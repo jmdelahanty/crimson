@@ -1,0 +1,3 @@
+/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/redgui.dir
+/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/edit_cache.dir
+/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/rebuild_cache.dir

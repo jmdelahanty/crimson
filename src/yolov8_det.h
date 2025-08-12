@@ -1,8 +1,9 @@
 #ifndef DETECT_END2END_YOLOV8_HPP
 #define DETECT_END2END_YOLOV8_HPP
-#include "NvInferPlugin.h"
+#include <NvInferPlugin.h>
+#include <NvInfer.h>
 #include "common.hpp"
-#include "fstream"
+#include <fstream>
 #include <nppi.h>
 
 using namespace pose;

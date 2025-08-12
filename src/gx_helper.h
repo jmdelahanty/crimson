@@ -75,7 +75,7 @@ void gx_imgui_init(gx_context *context) {
     // io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;       // Enable
     // Keyboard Controls io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad; //
     // Enable Gamepad Controls
-    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable; // Enable Docking
+//     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable; // Enable Docking
     // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;         // Enable
     // Multi-Viewport / Platform Windows
 
@@ -85,11 +85,11 @@ void gx_imgui_init(gx_context *context) {
     // When viewports are enabled we tweak WindowRounding/WindowBg so platform
     // windows can look identical to regular ones.
     ImGuiStyle &style = ImGui::GetStyle();
-    if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-        style.WindowRounding = 0.0f;
-        style.Colors[ImGuiCol_WindowBg].w = 1.0f;
-    }
-
+//     if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+//         style.WindowRounding = 0.0f;
+//         style.Colors[ImGuiCol_WindowBg].w = 1.0f;
+//     }
+// 
     // Setup Platform/Renderer backends
     ImGui_ImplGlfw_InitForOpenGL(context->render_target, true);
     ImGui_ImplOpenGL3_Init(context->glsl_version);

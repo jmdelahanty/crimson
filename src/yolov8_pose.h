@@ -4,7 +4,8 @@
 #ifndef POSE_NORMAL_YOLOv8_pose_HPP
 #define POSE_NORMAL_YOLOv8_pose_HPP
 
-#include "NvInferPlugin.h"
+#include <NvInferPlugin.h>
+#include <NvInfer.h>
 #include "common.hpp"
 #include "fstream"
 #include <nppi.h>

@@ -1347,13 +1347,12 @@ int main(int, char **) {
         // save/restore it to make it easier to paste this code elsewhere.
         //  For this specific demo app we could also call
         //  glfwMakeContextCurrent(window) directly)
-        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-            GLFWwindow *backup_current_context = glfwGetCurrentContext();
-            ImGui::UpdatePlatformWindows();
-            ImGui::RenderPlatformWindowsDefault();
-            glfwMakeContextCurrent(backup_current_context);
+//         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+//             GLFWwindow *backup_current_context = glfwGetCurrentContext();
+//             ImGui::UpdatePlatformWindows();
+//             ImGui::RenderPlatformWindowsDefault();
+//             glfwMakeContextCurrent(backup_current_context);
         }
-
         glfwSwapBuffers(window->render_target);
 
         if (ps.just_seeked) {
