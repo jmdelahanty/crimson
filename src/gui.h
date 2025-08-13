@@ -1,6 +1,7 @@
 #ifndef RED_GUI
 #define RED_GUI
 #include "render.h"
+#include "h5_loader.h"
 #include "skeleton.h"
 #include <filesystem>
 #include <fstream>
@@ -14,6 +15,41 @@ struct ProjectContext {
     std::vector<std::string> input_file_names;
     std::vector<std::string> camera_names;
 };
+
+static void gui_draw_chaser_state(const std::vector<LoggedChaserState>& states, int image_height, const CameraParams& cam_params) {
+    if (cam_params.inverse_homography_matrix.empty()) {
+        return; // Can't draw without the inverse homography matrix
+    }
+
+    for (const auto& state : states) {
+        std::vector<cv::Point2f> src_points;
+        src_points.push_back(cv::Point2f(state.chaser_pos_x, state.chaser_pos_y));
+        std::vector<cv::Point2f> dst_points;
+
+        // Use the inverse matrix to transform from stimulus to camera coordinates
+        cv::perspectiveTransform(src_points, dst_points, cam_params.inverse_homography_matrix);
+
+        if (!dst_points.empty()) {
+            double x = dst_points[0].x;
+            double y = (double)image_height - dst_points[0].y;
+
+            // Chaser is red, Target is green
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8.0f, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
+            ImPlot::PlotScatter("Chaser", &x, &y, 1);
+
+            src_points[0] = cv::Point2f(state.target_pos_x, state.target_pos_y);
+            cv::perspectiveTransform(src_points, dst_points, cam_params.inverse_homography_matrix);
+
+            if (!dst_points.empty()) {
+                x = dst_points[0].x;
+                y = (double)image_height - dst_points[0].y;
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8.0f, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
+                ImPlot::PlotScatter("Target", &x, &y, 1);
+            }
+        }
+    }
+}
+
 
 static void draw_cv_contours(std::vector<cv::Rect> boxes,
                              std::vector<std::string> labels,
@@ -37,6 +73,27 @@ static void draw_cv_contours(std::vector<cv::Rect> boxes,
         ImPlot::PlotLine(labels[i].c_str(), &x[0], &y[0], 5);
     }
 }
+
+static void gui_draw_bounding_boxes(const std::vector<LoggedBoundingBox>& boxes, int image_width, int image_height) {
+    (void)image_width;
+
+    for (const auto& box : boxes) {
+        double x_coords[5] = {box.x_min, box.x_min + box.width, box.x_min + box.width, box.x_min, box.x_min};
+        double y_coords[5] = {
+            (double)image_height - box.y_min,
+            (double)image_height - box.y_min,
+            (double)image_height - (box.y_min + box.height),
+            (double)image_height - (box.y_min + box.height),
+            (double)image_height - box.y_min
+        };
+
+        ImPlot::SetNextLineStyle(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), 2.0f);
+
+        std::string label = "ID: " + std::to_string(box.class_id);
+        ImPlot::PlotLine(label.c_str(), x_coords, y_coords, 5);
+    }
+}
+
 
 static void gui_plot_keypoints(KeyPoints *keypoints, SkeletonContext *skeleton,
                                int view_idx, int num_cams) {

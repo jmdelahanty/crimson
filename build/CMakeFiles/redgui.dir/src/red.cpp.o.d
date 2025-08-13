@@ -202,55 +202,45 @@ CMakeFiles/redgui.dir/src/red.cpp.o: \
  /usr/include/x86_64-linux-gnu/bits/socket2.h /usr/include/netinet/in.h \
  /usr/include/x86_64-linux-gnu/bits/in.h /usr/include/arpa/inet.h \
  /home/delahantyj@hhmi.org/gitrepos/crimson/src/camera.h \
- /usr/include/c++/13/filesystem /usr/include/c++/13/bits/fs_fwd.h \
- /usr/include/c++/13/bits/fs_path.h /usr/include/c++/13/locale \
- /usr/include/c++/13/bits/locale_facets_nonio.h \
- /usr/include/x86_64-linux-gnu/c++/13/bits/time_members.h \
- /usr/include/x86_64-linux-gnu/c++/13/bits/messages_members.h \
- /usr/include/libintl.h /usr/include/c++/13/bits/locale_facets_nonio.tcc \
- /usr/include/c++/13/bits/locale_conv.h /usr/include/c++/13/iomanip \
- /usr/include/c++/13/bits/quoted_string.h /usr/include/c++/13/codecvt \
- /usr/include/c++/13/ext/concurrence.h \
- /usr/include/c++/13/bits/shared_ptr.h \
- /usr/include/c++/13/bits/shared_ptr_base.h \
- /usr/include/c++/13/bits/allocated_ptr.h \
- /usr/include/c++/13/bits/unique_ptr.h \
- /usr/include/c++/13/ext/aligned_buffer.h \
- /usr/include/c++/13/bits/fs_dir.h /usr/include/c++/13/bits/fs_ops.h \
- /opt/crimson/lib/opencv/include/opencv4/opencv2/calib3d.hpp \
- /opt/crimson/lib/opencv/include/opencv4/opencv2/core.hpp \
- /opt/crimson/lib/opencv/include/opencv4/opencv2/core/cvdef.h \
- /opt/crimson/lib/opencv/include/opencv4/opencv2/core/version.hpp \
- /opt/crimson/lib/opencv/include/opencv4/opencv2/core/hal/interface.h \
- /opt/crimson/lib/opencv/include/opencv4/opencv2/core/cv_cpu_dispatch.h \
- /usr/lib/gcc/x86_64-linux-gnu/13/include/emmintrin.h \
- /usr/lib/gcc/x86_64-linux-gnu/13/include/xmmintrin.h \
- /usr/lib/gcc/x86_64-linux-gnu/13/include/mmintrin.h \
- /usr/lib/gcc/x86_64-linux-gnu/13/include/mm_malloc.h \
- /usr/include/c++/13/stdlib.h \
- /opt/crimson/lib/opencv/include/opencv4/opencv2/core/base.hpp \
- /opt/crimson/lib/opencv/include/opencv4/opencv2/opencv_modules.hpp \
- /usr/include/c++/13/climits \
- /usr/lib/gcc/x86_64-linux-gnu/13/include/limits.h \
- /usr/lib/gcc/x86_64-linux-gnu/13/include/syslimits.h \
- /usr/include/limits.h /usr/include/x86_64-linux-gnu/bits/posix1_lim.h \
- /usr/include/x86_64-linux-gnu/bits/local_lim.h \
- /usr/include/linux/limits.h \
- /usr/include/x86_64-linux-gnu/bits/posix2_lim.h \
- /usr/include/x86_64-linux-gnu/bits/xopen_lim.h \
- /usr/include/x86_64-linux-gnu/bits/uio_lim.h \
+ /home/delahantyj@hhmi.org/gitrepos/crimson/src/json.hpp \
  /usr/include/c++/13/algorithm /usr/include/c++/13/bits/stl_algo.h \
  /usr/include/c++/13/bits/algorithmfwd.h \
  /usr/include/c++/13/bits/stl_heap.h \
  /usr/include/c++/13/bits/uniform_int_dist.h \
  /usr/include/c++/13/bits/stl_tempbuf.h \
  /usr/include/c++/13/pstl/glue_algorithm_defs.h \
- /usr/include/c++/13/pstl/execution_defs.h \
- /opt/crimson/lib/opencv/include/opencv4/opencv2/core/cvstd.hpp \
- /usr/include/c++/13/cstring /usr/include/string.h /usr/include/strings.h \
- /usr/include/x86_64-linux-gnu/bits/strings_fortified.h \
- /usr/include/x86_64-linux-gnu/bits/string_fortified.h \
- /usr/include/c++/13/utility /usr/include/c++/13/bits/stl_relops.h \
+ /usr/include/c++/13/pstl/execution_defs.h /usr/include/c++/13/functional \
+ /usr/include/c++/13/bits/std_function.h \
+ /usr/include/c++/13/unordered_map \
+ /usr/include/c++/13/bits/unordered_map.h \
+ /usr/include/c++/13/bits/hashtable.h \
+ /usr/include/c++/13/bits/hashtable_policy.h \
+ /usr/include/c++/13/ext/aligned_buffer.h \
+ /usr/include/c++/13/bits/enable_special_members.h \
+ /usr/include/c++/13/bits/node_handle.h \
+ /usr/include/c++/13/bits/erase_if.h /usr/include/c++/13/vector \
+ /usr/include/c++/13/bits/stl_uninitialized.h \
+ /usr/include/c++/13/bits/stl_vector.h \
+ /usr/include/c++/13/bits/stl_bvector.h \
+ /usr/include/c++/13/bits/vector.tcc /usr/include/c++/13/array \
+ /usr/include/c++/13/compare /usr/include/c++/13/iterator \
+ /usr/include/c++/13/bits/stream_iterator.h /usr/include/c++/13/memory \
+ /usr/include/c++/13/bits/stl_raw_storage_iter.h \
+ /usr/include/c++/13/bits/align.h /usr/include/c++/13/bits/unique_ptr.h \
+ /usr/include/c++/13/bits/shared_ptr.h \
+ /usr/include/c++/13/bits/shared_ptr_base.h \
+ /usr/include/c++/13/bits/allocated_ptr.h \
+ /usr/include/c++/13/ext/concurrence.h \
+ /usr/include/c++/13/bits/shared_ptr_atomic.h \
+ /usr/include/c++/13/bits/atomic_base.h \
+ /usr/include/c++/13/bits/atomic_lockfree_defines.h \
+ /usr/include/c++/13/backward/auto_ptr.h \
+ /usr/include/c++/13/pstl/glue_memory_defs.h /usr/include/c++/13/utility \
+ /usr/include/c++/13/bits/stl_relops.h /usr/include/c++/13/forward_list \
+ /usr/include/c++/13/bits/forward_list.h \
+ /usr/include/c++/13/bits/forward_list.tcc /usr/include/c++/13/map \
+ /usr/include/c++/13/bits/stl_tree.h /usr/include/c++/13/bits/stl_map.h \
+ /usr/include/c++/13/bits/stl_multimap.h /usr/include/c++/13/valarray \
  /usr/include/c++/13/cmath /usr/include/math.h \
  /usr/include/x86_64-linux-gnu/bits/math-vector.h \
  /usr/include/x86_64-linux-gnu/bits/libm-simd-decl-stubs.h \
@@ -273,18 +263,56 @@ CMakeFiles/redgui.dir/src/red.cpp.o: \
  /usr/include/c++/13/tr1/poly_hermite.tcc \
  /usr/include/c++/13/tr1/poly_laguerre.tcc \
  /usr/include/c++/13/tr1/riemann_zeta.tcc \
+ /usr/include/c++/13/bits/valarray_array.h \
+ /usr/include/c++/13/bits/valarray_array.tcc \
+ /usr/include/c++/13/bits/valarray_before.h \
+ /usr/include/c++/13/bits/slice_array.h \
+ /usr/include/c++/13/bits/valarray_after.h \
+ /usr/include/c++/13/bits/gslice.h \
+ /usr/include/c++/13/bits/gslice_array.h \
+ /usr/include/c++/13/bits/mask_array.h \
+ /usr/include/c++/13/bits/indirect_array.h /usr/include/c++/13/version \
+ /usr/include/c++/13/cassert /usr/include/assert.h \
+ /usr/include/c++/13/cstring /usr/include/string.h /usr/include/strings.h \
+ /usr/include/x86_64-linux-gnu/bits/strings_fortified.h \
+ /usr/include/x86_64-linux-gnu/bits/string_fortified.h \
+ /usr/include/c++/13/filesystem /usr/include/c++/13/bits/fs_fwd.h \
+ /usr/include/c++/13/bits/fs_path.h /usr/include/c++/13/locale \
+ /usr/include/c++/13/bits/locale_facets_nonio.h \
+ /usr/include/x86_64-linux-gnu/c++/13/bits/time_members.h \
+ /usr/include/x86_64-linux-gnu/c++/13/bits/messages_members.h \
+ /usr/include/libintl.h /usr/include/c++/13/bits/locale_facets_nonio.tcc \
+ /usr/include/c++/13/bits/locale_conv.h /usr/include/c++/13/iomanip \
+ /usr/include/c++/13/bits/quoted_string.h /usr/include/c++/13/codecvt \
+ /usr/include/c++/13/bits/fs_dir.h /usr/include/c++/13/bits/fs_ops.h \
+ /usr/include/c++/13/numeric /usr/include/c++/13/bits/stl_numeric.h \
+ /usr/include/c++/13/pstl/glue_numeric_defs.h /usr/include/c++/13/any \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/calib3d.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/cvdef.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/version.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/hal/interface.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/cv_cpu_dispatch.h \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/emmintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/xmmintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/mmintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/mm_malloc.h \
+ /usr/include/c++/13/stdlib.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/base.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/opencv_modules.hpp \
+ /usr/include/c++/13/climits \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/limits.h \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/syslimits.h \
+ /usr/include/limits.h /usr/include/x86_64-linux-gnu/bits/posix1_lim.h \
+ /usr/include/x86_64-linux-gnu/bits/local_lim.h \
+ /usr/include/linux/limits.h \
+ /usr/include/x86_64-linux-gnu/bits/posix2_lim.h \
+ /usr/include/x86_64-linux-gnu/bits/xopen_lim.h \
+ /usr/include/x86_64-linux-gnu/bits/uio_lim.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/cvstd.hpp \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/core/cvstd_wrapper.hpp \
- /usr/include/c++/13/memory /usr/include/c++/13/bits/stl_uninitialized.h \
- /usr/include/c++/13/bits/stl_raw_storage_iter.h \
- /usr/include/c++/13/bits/align.h \
- /usr/include/c++/13/bits/shared_ptr_atomic.h \
- /usr/include/c++/13/bits/atomic_base.h \
- /usr/include/c++/13/bits/atomic_lockfree_defines.h \
- /usr/include/c++/13/backward/auto_ptr.h \
- /usr/include/c++/13/pstl/glue_memory_defs.h \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/core/neon_utils.hpp \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/core/vsx_utils.hpp \
- /usr/include/assert.h \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/core/check.hpp \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/core/traits.hpp \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/core/matx.hpp \
@@ -294,26 +322,14 @@ CMakeFiles/redgui.dir/src/red.cpp.o: \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/core/types.hpp \
  /usr/include/c++/13/cfloat \
  /usr/lib/gcc/x86_64-linux-gnu/13/include/float.h \
- /usr/include/c++/13/vector /usr/include/c++/13/bits/stl_vector.h \
- /usr/include/c++/13/bits/stl_bvector.h \
- /usr/include/c++/13/bits/vector.tcc \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/core/mat.hpp \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/core/bufferpool.hpp \
- /usr/include/c++/13/array /usr/include/c++/13/compare \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/core/mat.inl.hpp \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/core/persistence.hpp \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/core/operations.hpp \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/core/cvstd.inl.hpp \
  /usr/include/c++/13/complex \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/core/utility.hpp \
- /usr/include/c++/13/functional /usr/include/c++/13/bits/std_function.h \
- /usr/include/c++/13/unordered_map \
- /usr/include/c++/13/bits/unordered_map.h \
- /usr/include/c++/13/bits/hashtable.h \
- /usr/include/c++/13/bits/hashtable_policy.h \
- /usr/include/c++/13/bits/enable_special_members.h \
- /usr/include/c++/13/bits/node_handle.h \
- /usr/include/c++/13/bits/erase_if.h \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/core/optim.hpp \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/core/ovx.hpp \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/core/cvdef.h \
@@ -415,9 +431,6 @@ CMakeFiles/redgui.dir/src/red.cpp.o: \
  /usr/local/cuda-12.4/include/cuda.h \
  /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/nvcodec/nvcuvid.h \
  /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/nvcodec/cuviddec.h \
- /usr/include/c++/13/map /usr/include/c++/13/bits/stl_tree.h \
- /usr/include/c++/13/bits/stl_map.h \
- /usr/include/c++/13/bits/stl_multimap.h \
  /home/delahantyj@hhmi.org/gitrepos/crimson/src/NvCodecUtils.h \
  /usr/include/c++/13/chrono /usr/include/x86_64-linux-gnu/sys/stat.h \
  /usr/include/x86_64-linux-gnu/bits/stat.h \
@@ -515,23 +528,70 @@ CMakeFiles/redgui.dir/src/red.cpp.o: \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/video.hpp \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/video/tracking.hpp \
  /opt/crimson/lib/opencv/include/opencv4/opencv2/video/background_segm.hpp \
+ /home/delahantyj@hhmi.org/gitrepos/crimson/src/h5_loader.h \
+ /usr/include/hdf5/serial/H5Cpp.h /usr/include/hdf5/serial/H5Include.h \
+ /usr/include/hdf5/serial/hdf5.h /usr/include/hdf5/serial/H5public.h \
+ /usr/include/hdf5/serial/H5pubconf.h \
+ /usr/include/hdf5/serial/H5version.h \
+ /usr/include/hdf5/serial/H5api_adpt.h \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/stdbool.h \
+ /usr/include/hdf5/serial/H5Apublic.h \
+ /usr/include/hdf5/serial/H5Ipublic.h \
+ /usr/include/hdf5/serial/H5Opublic.h \
+ /usr/include/hdf5/serial/H5Lpublic.h \
+ /usr/include/hdf5/serial/H5Tpublic.h \
+ /usr/include/hdf5/serial/H5ACpublic.h \
+ /usr/include/hdf5/serial/H5Cpublic.h \
+ /usr/include/hdf5/serial/H5Dpublic.h \
+ /usr/include/hdf5/serial/H5Epublic.h \
+ /usr/include/hdf5/serial/H5Epubgen.h \
+ /usr/include/hdf5/serial/H5Fpublic.h \
+ /usr/include/hdf5/serial/H5FDpublic.h \
+ /usr/include/hdf5/serial/H5Gpublic.h \
+ /usr/include/hdf5/serial/H5MMpublic.h \
+ /usr/include/hdf5/serial/H5Ppublic.h \
+ /usr/include/hdf5/serial/H5Spublic.h \
+ /usr/include/hdf5/serial/H5Zpublic.h \
+ /usr/include/hdf5/serial/H5PLpublic.h \
+ /usr/include/hdf5/serial/H5Rpublic.h /usr/include/hdf5/serial/H5FDcore.h \
+ /usr/include/hdf5/serial/H5FDdirect.h \
+ /usr/include/hdf5/serial/H5FDfamily.h \
+ /usr/include/hdf5/serial/H5FDhdfs.h /usr/include/hdf5/serial/H5FDlog.h \
+ /usr/include/hdf5/serial/H5FDmirror.h /usr/include/hdf5/serial/H5FDmpi.h \
+ /usr/include/hdf5/serial/H5FDmpio.h /usr/include/hdf5/serial/H5FDmulti.h \
+ /usr/include/hdf5/serial/H5FDros3.h /usr/include/hdf5/serial/H5FDsec2.h \
+ /usr/include/hdf5/serial/H5FDsplitter.h \
+ /usr/include/hdf5/serial/H5FDstdio.h \
+ /usr/include/hdf5/serial/H5Exception.h \
+ /usr/include/hdf5/serial/H5IdComponent.h \
+ /usr/include/hdf5/serial/H5DataSpace.h \
+ /usr/include/hdf5/serial/H5PropList.h \
+ /usr/include/hdf5/serial/H5FaccProp.h \
+ /usr/include/hdf5/serial/H5FcreatProp.h \
+ /usr/include/hdf5/serial/H5OcreatProp.h \
+ /usr/include/hdf5/serial/H5DcreatProp.h \
+ /usr/include/hdf5/serial/H5DxferProp.h \
+ /usr/include/hdf5/serial/H5LcreatProp.h \
+ /usr/include/hdf5/serial/H5LaccProp.h \
+ /usr/include/hdf5/serial/H5DaccProp.h \
+ /usr/include/hdf5/serial/H5Location.h \
+ /usr/include/hdf5/serial/H5Classes.h /usr/include/hdf5/serial/H5Object.h \
+ /usr/include/hdf5/serial/H5AbstractDs.h \
+ /usr/include/hdf5/serial/H5Attribute.h \
+ /usr/include/hdf5/serial/H5DataType.h \
+ /usr/include/hdf5/serial/H5AtomType.h \
+ /usr/include/hdf5/serial/H5PredType.h \
+ /usr/include/hdf5/serial/H5EnumType.h \
+ /usr/include/hdf5/serial/H5IntType.h \
+ /usr/include/hdf5/serial/H5FloatType.h \
+ /usr/include/hdf5/serial/H5StrType.h \
+ /usr/include/hdf5/serial/H5CompType.h \
+ /usr/include/hdf5/serial/H5ArrayType.h \
+ /usr/include/hdf5/serial/H5VarLenType.h \
+ /usr/include/hdf5/serial/H5DataSet.h \
+ /usr/include/hdf5/serial/H5CommonFG.h /usr/include/hdf5/serial/H5Group.h \
+ /usr/include/hdf5/serial/H5File.h /usr/include/hdf5/serial/H5Library.h \
  /home/delahantyj@hhmi.org/gitrepos/crimson/src/skeleton.h \
- /home/delahantyj@hhmi.org/gitrepos/crimson/src/json.hpp \
- /usr/include/c++/13/iterator /usr/include/c++/13/bits/stream_iterator.h \
- /usr/include/c++/13/forward_list /usr/include/c++/13/bits/forward_list.h \
- /usr/include/c++/13/bits/forward_list.tcc /usr/include/c++/13/valarray \
- /usr/include/c++/13/bits/valarray_array.h \
- /usr/include/c++/13/bits/valarray_array.tcc \
- /usr/include/c++/13/bits/valarray_before.h \
- /usr/include/c++/13/bits/slice_array.h \
- /usr/include/c++/13/bits/valarray_after.h \
- /usr/include/c++/13/bits/gslice.h \
- /usr/include/c++/13/bits/gslice_array.h \
- /usr/include/c++/13/bits/mask_array.h \
- /usr/include/c++/13/bits/indirect_array.h /usr/include/c++/13/version \
- /usr/include/c++/13/cassert /usr/include/c++/13/numeric \
- /usr/include/c++/13/bits/stl_numeric.h \
- /usr/include/c++/13/pstl/glue_numeric_defs.h /usr/include/c++/13/any \
  /usr/include/c++/13/future /usr/include/c++/13/bits/atomic_futex.h \
  /usr/include/c++/13/regex /usr/include/c++/13/bitset \
  /usr/include/c++/13/stack /usr/include/c++/13/bits/stl_stack.h \

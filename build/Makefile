@@ -201,30 +201,6 @@ src/NvDecoder.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/redgui.dir/build.make CMakeFiles/redgui.dir/src/NvDecoder.cpp.s
 .PHONY : src/NvDecoder.cpp.s
 
-src/check_opencv_cuda.o: src/check_opencv_cuda.cpp.o
-.PHONY : src/check_opencv_cuda.o
-
-# target to build an object file
-src/check_opencv_cuda.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/redgui.dir/build.make CMakeFiles/redgui.dir/src/check_opencv_cuda.cpp.o
-.PHONY : src/check_opencv_cuda.cpp.o
-
-src/check_opencv_cuda.i: src/check_opencv_cuda.cpp.i
-.PHONY : src/check_opencv_cuda.i
-
-# target to preprocess a source file
-src/check_opencv_cuda.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/redgui.dir/build.make CMakeFiles/redgui.dir/src/check_opencv_cuda.cpp.i
-.PHONY : src/check_opencv_cuda.cpp.i
-
-src/check_opencv_cuda.s: src/check_opencv_cuda.cpp.s
-.PHONY : src/check_opencv_cuda.s
-
-# target to generate assembly for a file
-src/check_opencv_cuda.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/redgui.dir/build.make CMakeFiles/redgui.dir/src/check_opencv_cuda.cpp.s
-.PHONY : src/check_opencv_cuda.cpp.s
-
 src/create_image_cuda.o: src/create_image_cuda.cu.o
 .PHONY : src/create_image_cuda.o
 
@@ -272,6 +248,30 @@ src/decoder.s: src/decoder.cpp.s
 src/decoder.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/redgui.dir/build.make CMakeFiles/redgui.dir/src/decoder.cpp.s
 .PHONY : src/decoder.cpp.s
+
+src/h5_loader.o: src/h5_loader.cpp.o
+.PHONY : src/h5_loader.o
+
+# target to build an object file
+src/h5_loader.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/redgui.dir/build.make CMakeFiles/redgui.dir/src/h5_loader.cpp.o
+.PHONY : src/h5_loader.cpp.o
+
+src/h5_loader.i: src/h5_loader.cpp.i
+.PHONY : src/h5_loader.i
+
+# target to preprocess a source file
+src/h5_loader.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/redgui.dir/build.make CMakeFiles/redgui.dir/src/h5_loader.cpp.i
+.PHONY : src/h5_loader.cpp.i
+
+src/h5_loader.s: src/h5_loader.cpp.s
+.PHONY : src/h5_loader.s
+
+# target to generate assembly for a file
+src/h5_loader.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/redgui.dir/build.make CMakeFiles/redgui.dir/src/h5_loader.cpp.s
+.PHONY : src/h5_loader.cpp.s
 
 src/kernel.o: src/kernel.cu.o
 .PHONY : src/kernel.o
@@ -675,15 +675,15 @@ help:
 	@echo "... src/NvDecoder.o"
 	@echo "... src/NvDecoder.i"
 	@echo "... src/NvDecoder.s"
-	@echo "... src/check_opencv_cuda.o"
-	@echo "... src/check_opencv_cuda.i"
-	@echo "... src/check_opencv_cuda.s"
 	@echo "... src/create_image_cuda.o"
 	@echo "... src/create_image_cuda.i"
 	@echo "... src/create_image_cuda.s"
 	@echo "... src/decoder.o"
 	@echo "... src/decoder.i"
 	@echo "... src/decoder.s"
+	@echo "... src/h5_loader.o"
+	@echo "... src/h5_loader.i"
+	@echo "... src/h5_loader.s"
 	@echo "... src/kernel.o"
 	@echo "... src/kernel.i"
 	@echo "... src/kernel.s"

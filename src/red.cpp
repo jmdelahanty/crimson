@@ -12,6 +12,7 @@
 #include "skeleton.h"
 #include "utils.h"
 #include "yolo_detection.h"
+#include "h5_loader.h"
 #include <ImGuiFileDialog.h>
 #include <chrono>
 #include <iostream>
@@ -106,6 +107,9 @@ int main(int, char **) {
     std::vector<CameraParams> camera_params;
     std::vector<std::thread> decoder_threads;
     std::vector<FFmpegDemuxer *> demuxers;
+
+    H5SessionData h5_data;
+    bool h5_loaded = false;
 
     DecoderContext *dc_context =
         (DecoderContext *)malloc(sizeof(DecoderContext));
@@ -226,14 +230,16 @@ int main(int, char **) {
                                                 root_dir + "/calibration/" +
                                                 camera_names[i] + ".yaml";
 
-                                            CameraParams cam;
-                                            if (camera_load_params_from_yaml(
-                                                    cam_file, cam,
-                                                    error_message)) {
-                                                camera_params.push_back(cam);
-                                            } else {
+                                            if (!std::filesystem::exists(cam_file)) {
+                                                load_calibration = false;
+                                                error_message = "Calibration file not found: " + cam_file;
+                                                show_error = true;
+                                                break;
+                                            }
+                                            if (!camera_load_params_from_yaml(cam_file, camera_params[i], error_message)) {
                                                 load_calibration = false;
                                                 camera_params.clear();
+                                                camera_params.resize(scene->num_cams);
                                                 show_error = true;
                                                 break;
                                             }
@@ -380,15 +386,45 @@ int main(int, char **) {
                 root_dir = ImGuiFileDialog::Instance()->GetCurrentPath();
                 skeleton_dir = root_dir;
 
+                // Try to load H5 file from the selected directory
+                if (loadH5SessionFromDirectory(root_dir, h5_data, error_message)) {
+                    h5_loaded = true;
+                    std::cout << "Successfully loaded H5 session file" << std::endl;
+                    std::cout << "  Session UUID: " << h5_data.session_info.session_uuid << std::endl;
+                    std::cout << "  Protocol: " << h5_data.session_info.protocol_name_from_definition << std::endl;
+                    std::cout << "  Total frames: " << h5_data.total_frames << std::endl;
+                    std::cout << "  Events: " << h5_data.events.size() << std::endl;
+
+                    if (h5_data.has_tracking_data) {
+                        std::cout << "  Bounding boxes: " << h5_data.bounding_boxes.size() << std::endl;
+                        std::cout << "  Chaser states: " << h5_data.chaser_states.size() << std::endl;
+                    }
+
+                    // Sync FPS with video if available
+                    if (h5_data.fps > 0 && h5_data.has_video_metadata) {
+                        std::cout << "  H5 FPS: " << h5_data.fps << ", Video FPS: " << video_fps << std::endl;
+                        // Optionally sync: video_fps = h5_data.fps;
+                    }
+                } else {
+                    // H5 file not found or failed to load - this is optional, not an error
+                    std::cout << "No H5 session file found in directory (optional)" << std::endl;
+                    h5_loaded = false;
+                }
+
                 // check if it is mp4, if it is mp4 files
                 auto first_selection =
                     *selected_files.begin(); // Dereferencing iterator
                 if (string_ends_with(first_selection.first, ".mp4")) {
                     for (const auto &elem : selected_files) {
+                        std::string cam_string_full = elem.first;
+                        std::size_t last_slash = cam_string_full.find_last_of("/\\");
+                        if (last_slash != std::string::npos) {
+                            cam_string_full = cam_string_full.substr(last_slash + 1);
+                        }
                         std::size_t cam_string_mp4_position =
-                            elem.first.find("mp4");
+                            cam_string_full.find(".mp4");
                         std::string cam_string =
-                            elem.first.substr(0, cam_string_mp4_position - 1);
+                            cam_string_full.substr(0, cam_string_mp4_position);
                         camera_names.push_back(cam_string);
                         std::cout << "camera names: " << cam_string
                                   << std::endl;
@@ -474,6 +510,23 @@ int main(int, char **) {
                     }
                     video_loaded = true;
                 }
+
+                // After loading video and H5, load camera calibration
+                if (video_loaded) {
+                    camera_params.resize(scene->num_cams); // Ensure vector is sized
+                    if (h5_loaded) {
+                        for (size_t i = 0; i < camera_names.size(); ++i) {
+                           if (!camera_load_calibration_from_h5_json(
+                                   h5_data.arena_config_json,
+                                   camera_names[i],
+                                   camera_params[i],
+                                   error_message)) {
+                               show_error = true;
+                               break;
+                           }
+                        }
+                    }
+                }
             }
             // close
             ImGuiFileDialog::Instance()->Close();
@@ -491,14 +544,10 @@ int main(int, char **) {
                         for (u32 i = 0; i < scene->num_cams; i++) {
                             std::string cam_file = root_dir + "/calibration/" +
                                                    camera_names[i] + ".yaml";
-
-                            CameraParams cam;
-                            if (camera_load_params_from_yaml(cam_file, cam,
-                                                             error_message)) {
-                                camera_params.push_back(cam);
-                            } else {
+                            if (!camera_load_params_from_yaml(cam_file, camera_params[i], error_message)) {
                                 load_calibration = false;
                                 camera_params.clear();
+                                camera_params.resize(scene->num_cams);
                                 show_error = true;
                                 break;
                             }
@@ -862,6 +911,25 @@ int main(int, char **) {
                                 }
                             }
                         }
+                        // START of new code for H5 bounding box overlay
+                        if (h5_loaded && h5_data.has_tracking_data) {
+                            // Get all bounding boxes for this camera's frame ID
+                            auto boxes_for_frame = H5SessionLoader::getBoundingBoxesForFrame(h5_data, current_frame_num);
+                            if (!boxes_for_frame.empty()) {
+                                // Draw the bounding boxes on the current view
+                                gui_draw_bounding_boxes(boxes_for_frame, scene->image_width[j], scene->image_height[j]);
+                            }
+
+                            // Get the frame metadata to find the corresponding stimulus frame num
+                            auto frame_meta = H5SessionLoader::getFrameMetadataByCameraID(h5_data, current_frame_num);
+                            if (frame_meta) {
+                                // Get chaser states for this stimulus frame
+                                auto chaser_states = H5SessionLoader::getChaserStatesForFrame(h5_data, frame_meta->stimulus_frame_num);
+                                if (!chaser_states.empty()) {
+                                    gui_draw_chaser_state(chaser_states, scene->image_height[j], camera_params[j]);
+                                }
+                            }
+                        }
                         ImPlot::EndPlot();
                     }
 
@@ -1173,6 +1241,104 @@ int main(int, char **) {
                     }
                 }
 
+                // Session Info Window
+                if (h5_loaded) {
+                    if (ImGui::Begin("H5 Session Info")) {
+                        ImGui::Text("Session UUID: %s", h5_data.session_info.session_uuid.c_str());
+                        ImGui::Text("Start Time: %s", h5_data.session_info.session_start_iso8601_utc.c_str());
+                        ImGui::Text("Protocol: %s", h5_data.session_info.protocol_name_from_definition.c_str());
+                        ImGui::Text("Rig ID: %s", h5_data.session_info.rig_id.c_str());
+                        ImGui::Text("Arena ID: %s", h5_data.session_info.arena_id.c_str());
+                        ImGui::Text("Output Size: %dx%d",
+                                h5_data.session_info.stimulus_output_width,
+                                h5_data.session_info.stimulus_output_height);
+
+                        if (!h5_data.session_info.operator_notes.empty()) {
+                            ImGui::Separator();
+                            ImGui::TextWrapped("Notes: %s", h5_data.session_info.operator_notes.c_str());
+                        }
+
+                        if (!h5_data.session_info.subject_metadata.empty()) {
+                            ImGui::Separator();
+                            ImGui::Text("Subject Metadata:");
+                            for (const auto& [key, value] : h5_data.session_info.subject_metadata) {
+                                ImGui::Text("  %s: %s", key.c_str(), value.c_str());
+                            }
+                        }
+                    }
+                    ImGui::End();
+                }
+
+
+                // Events Window
+                if (h5_loaded && !h5_data.events.empty()) {
+                    if (ImGui::Begin("H5 Events")) {
+                        // Find events near current frame time
+                        if (video_loaded && h5_data.has_video_metadata) {
+                            auto frame_meta = H5SessionLoader::getFrameMetadata(h5_data, current_frame_num);
+                            if (frame_meta) {
+                                ImGui::Text("Current Frame Timestamp: %.3f s", frame_meta->timestamp_ns / 1e9);
+                                ImGui::Separator();
+                            }
+                        }
+
+                        ImGui::Text("Total Events: %zu", h5_data.events.size());
+
+                        // Show last few events
+                        ImGui::Separator();
+                        ImGui::Text("Recent Events:");
+                        size_t start_idx = h5_data.events.size() > 10 ? h5_data.events.size() - 10 : 0;
+                        for (size_t i = start_idx; i < h5_data.events.size(); i++) {
+                            const auto& event = h5_data.events[i];
+                            ImGui::Text("[%.3fs] Type:%d Step:%d %s",
+                                    event.timestamp_ns_session / 1e9,
+                                    event.event_type_id,
+                                    event.current_step_index,
+                                    event.name_or_context);
+                        }
+                    }
+                    ImGui::End();
+                }
+
+                // Tracking Data Window
+                if (h5_loaded && h5_data.has_tracking_data) {
+                    if (ImGui::Begin("H5 Tracking Data")) {
+                        ImGui::Text("Total Bounding Boxes: %zu", h5_data.bounding_boxes.size());
+                        ImGui::Text("Total Chaser States: %zu", h5_data.chaser_states.size());
+
+                        if (video_loaded) {
+                            ImGui::Separator();
+                            ImGui::Text("Current Frame: %d", current_frame_num);
+
+                            // Get tracking data for current frame
+                            auto boxes = H5SessionLoader::getBoundingBoxesForFrame(h5_data, current_frame_num);
+                            auto chaser_states = H5SessionLoader::getChaserStatesForFrame(h5_data, current_frame_num);
+
+                            if (!boxes.empty()) {
+                                ImGui::Text("Bounding Boxes in Frame: %zu", boxes.size());
+                                for (const auto& box : boxes) {
+                                    ImGui::Text("  Camera %d: [%.1f,%.1f,%.1f,%.1f] Class:%d Conf:%.2f",
+                                            box.payload_camera_id,
+                                            box.x_min, box.y_min, box.width, box.height,
+                                            box.class_id, box.confidence);
+                                }
+                            }
+
+                            if (!chaser_states.empty()) {
+                                ImGui::Text("Chaser States in Frame: %zu", chaser_states.size());
+                                for (const auto& state : chaser_states) {
+                                    ImGui::Text("  Chaser %d: %s Pos:(%.1f,%.1f) Target:(%.1f,%.1f)",
+                                            state.chaser_index,
+                                            state.is_chasing ? "Chasing" : "Not Chasing",
+                                            state.chaser_pos_x, state.chaser_pos_y,
+                                            state.target_pos_x, state.target_pos_y);
+                                }
+                            }
+                        }
+                    }
+                    ImGui::End();
+                }
+
                 if (ImGui::Button("Update keypoints working directory")) {
                     IGFD::FileDialogConfig config;
                     config.countSelectionMax = 1;
@@ -1352,7 +1518,6 @@ int main(int, char **) {
 //             ImGui::UpdatePlatformWindows();
 //             ImGui::RenderPlatformWindowsDefault();
 //             glfwMakeContextCurrent(backup_current_context);
-        }
         glfwSwapBuffers(window->render_target);
 
         if (ps.just_seeked) {

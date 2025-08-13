@@ -97,24 +97,10 @@ CMakeFiles/redgui.dir/src/NvDecoder.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/redgui.dir/src/NvDecoder.cpp.s"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/delahantyj@hhmi.org/gitrepos/crimson/src/NvDecoder.cpp -o CMakeFiles/redgui.dir/src/NvDecoder.cpp.s
 
-CMakeFiles/redgui.dir/src/check_opencv_cuda.cpp.o: CMakeFiles/redgui.dir/flags.make
-CMakeFiles/redgui.dir/src/check_opencv_cuda.cpp.o: /home/delahantyj@hhmi.org/gitrepos/crimson/src/check_opencv_cuda.cpp
-CMakeFiles/redgui.dir/src/check_opencv_cuda.cpp.o: CMakeFiles/redgui.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Building CXX object CMakeFiles/redgui.dir/src/check_opencv_cuda.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/redgui.dir/src/check_opencv_cuda.cpp.o -MF CMakeFiles/redgui.dir/src/check_opencv_cuda.cpp.o.d -o CMakeFiles/redgui.dir/src/check_opencv_cuda.cpp.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/src/check_opencv_cuda.cpp
-
-CMakeFiles/redgui.dir/src/check_opencv_cuda.cpp.i: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/redgui.dir/src/check_opencv_cuda.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/delahantyj@hhmi.org/gitrepos/crimson/src/check_opencv_cuda.cpp > CMakeFiles/redgui.dir/src/check_opencv_cuda.cpp.i
-
-CMakeFiles/redgui.dir/src/check_opencv_cuda.cpp.s: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/redgui.dir/src/check_opencv_cuda.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/delahantyj@hhmi.org/gitrepos/crimson/src/check_opencv_cuda.cpp -o CMakeFiles/redgui.dir/src/check_opencv_cuda.cpp.s
-
 CMakeFiles/redgui.dir/src/decoder.cpp.o: CMakeFiles/redgui.dir/flags.make
 CMakeFiles/redgui.dir/src/decoder.cpp.o: /home/delahantyj@hhmi.org/gitrepos/crimson/src/decoder.cpp
 CMakeFiles/redgui.dir/src/decoder.cpp.o: CMakeFiles/redgui.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Building CXX object CMakeFiles/redgui.dir/src/decoder.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Building CXX object CMakeFiles/redgui.dir/src/decoder.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/redgui.dir/src/decoder.cpp.o -MF CMakeFiles/redgui.dir/src/decoder.cpp.o.d -o CMakeFiles/redgui.dir/src/decoder.cpp.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/src/decoder.cpp
 
 CMakeFiles/redgui.dir/src/decoder.cpp.i: cmake_force
@@ -124,6 +110,20 @@ CMakeFiles/redgui.dir/src/decoder.cpp.i: cmake_force
 CMakeFiles/redgui.dir/src/decoder.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/redgui.dir/src/decoder.cpp.s"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/delahantyj@hhmi.org/gitrepos/crimson/src/decoder.cpp -o CMakeFiles/redgui.dir/src/decoder.cpp.s
+
+CMakeFiles/redgui.dir/src/h5_loader.cpp.o: CMakeFiles/redgui.dir/flags.make
+CMakeFiles/redgui.dir/src/h5_loader.cpp.o: /home/delahantyj@hhmi.org/gitrepos/crimson/src/h5_loader.cpp
+CMakeFiles/redgui.dir/src/h5_loader.cpp.o: CMakeFiles/redgui.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Building CXX object CMakeFiles/redgui.dir/src/h5_loader.cpp.o"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/redgui.dir/src/h5_loader.cpp.o -MF CMakeFiles/redgui.dir/src/h5_loader.cpp.o.d -o CMakeFiles/redgui.dir/src/h5_loader.cpp.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/src/h5_loader.cpp
+
+CMakeFiles/redgui.dir/src/h5_loader.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/redgui.dir/src/h5_loader.cpp.i"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/delahantyj@hhmi.org/gitrepos/crimson/src/h5_loader.cpp > CMakeFiles/redgui.dir/src/h5_loader.cpp.i
+
+CMakeFiles/redgui.dir/src/h5_loader.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/redgui.dir/src/h5_loader.cpp.s"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/delahantyj@hhmi.org/gitrepos/crimson/src/h5_loader.cpp -o CMakeFiles/redgui.dir/src/h5_loader.cpp.s
 
 CMakeFiles/redgui.dir/src/red.cpp.o: CMakeFiles/redgui.dir/flags.make
 CMakeFiles/redgui.dir/src/red.cpp.o: /home/delahantyj@hhmi.org/gitrepos/crimson/src/red.cpp
@@ -384,8 +384,8 @@ CMakeFiles/redgui.dir/third_party/ImGuiFileDialog/ImGuiFileDialog.cpp.s: cmake_f
 redgui_OBJECTS = \
 "CMakeFiles/redgui.dir/src/FFmpegDemuxer.cpp.o" \
 "CMakeFiles/redgui.dir/src/NvDecoder.cpp.o" \
-"CMakeFiles/redgui.dir/src/check_opencv_cuda.cpp.o" \
 "CMakeFiles/redgui.dir/src/decoder.cpp.o" \
+"CMakeFiles/redgui.dir/src/h5_loader.cpp.o" \
 "CMakeFiles/redgui.dir/src/red.cpp.o" \
 "CMakeFiles/redgui.dir/src/yolo_detection.cpp.o" \
 "CMakeFiles/redgui.dir/src/yolov8_det.cpp.o" \
@@ -410,8 +410,8 @@ redgui_EXTERNAL_OBJECTS =
 
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: CMakeFiles/redgui.dir/src/FFmpegDemuxer.cpp.o
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: CMakeFiles/redgui.dir/src/NvDecoder.cpp.o
-/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: CMakeFiles/redgui.dir/src/check_opencv_cuda.cpp.o
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: CMakeFiles/redgui.dir/src/decoder.cpp.o
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: CMakeFiles/redgui.dir/src/h5_loader.cpp.o
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: CMakeFiles/redgui.dir/src/red.cpp.o
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: CMakeFiles/redgui.dir/src/yolo_detection.cpp.o
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: CMakeFiles/redgui.dir/src/yolov8_det.cpp.o
