@@ -1,3 +1,5 @@
+// src/camera.h
+
 #ifndef RED_CAMERA
 #define RED_CAMERA
 
@@ -239,53 +241,6 @@ bool camera_load_params_from_yaml(const std::string &calibration_file,
                                camera_params.projection_mat);
     return true;
 }
-
-bool camera_load_calibration_from_h5_json(const std::string& arena_config_json,
-                                          const std::string& camera_id_str,
-                                          CameraParams& camera_params,
-                                          std::string& error_message) {
-    error_message.clear();
-    try {
-        json config = json::parse(arena_config_json);
-
-        if (config.contains("camera_calibrations")) {
-            for (const auto& calib : config["camera_calibrations"]) {
-                std::string current_cam_id_str;
-                 if (calib["camera_id"].is_string()) {
-                    current_cam_id_str = calib["camera_id"].get<std::string>();
-                } else if (calib["camera_id"].is_number()) {
-                    current_cam_id_str = std::to_string(calib["camera_id"].get<uint32_t>());
-                }
-
-
-                if (current_cam_id_str == camera_id_str) {
-                    if (calib.contains("homography_matrix") && calib["homography_matrix"].contains("data")) {
-                        std::vector<double> h_vec = calib["homography_matrix"]["data"].get<std::vector<double>>();
-                        if (h_vec.size() == 9) {
-                            camera_params.homography_matrix = cv::Mat(h_vec, true).reshape(1, 3);
-                            // Calculate and store the inverse
-                            if(cv::invert(camera_params.homography_matrix, camera_params.inverse_homography_matrix)) {
-                                return true;
-                            }
-                            error_message = "Failed to invert homography matrix for camera ID " + camera_id_str;
-                            return false;
-                        }
-                    }
-                }
-            }
-        }
-        error_message = "Homography matrix not found for camera ID " + camera_id_str + " in H5 calibration data.";
-        return false;
-    } catch (const json::exception& e) {
-        error_message = "Failed to parse H5 calibration JSON: " + std::string(e.what());
-        return false;
-    } catch (const std::invalid_argument& e) {
-        error_message = "Invalid camera ID format: " + std::string(e.what());
-        return false;
-    }
-    return false;
-}
-
 
 CameraParams camera_load_params_from_csv(std::string csv_filename,
                                          int cam_idx) {

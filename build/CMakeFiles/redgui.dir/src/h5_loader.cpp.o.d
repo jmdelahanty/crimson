@@ -2,34 +2,116 @@ CMakeFiles/redgui.dir/src/h5_loader.cpp.o: \
  /home/delahantyj@hhmi.org/gitrepos/crimson/src/h5_loader.cpp \
  /usr/include/stdc-predef.h \
  /home/delahantyj@hhmi.org/gitrepos/crimson/src/h5_loader.h \
- /usr/include/c++/13/string /usr/include/c++/13/bits/requires_hosted.h \
- /usr/include/x86_64-linux-gnu/c++/13/bits/c++config.h \
- /usr/include/x86_64-linux-gnu/c++/13/bits/os_defines.h \
- /usr/include/features.h /usr/include/features-time64.h \
+ /usr/include/hdf5/serial/H5Cpp.h /usr/include/hdf5/serial/H5Include.h \
+ /usr/include/hdf5/serial/hdf5.h /usr/include/hdf5/serial/H5public.h \
+ /usr/include/hdf5/serial/H5pubconf.h \
+ /usr/include/hdf5/serial/H5version.h /usr/include/features.h \
+ /usr/include/features-time64.h \
  /usr/include/x86_64-linux-gnu/bits/wordsize.h \
  /usr/include/x86_64-linux-gnu/bits/timesize.h \
  /usr/include/x86_64-linux-gnu/sys/cdefs.h \
  /usr/include/x86_64-linux-gnu/bits/long-double.h \
  /usr/include/x86_64-linux-gnu/gnu/stubs.h \
  /usr/include/x86_64-linux-gnu/gnu/stubs-64.h \
+ /usr/include/x86_64-linux-gnu/sys/types.h \
+ /usr/include/x86_64-linux-gnu/bits/types.h \
+ /usr/include/x86_64-linux-gnu/bits/typesizes.h \
+ /usr/include/x86_64-linux-gnu/bits/time64.h \
+ /usr/include/x86_64-linux-gnu/bits/types/clock_t.h \
+ /usr/include/x86_64-linux-gnu/bits/types/clockid_t.h \
+ /usr/include/x86_64-linux-gnu/bits/types/time_t.h \
+ /usr/include/x86_64-linux-gnu/bits/types/timer_t.h \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/stddef.h \
+ /usr/include/x86_64-linux-gnu/bits/stdint-intn.h /usr/include/endian.h \
+ /usr/include/x86_64-linux-gnu/bits/endian.h \
+ /usr/include/x86_64-linux-gnu/bits/endianness.h \
+ /usr/include/x86_64-linux-gnu/bits/byteswap.h \
+ /usr/include/x86_64-linux-gnu/bits/uintn-identity.h \
+ /usr/include/x86_64-linux-gnu/sys/select.h \
+ /usr/include/x86_64-linux-gnu/bits/select.h \
+ /usr/include/x86_64-linux-gnu/bits/types/sigset_t.h \
+ /usr/include/x86_64-linux-gnu/bits/types/__sigset_t.h \
+ /usr/include/x86_64-linux-gnu/bits/types/struct_timeval.h \
+ /usr/include/x86_64-linux-gnu/bits/types/struct_timespec.h \
+ /usr/include/x86_64-linux-gnu/bits/select2.h \
+ /usr/include/x86_64-linux-gnu/bits/select-decl.h \
+ /usr/include/x86_64-linux-gnu/bits/pthreadtypes.h \
+ /usr/include/x86_64-linux-gnu/bits/thread-shared-types.h \
+ /usr/include/x86_64-linux-gnu/bits/pthreadtypes-arch.h \
+ /usr/include/x86_64-linux-gnu/bits/atomic_wide_counter.h \
+ /usr/include/x86_64-linux-gnu/bits/struct_mutex.h \
+ /usr/include/x86_64-linux-gnu/bits/struct_rwlock.h \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/limits.h \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/syslimits.h \
+ /usr/include/limits.h \
+ /usr/include/x86_64-linux-gnu/bits/libc-header-start.h \
+ /usr/include/x86_64-linux-gnu/bits/posix1_lim.h \
+ /usr/include/x86_64-linux-gnu/bits/local_lim.h \
+ /usr/include/linux/limits.h \
+ /usr/include/x86_64-linux-gnu/bits/pthread_stack_min-dynamic.h \
+ /usr/include/x86_64-linux-gnu/bits/posix2_lim.h \
+ /usr/include/x86_64-linux-gnu/bits/xopen_lim.h \
+ /usr/include/x86_64-linux-gnu/bits/uio_lim.h \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/stdarg.h \
+ /usr/include/inttypes.h \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/stdint.h /usr/include/stdint.h \
+ /usr/include/x86_64-linux-gnu/bits/wchar.h \
+ /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h \
+ /usr/include/x86_64-linux-gnu/bits/stdint-least.h \
+ /usr/include/hdf5/serial/H5api_adpt.h \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/stdbool.h \
+ /usr/include/hdf5/serial/H5Apublic.h \
+ /usr/include/hdf5/serial/H5Ipublic.h \
+ /usr/include/hdf5/serial/H5Opublic.h \
+ /usr/include/hdf5/serial/H5Lpublic.h \
+ /usr/include/hdf5/serial/H5Tpublic.h \
+ /usr/include/hdf5/serial/H5ACpublic.h \
+ /usr/include/hdf5/serial/H5Cpublic.h \
+ /usr/include/hdf5/serial/H5Dpublic.h \
+ /usr/include/hdf5/serial/H5Epublic.h /usr/include/stdio.h \
+ /usr/include/x86_64-linux-gnu/bits/types/__fpos_t.h \
+ /usr/include/x86_64-linux-gnu/bits/types/__mbstate_t.h \
+ /usr/include/x86_64-linux-gnu/bits/types/__fpos64_t.h \
+ /usr/include/x86_64-linux-gnu/bits/types/__FILE.h \
+ /usr/include/x86_64-linux-gnu/bits/types/FILE.h \
+ /usr/include/x86_64-linux-gnu/bits/types/struct_FILE.h \
+ /usr/include/x86_64-linux-gnu/bits/types/cookie_io_functions_t.h \
+ /usr/include/x86_64-linux-gnu/bits/stdio_lim.h \
+ /usr/include/x86_64-linux-gnu/bits/floatn.h \
+ /usr/include/x86_64-linux-gnu/bits/floatn-common.h \
+ /usr/include/x86_64-linux-gnu/bits/stdio2-decl.h \
+ /usr/include/x86_64-linux-gnu/bits/stdio.h \
+ /usr/include/x86_64-linux-gnu/bits/stdio2.h \
+ /usr/include/hdf5/serial/H5Epubgen.h \
+ /usr/include/hdf5/serial/H5Fpublic.h \
+ /usr/include/hdf5/serial/H5FDpublic.h \
+ /usr/include/hdf5/serial/H5Gpublic.h \
+ /usr/include/hdf5/serial/H5MMpublic.h \
+ /usr/include/hdf5/serial/H5Ppublic.h \
+ /usr/include/hdf5/serial/H5Spublic.h \
+ /usr/include/hdf5/serial/H5Zpublic.h \
+ /usr/include/hdf5/serial/H5PLpublic.h \
+ /usr/include/hdf5/serial/H5Rpublic.h /usr/include/hdf5/serial/H5FDcore.h \
+ /usr/include/hdf5/serial/H5FDdirect.h \
+ /usr/include/hdf5/serial/H5FDfamily.h \
+ /usr/include/hdf5/serial/H5FDhdfs.h /usr/include/hdf5/serial/H5FDlog.h \
+ /usr/include/hdf5/serial/H5FDmirror.h /usr/include/hdf5/serial/H5FDmpi.h \
+ /usr/include/hdf5/serial/H5FDmpio.h /usr/include/hdf5/serial/H5FDmulti.h \
+ /usr/include/hdf5/serial/H5FDros3.h /usr/include/hdf5/serial/H5FDsec2.h \
+ /usr/include/hdf5/serial/H5FDsplitter.h \
+ /usr/include/hdf5/serial/H5FDstdio.h \
+ /usr/include/hdf5/serial/H5Exception.h /usr/include/c++/13/string \
+ /usr/include/c++/13/bits/requires_hosted.h \
+ /usr/include/x86_64-linux-gnu/c++/13/bits/c++config.h \
+ /usr/include/x86_64-linux-gnu/c++/13/bits/os_defines.h \
  /usr/include/x86_64-linux-gnu/c++/13/bits/cpu_defines.h \
  /usr/include/c++/13/pstl/pstl_config.h \
  /usr/include/c++/13/bits/stringfwd.h \
  /usr/include/c++/13/bits/memoryfwd.h \
  /usr/include/c++/13/bits/char_traits.h \
  /usr/include/c++/13/bits/postypes.h /usr/include/c++/13/cwchar \
- /usr/include/wchar.h \
- /usr/include/x86_64-linux-gnu/bits/libc-header-start.h \
- /usr/include/x86_64-linux-gnu/bits/floatn.h \
- /usr/include/x86_64-linux-gnu/bits/floatn-common.h \
- /usr/lib/gcc/x86_64-linux-gnu/13/include/stddef.h \
- /usr/lib/gcc/x86_64-linux-gnu/13/include/stdarg.h \
- /usr/include/x86_64-linux-gnu/bits/wchar.h \
- /usr/include/x86_64-linux-gnu/bits/types/wint_t.h \
+ /usr/include/wchar.h /usr/include/x86_64-linux-gnu/bits/types/wint_t.h \
  /usr/include/x86_64-linux-gnu/bits/types/mbstate_t.h \
- /usr/include/x86_64-linux-gnu/bits/types/__mbstate_t.h \
- /usr/include/x86_64-linux-gnu/bits/types/__FILE.h \
- /usr/include/x86_64-linux-gnu/bits/types/FILE.h \
  /usr/include/x86_64-linux-gnu/bits/types/locale_t.h \
  /usr/include/x86_64-linux-gnu/bits/types/__locale_t.h \
  /usr/include/x86_64-linux-gnu/bits/wchar2-decl.h \
@@ -47,11 +129,6 @@ CMakeFiles/redgui.dir/src/h5_loader.cpp.o: \
  /usr/include/c++/13/clocale /usr/include/locale.h \
  /usr/include/x86_64-linux-gnu/bits/locale.h /usr/include/c++/13/iosfwd \
  /usr/include/c++/13/cctype /usr/include/ctype.h \
- /usr/include/x86_64-linux-gnu/bits/types.h \
- /usr/include/x86_64-linux-gnu/bits/typesizes.h \
- /usr/include/x86_64-linux-gnu/bits/time64.h \
- /usr/include/x86_64-linux-gnu/bits/endian.h \
- /usr/include/x86_64-linux-gnu/bits/endianness.h \
  /usr/include/c++/13/bits/ostream_insert.h \
  /usr/include/c++/13/bits/cxxabi_forced.h \
  /usr/include/c++/13/bits/stl_iterator_base_funcs.h \
@@ -80,43 +157,14 @@ CMakeFiles/redgui.dir/src/h5_loader.cpp.o: \
  /usr/include/c++/13/bits/string_view.tcc \
  /usr/include/c++/13/ext/string_conversions.h /usr/include/c++/13/cstdlib \
  /usr/include/stdlib.h /usr/include/x86_64-linux-gnu/bits/waitflags.h \
- /usr/include/x86_64-linux-gnu/bits/waitstatus.h \
- /usr/include/x86_64-linux-gnu/sys/types.h \
- /usr/include/x86_64-linux-gnu/bits/types/clock_t.h \
- /usr/include/x86_64-linux-gnu/bits/types/clockid_t.h \
- /usr/include/x86_64-linux-gnu/bits/types/time_t.h \
- /usr/include/x86_64-linux-gnu/bits/types/timer_t.h \
- /usr/include/x86_64-linux-gnu/bits/stdint-intn.h /usr/include/endian.h \
- /usr/include/x86_64-linux-gnu/bits/byteswap.h \
- /usr/include/x86_64-linux-gnu/bits/uintn-identity.h \
- /usr/include/x86_64-linux-gnu/sys/select.h \
- /usr/include/x86_64-linux-gnu/bits/select.h \
- /usr/include/x86_64-linux-gnu/bits/types/sigset_t.h \
- /usr/include/x86_64-linux-gnu/bits/types/__sigset_t.h \
- /usr/include/x86_64-linux-gnu/bits/types/struct_timeval.h \
- /usr/include/x86_64-linux-gnu/bits/types/struct_timespec.h \
- /usr/include/x86_64-linux-gnu/bits/select2.h \
- /usr/include/x86_64-linux-gnu/bits/select-decl.h \
- /usr/include/x86_64-linux-gnu/bits/pthreadtypes.h \
- /usr/include/x86_64-linux-gnu/bits/thread-shared-types.h \
- /usr/include/x86_64-linux-gnu/bits/pthreadtypes-arch.h \
- /usr/include/x86_64-linux-gnu/bits/atomic_wide_counter.h \
- /usr/include/x86_64-linux-gnu/bits/struct_mutex.h \
- /usr/include/x86_64-linux-gnu/bits/struct_rwlock.h /usr/include/alloca.h \
+ /usr/include/x86_64-linux-gnu/bits/waitstatus.h /usr/include/alloca.h \
  /usr/include/x86_64-linux-gnu/bits/stdlib-bsearch.h \
  /usr/include/x86_64-linux-gnu/bits/stdlib-float.h \
  /usr/include/x86_64-linux-gnu/bits/stdlib.h \
  /usr/include/c++/13/bits/std_abs.h /usr/include/c++/13/cstdio \
- /usr/include/stdio.h /usr/include/x86_64-linux-gnu/bits/types/__fpos_t.h \
- /usr/include/x86_64-linux-gnu/bits/types/__fpos64_t.h \
- /usr/include/x86_64-linux-gnu/bits/types/struct_FILE.h \
- /usr/include/x86_64-linux-gnu/bits/types/cookie_io_functions_t.h \
- /usr/include/x86_64-linux-gnu/bits/stdio_lim.h \
- /usr/include/x86_64-linux-gnu/bits/stdio2-decl.h \
- /usr/include/x86_64-linux-gnu/bits/stdio.h \
- /usr/include/x86_64-linux-gnu/bits/stdio2.h /usr/include/c++/13/cerrno \
- /usr/include/errno.h /usr/include/x86_64-linux-gnu/bits/errno.h \
- /usr/include/linux/errno.h /usr/include/x86_64-linux-gnu/asm/errno.h \
+ /usr/include/c++/13/cerrno /usr/include/errno.h \
+ /usr/include/x86_64-linux-gnu/bits/errno.h /usr/include/linux/errno.h \
+ /usr/include/x86_64-linux-gnu/asm/errno.h \
  /usr/include/asm-generic/errno.h /usr/include/asm-generic/errno-base.h \
  /usr/include/x86_64-linux-gnu/bits/types/error_t.h \
  /usr/include/c++/13/bits/charconv.h \
@@ -124,117 +172,6 @@ CMakeFiles/redgui.dir/src/h5_loader.cpp.o: \
  /usr/include/c++/13/bits/memory_resource.h /usr/include/c++/13/cstddef \
  /usr/include/c++/13/bits/uses_allocator.h \
  /usr/include/c++/13/bits/uses_allocator_args.h /usr/include/c++/13/tuple \
- /usr/include/c++/13/vector /usr/include/c++/13/bits/stl_uninitialized.h \
- /usr/include/c++/13/bits/stl_vector.h \
- /usr/include/c++/13/bits/stl_bvector.h \
- /usr/include/c++/13/bits/vector.tcc /usr/include/c++/13/map \
- /usr/include/c++/13/bits/stl_tree.h \
- /usr/include/c++/13/ext/aligned_buffer.h \
- /usr/include/c++/13/bits/node_handle.h \
- /usr/include/c++/13/bits/stl_map.h \
- /usr/include/c++/13/bits/stl_multimap.h \
- /usr/include/c++/13/bits/erase_if.h /usr/include/c++/13/filesystem \
- /usr/include/c++/13/bits/fs_fwd.h /usr/include/c++/13/system_error \
- /usr/include/x86_64-linux-gnu/c++/13/bits/error_constants.h \
- /usr/include/c++/13/stdexcept /usr/include/c++/13/exception \
- /usr/include/c++/13/bits/exception_ptr.h \
- /usr/include/c++/13/bits/cxxabi_init_exception.h \
- /usr/include/c++/13/typeinfo /usr/include/c++/13/bits/nested_exception.h \
- /usr/include/c++/13/cstdint \
- /usr/lib/gcc/x86_64-linux-gnu/13/include/stdint.h /usr/include/stdint.h \
- /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h \
- /usr/include/x86_64-linux-gnu/bits/stdint-least.h \
- /usr/include/c++/13/bits/chrono.h /usr/include/c++/13/ratio \
- /usr/include/c++/13/limits /usr/include/c++/13/ctime /usr/include/time.h \
- /usr/include/x86_64-linux-gnu/bits/time.h \
- /usr/include/x86_64-linux-gnu/bits/timex.h \
- /usr/include/x86_64-linux-gnu/bits/types/struct_tm.h \
- /usr/include/x86_64-linux-gnu/bits/types/struct_itimerspec.h \
- /usr/include/c++/13/bits/parse_numbers.h \
- /usr/include/c++/13/bits/fs_path.h /usr/include/c++/13/locale \
- /usr/include/c++/13/bits/locale_classes.h \
- /usr/include/c++/13/ext/atomicity.h \
- /usr/include/x86_64-linux-gnu/c++/13/bits/gthr.h \
- /usr/include/x86_64-linux-gnu/c++/13/bits/gthr-default.h \
- /usr/include/pthread.h /usr/include/sched.h \
- /usr/include/x86_64-linux-gnu/bits/sched.h \
- /usr/include/x86_64-linux-gnu/bits/types/struct_sched_param.h \
- /usr/include/x86_64-linux-gnu/bits/cpu-set.h \
- /usr/include/x86_64-linux-gnu/bits/setjmp.h \
- /usr/include/x86_64-linux-gnu/bits/types/struct___jmp_buf_tag.h \
- /usr/include/x86_64-linux-gnu/bits/pthread_stack_min-dynamic.h \
- /usr/include/x86_64-linux-gnu/c++/13/bits/atomic_word.h \
- /usr/include/x86_64-linux-gnu/sys/single_threaded.h \
- /usr/include/c++/13/bits/locale_classes.tcc \
- /usr/include/c++/13/bits/locale_facets.h /usr/include/c++/13/cwctype \
- /usr/include/wctype.h /usr/include/x86_64-linux-gnu/bits/wctype-wchar.h \
- /usr/include/x86_64-linux-gnu/c++/13/bits/ctype_base.h \
- /usr/include/c++/13/bits/ios_base.h /usr/include/c++/13/streambuf \
- /usr/include/c++/13/bits/streambuf.tcc \
- /usr/include/c++/13/bits/streambuf_iterator.h \
- /usr/include/x86_64-linux-gnu/c++/13/bits/ctype_inline.h \
- /usr/include/c++/13/bits/locale_facets.tcc \
- /usr/include/c++/13/bits/locale_facets_nonio.h \
- /usr/include/x86_64-linux-gnu/c++/13/bits/time_members.h \
- /usr/include/x86_64-linux-gnu/c++/13/bits/messages_members.h \
- /usr/include/libintl.h /usr/include/c++/13/bits/codecvt.h \
- /usr/include/c++/13/bits/locale_facets_nonio.tcc \
- /usr/include/c++/13/bits/locale_conv.h /usr/include/c++/13/iomanip \
- /usr/include/c++/13/bits/quoted_string.h /usr/include/c++/13/sstream \
- /usr/include/c++/13/istream /usr/include/c++/13/ios \
- /usr/include/c++/13/bits/basic_ios.h \
- /usr/include/c++/13/bits/basic_ios.tcc /usr/include/c++/13/ostream \
- /usr/include/c++/13/bits/ostream.tcc \
- /usr/include/c++/13/bits/istream.tcc \
- /usr/include/c++/13/bits/sstream.tcc /usr/include/c++/13/codecvt \
- /usr/include/c++/13/ext/concurrence.h \
- /usr/include/c++/13/bits/shared_ptr.h \
- /usr/include/c++/13/bits/shared_ptr_base.h \
- /usr/include/c++/13/bits/allocated_ptr.h \
- /usr/include/c++/13/bits/unique_ptr.h /usr/include/c++/13/bits/fs_dir.h \
- /usr/include/c++/13/bits/fs_ops.h /usr/include/c++/13/chrono \
- /usr/include/hdf5/serial/H5Cpp.h /usr/include/hdf5/serial/H5Include.h \
- /usr/include/hdf5/serial/hdf5.h /usr/include/hdf5/serial/H5public.h \
- /usr/include/hdf5/serial/H5pubconf.h \
- /usr/include/hdf5/serial/H5version.h \
- /usr/lib/gcc/x86_64-linux-gnu/13/include/limits.h \
- /usr/lib/gcc/x86_64-linux-gnu/13/include/syslimits.h \
- /usr/include/limits.h /usr/include/x86_64-linux-gnu/bits/posix1_lim.h \
- /usr/include/x86_64-linux-gnu/bits/local_lim.h \
- /usr/include/linux/limits.h \
- /usr/include/x86_64-linux-gnu/bits/posix2_lim.h \
- /usr/include/x86_64-linux-gnu/bits/xopen_lim.h \
- /usr/include/x86_64-linux-gnu/bits/uio_lim.h /usr/include/inttypes.h \
- /usr/include/hdf5/serial/H5api_adpt.h \
- /usr/lib/gcc/x86_64-linux-gnu/13/include/stdbool.h \
- /usr/include/hdf5/serial/H5Apublic.h \
- /usr/include/hdf5/serial/H5Ipublic.h \
- /usr/include/hdf5/serial/H5Opublic.h \
- /usr/include/hdf5/serial/H5Lpublic.h \
- /usr/include/hdf5/serial/H5Tpublic.h \
- /usr/include/hdf5/serial/H5ACpublic.h \
- /usr/include/hdf5/serial/H5Cpublic.h \
- /usr/include/hdf5/serial/H5Dpublic.h \
- /usr/include/hdf5/serial/H5Epublic.h \
- /usr/include/hdf5/serial/H5Epubgen.h \
- /usr/include/hdf5/serial/H5Fpublic.h \
- /usr/include/hdf5/serial/H5FDpublic.h \
- /usr/include/hdf5/serial/H5Gpublic.h \
- /usr/include/hdf5/serial/H5MMpublic.h \
- /usr/include/hdf5/serial/H5Ppublic.h \
- /usr/include/hdf5/serial/H5Spublic.h \
- /usr/include/hdf5/serial/H5Zpublic.h \
- /usr/include/hdf5/serial/H5PLpublic.h \
- /usr/include/hdf5/serial/H5Rpublic.h /usr/include/hdf5/serial/H5FDcore.h \
- /usr/include/hdf5/serial/H5FDdirect.h \
- /usr/include/hdf5/serial/H5FDfamily.h \
- /usr/include/hdf5/serial/H5FDhdfs.h /usr/include/hdf5/serial/H5FDlog.h \
- /usr/include/hdf5/serial/H5FDmirror.h /usr/include/hdf5/serial/H5FDmpi.h \
- /usr/include/hdf5/serial/H5FDmpio.h /usr/include/hdf5/serial/H5FDmulti.h \
- /usr/include/hdf5/serial/H5FDros3.h /usr/include/hdf5/serial/H5FDsec2.h \
- /usr/include/hdf5/serial/H5FDsplitter.h \
- /usr/include/hdf5/serial/H5FDstdio.h \
- /usr/include/hdf5/serial/H5Exception.h \
  /usr/include/hdf5/serial/H5IdComponent.h \
  /usr/include/hdf5/serial/H5DataSpace.h \
  /usr/include/hdf5/serial/H5PropList.h \
@@ -263,14 +200,252 @@ CMakeFiles/redgui.dir/src/h5_loader.cpp.o: \
  /usr/include/hdf5/serial/H5DataSet.h \
  /usr/include/hdf5/serial/H5CommonFG.h /usr/include/hdf5/serial/H5Group.h \
  /usr/include/hdf5/serial/H5File.h /usr/include/hdf5/serial/H5Library.h \
- /usr/include/c++/13/iostream /usr/include/c++/13/algorithm \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/opencv.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/opencv_modules.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/cvdef.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/version.hpp \
+ /usr/include/c++/13/limits \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/hal/interface.h \
+ /usr/include/c++/13/cstdint \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/cv_cpu_dispatch.h \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/emmintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/xmmintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/mmintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/mm_malloc.h \
+ /usr/include/c++/13/stdlib.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/base.hpp \
+ /usr/include/c++/13/climits /usr/include/c++/13/algorithm \
  /usr/include/c++/13/bits/stl_algo.h \
  /usr/include/c++/13/bits/algorithmfwd.h \
  /usr/include/c++/13/bits/stl_heap.h \
  /usr/include/c++/13/bits/uniform_int_dist.h \
  /usr/include/c++/13/bits/stl_tempbuf.h \
  /usr/include/c++/13/pstl/glue_algorithm_defs.h \
- /usr/include/c++/13/pstl/execution_defs.h /usr/include/c++/13/cstring \
- /usr/include/string.h /usr/include/strings.h \
+ /usr/include/c++/13/pstl/execution_defs.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/cvstd.hpp \
+ /usr/include/c++/13/cstring /usr/include/string.h /usr/include/strings.h \
  /usr/include/x86_64-linux-gnu/bits/strings_fortified.h \
- /usr/include/x86_64-linux-gnu/bits/string_fortified.h
+ /usr/include/x86_64-linux-gnu/bits/string_fortified.h \
+ /usr/include/c++/13/utility /usr/include/c++/13/bits/stl_relops.h \
+ /usr/include/c++/13/cmath /usr/include/math.h \
+ /usr/include/x86_64-linux-gnu/bits/math-vector.h \
+ /usr/include/x86_64-linux-gnu/bits/libm-simd-decl-stubs.h \
+ /usr/include/x86_64-linux-gnu/bits/flt-eval-method.h \
+ /usr/include/x86_64-linux-gnu/bits/fp-logb.h \
+ /usr/include/x86_64-linux-gnu/bits/fp-fast.h \
+ /usr/include/x86_64-linux-gnu/bits/mathcalls-helper-functions.h \
+ /usr/include/x86_64-linux-gnu/bits/mathcalls.h \
+ /usr/include/x86_64-linux-gnu/bits/mathcalls-narrow.h \
+ /usr/include/x86_64-linux-gnu/bits/iscanonical.h \
+ /usr/include/c++/13/bits/specfun.h /usr/include/c++/13/tr1/gamma.tcc \
+ /usr/include/c++/13/tr1/special_function_util.h \
+ /usr/include/c++/13/tr1/bessel_function.tcc \
+ /usr/include/c++/13/tr1/beta_function.tcc \
+ /usr/include/c++/13/tr1/ell_integral.tcc \
+ /usr/include/c++/13/tr1/exp_integral.tcc \
+ /usr/include/c++/13/tr1/hypergeometric.tcc \
+ /usr/include/c++/13/tr1/legendre_function.tcc \
+ /usr/include/c++/13/tr1/modified_bessel_func.tcc \
+ /usr/include/c++/13/tr1/poly_hermite.tcc \
+ /usr/include/c++/13/tr1/poly_laguerre.tcc \
+ /usr/include/c++/13/tr1/riemann_zeta.tcc \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/cvstd_wrapper.hpp \
+ /usr/include/c++/13/memory /usr/include/c++/13/bits/stl_uninitialized.h \
+ /usr/include/c++/13/bits/stl_raw_storage_iter.h \
+ /usr/include/c++/13/bits/align.h /usr/include/c++/13/bits/unique_ptr.h \
+ /usr/include/c++/13/bits/shared_ptr.h \
+ /usr/include/c++/13/bits/shared_ptr_base.h /usr/include/c++/13/typeinfo \
+ /usr/include/c++/13/bits/allocated_ptr.h \
+ /usr/include/c++/13/ext/aligned_buffer.h \
+ /usr/include/c++/13/ext/atomicity.h \
+ /usr/include/x86_64-linux-gnu/c++/13/bits/gthr.h \
+ /usr/include/x86_64-linux-gnu/c++/13/bits/gthr-default.h \
+ /usr/include/pthread.h /usr/include/sched.h \
+ /usr/include/x86_64-linux-gnu/bits/sched.h \
+ /usr/include/x86_64-linux-gnu/bits/types/struct_sched_param.h \
+ /usr/include/x86_64-linux-gnu/bits/cpu-set.h /usr/include/time.h \
+ /usr/include/x86_64-linux-gnu/bits/time.h \
+ /usr/include/x86_64-linux-gnu/bits/timex.h \
+ /usr/include/x86_64-linux-gnu/bits/types/struct_tm.h \
+ /usr/include/x86_64-linux-gnu/bits/types/struct_itimerspec.h \
+ /usr/include/x86_64-linux-gnu/bits/setjmp.h \
+ /usr/include/x86_64-linux-gnu/bits/types/struct___jmp_buf_tag.h \
+ /usr/include/x86_64-linux-gnu/c++/13/bits/atomic_word.h \
+ /usr/include/x86_64-linux-gnu/sys/single_threaded.h \
+ /usr/include/c++/13/ext/concurrence.h /usr/include/c++/13/exception \
+ /usr/include/c++/13/bits/exception_ptr.h \
+ /usr/include/c++/13/bits/cxxabi_init_exception.h \
+ /usr/include/c++/13/bits/nested_exception.h \
+ /usr/include/c++/13/bits/shared_ptr_atomic.h \
+ /usr/include/c++/13/bits/atomic_base.h \
+ /usr/include/c++/13/bits/atomic_lockfree_defines.h \
+ /usr/include/c++/13/backward/auto_ptr.h \
+ /usr/include/c++/13/pstl/glue_memory_defs.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/neon_utils.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/vsx_utils.hpp \
+ /usr/include/assert.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/check.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/traits.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/matx.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/saturate.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/fast_math.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/matx.inl.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/types.hpp \
+ /usr/include/c++/13/cfloat \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/float.h \
+ /usr/include/c++/13/vector /usr/include/c++/13/bits/stl_vector.h \
+ /usr/include/c++/13/bits/stl_bvector.h \
+ /usr/include/c++/13/bits/vector.tcc \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/mat.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/bufferpool.hpp \
+ /usr/include/c++/13/array /usr/include/c++/13/compare \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/mat.inl.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/persistence.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/operations.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/cvstd.inl.hpp \
+ /usr/include/c++/13/complex /usr/include/c++/13/sstream \
+ /usr/include/c++/13/istream /usr/include/c++/13/ios \
+ /usr/include/c++/13/bits/ios_base.h \
+ /usr/include/c++/13/bits/locale_classes.h \
+ /usr/include/c++/13/bits/locale_classes.tcc \
+ /usr/include/c++/13/system_error \
+ /usr/include/x86_64-linux-gnu/c++/13/bits/error_constants.h \
+ /usr/include/c++/13/stdexcept /usr/include/c++/13/streambuf \
+ /usr/include/c++/13/bits/streambuf.tcc \
+ /usr/include/c++/13/bits/basic_ios.h \
+ /usr/include/c++/13/bits/locale_facets.h /usr/include/c++/13/cwctype \
+ /usr/include/wctype.h /usr/include/x86_64-linux-gnu/bits/wctype-wchar.h \
+ /usr/include/x86_64-linux-gnu/c++/13/bits/ctype_base.h \
+ /usr/include/c++/13/bits/streambuf_iterator.h \
+ /usr/include/x86_64-linux-gnu/c++/13/bits/ctype_inline.h \
+ /usr/include/c++/13/bits/locale_facets.tcc \
+ /usr/include/c++/13/bits/basic_ios.tcc /usr/include/c++/13/ostream \
+ /usr/include/c++/13/bits/ostream.tcc \
+ /usr/include/c++/13/bits/istream.tcc \
+ /usr/include/c++/13/bits/sstream.tcc \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/utility.hpp \
+ /usr/include/c++/13/functional /usr/include/c++/13/bits/std_function.h \
+ /usr/include/c++/13/unordered_map \
+ /usr/include/c++/13/bits/unordered_map.h \
+ /usr/include/c++/13/bits/hashtable.h \
+ /usr/include/c++/13/bits/hashtable_policy.h \
+ /usr/include/c++/13/bits/enable_special_members.h \
+ /usr/include/c++/13/bits/node_handle.h \
+ /usr/include/c++/13/bits/erase_if.h /usr/include/c++/13/mutex \
+ /usr/include/c++/13/bits/chrono.h /usr/include/c++/13/ratio \
+ /usr/include/c++/13/ctime /usr/include/c++/13/bits/parse_numbers.h \
+ /usr/include/c++/13/bits/std_mutex.h \
+ /usr/include/c++/13/bits/unique_lock.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/optim.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/ovx.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/cvdef.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/calib3d.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/features2d.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/miniflann.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/defines.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/config.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/affine.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/utils/logger.hpp \
+ /usr/include/c++/13/iostream \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/utils/logger.defines.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/utils/logtag.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/dnn.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/dnn/dnn.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/async.hpp \
+ /usr/include/c++/13/chrono \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/dnn/version.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/dnn/dict.hpp \
+ /usr/include/c++/13/map /usr/include/c++/13/bits/stl_tree.h \
+ /usr/include/c++/13/bits/stl_map.h \
+ /usr/include/c++/13/bits/stl_multimap.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/dnn/layer.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/dnn/dnn.inl.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/dnn/utils/inference_engine.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/dnn/dnn.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/flann_base.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/general.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/matrix.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/params.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/any.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/defines.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/saving.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/nn_index.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/result_set.h \
+ /usr/include/c++/13/set /usr/include/c++/13/bits/stl_set.h \
+ /usr/include/c++/13/bits/stl_multiset.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/all_indices.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/kdtree_index.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/dynamic_bitset.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/dist.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/heap.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/allocator.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/random.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/kdtree_single_index.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/kmeans_index.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/logger.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/composite_index.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/linear_index.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/hierarchical_clustering_index.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/lsh_index.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/lsh_table.h \
+ /usr/include/c++/13/iomanip /usr/include/c++/13/locale \
+ /usr/include/c++/13/bits/locale_facets_nonio.h \
+ /usr/include/x86_64-linux-gnu/c++/13/bits/time_members.h \
+ /usr/include/x86_64-linux-gnu/c++/13/bits/messages_members.h \
+ /usr/include/libintl.h /usr/include/c++/13/bits/codecvt.h \
+ /usr/include/c++/13/bits/locale_facets_nonio.tcc \
+ /usr/include/c++/13/bits/locale_conv.h \
+ /usr/include/c++/13/bits/quoted_string.h /usr/include/c++/13/math.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/autotuned_index.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/ground_truth.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/index_testing.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/timer.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/flann/sampling.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/highgui.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/imgcodecs.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/videoio.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/imgproc.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/imgproc/segmentation.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/ml.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/ml/ml.inl.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/objdetect.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/objdetect/aruco_detector.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/objdetect/aruco_dictionary.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/objdetect/aruco_board.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/objdetect/graphical_code_detector.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/objdetect/detection_based_tracker.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/objdetect/face.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/objdetect/charuco_detector.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/objdetect/barcode.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/photo.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/stitching.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/stitching/warpers.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/stitching/detail/warpers.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/cuda.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/cuda_types.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/core/cuda.inl.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/stitching/detail/warpers_inl.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/stitching/detail/warpers.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/stitching/detail/matchers.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/stitching/detail/motion_estimators.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/stitching/detail/matchers.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/stitching/detail/util.hpp \
+ /usr/include/c++/13/list /usr/include/c++/13/bits/stl_list.h \
+ /usr/include/c++/13/bits/list.tcc \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/stitching/detail/util_inl.hpp \
+ /usr/include/c++/13/queue /usr/include/c++/13/deque \
+ /usr/include/c++/13/bits/stl_deque.h /usr/include/c++/13/bits/deque.tcc \
+ /usr/include/c++/13/bits/stl_queue.h \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/stitching/detail/camera.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/stitching/detail/exposure_compensate.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/stitching/detail/seam_finders.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/stitching/detail/blenders.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/stitching/detail/camera.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/video.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/video/tracking.hpp \
+ /opt/crimson/lib/opencv/include/opencv4/opencv2/video/background_segm.hpp \
+ /usr/include/c++/13/filesystem /usr/include/c++/13/bits/fs_fwd.h \
+ /usr/include/c++/13/bits/fs_path.h /usr/include/c++/13/codecvt \
+ /usr/include/c++/13/bits/fs_dir.h /usr/include/c++/13/bits/fs_ops.h

@@ -1,3 +1,5 @@
+// src/red.cpp
+
 #include "IconsForkAwesome.h"
 #include "Logger.h"
 #include "camera.h"
@@ -316,13 +318,6 @@ int main(int, char **) {
                         1000.0f / ImGui::GetIO().Framerate,
                         ImGui::GetIO().Framerate);
 
-            // if (video_loaded) {
-            //     ImGui::Text("Frame number %d ",
-            //     scene->display_buffer[0][read_head].frame_number);
-            //     ImGui::Text("To Display frame number %d ",
-            //     to_display_frame_number); ImGui::Text("Readhead %d",
-            //     read_head);
-            // }
             if (!video_loaded) {
                 {
                     const char *items[] = {"CPU Buffer", "GPU Buffer"};
@@ -377,7 +372,7 @@ int main(int, char **) {
             }
         }
         ImGui::End();
-
+        
         // file explorer display
         if (ImGuiFileDialog::Instance()->Display("ChooseMedia")) {
             if (ImGuiFileDialog::Instance()->IsOk()) { // action if OK
@@ -386,30 +381,40 @@ int main(int, char **) {
                 root_dir = ImGuiFileDialog::Instance()->GetCurrentPath();
                 skeleton_dir = root_dir;
 
-                // Try to load H5 file from the selected directory
-                if (loadH5SessionFromDirectory(root_dir, h5_data, error_message)) {
-                    h5_loaded = true;
-                    std::cout << "Successfully loaded H5 session file" << std::endl;
-                    std::cout << "  Session UUID: " << h5_data.session_info.session_uuid << std::endl;
-                    std::cout << "  Protocol: " << h5_data.session_info.protocol_name_from_definition << std::endl;
-                    std::cout << "  Total frames: " << h5_data.total_frames << std::endl;
-                    std::cout << "  Events: " << h5_data.events.size() << std::endl;
+                // Load H5 file with enhanced loader
+                std::string h5_filepath = H5SessionLoader::findH5FileInDirectory(root_dir);
+                if (!h5_filepath.empty()) {
+                    std::cout << "Found H5 session file: " << h5_filepath << std::endl;
 
-                    if (h5_data.has_tracking_data) {
-                        std::cout << "  Bounding boxes: " << h5_data.bounding_boxes.size() << std::endl;
-                        std::cout << "  Chaser states: " << h5_data.chaser_states.size() << std::endl;
-                    }
+                    H5SessionLoader loader;
+                    if (loader.loadH5File(h5_filepath, h5_data, error_message)) {
+                        h5_loaded = true;
 
-                    // Sync FPS with video if available
-                    if (h5_data.fps > 0 && h5_data.has_video_metadata) {
-                        std::cout << "  H5 FPS: " << h5_data.fps << ", Video FPS: " << video_fps << std::endl;
-                        // Optionally sync: video_fps = h5_data.fps;
+                        // The enhanced loader automatically loads camera calibrations
+                        if (!h5_data.camera_calibrations.empty()) {
+                            std::cout << "H5 file contains calibration data for "
+                                    << h5_data.camera_calibrations.size() << " cameras:" << std::endl;
+
+                            for (const auto& [cam_id, calib] : h5_data.camera_calibrations) {
+                                std::cout << "  - " << cam_id;
+                                if (calib.has_homography) {
+                                    std::cout << " (with homography)";
+                                }
+                                if (calib.has_attributes) {
+                                    std::cout << " (with attributes)";
+                                }
+                                std::cout << std::endl;
+                            }
+                        }
+                    } else {
+                        std::cerr << "Failed to load H5 file: " << error_message << std::endl;
+                        h5_loaded = false;
                     }
                 } else {
-                    // H5 file not found or failed to load - this is optional, not an error
                     std::cout << "No H5 session file found in directory (optional)" << std::endl;
                     h5_loaded = false;
                 }
+
 
                 // check if it is mp4, if it is mp4 files
                 auto first_selection =
@@ -427,7 +432,7 @@ int main(int, char **) {
                             cam_string_full.substr(0, cam_string_mp4_position);
                         camera_names.push_back(cam_string);
                         std::cout << "camera names: " << cam_string
-                                  << std::endl;
+                                << std::endl;
                         window_need_decoding[cam_string].store(true);
                         window_was_decoding[cam_string] = true;
                         std::map<std::string, std::string> m;
@@ -472,12 +477,12 @@ int main(int, char **) {
                             elem.first.substr(cam_string_position + 1);
 
                         if (std::find(camera_names.begin(), camera_names.end(),
-                                      cam_name) == camera_names.end()) {
+                                    cam_name) == camera_names.end()) {
                             camera_names.push_back(cam_name);
                         }
 
                         if (std::find(imgs_names.begin(), imgs_names.end(),
-                                      file_name) == imgs_names.end()) {
+                                    file_name) == imgs_names.end()) {
                             imgs_names.push_back(file_name);
                         }
                     }
@@ -511,19 +516,64 @@ int main(int, char **) {
                     video_loaded = true;
                 }
 
-                // After loading video and H5, load camera calibration
-                if (video_loaded) {
+                if (video_loaded && h5_loaded) {
                     camera_params.resize(scene->num_cams); // Ensure vector is sized
-                    if (h5_loaded) {
-                        for (size_t i = 0; i < camera_names.size(); ++i) {
-                           if (!camera_load_calibration_from_h5_json(
-                                   h5_data.arena_config_json,
-                                   camera_names[i],
-                                   camera_params[i],
-                                   error_message)) {
-                               show_error = true;
-                               break;
-                           }
+                    std::cout << "\n=== Loading Camera Calibrations from H5 ===" << std::endl;
+                    for (size_t i = 0; i < camera_names.size(); ++i) {
+                        std::string h5_camera_id = camera_names[i];
+                        
+                        // ** FIX: Strip the "Cam" prefix if it exists **
+                        if (h5_camera_id.rfind("Cam", 0) == 0) {
+                            h5_camera_id = h5_camera_id.substr(3);
+                        }
+
+                        std::cout << "\nProcessing camera " << i << ": " << camera_names[i] << " (using ID: " << h5_camera_id << ")" << std::endl;
+                        
+                        // Use the enhanced loading function that checks YAML first, then falls back to JSON
+                        if (!camera_load_calibration_from_h5_enhanced(
+                                h5_data,              // Pass the entire H5 data structure
+                                h5_camera_id,         // Use the corrected camera ID
+                                camera_params[i],     // Output parameters
+                                error_message)) {
+                            
+                            std::cerr << "Failed to load calibration for camera " << camera_names[i] 
+                                    << ": " << error_message << std::endl;
+                            
+                            // Optionally try to load from YAML file as fallback
+                            std::string yaml_file = root_dir + "/calibration/" + camera_names[i] + ".yaml";
+                            if (std::filesystem::exists(yaml_file)) {
+                                std::cout << "Attempting to load from YAML file: " << yaml_file << std::endl;
+                                if (camera_load_params_from_yaml(yaml_file, camera_params[i], error_message)) {
+                                    std::cout << "Successfully loaded from YAML file" << std::endl;
+                                } else {
+                                    show_error = true;
+                                    break;
+                                }
+                            } else {
+                                show_error = true;
+                                break;
+                            }
+                        } else {
+                            // Print debug information about what was loaded
+                            camera_print_calibration_details(camera_params[i], camera_names[i]);
+                        }
+                    }
+
+                    if (!show_error) {
+                        std::cout << "\n=== All Camera Calibrations Loaded Successfully ===" << std::endl;
+
+                        // Verify all cameras have valid homographies if needed for overlays
+                        bool all_have_homography = true;
+                        for (size_t i = 0; i < camera_params.size(); ++i) {
+                            if (!camera_params[i].has_valid_homography) {
+                                std::cout << "Warning: Camera " << camera_names[i]
+                                        << " does not have a valid homography matrix" << std::endl;
+                                all_have_homography = false;
+                            }
+                        }
+
+                        if (all_have_homography) {
+                            std::cout << "All cameras have valid homography matrices for overlay rendering" << std::endl;
                         }
                     }
                 }
@@ -531,7 +581,6 @@ int main(int, char **) {
             // close
             ImGuiFileDialog::Instance()->Close();
         }
-
         if (ImGuiFileDialog::Instance()->Display("ChooseSkeleton")) {
             if (ImGuiFileDialog::Instance()->IsOk()) { // action if OK
                 auto skeleton_file =
@@ -631,415 +680,7 @@ int main(int, char **) {
 
         // Render a video frame
         if (video_loaded) {
-            for (int j = 0; j < scene->num_cams; j++) {
-                const std::string &win_name = camera_names[j];
-
-                // layout
-                ImGui::SetNextWindowSize(ImVec2(500, 400),
-                                         ImGuiCond_FirstUseEver);
-                ImVec2 window_pos;
-
-                if (scene->num_cams < 8) {
-                    if (j % 2 == 0) {
-                        window_pos.y = 200.0;
-                        window_pos.x = (j / 2.0) * 500;
-                    } else {
-                        window_pos.y = 600.0;
-                        window_pos.x = (j - 1) / 2.0 * 500;
-                    }
-                } else {
-                    int row = j % 4;
-                    float base_x = (row == 0) ? j : (j - 1);
-                    float x_group = (base_x / 4.0f) * 500;
-                    switch (row) {
-                    case 0:
-                        window_pos = {x_group, 200.0f};
-                        break;
-                    case 1:
-                        window_pos = {x_group, 600.0f};
-                        break;
-                    case 2:
-                        window_pos = {x_group, 1000.0f};
-                        break;
-                    case 3:
-                        window_pos = {x_group, 1400.0f};
-                        break;
-                    }
-                }
-
-                ImGui::SetNextWindowPos(window_pos, ImGuiCond_FirstUseEver);
-                bool is_visible = ImGui::Begin(win_name.c_str());
-
-                if (!window_was_decoding[win_name] && is_visible &&
-                    ps.play_video) {
-                    // seek if visibility has changed
-                    seek_all_cameras(scene, current_frame_num, video_fps, ps,
-                                     true);
-                }
-
-                if (!window_was_decoding[win_name] && is_visible &&
-                    !ps.play_video && !ps.pause_seeked) {
-                    // seek if visibility has changed
-                    seek_all_cameras(scene, current_frame_num, video_fps, ps,
-                                     true);
-                    for (auto &[key, value] : window_need_decoding) {
-                        value.store(true);
-                    }
-                }
-
-                if (ps.play_video) {
-                    window_need_decoding[win_name].store(is_visible);
-                };
-
-                if (is_visible) {
-                    if (ps.play_video) {
-                        // if the current frame is ready, upload for display,
-                        // otherwise wait for the frame to get ready
-                        // while (scene->display_buffer[j][ps.read_head]
-                        //            .frame_number !=
-                        //        ps.to_display_frame_number) {
-                        //     std::cout
-                        //         << win_name << " , read head: " <<
-                        //         ps.read_head
-                        //         << ", frame_number: "
-                        //         << scene->display_buffer[j][ps.read_head]
-                        //                .frame_number
-                        //         << ", to_display_frame_number: "
-                        //         << ps.to_display_frame_number << std::endl;
-                        //     std::this_thread::sleep_for(
-                        //         std::chrono::milliseconds(1));
-                        // }
-
-                        current_frame_num = ps.to_display_frame_number;
-                        if (scene->use_cpu_buffer) {
-                            // upload_texture(&scene->image_texture[j],
-                            // scene->display_buffer[j][read_head].frame,
-                            // scene->image_width[j], scene->image_height[j]);
-                            // // 2x slower than pbo copy frame to cuda buffer
-                            ck(cudaMemcpy(
-                                scene->pbo_cuda[j].cuda_buffer,
-                                scene->display_buffer[j][ps.read_head].frame,
-                                scene->image_width[j] * scene->image_height[j] *
-                                    4,
-                                cudaMemcpyHostToDevice));
-                        } else {
-                            ck(cudaMemcpy(
-                                scene->pbo_cuda[j].cuda_buffer,
-                                scene->display_buffer[j][ps.read_head].frame,
-                                scene->image_width[j] * scene->image_height[j] *
-                                    4,
-                                cudaMemcpyDeviceToDevice));
-                        }
-                    } else {
-                        if (scene->use_cpu_buffer) {
-                            // upload_texture(&scene->image_texture[j],
-                            // scene->display_buffer[j][select_corr_head].frame,
-                            // scene->image_width[j], scene->image_height[j]);
-                            ck(cudaMemcpy(
-                                scene->pbo_cuda[j].cuda_buffer,
-                                scene->display_buffer[j][select_corr_head]
-                                    .frame,
-                                scene->image_width[j] * scene->image_height[j] *
-                                    4,
-                                cudaMemcpyHostToDevice));
-                        } else {
-                            ck(cudaMemcpy(
-                                scene->pbo_cuda[j].cuda_buffer,
-                                scene->display_buffer[j][select_corr_head]
-                                    .frame,
-                                scene->image_width[j] * scene->image_height[j] *
-                                    4,
-                                cudaMemcpyDeviceToDevice));
-                        }
-                    }
-                    bind_pbo(&scene->pbo_cuda[j].pbo);
-                    bind_texture(&scene->image_texture[j]);
-                    upload_image_pbo_to_texture(scene->image_width[j],
-                                                scene->image_height[j]);
-                    unbind_pbo();
-                    unbind_texture();
-
-                    // sync yolo detection
-                    if (yolo_detection) {
-                        std::unique_lock<std::mutex> lck(g_mutexes[j]);
-                        // std::cout << "main_thread: acquire lock" <<
-                        // std::endl;
-                        yolo_input_frames_rgba[j] =
-                            scene->pbo_cuda[j].cuda_buffer;
-                        g_ready[j] = true;
-                        g_cvs[j].notify_one();
-                    }
-
-                    ImGui::BeginGroup();
-                    std::string scene_name = "scene view" + std::to_string(j);
-                    ImGui::BeginChild(
-                        scene_name.c_str(),
-                        ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));
-                    ImVec2 avail_size = ImGui::GetContentRegionAvail();
-
-                    // ImGui::Image((void*)(intptr_t)image_texture[j],
-                    // avail_size);
-                    //
-                    if (plot_keypoints_flag) {
-                        if (keypoints_map.find(current_frame_num) ==
-                            keypoints_map.end()) {
-                            keypoints_find = false;
-                        } else {
-                            keypoints_find = true;
-                        }
-                    }
-
-                    if (ImPlot::BeginPlot("##no_plot_name", avail_size,
-                                          ImPlotFlags_Equal |
-                                              ImPlotAxisFlags_AutoFit |
-                                              ImPlotFlags_Crosshairs)) {
-                        ImPlot::PlotImage(
-                            "##no_image_name",
-                            (ImTextureID)(intptr_t)scene->image_texture[j],
-                            ImVec2(0, 0),
-                            ImVec2(scene->image_width[j],
-                                   scene->image_height[j]));
-
-                        if (yolo_detection) {
-                            draw_cv_contours(
-                                yolo_boxes.at(j), yolo_labels.at(j),
-                                yolo_classid.at(j), scene->image_height[j]);
-                        }
-
-                        if (plot_keypoints_flag) {
-                            // plot arena for testing camera parameters
-                            // gui_plot_perimeter(&camera_params[j],
-                            // scene->image_height[j]); if (scene->num_cams > 1)
-                            // {
-                            //     gui_plot_world_coordinates(&camera_params[j],
-                            //     j, scene->image_height[j]);
-                            // }
-
-                            // labeling
-                            if (ImPlot::IsPlotHovered()) {
-                                is_view_focused[j] = true;
-
-                                if (ImGui::IsKeyPressed(ImGuiKey_C, false)) {
-                                    // create keypoints
-                                    if (!keypoints_find) {
-                                        // not found
-                                        KeyPoints *keypoints =
-                                            (KeyPoints *)malloc(
-                                                sizeof(KeyPoints));
-                                        allocate_keypoints(keypoints, scene,
-                                                           skeleton);
-                                        keypoints_map[current_frame_num] =
-                                            keypoints;
-                                    }
-                                }
-
-                                if (keypoints_find) {
-                                    u32 *kp = &(keypoints_map[current_frame_num]
-                                                    ->active_id[j]);
-                                    if (ImGui::IsKeyPressed(ImGuiKey_W,
-                                                            false)) {
-                                        // labeling sequentially each view
-                                        ImPlotPoint mouse =
-                                            ImPlot::GetPlotMousePos();
-                                        keypoints_map[current_frame_num]
-                                            ->keypoints2d[j][*kp]
-                                            .position = {mouse.x, mouse.y};
-                                        keypoints_map[current_frame_num]
-                                            ->keypoints2d[j][*kp]
-                                            .is_labeled = true;
-                                        keypoints_map[current_frame_num]
-                                            ->keypoints2d[j][*kp]
-                                            .is_triangulated = false;
-                                        if (*kp < (skeleton->num_nodes - 1)) {
-                                            (*kp)++;
-                                        }
-                                    }
-
-                                    if (ImGui::IsKeyPressed(ImGuiKey_A, true)) {
-                                        if (*kp <= 0) {
-                                            *kp = 0;
-                                        } else
-                                            (*kp)--;
-                                    }
-
-                                    if (ImGui::IsKeyPressed(ImGuiKey_D, true)) {
-                                        if (*kp >= skeleton->num_nodes - 1) {
-                                            *kp = skeleton->num_nodes - 1;
-                                        } else
-                                            (*kp)++;
-                                    }
-
-                                    if (ImGui::IsKeyPressed(
-                                            ImGuiKey_E,
-                                            false)) // skip to the last keypoint
-                                    {
-                                        *kp = skeleton->num_nodes - 1;
-                                    }
-
-                                    if (ImGui::IsKeyPressed(
-                                            ImGuiKey_Q,
-                                            false)) // go to the first keypoint
-                                    {
-                                        *kp = 0;
-                                    }
-
-                                    // delete all keypoint on a frame
-                                    if (ImGui::IsKeyPressed(ImGuiKey_Backspace,
-                                                            false)) {
-                                        free_keypoints(
-                                            keypoints_map[current_frame_num],
-                                            scene);
-                                        keypoints_map.erase(current_frame_num);
-                                        keypoints_find = false;
-                                    }
-                                }
-                            } else {
-                                is_view_focused[j] = false;
-                            }
-
-                            if (keypoints_find) {
-                                gui_plot_keypoints(
-                                    keypoints_map.at(current_frame_num),
-                                    skeleton, j, scene->num_cams);
-                                // think more general solution of multiple sets
-                                // of keypoints
-                                if (skeleton->name == "Rat4Box" ||
-                                    skeleton->name == "Rat4Box3Ball") {
-                                    gui_plot_bbox_from_keypoints(
-                                        keypoints_map.at(current_frame_num),
-                                        skeleton, j, 4, 5);
-                                }
-                            }
-                        }
-                        // START of new code for H5 bounding box overlay
-                        if (h5_loaded && h5_data.has_tracking_data) {
-                            // Get all bounding boxes for this camera's frame ID
-                            auto boxes_for_frame = H5SessionLoader::getBoundingBoxesForFrame(h5_data, current_frame_num);
-                            if (!boxes_for_frame.empty()) {
-                                // Draw the bounding boxes on the current view
-                                gui_draw_bounding_boxes(boxes_for_frame, scene->image_width[j], scene->image_height[j]);
-                            }
-
-                            // Get the frame metadata to find the corresponding stimulus frame num
-                            auto frame_meta = H5SessionLoader::getFrameMetadataByCameraID(h5_data, current_frame_num);
-                            if (frame_meta) {
-                                // Get chaser states for this stimulus frame
-                                auto chaser_states = H5SessionLoader::getChaserStatesForFrame(h5_data, frame_meta->stimulus_frame_num);
-                                if (!chaser_states.empty()) {
-                                    gui_draw_chaser_state(chaser_states, scene->image_height[j], camera_params[j]);
-                                }
-                            }
-                        }
-                        ImPlot::EndPlot();
-                    }
-
-                    ImGui::EndChild();
-
-                    float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
-                    if (ImGui::Button(ICON_FK_FAST_BACKWARD)) {
-                        int clamped_frame =
-                            std::max(0, current_frame_num -
-                                            10 * dc_context->seek_interval);
-                        seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                         false);
-                    }
-                    ImGui::SameLine(0.0f, spacing);
-                    if (ImGui::Button(ICON_FK_STEP_BACKWARD)) {
-                        int clamped_frame = std::max(
-                            0, current_frame_num - dc_context->seek_interval);
-                        seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                         false);
-                    }
-                    ImGui::SameLine(0.0f, spacing);
-
-                    if (ps.to_display_frame_number ==
-                        (dc_context->total_num_frame - 1)) {
-                        ImVec4 repeat_normal = ImVec4(1.0f, 1.0f, 0.2f, 1.0f);
-                        ImVec4 repeat_hover = ImVec4(1.0f, 1.0f, 0.4f, 1.0f);
-                        ImVec4 repeat_active = ImVec4(1.0f, 0.9f, 0.1f, 1.0f);
-                        ImGui::PushStyleColor(ImGuiCol_Button, repeat_normal);
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                                              repeat_hover);
-                        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-                                              repeat_active);
-
-                        if (ImGui::Button(ICON_FK_REPEAT)) {
-                            // seek to zero
-                            seek_all_cameras(scene, 0, video_fps, ps, false);
-                        }
-                        ImGui::PopStyleColor(3);
-                    } else {
-                        ImVec4 normal, hover, active;
-                        if (ps.play_video) {
-                            normal = ImVec4(0.8f, 0.3f, 0.3f, 1.0f);
-                            hover = ImVec4(0.9f, 0.4f, 0.4f, 1.0f);
-                            active = ImVec4(0.7f, 0.2f, 0.2f, 1.0f);
-                        } else {
-                            // green
-                            normal = ImVec4(0.2f, 0.6f, 0.2f, 1.0f);
-                            hover = ImVec4(0.4f, 0.9f, 0.4f, 1.0f);
-                            active = ImVec4(0.3f, 0.75f, 0.3f, 1.0f);
-                        }
-                        ImGui::PushStyleColor(ImGuiCol_Button, normal);
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hover);
-                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, active);
-                        if (ImGui::Button(ps.play_video ? ICON_FK_PAUSE
-                                                        : ICON_FK_PLAY)) {
-                            ps.play_video = !ps.play_video;
-                            if (ps.play_video) {
-                                ps.pause_seeked = false;
-                                ps.last_play_time_start =
-                                    std::chrono::steady_clock::now();
-                            } else {
-                                ps.pause_selected = 0;
-                            }
-                        }
-                        ImGui::PopStyleColor(3);
-                    }
-
-                    ImGui::SameLine(0.0f, spacing);
-                    if (ImGui::Button(ICON_FK_STEP_FORWARD)) {
-                        int clamped_frame = std::min(
-                            dc_context->total_num_frame,
-                            current_frame_num + dc_context->seek_interval);
-                        seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                         false);
-                    }
-                    ImGui::SameLine(0.0f, spacing);
-                    if (ImGui::Button(ICON_FK_FAST_FORWARD)) {
-                        int clamped_frame = std::min(
-                            dc_context->total_num_frame,
-                            current_frame_num + 10 * dc_context->seek_interval);
-                        seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                         false);
-                    }
-                    ImGui::SameLine();
-                    ps.slider_just_changed = ImGui::SliderInt(
-                        "##frame count", &ps.slider_frame_number, 0,
-                        dc_context->estimated_num_frames);
-                    ImGui::SameLine();
-                    float current_time_sec = ps.slider_frame_number / video_fps;
-                    float total_time_sec =
-                        dc_context->estimated_num_frames / video_fps;
-
-                    std::string current_str = format_time(current_time_sec);
-                    std::string total_str = format_time(total_time_sec);
-                    ImGui::Text("%s / %s", current_str.c_str(),
-                                total_str.c_str());
-
-                    if (ps.slider_just_changed) {
-                        // std::cout << "main, seeking: " <<
-                        // ps.slider_frame_number
-                        //           << std::endl;
-                        seek_all_cameras(scene, ps.slider_frame_number,
-                                         video_fps, ps, false);
-                    }
-
-                    ImGui::EndGroup();
-                }
-                ImGui::End();
-            }
-
+            
             if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
                 ps.play_video = !ps.play_video;
                 if (ps.play_video) {
@@ -1239,104 +880,6 @@ int main(int, char **) {
                                          skeleton, camera_params, scene);
                         }
                     }
-                }
-
-                // Session Info Window
-                if (h5_loaded) {
-                    if (ImGui::Begin("H5 Session Info")) {
-                        ImGui::Text("Session UUID: %s", h5_data.session_info.session_uuid.c_str());
-                        ImGui::Text("Start Time: %s", h5_data.session_info.session_start_iso8601_utc.c_str());
-                        ImGui::Text("Protocol: %s", h5_data.session_info.protocol_name_from_definition.c_str());
-                        ImGui::Text("Rig ID: %s", h5_data.session_info.rig_id.c_str());
-                        ImGui::Text("Arena ID: %s", h5_data.session_info.arena_id.c_str());
-                        ImGui::Text("Output Size: %dx%d",
-                                h5_data.session_info.stimulus_output_width,
-                                h5_data.session_info.stimulus_output_height);
-
-                        if (!h5_data.session_info.operator_notes.empty()) {
-                            ImGui::Separator();
-                            ImGui::TextWrapped("Notes: %s", h5_data.session_info.operator_notes.c_str());
-                        }
-
-                        if (!h5_data.session_info.subject_metadata.empty()) {
-                            ImGui::Separator();
-                            ImGui::Text("Subject Metadata:");
-                            for (const auto& [key, value] : h5_data.session_info.subject_metadata) {
-                                ImGui::Text("  %s: %s", key.c_str(), value.c_str());
-                            }
-                        }
-                    }
-                    ImGui::End();
-                }
-
-
-                // Events Window
-                if (h5_loaded && !h5_data.events.empty()) {
-                    if (ImGui::Begin("H5 Events")) {
-                        // Find events near current frame time
-                        if (video_loaded && h5_data.has_video_metadata) {
-                            auto frame_meta = H5SessionLoader::getFrameMetadata(h5_data, current_frame_num);
-                            if (frame_meta) {
-                                ImGui::Text("Current Frame Timestamp: %.3f s", frame_meta->timestamp_ns / 1e9);
-                                ImGui::Separator();
-                            }
-                        }
-
-                        ImGui::Text("Total Events: %zu", h5_data.events.size());
-
-                        // Show last few events
-                        ImGui::Separator();
-                        ImGui::Text("Recent Events:");
-                        size_t start_idx = h5_data.events.size() > 10 ? h5_data.events.size() - 10 : 0;
-                        for (size_t i = start_idx; i < h5_data.events.size(); i++) {
-                            const auto& event = h5_data.events[i];
-                            ImGui::Text("[%.3fs] Type:%d Step:%d %s",
-                                    event.timestamp_ns_session / 1e9,
-                                    event.event_type_id,
-                                    event.current_step_index,
-                                    event.name_or_context);
-                        }
-                    }
-                    ImGui::End();
-                }
-
-                // Tracking Data Window
-                if (h5_loaded && h5_data.has_tracking_data) {
-                    if (ImGui::Begin("H5 Tracking Data")) {
-                        ImGui::Text("Total Bounding Boxes: %zu", h5_data.bounding_boxes.size());
-                        ImGui::Text("Total Chaser States: %zu", h5_data.chaser_states.size());
-
-                        if (video_loaded) {
-                            ImGui::Separator();
-                            ImGui::Text("Current Frame: %d", current_frame_num);
-
-                            // Get tracking data for current frame
-                            auto boxes = H5SessionLoader::getBoundingBoxesForFrame(h5_data, current_frame_num);
-                            auto chaser_states = H5SessionLoader::getChaserStatesForFrame(h5_data, current_frame_num);
-
-                            if (!boxes.empty()) {
-                                ImGui::Text("Bounding Boxes in Frame: %zu", boxes.size());
-                                for (const auto& box : boxes) {
-                                    ImGui::Text("  Camera %d: [%.1f,%.1f,%.1f,%.1f] Class:%d Conf:%.2f",
-                                            box.payload_camera_id,
-                                            box.x_min, box.y_min, box.width, box.height,
-                                            box.class_id, box.confidence);
-                                }
-                            }
-
-                            if (!chaser_states.empty()) {
-                                ImGui::Text("Chaser States in Frame: %zu", chaser_states.size());
-                                for (const auto& state : chaser_states) {
-                                    ImGui::Text("  Chaser %d: %s Pos:(%.1f,%.1f) Target:(%.1f,%.1f)",
-                                            state.chaser_index,
-                                            state.is_chasing ? "Chasing" : "Not Chasing",
-                                            state.chaser_pos_x, state.chaser_pos_y,
-                                            state.target_pos_x, state.target_pos_y);
-                                }
-                            }
-                        }
-                    }
-                    ImGui::End();
                 }
 
                 if (ImGui::Button("Update keypoints working directory")) {

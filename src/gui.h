@@ -1,3 +1,5 @@
+// src/gui.h
+
 #ifndef RED_GUI
 #define RED_GUI
 #include "render.h"
@@ -17,10 +19,15 @@ struct ProjectContext {
 };
 
 static void gui_draw_chaser_state(const std::vector<LoggedChaserState>& states, int image_height, const CameraParams& cam_params) {
-    if (cam_params.inverse_homography_matrix.empty()) {
-        return; // Can't draw without the inverse homography matrix
+    // Check if we have a valid homography
+    if (!cam_params.has_valid_homography) {
+        // Could show a warning in the UI
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), 
+                         "Warning: No homography matrix available for overlay");
+        return;
     }
 
+    // Now we can safely use the homography matrices
     for (const auto& state : states) {
         std::vector<cv::Point2f> src_points;
         src_points.push_back(cv::Point2f(state.chaser_pos_x, state.chaser_pos_y));
@@ -1087,5 +1094,66 @@ static void gui_plot_perimeter(CameraParams *cvp, int image_height) {
     std::string name = "arena";
     ImPlot::PlotLine(name.c_str(), arena_x, arena_y, 100);
 }
+
+void diagnose_h5_homography_loading(const std::string& h5_filepath) {
+    std::cout << "\n=== H5 Homography Loading Diagnostic ===" << std::endl;
+    std::cout << "File: " << h5_filepath << std::endl;
+    
+    H5SessionLoader loader;
+    H5SessionData data;
+    std::string error_msg;
+    
+    if (loader.loadH5File(h5_filepath, data, error_msg)) {
+        std::cout << "H5 file loaded successfully" << std::endl;
+        
+        if (data.camera_calibrations.empty()) {
+            std::cout << "WARNING: No camera calibrations found in H5 file!" << std::endl;
+            std::cout << "The H5 file may be using an older format or missing calibration data." << std::endl;
+        } else {
+            std::cout << "Found " << data.camera_calibrations.size() << " camera calibrations:" << std::endl;
+            
+            for (const auto& [cam_id, calib] : data.camera_calibrations) {
+                std::cout << "\nCamera: " << cam_id << std::endl;
+                
+                if (calib.has_homography) {
+                    std::cout << "  ✓ Homography matrix loaded (3x3)" << std::endl;
+                    std::cout << "  Timestamp: " << calib.calibration_timestamp_utc << std::endl;
+                    std::cout << "  Matrix values:" << std::endl;
+                    std::cout << calib.homography_matrix << std::endl;
+                } else {
+                    std::cout << "  ✗ No homography matrix found" << std::endl;
+                }
+                
+                if (calib.has_attributes) {
+                    std::cout << "  ✓ Calibration attributes loaded:" << std::endl;
+                    std::cout << "    - pixels_per_mm_projector: " << calib.pixels_per_mm_projector << std::endl;
+                    std::cout << "    - pixels_per_mm_camera: " << calib.pixels_per_mm_camera << std::endl;
+                    std::cout << "    - real_world_ref_mm: " << calib.real_world_ref_mm << std::endl;
+                } else {
+                    std::cout << "  ✗ No calibration attributes found" << std::endl;
+                }
+            }
+        }
+        
+        // Also check the JSON fallback
+        if (!data.arena_config_json.empty()) {
+            std::cout << "\nJSON arena_config is available (fallback method)" << std::endl;
+            try {
+                json config = json::parse(data.arena_config_json);
+                if (config.contains("camera_calibrations")) {
+                    std::cout << "  JSON contains " << config["camera_calibrations"].size() 
+                              << " camera calibrations" << std::endl;
+                }
+            } catch (const json::exception& e) {
+                std::cout << "  Failed to parse JSON: " << e.what() << std::endl;
+            }
+        }
+    } else {
+        std::cout << "Failed to load H5 file: " << error_msg << std::endl;
+    }
+    
+    std::cout << "=== End Diagnostic ===" << std::endl;
+}
+
 
 #endif
