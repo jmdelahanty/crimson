@@ -87,9 +87,29 @@ bool H5SessionLoader::loadH5File(const std::string& filepath, H5SessionData& dat
             std::cerr << "Warning: Failed to load protocol snapshot" << std::endl;
         }
 
-        // Load calibration snapshot
-        if (!loadCalibrationSnapshot(file, data.arena_config_json)) {
-            std::cerr << "Warning: Failed to load calibration snapshot" << std::endl;
+        if (!loadCalibrationSnapshotEnhanced(file, data.arena_config_json, data.camera_calibrations)) {
+            std::cerr << "Warning: Failed to load enhanced calibration snapshot" << std::endl;
+            // Fall back to basic loading
+            if (!loadCalibrationSnapshot(file, data.arena_config_json)) {
+                std::cerr << "Warning: Failed to load basic calibration snapshot" << std::endl;
+            }
+        } else {
+            std::cout << "  Loaded calibration for " << data.camera_calibrations.size() << " cameras" << std::endl;
+            
+            // Print summary of what was loaded
+            for (const auto& [cam_id, calib] : data.camera_calibrations) {
+                std::cout << "    Camera " << cam_id << ":"
+                         << " homography=" << (calib.has_homography ? "yes" : "no")
+                         << " attributes=" << (calib.has_attributes ? "yes" : "no")
+                         << std::endl;
+                if (calib.has_homography) {
+                    std::cout << "      Timestamp: " << calib.calibration_timestamp_utc << std::endl;
+                }
+                if (calib.has_attributes) {
+                    std::cout << "      pixels_per_mm_projector: " << calib.pixels_per_mm_projector << std::endl;
+                    std::cout << "      pixels_per_mm_camera: " << calib.pixels_per_mm_camera << std::endl;
+                }
+            }
         }
 
         file.close();
@@ -531,4 +551,220 @@ bool loadH5SessionFromDirectory(const std::string& video_directory,
     // Load the H5 file
     H5SessionLoader loader;
     return loader.loadH5File(h5_filepath, h5_data, error_message);
+}
+
+bool H5SessionLoader::loadCalibrationSnapshotEnhanced(H5::H5File& file, 
+                                                      std::string& arena_config_json,
+                                                      std::map<std::string, CameraCalibrationData>& camera_calibrations) {
+    try {
+        if (!groupExists(file, "/calibration_snapshot")) {
+            return false;
+        }
+
+        Group calibGroup = file.openGroup("/calibration_snapshot");
+
+        // Load the arena config JSON (existing functionality)
+        if (datasetExists(calibGroup, "arena_config_json")) {
+            DataSet dataset = calibGroup.openDataSet("arena_config_json");
+            StrType strType(PredType::C_S1, H5T_VARIABLE);
+            H5std_string h5_str;
+            dataset.read(h5_str, strType);
+            arena_config_json = h5_str;
+        }
+
+        // Now iterate through all camera groups
+        hsize_t num_objs = calibGroup.getNumObjs();
+        for (hsize_t i = 0; i < num_objs; i++) {
+            H5G_obj_t obj_type = calibGroup.getObjTypeByIdx(i);
+            
+            if (obj_type == H5G_GROUP) {
+                std::string obj_name = calibGroup.getObjnameByIdx(i);
+                
+                // Skip non-camera groups (like if there's metadata group)
+                if (obj_name.find("Camera") != std::string::npos || 
+                    obj_name.find("camera") != std::string::npos ||
+                    std::isdigit(obj_name[0])) {  // Handle numeric camera IDs
+                    
+                    std::cout << "Loading calibration for camera: " << obj_name << std::endl;
+                    
+                    Group camera_group = calibGroup.openGroup(obj_name);
+                    CameraCalibrationData calib_data;
+                    calib_data.camera_id = obj_name;
+                    
+                    // Load homography YAML
+                    if (loadCameraHomographyYAML(camera_group, calib_data)) {
+                        std::cout << "  - Loaded homography matrix from YAML" << std::endl;
+                    }
+                    
+                    // Load calibration attributes
+                    if (loadCameraCalibrationAttributes(camera_group, calib_data)) {
+                        std::cout << "  - Loaded calibration attributes" << std::endl;
+                    }
+                    
+                    // Load calibration images (optional, can be memory intensive)
+                    // Uncomment if needed:
+                    // if (loadCameraCalibrationImages(camera_group, calib_data)) {
+                    //     std::cout << "  - Loaded calibration images" << std::endl;
+                    // }
+                    
+                    camera_calibrations[obj_name] = calib_data;
+                    camera_group.close();
+                }
+            }
+        }
+
+        calibGroup.close();
+        return true;
+        
+    } catch (const H5::Exception& e) {
+        std::cerr << "Error loading enhanced calibration snapshot: " << e.getCDetailMsg() << std::endl;
+        return false;
+    }
+}
+
+bool H5SessionLoader::loadCameraHomographyYAML(H5::Group& camera_group,
+                                               CameraCalibrationData& calib_data) {
+    try {
+        if (!datasetExists(camera_group, "homography_matrix_yml")) {
+            return false;
+        }
+        
+        DataSet dataset = camera_group.openDataSet("homography_matrix_yml");
+        
+        // Read the YAML string
+        StrType strType = dataset.getStrType();
+        H5std_string yaml_content;
+        dataset.read(yaml_content, strType);
+        
+        // Parse the YAML to extract homography matrix
+        if (parseHomographyYAML(yaml_content, 
+                               calib_data.homography_matrix,
+                               calib_data.calibration_timestamp_utc)) {
+            calib_data.has_homography = true;
+            dataset.close();
+            return true;
+        }
+        
+        dataset.close();
+        
+    } catch (const H5::Exception& e) {
+        std::cerr << "Error loading homography YAML: " << e.getCDetailMsg() << std::endl;
+    }
+    return false;
+}
+
+bool H5SessionLoader::loadCameraCalibrationAttributes(H5::Group& camera_group,
+                                                      CameraCalibrationData& calib_data) {
+    try {
+        bool found_any = false;
+        
+        // Read float attributes
+        if (camera_group.attrExists("pixels_per_mm_projector")) {
+            Attribute attr = camera_group.openAttribute("pixels_per_mm_projector");
+            attr.read(PredType::NATIVE_FLOAT, &calib_data.pixels_per_mm_projector);
+            found_any = true;
+        }
+        
+        if (camera_group.attrExists("pixels_per_mm_camera")) {
+            Attribute attr = camera_group.openAttribute("pixels_per_mm_camera");
+            attr.read(PredType::NATIVE_FLOAT, &calib_data.pixels_per_mm_camera);
+            found_any = true;
+        }
+        
+        if (camera_group.attrExists("real_world_ref_mm")) {
+            Attribute attr = camera_group.openAttribute("real_world_ref_mm");
+            attr.read(PredType::NATIVE_FLOAT, &calib_data.real_world_ref_mm);
+            found_any = true;
+        }
+        
+        calib_data.has_attributes = found_any;
+        return found_any;
+        
+    } catch (const H5::Exception& e) {
+        std::cerr << "Error loading calibration attributes: " << e.getCDetailMsg() << std::endl;
+    }
+    return false;
+}
+
+bool H5SessionLoader::loadCameraCalibrationImages(H5::Group& camera_group,
+                                                  CameraCalibrationData& calib_data) {
+    try {
+        bool loaded_any = false;
+        
+        // Load homography image
+        if (datasetExists(camera_group, "homography_image_png_buffer")) {
+            DataSet dataset = camera_group.openDataSet("homography_image_png_buffer");
+            DataSpace dataspace = dataset.getSpace();
+            
+            hsize_t dims[1];
+            dataspace.getSimpleExtentDims(dims);
+            
+            calib_data.homography_image_png.resize(dims[0]);
+            dataset.read(calib_data.homography_image_png.data(), PredType::NATIVE_UINT8);
+            dataset.close();
+            loaded_any = true;
+        }
+        
+        // Load scale image
+        if (datasetExists(camera_group, "scale_image_png_buffer")) {
+            DataSet dataset = camera_group.openDataSet("scale_image_png_buffer");
+            DataSpace dataspace = dataset.getSpace();
+            
+            hsize_t dims[1];
+            dataspace.getSimpleExtentDims(dims);
+            
+            calib_data.scale_image_png.resize(dims[0]);
+            dataset.read(calib_data.scale_image_png.data(), PredType::NATIVE_UINT8);
+            dataset.close();
+            loaded_any = true;
+        }
+        
+        return loaded_any;
+        
+    } catch (const H5::Exception& e) {
+        std::cerr << "Error loading calibration images: " << e.getCDetailMsg() << std::endl;
+    }
+    return false;
+}
+
+bool H5SessionLoader::parseHomographyYAML(const std::string& yaml_content,
+                                          cv::Mat& homography_matrix,
+                                          std::string& timestamp) {
+    try {
+        // Use OpenCV's FileStorage with MEMORY flag to parse YAML string
+        cv::FileStorage fs(yaml_content, cv::FileStorage::READ | cv::FileStorage::MEMORY);
+        
+        if (!fs.isOpened()) {
+            std::cerr << "Failed to parse YAML content" << std::endl;
+            return false;
+        }
+        
+        // Extract timestamp if present
+        if (!fs["calibration_timestamp_utc"].empty()) {
+            fs["calibration_timestamp_utc"] >> timestamp;
+        }
+        
+        // Extract homography matrix
+        if (!fs["homography_matrix"].empty()) {
+            fs["homography_matrix"] >> homography_matrix;
+            
+            // Verify it's a 3x3 matrix
+            if (homography_matrix.rows == 3 && homography_matrix.cols == 3) {
+                fs.release();
+                return true;
+            } else {
+                std::cerr << "Invalid homography matrix dimensions: " 
+                         << homography_matrix.rows << "x" << homography_matrix.cols << std::endl;
+            }
+        }
+        
+        fs.release();
+        
+    } catch (const cv::Exception& e) {
+        std::cerr << "OpenCV error parsing YAML: " << e.what() << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "Error parsing homography YAML: " << e.what() << std::endl;
+    }
+    
+    return false;
 }

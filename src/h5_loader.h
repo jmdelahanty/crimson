@@ -1,12 +1,13 @@
 #ifndef H5_LOADER_H
 #define H5_LOADER_H
 
+#include <H5Cpp.h>
+#include <opencv2/opencv.hpp>
+#include <filesystem>
 #include <string>
 #include <vector>
 #include <map>
-#include <filesystem>
-#include <chrono>
-#include <H5Cpp.h>
+#include <iostream>
 
 // Mirror the structures from logging_structs.h
 struct SessionInfo {
@@ -27,6 +28,19 @@ struct SessionInfo {
     std::map<std::string, std::string> subject_metadata;
     std::string operator_notes;
     std::vector<std::string> associated_camera_ids;
+};
+
+struct CameraCalibrationData {
+    std::string camera_id;
+    cv::Mat homography_matrix;
+    std::string calibration_timestamp_utc;
+    float pixels_per_mm_projector = 0.0f;
+    float pixels_per_mm_camera = 0.0f;
+    float real_world_ref_mm = 0.0f;
+    std::vector<uint8_t> homography_image_png;
+    std::vector<uint8_t> scale_image_png;
+    bool has_homography = false;
+    bool has_attributes = false;
 };
 
 struct EventLogEntry {
@@ -99,6 +113,9 @@ struct H5SessionData {
     bool has_video_metadata = false;
     size_t total_frames = 0;
     double fps = 30.0; // Will be calculated from frame metadata if available
+
+    // Add camera calibrations map
+    std::map<std::string, CameraCalibrationData> camera_calibrations;
 };
 
 class H5SessionLoader {
@@ -129,6 +146,24 @@ public:
     static std::vector<LoggedBoundingBox> getBoundingBoxesForFrame(const H5SessionData& data, uint64_t frame_id);
     static std::vector<LoggedChaserState> getChaserStatesForFrame(const H5SessionData& data, uint64_t frame_num);
     static FrameMetadataRecord* getFrameMetadataByCameraID(H5SessionData& data, uint64_t camera_frame_id);
+
+    bool loadCalibrationSnapshotEnhanced(H5::H5File& file, 
+                                         std::string& arena_config_json,
+                                         std::map<std::string, CameraCalibrationData>& camera_calibrations);
+    
+    bool loadCameraHomographyYAML(H5::Group& camera_group,
+                                  CameraCalibrationData& calib_data);
+    
+    bool loadCameraCalibrationAttributes(H5::Group& camera_group,
+                                         CameraCalibrationData& calib_data);
+    
+    bool loadCameraCalibrationImages(H5::Group& camera_group,
+                                     CameraCalibrationData& calib_data);
+    
+    // Helper to extract homography from YAML string
+    static bool parseHomographyYAML(const std::string& yaml_content,
+                                    cv::Mat& homography_matrix,
+                                    std::string& timestamp);
 
 private:
     // Helper functions
