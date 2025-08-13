@@ -11,6 +11,7 @@
 #include <regex>
 #include <thread>
 #include <vector>
+#include <iostream>
 
 struct ProjectContext {
     std::string root_dir;
@@ -21,35 +22,40 @@ struct ProjectContext {
 static void gui_draw_chaser_state(const std::vector<LoggedChaserState>& states, int image_height, const CameraParams& cam_params) {
     // Check if we have a valid homography
     if (!cam_params.has_valid_homography) {
-        // Could show a warning in the UI
-        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), 
-                         "Warning: No homography matrix available for overlay");
         return;
     }
 
-    // Now we can safely use the homography matrices
     for (const auto& state : states) {
         std::vector<cv::Point2f> src_points;
         src_points.push_back(cv::Point2f(state.chaser_pos_x, state.chaser_pos_y));
         std::vector<cv::Point2f> dst_points;
 
-        // Use the inverse matrix to transform from stimulus to camera coordinates
-        cv::perspectiveTransform(src_points, dst_points, cam_params.inverse_homography_matrix);
+        cv::perspectiveTransform(src_points, dst_points, cam_params.homography_matrix);
 
         if (!dst_points.empty()) {
             double x = dst_points[0].x;
             double y = (double)image_height - dst_points[0].y;
 
-            // Chaser is red, Target is green
+            // --- START: NEW DEBUG CODE ---
+            std::cout << "Chaser - Stimulus: (" << state.chaser_pos_x << ", " << state.chaser_pos_y
+                      << ") -> Transformed: (" << x << ", " << y << ")" << std::endl;
+            // --- END: NEW DEBUG CODE ---
+
             ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8.0f, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
             ImPlot::PlotScatter("Chaser", &x, &y, 1);
 
             src_points[0] = cv::Point2f(state.target_pos_x, state.target_pos_y);
-            cv::perspectiveTransform(src_points, dst_points, cam_params.inverse_homography_matrix);
+            cv::perspectiveTransform(src_points, dst_points, cam_params.homography_matrix);
 
             if (!dst_points.empty()) {
                 x = dst_points[0].x;
                 y = (double)image_height - dst_points[0].y;
+
+                // --- START: NEW DEBUG CODE ---
+                std::cout << "Target - Stimulus: (" << state.target_pos_x << ", " << state.target_pos_y
+                          << ") -> Transformed: (" << x << ", " << y << ")" << std::endl;
+                // --- END: NEW DEBUG CODE ---
+
                 ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8.0f, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
                 ImPlot::PlotScatter("Target", &x, &y, 1);
             }

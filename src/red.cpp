@@ -316,13 +316,6 @@ int main(int, char **) {
                         1000.0f / ImGui::GetIO().Framerate,
                         ImGui::GetIO().Framerate);
 
-            // if (video_loaded) {
-            //     ImGui::Text("Frame number %d ",
-            //     scene->display_buffer[0][read_head].frame_number);
-            //     ImGui::Text("To Display frame number %d ",
-            //     to_display_frame_number); ImGui::Text("Readhead %d",
-            //     read_head);
-            // }
             if (!video_loaded) {
                 {
                     const char *items[] = {"CPU Buffer", "GPU Buffer"};
@@ -515,15 +508,44 @@ int main(int, char **) {
                 if (video_loaded) {
                     camera_params.resize(scene->num_cams); // Ensure vector is sized
                     if (h5_loaded) {
+                        std::cout << "\n=== Loading Camera Calibrations from H5 ===" << std::endl;
                         for (size_t i = 0; i < camera_names.size(); ++i) {
-                           if (!camera_load_calibration_from_h5_json(
-                                   h5_data.arena_config_json,
-                                   camera_names[i],
-                                   camera_params[i],
-                                   error_message)) {
-                               show_error = true;
-                               break;
-                           }
+                            std::string h5_camera_id = camera_names[i];
+
+                            // ** FIX 1: Strip the "Cam" prefix to match H5 key **
+                            if (h5_camera_id.rfind("Cam", 0) == 0) {
+                                h5_camera_id = h5_camera_id.substr(3);
+                            }
+
+                            std::cout << "\nProcessing camera " << i << ": " << camera_names[i]
+                                    << " (using ID: " << h5_camera_id << " for H5 lookup)" << std::endl;
+
+                            // ** FIX 2: Use the enhanced loading function **
+                            if (!camera_load_calibration_from_h5_enhanced(
+                                    h5_data,          // Pass the entire H5 data structure
+                                    h5_camera_id,     // Use the corrected camera ID
+                                    camera_params[i], // Output parameters
+                                    error_message)) {
+
+                                std::cerr << "Warning: Failed to load calibration for camera " << camera_names[i]
+                                        << " from H5 file: " << error_message << std::endl;
+
+                                // Attempt to fall back to loading from a separate YAML file
+                                std::string yaml_file = root_dir + "/calibration/" + camera_names[i] + ".yaml";
+                                if (std::filesystem::exists(yaml_file)) {
+                                    std::cout << "--> H5 failed, attempting fallback to YAML file: " << yaml_file << std::endl;
+                                    if (!camera_load_params_from_yaml(yaml_file, camera_params[i], error_message)) {
+                                        // If both H5 and YAML fail, show an error
+                                        show_error = true;
+                                        break;
+                                    }
+                                } else {
+                                    std::cout << "--> No fallback YAML file found." << std::endl;
+                                }
+                            } else {
+                                // Print debug info to confirm what was successfully loaded from H5
+                                camera_print_calibration_details(camera_params[i], camera_names[i]);
+                            }
                         }
                     }
                 }
