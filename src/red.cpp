@@ -696,12 +696,12 @@ int main(int, char **) {
                     int clamped_frame = std::max(
                         0, current_frame_num - 10 * dc_context->seek_interval);
                     seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                     false);
+                                    false);
                 } else {
                     int clamped_frame = std::max(
                         0, current_frame_num - dc_context->seek_interval);
                     seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                     false);
+                                    false);
                 }
             }
 
@@ -711,14 +711,140 @@ int main(int, char **) {
                         dc_context->total_num_frame,
                         current_frame_num + 10 * dc_context->seek_interval);
                     seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                     false);
+                                    false);
                 } else {
                     int clamped_frame =
                         std::min(dc_context->total_num_frame,
-                                 current_frame_num + dc_context->seek_interval);
+                                current_frame_num + dc_context->seek_interval);
                     seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                     false);
+                                    false);
                 }
+            }
+
+            // *** ADD THIS CAMERA RENDERING LOOP ***
+            for (u32 i = 0; i < scene->num_cams; i++) {
+                // Create a window for each camera
+                bool window_open = window_need_decoding[camera_names[i]].load();
+                if (ImGui::Begin(camera_names[i].c_str(), &window_open)) {
+                    window_need_decoding[camera_names[i]].store(window_open);
+                    
+                    // Track if this window is focused
+                    is_view_focused[i] = ImGui::IsWindowFocused();
+                    
+                    // Get the current frame to display
+                    int display_idx = (ps.read_head + ps.pause_selected) % scene->size_of_buffer;
+                    
+                    // Update the texture with the current frame data
+                    if (scene->use_cpu_buffer) {
+                        // CPU buffer path
+                        upload_texture(&scene->image_texture[i], 
+                                    scene->display_buffer[i][display_idx].frame,
+                                    scene->image_width[i], 
+                                    scene->image_height[i]);
+                    } else {
+                        // GPU buffer path using PBO
+                        cudaMemcpy(scene->pbo_cuda[i].cuda_buffer,
+                                scene->display_buffer[i][display_idx].frame,
+                                scene->image_width[i] * scene->image_height[i] * 4,
+                                cudaMemcpyDeviceToDevice);
+                        
+                        bind_texture(&scene->image_texture[i]);
+                        bind_pbo(&scene->pbo_cuda[i].pbo);
+                        upload_image_pbo_to_texture(scene->image_width[i], scene->image_height[i]);
+                        unbind_pbo();
+                        unbind_texture();
+                    }
+                    
+                    // Display the video frame
+                    ImGui::Image(
+                        (void *)(intptr_t)scene->image_texture[i],
+                        ImVec2(scene->image_width[i] / 2.0, scene->image_height[i] / 2.0)
+                    );
+                    
+                    // Overlay keypoints and other annotations if enabled
+                    if (plot_keypoints_flag) {
+                        ImGui::SetCursorPos(ImGui::GetWindowContentRegionMin());
+                        
+                        if (ImPlot::BeginPlot("##Video", ImVec2(scene->image_width[i] / 2.0, scene->image_height[i] / 2.0), 
+                                            ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect | ImPlotFlags_NoMouseText | ImPlotFlags_Equal)) {
+                            
+                            // Set the plot limits to match the image dimensions
+                            ImPlot::SetupAxes(NULL, NULL, 
+                                            ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoTickMarks | ImPlotAxisFlags_NoGridLines,
+                                            ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoTickMarks | ImPlotAxisFlags_NoGridLines | ImPlotAxisFlags_Invert);
+                            ImPlot::SetupAxisLimits(ImAxis_X1, 0, scene->image_width[i], ImGuiCond_Always);
+                            ImPlot::SetupAxisLimits(ImAxis_Y1, 0, scene->image_height[i], ImGuiCond_Always);
+                            
+                            // Draw keypoints if they exist for this frame
+                            if (keypoints_find && keypoints_map.count(current_frame_num) > 0) {
+                                gui_plot_keypoints(keypoints_map[current_frame_num], skeleton, i, scene->num_cams);
+                            }
+                            
+                            // Draw H5 data overlays if loaded and homography is valid
+                            if (h5_loaded && i < camera_params.size() && camera_params[i].has_valid_homography) {
+                                gui_draw_chaser_state(H5SessionLoader::getChaserStatesForFrame(h5_data, current_frame_num), 
+                                                    scene->image_height[i], camera_params[i]);
+                                gui_draw_bounding_boxes(H5SessionLoader::getBoundingBoxesForFrame(h5_data, current_frame_num), 
+                                                    scene->image_width[i], scene->image_height[i]);
+                            }
+                            
+                            // Draw YOLO detections if enabled
+                            if (yolo_detection && !yolo_boxes[i].empty()) {
+                                draw_cv_contours(yolo_boxes[i], yolo_labels[i], yolo_classid[i], scene->image_height[i]);
+                            }
+                            
+                            // Handle mouse interactions for keypoint creation/editing
+                            if (ImPlot::IsPlotHovered() && keypoints_find) {
+                                ImPlotPoint mouse_pos = ImPlot::GetPlotMousePos();
+                                
+                                // Create keypoint on 'c' key
+                                if (ImGui::IsKeyPressed(ImGuiKey_C, false)) {
+                                    int active_id = keypoints_map[current_frame_num]->active_id[i];
+                                    keypoints_map[current_frame_num]->keypoints2d[i][active_id].position.x = mouse_pos.x;
+                                    keypoints_map[current_frame_num]->keypoints2d[i][active_id].position.y = mouse_pos.y;
+                                    keypoints_map[current_frame_num]->keypoints2d[i][active_id].is_labeled = true;
+                                }
+                                
+                                // Delete active keypoint on 'w' key
+                                if (ImGui::IsKeyPressed(ImGuiKey_W, false)) {
+                                    int active_id = keypoints_map[current_frame_num]->active_id[i];
+                                    keypoints_map[current_frame_num]->keypoints2d[i][active_id].is_labeled = false;
+                                }
+                                
+                                // Navigate active keypoint with a/d/q/e keys
+                                if (ImGui::IsKeyPressed(ImGuiKey_A, false)) {
+                                    keypoints_map[current_frame_num]->active_id[i] = 
+                                        (keypoints_map[current_frame_num]->active_id[i] + 1) % skeleton->num_nodes;
+                                }
+                                if (ImGui::IsKeyPressed(ImGuiKey_D, false)) {
+                                    keypoints_map[current_frame_num]->active_id[i] = 
+                                        (keypoints_map[current_frame_num]->active_id[i] - 1 + skeleton->num_nodes) % skeleton->num_nodes;
+                                }
+                                if (ImGui::IsKeyPressed(ImGuiKey_Q, false)) {
+                                    keypoints_map[current_frame_num]->active_id[i] = 0;
+                                }
+                                if (ImGui::IsKeyPressed(ImGuiKey_E, false)) {
+                                    keypoints_map[current_frame_num]->active_id[i] = skeleton->num_nodes - 1;
+                                }
+                                
+                                // Triangulate on 't' key
+                                if (ImGui::IsKeyPressed(ImGuiKey_T, false)) {
+                                    reprojection(keypoints_map[current_frame_num], skeleton, camera_params, scene);
+                                }
+                                
+                                // Delete all keypoints on backspace
+                                if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) {
+                                    for (int j = 0; j < skeleton->num_nodes; j++) {
+                                        keypoints_map[current_frame_num]->keypoints2d[i][j].is_labeled = false;
+                                    }
+                                }
+                            }
+                            
+                            ImPlot::EndPlot();
+                        }
+                    }
+                }
+                ImGui::End();
             }
 
             for (const auto &[name, flag] : window_need_decoding) {
