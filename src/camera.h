@@ -31,6 +31,8 @@ struct CameraParams {
     float pixels_per_mm_projector = 0.0f;
     float pixels_per_mm_camera = 0.0f;
     float real_world_ref_mm = 0.0f;
+    float stimulus_offset_x = 0.0f;
+    float stimulus_offset_y = 0.0f;
     bool has_valid_homography = false;
 };
 

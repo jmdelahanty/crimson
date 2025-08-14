@@ -20,46 +20,51 @@ struct ProjectContext {
 };
 
 static void gui_draw_chaser_state(const std::vector<LoggedChaserState>& states, int image_height, const CameraParams& cam_params) {
-    // Check if we have a valid homography
     if (!cam_params.has_valid_homography) {
         return;
     }
 
+    float offsetX = cam_params.stimulus_offset_x;
+    float offsetY = cam_params.stimulus_offset_y;
+
     for (const auto& state : states) {
-        std::vector<cv::Point2f> src_points;
-        src_points.push_back(cv::Point2f(state.chaser_pos_x, state.chaser_pos_y));
-        std::vector<cv::Point2f> dst_points;
+        // We are temporarily ignoring the 'is_chasing' flag for debugging.
+        // if (state.is_chasing) {
 
-        cv::perspectiveTransform(src_points, dst_points, cam_params.homography_matrix);
+            // --- START: ADDED DEBUG PRINT ---
+            std::cout << "Frame: " << state.stimulus_frame_num
+                      << " | Chaser: (" << state.chaser_pos_x << ", " << state.chaser_pos_y << ")"
+                      << " | Target: (" << state.target_pos_x << ", " << state.target_pos_y << ")" << std::endl;
+            // --- END: ADDED DEBUG PRINT ---
 
-        if (!dst_points.empty()) {
-            double x = dst_points[0].x;
-            double y = (double)image_height - dst_points[0].y;
-
-            // --- START: NEW DEBUG CODE ---
-            std::cout << "Chaser - Stimulus: (" << state.chaser_pos_x << ", " << state.chaser_pos_y
-                      << ") -> Transformed: (" << x << ", " << y << ")" << std::endl;
-            // --- END: NEW DEBUG CODE ---
-
-            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8.0f, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
-            ImPlot::PlotScatter("Chaser", &x, &y, 1);
-
-            src_points[0] = cv::Point2f(state.target_pos_x, state.target_pos_y);
-            cv::perspectiveTransform(src_points, dst_points, cam_params.homography_matrix);
+            std::vector<cv::Point2f> src_points;
+            std::vector<cv::Point2f> dst_points;
+            
+            // Apply the offset to the stimulus coordinates
+            src_points.push_back(cv::Point2f(state.chaser_pos_x + offsetX, state.chaser_pos_y + offsetY));
+            
+            // Use the INVERSE homography matrix on the corrected coordinates
+            cv::perspectiveTransform(src_points, dst_points, cam_params.inverse_homography_matrix);
 
             if (!dst_points.empty()) {
-                x = dst_points[0].x;
-                y = (double)image_height - dst_points[0].y;
+                double x = dst_points[0].x;
+                double y = (double)image_height - dst_points[0].y;
+                
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8.0f, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
+                ImPlot::PlotScatter("Chaser", &x, &y, 1);
 
-                // --- START: NEW DEBUG CODE ---
-                std::cout << "Target - Stimulus: (" << state.target_pos_x << ", " << state.target_pos_y
-                          << ") -> Transformed: (" << x << ", " << y << ")" << std::endl;
-                // --- END: NEW DEBUG CODE ---
+                // Apply the same offset to the target coordinates
+                src_points[0] = cv::Point2f(state.target_pos_x + offsetX, state.target_pos_y + offsetY);
+                cv::perspectiveTransform(src_points, dst_points, cam_params.inverse_homography_matrix);
 
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8.0f, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
-                ImPlot::PlotScatter("Target", &x, &y, 1);
+                if (!dst_points.empty()) {
+                    x = dst_points[0].x;
+                    y = (double)image_height - dst_points[0].y;
+                    ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8.0f, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
+                    ImPlot::PlotScatter("Target", &x, &y, 1);
+                }
             }
-        }
+        // } 
     }
 }
 

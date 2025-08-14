@@ -1281,3 +1281,687 @@ events:
         
       exitCode: 2
 ...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:284 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:614 (_HDF5_test_regular_compiler_CXX)"
+      - "CMakeLists.txt:39 (find_package)"
+    directories:
+      source: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-y0xUIb"
+      binary: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-y0xUIb"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80;86"
+      CMAKE_CXX_FLAGS: " -Ofast -mssse3 -ffast-math"
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "HDF5_CXX_COMPILER_NO_INTERROGATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-y0xUIb'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_0d216/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_0d216.dir/build.make CMakeFiles/cmTC_0d216.dir/build
+        gmake[1]: Entering directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-y0xUIb'
+        Building CXX object CMakeFiles/cmTC_0d216.dir/cmake_hdf5_test.cxx.o
+        /usr/bin/c++   -Ofast -mssse3 -ffast-math  -std=c++17 -o CMakeFiles/cmTC_0d216.dir/cmake_hdf5_test.cxx.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx
+        /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx:1:10: fatal error: H5Cpp.h: No such file or directory
+            1 | #include <H5Cpp.h>
+              |          ^~~~~~~~~
+        compilation terminated.
+        gmake[1]: *** [CMakeFiles/cmTC_0d216.dir/build.make:78: CMakeFiles/cmTC_0d216.dir/cmake_hdf5_test.cxx.o] Error 1
+        gmake[1]: Leaving directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-y0xUIb'
+        gmake: *** [Makefile:127: cmTC_0d216/fast] Error 2
+        
+      exitCode: 2
+...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:284 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:614 (_HDF5_test_regular_compiler_CXX)"
+      - "CMakeLists.txt:39 (find_package)"
+    directories:
+      source: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-uvZdAr"
+      binary: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-uvZdAr"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80;86"
+      CMAKE_CXX_FLAGS: " -Ofast -mssse3 -ffast-math"
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "HDF5_CXX_COMPILER_NO_INTERROGATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-uvZdAr'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_64594/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_64594.dir/build.make CMakeFiles/cmTC_64594.dir/build
+        gmake[1]: Entering directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-uvZdAr'
+        Building CXX object CMakeFiles/cmTC_64594.dir/cmake_hdf5_test.cxx.o
+        /usr/bin/c++   -Ofast -mssse3 -ffast-math  -std=c++17 -o CMakeFiles/cmTC_64594.dir/cmake_hdf5_test.cxx.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx
+        /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx:1:10: fatal error: H5Cpp.h: No such file or directory
+            1 | #include <H5Cpp.h>
+              |          ^~~~~~~~~
+        compilation terminated.
+        gmake[1]: *** [CMakeFiles/cmTC_64594.dir/build.make:78: CMakeFiles/cmTC_64594.dir/cmake_hdf5_test.cxx.o] Error 1
+        gmake[1]: Leaving directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-uvZdAr'
+        gmake: *** [Makefile:127: cmTC_64594/fast] Error 2
+        
+      exitCode: 2
+...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:284 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:614 (_HDF5_test_regular_compiler_CXX)"
+      - "CMakeLists.txt:39 (find_package)"
+    directories:
+      source: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-W5SDAP"
+      binary: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-W5SDAP"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80;86"
+      CMAKE_CXX_FLAGS: " -Ofast -mssse3 -ffast-math"
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "HDF5_CXX_COMPILER_NO_INTERROGATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-W5SDAP'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_b1db7/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_b1db7.dir/build.make CMakeFiles/cmTC_b1db7.dir/build
+        gmake[1]: Entering directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-W5SDAP'
+        Building CXX object CMakeFiles/cmTC_b1db7.dir/cmake_hdf5_test.cxx.o
+        /usr/bin/c++   -Ofast -mssse3 -ffast-math  -std=c++17 -o CMakeFiles/cmTC_b1db7.dir/cmake_hdf5_test.cxx.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx
+        /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx:1:10: fatal error: H5Cpp.h: No such file or directory
+            1 | #include <H5Cpp.h>
+              |          ^~~~~~~~~
+        compilation terminated.
+        gmake[1]: *** [CMakeFiles/cmTC_b1db7.dir/build.make:78: CMakeFiles/cmTC_b1db7.dir/cmake_hdf5_test.cxx.o] Error 1
+        gmake[1]: Leaving directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-W5SDAP'
+        gmake: *** [Makefile:127: cmTC_b1db7/fast] Error 2
+        
+      exitCode: 2
+...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:284 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:614 (_HDF5_test_regular_compiler_CXX)"
+      - "CMakeLists.txt:39 (find_package)"
+    directories:
+      source: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-oCmUUM"
+      binary: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-oCmUUM"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80;86"
+      CMAKE_CXX_FLAGS: " -Ofast -mssse3 -ffast-math"
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "HDF5_CXX_COMPILER_NO_INTERROGATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-oCmUUM'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_42c14/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_42c14.dir/build.make CMakeFiles/cmTC_42c14.dir/build
+        gmake[1]: Entering directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-oCmUUM'
+        Building CXX object CMakeFiles/cmTC_42c14.dir/cmake_hdf5_test.cxx.o
+        /usr/bin/c++   -Ofast -mssse3 -ffast-math  -std=c++17 -o CMakeFiles/cmTC_42c14.dir/cmake_hdf5_test.cxx.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx
+        /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx:1:10: fatal error: H5Cpp.h: No such file or directory
+            1 | #include <H5Cpp.h>
+              |          ^~~~~~~~~
+        compilation terminated.
+        gmake[1]: *** [CMakeFiles/cmTC_42c14.dir/build.make:78: CMakeFiles/cmTC_42c14.dir/cmake_hdf5_test.cxx.o] Error 1
+        gmake[1]: Leaving directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-oCmUUM'
+        gmake: *** [Makefile:127: cmTC_42c14/fast] Error 2
+        
+      exitCode: 2
+...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:284 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:614 (_HDF5_test_regular_compiler_CXX)"
+      - "CMakeLists.txt:39 (find_package)"
+    directories:
+      source: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-nYWMg6"
+      binary: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-nYWMg6"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80;86"
+      CMAKE_CXX_FLAGS: " -Ofast -mssse3 -ffast-math"
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "HDF5_CXX_COMPILER_NO_INTERROGATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-nYWMg6'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_7320f/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_7320f.dir/build.make CMakeFiles/cmTC_7320f.dir/build
+        gmake[1]: Entering directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-nYWMg6'
+        Building CXX object CMakeFiles/cmTC_7320f.dir/cmake_hdf5_test.cxx.o
+        /usr/bin/c++   -Ofast -mssse3 -ffast-math  -std=c++17 -o CMakeFiles/cmTC_7320f.dir/cmake_hdf5_test.cxx.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx
+        /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx:1:10: fatal error: H5Cpp.h: No such file or directory
+            1 | #include <H5Cpp.h>
+              |          ^~~~~~~~~
+        compilation terminated.
+        gmake[1]: *** [CMakeFiles/cmTC_7320f.dir/build.make:78: CMakeFiles/cmTC_7320f.dir/cmake_hdf5_test.cxx.o] Error 1
+        gmake[1]: Leaving directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-nYWMg6'
+        gmake: *** [Makefile:127: cmTC_7320f/fast] Error 2
+        
+      exitCode: 2
+...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:284 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:614 (_HDF5_test_regular_compiler_CXX)"
+      - "CMakeLists.txt:39 (find_package)"
+    directories:
+      source: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-FYK4xU"
+      binary: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-FYK4xU"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80;86"
+      CMAKE_CXX_FLAGS: " -Ofast -mssse3 -ffast-math"
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "HDF5_CXX_COMPILER_NO_INTERROGATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-FYK4xU'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_f4b6a/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_f4b6a.dir/build.make CMakeFiles/cmTC_f4b6a.dir/build
+        gmake[1]: Entering directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-FYK4xU'
+        Building CXX object CMakeFiles/cmTC_f4b6a.dir/cmake_hdf5_test.cxx.o
+        /usr/bin/c++   -Ofast -mssse3 -ffast-math  -std=c++17 -o CMakeFiles/cmTC_f4b6a.dir/cmake_hdf5_test.cxx.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx
+        /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx:1:10: fatal error: H5Cpp.h: No such file or directory
+            1 | #include <H5Cpp.h>
+              |          ^~~~~~~~~
+        compilation terminated.
+        gmake[1]: *** [CMakeFiles/cmTC_f4b6a.dir/build.make:78: CMakeFiles/cmTC_f4b6a.dir/cmake_hdf5_test.cxx.o] Error 1
+        gmake[1]: Leaving directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-FYK4xU'
+        gmake: *** [Makefile:127: cmTC_f4b6a/fast] Error 2
+        
+      exitCode: 2
+...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:284 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:614 (_HDF5_test_regular_compiler_CXX)"
+      - "CMakeLists.txt:39 (find_package)"
+    directories:
+      source: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-QaV8HL"
+      binary: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-QaV8HL"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80;86"
+      CMAKE_CXX_FLAGS: " -Ofast -mssse3 -ffast-math"
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "HDF5_CXX_COMPILER_NO_INTERROGATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-QaV8HL'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_73e1e/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_73e1e.dir/build.make CMakeFiles/cmTC_73e1e.dir/build
+        gmake[1]: Entering directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-QaV8HL'
+        Building CXX object CMakeFiles/cmTC_73e1e.dir/cmake_hdf5_test.cxx.o
+        /usr/bin/c++   -Ofast -mssse3 -ffast-math  -std=c++17 -o CMakeFiles/cmTC_73e1e.dir/cmake_hdf5_test.cxx.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx
+        /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx:1:10: fatal error: H5Cpp.h: No such file or directory
+            1 | #include <H5Cpp.h>
+              |          ^~~~~~~~~
+        compilation terminated.
+        gmake[1]: *** [CMakeFiles/cmTC_73e1e.dir/build.make:78: CMakeFiles/cmTC_73e1e.dir/cmake_hdf5_test.cxx.o] Error 1
+        gmake[1]: Leaving directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-QaV8HL'
+        gmake: *** [Makefile:127: cmTC_73e1e/fast] Error 2
+        
+      exitCode: 2
+...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:284 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:614 (_HDF5_test_regular_compiler_CXX)"
+      - "CMakeLists.txt:39 (find_package)"
+    directories:
+      source: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-t3sAIv"
+      binary: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-t3sAIv"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80;86"
+      CMAKE_CXX_FLAGS: " -Ofast -mssse3 -ffast-math"
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "HDF5_CXX_COMPILER_NO_INTERROGATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-t3sAIv'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_dc162/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_dc162.dir/build.make CMakeFiles/cmTC_dc162.dir/build
+        gmake[1]: Entering directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-t3sAIv'
+        Building CXX object CMakeFiles/cmTC_dc162.dir/cmake_hdf5_test.cxx.o
+        /usr/bin/c++   -Ofast -mssse3 -ffast-math  -std=c++17 -o CMakeFiles/cmTC_dc162.dir/cmake_hdf5_test.cxx.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx
+        /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx:1:10: fatal error: H5Cpp.h: No such file or directory
+            1 | #include <H5Cpp.h>
+              |          ^~~~~~~~~
+        compilation terminated.
+        gmake[1]: *** [CMakeFiles/cmTC_dc162.dir/build.make:78: CMakeFiles/cmTC_dc162.dir/cmake_hdf5_test.cxx.o] Error 1
+        gmake[1]: Leaving directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-t3sAIv'
+        gmake: *** [Makefile:127: cmTC_dc162/fast] Error 2
+        
+      exitCode: 2
+...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:284 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:614 (_HDF5_test_regular_compiler_CXX)"
+      - "CMakeLists.txt:39 (find_package)"
+    directories:
+      source: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-ZJaXcB"
+      binary: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-ZJaXcB"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80;86"
+      CMAKE_CXX_FLAGS: " -Ofast -mssse3 -ffast-math"
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "HDF5_CXX_COMPILER_NO_INTERROGATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-ZJaXcB'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_d8619/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_d8619.dir/build.make CMakeFiles/cmTC_d8619.dir/build
+        gmake[1]: Entering directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-ZJaXcB'
+        Building CXX object CMakeFiles/cmTC_d8619.dir/cmake_hdf5_test.cxx.o
+        /usr/bin/c++   -Ofast -mssse3 -ffast-math  -std=c++17 -o CMakeFiles/cmTC_d8619.dir/cmake_hdf5_test.cxx.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx
+        /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx:1:10: fatal error: H5Cpp.h: No such file or directory
+            1 | #include <H5Cpp.h>
+              |          ^~~~~~~~~
+        compilation terminated.
+        gmake[1]: *** [CMakeFiles/cmTC_d8619.dir/build.make:78: CMakeFiles/cmTC_d8619.dir/cmake_hdf5_test.cxx.o] Error 1
+        gmake[1]: Leaving directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-ZJaXcB'
+        gmake: *** [Makefile:127: cmTC_d8619/fast] Error 2
+        
+      exitCode: 2
+...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:284 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:614 (_HDF5_test_regular_compiler_CXX)"
+      - "CMakeLists.txt:39 (find_package)"
+    directories:
+      source: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-aYQeVu"
+      binary: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-aYQeVu"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80;86"
+      CMAKE_CXX_FLAGS: " -Ofast -mssse3 -ffast-math"
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "HDF5_CXX_COMPILER_NO_INTERROGATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-aYQeVu'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_2fd68/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_2fd68.dir/build.make CMakeFiles/cmTC_2fd68.dir/build
+        gmake[1]: Entering directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-aYQeVu'
+        Building CXX object CMakeFiles/cmTC_2fd68.dir/cmake_hdf5_test.cxx.o
+        /usr/bin/c++   -Ofast -mssse3 -ffast-math  -std=c++17 -o CMakeFiles/cmTC_2fd68.dir/cmake_hdf5_test.cxx.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx
+        /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx:1:10: fatal error: H5Cpp.h: No such file or directory
+            1 | #include <H5Cpp.h>
+              |          ^~~~~~~~~
+        compilation terminated.
+        gmake[1]: *** [CMakeFiles/cmTC_2fd68.dir/build.make:78: CMakeFiles/cmTC_2fd68.dir/cmake_hdf5_test.cxx.o] Error 1
+        gmake[1]: Leaving directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-aYQeVu'
+        gmake: *** [Makefile:127: cmTC_2fd68/fast] Error 2
+        
+      exitCode: 2
+...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:284 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:614 (_HDF5_test_regular_compiler_CXX)"
+      - "CMakeLists.txt:39 (find_package)"
+    directories:
+      source: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-dg7zqC"
+      binary: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-dg7zqC"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80;86"
+      CMAKE_CXX_FLAGS: " -Ofast -mssse3 -ffast-math"
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "HDF5_CXX_COMPILER_NO_INTERROGATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-dg7zqC'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_52a37/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_52a37.dir/build.make CMakeFiles/cmTC_52a37.dir/build
+        gmake[1]: Entering directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-dg7zqC'
+        Building CXX object CMakeFiles/cmTC_52a37.dir/cmake_hdf5_test.cxx.o
+        /usr/bin/c++   -Ofast -mssse3 -ffast-math  -std=c++17 -o CMakeFiles/cmTC_52a37.dir/cmake_hdf5_test.cxx.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx
+        /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx:1:10: fatal error: H5Cpp.h: No such file or directory
+            1 | #include <H5Cpp.h>
+              |          ^~~~~~~~~
+        compilation terminated.
+        gmake[1]: *** [CMakeFiles/cmTC_52a37.dir/build.make:78: CMakeFiles/cmTC_52a37.dir/cmake_hdf5_test.cxx.o] Error 1
+        gmake[1]: Leaving directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-dg7zqC'
+        gmake: *** [Makefile:127: cmTC_52a37/fast] Error 2
+        
+      exitCode: 2
+...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:284 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:614 (_HDF5_test_regular_compiler_CXX)"
+      - "CMakeLists.txt:39 (find_package)"
+    directories:
+      source: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-6yN77i"
+      binary: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-6yN77i"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80;86"
+      CMAKE_CXX_FLAGS: " -Ofast -mssse3 -ffast-math"
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "HDF5_CXX_COMPILER_NO_INTERROGATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-6yN77i'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_2ec23/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_2ec23.dir/build.make CMakeFiles/cmTC_2ec23.dir/build
+        gmake[1]: Entering directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-6yN77i'
+        Building CXX object CMakeFiles/cmTC_2ec23.dir/cmake_hdf5_test.cxx.o
+        /usr/bin/c++   -Ofast -mssse3 -ffast-math  -std=c++17 -o CMakeFiles/cmTC_2ec23.dir/cmake_hdf5_test.cxx.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx
+        /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx:1:10: fatal error: H5Cpp.h: No such file or directory
+            1 | #include <H5Cpp.h>
+              |          ^~~~~~~~~
+        compilation terminated.
+        gmake[1]: *** [CMakeFiles/cmTC_2ec23.dir/build.make:78: CMakeFiles/cmTC_2ec23.dir/cmake_hdf5_test.cxx.o] Error 1
+        gmake[1]: Leaving directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-6yN77i'
+        gmake: *** [Makefile:127: cmTC_2ec23/fast] Error 2
+        
+      exitCode: 2
+...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:284 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:614 (_HDF5_test_regular_compiler_CXX)"
+      - "CMakeLists.txt:39 (find_package)"
+    directories:
+      source: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-uBzh54"
+      binary: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-uBzh54"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80;86"
+      CMAKE_CXX_FLAGS: " -Ofast -mssse3 -ffast-math"
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "HDF5_CXX_COMPILER_NO_INTERROGATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-uBzh54'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_17df1/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_17df1.dir/build.make CMakeFiles/cmTC_17df1.dir/build
+        gmake[1]: Entering directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-uBzh54'
+        Building CXX object CMakeFiles/cmTC_17df1.dir/cmake_hdf5_test.cxx.o
+        /usr/bin/c++   -Ofast -mssse3 -ffast-math  -std=c++17 -o CMakeFiles/cmTC_17df1.dir/cmake_hdf5_test.cxx.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx
+        /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx:1:10: fatal error: H5Cpp.h: No such file or directory
+            1 | #include <H5Cpp.h>
+              |          ^~~~~~~~~
+        compilation terminated.
+        gmake[1]: *** [CMakeFiles/cmTC_17df1.dir/build.make:78: CMakeFiles/cmTC_17df1.dir/cmake_hdf5_test.cxx.o] Error 1
+        gmake[1]: Leaving directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-uBzh54'
+        gmake: *** [Makefile:127: cmTC_17df1/fast] Error 2
+        
+      exitCode: 2
+...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:284 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:614 (_HDF5_test_regular_compiler_CXX)"
+      - "CMakeLists.txt:39 (find_package)"
+    directories:
+      source: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-Kx8bpe"
+      binary: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-Kx8bpe"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80;86"
+      CMAKE_CXX_FLAGS: " -Ofast -mssse3 -ffast-math"
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "HDF5_CXX_COMPILER_NO_INTERROGATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-Kx8bpe'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_7adb2/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_7adb2.dir/build.make CMakeFiles/cmTC_7adb2.dir/build
+        gmake[1]: Entering directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-Kx8bpe'
+        Building CXX object CMakeFiles/cmTC_7adb2.dir/cmake_hdf5_test.cxx.o
+        /usr/bin/c++   -Ofast -mssse3 -ffast-math  -std=c++17 -o CMakeFiles/cmTC_7adb2.dir/cmake_hdf5_test.cxx.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx
+        /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx:1:10: fatal error: H5Cpp.h: No such file or directory
+            1 | #include <H5Cpp.h>
+              |          ^~~~~~~~~
+        compilation terminated.
+        gmake[1]: *** [CMakeFiles/cmTC_7adb2.dir/build.make:78: CMakeFiles/cmTC_7adb2.dir/cmake_hdf5_test.cxx.o] Error 1
+        gmake[1]: Leaving directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-Kx8bpe'
+        gmake: *** [Makefile:127: cmTC_7adb2/fast] Error 2
+        
+      exitCode: 2
+...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:284 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:614 (_HDF5_test_regular_compiler_CXX)"
+      - "CMakeLists.txt:39 (find_package)"
+    directories:
+      source: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-xWaz0X"
+      binary: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-xWaz0X"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80;86"
+      CMAKE_CXX_FLAGS: " -Ofast -mssse3 -ffast-math"
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "HDF5_CXX_COMPILER_NO_INTERROGATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-xWaz0X'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_93ec9/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_93ec9.dir/build.make CMakeFiles/cmTC_93ec9.dir/build
+        gmake[1]: Entering directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-xWaz0X'
+        Building CXX object CMakeFiles/cmTC_93ec9.dir/cmake_hdf5_test.cxx.o
+        /usr/bin/c++   -Ofast -mssse3 -ffast-math  -std=c++17 -o CMakeFiles/cmTC_93ec9.dir/cmake_hdf5_test.cxx.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx
+        /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx:1:10: fatal error: H5Cpp.h: No such file or directory
+            1 | #include <H5Cpp.h>
+              |          ^~~~~~~~~
+        compilation terminated.
+        gmake[1]: *** [CMakeFiles/cmTC_93ec9.dir/build.make:78: CMakeFiles/cmTC_93ec9.dir/cmake_hdf5_test.cxx.o] Error 1
+        gmake[1]: Leaving directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-xWaz0X'
+        gmake: *** [Makefile:127: cmTC_93ec9/fast] Error 2
+        
+      exitCode: 2
+...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:284 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:614 (_HDF5_test_regular_compiler_CXX)"
+      - "CMakeLists.txt:39 (find_package)"
+    directories:
+      source: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-IcR0VN"
+      binary: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-IcR0VN"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80;86"
+      CMAKE_CXX_FLAGS: " -Ofast -mssse3 -ffast-math"
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "HDF5_CXX_COMPILER_NO_INTERROGATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-IcR0VN'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_a732b/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_a732b.dir/build.make CMakeFiles/cmTC_a732b.dir/build
+        gmake[1]: Entering directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-IcR0VN'
+        Building CXX object CMakeFiles/cmTC_a732b.dir/cmake_hdf5_test.cxx.o
+        /usr/bin/c++   -Ofast -mssse3 -ffast-math  -std=c++17 -o CMakeFiles/cmTC_a732b.dir/cmake_hdf5_test.cxx.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx
+        /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx:1:10: fatal error: H5Cpp.h: No such file or directory
+            1 | #include <H5Cpp.h>
+              |          ^~~~~~~~~
+        compilation terminated.
+        gmake[1]: *** [CMakeFiles/cmTC_a732b.dir/build.make:78: CMakeFiles/cmTC_a732b.dir/cmake_hdf5_test.cxx.o] Error 1
+        gmake[1]: Leaving directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-IcR0VN'
+        gmake: *** [Makefile:127: cmTC_a732b/fast] Error 2
+        
+      exitCode: 2
+...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:284 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:614 (_HDF5_test_regular_compiler_CXX)"
+      - "CMakeLists.txt:39 (find_package)"
+    directories:
+      source: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-HDWwAy"
+      binary: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-HDWwAy"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80;86"
+      CMAKE_CXX_FLAGS: " -Ofast -mssse3 -ffast-math"
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "HDF5_CXX_COMPILER_NO_INTERROGATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-HDWwAy'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_43d72/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_43d72.dir/build.make CMakeFiles/cmTC_43d72.dir/build
+        gmake[1]: Entering directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-HDWwAy'
+        Building CXX object CMakeFiles/cmTC_43d72.dir/cmake_hdf5_test.cxx.o
+        /usr/bin/c++   -Ofast -mssse3 -ffast-math  -std=c++17 -o CMakeFiles/cmTC_43d72.dir/cmake_hdf5_test.cxx.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx
+        /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx:1:10: fatal error: H5Cpp.h: No such file or directory
+            1 | #include <H5Cpp.h>
+              |          ^~~~~~~~~
+        compilation terminated.
+        gmake[1]: *** [CMakeFiles/cmTC_43d72.dir/build.make:78: CMakeFiles/cmTC_43d72.dir/cmake_hdf5_test.cxx.o] Error 1
+        gmake[1]: Leaving directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-HDWwAy'
+        gmake: *** [Makefile:127: cmTC_43d72/fast] Error 2
+        
+      exitCode: 2
+...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:284 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindHDF5.cmake:614 (_HDF5_test_regular_compiler_CXX)"
+      - "CMakeLists.txt:39 (find_package)"
+    directories:
+      source: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-2g7MDx"
+      binary: "/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-2g7MDx"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80;86"
+      CMAKE_CXX_FLAGS: " -Ofast -mssse3 -ffast-math"
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "HDF5_CXX_COMPILER_NO_INTERROGATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-2g7MDx'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_cef1e/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_cef1e.dir/build.make CMakeFiles/cmTC_cef1e.dir/build
+        gmake[1]: Entering directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-2g7MDx'
+        Building CXX object CMakeFiles/cmTC_cef1e.dir/cmake_hdf5_test.cxx.o
+        /usr/bin/c++   -Ofast -mssse3 -ffast-math  -std=c++17 -o CMakeFiles/cmTC_cef1e.dir/cmake_hdf5_test.cxx.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx
+        /home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/hdf5/cmake_hdf5_test.cxx:1:10: fatal error: H5Cpp.h: No such file or directory
+            1 | #include <H5Cpp.h>
+              |          ^~~~~~~~~
+        compilation terminated.
+        gmake[1]: *** [CMakeFiles/cmTC_cef1e.dir/build.make:78: CMakeFiles/cmTC_cef1e.dir/cmake_hdf5_test.cxx.o] Error 1
+        gmake[1]: Leaving directory '/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/CMakeScratch/TryCompile-2g7MDx'
+        gmake: *** [Makefile:127: cmTC_cef1e/fast] Error 2
+        
+      exitCode: 2
+...

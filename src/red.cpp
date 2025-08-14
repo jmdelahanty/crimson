@@ -371,6 +371,61 @@ int main(int, char **) {
         }
         ImGui::End();
 
+        if (video_loaded) {
+            ImGui::Begin("Frame Debug");
+            ImGui::Text("Inspecting Frame: %d", current_frame_num);
+            ImGui::Separator();
+
+            // 1. Check for H5 Bounding Boxes
+            if (h5_loaded && h5_data.has_tracking_data) {
+                auto boxes_for_frame = H5SessionLoader::getBoundingBoxesForFrame(h5_data, current_frame_num);
+                if (!boxes_for_frame.empty()) {
+                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[H5] Bounding Boxes:  Found %zu", boxes_for_frame.size());
+                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "[H5] Bounding Boxes:  None");
+                }
+            }
+
+            // 2. Check for H5 Chaser/Target States
+            if (h5_loaded) {
+                auto frame_meta = H5SessionLoader::getFrameMetadataByCameraID(h5_data, current_frame_num);
+                if (frame_meta) {
+                    auto chaser_states = H5SessionLoader::getChaserStatesForFrame(h5_data, frame_meta->stimulus_frame_num);
+                    if (!chaser_states.empty()) {
+                        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[H5] Chaser/Target:    Found %zu states", chaser_states.size());
+                    } else {
+                        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "[H5] Chaser/Target:    None for stimulus frame %llu", frame_meta->stimulus_frame_num);
+                    }
+                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "[H5] Chaser/Target:    No frame metadata found for camera frame");
+                }
+            }
+
+            // 3. Check for Labeled Keypoints
+            if (plot_keypoints_flag) {
+                if (keypoints_map.count(current_frame_num)) {
+                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[Manual] Keypoints:   Found");
+                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "[Manual] Keypoints:   None");
+                }
+            }
+
+            // 4. Check for YOLO Detections (for each camera view)
+            if (yolo_detection) {
+                ImGui::Separator();
+                ImGui::Text("YOLO Detections:");
+                for(int i = 0; i < scene->num_cams; ++i) {
+                    if (!yolo_boxes.at(i).empty()) {
+                        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "  - %s: Found %zu", camera_names[i].c_str(), yolo_boxes.at(i).size());
+                    } else {
+                        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "  - %s: None", camera_names[i].c_str());
+                    }
+                }
+            }
+
+            ImGui::End();
+        }
+
         // file explorer display
         if (ImGuiFileDialog::Instance()->Display("ChooseMedia")) {
             if (ImGuiFileDialog::Instance()->IsOk()) { // action if OK
@@ -508,6 +563,46 @@ int main(int, char **) {
                 if (video_loaded) {
                     camera_params.resize(scene->num_cams); // Ensure vector is sized
                     if (h5_loaded) {
+                        // Parse the arena config JSON to calculate the coordinate system offset
+                        if (!h5_data.arena_config_json.empty()) {
+                            try {
+                                json config = json::parse(h5_data.arena_config_json);
+
+                                // Extract the center of the stimulus (swimmable) area
+                                float swim_x = config.value("swimmable_area_center_x_px", 0.0f);
+                                float swim_y = config.value("swimmable_area_center_y_px", 0.0f);
+
+                                std::cout << "[Offset Calc] Swimmable area center: (" << swim_x << ", " << swim_y << ")" << std::endl;
+
+                                // Extract the calibration (sub_arena) dimensions and position
+                                float sub_x = config.value("sub_arena_x_px", 0.0f);
+                                float sub_y = config.value("sub_arena_y_px", 0.0f);
+                                float sub_w = config.value("sub_arena_width_px", 0.0f);
+                                float sub_h = config.value("sub_arena_height_px", 0.0f);
+                                
+                                // Correctly calculate the CENTER of the calibration area
+                                float calib_center_x = sub_x + (sub_w / 2.0f);
+                                float calib_center_y = sub_y + (sub_h / 2.0f);
+                                
+                                // **FIXED CALCULATION:**
+                                // Calculate the final offset by finding the difference between the two centers
+                                // and then adjusting by the swimmable area's center again.
+                                float offsetX = (calib_center_x - swim_x) - swim_x;
+                                float offsetY = (calib_center_y - swim_y) - swim_y;
+
+                                std::cout << "[Offset Calc] Calibration center: (" << calib_center_x << ", " << calib_center_y << ")" << std::endl;
+
+                                // Store the corrected offset in each camera's parameters
+                                for (size_t i = 0; i < camera_params.size(); ++i) {
+                                    camera_params[i].stimulus_offset_x = offsetX;
+                                    camera_params[i].stimulus_offset_y = offsetY;
+                                }
+                                std::cout << "[Offset Calc] Corrected stimulus offset: (" << offsetX << ", " << offsetY << ")" << std::endl;
+
+                            } catch (const json::exception& e) {
+                                std::cerr << "Warning: Could not parse arena_config.json to calculate offset: " << e.what() << std::endl;
+                            }
+                        }
                         std::cout << "\n=== Loading Camera Calibrations from H5 ===" << std::endl;
                         for (size_t i = 0; i < camera_names.size(); ++i) {
                             std::string h5_camera_id = camera_names[i];
