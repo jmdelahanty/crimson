@@ -433,6 +433,27 @@ void save_keypoints_depreciated(std::map<u32, KeyPoints *> keypoints_map,
     }
 }
 
+static void gui_draw_zarr_bounding_boxes(const std::vector<LoggedBoundingBox>& boxes, int image_width, int image_height) {
+    (void)image_width;
+
+    for (const auto& box : boxes) {
+        double x_coords[5] = {box.x_min, box.x_min + box.width, box.x_min + box.width, box.x_min, box.x_min};
+        double y_coords[5] = {
+            (double)image_height - box.y_min,
+            (double)image_height - box.y_min,
+            (double)image_height - (box.y_min + box.height),
+            (double)image_height - (box.y_min + box.height),
+            (double)image_height - box.y_min
+        };
+
+        // BLUE color instead of green
+        ImPlot::SetNextLineStyle(ImVec4(0.2f, 0.2f, 1.0f, 1.0f), 2.0f);  // Blue (R,G,B,A)
+
+        std::string label = "Zarr ID: " + std::to_string(box.class_id);
+        ImPlot::PlotLine(label.c_str(), x_coords, y_coords, 5);
+    }
+}
+
 void save_keypoints(std::map<u32, KeyPoints *> keypoints_map,
                     SkeletonContext *skeleton, std::string root_dir,
                     int num_cameras, std::vector<std::string> &camera_names,

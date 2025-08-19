@@ -215,7 +215,10 @@ target_link_libraries(redgui PRIVATE
     glfw
 
     # TensorStore for Zarr support
+    tensorstore::tensorstore
     tensorstore::driver_zarr
+    tensorstore::index_space
+    tensorstore::kvstore_file
 
     # FFmpeg Libraries
     ${FFMPEG_LIBRARIES}

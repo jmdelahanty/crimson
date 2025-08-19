@@ -1101,8 +1101,7 @@ int main(int, char **) {
                         if (zarr_loaded) {
                             auto zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num);
                             if (!zarr_boxes.empty()) {
-                                // Use the same drawing function as H5 boxes
-                                gui_draw_bounding_boxes(zarr_boxes, scene->image_width[j], scene->image_height[j]);
+                                gui_draw_zarr_bounding_boxes(zarr_boxes, scene->image_width[j], scene->image_height[j]);
                             }
                         }
                         
