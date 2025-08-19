@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <thread>
+#include "zarr_loader.h"
 
 #if defined(_MSC_VER) && (_MSC_VER >= 1900) &&                                 \
     !defined(IMGUI_DISABLE_WIN32_FUNCTIONS)
@@ -110,6 +111,10 @@ int main(int, char **) {
 
     H5SessionData h5_data;
     bool h5_loaded = false;
+
+    // Zarr loading
+    ZarrDetectionLoader zarr_loader;
+    bool zarr_loaded = false;
 
     DecoderContext *dc_context =
         (DecoderContext *)malloc(sizeof(DecoderContext));
@@ -423,6 +428,34 @@ int main(int, char **) {
                 }
             }
 
+            if (zarr_loaded) {
+                int32_t n_dets = zarr_loader.getDetectionsForFrame(current_frame_num);
+                if (n_dets > 0) {
+                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), 
+                                    "[Zarr] Detections:    Found %d", n_dets);
+                    
+                    // Show additional info
+                    if (zarr_loader.hasScores()) {
+                        auto detections = zarr_loader.getRawDetections(current_frame_num);
+                        if (!detections.scores.empty()) {
+                            float max_score = *std::max_element(detections.scores.begin(), 
+                                                            detections.scores.end());
+                            ImGui::Text("  Max confidence: %.2f", max_score);
+                        }
+                    }
+                    
+                    if (zarr_loader.hasClassIDs()) {
+                        ImGui::Text("  Has class IDs: Yes");
+                    }
+                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 
+                                    "[Zarr] Detections:    None");
+                }
+            } else {
+                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), 
+                                "[Zarr] Detections:    Not loaded");
+            }
+
             ImGui::End();
         }
 
@@ -457,6 +490,24 @@ int main(int, char **) {
                     // H5 file not found or failed to load - this is optional, not an error
                     std::cout << "No H5 session file found in directory (optional)" << std::endl;
                     h5_loaded = false;
+                }
+
+                if (loadZarrDetectionFromDirectory(root_dir, zarr_loader, error_message)) {
+                    zarr_loaded = true;
+                    std::cout << "Successfully loaded Zarr detection file" << std::endl;
+                    std::cout << "  Total frames: " << zarr_loader.getTotalFrames() << std::endl;
+                    std::cout << "  FPS: " << zarr_loader.getFPS() << std::endl;
+                    
+                    // Check if frame counts match between video and detections
+                    if (video_loaded && zarr_loader.getTotalFrames() > 0) {
+                        if (zarr_loader.getTotalFrames() != dc_context->total_num_frame) {
+                            std::cout << "  WARNING: Zarr frames (" << zarr_loader.getTotalFrames()
+                                      << ") != Video frames (" << dc_context->total_num_frame << ")" << std::endl;
+                        }
+                    }
+                } else {
+                    std::cout << "No Zarr detection file found (optional): " << error_message << std::endl;
+                    zarr_loaded = false;
                 }
 
                 // check if it is mp4, if it is mp4 files
@@ -1047,6 +1098,14 @@ int main(int, char **) {
                                 }
                             }
                         }
+                        if (zarr_loaded) {
+                            auto zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num);
+                            if (!zarr_boxes.empty()) {
+                                // Use the same drawing function as H5 boxes
+                                gui_draw_bounding_boxes(zarr_boxes, scene->image_width[j], scene->image_height[j]);
+                            }
+                        }
+                        
                         ImPlot::EndPlot();
                     }
 

@@ -3,15 +3,15 @@
 
 # compile CUDA with /usr/local/cuda-12.4/bin/nvcc
 # compile CXX with /usr/bin/c++
-CUDA_DEFINES = -DGLEW_STATIC -DUSE_NVML -DUSE_TENSORRT
+CUDA_DEFINES = -DCHROMIUM_ZLIB_NO_CHROMECONF -DGLEW_STATIC -DLZ4LIB_VISIBILITY="" -DUSE_NVML -DUSE_TENSORRT -DZSTDLIB_HIDDEN="" -DZSTDLIB_VISIBLE=""
 
 CUDA_INCLUDES = --options-file CMakeFiles/redgui.dir/includes_CUDA.rsp
 
 CUDA_FLAGS = -std=c++17 "--generate-code=arch=compute_80,code=[compute_80,sm_80]" "--generate-code=arch=compute_86,code=[compute_86,sm_86]"
 
-CXX_DEFINES = -DGLEW_STATIC -DUSE_NVML -DUSE_TENSORRT
+CXX_DEFINES = -DCHROMIUM_ZLIB_NO_CHROMECONF -DGLEW_STATIC -DLZ4LIB_VISIBILITY="" -DUSE_NVML -DUSE_TENSORRT -DZSTDLIB_HIDDEN="" -DZSTDLIB_VISIBLE=""
 
-CXX_INCLUDES = -I/home/delahantyj@hhmi.org/gitrepos/crimson/src -I/home/delahantyj@hhmi.org/gitrepos/crimson/third_party/nvcodec -I/home/delahantyj@hhmi.org/gitrepos/crimson/third_party/IconFontCppHeaders -I/usr/local/cuda-12.4/include -I/usr/local/cuda/include -I/home/delahantyj@hhmi.org/gitrepos/crimson/third_party/imgui -I/home/delahantyj@hhmi.org/gitrepos/crimson/third_party/imgui/backends -I/home/delahantyj@hhmi.org/gitrepos/crimson/third_party/implot -I/home/delahantyj@hhmi.org/gitrepos/crimson/third_party/ImGuiFileDialog -I/opt/orange/lib/ffmpeg-nvidia/include -I/usr/include/hdf5/serial -I/usr/local/TensorRT-10.0.1.6/include -isystem /opt/crimson/lib/opencv/include/opencv4
+CXX_INCLUDES = -I/home/delahantyj@hhmi.org/gitrepos/crimson/src -I/home/delahantyj@hhmi.org/gitrepos/crimson/third_party/nvcodec -I/home/delahantyj@hhmi.org/gitrepos/crimson/third_party/IconFontCppHeaders -I/usr/local/cuda-12.4/include -I/usr/local/cuda/include -I/home/delahantyj@hhmi.org/gitrepos/crimson/third_party/imgui -I/home/delahantyj@hhmi.org/gitrepos/crimson/third_party/imgui/backends -I/home/delahantyj@hhmi.org/gitrepos/crimson/third_party/implot -I/home/delahantyj@hhmi.org/gitrepos/crimson/third_party/ImGuiFileDialog -I/opt/orange/lib/ffmpeg-nvidia/include -I/usr/include/hdf5/serial -I/usr/local/TensorRT-10.0.1.6/include -I/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/blosc-src -I/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/blosc-src/blosc -I/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/lz4-src/lib -I/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/lz4-src -I/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/snappy-build -I/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/snappy-src -I/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/zlib-src -I/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/zlib-src/contrib/optimizations -I/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/zstd-src -I/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/zstd-src/lib -I/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/tensorstore-src -I/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/absl-src -I/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/riegeli-src -I/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/nlohmann_json-src -I/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/nlohmann_json-src/include -I/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/half-src/include -I/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/bzip2-src -I/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/re2-src -isystem /opt/crimson/lib/opencv/include/opencv4
 
-CXX_FLAGS =  -Ofast -mssse3 -ffast-math -std=c++17
+CXX_FLAGS =  -Ofast -mssse3 -ffast-math -std=c++17 -Wno-deprecated-declarations -Wno-sign-compare -Wno-unused-but-set-parameter -Wno-maybe-uninitialized -Wno-sequence-point -Wno-unknown-warning-option -fsized-deallocation
 

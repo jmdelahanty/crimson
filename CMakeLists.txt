@@ -120,6 +120,34 @@ if(EXISTS ${IMGUI_FILE_DIALOG_DIR})
     )
 endif()
 
+# ============================================================================
+# TensorStore for Zarr support
+# ============================================================================
+message(STATUS "Configuring TensorStore for Zarr support...")
+
+include(FetchContent)
+
+# Set TensorStore options before declaring
+set(TENSORSTORE_BUILD_TESTS OFF CACHE BOOL "Build TensorStore tests" FORCE)
+set(TENSORSTORE_BUILD_EXAMPLES OFF CACHE BOOL "Build TensorStore examples" FORCE)
+set(TENSORSTORE_BUILD_PYTHON_BINDINGS OFF CACHE BOOL "Build Python bindings" FORCE)
+set(TENSORSTORE_BUILD_BENCHMARKS OFF CACHE BOOL "Build benchmarks" FORCE)
+set(TENSORSTORE_BUILD_DOC OFF CACHE BOOL "Build documentation" FORCE)
+
+# Use a specific release version for stability
+FetchContent_Declare(
+    tensorstore
+    GIT_REPOSITORY https://github.com/google/tensorstore.git
+    GIT_TAG        v0.1.64  # Latest stable release as of Jan 2025
+    GIT_SHALLOW    TRUE      # Only fetch the specific tag, not full history
+    GIT_PROGRESS   TRUE      # Show download progress
+)
+
+# This will download and configure TensorStore
+FetchContent_MakeAvailable(tensorstore)
+
+message(STATUS "TensorStore configured successfully")
+
 # --- Source Files ---
 # CUDA sources
 set(CUDA_SOURCES "")
@@ -140,7 +168,7 @@ endforeach()
 file(GLOB CPP_SOURCES "src/*.cpp")
 
 # --- Create the Executable ---
-add_executable(redgui 
+add_executable(redgui
     ${CPP_SOURCES}
     ${CUDA_SOURCES}
     ${IMGUI_SOURCES}
@@ -179,23 +207,26 @@ target_link_libraries(redgui PRIVATE
     ${NPPICC_LIBRARY}
     ${NPPIDEI_LIBRARY}
     ${NPPIAL_LIBRARY}
-    
+
     # OpenGL Libraries
     OpenGL::GL
     OpenGL::GLU
     GLEW::GLEW
     glfw
-    
+
+    # TensorStore for Zarr support
+    tensorstore::driver_zarr
+
     # FFmpeg Libraries
     ${FFMPEG_LIBRARIES}
-    
+
     # OpenCV Libraries
     ${OpenCV_LIBS}
-    
+
     # HDF5 Libraries
     ${HDF5_CXX_LIBRARIES}
     ${HDF5_HL_LIBRARIES}
-    
+
     # System Libraries
     Threads::Threads
 )
@@ -219,7 +250,7 @@ target_compile_definitions(redgui PRIVATE
 
 # --- Post-Build Commands ---
 # Copy font files if they exist
-set(FONT_FILES 
+set(FONT_FILES
     "src/Roboto-Regular.ttf"
     "src/fa-solid-900.ttf"
 )

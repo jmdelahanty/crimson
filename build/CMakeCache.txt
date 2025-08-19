@@ -14,6 +14,27 @@
 # EXTERNAL cache entries
 ########################
 
+//Enable install rule
+ABSL_ENABLE_INSTALL:BOOL=OFF
+
+//If ON, Abseil will use find_package(GTest) rather than assuming
+// that GoogleTest is already provided by the including project.
+ABSL_FIND_GOOGLETEST:BOOL=ON
+
+//If set, download GoogleTest from this URL
+ABSL_GOOGLETEST_DOWNLOAD_URL:STRING=
+
+//If ABSL_USE_GOOGLETEST_HEAD is OFF and ABSL_GOOGLETEST_URL is
+// not set, specifies the directory of a local GoogleTest checkout.
+ABSL_LOCAL_GOOGLETEST_DIR:PATH=/usr/src/googletest
+
+//If ON, abseil will download HEAD from GoogleTest at config time.
+ABSL_USE_GOOGLETEST_HEAD:BOOL=OFF
+
+//Silence warnings in Abseil headers by marking them as SYSTEM
+// includes
+ABSL_USE_SYSTEM_INCLUDES:BOOL=OFF
+
 //Path to a library.
 AVCODEC_LIBRARY:FILEPATH=/opt/orange/lib/ffmpeg-nvidia/lib/libavcodec.so
 
@@ -23,14 +44,118 @@ AVFORMAT_INCLUDE_DIR:PATH=/opt/orange/lib/ffmpeg-nvidia/include
 //Path to a library.
 AVFORMAT_LIBRARY:FILEPATH=/opt/orange/lib/ffmpeg-nvidia/lib/libavformat.so
 
+//Value Computed by CMake
+AVIF_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/avif-build
+
+//The directory containing a CMake configuration file for AVIF.
+AVIF_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+AVIF_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+AVIF_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/avif-src
+
 //Path to a library.
 AVUTIL_LIBRARY:FILEPATH=/opt/orange/lib/ffmpeg-nvidia/lib/libavutil.so
+
+//Value Computed by CMake
+BLAKE3_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/blake3-build
+
+//The directory containing a CMake configuration file for BLAKE3.
+BLAKE3_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+BLAKE3_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+BLAKE3_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/blake3-src
+
+//Value Computed by CMake
+BZip2_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/bzip2-build
+
+//The directory containing a CMake configuration file for BZip2.
+BZip2_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+BZip2_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+BZip2_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/bzip2-src
+
+//Value Computed by CMake
+Blosc_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/blosc-build
+
+//The directory containing a CMake configuration file for Blosc.
+Blosc_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+Blosc_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+Blosc_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/blosc-src
+
+//Value Computed by CMake
+Brotli_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/brotli-build
+
+//The directory containing a CMake configuration file for Brotli.
+Brotli_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+Brotli_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+Brotli_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/brotli-src
 
 //Path to a program.
 CMAKE_ADDR2LINE:FILEPATH=/usr/bin/addr2line
 
 //Path to a program.
 CMAKE_AR:FILEPATH=/usr/bin/ar
+
+//ASM compiler
+CMAKE_ASM_COMPILER:FILEPATH=/usr/bin/cc
+
+//A wrapper around 'ar' adding the appropriate '--plugin' option
+// for the GCC compiler
+CMAKE_ASM_COMPILER_AR:FILEPATH=/usr/bin/gcc-ar
+
+//A wrapper around 'ranlib' adding the appropriate '--plugin' option
+// for the GCC compiler
+CMAKE_ASM_COMPILER_RANLIB:FILEPATH=/usr/bin/gcc-ranlib
+
+//Flags used by the ASM compiler during all build types.
+CMAKE_ASM_FLAGS:STRING=
+
+//Flags used by the ASM compiler during DEBUG builds.
+CMAKE_ASM_FLAGS_DEBUG:STRING=-g
+
+//Flags used by the ASM compiler during MINSIZEREL builds.
+CMAKE_ASM_FLAGS_MINSIZEREL:STRING=-Os -DNDEBUG
+
+//Flags used by the ASM compiler during RELEASE builds.
+CMAKE_ASM_FLAGS_RELEASE:STRING=-O3 -DNDEBUG
+
+//Flags used by the ASM compiler during RELWITHDEBINFO builds.
+CMAKE_ASM_FLAGS_RELWITHDEBINFO:STRING=-O2 -g -DNDEBUG
+
+//NASM compiler
+CMAKE_ASM_NASM_COMPILER:FILEPATH=/usr/bin/yasm
+
+//Flags used by the ASM_NASM compiler during all build types.
+CMAKE_ASM_NASM_FLAGS:STRING=
+
+//Flags used by the ASM_NASM compiler during DEBUG builds.
+CMAKE_ASM_NASM_FLAGS_DEBUG:STRING=
+
+//Flags used by the ASM_NASM compiler during MINSIZEREL builds.
+CMAKE_ASM_NASM_FLAGS_MINSIZEREL:STRING=
+
+//Flags used by the ASM_NASM compiler during RELEASE builds.
+CMAKE_ASM_NASM_FLAGS_RELEASE:STRING=
+
+//Flags used by the ASM_NASM compiler during RELWITHDEBINFO builds.
+CMAKE_ASM_NASM_FLAGS_RELWITHDEBINFO:STRING=
 
 //Choose the type of build, options are: None Debug Release RelWithDebInfo
 // MinSizeRel ...
@@ -86,6 +211,32 @@ CMAKE_CXX_FLAGS_RELEASE:STRING=-O3 -DNDEBUG
 //Flags used by the CXX compiler during RELWITHDEBINFO builds.
 CMAKE_CXX_FLAGS_RELWITHDEBINFO:STRING=-O2 -g -DNDEBUG
 
+//C compiler
+CMAKE_C_COMPILER:FILEPATH=/usr/bin/cc
+
+//A wrapper around 'ar' adding the appropriate '--plugin' option
+// for the GCC compiler
+CMAKE_C_COMPILER_AR:FILEPATH=/usr/bin/gcc-ar-13
+
+//A wrapper around 'ranlib' adding the appropriate '--plugin' option
+// for the GCC compiler
+CMAKE_C_COMPILER_RANLIB:FILEPATH=/usr/bin/gcc-ranlib-13
+
+//Flags used by the C compiler during all build types.
+CMAKE_C_FLAGS:STRING=
+
+//Flags used by the C compiler during DEBUG builds.
+CMAKE_C_FLAGS_DEBUG:STRING=-g
+
+//Flags used by the C compiler during MINSIZEREL builds.
+CMAKE_C_FLAGS_MINSIZEREL:STRING=-Os -DNDEBUG
+
+//Flags used by the C compiler during RELEASE builds.
+CMAKE_C_FLAGS_RELEASE:STRING=-O3 -DNDEBUG
+
+//Flags used by the C compiler during RELWITHDEBINFO builds.
+CMAKE_C_FLAGS_RELWITHDEBINFO:STRING=-O2 -g -DNDEBUG
+
 //Path to a program.
 CMAKE_DLLTOOL:FILEPATH=CMAKE_DLLTOOL-NOTFOUND
 
@@ -110,8 +261,56 @@ CMAKE_EXPORT_COMPILE_COMMANDS:BOOL=
 //Value Computed by CMake.
 CMAKE_FIND_PACKAGE_REDIRECTS_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
 
+//User executables (bin)
+CMAKE_INSTALL_BINDIR:PATH=bin
+
+//Read-only architecture-independent data (DATAROOTDIR)
+CMAKE_INSTALL_DATADIR:PATH=
+
+//Read-only architecture-independent data root (share)
+CMAKE_INSTALL_DATAROOTDIR:PATH=share
+
+//Documentation root (DATAROOTDIR/doc/PROJECT_NAME)
+CMAKE_INSTALL_DOCDIR:PATH=
+
+//C header files (include)
+CMAKE_INSTALL_INCLUDEDIR:PATH=include
+
+//Info documentation (DATAROOTDIR/info)
+CMAKE_INSTALL_INFODIR:PATH=
+
+//Object code libraries (lib)
+CMAKE_INSTALL_LIBDIR:PATH=lib
+
+//Program executables (libexec)
+CMAKE_INSTALL_LIBEXECDIR:PATH=libexec
+
+//Locale-dependent data (DATAROOTDIR/locale)
+CMAKE_INSTALL_LOCALEDIR:PATH=
+
+//Modifiable single-machine data (var)
+CMAKE_INSTALL_LOCALSTATEDIR:PATH=var
+
+//Man documentation (DATAROOTDIR/man)
+CMAKE_INSTALL_MANDIR:PATH=
+
+//C header files for non-gcc (/usr/include)
+CMAKE_INSTALL_OLDINCLUDEDIR:PATH=/usr/include
+
 //Install path prefix, prepended onto install directories.
 CMAKE_INSTALL_PREFIX:PATH=/usr/local
+
+//Run-time variable data (LOCALSTATEDIR/run)
+CMAKE_INSTALL_RUNSTATEDIR:PATH=
+
+//System admin executables (sbin)
+CMAKE_INSTALL_SBINDIR:PATH=sbin
+
+//Modifiable architecture-independent data (com)
+CMAKE_INSTALL_SHAREDSTATEDIR:PATH=com
+
+//Read-only single-machine data (etc)
+CMAKE_INSTALL_SYSCONFDIR:PATH=etc
 
 //Path to a program.
 CMAKE_LINKER:FILEPATH=/usr/bin/ld
@@ -156,6 +355,21 @@ CMAKE_PROJECT_HOMEPAGE_URL:STATIC=
 
 //Value Computed by CMake
 CMAKE_PROJECT_NAME:STATIC=redgui
+
+//Value Computed by CMake
+CMAKE_PROJECT_VERSION:STATIC=20240116
+
+//Value Computed by CMake
+CMAKE_PROJECT_VERSION_MAJOR:STATIC=20240116
+
+//Value Computed by CMake
+CMAKE_PROJECT_VERSION_MINOR:STATIC=
+
+//Value Computed by CMake
+CMAKE_PROJECT_VERSION_PATCH:STATIC=
+
+//Value Computed by CMake
+CMAKE_PROJECT_VERSION_TWEAK:STATIC=
 
 //Path to a program.
 CMAKE_RANLIB:FILEPATH=/usr/bin/ranlib
@@ -367,6 +581,284 @@ CUDA_nvToolsExt_LIBRARY:FILEPATH=/usr/local/cuda-12.4/lib64/libnvToolsExt.so
 //Path to a library.
 CUDA_rt_LIBRARY:FILEPATH=/usr/lib/x86_64-linux-gnu/librt.a
 
+//Value Computed by CMake
+CURL_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/curl-build
+
+CURL_DEBUG:BOOL=OFF
+
+//The directory containing a CMake configuration file for CURL.
+CURL_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+CURL_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+CURL_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/curl-src
+
+//Path to a library.
+EXECINFO_LIBRARY:FILEPATH=EXECINFO_LIBRARY-NOTFOUND
+
+//Directory under which to collect all populated content
+FETCHCONTENT_BASE_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps
+
+//Disables all attempts to download or update content and assumes
+// source dirs already exist
+FETCHCONTENT_FULLY_DISCONNECTED:BOOL=OFF
+
+//Enables QUIET option for all content population
+FETCHCONTENT_QUIET:BOOL=ON
+
+//When not empty, overrides where to find pre-populated content
+// for absl
+FETCHCONTENT_SOURCE_DIR_ABSL:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for aom
+FETCHCONTENT_SOURCE_DIR_AOM:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for AVIF
+FETCHCONTENT_SOURCE_DIR_AVIF:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for benchmark
+FETCHCONTENT_SOURCE_DIR_BENCHMARK:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for BLAKE3
+FETCHCONTENT_SOURCE_DIR_BLAKE3:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for Blosc
+FETCHCONTENT_SOURCE_DIR_BLOSC:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for Brotli
+FETCHCONTENT_SOURCE_DIR_BROTLI:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for BZip2
+FETCHCONTENT_SOURCE_DIR_BZIP2:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for c-ares
+FETCHCONTENT_SOURCE_DIR_C-ARES:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for CURL
+FETCHCONTENT_SOURCE_DIR_CURL:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for dav1d
+FETCHCONTENT_SOURCE_DIR_DAV1D:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for envoy
+FETCHCONTENT_SOURCE_DIR_ENVOY:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for Googleapis
+FETCHCONTENT_SOURCE_DIR_GOOGLEAPIS:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for gRPC
+FETCHCONTENT_SOURCE_DIR_GRPC:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for GTest
+FETCHCONTENT_SOURCE_DIR_GTEST:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for half
+FETCHCONTENT_SOURCE_DIR_HALF:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for JPEG
+FETCHCONTENT_SOURCE_DIR_JPEG:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for LibLZMA
+FETCHCONTENT_SOURCE_DIR_LIBLZMA:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for libyuv
+FETCHCONTENT_SOURCE_DIR_LIBYUV:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for LZ4
+FETCHCONTENT_SOURCE_DIR_LZ4:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for NGHTTP2
+FETCHCONTENT_SOURCE_DIR_NGHTTP2:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for nlohmann_json
+FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for OpenSSL
+FETCHCONTENT_SOURCE_DIR_OPENSSL:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for PNG
+FETCHCONTENT_SOURCE_DIR_PNG:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for protobuf
+FETCHCONTENT_SOURCE_DIR_PROTOBUF:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for Re2
+FETCHCONTENT_SOURCE_DIR_RE2:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for riegeli
+FETCHCONTENT_SOURCE_DIR_RIEGELI:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for Snappy
+FETCHCONTENT_SOURCE_DIR_SNAPPY:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for tensorstore
+FETCHCONTENT_SOURCE_DIR_TENSORSTORE:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for TIFF
+FETCHCONTENT_SOURCE_DIR_TIFF:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for tinyxml2
+FETCHCONTENT_SOURCE_DIR_TINYXML2:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for udpa
+FETCHCONTENT_SOURCE_DIR_UDPA:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for WebP
+FETCHCONTENT_SOURCE_DIR_WEBP:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for ZLIB
+FETCHCONTENT_SOURCE_DIR_ZLIB:PATH=
+
+//When not empty, overrides where to find pre-populated content
+// for Zstd
+FETCHCONTENT_SOURCE_DIR_ZSTD:PATH=
+
+//Enables UPDATE_DISCONNECTED behavior for all content population
+FETCHCONTENT_UPDATES_DISCONNECTED:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of absl
+FETCHCONTENT_UPDATES_DISCONNECTED_ABSL:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of aom
+FETCHCONTENT_UPDATES_DISCONNECTED_AOM:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of AVIF
+FETCHCONTENT_UPDATES_DISCONNECTED_AVIF:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of benchmark
+FETCHCONTENT_UPDATES_DISCONNECTED_BENCHMARK:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of BLAKE3
+FETCHCONTENT_UPDATES_DISCONNECTED_BLAKE3:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of Blosc
+FETCHCONTENT_UPDATES_DISCONNECTED_BLOSC:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of Brotli
+FETCHCONTENT_UPDATES_DISCONNECTED_BROTLI:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of BZip2
+FETCHCONTENT_UPDATES_DISCONNECTED_BZIP2:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of c-ares
+FETCHCONTENT_UPDATES_DISCONNECTED_C-ARES:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of CURL
+FETCHCONTENT_UPDATES_DISCONNECTED_CURL:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of dav1d
+FETCHCONTENT_UPDATES_DISCONNECTED_DAV1D:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of envoy
+FETCHCONTENT_UPDATES_DISCONNECTED_ENVOY:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of Googleapis
+FETCHCONTENT_UPDATES_DISCONNECTED_GOOGLEAPIS:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of gRPC
+FETCHCONTENT_UPDATES_DISCONNECTED_GRPC:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of GTest
+FETCHCONTENT_UPDATES_DISCONNECTED_GTEST:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of half
+FETCHCONTENT_UPDATES_DISCONNECTED_HALF:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of JPEG
+FETCHCONTENT_UPDATES_DISCONNECTED_JPEG:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of LibLZMA
+FETCHCONTENT_UPDATES_DISCONNECTED_LIBLZMA:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of libyuv
+FETCHCONTENT_UPDATES_DISCONNECTED_LIBYUV:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of LZ4
+FETCHCONTENT_UPDATES_DISCONNECTED_LZ4:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of NGHTTP2
+FETCHCONTENT_UPDATES_DISCONNECTED_NGHTTP2:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of nlohmann_json
+FETCHCONTENT_UPDATES_DISCONNECTED_NLOHMANN_JSON:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of OpenSSL
+FETCHCONTENT_UPDATES_DISCONNECTED_OPENSSL:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of PNG
+FETCHCONTENT_UPDATES_DISCONNECTED_PNG:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of protobuf
+FETCHCONTENT_UPDATES_DISCONNECTED_PROTOBUF:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of Re2
+FETCHCONTENT_UPDATES_DISCONNECTED_RE2:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of riegeli
+FETCHCONTENT_UPDATES_DISCONNECTED_RIEGELI:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of Snappy
+FETCHCONTENT_UPDATES_DISCONNECTED_SNAPPY:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of tensorstore
+FETCHCONTENT_UPDATES_DISCONNECTED_TENSORSTORE:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of TIFF
+FETCHCONTENT_UPDATES_DISCONNECTED_TIFF:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of tinyxml2
+FETCHCONTENT_UPDATES_DISCONNECTED_TINYXML2:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of udpa
+FETCHCONTENT_UPDATES_DISCONNECTED_UDPA:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of WebP
+FETCHCONTENT_UPDATES_DISCONNECTED_WEBP:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of ZLIB
+FETCHCONTENT_UPDATES_DISCONNECTED_ZLIB:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of Zstd
+FETCHCONTENT_UPDATES_DISCONNECTED_ZSTD:BOOL=OFF
+
+//Git command line client
+GIT_EXECUTABLE:FILEPATH=/usr/bin/git
+
 //The directory containing a CMake configuration file for GLEW.
 GLEW_DIR:PATH=GLEW_DIR-NOTFOUND
 
@@ -384,6 +876,32 @@ GLEW_STATIC_LIBRARY_DEBUG:FILEPATH=GLEW_STATIC_LIBRARY_DEBUG-NOTFOUND
 
 //Path to a library.
 GLEW_STATIC_LIBRARY_RELEASE:FILEPATH=/usr/lib/x86_64-linux-gnu/libGLEW.a
+
+GRPC_DISABLE_GRPC_RLS:BOOL=OFF
+
+//Value Computed by CMake
+GTest_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/gtest-build
+
+//The directory containing a CMake configuration file for GTest.
+GTest_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+GTest_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+GTest_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/gtest-src
+
+//Value Computed by CMake
+Googleapis_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/googleapis-build
+
+//The directory containing a CMake configuration file for Googleapis.
+Googleapis_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+Googleapis_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+Googleapis_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/googleapis-src
 
 //HDF5 CXX Wrapper compiler.  Used only to detect HDF5 compile
 // flags.
@@ -427,6 +945,59 @@ HDF5_DIFF_EXECUTABLE:FILEPATH=/usr/bin/h5diff
 
 //The directory containing a CMake configuration file for HDF5.
 HDF5_DIR:PATH=HDF5_DIR-NOTFOUND
+
+//Value Computed by CMake
+JPEG_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/jpeg-build
+
+//The directory containing a CMake configuration file for JPEG.
+JPEG_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+JPEG_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+JPEG_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/jpeg-src
+
+//Path to a library.
+LIBRT:FILEPATH=/usr/lib/x86_64-linux-gnu/librt.a
+
+//Value Computed by CMake
+LZ4_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/lz4-build
+
+//The directory containing a CMake configuration file for LZ4.
+LZ4_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+LZ4_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+LZ4_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/lz4-src
+
+//Value Computed by CMake
+LibLZMA_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/liblzma-build
+
+//The directory containing a CMake configuration file for LibLZMA.
+LibLZMA_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+LibLZMA_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+LibLZMA_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/liblzma-src
+
+//Value Computed by CMake
+NGHTTP2_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/nghttp2-build
+
+NGHTTP2_DEBUG:BOOL=OFF
+
+//The directory containing a CMake configuration file for NGHTTP2.
+NGHTTP2_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+NGHTTP2_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+NGHTTP2_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/nghttp2-src
 
 //Path to a library.
 NPPC_LIBRARY:FILEPATH=/usr/local/cuda-12.4/lib64/libnppc.so
@@ -497,17 +1068,664 @@ OPENGL_opengl_LIBRARY:FILEPATH=/usr/lib/x86_64-linux-gnu/libOpenGL.so
 //Path to a file.
 OPENGL_xmesa_INCLUDE_DIR:PATH=OPENGL_xmesa_INCLUDE_DIR-NOTFOUND
 
+//Value Computed by CMake
+OpenSSL_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/openssl-build
+
+//The directory containing a CMake configuration file for OpenSSL.
+OpenSSL_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+OpenSSL_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+OpenSSL_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/openssl-src
+
+//Value Computed by CMake
+PNG_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/png-build
+
+//The directory containing a CMake configuration file for PNG.
+PNG_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+PNG_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+PNG_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/png-src
+
+PROTOBUF_UPB_FASTTABLE_ENABLED:BOOL=OFF
+
+//Patch command line executable
+Patch_EXECUTABLE:FILEPATH=/usr/bin/patch
+
+//Value Computed by CMake
+Re2_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/re2-build
+
+//The directory containing a CMake configuration file for Re2.
+Re2_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+Re2_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+Re2_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/re2-src
+
 //Path to a library.
 SWRESAMPLE_LIBRARY:FILEPATH=/opt/orange/lib/ffmpeg-nvidia/lib/libswresample.so
 
 //Path to a library.
 SWSCALE_LIBRARY:FILEPATH=/opt/orange/lib/ffmpeg-nvidia/lib/libswscale.so
 
+//Value Computed by CMake
+Snappy_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/snappy-build
+
+//The directory containing a CMake configuration file for Snappy.
+Snappy_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+Snappy_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+Snappy_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/snappy-src
+
 //Path to a file.
 TENSORRT_INCLUDE_DIR:PATH=/usr/local/TensorRT-10.0.1.6/include
 
+//Build benchmarks
+TENSORSTORE_BUILD_BENCHMARKS:BOOL=OFF
+
+//Build documentation
+TENSORSTORE_BUILD_DOC:BOOL=OFF
+
+//Build TensorStore examples
+TENSORSTORE_BUILD_EXAMPLES:BOOL=OFF
+
+//Build Python bindings
+TENSORSTORE_BUILD_PYTHON_BINDINGS:BOOL=OFF
+
+//Build TensorStore tests
+TENSORSTORE_BUILD_TESTS:BOOL=OFF
+
+TENSORSTORE_DRIVER_KVS_BACKED_CHUNK_DRIVER_DEBUG:BOOL=OFF
+
+TENSORSTORE_INTERNAL_CACHE_ASYNC_CACHE_DEBUG:BOOL=OFF
+
+TENSORSTORE_INTERNAL_CACHE_CHUNK_CACHE_DEBUG:BOOL=OFF
+
+TENSORSTORE_INTERNAL_CACHE_REFCOUNT_DEBUG:BOOL=OFF
+
+TENSORSTORE_INTERNAL_GRID_STORAGE_STATISTICS_DEBUG:BOOL=OFF
+
+TENSORSTORE_INTERNAL_METRICS_ENABLE:BOOL=ON
+
+TENSORSTORE_INTERNAL_NDITERABLE_TEST_UNIT_BLOCK_SIZE:BOOL=OFF
+
+TENSORSTORE_KVSTORE_OCDBT_DEBUG:BOOL=OFF
+
+TENSORSTORE_KVSTORE_TRANSACTION_DEBUG:BOOL=OFF
+
+//Use an installed version of absl
+TENSORSTORE_USE_SYSTEM_ABSL:BOOL=OFF
+
+//Use an installed version of aom
+TENSORSTORE_USE_SYSTEM_AOM:BOOL=OFF
+
+//Use an installed version of AVIF
+TENSORSTORE_USE_SYSTEM_AVIF:BOOL=OFF
+
+//Use an installed version of aws_checksums
+TENSORSTORE_USE_SYSTEM_AWS_CHECKSUMS:BOOL=OFF
+
+//Use an installed version of aws_crt_cpp
+TENSORSTORE_USE_SYSTEM_AWS_CRT_CPP:BOOL=OFF
+
+//Use an installed version of aws_c_auth
+TENSORSTORE_USE_SYSTEM_AWS_C_AUTH:BOOL=OFF
+
+//Use an installed version of aws_c_cal
+TENSORSTORE_USE_SYSTEM_AWS_C_CAL:BOOL=OFF
+
+//Use an installed version of aws_c_common
+TENSORSTORE_USE_SYSTEM_AWS_C_COMMON:BOOL=OFF
+
+//Use an installed version of aws_c_compression
+TENSORSTORE_USE_SYSTEM_AWS_C_COMPRESSION:BOOL=OFF
+
+//Use an installed version of aws_c_event_stream
+TENSORSTORE_USE_SYSTEM_AWS_C_EVENT_STREAM:BOOL=OFF
+
+//Use an installed version of aws_c_http
+TENSORSTORE_USE_SYSTEM_AWS_C_HTTP:BOOL=OFF
+
+//Use an installed version of aws_c_io
+TENSORSTORE_USE_SYSTEM_AWS_C_IO:BOOL=OFF
+
+//Use an installed version of aws_c_mqtt
+TENSORSTORE_USE_SYSTEM_AWS_C_MQTT:BOOL=OFF
+
+//Use an installed version of aws_c_s3
+TENSORSTORE_USE_SYSTEM_AWS_C_S3:BOOL=OFF
+
+//Use an installed version of aws_c_sdkutils
+TENSORSTORE_USE_SYSTEM_AWS_C_SDKUTILS:BOOL=OFF
+
+//Use an installed version of benchmark
+TENSORSTORE_USE_SYSTEM_BENCHMARK:BOOL=OFF
+
+//Use an installed version of BLAKE3
+TENSORSTORE_USE_SYSTEM_BLAKE3:BOOL=OFF
+
+//Use an installed version of Blosc
+TENSORSTORE_USE_SYSTEM_BLOSC:BOOL=OFF
+
+//Use an installed version of Brotli
+TENSORSTORE_USE_SYSTEM_BROTLI:BOOL=OFF
+
+//Use an installed version of BZip2
+TENSORSTORE_USE_SYSTEM_BZIP2:BOOL=OFF
+
+//Use an installed version of CURL
+TENSORSTORE_USE_SYSTEM_CURL:BOOL=OFF
+
+//Use an installed version of c-ares
+TENSORSTORE_USE_SYSTEM_C_ARES:BOOL=OFF
+
+//Use an installed version of dav1d
+TENSORSTORE_USE_SYSTEM_DAV1D:BOOL=OFF
+
+//Use an installed version of envoy
+TENSORSTORE_USE_SYSTEM_ENVOY:BOOL=OFF
+
+//Use an installed version of Googleapis
+TENSORSTORE_USE_SYSTEM_GOOGLEAPIS:BOOL=OFF
+
+//Use an installed version of GTest
+TENSORSTORE_USE_SYSTEM_GTEST:BOOL=OFF
+
+//Use an installed version of half
+TENSORSTORE_USE_SYSTEM_HALF:BOOL=OFF
+
+//Use an installed version of JPEG
+TENSORSTORE_USE_SYSTEM_JPEG:BOOL=OFF
+
+//Use an installed version of LibLZMA
+TENSORSTORE_USE_SYSTEM_LIBLZMA:BOOL=OFF
+
+//Use an installed version of libyuv
+TENSORSTORE_USE_SYSTEM_LIBYUV:BOOL=OFF
+
+//Use an installed version of LZ4
+TENSORSTORE_USE_SYSTEM_LZ4:BOOL=OFF
+
+//Use an installed version of NGHTTP2
+TENSORSTORE_USE_SYSTEM_NGHTTP2:BOOL=OFF
+
+//Use an installed version of nlohmann_json
+TENSORSTORE_USE_SYSTEM_NLOHMANN_JSON:BOOL=OFF
+
+//Use an installed version of OpenSSL
+TENSORSTORE_USE_SYSTEM_OPENSSL:BOOL=OFF
+
+//Use an installed version of PNG
+TENSORSTORE_USE_SYSTEM_PNG:BOOL=OFF
+
+//Use an installed version of protobuf
+TENSORSTORE_USE_SYSTEM_PROTOBUF:BOOL=OFF
+
+//Use an installed version of Re2
+TENSORSTORE_USE_SYSTEM_RE2:BOOL=OFF
+
+//Use an installed version of riegeli
+TENSORSTORE_USE_SYSTEM_RIEGELI:BOOL=OFF
+
+//Use an installed version of s2n_tls
+TENSORSTORE_USE_SYSTEM_S2N_TLS:BOOL=OFF
+
+//Use an installed version of Snappy
+TENSORSTORE_USE_SYSTEM_SNAPPY:BOOL=OFF
+
+//Use an installed version of TIFF
+TENSORSTORE_USE_SYSTEM_TIFF:BOOL=OFF
+
+//Use an installed version of tinyxml2
+TENSORSTORE_USE_SYSTEM_TINYXML2:BOOL=OFF
+
+//Use an installed version of udpa
+TENSORSTORE_USE_SYSTEM_UDPA:BOOL=OFF
+
+//Use an installed version of utf8_range
+TENSORSTORE_USE_SYSTEM_UTF8_RANGE:BOOL=OFF
+
+//Use an installed version of WebP
+TENSORSTORE_USE_SYSTEM_WEBP:BOOL=OFF
+
+//Use an installed version of ZLIB
+TENSORSTORE_USE_SYSTEM_ZLIB:BOOL=OFF
+
+//Use an installed version of Zstd
+TENSORSTORE_USE_SYSTEM_ZSTD:BOOL=OFF
+
+//Value Computed by CMake
+TIFF_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/tiff-build
+
+//The directory containing a CMake configuration file for TIFF.
+TIFF_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+TIFF_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+TIFF_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/tiff-src
+
+//Value Computed by CMake
+WebP_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/webp-build
+
+//The directory containing a CMake configuration file for WebP.
+WebP_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+WebP_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+WebP_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/webp-src
+
+//Value Computed by CMake
+ZLIB_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/zlib-build
+
+//The directory containing a CMake configuration file for ZLIB.
+ZLIB_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+ZLIB_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+ZLIB_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/zlib-src
+
+//Value Computed by CMake
+Zstd_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/zstd-build
+
+//The directory containing a CMake configuration file for Zstd.
+Zstd_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+Zstd_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+Zstd_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/zstd-src
+
+//Value Computed by CMake
+absl_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/absl-build
+
+//The directory containing a CMake configuration file for absl.
+absl_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+absl_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+absl_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/absl-src
+
+//Dependencies for the target
+absl_bad_any_cast_impl_LIB_DEPENDS:STATIC=general;absl::raw_logging_internal;
+
+//Dependencies for the target
+absl_bad_optional_access_LIB_DEPENDS:STATIC=general;absl::raw_logging_internal;
+
+//Dependencies for the target
+absl_bad_variant_access_LIB_DEPENDS:STATIC=general;absl::raw_logging_internal;
+
+//Dependencies for the target
+absl_base_LIB_DEPENDS:STATIC=general;absl::log_severity;general;absl::raw_logging_internal;general;absl::spinlock_wait;general;absl::type_traits;
+
+//Dependencies for the target
+absl_cord_LIB_DEPENDS:STATIC=general;absl::base;general;absl::cord_internal;general;absl::cordz_functions;general;absl::cordz_info;general;absl::crc32c;general;absl::crc_cord_state;general;absl::optional;general;absl::raw_logging_internal;general;absl::span;general;absl::strings;
+
+//Dependencies for the target
+absl_cord_internal_LIB_DEPENDS:STATIC=general;absl::crc_cord_state;general;absl::raw_logging_internal;general;absl::strings;general;absl::throw_delegate;
+
+//Dependencies for the target
+absl_cordz_functions_LIB_DEPENDS:STATIC=general;absl::exponential_biased;general;absl::raw_logging_internal;
+
+//Dependencies for the target
+absl_cordz_handle_LIB_DEPENDS:STATIC=general;absl::base;general;absl::raw_logging_internal;general;absl::synchronization;
+
+//Dependencies for the target
+absl_cordz_info_LIB_DEPENDS:STATIC=general;absl::base;general;absl::cord_internal;general;absl::cordz_functions;general;absl::cordz_handle;general;absl::span;general;absl::raw_logging_internal;general;absl::stacktrace;general;absl::synchronization;general;absl::time;
+
+//Dependencies for the target
+absl_cordz_sample_token_LIB_DEPENDS:STATIC=general;absl::cordz_handle;general;absl::cordz_info;
+
+//Dependencies for the target
+absl_crc32c_LIB_DEPENDS:STATIC=general;absl::crc_cpu_detect;general;absl::crc_internal;general;absl::non_temporal_memcpy;general;absl::str_format;general;absl::strings;
+
+//Dependencies for the target
+absl_crc_cord_state_LIB_DEPENDS:STATIC=general;absl::crc32c;general;absl::strings;
+
+//Dependencies for the target
+absl_crc_cpu_detect_LIB_DEPENDS:STATIC=general;absl::base;
+
+//Dependencies for the target
+absl_crc_internal_LIB_DEPENDS:STATIC=general;absl::crc_cpu_detect;general;absl::raw_logging_internal;general;absl::memory;general;absl::bits;
+
+//Dependencies for the target
+absl_debugging_internal_LIB_DEPENDS:STATIC=general;absl::raw_logging_internal;
+
+//Dependencies for the target
+absl_demangle_internal_LIB_DEPENDS:STATIC=general;absl::base;
+
+//Dependencies for the target
+absl_die_if_null_LIB_DEPENDS:STATIC=general;absl::log;general;absl::strings;
+
+//Dependencies for the target
+absl_examine_stack_LIB_DEPENDS:STATIC=general;absl::stacktrace;general;absl::symbolize;general;absl::raw_logging_internal;
+
+//Dependencies for the target
+absl_failure_signal_handler_LIB_DEPENDS:STATIC=general;absl::examine_stack;general;absl::stacktrace;general;absl::base;general;absl::raw_logging_internal;
+
+//Dependencies for the target
+absl_flags_commandlineflag_LIB_DEPENDS:STATIC=general;absl::flags_commandlineflag_internal;general;absl::optional;general;absl::strings;
+
+//Dependencies for the target
+absl_flags_config_LIB_DEPENDS:STATIC=general;absl::flags_program_name;general;absl::strings;general;absl::synchronization;
+
+//Dependencies for the target
+absl_flags_internal_LIB_DEPENDS:STATIC=general;absl::base;general;absl::flags_commandlineflag;general;absl::flags_commandlineflag_internal;general;absl::flags_config;general;absl::flags_marshalling;general;absl::synchronization;general;absl::meta;general;absl::utility;
+
+//Dependencies for the target
+absl_flags_marshalling_LIB_DEPENDS:STATIC=general;absl::log_severity;general;absl::int128;general;absl::optional;general;absl::strings;general;absl::str_format;
+
+//Dependencies for the target
+absl_flags_parse_LIB_DEPENDS:STATIC=general;absl::flags_config;general;absl::flags_commandlineflag;general;absl::flags_commandlineflag_internal;general;absl::flags_internal;general;absl::flags_private_handle_accessor;general;absl::flags_program_name;general;absl::flags_reflection;general;absl::flags_usage;general;absl::strings;general;absl::synchronization;
+
+//Dependencies for the target
+absl_flags_private_handle_accessor_LIB_DEPENDS:STATIC=general;absl::flags_commandlineflag;general;absl::flags_commandlineflag_internal;general;absl::strings;
+
+//Dependencies for the target
+absl_flags_program_name_LIB_DEPENDS:STATIC=general;absl::strings;general;absl::synchronization;
+
+//Dependencies for the target
+absl_flags_reflection_LIB_DEPENDS:STATIC=general;absl::flags_commandlineflag;general;absl::flags_private_handle_accessor;general;absl::flags_config;general;absl::strings;general;absl::synchronization;
+
+//Dependencies for the target
+absl_flags_usage_LIB_DEPENDS:STATIC=general;absl::flags_usage_internal;general;absl::raw_logging_internal;general;absl::strings;general;absl::synchronization;
+
+//Dependencies for the target
+absl_flags_usage_internal_LIB_DEPENDS:STATIC=general;absl::flags_config;general;absl::flags_commandlineflag;general;absl::flags_internal;general;absl::flags_private_handle_accessor;general;absl::flags_program_name;general;absl::flags_reflection;general;absl::strings;general;absl::synchronization;
+
+//Dependencies for the target
+absl_graphcycles_internal_LIB_DEPENDS:STATIC=general;absl::base;general;absl::malloc_internal;general;absl::raw_logging_internal;
+
+//Dependencies for the target
+absl_hash_LIB_DEPENDS:STATIC=general;absl::bits;general;absl::city;general;absl::meta;general;absl::int128;general;absl::strings;general;absl::optional;general;absl::variant;general;absl::utility;general;absl::low_level_hash;
+
+//Dependencies for the target
+absl_hashtablez_sampler_LIB_DEPENDS:STATIC=general;absl::base;general;absl::exponential_biased;general;absl::raw_logging_internal;general;absl::sample_recorder;general;absl::synchronization;general;absl::time;
+
+//Dependencies for the target
+absl_kernel_timeout_internal_LIB_DEPENDS:STATIC=general;absl::base;general;absl::raw_logging_internal;general;absl::time;
+
+//Dependencies for the target
+absl_log_entry_LIB_DEPENDS:STATIC=general;absl::log_severity;general;absl::span;general;absl::strings;general;absl::time;
+
+//Dependencies for the target
+absl_log_flags_LIB_DEPENDS:STATIC=general;absl::log_globals;general;absl::log_severity;general;absl::flags_marshalling;general;absl::strings;general;absl::vlog_config_internal;
+
+//Dependencies for the target
+absl_log_globals_LIB_DEPENDS:STATIC=general;absl::hash;general;absl::log_severity;general;absl::raw_logging_internal;general;absl::strings;general;absl::vlog_config_internal;
+
+//Dependencies for the target
+absl_log_initialize_LIB_DEPENDS:STATIC=general;absl::log_globals;general;absl::log_internal_globals;general;absl::time;
+
+//Dependencies for the target
+absl_log_internal_check_op_LIB_DEPENDS:STATIC=general;absl::log_internal_nullguard;general;absl::log_internal_nullstream;general;absl::log_internal_strip;general;absl::strings;
+
+//Dependencies for the target
+absl_log_internal_conditions_LIB_DEPENDS:STATIC=general;absl::base;general;absl::log_internal_voidify;
+
+//Dependencies for the target
+absl_log_internal_fnmatch_LIB_DEPENDS:STATIC=general;absl::strings;
+
+//Dependencies for the target
+absl_log_internal_format_LIB_DEPENDS:STATIC=general;absl::log_internal_append_truncated;general;absl::log_internal_globals;general;absl::log_severity;general;absl::strings;general;absl::str_format;general;absl::time;general;absl::span;
+
+//Dependencies for the target
+absl_log_internal_globals_LIB_DEPENDS:STATIC=general;absl::log_severity;general;absl::raw_logging_internal;general;absl::strings;general;absl::time;
+
+//Dependencies for the target
+absl_log_internal_log_sink_set_LIB_DEPENDS:STATIC=general;absl::base;general;absl::log_internal_globals;general;absl::log_globals;general;absl::log_entry;general;absl::log_severity;general;absl::log_sink;general;absl::raw_logging_internal;general;absl::synchronization;general;absl::span;general;absl::strings;
+
+//Dependencies for the target
+absl_log_internal_message_LIB_DEPENDS:STATIC=general;absl::base;general;absl::examine_stack;general;absl::log_internal_append_truncated;general;absl::log_internal_format;general;absl::log_internal_globals;general;absl::log_internal_proto;general;absl::log_internal_log_sink_set;general;absl::log_internal_nullguard;general;absl::log_globals;general;absl::log_entry;general;absl::log_severity;general;absl::log_sink;general;absl::log_sink_registry;general;absl::memory;general;absl::raw_logging_internal;general;absl::strings;general;absl::strerror;general;absl::time;general;absl::span;
+
+//Dependencies for the target
+absl_log_internal_proto_LIB_DEPENDS:STATIC=general;absl::base;general;absl::strings;general;absl::span;
+
+//Dependencies for the target
+absl_log_severity_LIB_DEPENDS:STATIC=general;absl::config;general;absl::core_headers;
+
+//Dependencies for the target
+absl_log_sink_LIB_DEPENDS:STATIC=general;absl::log_entry;
+
+//Dependencies for the target
+absl_low_level_hash_LIB_DEPENDS:STATIC=general;absl::int128;
+
+//Dependencies for the target
+absl_malloc_internal_LIB_DEPENDS:STATIC=general;absl::base;general;absl::base_internal;general;absl::raw_logging_internal;
+
+//Dependencies for the target
+absl_periodic_sampler_LIB_DEPENDS:STATIC=general;absl::exponential_biased;
+
+//Dependencies for the target
+absl_random_distributions_LIB_DEPENDS:STATIC=general;absl::random_internal_generate_real;general;absl::random_internal_distribution_caller;general;absl::random_internal_fast_uniform_bits;general;absl::random_internal_fastmath;general;absl::random_internal_iostream_state_saver;general;absl::random_internal_traits;general;absl::random_internal_uniform_helper;general;absl::random_internal_wide_multiply;general;absl::strings;
+
+//Dependencies for the target
+absl_random_internal_distribution_test_util_LIB_DEPENDS:STATIC=general;absl::raw_logging_internal;general;absl::strings;general;absl::str_format;general;absl::span;
+
+//Dependencies for the target
+absl_random_internal_pool_urbg_LIB_DEPENDS:STATIC=general;absl::base;general;absl::random_internal_randen;general;absl::random_internal_seed_material;general;absl::random_seed_gen_exception;general;absl::raw_logging_internal;general;absl::span;
+
+//Dependencies for the target
+absl_random_internal_randen_LIB_DEPENDS:STATIC=general;absl::random_internal_platform;general;absl::random_internal_randen_hwaes;general;absl::random_internal_randen_slow;
+
+//Dependencies for the target
+absl_random_internal_randen_hwaes_LIB_DEPENDS:STATIC=general;absl::random_internal_platform;general;absl::random_internal_randen_hwaes_impl;
+
+//Dependencies for the target
+absl_random_internal_randen_hwaes_impl_LIB_DEPENDS:STATIC=general;absl::random_internal_platform;
+
+//Dependencies for the target
+absl_random_internal_randen_slow_LIB_DEPENDS:STATIC=general;absl::random_internal_platform;
+
+//Dependencies for the target
+absl_random_internal_seed_material_LIB_DEPENDS:STATIC=general;absl::optional;general;absl::raw_logging_internal;general;absl::span;general;absl::strings;
+
+//Dependencies for the target
+absl_random_seed_sequences_LIB_DEPENDS:STATIC=general;absl::random_internal_pool_urbg;general;absl::random_internal_salted_seed_seq;general;absl::random_internal_seed_material;general;absl::random_seed_gen_exception;general;absl::span;
+
+//Dependencies for the target
+absl_raw_hash_set_LIB_DEPENDS:STATIC=general;absl::bits;general;absl::hash;general;absl::hashtablez_sampler;general;absl::memory;general;absl::meta;general;absl::optional;general;absl::raw_logging_internal;general;absl::utility;
+
+//Dependencies for the target
+absl_raw_logging_internal_LIB_DEPENDS:STATIC=general;absl::config;general;absl::core_headers;general;absl::log_severity;
+
+//Dependencies for the target
+absl_scoped_mock_log_LIB_DEPENDS:STATIC=general;absl::log_entry;general;absl::log_severity;general;absl::log_sink;general;absl::raw_logging_internal;general;absl::strings;general;GTest::gmock;general;GTest::gtest;
+
+//Dependencies for the target
+absl_scoped_set_env_LIB_DEPENDS:STATIC=general;absl::raw_logging_internal;
+
+//Dependencies for the target
+absl_spinlock_wait_LIB_DEPENDS:STATIC=general;absl::base_internal;general;absl::core_headers;
+
+//Dependencies for the target
+absl_stacktrace_LIB_DEPENDS:STATIC=general;absl::debugging_internal;general;absl::raw_logging_internal;
+
+//Dependencies for the target
+absl_status_LIB_DEPENDS:STATIC=general;absl::cord;general;absl::optional;general;absl::raw_logging_internal;general;absl::span;general;absl::stacktrace;general;absl::strerror;general;absl::str_format;general;absl::strings;general;absl::symbolize;
+
+//Dependencies for the target
+absl_statusor_LIB_DEPENDS:STATIC=general;absl::base;general;absl::has_ostream_operator;general;absl::raw_logging_internal;general;absl::status;general;absl::str_format;general;absl::strings;general;absl::utility;general;absl::variant;
+
+//Dependencies for the target
+absl_str_format_internal_LIB_DEPENDS:STATIC=general;absl::strings;general;absl::utility;general;absl::int128;general;absl::span;
+
+//Dependencies for the target
+absl_string_view_LIB_DEPENDS:STATIC=general;absl::base;general;absl::throw_delegate;
+
+//Dependencies for the target
+absl_strings_LIB_DEPENDS:STATIC=general;absl::string_view;general;absl::strings_internal;general;absl::base;general;absl::charset;general;absl::int128;general;absl::raw_logging_internal;general;absl::throw_delegate;
+
+//Dependencies for the target
+absl_strings_internal_LIB_DEPENDS:STATIC=general;absl::raw_logging_internal;
+
+//Dependencies for the target
+absl_symbolize_LIB_DEPENDS:STATIC=general;absl::debugging_internal;general;absl::demangle_internal;general;absl::base;general;absl::malloc_internal;general;absl::raw_logging_internal;general;absl::strings;
+
+//Dependencies for the target
+absl_synchronization_LIB_DEPENDS:STATIC=general;absl::graphcycles_internal;general;absl::kernel_timeout_internal;general;absl::base;general;absl::malloc_internal;general;absl::raw_logging_internal;general;absl::stacktrace;general;absl::symbolize;general;absl::time;
+
+//Dependencies for the target
+absl_throw_delegate_LIB_DEPENDS:STATIC=general;absl::raw_logging_internal;
+
+//Dependencies for the target
+absl_time_LIB_DEPENDS:STATIC=general;absl::base;general;absl::civil_time;general;absl::int128;general;absl::raw_logging_internal;general;absl::strings;general;absl::time_zone;
+
+//Dependencies for the target
+absl_vlog_config_internal_LIB_DEPENDS:STATIC=general;absl::base;general;absl::log_internal_fnmatch;general;absl::memory;general;absl::strings;general;absl::synchronization;general;absl::optional;
+
+//Value Computed by CMake
+aom_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/aom-build
+
+//The directory containing a CMake configuration file for aom.
+aom_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+aom_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+aom_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/aom-src
+
+//Value Computed by CMake
+benchmark_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/benchmark-build
+
+//The directory containing a CMake configuration file for benchmark.
+benchmark_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+benchmark_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+benchmark_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/benchmark-src
+
+//Value Computed by CMake
+c-ares_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/c-ares-build
+
+//The directory containing a CMake configuration file for c-ares.
+c-ares_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+c-ares_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+c-ares_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/c-ares-src
+
+//Value Computed by CMake
+dav1d_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/dav1d-build
+
+//The directory containing a CMake configuration file for dav1d.
+dav1d_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+dav1d_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+dav1d_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/dav1d-src
+
+//Value Computed by CMake
+envoy_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/envoy-build
+
+//The directory containing a CMake configuration file for envoy.
+envoy_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+envoy_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+envoy_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/envoy-src
+
+//Value Computed by CMake
+gRPC_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/grpc-build
+
+//The directory containing a CMake configuration file for gRPC.
+gRPC_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+gRPC_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+gRPC_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/grpc-src
+
 //The directory containing a CMake configuration file for glfw3.
 glfw3_DIR:PATH=/usr/lib/x86_64-linux-gnu/cmake/glfw3
+
+//Value Computed by CMake
+half_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/half-build
+
+//The directory containing a CMake configuration file for half.
+half_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+half_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+half_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/half-src
+
+//Value Computed by CMake
+libyuv_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/libyuv-build
+
+//The directory containing a CMake configuration file for libyuv.
+libyuv_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+libyuv_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+libyuv_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/libyuv-src
+
+//Value Computed by CMake
+lpm_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/tensorstore-build/_local_mirror/lpm-build
+
+//The directory containing a CMake configuration file for lpm.
+lpm_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+lpm_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+lpm_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/tensorstore-build/_local_mirror/lpm-src
+
+//Value Computed by CMake
+nlohmann_json_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/nlohmann_json-build
+
+//The directory containing a CMake configuration file for nlohmann_json.
+nlohmann_json_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+nlohmann_json_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+nlohmann_json_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/nlohmann_json-src
+
+//Value Computed by CMake
+protobuf_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/protobuf-build
+
+//The directory containing a CMake configuration file for protobuf.
+protobuf_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+protobuf_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+protobuf_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/protobuf-src
 
 //Value Computed by CMake
 redgui_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build
@@ -518,15 +1736,94 @@ redgui_IS_TOP_LEVEL:STATIC=ON
 //Value Computed by CMake
 redgui_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson
 
+//Value Computed by CMake
+riegeli_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/riegeli-build
+
+//The directory containing a CMake configuration file for riegeli.
+riegeli_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+riegeli_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+riegeli_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/riegeli-src
+
+//Value Computed by CMake
+tensorstore_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/tensorstore-build
+
+//Value Computed by CMake
+tensorstore_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+tensorstore_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/tensorstore-src
+
+//Value Computed by CMake
+tinyxml2_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/tinyxml2-build
+
+//The directory containing a CMake configuration file for tinyxml2.
+tinyxml2_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+tinyxml2_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+tinyxml2_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/tinyxml2-src
+
+//Value Computed by CMake
+udpa_BINARY_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/udpa-build
+
+//The directory containing a CMake configuration file for udpa.
+udpa_DIR:PATH=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles/pkgRedirects
+
+//Value Computed by CMake
+udpa_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+udpa_SOURCE_DIR:STATIC=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/udpa-src
+
 
 ########################
 # INTERNAL cache entries
 ########################
 
+//Test ABSL_INTERNAL_AT_LEAST_CXX17
+ABSL_INTERNAL_AT_LEAST_CXX17:INTERNAL=1
+//Test ABSL_INTERNAL_AT_LEAST_CXX20
+ABSL_INTERNAL_AT_LEAST_CXX20:INTERNAL=
 //ADVANCED property for variable: CMAKE_ADDR2LINE
 CMAKE_ADDR2LINE-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_AR
 CMAKE_AR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_ASM_COMPILER
+CMAKE_ASM_COMPILER-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_ASM_COMPILER_AR
+CMAKE_ASM_COMPILER_AR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_ASM_COMPILER_RANLIB
+CMAKE_ASM_COMPILER_RANLIB-ADVANCED:INTERNAL=1
+CMAKE_ASM_COMPILER_WORKS:INTERNAL=1
+//ADVANCED property for variable: CMAKE_ASM_FLAGS
+CMAKE_ASM_FLAGS-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_ASM_FLAGS_DEBUG
+CMAKE_ASM_FLAGS_DEBUG-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_ASM_FLAGS_MINSIZEREL
+CMAKE_ASM_FLAGS_MINSIZEREL-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_ASM_FLAGS_RELEASE
+CMAKE_ASM_FLAGS_RELEASE-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_ASM_FLAGS_RELWITHDEBINFO
+CMAKE_ASM_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_ASM_NASM_COMPILER
+CMAKE_ASM_NASM_COMPILER-ADVANCED:INTERNAL=1
+CMAKE_ASM_NASM_COMPILER_WORKS:INTERNAL=1
+//ADVANCED property for variable: CMAKE_ASM_NASM_FLAGS
+CMAKE_ASM_NASM_FLAGS-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_ASM_NASM_FLAGS_DEBUG
+CMAKE_ASM_NASM_FLAGS_DEBUG-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_ASM_NASM_FLAGS_MINSIZEREL
+CMAKE_ASM_NASM_FLAGS_MINSIZEREL-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_ASM_NASM_FLAGS_RELEASE
+CMAKE_ASM_NASM_FLAGS_RELEASE-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_ASM_NASM_FLAGS_RELWITHDEBINFO
+CMAKE_ASM_NASM_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
 //This is the directory where this CMakeCache.txt was created
 CMAKE_CACHEFILE_DIR:INTERNAL=/home/delahantyj@hhmi.org/gitrepos/crimson/build
 //Major version of cmake used to create the current loaded cache
@@ -571,6 +1868,22 @@ CMAKE_CXX_FLAGS_MINSIZEREL-ADVANCED:INTERNAL=1
 CMAKE_CXX_FLAGS_RELEASE-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_CXX_FLAGS_RELWITHDEBINFO
 CMAKE_CXX_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_C_COMPILER
+CMAKE_C_COMPILER-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_C_COMPILER_AR
+CMAKE_C_COMPILER_AR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_C_COMPILER_RANLIB
+CMAKE_C_COMPILER_RANLIB-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_C_FLAGS
+CMAKE_C_FLAGS-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_C_FLAGS_DEBUG
+CMAKE_C_FLAGS_DEBUG-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_C_FLAGS_MINSIZEREL
+CMAKE_C_FLAGS_MINSIZEREL-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_C_FLAGS_RELEASE
+CMAKE_C_FLAGS_RELEASE-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_C_FLAGS_RELWITHDEBINFO
+CMAKE_C_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_DLLTOOL
 CMAKE_DLLTOOL-ADVANCED:INTERNAL=1
 //Executable file format
@@ -602,8 +1915,40 @@ CMAKE_HAVE_LIBC_PTHREAD:INTERNAL=1
 //Source directory with the top level CMakeLists.txt file for this
 // project
 CMAKE_HOME_DIRECTORY:INTERNAL=/home/delahantyj@hhmi.org/gitrepos/crimson
+//ADVANCED property for variable: CMAKE_INSTALL_BINDIR
+CMAKE_INSTALL_BINDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_DATADIR
+CMAKE_INSTALL_DATADIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_DATAROOTDIR
+CMAKE_INSTALL_DATAROOTDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_DOCDIR
+CMAKE_INSTALL_DOCDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_INCLUDEDIR
+CMAKE_INSTALL_INCLUDEDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_INFODIR
+CMAKE_INSTALL_INFODIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_LIBDIR
+CMAKE_INSTALL_LIBDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_LIBEXECDIR
+CMAKE_INSTALL_LIBEXECDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_LOCALEDIR
+CMAKE_INSTALL_LOCALEDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_LOCALSTATEDIR
+CMAKE_INSTALL_LOCALSTATEDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_MANDIR
+CMAKE_INSTALL_MANDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_OLDINCLUDEDIR
+CMAKE_INSTALL_OLDINCLUDEDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_RUNSTATEDIR
+CMAKE_INSTALL_RUNSTATEDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_SBINDIR
+CMAKE_INSTALL_SBINDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_SHAREDSTATEDIR
+CMAKE_INSTALL_SHAREDSTATEDIR-ADVANCED:INTERNAL=1
 //Install .so files without execute permission.
 CMAKE_INSTALL_SO_NO_EXE:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_SYSCONFDIR
+CMAKE_INSTALL_SYSCONFDIR-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_LINKER
 CMAKE_LINKER-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_MAKE_PROGRAM
@@ -621,7 +1966,7 @@ CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_NM
 CMAKE_NM-ADVANCED:INTERNAL=1
 //number of local generators
-CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=1
+CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=60
 //ADVANCED property for variable: CMAKE_OBJCOPY
 CMAKE_OBJCOPY-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_OBJDUMP
@@ -773,8 +2118,14 @@ FIND_PACKAGE_MESSAGE_DETAILS_HDF5:INTERNAL=[/usr/lib/x86_64-linux-gnu/hdf5/seria
 FIND_PACKAGE_MESSAGE_DETAILS_OpenCV:INTERNAL=[/opt/crimson/lib/opencv][v4.10.0()]
 //Details about finding OpenGL
 FIND_PACKAGE_MESSAGE_DETAILS_OpenGL:INTERNAL=[/usr/lib/x86_64-linux-gnu/libOpenGL.so][/usr/lib/x86_64-linux-gnu/libGLX.so][/usr/include][c ][v()]
+//Details about finding Patch
+FIND_PACKAGE_MESSAGE_DETAILS_Patch:INTERNAL=[/usr/bin/patch][v()]
+//Details about finding Python3
+FIND_PACKAGE_MESSAGE_DETAILS_Python3:INTERNAL=[/usr/bin/python3][cfound components: Interpreter ][v3.12.3()]
 //Details about finding Threads
 FIND_PACKAGE_MESSAGE_DETAILS_Threads:INTERNAL=[TRUE][v()]
+//ADVANCED property for variable: GIT_EXECUTABLE
+GIT_EXECUTABLE-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: GLEW_INCLUDE_DIR
 GLEW_INCLUDE_DIR-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: GLEW_SHARED_LIBRARY_DEBUG
@@ -817,6 +2168,22 @@ OPENGL_glx_LIBRARY-ADVANCED:INTERNAL=1
 OPENGL_opengl_LIBRARY-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: OPENGL_xmesa_INCLUDE_DIR
 OPENGL_xmesa_INCLUDE_DIR-ADVANCED:INTERNAL=1
+Protobuf_IMPORT_DIRS:INTERNAL=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/protobuf-src/src
+Protobuf_INCLUDE_DIRS:INTERNAL=/home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/protobuf-src/src
+Protobuf_LIBRARIES:INTERNAL=protobuf::libprotobuf
 //linker supports push/pop state
 _CMAKE_LINKER_PUSHPOP_STATE_SUPPORTED:INTERNAL=TRUE
+//CMAKE_INSTALL_PREFIX during last run
+_GNUInstallDirs_LAST_CMAKE_INSTALL_PREFIX:INTERNAL=/usr/local
+//Compiler reason failure
+_Python3_Compiler_REASON_FAILURE:INTERNAL=
+//Development reason failure
+_Python3_Development_REASON_FAILURE:INTERNAL=
+//Path to a program.
+_Python3_EXECUTABLE:INTERNAL=/usr/bin/python3
+//Python3 Properties
+_Python3_INTERPRETER_PROPERTIES:INTERNAL=Python;3;12;3;64;32;;cpython-312-x86_64-linux-gnu;abi3;/usr/lib/python3.12;/usr/lib/python3.12;/usr/local/lib/python3.12/dist-packages;/usr/local/lib/python3.12/dist-packages
+_Python3_INTERPRETER_SIGNATURE:INTERNAL=4c8bfa8951e99fa32e4000a94f8c04a2
+//NumPy reason failure
+_Python3_NumPy_REASON_FAILURE:INTERNAL=
 

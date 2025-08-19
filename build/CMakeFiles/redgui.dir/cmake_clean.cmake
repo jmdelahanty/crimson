@@ -23,6 +23,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/redgui.dir/src/yolov8_det.cpp.o.d"
   "CMakeFiles/redgui.dir/src/yolov8_pose.cpp.o"
   "CMakeFiles/redgui.dir/src/yolov8_pose.cpp.o.d"
+  "CMakeFiles/redgui.dir/src/zarr_loader.cpp.o"
+  "CMakeFiles/redgui.dir/src/zarr_loader.cpp.o.d"
   "CMakeFiles/redgui.dir/third_party/ImGuiFileDialog/ImGuiFileDialog.cpp.o"
   "CMakeFiles/redgui.dir/third_party/ImGuiFileDialog/ImGuiFileDialog.cpp.o.d"
   "CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_glfw.cpp.o"

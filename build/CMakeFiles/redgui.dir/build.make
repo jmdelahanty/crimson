@@ -181,11 +181,25 @@ CMakeFiles/redgui.dir/src/yolov8_pose.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/redgui.dir/src/yolov8_pose.cpp.s"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/delahantyj@hhmi.org/gitrepos/crimson/src/yolov8_pose.cpp -o CMakeFiles/redgui.dir/src/yolov8_pose.cpp.s
 
+CMakeFiles/redgui.dir/src/zarr_loader.cpp.o: CMakeFiles/redgui.dir/flags.make
+CMakeFiles/redgui.dir/src/zarr_loader.cpp.o: /home/delahantyj@hhmi.org/gitrepos/crimson/src/zarr_loader.cpp
+CMakeFiles/redgui.dir/src/zarr_loader.cpp.o: CMakeFiles/redgui.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_9) "Building CXX object CMakeFiles/redgui.dir/src/zarr_loader.cpp.o"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/redgui.dir/src/zarr_loader.cpp.o -MF CMakeFiles/redgui.dir/src/zarr_loader.cpp.o.d -o CMakeFiles/redgui.dir/src/zarr_loader.cpp.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/src/zarr_loader.cpp
+
+CMakeFiles/redgui.dir/src/zarr_loader.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/redgui.dir/src/zarr_loader.cpp.i"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/delahantyj@hhmi.org/gitrepos/crimson/src/zarr_loader.cpp > CMakeFiles/redgui.dir/src/zarr_loader.cpp.i
+
+CMakeFiles/redgui.dir/src/zarr_loader.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/redgui.dir/src/zarr_loader.cpp.s"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/delahantyj@hhmi.org/gitrepos/crimson/src/zarr_loader.cpp -o CMakeFiles/redgui.dir/src/zarr_loader.cpp.s
+
 CMakeFiles/redgui.dir/src/create_image_cuda.cu.o: CMakeFiles/redgui.dir/flags.make
 CMakeFiles/redgui.dir/src/create_image_cuda.cu.o: CMakeFiles/redgui.dir/includes_CUDA.rsp
 CMakeFiles/redgui.dir/src/create_image_cuda.cu.o: /home/delahantyj@hhmi.org/gitrepos/crimson/src/create_image_cuda.cu
 CMakeFiles/redgui.dir/src/create_image_cuda.cu.o: CMakeFiles/redgui.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_9) "Building CUDA object CMakeFiles/redgui.dir/src/create_image_cuda.cu.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_10) "Building CUDA object CMakeFiles/redgui.dir/src/create_image_cuda.cu.o"
 	/usr/local/cuda-12.4/bin/nvcc -forward-unknown-to-host-compiler $(CUDA_DEFINES) $(CUDA_INCLUDES) $(CUDA_FLAGS) -MD -MT CMakeFiles/redgui.dir/src/create_image_cuda.cu.o -MF CMakeFiles/redgui.dir/src/create_image_cuda.cu.o.d -x cu -c /home/delahantyj@hhmi.org/gitrepos/crimson/src/create_image_cuda.cu -o CMakeFiles/redgui.dir/src/create_image_cuda.cu.o
 
 CMakeFiles/redgui.dir/src/create_image_cuda.cu.i: cmake_force
@@ -200,7 +214,7 @@ CMakeFiles/redgui.dir/src/ColorSpace.cu.o: CMakeFiles/redgui.dir/flags.make
 CMakeFiles/redgui.dir/src/ColorSpace.cu.o: CMakeFiles/redgui.dir/includes_CUDA.rsp
 CMakeFiles/redgui.dir/src/ColorSpace.cu.o: /home/delahantyj@hhmi.org/gitrepos/crimson/src/ColorSpace.cu
 CMakeFiles/redgui.dir/src/ColorSpace.cu.o: CMakeFiles/redgui.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_10) "Building CUDA object CMakeFiles/redgui.dir/src/ColorSpace.cu.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_11) "Building CUDA object CMakeFiles/redgui.dir/src/ColorSpace.cu.o"
 	/usr/local/cuda-12.4/bin/nvcc -forward-unknown-to-host-compiler $(CUDA_DEFINES) $(CUDA_INCLUDES) $(CUDA_FLAGS) -MD -MT CMakeFiles/redgui.dir/src/ColorSpace.cu.o -MF CMakeFiles/redgui.dir/src/ColorSpace.cu.o.d -x cu -c /home/delahantyj@hhmi.org/gitrepos/crimson/src/ColorSpace.cu -o CMakeFiles/redgui.dir/src/ColorSpace.cu.o
 
 CMakeFiles/redgui.dir/src/ColorSpace.cu.i: cmake_force
@@ -215,7 +229,7 @@ CMakeFiles/redgui.dir/src/kernel.cu.o: CMakeFiles/redgui.dir/flags.make
 CMakeFiles/redgui.dir/src/kernel.cu.o: CMakeFiles/redgui.dir/includes_CUDA.rsp
 CMakeFiles/redgui.dir/src/kernel.cu.o: /home/delahantyj@hhmi.org/gitrepos/crimson/src/kernel.cu
 CMakeFiles/redgui.dir/src/kernel.cu.o: CMakeFiles/redgui.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_11) "Building CUDA object CMakeFiles/redgui.dir/src/kernel.cu.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_12) "Building CUDA object CMakeFiles/redgui.dir/src/kernel.cu.o"
 	/usr/local/cuda-12.4/bin/nvcc -forward-unknown-to-host-compiler $(CUDA_DEFINES) $(CUDA_INCLUDES) $(CUDA_FLAGS) -MD -MT CMakeFiles/redgui.dir/src/kernel.cu.o -MF CMakeFiles/redgui.dir/src/kernel.cu.o.d -x cu -c /home/delahantyj@hhmi.org/gitrepos/crimson/src/kernel.cu -o CMakeFiles/redgui.dir/src/kernel.cu.o
 
 CMakeFiles/redgui.dir/src/kernel.cu.i: cmake_force
@@ -229,7 +243,7 @@ CMakeFiles/redgui.dir/src/kernel.cu.s: cmake_force
 CMakeFiles/redgui.dir/third_party/imgui/imgui.cpp.o: CMakeFiles/redgui.dir/flags.make
 CMakeFiles/redgui.dir/third_party/imgui/imgui.cpp.o: /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/imgui/imgui.cpp
 CMakeFiles/redgui.dir/third_party/imgui/imgui.cpp.o: CMakeFiles/redgui.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_12) "Building CXX object CMakeFiles/redgui.dir/third_party/imgui/imgui.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_13) "Building CXX object CMakeFiles/redgui.dir/third_party/imgui/imgui.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/redgui.dir/third_party/imgui/imgui.cpp.o -MF CMakeFiles/redgui.dir/third_party/imgui/imgui.cpp.o.d -o CMakeFiles/redgui.dir/third_party/imgui/imgui.cpp.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/imgui/imgui.cpp
 
 CMakeFiles/redgui.dir/third_party/imgui/imgui.cpp.i: cmake_force
@@ -243,7 +257,7 @@ CMakeFiles/redgui.dir/third_party/imgui/imgui.cpp.s: cmake_force
 CMakeFiles/redgui.dir/third_party/imgui/imgui_demo.cpp.o: CMakeFiles/redgui.dir/flags.make
 CMakeFiles/redgui.dir/third_party/imgui/imgui_demo.cpp.o: /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/imgui/imgui_demo.cpp
 CMakeFiles/redgui.dir/third_party/imgui/imgui_demo.cpp.o: CMakeFiles/redgui.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_13) "Building CXX object CMakeFiles/redgui.dir/third_party/imgui/imgui_demo.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_14) "Building CXX object CMakeFiles/redgui.dir/third_party/imgui/imgui_demo.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/redgui.dir/third_party/imgui/imgui_demo.cpp.o -MF CMakeFiles/redgui.dir/third_party/imgui/imgui_demo.cpp.o.d -o CMakeFiles/redgui.dir/third_party/imgui/imgui_demo.cpp.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/imgui/imgui_demo.cpp
 
 CMakeFiles/redgui.dir/third_party/imgui/imgui_demo.cpp.i: cmake_force
@@ -257,7 +271,7 @@ CMakeFiles/redgui.dir/third_party/imgui/imgui_demo.cpp.s: cmake_force
 CMakeFiles/redgui.dir/third_party/imgui/imgui_draw.cpp.o: CMakeFiles/redgui.dir/flags.make
 CMakeFiles/redgui.dir/third_party/imgui/imgui_draw.cpp.o: /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/imgui/imgui_draw.cpp
 CMakeFiles/redgui.dir/third_party/imgui/imgui_draw.cpp.o: CMakeFiles/redgui.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_14) "Building CXX object CMakeFiles/redgui.dir/third_party/imgui/imgui_draw.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_15) "Building CXX object CMakeFiles/redgui.dir/third_party/imgui/imgui_draw.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/redgui.dir/third_party/imgui/imgui_draw.cpp.o -MF CMakeFiles/redgui.dir/third_party/imgui/imgui_draw.cpp.o.d -o CMakeFiles/redgui.dir/third_party/imgui/imgui_draw.cpp.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/imgui/imgui_draw.cpp
 
 CMakeFiles/redgui.dir/third_party/imgui/imgui_draw.cpp.i: cmake_force
@@ -271,7 +285,7 @@ CMakeFiles/redgui.dir/third_party/imgui/imgui_draw.cpp.s: cmake_force
 CMakeFiles/redgui.dir/third_party/imgui/imgui_tables.cpp.o: CMakeFiles/redgui.dir/flags.make
 CMakeFiles/redgui.dir/third_party/imgui/imgui_tables.cpp.o: /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/imgui/imgui_tables.cpp
 CMakeFiles/redgui.dir/third_party/imgui/imgui_tables.cpp.o: CMakeFiles/redgui.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_15) "Building CXX object CMakeFiles/redgui.dir/third_party/imgui/imgui_tables.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_16) "Building CXX object CMakeFiles/redgui.dir/third_party/imgui/imgui_tables.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/redgui.dir/third_party/imgui/imgui_tables.cpp.o -MF CMakeFiles/redgui.dir/third_party/imgui/imgui_tables.cpp.o.d -o CMakeFiles/redgui.dir/third_party/imgui/imgui_tables.cpp.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/imgui/imgui_tables.cpp
 
 CMakeFiles/redgui.dir/third_party/imgui/imgui_tables.cpp.i: cmake_force
@@ -285,7 +299,7 @@ CMakeFiles/redgui.dir/third_party/imgui/imgui_tables.cpp.s: cmake_force
 CMakeFiles/redgui.dir/third_party/imgui/imgui_widgets.cpp.o: CMakeFiles/redgui.dir/flags.make
 CMakeFiles/redgui.dir/third_party/imgui/imgui_widgets.cpp.o: /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/imgui/imgui_widgets.cpp
 CMakeFiles/redgui.dir/third_party/imgui/imgui_widgets.cpp.o: CMakeFiles/redgui.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_16) "Building CXX object CMakeFiles/redgui.dir/third_party/imgui/imgui_widgets.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_17) "Building CXX object CMakeFiles/redgui.dir/third_party/imgui/imgui_widgets.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/redgui.dir/third_party/imgui/imgui_widgets.cpp.o -MF CMakeFiles/redgui.dir/third_party/imgui/imgui_widgets.cpp.o.d -o CMakeFiles/redgui.dir/third_party/imgui/imgui_widgets.cpp.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/imgui/imgui_widgets.cpp
 
 CMakeFiles/redgui.dir/third_party/imgui/imgui_widgets.cpp.i: cmake_force
@@ -299,7 +313,7 @@ CMakeFiles/redgui.dir/third_party/imgui/imgui_widgets.cpp.s: cmake_force
 CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_glfw.cpp.o: CMakeFiles/redgui.dir/flags.make
 CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_glfw.cpp.o: /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/imgui/backends/imgui_impl_glfw.cpp
 CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_glfw.cpp.o: CMakeFiles/redgui.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_17) "Building CXX object CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_glfw.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_18) "Building CXX object CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_glfw.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_glfw.cpp.o -MF CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_glfw.cpp.o.d -o CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_glfw.cpp.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/imgui/backends/imgui_impl_glfw.cpp
 
 CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_glfw.cpp.i: cmake_force
@@ -313,7 +327,7 @@ CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_glfw.cpp.s: cmake_fo
 CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_opengl3.cpp.o: CMakeFiles/redgui.dir/flags.make
 CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_opengl3.cpp.o: /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/imgui/backends/imgui_impl_opengl3.cpp
 CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_opengl3.cpp.o: CMakeFiles/redgui.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_18) "Building CXX object CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_opengl3.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_19) "Building CXX object CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_opengl3.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_opengl3.cpp.o -MF CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_opengl3.cpp.o.d -o CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_opengl3.cpp.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/imgui/backends/imgui_impl_opengl3.cpp
 
 CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_opengl3.cpp.i: cmake_force
@@ -327,7 +341,7 @@ CMakeFiles/redgui.dir/third_party/imgui/backends/imgui_impl_opengl3.cpp.s: cmake
 CMakeFiles/redgui.dir/third_party/implot/implot.cpp.o: CMakeFiles/redgui.dir/flags.make
 CMakeFiles/redgui.dir/third_party/implot/implot.cpp.o: /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/implot/implot.cpp
 CMakeFiles/redgui.dir/third_party/implot/implot.cpp.o: CMakeFiles/redgui.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_19) "Building CXX object CMakeFiles/redgui.dir/third_party/implot/implot.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_20) "Building CXX object CMakeFiles/redgui.dir/third_party/implot/implot.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/redgui.dir/third_party/implot/implot.cpp.o -MF CMakeFiles/redgui.dir/third_party/implot/implot.cpp.o.d -o CMakeFiles/redgui.dir/third_party/implot/implot.cpp.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/implot/implot.cpp
 
 CMakeFiles/redgui.dir/third_party/implot/implot.cpp.i: cmake_force
@@ -341,7 +355,7 @@ CMakeFiles/redgui.dir/third_party/implot/implot.cpp.s: cmake_force
 CMakeFiles/redgui.dir/third_party/implot/implot_items.cpp.o: CMakeFiles/redgui.dir/flags.make
 CMakeFiles/redgui.dir/third_party/implot/implot_items.cpp.o: /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/implot/implot_items.cpp
 CMakeFiles/redgui.dir/third_party/implot/implot_items.cpp.o: CMakeFiles/redgui.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_20) "Building CXX object CMakeFiles/redgui.dir/third_party/implot/implot_items.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_21) "Building CXX object CMakeFiles/redgui.dir/third_party/implot/implot_items.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/redgui.dir/third_party/implot/implot_items.cpp.o -MF CMakeFiles/redgui.dir/third_party/implot/implot_items.cpp.o.d -o CMakeFiles/redgui.dir/third_party/implot/implot_items.cpp.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/implot/implot_items.cpp
 
 CMakeFiles/redgui.dir/third_party/implot/implot_items.cpp.i: cmake_force
@@ -355,7 +369,7 @@ CMakeFiles/redgui.dir/third_party/implot/implot_items.cpp.s: cmake_force
 CMakeFiles/redgui.dir/third_party/implot/implot_demo.cpp.o: CMakeFiles/redgui.dir/flags.make
 CMakeFiles/redgui.dir/third_party/implot/implot_demo.cpp.o: /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/implot/implot_demo.cpp
 CMakeFiles/redgui.dir/third_party/implot/implot_demo.cpp.o: CMakeFiles/redgui.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_21) "Building CXX object CMakeFiles/redgui.dir/third_party/implot/implot_demo.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_22) "Building CXX object CMakeFiles/redgui.dir/third_party/implot/implot_demo.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/redgui.dir/third_party/implot/implot_demo.cpp.o -MF CMakeFiles/redgui.dir/third_party/implot/implot_demo.cpp.o.d -o CMakeFiles/redgui.dir/third_party/implot/implot_demo.cpp.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/implot/implot_demo.cpp
 
 CMakeFiles/redgui.dir/third_party/implot/implot_demo.cpp.i: cmake_force
@@ -369,7 +383,7 @@ CMakeFiles/redgui.dir/third_party/implot/implot_demo.cpp.s: cmake_force
 CMakeFiles/redgui.dir/third_party/ImGuiFileDialog/ImGuiFileDialog.cpp.o: CMakeFiles/redgui.dir/flags.make
 CMakeFiles/redgui.dir/third_party/ImGuiFileDialog/ImGuiFileDialog.cpp.o: /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/ImGuiFileDialog/ImGuiFileDialog.cpp
 CMakeFiles/redgui.dir/third_party/ImGuiFileDialog/ImGuiFileDialog.cpp.o: CMakeFiles/redgui.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_22) "Building CXX object CMakeFiles/redgui.dir/third_party/ImGuiFileDialog/ImGuiFileDialog.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_23) "Building CXX object CMakeFiles/redgui.dir/third_party/ImGuiFileDialog/ImGuiFileDialog.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/redgui.dir/third_party/ImGuiFileDialog/ImGuiFileDialog.cpp.o -MF CMakeFiles/redgui.dir/third_party/ImGuiFileDialog/ImGuiFileDialog.cpp.o.d -o CMakeFiles/redgui.dir/third_party/ImGuiFileDialog/ImGuiFileDialog.cpp.o -c /home/delahantyj@hhmi.org/gitrepos/crimson/third_party/ImGuiFileDialog/ImGuiFileDialog.cpp
 
 CMakeFiles/redgui.dir/third_party/ImGuiFileDialog/ImGuiFileDialog.cpp.i: cmake_force
@@ -390,6 +404,7 @@ redgui_OBJECTS = \
 "CMakeFiles/redgui.dir/src/yolo_detection.cpp.o" \
 "CMakeFiles/redgui.dir/src/yolov8_det.cpp.o" \
 "CMakeFiles/redgui.dir/src/yolov8_pose.cpp.o" \
+"CMakeFiles/redgui.dir/src/zarr_loader.cpp.o" \
 "CMakeFiles/redgui.dir/src/create_image_cuda.cu.o" \
 "CMakeFiles/redgui.dir/src/ColorSpace.cu.o" \
 "CMakeFiles/redgui.dir/src/kernel.cu.o" \
@@ -416,6 +431,7 @@ redgui_EXTERNAL_OBJECTS =
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: CMakeFiles/redgui.dir/src/yolo_detection.cpp.o
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: CMakeFiles/redgui.dir/src/yolov8_det.cpp.o
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: CMakeFiles/redgui.dir/src/yolov8_pose.cpp.o
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: CMakeFiles/redgui.dir/src/zarr_loader.cpp.o
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: CMakeFiles/redgui.dir/src/create_image_cuda.cu.o
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: CMakeFiles/redgui.dir/src/ColorSpace.cu.o
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: CMakeFiles/redgui.dir/src/kernel.cu.o
@@ -501,6 +517,237 @@ redgui_EXTERNAL_OBJECTS =
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: /usr/local/TensorRT-10.0.1.6/lib/libnvinfer_plugin.so
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: /usr/lib/x86_64-linux-gnu/libGLX.so
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: /usr/lib/x86_64-linux-gnu/libOpenGL.so
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_driver_zarr_bzip2_compressor.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_compression_bzip2_compressor.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_bzip2_bzip2_reader.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_bzip2_bzip2_writer.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_bzip2_bzip2_error.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/bzip2-build/libBZip2_bz2lib.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_driver_zarr_driver.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_driver_kvs_backed_chunk_driver.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_box_difference.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_cache_cache_pool_resource.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_cache_kvs_backed_chunk_cache.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_cache_kvs_backed_cache.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_data_copy_concurrency_resource.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_concurrency_resource.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_thread_thread_pool.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_thread_task_group_impl.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_thread_pool_impl.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_thread.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_json_binding_staleness_bound.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_open_mode_spec.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_driver_zarr_spec.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_driver_zarr_metadata.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_driver_zarr_blosc_compressor.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_compression_blosc_compressor.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_bytes_chain_reader.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_compression_blosc.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/blosc-build/libBlosc_blosc.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/blosc-build/libBlosc_shuffle.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/blosc-build/libBlosc_shuffle_avx2.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/blosc-build/libBlosc_shuffle_sse2.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/blosc-build/libBlosc_shuffle_generic.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/lz4-build/libLZ4_lz4.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/snappy-build/libSnappy_snappy.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_data_type_endian_conversion.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_riegeli_array_endian_codec.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_bytes_copy_all.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_bytes_limiting_reader.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_driver_zarr_dtype.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_json_metadata_matching.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_cache_chunk_cache.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_cache_async_cache.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_chunk_grid_specification.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_async_write_array.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_masked_array.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_cache.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_grid_storage_statistics.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_grid_chunk_key_ranges.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_grid_partition.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_grid_chunk_key_ranges_base10.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_grid_partition_impl.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_storage_statistics.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_tensorstore.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_spec.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_driver.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_array_storage_statistics.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_lock_collection.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_nditerable_copy.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_nditerable_data_type_conversion.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_nditerable_elementwise_input_transform.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_nditerable_elementwise_output_transform.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_nditerable_transformed_array.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_nditerable_array.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_nditerable_util.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_nditerable.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_index_space_alignment.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_progress.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_resize_options.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_kvstore.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_context.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_serialization_registry.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_path.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_kvstore_generation.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_serialization_absl_time.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_kvstore_key_range.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_kvstore_byte_range.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_log_verbose_flag.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_env.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/flags/libabsl_flags_internal.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/flags/libabsl_flags_reflection.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/flags/libabsl_flags_config.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/flags/libabsl_flags_program_name.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/flags/libabsl_flags_private_handle_accessor.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/flags/libabsl_flags_commandlineflag.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/flags/libabsl_flags_commandlineflag_internal.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/flags/libabsl_flags_marshalling.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_open_mode.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_batch.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_schema.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_chunk_layout.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_codec_spec.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_index_space_transform_broadcastable_array.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_index_space_transformed_array.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_index_space_dimension_units.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_index_space_index_transform.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_index_space_output_index_method.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_serialization_json.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_index_space_dimension_identifier.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_dimension_labels.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_json_binding_data_type.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_json_binding_unit.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_util_unit.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/re2-build/libRe2_re2.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_transaction.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_container_intrusive_red_black_tree.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_util_future.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/debugging/libabsl_leak_check.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_metrics_metric_impl.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_metrics_registry.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_metrics_collect.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_metrics_metadata.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_driver_zarr_zlib_compressor.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_compression_zlib_compressor.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_zlib_zlib_writer.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_zlib_zlib_reader.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_zlib_zlib_error.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_compression_zlib.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/zlib-build/libZLIB_zlib.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_driver_zarr_zstd_compressor.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_driver_zarr_compressor.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_compression_zstd_compressor.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_zstd_zstd_writer.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_bytes_buffered_writer.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_compression_json_specified_compressor.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_json_registry.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_json_binding.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_json.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_json_array.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_array.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_unaligned_data_type_functions.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_riegeli_json_input.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_riegeli_json_output.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_util_element_pointer.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_strided_layout.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_box.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_index_interval.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_util_constant_vector.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_util_iterate.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_contiguous_layout.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_bytes_cord_writer.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_bytes_read_all.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_data_type.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_json_same.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_json_value_as.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_util_utf8_string.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_serialization.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_poly_storage.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_riegeli_delimited.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_util_quote_string.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_varint_varint_reading.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_internal_utf8.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_rank.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_static_cast.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/tensorstore-build/libtensorstore_util_status.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/log/libabsl_log_internal_check_op.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/log/libabsl_log_internal_conditions.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/log/libabsl_log_internal_message.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/log/libabsl_log_internal_nullguard.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/debugging/libabsl_examine_stack.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/log/libabsl_log_internal_format.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/log/libabsl_log_internal_proto.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/log/libabsl_log_internal_log_sink_set.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/log/libabsl_log_internal_globals.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/log/libabsl_log_globals.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/log/libabsl_log_sink.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/log/libabsl_log_entry.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/log/libabsl_vlog_config_internal.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/log/libabsl_log_internal_fnmatch.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_bytes_cord_reader.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_bytes_pullable_reader.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_zstd_zstd_reader.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_base_recycling_pool.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_base_background_cleaning.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_base_parallelism.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_zstd_zstd_dictionary.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/zstd-build/libZstd_zstdlib.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_bytes_buffered_reader.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_bytes_buffer_options.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_bytes_reader_and_writer.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_base_chain.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_base_memory_estimator.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/container/libabsl_raw_hash_set.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/hash/libabsl_hash.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/hash/libabsl_city.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/hash/libabsl_low_level_hash.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/container/libabsl_hashtablez_sampler.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_base_sized_shared_buffer.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_base_shared_buffer.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_base_zeros.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_base_object.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_base_status.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/status/libabsl_statusor.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/status/libabsl_status.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/base/libabsl_strerror.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/types/libabsl_bad_variant_access.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_base_buffer.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_base_cord_utils.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_base_string_utils.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/strings/libabsl_cord.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/strings/libabsl_cordz_info.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/strings/libabsl_cord_internal.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/strings/libabsl_cordz_functions.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/profiling/libabsl_exponential_biased.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/strings/libabsl_cordz_handle.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/synchronization/libabsl_synchronization.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/debugging/libabsl_stacktrace.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/debugging/libabsl_symbolize.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/debugging/libabsl_debugging_internal.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/debugging/libabsl_demangle_internal.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/synchronization/libabsl_graphcycles_internal.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/base/libabsl_malloc_internal.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/synchronization/libabsl_kernel_timeout_internal.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/time/libabsl_time.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/time/libabsl_civil_time.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/time/libabsl_time_zone.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/crc/libabsl_crc_cord_state.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/crc/libabsl_crc32c.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/strings/libabsl_str_format_internal.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/crc/libabsl_crc_internal.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/crc/libabsl_crc_cpu_detect.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/types/libabsl_bad_optional_access.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_bytes_write_int_internal.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/riegeli-build/libriegeli_base_assert.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/strings/libabsl_strings.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/strings/libabsl_strings_internal.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/strings/libabsl_string_view.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/base/libabsl_base.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/base/libabsl_spinlock_wait.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/base/libabsl_throw_delegate.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/base/libabsl_raw_logging_internal.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/base/libabsl_log_severity.a
+/home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: _deps/absl-build/absl/numeric/libabsl_int128.a
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: /opt/crimson/lib/opencv/lib/libopencv_shape.so.4.10.0
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: /opt/crimson/lib/opencv/lib/libopencv_highgui.so.4.10.0
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: /opt/crimson/lib/opencv/lib/libopencv_datasets.so.4.10.0
@@ -522,7 +769,7 @@ redgui_EXTERNAL_OBJECTS =
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: /opt/crimson/lib/opencv/lib/libopencv_imgproc.so.4.10.0
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: /opt/crimson/lib/opencv/lib/libopencv_core.so.4.10.0
 /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui: CMakeFiles/redgui.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_23) "Linking CXX executable /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/delahantyj@hhmi.org/gitrepos/crimson/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_24) "Linking CXX executable /home/delahantyj@hhmi.org/gitrepos/crimson/release/redgui"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/redgui.dir/link.txt --verbose=$(VERBOSE)
 
 # Rule to build all files generated by this target.
