@@ -43,79 +43,82 @@ bool camera_load_calibration_from_h5_enhanced(const H5SessionData& h5_data,
     error_message.clear();
     
     try {
-        // First, try to load from the enhanced camera calibrations
+        // Method 1: Try to load from enhanced camera calibrations (YAML format)
         auto it = h5_data.camera_calibrations.find(camera_id_str);
         if (it != h5_data.camera_calibrations.end() && it->second.has_homography) {
             const CameraCalibrationData& calib_data = it->second;
             
             std::cout << "Loading homography from YAML for camera: " << camera_id_str << std::endl;
             
-            // Copy the homography matrix
             camera_params.homography_matrix = calib_data.homography_matrix.clone();
             
-            // Calculate and store the inverse
             if (cv::invert(camera_params.homography_matrix, camera_params.inverse_homography_matrix)) {
                 camera_params.has_valid_homography = true;
                 camera_params.calibration_timestamp = calib_data.calibration_timestamp_utc;
                 
-                // Copy additional attributes if available
                 if (calib_data.has_attributes) {
                     camera_params.pixels_per_mm_projector = calib_data.pixels_per_mm_projector;
                     camera_params.pixels_per_mm_camera = calib_data.pixels_per_mm_camera;
                     camera_params.real_world_ref_mm = calib_data.real_world_ref_mm;
                 }
                 
-                std::cout << "  Successfully loaded homography matrix (3x3):" << std::endl;
-                std::cout << camera_params.homography_matrix << std::endl;
-                std::cout << "  Calibration timestamp: " << camera_params.calibration_timestamp << std::endl;
-                
+                std::cout << "  Successfully loaded homography matrix from YAML" << std::endl;
                 return true;
-            } else {
-                error_message = "Failed to invert homography matrix for camera ID " + camera_id_str;
-                std::cerr << error_message << std::endl;
             }
         }
         
-        // Fall back to JSON method if YAML loading failed
-        std::cout << "Falling back to JSON arena_config for camera: " << camera_id_str << std::endl;
-        
-        if (h5_data.arena_config_json.empty()) {
-            error_message = "No arena configuration found in H5 file";
-            return false;
+        // Method 2: Try to load directly from /homography dataset (analysis file format)
+        if (!camera_params.has_valid_homography && h5_data.has_direct_homography) {
+            std::cout << "Loading homography from direct /homography dataset" << std::endl;
+            
+            camera_params.homography_matrix = h5_data.direct_homography_matrix.clone();
+            
+            if (cv::invert(camera_params.homography_matrix, camera_params.inverse_homography_matrix)) {
+                camera_params.has_valid_homography = true;
+                std::cout << "  Successfully loaded homography from /homography dataset" << std::endl;
+                return true;
+            }
         }
         
-        json config = json::parse(h5_data.arena_config_json);
-        
-        if (config.contains("camera_calibrations")) {
-            for (const auto& calib : config["camera_calibrations"]) {
-                std::string current_cam_id_str;
-                if (calib["camera_id"].is_string()) {
-                    current_cam_id_str = calib["camera_id"].get<std::string>();
-                } else if (calib["camera_id"].is_number()) {
-                    current_cam_id_str = std::to_string(calib["camera_id"].get<uint32_t>());
-                }
-                
-                if (current_cam_id_str == camera_id_str) {
-                    if (calib.contains("homography_matrix") && calib["homography_matrix"].contains("data")) {
-                        std::vector<double> h_vec = calib["homography_matrix"]["data"].get<std::vector<double>>();
-                        if (h_vec.size() == 9) {
-                            camera_params.homography_matrix = cv::Mat(h_vec, true).reshape(1, 3);
-                            
-                            // Calculate and store the inverse
-                            if (cv::invert(camera_params.homography_matrix, camera_params.inverse_homography_matrix)) {
-                                camera_params.has_valid_homography = true;
-                                std::cout << "  Loaded homography from JSON (fallback method)" << std::endl;
-                                return true;
+        // Method 3: Fall back to JSON method
+        if (!camera_params.has_valid_homography) {
+            std::cout << "Falling back to JSON arena_config for camera: " << camera_id_str << std::endl;
+            
+            if (h5_data.arena_config_json.empty()) {
+                error_message = "No arena configuration found in H5 file";
+                return false;
+            }
+            
+            json config = json::parse(h5_data.arena_config_json);
+            
+            if (config.contains("camera_calibrations")) {
+                for (const auto& calib : config["camera_calibrations"]) {
+                    std::string current_cam_id_str;
+                    if (calib["camera_id"].is_string()) {
+                        current_cam_id_str = calib["camera_id"].get<std::string>();
+                    } else if (calib["camera_id"].is_number()) {
+                        current_cam_id_str = std::to_string(calib["camera_id"].get<uint32_t>());
+                    }
+                    
+                    if (current_cam_id_str == camera_id_str) {
+                        if (calib.contains("homography_matrix") && calib["homography_matrix"].contains("data")) {
+                            std::vector<double> h_vec = calib["homography_matrix"]["data"].get<std::vector<double>>();
+                            if (h_vec.size() == 9) {
+                                camera_params.homography_matrix = cv::Mat(h_vec, true).reshape(1, 3);
+                                
+                                if (cv::invert(camera_params.homography_matrix, camera_params.inverse_homography_matrix)) {
+                                    camera_params.has_valid_homography = true;
+                                    std::cout << "  Loaded homography from JSON (fallback method)" << std::endl;
+                                    return true;
+                                }
                             }
-                            error_message = "Failed to invert homography matrix for camera ID " + camera_id_str;
-                            return false;
                         }
                     }
                 }
             }
         }
         
-        error_message = "Homography matrix not found for camera ID " + camera_id_str + " in H5 data";
+        error_message = "Homography matrix not found in any expected location in H5 file";
         return false;
         
     } catch (const json::exception& e) {

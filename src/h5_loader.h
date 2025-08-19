@@ -114,8 +114,34 @@ struct H5SessionData {
     size_t total_frames = 0;
     double fps = 30.0; // Will be calculated from frame metadata if available
 
+    // Camera calibrations
+    cv::Mat direct_homography_matrix;
+    bool has_direct_homography = false;
+
     // Add camera calibrations map
     std::map<std::string, CameraCalibrationData> camera_calibrations;
+
+    // Analysis file specific data
+    bool is_analysis_file = false;
+    bool has_continuous_frames = false;  // True if frame_metadata has no gaps
+    std::vector<bool> interpolation_mask;  // True = original, False = interpolated
+    std::string gap_info_json;  // JSON string with gap analysis information
+    
+    // Helper methods for analysis files
+    bool isFrameInterpolated(size_t frame_index) const {
+        if (frame_index < interpolation_mask.size()) {
+            return !interpolation_mask[frame_index];  // Mask is true for original
+        }
+        return false;
+    }
+    
+    size_t getOriginalFrameCount() const {
+        return std::count(interpolation_mask.begin(), interpolation_mask.end(), true);
+    }
+    
+    size_t getInterpolatedFrameCount() const {
+        return std::count(interpolation_mask.begin(), interpolation_mask.end(), false);
+    }
 };
 
 class H5SessionLoader {
@@ -134,6 +160,7 @@ public:
     bool loadFrameMetadata(H5::H5File& file, std::vector<FrameMetadataRecord>& metadata);
     bool loadProtocolSnapshot(H5::H5File& file, std::string& protocol_json);
     bool loadCalibrationSnapshot(H5::H5File& file, std::string& arena_config_json);
+    bool loadHomographyDirect(H5::H5File& file, cv::Mat& homography_matrix);
 
     // Find H5 file in directory
     static std::string findH5FileInDirectory(const std::string& directory);
@@ -164,6 +191,18 @@ public:
     static bool parseHomographyYAML(const std::string& yaml_content,
                                     cv::Mat& homography_matrix,
                                     std::string& timestamp);
+
+    // Analysis file specific loading methods
+    bool loadAnalysisData(H5::H5File& file, H5SessionData& data);
+    bool loadInterpolationMask(H5::H5File& file, std::vector<bool>& mask);
+    bool loadGapInfo(H5::H5File& file, std::string& gap_info);
+    
+    // Helper to detect if file is an analysis file
+    static bool isAnalysisFile(const std::string& filepath);
+    
+    // Enhanced frame metadata access for continuous frames
+    static FrameMetadataRecord* getFrameMetadataByCameraIDContinuous(
+        H5SessionData& data, uint64_t camera_frame_id);
 
 private:
     // Helper functions

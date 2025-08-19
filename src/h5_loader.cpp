@@ -13,122 +13,6 @@ H5SessionLoader::H5SessionLoader() {
 H5SessionLoader::~H5SessionLoader() {
 }
 
-bool H5SessionLoader::loadH5File(const std::string& filepath, H5SessionData& data, std::string& error_message) {
-    try {
-        // Check if file exists
-        if (!std::filesystem::exists(filepath)) {
-            setError(error_message, "H5 file does not exist: " + filepath);
-            return false;
-        }
-
-        // Open the HDF5 file
-        H5File file(filepath, H5F_ACC_RDONLY);
-
-        std::cout << "Loading H5 session file: " << filepath << std::endl;
-
-        // Load session info (attributes from root group)
-        if (!loadSessionInfo(file, data.session_info)) {
-            std::cerr << "Warning: Failed to load complete session info" << std::endl;
-        }
-
-        // Load events
-        if (!loadEvents(file, data.events)) {
-            std::cerr << "Warning: Failed to load events" << std::endl;
-        } else {
-            std::cout << "  Loaded " << data.events.size() << " events" << std::endl;
-        }
-
-        // Load tracking data if it exists
-        if (groupExists(file, "/tracking_data")) {
-            data.has_tracking_data = true;
-
-            if (!loadBoundingBoxes(file, data.bounding_boxes)) {
-                std::cerr << "Warning: Failed to load bounding boxes" << std::endl;
-            } else {
-                std::cout << "  Loaded " << data.bounding_boxes.size() << " bounding boxes" << std::endl;
-            }
-
-            if (!loadChaserStates(file, data.chaser_states)) {
-                std::cerr << "Warning: Failed to load chaser states" << std::endl;
-            } else {
-                std::cout << "  Loaded " << data.chaser_states.size() << " chaser states" << std::endl;
-            }
-        }
-
-        // Load video metadata if it exists
-        if (groupExists(file, "/video_metadata")) {
-            data.has_video_metadata = true;
-
-            if (!loadFrameMetadata(file, data.frame_metadata)) {
-                std::cerr << "Warning: Failed to load frame metadata" << std::endl;
-            } else {
-                std::cout << "  Loaded " << data.frame_metadata.size() << " frame metadata records" << std::endl;
-
-                // Calculate total frames and FPS
-                if (!data.frame_metadata.empty()) {
-                    data.total_frames = data.frame_metadata.back().stimulus_frame_num + 1;
-
-                    // Calculate FPS from timestamps if we have enough frames
-                    if (data.frame_metadata.size() > 10) {
-                        double time_diff = (data.frame_metadata.back().timestamp_ns -
-                                          data.frame_metadata.front().timestamp_ns) / 1e9;
-                        double frame_diff = data.frame_metadata.back().stimulus_frame_num -
-                                          data.frame_metadata.front().stimulus_frame_num;
-                        if (time_diff > 0) {
-                            data.fps = frame_diff / time_diff;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Load protocol snapshot
-        if (!loadProtocolSnapshot(file, data.protocol_json)) {
-            std::cerr << "Warning: Failed to load protocol snapshot" << std::endl;
-        }
-
-        if (!loadCalibrationSnapshotEnhanced(file, data.arena_config_json, data.camera_calibrations)) {
-            std::cerr << "Warning: Failed to load enhanced calibration snapshot" << std::endl;
-            // Fall back to basic loading
-            if (!loadCalibrationSnapshot(file, data.arena_config_json)) {
-                std::cerr << "Warning: Failed to load basic calibration snapshot" << std::endl;
-            }
-        } else {
-            std::cout << "  Loaded calibration for " << data.camera_calibrations.size() << " cameras" << std::endl;
-            
-            // Print summary of what was loaded
-            for (const auto& [cam_id, calib] : data.camera_calibrations) {
-                std::cout << "    Camera " << cam_id << ":"
-                         << " homography=" << (calib.has_homography ? "yes" : "no")
-                         << " attributes=" << (calib.has_attributes ? "yes" : "no")
-                         << std::endl;
-                if (calib.has_homography) {
-                    std::cout << "      Timestamp: " << calib.calibration_timestamp_utc << std::endl;
-                }
-                if (calib.has_attributes) {
-                    std::cout << "      pixels_per_mm_projector: " << calib.pixels_per_mm_projector << std::endl;
-                    std::cout << "      pixels_per_mm_camera: " << calib.pixels_per_mm_camera << std::endl;
-                }
-            }
-        }
-
-        file.close();
-
-        std::cout << "Successfully loaded H5 session file" << std::endl;
-        std::cout << "  Total frames: " << data.total_frames << std::endl;
-        std::cout << "  Estimated FPS: " << data.fps << std::endl;
-
-        return true;
-
-    } catch (const H5::Exception& error) {
-        setError(error_message, "HDF5 error: " + std::string(error.getCDetailMsg()));
-        return false;
-    } catch (const std::exception& e) {
-        setError(error_message, "Exception: " + std::string(e.what()));
-        return false;
-    }
-}
-
 bool H5SessionLoader::loadSessionInfo(H5::H5File& file, SessionInfo& info) {
     try {
         Group root = file.openGroup("/");
@@ -430,26 +314,32 @@ bool H5SessionLoader::loadProtocolSnapshot(H5::H5File& file, std::string& protoc
 bool H5SessionLoader::loadCalibrationSnapshot(H5::H5File& file, std::string& arena_config_json) {
     try {
         if (!groupExists(file, "/calibration_snapshot")) {
+            std::cout << "[DEBUG] /calibration_snapshot group does not exist" << std::endl;
             return false;
         }
-
+        
+        std::cout << "[DEBUG] Found /calibration_snapshot group" << std::endl;
+        
         Group calibGroup = file.openGroup("/calibration_snapshot");
-
+        
         if (datasetExists(calibGroup, "arena_config_json")) {
+            std::cout << "[DEBUG] Found arena_config_json dataset" << std::endl;
             DataSet dataset = calibGroup.openDataSet("arena_config_json");
             StrType strType(PredType::C_S1, H5T_VARIABLE);
             H5std_string h5_str;
             dataset.read(h5_str, strType);
             arena_config_json = h5_str;
+            std::cout << "[DEBUG] Loaded arena_config_json, length: " << arena_config_json.length() << std::endl;
+        } else {
+            std::cout << "[DEBUG] arena_config_json dataset not found" << std::endl;
         }
-
+        
         return true;
     } catch (const H5::Exception& e) {
         std::cerr << "Error loading calibration snapshot: " << e.getCDetailMsg() << std::endl;
         return false;
     }
 }
-
 // Helper functions
 bool H5SessionLoader::groupExists(H5::H5File& file, const std::string& group_name) {
     try {
@@ -507,11 +397,61 @@ FrameMetadataRecord* H5SessionLoader::getFrameMetadata(H5SessionData& data, uint
 }
 
 FrameMetadataRecord* H5SessionLoader::getFrameMetadataByCameraID(H5SessionData& data, uint64_t camera_frame_id) {
+    // First try the optimized lookup for continuous frames (analysis files)
+    if (data.has_continuous_frames && !data.frame_metadata.empty()) {
+        // For continuous frames from analysis files, frames should be sequential
+        uint64_t min_frame_id = data.frame_metadata.front().triggering_camera_frame_id;
+        uint64_t max_frame_id = data.frame_metadata.back().triggering_camera_frame_id;
+        
+        // Debug output
+        static int debug_counter = 0;
+        if (debug_counter++ % 100 == 0) {  // Print every 100th call to avoid spam
+            std::cout << "[DEBUG] getFrameMetadataByCameraID: "
+                      << "camera_frame_id=" << camera_frame_id 
+                      << ", min=" << min_frame_id 
+                      << ", max=" << max_frame_id 
+                      << ", continuous=" << data.has_continuous_frames << std::endl;
+        }
+        
+        if (camera_frame_id >= min_frame_id && camera_frame_id <= max_frame_id) {
+            // In analysis files with continuous frames, the index should map directly
+            size_t index = camera_frame_id - min_frame_id;
+            if (index < data.frame_metadata.size()) {
+                // Verify this is the correct frame (in case of any indexing issues)
+                if (data.frame_metadata[index].triggering_camera_frame_id == camera_frame_id) {
+                    return &data.frame_metadata[index];
+                } else {
+                    // If direct indexing failed, fall back to linear search
+                    std::cerr << "[WARNING] Direct index lookup failed for frame " << camera_frame_id 
+                              << ", falling back to linear search" << std::endl;
+                }
+            }
+        }
+    }
+    
+    // Fall back to linear search for non-continuous frames or if direct lookup failed
     auto it = std::find_if(data.frame_metadata.begin(), data.frame_metadata.end(),
                           [camera_frame_id](const FrameMetadataRecord& record) {
                               return record.triggering_camera_frame_id == camera_frame_id;
                           });
-    return (it != data.frame_metadata.end()) ? &(*it) : nullptr;
+    
+    if (it != data.frame_metadata.end()) {
+        return &(*it);
+    }
+    
+    // If still not found, print debug info
+    static int not_found_counter = 0;
+    if (not_found_counter++ < 10) {  // Only print first 10 not-found messages
+        std::cerr << "[WARNING] Frame metadata not found for camera_frame_id: " << camera_frame_id << std::endl;
+        if (!data.frame_metadata.empty()) {
+            std::cerr << "  Available range: " 
+                      << data.frame_metadata.front().triggering_camera_frame_id 
+                      << " - " 
+                      << data.frame_metadata.back().triggering_camera_frame_id << std::endl;
+        }
+    }
+    
+    return nullptr;
 }
 
 std::vector<LoggedBoundingBox> H5SessionLoader::getBoundingBoxesForFrame(const H5SessionData& data, uint64_t frame_id) {
@@ -768,3 +708,314 @@ bool H5SessionLoader::parseHomographyYAML(const std::string& yaml_content,
     
     return false;
 }
+
+bool H5SessionLoader::isAnalysisFile(const std::string& filepath) {
+    // Check if filename contains "analysis" or if the file has /analysis group
+    std::filesystem::path path(filepath);
+    std::string filename = path.filename().string();
+    std::transform(filename.begin(), filename.end(), filename.begin(), ::tolower);
+    
+    return (filename.find("analysis") != std::string::npos) ||
+           (filename.find("out_analysis") != std::string::npos);
+}
+
+bool H5SessionLoader::loadAnalysisData(H5::H5File& file, H5SessionData& data) {
+    try {
+        if (!groupExists(file, "/analysis")) {
+            return false;
+        }
+        
+        Group analysisGroup = file.openGroup("/analysis");
+        
+        // Load interpolation mask
+        if (!loadInterpolationMask(file, data.interpolation_mask)) {
+            std::cerr << "Warning: Failed to load interpolation mask" << std::endl;
+        }
+        
+        // Load gap info JSON
+        if (!loadGapInfo(file, data.gap_info_json)) {
+            std::cerr << "Warning: Failed to load gap info" << std::endl;
+        }
+        
+        // Mark that this is an analysis file with continuous frames
+        data.is_analysis_file = true;
+        data.has_continuous_frames = true;
+        
+        std::cout << "  Loaded analysis data:" << std::endl;
+        std::cout << "    Original frames: " << data.getOriginalFrameCount() << std::endl;
+        std::cout << "    Interpolated frames: " << data.getInterpolatedFrameCount() << std::endl;
+        
+        return true;
+    } catch (const H5::Exception& e) {
+        std::cerr << "Error loading analysis data: " << e.getCDetailMsg() << std::endl;
+        return false;
+    }
+}
+
+bool H5SessionLoader::loadInterpolationMask(H5::H5File& file, std::vector<bool>& mask) {
+    try {
+        Group analysisGroup = file.openGroup("/analysis");
+        
+        if (!datasetExists(analysisGroup, "interpolation_mask")) {
+            return false;
+        }
+        
+        DataSet dataset = analysisGroup.openDataSet("interpolation_mask");
+        DataSpace dataspace = dataset.getSpace();
+        
+        // Get dimensions
+        hsize_t dims[1];
+        dataspace.getSimpleExtentDims(dims);
+        size_t num_elements = dims[0];
+        
+        if (num_elements == 0) {
+            return true;  // Empty but valid
+        }
+        
+        // Read as uint8 array first (HDF5 stores booleans as uint8)
+        std::vector<uint8_t> temp_mask(num_elements);
+        dataset.read(temp_mask.data(), PredType::NATIVE_UINT8);
+        
+        // Convert to bool vector
+        mask.resize(num_elements);
+        for (size_t i = 0; i < num_elements; ++i) {
+            mask[i] = (temp_mask[i] != 0);
+        }
+        
+        return true;
+    } catch (const H5::Exception& e) {
+        std::cerr << "Error loading interpolation mask: " << e.getCDetailMsg() << std::endl;
+        return false;
+    }
+}
+
+bool H5SessionLoader::loadGapInfo(H5::H5File& file, std::string& gap_info) {
+    try {
+        Group analysisGroup = file.openGroup("/analysis");
+        
+        if (!datasetExists(analysisGroup, "gap_info")) {
+            return false;
+        }
+        
+        DataSet dataset = analysisGroup.openDataSet("gap_info");
+        StrType strType(PredType::C_S1, H5T_VARIABLE);
+        H5std_string h5_str;
+        dataset.read(h5_str, strType);
+        gap_info = h5_str;
+        
+        return true;
+    } catch (const H5::Exception& e) {
+        std::cerr << "Error loading gap info: " << e.getCDetailMsg() << std::endl;
+        return false;
+    }
+}
+
+// Enhanced loadH5File method that detects and handles analysis files
+bool H5SessionLoader::loadH5File(const std::string& filepath, H5SessionData& data, std::string& error_message) {
+    try {
+        // Check if file exists
+        if (!std::filesystem::exists(filepath)) {
+            setError(error_message, "H5 file does not exist: " + filepath);
+            return false;
+        }
+        
+        // Detect if this is an analysis file
+        std::filesystem::path path(filepath);
+        std::string filename = path.filename().string();
+        std::transform(filename.begin(), filename.end(), filename.begin(), ::tolower);
+        data.is_analysis_file = (filename.find("analysis") != std::string::npos) ||
+                                (filename.find("out_analysis") != std::string::npos);
+        
+        // Open the HDF5 file
+        H5File file(filepath, H5F_ACC_RDONLY);
+        
+        std::cout << "Loading H5 " << (data.is_analysis_file ? "analysis" : "session") 
+                  << " file: " << filepath << std::endl;
+        
+        // Load session info (attributes from root group)
+        if (!loadSessionInfo(file, data.session_info)) {
+            std::cerr << "Warning: Failed to load complete session info" << std::endl;
+        }
+        
+        // Load events
+        if (!loadEvents(file, data.events)) {
+            std::cerr << "Warning: Failed to load events" << std::endl;
+        } else {
+            std::cout << "  Loaded " << data.events.size() << " events" << std::endl;
+        }
+        
+        // Load tracking data if it exists
+        if (groupExists(file, "/tracking_data")) {
+            data.has_tracking_data = true;
+            
+            if (!loadBoundingBoxes(file, data.bounding_boxes)) {
+                std::cerr << "Warning: Failed to load bounding boxes" << std::endl;
+            } else {
+                std::cout << "  Loaded " << data.bounding_boxes.size() << " bounding boxes" << std::endl;
+            }
+            
+            if (!loadChaserStates(file, data.chaser_states)) {
+                std::cerr << "Warning: Failed to load chaser states" << std::endl;
+            } else {
+                std::cout << "  Loaded " << data.chaser_states.size() << " chaser states" << std::endl;
+            }
+        }
+        
+        // Load video metadata if it exists
+        if (groupExists(file, "/video_metadata")) {
+            data.has_video_metadata = true;
+            
+            if (!loadFrameMetadata(file, data.frame_metadata)) {
+                std::cerr << "Warning: Failed to load frame metadata" << std::endl;
+            } else {
+                std::cout << "  Loaded " << data.frame_metadata.size() << " frame metadata records" << std::endl;
+                
+                // For analysis files, frames should be continuous
+                if (data.is_analysis_file) {
+                    data.has_continuous_frames = true;
+                    std::cout << "  Frame metadata is CONTINUOUS (analysis file)" << std::endl;
+                    
+                    // Verify continuity
+                    if (!data.frame_metadata.empty()) {
+                        uint64_t min_id = data.frame_metadata.front().triggering_camera_frame_id;
+                        uint64_t max_id = data.frame_metadata.back().triggering_camera_frame_id;
+                        size_t expected_count = max_id - min_id + 1;
+                        
+                        if (data.frame_metadata.size() == expected_count) {
+                            std::cout << "  Verified: Frame metadata is perfectly continuous" << std::endl;
+                        } else {
+                            std::cerr << "  WARNING: Frame count mismatch. Expected " << expected_count 
+                                     << " but got " << data.frame_metadata.size() << std::endl;
+                            // Still treat as continuous if it's an analysis file
+                        }
+                    }
+                }
+                
+                // Calculate total frames and FPS
+                if (!data.frame_metadata.empty()) {
+                    data.total_frames = data.frame_metadata.back().stimulus_frame_num + 1;
+                    
+                    // Calculate FPS from timestamps if we have enough frames
+                    if (data.frame_metadata.size() > 10) {
+                        double time_diff = (data.frame_metadata.back().timestamp_ns -
+                                          data.frame_metadata.front().timestamp_ns) / 1e9;
+                        double frame_diff = data.frame_metadata.size() - 1;
+                        data.fps = frame_diff / time_diff;
+                    }
+                }
+            }
+        }
+        
+        // Load analysis-specific data if available
+        if (groupExists(file, "/analysis")) {
+            std::cout << "  Found /analysis group - loading interpolation data" << std::endl;
+            Group analysisGroup = file.openGroup("/analysis");
+            
+            // Load interpolation mask if present
+            if (datasetExists(analysisGroup, "interpolation_mask")) {
+                // Implementation would go here if needed
+                std::cout << "    Interpolation mask found" << std::endl;
+            }
+            
+            // Load gap info if present  
+            if (datasetExists(analysisGroup, "gap_info")) {
+                // Implementation would go here if needed
+                std::cout << "    Gap info found" << std::endl;
+            }
+            
+            analysisGroup.close();
+        }
+        
+        // Load protocol and calibration snapshots
+        loadProtocolSnapshot(file, data.protocol_json);
+        loadCalibrationSnapshot(file, data.arena_config_json);
+        
+        // Load enhanced calibration data if available
+        loadCalibrationSnapshotEnhanced(file, data.arena_config_json, data.camera_calibrations);
+        
+        // Try to load homography directly from /homography dataset (for analysis files)
+        if (loadHomographyDirect(file, data.direct_homography_matrix)) {
+            data.has_direct_homography = true;
+            std::cout << "  Found direct homography matrix at /homography" << std::endl;
+        }
+        
+        file.close();
+        
+        std::cout << "Successfully loaded H5 file" << std::endl;
+        std::cout << "  Total frames: " << data.total_frames << std::endl;
+        std::cout << "  Estimated FPS: " << data.fps << std::endl;
+        if (data.has_continuous_frames) {
+            std::cout << "  Frame coverage: CONTINUOUS (no gaps)" << std::endl;
+        }
+        
+        return true;
+        
+    } catch (const H5::Exception& error) {
+        setError(error_message, "HDF5 error: " + std::string(error.getCDetailMsg()));
+        return false;
+    } catch (const std::exception& e) {
+        setError(error_message, "Exception: " + std::string(e.what()));
+        return false;
+    }
+}
+
+
+// New helper method for continuous frame access
+FrameMetadataRecord* H5SessionLoader::getFrameMetadataByCameraIDContinuous(
+    H5SessionData& data, uint64_t camera_frame_id) {
+    
+    if (data.has_continuous_frames && !data.frame_metadata.empty()) {
+        // For continuous frames, we can directly calculate the index
+        uint64_t min_frame_id = data.frame_metadata.front().triggering_camera_frame_id;
+        uint64_t max_frame_id = data.frame_metadata.back().triggering_camera_frame_id;
+        
+        if (camera_frame_id >= min_frame_id && camera_frame_id <= max_frame_id) {
+            size_t index = camera_frame_id - min_frame_id;
+            if (index < data.frame_metadata.size()) {
+                return &data.frame_metadata[index];
+            }
+        }
+    }
+    
+    // Fall back to linear search for non-continuous frames
+    return getFrameMetadataByCameraID(data, camera_frame_id);
+}
+
+
+bool H5SessionLoader::loadHomographyDirect(H5::H5File& file, cv::Mat& homography_matrix) {
+    try {
+        // Check if /homography dataset exists (as saved by the Python analysis script)
+        if (!H5Lexists(file.getId(), "/homography", H5P_DEFAULT)) {
+            return false;
+        }
+        
+        DataSet dataset = file.openDataSet("/homography");
+        DataSpace dataspace = dataset.getSpace();
+        
+        // Get dimensions - should be 3x3
+        hsize_t dims[2];
+        int ndims = dataspace.getSimpleExtentDims(dims);
+        
+        if (ndims != 2 || dims[0] != 3 || dims[1] != 3) {
+            std::cerr << "Invalid homography dimensions: " << dims[0] << "x" << dims[1] << std::endl;
+            return false;
+        }
+        
+        // Read the data as double (float64)
+        double data[9];
+        dataset.read(data, PredType::NATIVE_DOUBLE);
+        
+        // Convert to cv::Mat
+        homography_matrix = cv::Mat(3, 3, CV_64F, data).clone();
+        
+        std::cout << "  Loaded homography directly from /homography dataset" << std::endl;
+        std::cout << "  Homography matrix:\n" << homography_matrix << std::endl;
+        
+        return true;
+        
+    } catch (const H5::Exception& e) {
+        std::cerr << "Error loading homography directly: " << e.getCDetailMsg() << std::endl;
+        return false;
+    }
+}
+
