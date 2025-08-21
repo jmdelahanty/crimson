@@ -422,28 +422,45 @@ int main(int, char **) {
                 }
             }
 
-            // 4. Check for YOLO Detections (for each camera view)
-            if (yolo_detection) {
-                ImGui::Separator();
-                ImGui::Text("YOLO Detections:");
-                for(int i = 0; i < scene->num_cams; ++i) {
-                    if (!yolo_boxes.at(i).empty()) {
-                        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "  - %s: Found %zu", camera_names[i].c_str(), yolo_boxes.at(i).size());
-                    } else {
-                        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "  - %s: None", camera_names[i].c_str());
-                    }
-                }
-            }
-
             if (zarr_loaded) {
-                int32_t n_dets = zarr_loader.getDetectionsForFrame(current_frame_num);
-                if (n_dets > 0) {
-                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), 
-                                    "[Zarr] Detections:    Found %d", n_dets);
+                // Get the actual bounding boxes (including interpolated ones if available)
+                std::vector<LoggedBoundingBox> zarr_boxes;
+                bool is_interpolated = false;
+                
+                // Check if we have interpolation and if this frame is interpolated
+                if (zarr_loader.hasInterpolation()) {
+                    is_interpolated = zarr_loader.isFrameInterpolated(current_frame_num);
                     
-                    // Show additional info
+                    // Get interpolated boxes if enabled
+                    if (use_interpolated_detections) {
+                        zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num, true);
+                    } else {
+                        zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num, false);
+                    }
+                } else {
+                    // No interpolation available, get regular boxes
+                    zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num);
+                }
+                
+                // Display the detection count with appropriate coloring
+                if (!zarr_boxes.empty()) {
+                    if (is_interpolated && use_interpolated_detections) {
+                        // Orange color for interpolated detections
+                        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f), 
+                                        "[Zarr] Detections:    Found %zu (INTERPOLATED)", zarr_boxes.size());
+                    } else if (is_interpolated && !use_interpolated_detections) {
+                        // Show that interpolation is available but not being used
+                        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), 
+                                        "[Zarr] Detections:    Found %zu (original, interp available)", zarr_boxes.size());
+                    } else {
+                        // Green color for original detections
+                        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), 
+                                        "[Zarr] Detections:    Found %zu", zarr_boxes.size());
+                    }
+                    
+                    // Show additional info if available
                     if (zarr_loader.hasScores()) {
-                        auto detections = zarr_loader.getRawDetections(current_frame_num);
+                        ZarrDetectionLoader::FrameDetections detections = zarr_loader.getRawDetections(current_frame_num, use_interpolated_detections);
                         if (!detections.scores.empty()) {
                             float max_score = *std::max_element(detections.scores.begin(), 
                                                             detections.scores.end());
@@ -454,13 +471,43 @@ int main(int, char **) {
                     if (zarr_loader.hasClassIDs()) {
                         ImGui::Text("  Has class IDs: Yes");
                     }
+                    
+                    // Show interpolation info if available
+                    if (zarr_loader.hasInterpolation()) {
+                        ImGui::Text("  Interpolation available: Yes");
+                        ImGui::Text("  Current frame interpolated: %s", is_interpolated ? "Yes" : "No");
+                        ImGui::Text("  Using interpolation: %s", use_interpolated_detections ? "Yes" : "No");
+                        ImGui::Text("  Method: %s", zarr_loader.getInterpolationMethod().c_str());
+                    }
                 } else {
-                    ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 
-                                    "[Zarr] Detections:    None");
+                    // No detections found
+                    if (zarr_loader.hasInterpolation() && is_interpolated) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), 
+                                        "[Zarr] Detections:    None (frame is interpolated)");
+                    } else {
+                        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 
+                                        "[Zarr] Detections:    None");
+                    }
                 }
             } else {
                 ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), 
                                 "[Zarr] Detections:    Not loaded");
+            }
+
+            if (zarr_loaded && zarr_loader.hasInterpolation()) {
+                ImGui::Separator();
+                ImGui::Text("Interpolation Settings:");
+                ImGui::Checkbox("Use Interpolated Zarr Detections", &use_interpolated_detections);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("When checked, displays interpolated detections (orange) instead of original detections (green)");
+                }
+                
+                // Show current status
+                bool current_interpolated = zarr_loader.isFrameInterpolated(current_frame_num);
+                if (current_interpolated) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f), "(Current frame is interpolated)");
+                }
             }
 
             ImGui::End();
@@ -1054,20 +1101,34 @@ int main(int, char **) {
                         
                         // === ENHANCED ZARR BOUNDING BOX RENDERING === //
                         if (zarr_loaded) {
-                            // Check if this frame is interpolated
+                            // Check interpolation status for this frame
                             bool is_zarr_interpolated = zarr_loader.hasInterpolation() && 
-                                                    zarr_loader.isFrameInterpolated(current_frame_num);
+                                                        zarr_loader.isFrameInterpolated(current_frame_num);
                             
-                            // Get bounding boxes (using interpolated if available and enabled)
+                            // Get bounding boxes - use interpolated if available and enabled
                             std::vector<LoggedBoundingBox> zarr_boxes;
                             if (zarr_loader.hasInterpolation() && use_interpolated_detections) {
-                                // This will get interpolated boxes if available
+                                // Request interpolated boxes (will return interpolated if available for this frame)
                                 zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num, true);
                             } else {
-                                // This will get original boxes only
-                                zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num);
+                                // Request original boxes only
+                                zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num, false);
                             }
                             
+                            // DEBUG: Add this to see what's happening
+                            if (!zarr_boxes.empty()) {
+                                std::cout << "Drawing " << zarr_boxes.size() << " zarr boxes for frame " 
+                                        << current_frame_num << " (interpolated=" << is_zarr_interpolated << ")" << std::endl;
+                                for (const auto& box : zarr_boxes) {
+                                    std::cout << "  Box: x_min=" << box.x_min << ", y_min=" << box.y_min 
+                                            << ", width=" << box.width << ", height=" << box.height 
+                                            << ", class_id=" << box.class_id << std::endl;
+                                }
+                            } else {
+                                std::cout << "No zarr boxes to draw for frame " << current_frame_num << std::endl;
+                            }
+                            
+                            // Draw the boxes
                             if (!zarr_boxes.empty()) {
                                 for (const auto& box : zarr_boxes) {
                                     double x_coords[5] = {
@@ -1086,7 +1147,11 @@ int main(int, char **) {
                                         (double)scene->image_height[j] - box.y_min
                                     };
                                     
-                                    // Color based on interpolation status
+                                    // DEBUG: Check the coordinates
+                                    std::cout << "    Drawing at: x=[" << x_coords[0] << "-" << x_coords[1] 
+                                            << "], y=[" << y_coords[2] << "-" << y_coords[0] << "]" << std::endl;
+                                    
+                                    // Choose color based on whether this frame is interpolated
                                     ImVec4 box_color;
                                     float line_width;
                                     
@@ -1094,10 +1159,12 @@ int main(int, char **) {
                                         // Orange/yellow for interpolated frames
                                         box_color = ImVec4(1.0f, 0.7f, 0.0f, 0.9f);
                                         line_width = 2.5f;
+                                        std::cout << "    Using ORANGE color for interpolated box" << std::endl;
                                     } else {
                                         // Green for original detections
                                         box_color = ImVec4(0.2f, 1.0f, 0.2f, 1.0f);
                                         line_width = 2.0f;
+                                        std::cout << "    Using GREEN color for original box" << std::endl;
                                     }
                                     
                                     ImPlot::SetNextLineStyle(box_color, line_width);
@@ -1121,7 +1188,7 @@ int main(int, char **) {
                             std::string source = "";
                             
                             if (zarr_loaded && zarr_loader.hasInterpolation() && 
-                                zarr_loader.isFrameInterpolated(current_frame_num)) {
+                                zarr_loader.isFrameInterpolated(current_frame_num) && use_interpolated_detections) {
                                 any_interpolated = true;
                                 source = "Zarr";
                             }
@@ -1129,45 +1196,47 @@ int main(int, char **) {
                             if (h5_loaded && h5_data.is_analysis_file && 
                                 h5_data.isFrameInterpolated(current_frame_num)) {
                                 any_interpolated = true;
-                                source = source.empty() ? "H5" : source + "+H5";
+                                source = source.empty() ? "H5" : source + "/H5";
                             }
                             
-                            // Create status text
-                            std::string status_text;
-                            ImVec4 status_color;
-                            
-                            if (any_interpolated) {
-                                status_text = "INTERPOLATED";
-                                if (!source.empty()) {
-                                    status_text += " (" + source + ")";
+                            if (any_interpolated || (zarr_loader.hasInterpolation() || h5_data.is_analysis_file)) {
+                                // Get the plot limits
+                                ImPlotRect limits = ImPlot::GetPlotLimits();
+                                
+                                // Calculate text size first to position from the right
+                                std::string status_text;
+                                ImVec4 status_color;
+                                if (any_interpolated) {
+                                    status_text = source + " OFFLINE-DETECTION: INTERPOLATED";
+                                    status_color = ImVec4(1.0f, 0.7f, 0.0f, 0.9f);  // Orange
+                                } else {
+                                    status_text = "OFFLINE-DETECTION: ORIGINAL";
+                                    status_color = ImVec4(0.2f, 1.0f, 0.2f, 0.9f);  // Green
                                 }
-                                status_color = ImVec4(1.0f, 0.7f, 0.0f, 0.9f);  // Orange
-                            } else {
-                                status_text = "ORIGINAL";
-                                status_color = ImVec4(0.2f, 1.0f, 0.2f, 0.9f);  // Green
+                                
+                                ImVec2 text_size = ImGui::CalcTextSize(status_text.c_str());
+                                
+                                // Position in top-right: use Max for both x (right) and y (top)
+                                ImVec2 overlay_pos = ImPlot::PlotToPixels(
+                                    limits.Max().x - (text_size.x + 150),  // Right side minus text width and padding
+                                    limits.Max().y - 100                    // Top with small offset
+                                );
+                                
+                                // Draw background box and text (rest of code stays the same)
+                                ImDrawList* draw_list = ImPlot::GetPlotDrawList();
+                                ImVec2 box_min = overlay_pos;
+                                ImVec2 box_max = ImVec2(box_min.x + text_size.x + 10, 
+                                                        box_min.y + text_size.y + 6);
+                                
+                                draw_list->AddRectFilled(box_min, box_max, 
+                                                        IM_COL32(0, 0, 0, 200), 3.0f);
+                                draw_list->AddRect(box_min, box_max, 
+                                                ImGui::ColorConvertFloat4ToU32(status_color), 3.0f);
+                                
+                                draw_list->AddText(ImVec2(box_min.x + 5, box_min.y + 3), 
+                                                ImGui::ColorConvertFloat4ToU32(status_color), 
+                                                status_text.c_str());
                             }
-                            
-                            // Draw status overlay in top-left corner of the plot
-                            ImDrawList* draw_list = ImPlot::GetPlotDrawList();
-                            ImVec2 text_size = ImGui::CalcTextSize(status_text.c_str());
-                            
-                            // Position in top-left, slightly offset from edge
-                            ImVec2 plot_pos = ImPlot::PlotToPixels(ImPlotPoint(10, scene->image_height[j] - 30));
-                            ImVec2 box_min = plot_pos;
-                            ImVec2 box_max = ImVec2(box_min.x + text_size.x + 10, 
-                                                    box_min.y + text_size.y + 6);
-                            
-                            // Semi-transparent background
-                            draw_list->AddRectFilled(box_min, box_max, 
-                                                    IM_COL32(0, 0, 0, 200), 3.0f);
-                            // Colored border
-                            draw_list->AddRect(box_min, box_max, 
-                                            ImGui::ColorConvertFloat4ToU32(status_color), 3.0f);
-                            
-                            // Status text
-                            draw_list->AddText(ImVec2(box_min.x + 5, box_min.y + 3), 
-                                            ImGui::ColorConvertFloat4ToU32(status_color), 
-                                            status_text.c_str());
                         }
 
                         if (plot_keypoints_flag) {

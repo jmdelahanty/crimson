@@ -814,7 +814,32 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
         auto bbox_array = bbox_future.result().value();
         auto* bbox_data = static_cast<const float*>(bbox_array.data());
         
-        int valid_detections = data_.n_detections[frame_id];
+        // FIX: For interpolated data, we need to check the actual array dimensions
+        // or scan for valid boxes since n_detections might not apply
+        int valid_detections;
+        if (use_interp) {
+            // For interpolated data, check the shape of the array
+            // The second dimension should be max_detections
+            auto shape = bbox_array.shape();
+            int max_dets = shape[0];  // This is the max detections dimension
+            
+            // Count valid detections by checking for non-negative values
+            valid_detections = 0;
+            for (int det_idx = 0; det_idx < max_dets; ++det_idx) {
+                float first_coord = bbox_data[det_idx * 4];
+                if (first_coord >= 0) {
+                    valid_detections++;
+                } else {
+                    break;  // Assuming detections are packed at the beginning
+                }
+            }
+            
+            std::cout << "Interpolated frame " << frame_id << ": found " 
+                      << valid_detections << " valid detections" << std::endl;
+        } else {
+            // Use original n_detections for non-interpolated frames
+            valid_detections = data_.n_detections[frame_id];
+        }
         
         for (int det_idx = 0; det_idx < valid_detections; ++det_idx) {
             std::array<float, 4> box;

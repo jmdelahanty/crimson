@@ -68,7 +68,7 @@ struct LoggedBoundingBox {
     int64_t payload_timestamp_ns_epoch;
     int64_t received_timestamp_ns_epoch;
     uint64_t payload_frame_id;
-    uint16_t payload_camera_id;
+    uint32_t payload_camera_id;
     uint8_t box_index_in_payload;
     float x_min;
     float y_min;

@@ -417,8 +417,8 @@ FrameMetadataRecord* H5SessionLoader::getFrameMetadataByCameraID(H5SessionData& 
                     return &data.frame_metadata[index];
                 } else {
                     // If direct indexing failed, fall back to linear search
-                    std::cerr << "[WARNING] Direct index lookup failed for frame " << camera_frame_id 
-                              << ", falling back to linear search" << std::endl;
+                    // std::cerr << "[WARNING] Direct index lookup failed for frame " << camera_frame_id 
+                    //           << ", falling back to linear search" << std::endl;
                 }
             }
         }
