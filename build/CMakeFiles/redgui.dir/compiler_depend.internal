@@ -2735,6 +2735,7 @@ CMakeFiles/redgui.dir/src/red.cpp.o
  /home/delahantyj@hhmi.org/gitrepos/crimson/src/decoder.h
  /home/delahantyj@hhmi.org/gitrepos/crimson/src/global.h
  /home/delahantyj@hhmi.org/gitrepos/crimson/src/gui.h
+ /home/delahantyj@hhmi.org/gitrepos/crimson/src/gui_interpolation.h
  /home/delahantyj@hhmi.org/gitrepos/crimson/src/gx_helper.h
  /home/delahantyj@hhmi.org/gitrepos/crimson/src/h5_loader.h
  /home/delahantyj@hhmi.org/gitrepos/crimson/src/json.hpp

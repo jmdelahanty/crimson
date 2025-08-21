@@ -2727,6 +2727,7 @@ CMakeFiles/redgui.dir/src/red.cpp.o: /home/delahantyj@hhmi.org/gitrepos/crimson/
   /home/delahantyj@hhmi.org/gitrepos/crimson/src/decoder.h \
   /home/delahantyj@hhmi.org/gitrepos/crimson/src/global.h \
   /home/delahantyj@hhmi.org/gitrepos/crimson/src/gui.h \
+  /home/delahantyj@hhmi.org/gitrepos/crimson/src/gui_interpolation.h \
   /home/delahantyj@hhmi.org/gitrepos/crimson/src/gx_helper.h \
   /home/delahantyj@hhmi.org/gitrepos/crimson/src/h5_loader.h \
   /home/delahantyj@hhmi.org/gitrepos/crimson/src/json.hpp \
@@ -9066,8 +9067,6 @@ _deps/absl-src/absl/base/internal/nullability_impl.h:
 
 /opt/crimson/lib/opencv/include/opencv4/opencv2/dnn/dnn.hpp:
 
-_deps/absl-src/absl/log/absl_check.h:
-
 /usr/include/x86_64-linux-gnu/bits/types.h:
 
 /usr/include/c++/13/bits/cpp_type_traits.h:
@@ -10498,6 +10497,10 @@ _deps/tensorstore-src/tensorstore/internal/tracing/tracing.h:
 
 _deps/tensorstore-src/tensorstore/internal/unique_with_intrusive_allocator.h:
 
+/usr/lib/gcc/x86_64-linux-gnu/13/include/avx5124fmapsintrin.h:
+
+_deps/tensorstore-src/tensorstore/internal/void_wrapper.h:
+
 /usr/include/hdf5/serial/H5Location.h:
 
 _deps/nlohmann_json-src/include/nlohmann/adl_serializer.hpp:
@@ -10571,6 +10574,10 @@ _deps/tensorstore-src/tensorstore/util/result_impl.h:
 /home/delahantyj@hhmi.org/gitrepos/crimson/src/camera.h:
 
 /home/delahantyj@hhmi.org/gitrepos/crimson/src/gui.h:
+
+_deps/absl-src/absl/log/absl_check.h:
+
+/home/delahantyj@hhmi.org/gitrepos/crimson/src/gui_interpolation.h:
 
 /home/delahantyj@hhmi.org/gitrepos/crimson/src/json.hpp:
 
@@ -10777,7 +10784,3 @@ _deps/tensorstore-src/tensorstore/util/endian.h:
 /usr/lib/gcc/x86_64-linux-gnu/13/include/amxfp16intrin.h:
 
 /usr/lib/gcc/x86_64-linux-gnu/13/include/amxtileintrin.h:
-
-_deps/tensorstore-src/tensorstore/internal/void_wrapper.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/13/include/avx5124fmapsintrin.h:

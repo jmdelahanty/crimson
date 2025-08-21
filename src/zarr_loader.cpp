@@ -3,9 +3,9 @@
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cstring>
-#include <tensorstore/kvstore/operations.h>  // For kvstore::Read
-#include <tensorstore/cast.h>  // For Cast operation
-#include <tensorstore/driver/zarr/dtype.h> // For GetZarrDType
+#include <tensorstore/kvstore/operations.h>
+#include <tensorstore/cast.h>
+#include <tensorstore/driver/zarr/dtype.h>
 
 using json = nlohmann::json;
 
@@ -21,45 +21,92 @@ ZarrDetectionLoader::~ZarrDetectionLoader() {
 bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
                                        std::string& error_message) {
     try {
+        // Clear any previous data
+        data_ = ZarrDetectionData();
+        
         std::cout << "Opening Zarr store: " << filepath << std::endl;
 
-        // Open the zarr store
-        auto store_result = ts::kvstore::Open({
-            {"driver", "file"},
-            {"path", filepath}
-        }, context_).result();
-
-        if (!store_result.ok()) {
-            error_message = "Failed to open zarr store: " +
-                          store_result.status().ToString();
+        // Validate filepath exists
+        if (!std::filesystem::exists(filepath)) {
+            error_message = "Zarr file/directory does not exist: " + filepath;
             return false;
         }
 
-        auto store = std::move(store_result.value());
-
-        // Check for standard format first (bboxes at root level)
-        auto check_standard = ts::kvstore::Read(store, "bboxes/.zarray").result();
-        if (check_standard.ok()) {
-            std::cout << "Detected standard Zarr format" << std::endl;
-            return loadStandardFormat(store);
+        // Open the kvstore
+        auto spec_result = ts::kvstore::Spec::FromJson({
+            {"driver", "file"},
+            {"path", filepath}
+        });
+        
+        if (!spec_result.ok()) {
+            error_message = "Failed to create kvstore spec: " + spec_result.status().ToString();
+            return false;
         }
 
-        // Check for detect_runs format
-        auto check_runs = ts::kvstore::Read(store, "detect_runs/.zattrs").result();
-        if (check_runs.ok()) {
-            std::cout << "Detected detect_runs Zarr format" << std::endl;
-            return loadDetectRunsFormat(store);
+        auto store_future = ts::kvstore::Open(spec_result.value(), context_);
+        auto store_result = store_future.result();
+        
+        if (!store_result.ok()) {
+            error_message = "Failed to open kvstore: " + store_result.status().ToString();
+            return false;
         }
-
-        error_message = "Unrecognized zarr format - no bboxes or detect_runs found";
-        return false;
-
+        
+        auto store = store_result.value();
+        
+        // Load standard format
+        if (!loadStandardFormat(store)) {
+            error_message = "Failed to load standard zarr format";
+            return false;
+        }
+        
+        // Validate we have essential data
+        if (data_.total_frames == 0) {
+            error_message = "Zarr file has 0 frames";
+            return false;
+        }
+        
+        // Try to load interpolation runs from the correct, known location
+        if (loadInterpolationRuns(store)) {
+            std::cout << "  Successfully loaded interpolation data" << std::endl;
+            
+            // Validate interpolation data matches main data dimensions
+            if (data_.has_interpolation) {
+                auto interp_domain = data_.latest_interpolation.bboxes_store.domain();
+                if (interp_domain.shape()[0] != data_.total_frames) {
+                    std::cerr << "  Warning: Interpolation frame count mismatch. "
+                              << "Expected " << data_.total_frames 
+                              << " but got " << interp_domain.shape()[0] << std::endl;
+                    data_.has_interpolation = false;
+                }
+            }
+        } else {
+            std::cout << "  No interpolation data available in 'interpolation_runs'" << std::endl;
+        }
+        
+        std::cout << "Successfully loaded zarr file: " << filepath << std::endl;
+        std::cout << "  Total frames: " << data_.total_frames << std::endl;
+        std::cout << "  Max detections per frame: " << data_.max_detections << std::endl;
+        std::cout << "  FPS: " << data_.fps << std::endl;
+        std::cout << "  Has scores: " << (data_.has_scores ? "Yes" : "No") << std::endl;
+        std::cout << "  Has class IDs: " << (data_.has_class_ids ? "Yes" : "No") << std::endl;
+        std::cout << "  Has interpolation: " << (data_.has_interpolation ? "Yes" : "No") << std::endl;
+        
+        if (data_.has_interpolation) {
+            std::cout << "  Interpolation method: " << data_.latest_interpolation.method << std::endl;
+            std::cout << "  Interpolation created: " << data_.latest_interpolation.created_at << std::endl;
+        }
+        
+        return true;
+        
     } catch (const std::exception& e) {
         error_message = std::string("Exception loading zarr: ") + e.what();
+        // Clear any partially loaded data
+        data_ = ZarrDetectionData();
         return false;
     }
 }
 
+// ... (loadStandardFormat and other functions remain the same) ...
 bool ZarrDetectionLoader::loadStandardFormat(const ts::kvstore::KvStore& store) {
     try {
         // Load metadata first
@@ -88,17 +135,12 @@ bool ZarrDetectionLoader::loadStandardFormat(const ts::kvstore::KvStore& store) 
             }
         }
         
-        // If n_detections doesn't exist or failed to load, initialize based on max_detections
         if (!has_n_detections) {
             std::cout << "  No n_detections array found, initializing..." << std::endl;
             
-            // Since max_detections is 1 in your case, we need to check if boxes are valid
-            // We'll assume all frames have detections unless the bbox values are fill_value (-1.0)
             data_.n_detections.clear();
             data_.n_detections.resize(data_.total_frames, 0);
             
-            // Do a quick scan to determine which frames have valid detections
-            // This is important to avoid processing invalid/padded boxes
             for (size_t frame_id = 0; frame_id < std::min(size_t(10), data_.total_frames); ++frame_id) {
                 try {
                     auto bbox_slice = data_.bboxes_store | 
@@ -109,38 +151,32 @@ bool ZarrDetectionLoader::loadStandardFormat(const ts::kvstore::KvStore& store) 
                         auto bbox_array = bbox_result.value();
                         auto* bbox_data = static_cast<const float*>(bbox_array.data());
                         
-                        // Check if the first coordinate is not the fill value (-1.0)
-                        // If any coordinate is -1.0, assume no detection
                         bool has_valid_detection = true;
                         for (int i = 0; i < 4; ++i) {
-                            if (std::abs(bbox_data[i] + 1.0f) < 1e-6f) {  // Check for -1.0 fill value
+                            if (std::abs(bbox_data[i] + 1.0f) < 1e-6f) {
                                 has_valid_detection = false;
                                 break;
                             }
                         }
                         
                         if (has_valid_detection) {
-                            data_.n_detections[frame_id] = 1;  // Since max_detections is 1
+                            data_.n_detections[frame_id] = 1;
                         }
                     }
                 } catch (...) {
-                    // If we can't read this frame, assume no detection
                     data_.n_detections[frame_id] = 0;
                 }
             }
             
-            // For remaining frames, assume they have detections if we couldn't scan all
-            // (You might want to scan all frames if the dataset is small enough)
             if (data_.total_frames > 10) {
                 std::cout << "  Note: Only scanned first 10 frames for valid detections." << std::endl;
                 std::cout << "  Assuming remaining frames have valid detections." << std::endl;
                 for (size_t i = 10; i < data_.total_frames; ++i) {
-                    data_.n_detections[i] = 1;  // Assume detection exists
+                    data_.n_detections[i] = 1;
                 }
             }
         }
 
-        // Calculate actual max detections from n_detections if we loaded/created it
         if (!data_.n_detections.empty()) {
             auto max_iter = std::max_element(data_.n_detections.begin(), data_.n_detections.end());
             int32_t actual_max = (max_iter != data_.n_detections.end()) ? *max_iter : 0;
@@ -150,7 +186,6 @@ bool ZarrDetectionLoader::loadStandardFormat(const ts::kvstore::KvStore& store) 
             }
         }
 
-        // Load scores (optional)
         auto scores_check = ts::kvstore::Read(store, "scores/.zarray").result();
         if (scores_check.ok()) {
             if (loadScores(store, "scores")) {
@@ -163,7 +198,6 @@ bool ZarrDetectionLoader::loadStandardFormat(const ts::kvstore::KvStore& store) 
             std::cout << "  No scores array found (optional)" << std::endl;
         }
 
-        // Load class IDs (optional)
         auto class_check = ts::kvstore::Read(store, "class_ids/.zarray").result();
         if (class_check.ok()) {
             if (loadClassIDs(store, "class_ids")) {
@@ -176,7 +210,6 @@ bool ZarrDetectionLoader::loadStandardFormat(const ts::kvstore::KvStore& store) 
             std::cout << "  No class_ids array found (optional)" << std::endl;
         }
 
-        // Count total detections
         int64_t total_detections = 0;
         for (const auto& n : data_.n_detections) {
             total_detections += n;
@@ -193,65 +226,6 @@ bool ZarrDetectionLoader::loadStandardFormat(const ts::kvstore::KvStore& store) 
 
     } catch (const std::exception& e) {
         std::cerr << "Error in loadStandardFormat: " << e.what() << std::endl;
-        return false;
-    }
-}
-
-bool ZarrDetectionLoader::loadDetectRunsFormat(const ts::kvstore::KvStore& store) {
-    try {
-        // Read the detect_runs attributes to get the latest run
-        auto attrs_result = ts::kvstore::Read(store, "detect_runs/.zattrs").result();
-        if (!attrs_result.ok()) {
-            std::cerr << "Could not read detect_runs/.zattrs" << std::endl;
-            return false;
-        }
-
-        auto attrs = json::parse(attrs_result.value().value.Flatten());
-        if (!attrs.contains("latest")) {
-            std::cerr << "No 'latest' field in detect_runs/.zattrs" << std::endl;
-            return false;
-        }
-
-        std::string latest_run = attrs["latest"];
-        std::string run_prefix = "detect_runs/" + latest_run + "/";
-        std::cout << "Loading run: " << latest_run << std::endl;
-
-        // Load arrays from the run subdirectory
-        if (!loadNDetections(store, run_prefix + "n_detections")) {
-            std::cerr << "Error: Could not load n_detections from run" << std::endl;
-            return false;
-        }
-
-        // Try both bbox_norm_coords and bboxes
-        if (!loadBoundingBoxes(store, run_prefix + "bbox_norm_coords")) {
-            if (!loadBoundingBoxes(store, run_prefix + "bboxes")) {
-                std::cerr << "Error: Could not load bbox data from run" << std::endl;
-                return false;
-            }
-        } else {
-            data_.coordinates_normalized = true;  // bbox_norm_coords implies normalized
-        }
-
-        // Try to load optional arrays
-        loadScores(store, run_prefix + "scores");
-        loadClassIDs(store, run_prefix + "class_ids");
-
-        // Load run metadata
-        auto run_attrs_result = ts::kvstore::Read(store, run_prefix + ".zattrs").result();
-        if (run_attrs_result.ok()) {
-            auto run_attrs = json::parse(run_attrs_result.value().value.Flatten());
-            if (run_attrs.contains("fps")) {
-                data_.fps = run_attrs["fps"];
-            }
-            if (run_attrs.contains("video_path")) {
-                data_.video_path = run_attrs["video_path"];
-            }
-        }
-
-        return true;
-
-    } catch (const std::exception& e) {
-        std::cerr << "Error in loadDetectRunsFormat: " << e.what() << std::endl;
         return false;
     }
 }
@@ -276,7 +250,6 @@ bool ZarrDetectionLoader::loadBoundingBoxes(const ts::kvstore::KvStore& store,
         }
         data_.bboxes_store = open_result.value();
 
-        // Get dimensions
         auto domain = data_.bboxes_store.domain();
         data_.total_frames = domain.shape()[0];
         data_.max_detections = domain.shape()[1];
@@ -365,8 +338,6 @@ bool ZarrDetectionLoader::loadNDetections(const ts::kvstore::KvStore& store,
         }
 
         auto n_det_store = open_result.value();
-
-        // Read all n_detections into memory (usually small array)
         auto read_result = ts::Read(n_det_store).result();
         if (!read_result.ok()) {
             return false;
@@ -375,7 +346,6 @@ bool ZarrDetectionLoader::loadNDetections(const ts::kvstore::KvStore& store,
         auto n_det_array = read_result.value();
         data_.total_frames = n_det_array.shape()[0];
 
-        // Convert to vector
         data_.n_detections.clear();
         data_.n_detections.reserve(data_.total_frames);
         for (int i = 0; i < data_.total_frames; ++i) {
@@ -423,109 +393,40 @@ std::vector<LoggedBoundingBox> ZarrDetectionLoader::getBoundingBoxesForFrame(siz
         return result;
     }
     
-    auto detections = getRawDetections(frame_id);
+    auto detections = getRawDetections(frame_id, false);
     
     for (size_t i = 0; i < detections.boxes.size(); ++i) {
         LoggedBoundingBox box;
         
-        // Set coordinates - LoggedBoundingBox uses x_min, y_min, width, height
-        // The Zarr has [x_min, y_min, x_max, y_max] format
         box.x_min = detections.boxes[i][0];
         box.y_min = detections.boxes[i][1];
         
-        // Calculate width and height from x_max and y_max
         float x_max = detections.boxes[i][2];
         float y_max = detections.boxes[i][3];
         box.width = x_max - box.x_min;
         box.height = y_max - box.y_min;
         
-        // Set frame and camera info
         box.payload_frame_id = frame_id;
-        box.payload_camera_id = 0;  // Assuming single camera or default camera ID
+        box.payload_camera_id = 0;
         box.box_index_in_payload = static_cast<uint8_t>(i);
         
-        // Set class_id and confidence
         if (i < detections.class_ids.size()) {
             box.class_id = static_cast<uint16_t>(detections.class_ids[i]);
         } else {
-            box.class_id = 0;  // Default class
+            box.class_id = 0;
         }
         
         if (i < detections.scores.size()) {
             box.confidence = detections.scores[i];
         } else {
-            box.confidence = 1.0f;  // Default confidence if not available
+            box.confidence = 1.0f;
         }
         
-        // Calculate timestamps based on FPS
-        // Note: You might need to adjust this based on your actual timestamp calculation
         int64_t timestamp_ns = static_cast<int64_t>(frame_id / data_.fps * 1e9);
         box.payload_timestamp_ns_epoch = timestamp_ns;
-        box.received_timestamp_ns_epoch = timestamp_ns;  // Or use current time if needed
+        box.received_timestamp_ns_epoch = timestamp_ns;
         
         result.push_back(box);
-    }
-    
-    return result;
-}
-
-
-// In getRawDetections or getBoundingBoxesForFrame
-ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(size_t frame_id) const {
-    FrameDetections result;
-    result.frame_id = frame_id;
-    
-    if (frame_id >= data_.total_frames) {
-        return result;  // Empty result for out-of-bounds
-    }
-    
-    try {
-        // Cast frame_id to tensorstore::Index
-        auto ts_frame_id = static_cast<tensorstore::Index>(frame_id);
-        
-        // Use IndexSlice with proper type
-        auto bbox_future = ts::Read(
-            data_.bboxes_store | 
-            ts::Dims(0).IndexSlice(ts_frame_id)  // Select specific frame
-        );
-        
-        auto bbox_array = bbox_future.result().value();
-        
-        // The result will be shape [1, 4], we need to extract the values
-        auto* bbox_data = static_cast<const float*>(bbox_array.data());
-        
-        // Since max_detections is 1, we only have one box
-        if (data_.n_detections[frame_id] > 0) {
-            std::array<float, 4> box;
-            for (int i = 0; i < 4; ++i) {
-                box[i] = bbox_data[i];
-            }
-            result.boxes.push_back(box);
-            
-            // Read scores if available
-            if (data_.has_scores) {
-                auto score_future = ts::Read(
-                    data_.scores_store | 
-                    ts::Dims(0).IndexSlice(ts_frame_id)
-                );
-                auto score_array = score_future.result().value();
-                auto* score_data = static_cast<const float*>(score_array.data());
-                result.scores.push_back(score_data[0]);
-            }
-            
-            // Read class_ids if available
-            if (data_.has_class_ids) {
-                auto class_future = ts::Read(
-                    data_.class_ids_store | 
-                    ts::Dims(0).IndexSlice(ts_frame_id)
-                );
-                auto class_array = class_future.result().value();
-                auto* class_data = static_cast<const int32_t*>(class_array.data());
-                result.class_ids.push_back(class_data[0]);
-            }
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "Error reading frame " << frame_id << ": " << e.what() << std::endl;
     }
     
     return result;
@@ -543,26 +444,23 @@ LoggedBoundingBox ZarrDetectionLoader::convertToLoggedBox(
     float score,
     int32_t class_id,
     size_t frame_id,
-    size_t box_index
+    size_t box_index,
+    bool is_interpolated
 ) const {
     LoggedBoundingBox result;
     
-    // Set coordinates (convert from x_max, y_max to width, height)
     result.x_min = box[0];
     result.y_min = box[1];
-    result.width = box[2] - box[0];   // x_max - x_min
-    result.height = box[3] - box[1];  // y_max - y_min
+    result.width = box[2] - box[0];
+    result.height = box[3] - box[1];
     
-    // Set metadata
     result.payload_frame_id = frame_id;
-    result.payload_camera_id = 0;  // Default camera ID
+    result.payload_camera_id = 0;
     result.box_index_in_payload = static_cast<uint8_t>(box_index);
     
-    // Set detection info
     result.class_id = static_cast<uint16_t>(class_id);
     result.confidence = score;
     
-    // Calculate timestamps
     int64_t timestamp_ns = static_cast<int64_t>(frame_id / data_.fps * 1e9);
     result.payload_timestamp_ns_epoch = timestamp_ns;
     result.received_timestamp_ns_epoch = timestamp_ns;
@@ -578,11 +476,9 @@ std::optional<std::string> ZarrDetectionLoader::findZarrDetectionFile(const std:
             if (entry.is_directory()) {
                 std::string filename = entry.path().filename().string();
 
-                // Check if it has .zarr extension
                 if (filename.find(".zarr") != std::string::npos ||
                     filename.find(".zr3") != std::string::npos) {
 
-                    // Check if it contains "detection" or "chaser" in the name
                     if (filename.find("detection") != std::string::npos ||
                         filename.find("chaser") != std::string::npos) {
                         return entry.path().string();
@@ -597,7 +493,6 @@ std::optional<std::string> ZarrDetectionLoader::findZarrDetectionFile(const std:
     return std::nullopt;
 }
 
-// Standalone helper function
 bool loadZarrDetectionFromDirectory(
     const std::string& dir_path,
     ZarrDetectionLoader& loader,
@@ -612,4 +507,372 @@ bool loadZarrDetectionFromDirectory(
 
     std::cout << "Found zarr file: " << zarr_file.value() << std::endl;
     return loader.loadZarrFile(zarr_file.value(), error_message);
+}
+
+bool ZarrDetectionLoader::loadInterpolationRuns(const ts::kvstore::KvStore& store) {
+    try {
+        // The actual interpolation run we know exists is:
+        // /interpolation_runs/interp_linear_20250820_125819/
+        // Let's check for it directly first
+        
+        std::string known_run = "interp_linear_20250820_125819";
+        std::string test_path = "interpolation_runs/" + known_run + "/bboxes/.zarray";
+        
+        auto test_result = ts::kvstore::Read(store, test_path).result();
+        if (test_result.ok()) {
+            std::cout << "  Found interpolation run: " << known_run << std::endl;
+            std::cout << "  Loading run: " << known_run << std::endl;
+            return loadLatestInterpolationRun(store, known_run);
+        }
+        
+        // If that didn't work, try scanning for other patterns
+        std::vector<std::string> run_names;
+        
+        // Common prefixes for interpolation runs
+        std::vector<std::string> prefixes = {
+            "interp_linear_",
+            "interp_cubic_",
+            "interp_nearest_",
+            "interp_"
+        };
+        
+        // Scan for runs with these patterns
+        // Since we know the format is typically prefix + YYYYMMDD_HHMMSS
+        // Let's try dates from today backwards
+        auto now = std::chrono::system_clock::now();
+        
+        for (int days_back = 0; days_back < 365; ++days_back) {  // Check up to a year back
+            auto check_time = now - std::chrono::hours(24 * days_back);
+            auto check_time_t = std::chrono::system_clock::to_time_t(check_time);
+            struct tm* tm_check = std::localtime(&check_time_t);
+            
+            // Try different times of day
+            for (int hour = 23; hour >= 0; hour -= 4) {
+                for (int min = 59; min >= 0; min -= 30) {
+                    for (int sec = 59; sec >= 0; sec -= 30) {
+                        // Try each prefix
+                        for (const auto& prefix : prefixes) {
+                            char run_name[100];
+                            snprintf(run_name, sizeof(run_name), 
+                                    "%s%04d%02d%02d_%02d%02d%02d",
+                                    prefix.c_str(),
+                                    tm_check->tm_year + 1900,
+                                    tm_check->tm_mon + 1,
+                                    tm_check->tm_mday,
+                                    hour, min, sec);
+                            
+                            // Check if this run exists by looking for its bboxes array
+                            std::string bbox_path = std::string("interpolation_runs/") + 
+                                                   run_name + "/bboxes/.zarray";
+                            auto result = ts::kvstore::Read(store, bbox_path).result();
+                            
+                            if (result.ok()) {
+                                run_names.push_back(run_name);
+                                std::cout << "    Found interpolation run: " << run_name << std::endl;
+                                
+                                // If we found one, that's probably enough
+                                goto found_some;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Stop early if we found something
+            if (!run_names.empty()) {
+                break;
+            }
+        }
+        
+        found_some:
+        if (run_names.empty()) {
+            std::cout << "  No interpolation runs found" << std::endl;
+            return false;
+        }
+        
+        // Sort to get the latest (timestamp format means alphabetical = chronological)
+        std::sort(run_names.begin(), run_names.end());
+        std::string latest_run = run_names.back();
+        
+        std::cout << "  Found " << run_names.size() << " interpolation run(s)" << std::endl;
+        std::cout << "  Loading latest run: " << latest_run << std::endl;
+        
+        // Load the latest interpolation run
+        return loadLatestInterpolationRun(store, latest_run);
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error loading interpolation runs: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+
+bool ZarrDetectionLoader::loadLatestInterpolationRun(const ts::kvstore::KvStore& store, 
+                                                     const std::string& run_name) {
+    try {
+        std::string base_path = "interpolation_runs/" + run_name + "/";
+        
+        // Try to load metadata, but don't fail if it's missing or empty
+        auto attrs_result = ts::kvstore::Read(store, base_path + ".zattrs").result();
+        if (attrs_result.ok() && attrs_result.value().has_value()) {
+            // Convert Cord to string using Flatten()
+            std::string attrs_str = std::string(attrs_result.value().value.Flatten());
+            
+            // Check if the string is not empty before parsing
+            if (!attrs_str.empty()) {
+                try {
+                    auto attrs_json = nlohmann::json::parse(attrs_str);
+                    
+                    data_.latest_interpolation.run_name = run_name;
+                    data_.latest_interpolation.created_at = attrs_json.value("created_at", "");
+                    data_.latest_interpolation.method = attrs_json.value("method", "linear");
+                    
+                    std::cout << "    Created: " << data_.latest_interpolation.created_at << std::endl;
+                    std::cout << "    Method: " << data_.latest_interpolation.method << std::endl;
+                } catch (const nlohmann::json::parse_error& e) {
+                    std::cout << "    Warning: Could not parse .zattrs (may be empty): " << e.what() << std::endl;
+                    // Continue with defaults
+                    data_.latest_interpolation.run_name = run_name;
+                    data_.latest_interpolation.method = "linear";  // Reasonable default
+                }
+            } else {
+                std::cout << "    Warning: Empty .zattrs file, using defaults" << std::endl;
+                data_.latest_interpolation.run_name = run_name;
+                data_.latest_interpolation.method = "linear";
+            }
+        } else {
+            std::cout << "    No .zattrs found, using defaults" << std::endl;
+            data_.latest_interpolation.run_name = run_name;
+            // Extract method from run name if possible (e.g., "interp_linear_20250820_125819")
+            if (run_name.find("_linear_") != std::string::npos) {
+                data_.latest_interpolation.method = "linear";
+            } else if (run_name.find("_cubic_") != std::string::npos) {
+                data_.latest_interpolation.method = "cubic";
+            } else if (run_name.find("_nearest_") != std::string::npos) {
+                data_.latest_interpolation.method = "nearest";
+            } else {
+                data_.latest_interpolation.method = "unknown";
+            }
+        }
+        
+        // Now load the actual data arrays - these are required
+        
+        // Load interpolated bboxes
+        json spec;
+        spec["driver"] = "zarr";
+        spec["kvstore"] = store.spec().value().ToJson().value();
+        spec["path"] = base_path + "bboxes";
+        
+        std::cout << "    Loading interpolated bboxes from: " << base_path + "bboxes" << std::endl;
+        
+        auto bbox_result = ts::Open<float, 3>(
+            spec,
+            ts::OpenMode::open,
+            ts::ReadWriteMode::read,
+            context_
+        ).result();
+        
+        if (!bbox_result.ok()) {
+            std::cerr << "Failed to load interpolated bboxes: " << bbox_result.status().ToString() << std::endl;
+            return false;
+        }
+        
+        data_.latest_interpolation.bboxes_store = bbox_result.value();
+        std::cout << "    Successfully loaded interpolated bboxes" << std::endl;
+        
+        // Load interpolation mask (true = interpolated, false = original)
+        spec["path"] = base_path + "interpolation_mask";
+        
+        std::cout << "    Loading interpolation mask from: " << base_path + "interpolation_mask" << std::endl;
+        
+        auto mask_result = ts::Open<bool, 1>(
+            spec,
+            ts::OpenMode::open,
+            ts::ReadWriteMode::read,
+            context_
+        ).result();
+        
+        if (!mask_result.ok()) {
+            std::cerr << "Failed to load interpolation mask: " << mask_result.status().ToString() << std::endl;
+            return false;
+        }
+        
+        data_.latest_interpolation.interpolation_mask = mask_result.value();
+        data_.latest_interpolation.is_loaded = true;
+        data_.has_interpolation = true;
+        
+        std::cout << "    Successfully loaded interpolation mask" << std::endl;
+        
+        // Get dimensions for validation
+        auto bbox_domain = data_.latest_interpolation.bboxes_store.domain();
+        auto mask_domain = data_.latest_interpolation.interpolation_mask.domain();
+        
+        size_t bbox_frames = bbox_domain.shape()[0];
+        size_t mask_frames = mask_domain.shape()[0];
+        
+        std::cout << "    Bbox frames: " << bbox_frames << std::endl;
+        std::cout << "    Mask frames: " << mask_frames << std::endl;
+        
+        if (bbox_frames != mask_frames) {
+            std::cerr << "    Warning: Frame count mismatch between bboxes and mask!" << std::endl;
+        }
+        
+        // Try to count interpolated frames (but don't fail if it doesn't work)
+        try {
+            auto mask_array = ts::Read(data_.latest_interpolation.interpolation_mask).result().value();
+            auto* mask_data = static_cast<const bool*>(mask_array.data());
+            
+            size_t interpolated_count = 0;
+            for (size_t i = 0; i < mask_frames; ++i) {
+                if (mask_data[i]) {
+                    interpolated_count++;
+                }
+            }
+            
+            std::cout << "    Interpolated frames: " << interpolated_count 
+                      << " / " << mask_frames << std::endl;
+        } catch (const std::exception& e) {
+            std::cout << "    Could not count interpolated frames: " << e.what() << std::endl;
+        }
+        
+        std::cout << "    Successfully loaded interpolation run: " << run_name << std::endl;
+        return true;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error loading interpolation run " << run_name 
+                  << ": " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool ZarrDetectionLoader::isFrameInterpolated(size_t frame_id) const {
+    if (!data_.has_interpolation || frame_id >= data_.total_frames) {
+        return false;
+    }
+    
+    try {
+        auto ts_frame_id = static_cast<tensorstore::Index>(frame_id);
+        
+        auto mask_future = ts::Read(
+            data_.latest_interpolation.interpolation_mask | 
+            ts::Dims(0).IndexSlice(ts_frame_id)
+        );
+        
+        auto mask_array = mask_future.result().value();
+        auto* mask_data = static_cast<const bool*>(mask_array.data());
+        
+        return mask_data[0];
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error checking interpolation status for frame " 
+                  << frame_id << ": " << e.what() << std::endl;
+        return false;
+    }
+}
+
+std::vector<LoggedBoundingBox> ZarrDetectionLoader::getBoundingBoxesForFrame(
+    size_t frame_id, bool use_interpolated) const {
+    
+    if (use_interpolated && data_.has_interpolation) {
+        auto detections = getRawDetections(frame_id, true);
+        return convertDetectionsToLoggedBoxes(detections, frame_id);
+    } else {
+        return getBoundingBoxesForFrame(frame_id);
+    }
+}
+
+ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
+    size_t frame_id, bool use_interpolated) const {
+    
+    FrameDetections result;
+    result.frame_id = frame_id;
+    
+    if (frame_id >= data_.total_frames) {
+        return result;
+    }
+    
+    try {
+        auto ts_frame_id = static_cast<tensorstore::Index>(frame_id);
+        
+        bool use_interp = use_interpolated && data_.has_interpolation;
+        ts::TensorStore<float, 3>* bbox_source = nullptr;
+        
+        if (use_interp) {
+            bbox_source = const_cast<ts::TensorStore<float, 3>*>(
+                &data_.latest_interpolation.bboxes_store);
+            result.is_interpolated = isFrameInterpolated(frame_id);
+        } else {
+            bbox_source = const_cast<ts::TensorStore<float, 3>*>(&data_.bboxes_store);
+            result.is_interpolated = false;
+        }
+        
+        auto bbox_future = ts::Read(
+            *bbox_source | 
+            ts::Dims(0).IndexSlice(ts_frame_id)
+        );
+        
+        auto bbox_array = bbox_future.result().value();
+        auto* bbox_data = static_cast<const float*>(bbox_array.data());
+        
+        int valid_detections = data_.n_detections[frame_id];
+        
+        for (int det_idx = 0; det_idx < valid_detections; ++det_idx) {
+            std::array<float, 4> box;
+            for (int coord = 0; coord < 4; ++coord) {
+                box[coord] = bbox_data[det_idx * 4 + coord];
+            }
+            
+            if (box[0] >= 0) {
+                result.boxes.push_back(box);
+                
+                if (!use_interp && data_.has_scores) {
+                    auto score_future = ts::Read(
+                        data_.scores_store | 
+                        ts::Dims(0).IndexSlice(ts_frame_id)
+                    );
+                    auto score_array = score_future.result().value();
+                    auto* score_data = static_cast<const float*>(score_array.data());
+                    result.scores.push_back(score_data[det_idx]);
+                } else {
+                    result.scores.push_back(1.0f);
+                }
+                
+                if (!use_interp && data_.has_class_ids) {
+                    auto class_future = ts::Read(
+                        data_.class_ids_store | 
+                        ts::Dims(0).IndexSlice(ts_frame_id)
+                    );
+                    auto class_array = class_future.result().value();
+                    auto* class_data = static_cast<const int32_t*>(class_array.data());
+                    result.class_ids.push_back(class_data[det_idx]);
+                } else {
+                    result.class_ids.push_back(0);
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error reading frame " << frame_id << ": " << e.what() << std::endl;
+    }
+    
+    return result;
+}
+
+std::vector<LoggedBoundingBox> ZarrDetectionLoader::convertDetectionsToLoggedBoxes(
+    const FrameDetections& detections, size_t frame_id) const {
+    
+    std::vector<LoggedBoundingBox> result;
+    
+    for (size_t i = 0; i < detections.boxes.size(); ++i) {
+        LoggedBoundingBox box = convertToLoggedBox(
+            detections.boxes[i],
+            i < detections.scores.size() ? detections.scores[i] : 1.0f,
+            i < detections.class_ids.size() ? detections.class_ids[i] : 0,
+            frame_id,
+            i,
+            detections.is_interpolated
+        );
+        result.push_back(box);
+    }
+    
+    return result;
 }

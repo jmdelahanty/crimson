@@ -399,18 +399,13 @@ FrameMetadataRecord* H5SessionLoader::getFrameMetadata(H5SessionData& data, uint
 FrameMetadataRecord* H5SessionLoader::getFrameMetadataByCameraID(H5SessionData& data, uint64_t camera_frame_id) {
     // First try the optimized lookup for continuous frames (analysis files)
     if (data.has_continuous_frames && !data.frame_metadata.empty()) {
-        // For continuous frames from analysis files, frames should be sequential
         uint64_t min_frame_id = data.frame_metadata.front().triggering_camera_frame_id;
         uint64_t max_frame_id = data.frame_metadata.back().triggering_camera_frame_id;
-        
-        // Debug output
-        static int debug_counter = 0;
-        if (debug_counter++ % 100 == 0) {  // Print every 100th call to avoid spam
-            std::cout << "[DEBUG] getFrameMetadataByCameraID: "
-                      << "camera_frame_id=" << camera_frame_id 
-                      << ", min=" << min_frame_id 
-                      << ", max=" << max_frame_id 
-                      << ", continuous=" << data.has_continuous_frames << std::endl;
+
+        // --- FIX: Add a guard clause to prevent underflow ---
+        if (camera_frame_id < min_frame_id || camera_frame_id > max_frame_id) {
+            // If the requested frame is outside the available range, return null immediately.
+            return nullptr; 
         }
         
         if (camera_frame_id >= min_frame_id && camera_frame_id <= max_frame_id) {

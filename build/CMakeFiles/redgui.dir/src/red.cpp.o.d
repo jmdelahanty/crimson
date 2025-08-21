@@ -913,4 +913,5 @@ CMakeFiles/redgui.dir/src/red.cpp.o: \
  /home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/tensorstore-src/tensorstore/index_space/internal/single_index_slice_op.h \
  /home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/tensorstore-src/tensorstore/index_space/internal/translate_op.h \
  /home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/tensorstore-src/tensorstore/index_space/internal/transpose_op.h \
- /home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/tensorstore-src/tensorstore/open.h
+ /home/delahantyj@hhmi.org/gitrepos/crimson/build/_deps/tensorstore-src/tensorstore/open.h \
+ /home/delahantyj@hhmi.org/gitrepos/crimson/src/gui_interpolation.h

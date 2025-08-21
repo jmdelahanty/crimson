@@ -215,10 +215,7 @@ target_link_libraries(redgui PRIVATE
     glfw
 
     # TensorStore for Zarr support
-    tensorstore::tensorstore
-    tensorstore::driver_zarr
-    tensorstore::index_space
-    tensorstore::kvstore_file
+    tensorstore::all_drivers
 
     # FFmpeg Libraries
     ${FFMPEG_LIBRARIES}
@@ -287,3 +284,13 @@ if(NVML_LIBRARY)
 endif()
 message(STATUS "  Output Directory: ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 message(STATUS "========================================")
+
+# ============================================================================
+# ADDED: Build the minimal Zarr lister diagnostic tool
+# # ============================================================================
+# add_executable(minimal_zarr_lister src/minimal_zarr_lister.cpp)
+
+# # Link the lister only to what it needs, which is handled by tensorstore::all_drivers
+# target_link_libraries(minimal_zarr_lister PRIVATE
+#     tensorstore::all_drivers
+# )

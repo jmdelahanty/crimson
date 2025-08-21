@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <thread>
 #include "zarr_loader.h"
+#include "gui_interpolation.h"
 
 #if defined(_MSC_VER) && (_MSC_VER >= 1900) &&                                 \
     !defined(IMGUI_DISABLE_WIN32_FUNCTIONS)
@@ -38,6 +39,12 @@ std::vector<std::vector<int>> yolo_classid(MAX_VIEWS);
 std::vector<unsigned char *> yolo_input_frames_rgba(MAX_VIEWS);
 std::unordered_map<std::string, std::atomic<bool>> window_need_decoding;
 std::unordered_map<std::string, std::atomic<int>> latest_decoded_frame;
+
+// 2. Add these variables near your other global variables
+ZarrDetectionLoader* zarr_loader = nullptr;
+H5SessionData* h5_session_data = nullptr;
+bool show_interpolation_debug = false;
+bool use_interpolated_detections = true;  // Toggle for using interpolated vs original
 
 struct PlaybackState {
     int pause_selected = 0;
@@ -466,6 +473,23 @@ int main(int, char **) {
                     ImGuiFileDialog::Instance()->GetSelection();
                 root_dir = ImGuiFileDialog::Instance()->GetCurrentPath();
                 skeleton_dir = root_dir;
+
+                // Try to load Zarr detection file
+                std::string zarr_error;
+                if (loadZarrDetectionFromDirectory(root_dir, zarr_loader, zarr_error)) {
+                    zarr_loaded = true;
+                    std::cout << "Successfully loaded Zarr detection file" << std::endl;
+                    std::cout << "  Total frames: " << zarr_loader.getTotalFrames() << std::endl;
+                    std::cout << "  FPS: " << zarr_loader.getFPS() << std::endl;
+                    
+                    if (zarr_loader.hasInterpolation()) {
+                        std::cout << "  Interpolation data available!" << std::endl;
+                        std::cout << "  Method: " << zarr_loader.getInterpolationMethod() << std::endl;
+                    }
+                } else {
+                    zarr_loaded = false;
+                    std::cout << "No Zarr detection file found (optional): " << zarr_error << std::endl;
+                }
 
                 // Try to load H5 file from the selected directory
                 if (loadH5SessionFromDirectory(root_dir, h5_data, error_message)) {
@@ -959,19 +983,191 @@ int main(int, char **) {
 
                     if (ImPlot::BeginPlot("##no_plot_name", avail_size,
                                           ImPlotFlags_Equal |
-                                              ImPlotAxisFlags_AutoFit |
-                                              ImPlotFlags_Crosshairs)) {
+                                          ImPlotAxisFlags_AutoFit |
+                                          ImPlotFlags_Crosshairs)) {
                         ImPlot::PlotImage(
                             "##no_image_name",
                             (ImTextureID)(intptr_t)scene->image_texture[j],
                             ImVec2(0, 0),
                             ImVec2(scene->image_width[j],
-                                   scene->image_height[j]));
+                                scene->image_height[j]));
 
                         if (yolo_detection) {
                             draw_cv_contours(
                                 yolo_boxes.at(j), yolo_labels.at(j),
                                 yolo_classid.at(j), scene->image_height[j]);
+                        }
+
+                        // === ENHANCED H5 BOUNDING BOX RENDERING === //
+                        if (h5_loaded && h5_data.has_tracking_data) {
+                            // Get all bounding boxes for this camera's frame ID
+                            auto boxes_for_frame = H5SessionLoader::getBoundingBoxesForFrame(h5_data, current_frame_num);
+                            
+                            if (!boxes_for_frame.empty()) {
+                                // Check if this frame is interpolated (for H5 analysis files)
+                                bool is_h5_interpolated = h5_data.is_analysis_file && 
+                                                        h5_data.isFrameInterpolated(current_frame_num);
+                                
+                                // Draw the bounding boxes with interpolation indication
+                                for (const auto& box : boxes_for_frame) {
+                                    double x_coords[5] = {
+                                        box.x_min, 
+                                        box.x_min + box.width, 
+                                        box.x_min + box.width, 
+                                        box.x_min, 
+                                        box.x_min
+                                    };
+                                    
+                                    double y_coords[5] = {
+                                        (double)scene->image_height[j] - box.y_min,
+                                        (double)scene->image_height[j] - box.y_min,
+                                        (double)scene->image_height[j] - (box.y_min + box.height),
+                                        (double)scene->image_height[j] - (box.y_min + box.height),
+                                        (double)scene->image_height[j] - box.y_min
+                                    };
+                                    
+                                    // Blue tones for H5 boxes
+                                    ImVec4 color;
+                                    if (is_h5_interpolated) {
+                                        color = ImVec4(0.5f, 0.5f, 1.0f, 0.9f);  // Light blue for interpolated
+                                    } else {
+                                        color = ImVec4(0.2f, 0.2f, 1.0f, 1.0f);  // Blue for original
+                                    }
+                                    
+                                    ImPlot::SetNextLineStyle(color, 2.0f);
+                                    std::string label = "H5_" + std::to_string(box.class_id);
+                                    if (is_h5_interpolated) label += " [I]";
+                                    ImPlot::PlotLine(label.c_str(), x_coords, y_coords, 5);
+                                }
+                            }
+
+                            // Get the frame metadata to find the corresponding stimulus frame num
+                            auto frame_meta = H5SessionLoader::getFrameMetadataByCameraID(h5_data, current_frame_num);
+                            if (frame_meta) {
+                                // Get chaser states for this stimulus frame
+                                auto chaser_states = H5SessionLoader::getChaserStatesForFrame(h5_data, frame_meta->stimulus_frame_num);
+                                if (!chaser_states.empty()) {
+                                    gui_draw_chaser_state(chaser_states, scene->image_height[j], camera_params[j]);
+                                }
+                            }
+                        }
+                        
+                        // === ENHANCED ZARR BOUNDING BOX RENDERING === //
+                        if (zarr_loaded) {
+                            // Check if this frame is interpolated
+                            bool is_zarr_interpolated = zarr_loader.hasInterpolation() && 
+                                                    zarr_loader.isFrameInterpolated(current_frame_num);
+                            
+                            // Get bounding boxes (using interpolated if available and enabled)
+                            std::vector<LoggedBoundingBox> zarr_boxes;
+                            if (zarr_loader.hasInterpolation() && use_interpolated_detections) {
+                                // This will get interpolated boxes if available
+                                zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num, true);
+                            } else {
+                                // This will get original boxes only
+                                zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num);
+                            }
+                            
+                            if (!zarr_boxes.empty()) {
+                                for (const auto& box : zarr_boxes) {
+                                    double x_coords[5] = {
+                                        box.x_min, 
+                                        box.x_min + box.width, 
+                                        box.x_min + box.width, 
+                                        box.x_min, 
+                                        box.x_min
+                                    };
+                                    
+                                    double y_coords[5] = {
+                                        (double)scene->image_height[j] - box.y_min,
+                                        (double)scene->image_height[j] - box.y_min,
+                                        (double)scene->image_height[j] - (box.y_min + box.height),
+                                        (double)scene->image_height[j] - (box.y_min + box.height),
+                                        (double)scene->image_height[j] - box.y_min
+                                    };
+                                    
+                                    // Color based on interpolation status
+                                    ImVec4 box_color;
+                                    float line_width;
+                                    
+                                    if (is_zarr_interpolated && use_interpolated_detections) {
+                                        // Orange/yellow for interpolated frames
+                                        box_color = ImVec4(1.0f, 0.7f, 0.0f, 0.9f);
+                                        line_width = 2.5f;
+                                    } else {
+                                        // Green for original detections
+                                        box_color = ImVec4(0.2f, 1.0f, 0.2f, 1.0f);
+                                        line_width = 2.0f;
+                                    }
+                                    
+                                    ImPlot::SetNextLineStyle(box_color, line_width);
+                                    
+                                    std::string label = "Zarr_" + std::to_string(box.class_id);
+                                    if (is_zarr_interpolated && use_interpolated_detections) {
+                                        label += " [I]";  // Mark as interpolated
+                                    }
+                                    
+                                    ImPlot::PlotLine(label.c_str(), x_coords, y_coords, 5);
+                                }
+                            }
+                        }
+                        
+                        // === ADD INTERPOLATION STATUS OVERLAY === //
+                        if ((zarr_loaded && zarr_loader.hasInterpolation()) || 
+                            (h5_loaded && h5_data.is_analysis_file)) {
+                            
+                            // Determine interpolation status
+                            bool any_interpolated = false;
+                            std::string source = "";
+                            
+                            if (zarr_loaded && zarr_loader.hasInterpolation() && 
+                                zarr_loader.isFrameInterpolated(current_frame_num)) {
+                                any_interpolated = true;
+                                source = "Zarr";
+                            }
+                            
+                            if (h5_loaded && h5_data.is_analysis_file && 
+                                h5_data.isFrameInterpolated(current_frame_num)) {
+                                any_interpolated = true;
+                                source = source.empty() ? "H5" : source + "+H5";
+                            }
+                            
+                            // Create status text
+                            std::string status_text;
+                            ImVec4 status_color;
+                            
+                            if (any_interpolated) {
+                                status_text = "INTERPOLATED";
+                                if (!source.empty()) {
+                                    status_text += " (" + source + ")";
+                                }
+                                status_color = ImVec4(1.0f, 0.7f, 0.0f, 0.9f);  // Orange
+                            } else {
+                                status_text = "ORIGINAL";
+                                status_color = ImVec4(0.2f, 1.0f, 0.2f, 0.9f);  // Green
+                            }
+                            
+                            // Draw status overlay in top-left corner of the plot
+                            ImDrawList* draw_list = ImPlot::GetPlotDrawList();
+                            ImVec2 text_size = ImGui::CalcTextSize(status_text.c_str());
+                            
+                            // Position in top-left, slightly offset from edge
+                            ImVec2 plot_pos = ImPlot::PlotToPixels(ImPlotPoint(10, scene->image_height[j] - 30));
+                            ImVec2 box_min = plot_pos;
+                            ImVec2 box_max = ImVec2(box_min.x + text_size.x + 10, 
+                                                    box_min.y + text_size.y + 6);
+                            
+                            // Semi-transparent background
+                            draw_list->AddRectFilled(box_min, box_max, 
+                                                    IM_COL32(0, 0, 0, 200), 3.0f);
+                            // Colored border
+                            draw_list->AddRect(box_min, box_max, 
+                                            ImGui::ColorConvertFloat4ToU32(status_color), 3.0f);
+                            
+                            // Status text
+                            draw_list->AddText(ImVec2(box_min.x + 5, box_min.y + 3), 
+                                            ImGui::ColorConvertFloat4ToU32(status_color), 
+                                            status_text.c_str());
                         }
 
                         if (plot_keypoints_flag) {
@@ -1078,33 +1274,7 @@ int main(int, char **) {
                                         skeleton, j, 4, 5);
                                 }
                             }
-                        }
-                        // START of new code for H5 bounding box overlay
-                        if (h5_loaded && h5_data.has_tracking_data) {
-                            // Get all bounding boxes for this camera's frame ID
-                            auto boxes_for_frame = H5SessionLoader::getBoundingBoxesForFrame(h5_data, current_frame_num);
-                            if (!boxes_for_frame.empty()) {
-                                // Draw the bounding boxes on the current view
-                                gui_draw_bounding_boxes(boxes_for_frame, scene->image_width[j], scene->image_height[j]);
-                            }
-
-                            // Get the frame metadata to find the corresponding stimulus frame num
-                            auto frame_meta = H5SessionLoader::getFrameMetadataByCameraID(h5_data, current_frame_num);
-                            if (frame_meta) {
-                                // Get chaser states for this stimulus frame
-                                auto chaser_states = H5SessionLoader::getChaserStatesForFrame(h5_data, frame_meta->stimulus_frame_num);
-                                if (!chaser_states.empty()) {
-                                    gui_draw_chaser_state(chaser_states, scene->image_height[j], camera_params[j]);
-                                }
-                            }
-                        }
-                        if (zarr_loaded) {
-                            auto zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num);
-                            if (!zarr_boxes.empty()) {
-                                gui_draw_zarr_bounding_boxes(zarr_boxes, scene->image_width[j], scene->image_height[j]);
-                            }
-                        }
-                        
+                        }     
                         ImPlot::EndPlot();
                     }
 
