@@ -366,14 +366,39 @@ void H5SessionLoader::setError(std::string& error_message, const std::string& ms
 // Static helper functions
 std::string H5SessionLoader::findH5FileInDirectory(const std::string& directory) {
     try {
+        std::vector<std::string> analysis_files;
+        std::vector<std::string> regular_files;
+        
         for (const auto& entry : std::filesystem::directory_iterator(directory)) {
             if (entry.is_regular_file()) {
                 std::string filepath = entry.path().string();
                 if (isH5File(filepath)) {
-                    return filepath;
+                    // Check if it's an analysis file
+                    if (filepath.find("_analysis.h5") != std::string::npos ||
+                        filepath.find("_analysis.hdf5") != std::string::npos) {
+                        analysis_files.push_back(filepath);
+                    } else {
+                        regular_files.push_back(filepath);
+                    }
                 }
             }
         }
+        
+        // Priority: 
+        // 1. Analysis files (prefer these)
+        // 2. Regular H5 files (fallback)
+        if (!analysis_files.empty()) {
+            if (analysis_files.size() > 1) {
+                std::cout << "Warning: Multiple analysis files found, using: " 
+                          << analysis_files[0] << std::endl;
+            }
+            return analysis_files[0];
+        } else if (!regular_files.empty()) {
+            std::cout << "No analysis file found, using regular H5 file: " 
+                      << regular_files[0] << std::endl;
+            return regular_files[0];
+        }
+        
     } catch (const std::filesystem::filesystem_error& e) {
         std::cerr << "Filesystem error: " << e.what() << std::endl;
     }
@@ -397,56 +422,147 @@ FrameMetadataRecord* H5SessionLoader::getFrameMetadata(H5SessionData& data, uint
 }
 
 FrameMetadataRecord* H5SessionLoader::getFrameMetadataByCameraID(H5SessionData& data, uint64_t camera_frame_id) {
+    static int call_count = 0;
+    static uint64_t last_camera_frame = 0;
+    static int consecutive_same_frame = 0;
+    
+    // Track if we're repeatedly looking up the same frame (sign of blinking)
+    if (camera_frame_id == last_camera_frame) {
+        consecutive_same_frame++;
+    } else {
+        if (consecutive_same_frame > 1) {
+            std::cout << "[H5_DEBUG] Frame " << last_camera_frame 
+                      << " was looked up " << consecutive_same_frame + 1 
+                      << " times in a row" << std::endl;
+        }
+        consecutive_same_frame = 0;
+        last_camera_frame = camera_frame_id;
+    }
+    
+    call_count++;
+    
+    // Log every 100th call or first 10 calls for debugging
+    bool should_log = (call_count <= 10) || (call_count % 100 == 0);
+    
+    if (should_log) {
+        std::cout << "\n[H5_LOOKUP] Call #" << call_count 
+                  << " - Looking up camera frame: " << camera_frame_id << std::endl;
+    }
+    
     // First try the optimized lookup for continuous frames (analysis files)
     if (data.has_continuous_frames && !data.frame_metadata.empty()) {
         uint64_t min_frame_id = data.frame_metadata.front().triggering_camera_frame_id;
         uint64_t max_frame_id = data.frame_metadata.back().triggering_camera_frame_id;
+        
+        if (should_log) {
+            std::cout << "  [H5_DEBUG] Using CONTINUOUS mode (analysis file)" << std::endl;
+            std::cout << "  [H5_DEBUG] Available range: " << min_frame_id << " - " << max_frame_id << std::endl;
+        }
 
-        // --- FIX: Add a guard clause to prevent underflow ---
+        // Check bounds
         if (camera_frame_id < min_frame_id || camera_frame_id > max_frame_id) {
-            // If the requested frame is outside the available range, return null immediately.
-            return nullptr; 
+            if (should_log) {
+                std::cout << "  [H5_DEBUG] ❌ Frame " << camera_frame_id << " is OUT OF RANGE" << std::endl;
+            }
+            return nullptr;
         }
         
         if (camera_frame_id >= min_frame_id && camera_frame_id <= max_frame_id) {
             // In analysis files with continuous frames, the index should map directly
             size_t index = camera_frame_id - min_frame_id;
+            
+            if (should_log) {
+                std::cout << "  [H5_DEBUG] Calculated index: " << index 
+                          << " (frame " << camera_frame_id << " - min " << min_frame_id << ")" << std::endl;
+            }
+            
             if (index < data.frame_metadata.size()) {
                 // Verify this is the correct frame (in case of any indexing issues)
-                if (data.frame_metadata[index].triggering_camera_frame_id == camera_frame_id) {
+                uint64_t found_camera_id = data.frame_metadata[index].triggering_camera_frame_id;
+                uint64_t found_stim_id = data.frame_metadata[index].stimulus_frame_num;
+                
+                if (found_camera_id == camera_frame_id) {
+                    if (should_log) {
+                        std::cout << "  [H5_DEBUG] ✅ Direct index SUCCESS!" << std::endl;
+                        std::cout << "  [H5_DEBUG] Found: camera=" << found_camera_id 
+                                  << " -> stimulus=" << found_stim_id << std::endl;
+                    }
                     return &data.frame_metadata[index];
                 } else {
-                    // If direct indexing failed, fall back to linear search
-                    // std::cerr << "[WARNING] Direct index lookup failed for frame " << camera_frame_id 
-                    //           << ", falling back to linear search" << std::endl;
+                    if (should_log) {
+                        std::cout << "  [H5_DEBUG] ⚠️  Direct index MISMATCH!" << std::endl;
+                        std::cout << "  [H5_DEBUG] Expected camera=" << camera_frame_id 
+                                  << " but found camera=" << found_camera_id << std::endl;
+                        std::cout << "  [H5_DEBUG] Falling back to linear search..." << std::endl;
+                    }
+                }
+            } else {
+                if (should_log) {
+                    std::cout << "  [H5_DEBUG] ⚠️  Index " << index << " >= size " 
+                              << data.frame_metadata.size() << std::endl;
                 }
             }
+        }
+    } else {
+        if (should_log) {
+            std::cout << "  [H5_DEBUG] Using LINEAR SEARCH mode (non-continuous or regular file)" << std::endl;
+            std::cout << "  [H5_DEBUG] has_continuous_frames=" << data.has_continuous_frames 
+                      << ", metadata_size=" << data.frame_metadata.size() << std::endl;
         }
     }
     
     // Fall back to linear search for non-continuous frames or if direct lookup failed
-    auto it = std::find_if(data.frame_metadata.begin(), data.frame_metadata.end(),
-                          [camera_frame_id](const FrameMetadataRecord& record) {
-                              return record.triggering_camera_frame_id == camera_frame_id;
-                          });
-    
-    if (it != data.frame_metadata.end()) {
-        return &(*it);
+    if (should_log) {
+        std::cout << "  [H5_DEBUG] Starting linear search through " 
+                  << data.frame_metadata.size() << " records..." << std::endl;
     }
     
-    // If still not found, print debug info
-    static int not_found_counter = 0;
-    if (not_found_counter++ < 10) {  // Only print first 10 not-found messages
-        std::cerr << "[WARNING] Frame metadata not found for camera_frame_id: " << camera_frame_id << std::endl;
-        if (!data.frame_metadata.empty()) {
-            std::cerr << "  Available range: " 
-                      << data.frame_metadata.front().triggering_camera_frame_id 
-                      << " - " 
-                      << data.frame_metadata.back().triggering_camera_frame_id << std::endl;
+    // Count ALL matches to detect multiple stimulus frames per camera frame
+    std::vector<size_t> matching_indices;
+    for (size_t i = 0; i < data.frame_metadata.size(); ++i) {
+        if (data.frame_metadata[i].triggering_camera_frame_id == camera_frame_id) {
+            matching_indices.push_back(i);
         }
     }
     
-    return nullptr;
+    if (matching_indices.empty()) {
+        static int not_found_counter = 0;
+        if (not_found_counter++ < 10) {
+            std::cerr << "[H5_WARNING] Frame metadata not found for camera_frame_id: " << camera_frame_id << std::endl;
+            if (!data.frame_metadata.empty()) {
+                std::cerr << "  Available range: " 
+                          << data.frame_metadata.front().triggering_camera_frame_id 
+                          << " - " 
+                          << data.frame_metadata.back().triggering_camera_frame_id << std::endl;
+            }
+        }
+        return nullptr;
+    }
+    
+    // Log if we found multiple matches (this causes blinking!)
+    if (matching_indices.size() > 1) {
+        if (should_log || matching_indices.size() > 2) {  // Always log if more than 2
+            std::cout << "  [H5_DEBUG] ⚠️  Found " << matching_indices.size() 
+                      << " MULTIPLE matches for camera frame " << camera_frame_id << "!" << std::endl;
+            
+            for (size_t i = 0; i < std::min(matching_indices.size(), size_t(3)); ++i) {
+                size_t idx = matching_indices[i];
+                std::cout << "    Match " << i+1 << ": index=" << idx 
+                          << ", stimulus=" << data.frame_metadata[idx].stimulus_frame_num 
+                          << ", camera=" << data.frame_metadata[idx].triggering_camera_frame_id << std::endl;
+            }
+            
+            std::cout << "  [H5_DEBUG] 🎲 Returning FIRST match (index=" << matching_indices[0] 
+                      << ", stimulus=" << data.frame_metadata[matching_indices[0]].stimulus_frame_num << ")" << std::endl;
+        }
+    } else if (should_log) {
+        size_t idx = matching_indices[0];
+        std::cout << "  [H5_DEBUG] ✅ Found single match: index=" << idx 
+                  << ", stimulus=" << data.frame_metadata[idx].stimulus_frame_num << std::endl;
+    }
+    
+    // Return the first match (this may not be consistent if order changes!)
+    return &data.frame_metadata[matching_indices[0]];
 }
 
 std::vector<LoggedBoundingBox> H5SessionLoader::getBoundingBoxesForFrame(const H5SessionData& data, uint64_t frame_id) {
@@ -460,12 +576,37 @@ std::vector<LoggedBoundingBox> H5SessionLoader::getBoundingBoxesForFrame(const H
 }
 
 std::vector<LoggedChaserState> H5SessionLoader::getChaserStatesForFrame(const H5SessionData& data, uint64_t frame_num) {
+    static int chaser_call_count = 0;
+    chaser_call_count++;
+    
+    bool should_log = (chaser_call_count <= 10) || (chaser_call_count % 100 == 0);
+    
     std::vector<LoggedChaserState> result;
     for (const auto& state : data.chaser_states) {
         if (state.stimulus_frame_num == frame_num) {
             result.push_back(state);
         }
     }
+    
+    if (should_log) {
+        std::cout << "[H5_CHASER] Call #" << chaser_call_count 
+                  << " - Stimulus frame " << frame_num 
+                  << " -> Found " << result.size() << " chaser state(s)";
+        
+        if (!result.empty()) {
+            const auto& first = result[0];
+            std::cout << " [Chaser at (" << first.chaser_pos_x << ", " << first.chaser_pos_y 
+                      << "), Target at (" << first.target_pos_x << ", " << first.target_pos_y << ")]";
+        }
+        std::cout << std::endl;
+    }
+    
+    // Warn if multiple chaser states for same stimulus frame
+    if (result.size() > 1) {
+        std::cout << "  [H5_CHASER] ⚠️  WARNING: Multiple chaser states (" << result.size() 
+                  << ") for stimulus frame " << frame_num << "!" << std::endl;
+    }
+    
     return result;
 }
 
@@ -724,21 +865,23 @@ bool H5SessionLoader::loadAnalysisData(H5::H5File& file, H5SessionData& data) {
         
         // Load interpolation mask
         if (!loadInterpolationMask(file, data.interpolation_mask)) {
-            std::cerr << "Warning: Failed to load interpolation mask" << std::endl;
+            std::cerr << "  Warning: Failed to load interpolation mask" << std::endl;
+        } else {
+            std::cout << "  Loaded interpolation mask: " << data.interpolation_mask.size() << " entries" << std::endl;
         }
         
         // Load gap info JSON
         if (!loadGapInfo(file, data.gap_info_json)) {
-            std::cerr << "Warning: Failed to load gap info" << std::endl;
+            std::cerr << "  Warning: Failed to load gap info" << std::endl;
+        } else {
+            std::cout << "  Loaded gap info JSON" << std::endl;
         }
         
-        // Mark that this is an analysis file with continuous frames
-        data.is_analysis_file = true;
-        data.has_continuous_frames = true;
-        
-        std::cout << "  Loaded analysis data:" << std::endl;
-        std::cout << "    Original frames: " << data.getOriginalFrameCount() << std::endl;
-        std::cout << "    Interpolated frames: " << data.getInterpolatedFrameCount() << std::endl;
+        if (!data.interpolation_mask.empty()) {
+            std::cout << "  Analysis statistics:" << std::endl;
+            std::cout << "    Original frames: " << data.getOriginalFrameCount() << std::endl;
+            std::cout << "    Interpolated frames: " << data.getInterpolatedFrameCount() << std::endl;
+        }
         
         return true;
     } catch (const H5::Exception& e) {
@@ -808,24 +951,41 @@ bool H5SessionLoader::loadGapInfo(H5::H5File& file, std::string& gap_info) {
 // Enhanced loadH5File method that detects and handles analysis files
 bool H5SessionLoader::loadH5File(const std::string& filepath, H5SessionData& data, std::string& error_message) {
     try {
-        // Check if file exists
+        // ============================================
+        // STEP 1: Validate and open file
+        // ============================================
         if (!std::filesystem::exists(filepath)) {
             setError(error_message, "H5 file does not exist: " + filepath);
             return false;
         }
         
-        // Detect if this is an analysis file
+        H5File file(filepath, H5F_ACC_RDONLY);
+        
+        // ============================================
+        // STEP 2: Determine file type (analysis vs regular)
+        // ============================================
         std::filesystem::path path(filepath);
         std::string filename = path.filename().string();
         std::transform(filename.begin(), filename.end(), filename.begin(), ::tolower);
-        data.is_analysis_file = (filename.find("analysis") != std::string::npos) ||
-                                (filename.find("out_analysis") != std::string::npos);
         
-        // Open the HDF5 file
-        H5File file(filepath, H5F_ACC_RDONLY);
+        // Check filename for "analysis" keyword
+        bool filename_suggests_analysis = (filename.find("analysis") != std::string::npos) ||
+                                         (filename.find("out_analysis") != std::string::npos);
         
-        std::cout << "Loading H5 " << (data.is_analysis_file ? "analysis" : "session") 
-                  << " file: " << filepath << std::endl;
+        // Check for /analysis group existence
+        bool has_analysis_group = groupExists(file, "/analysis");
+        
+        // File is analysis if EITHER filename suggests it OR it has /analysis group
+        data.is_analysis_file = filename_suggests_analysis || has_analysis_group;
+        
+        std::cout << "Loading H5 file: " << filepath << std::endl;
+        std::cout << "  File type: " << (data.is_analysis_file ? "ANALYSIS" : "REGULAR") << std::endl;
+        std::cout << "  Filename suggests analysis: " << filename_suggests_analysis << std::endl;
+        std::cout << "  Has /analysis group: " << has_analysis_group << std::endl;
+        
+        // ============================================
+        // STEP 3: Load core session data
+        // ============================================
         
         // Load session info (attributes from root group)
         if (!loadSessionInfo(file, data.session_info)) {
@@ -839,7 +999,9 @@ bool H5SessionLoader::loadH5File(const std::string& filepath, H5SessionData& dat
             std::cout << "  Loaded " << data.events.size() << " events" << std::endl;
         }
         
-        // Load tracking data if it exists
+        // ============================================
+        // STEP 4: Load tracking data
+        // ============================================
         if (groupExists(file, "/tracking_data")) {
             data.has_tracking_data = true;
             
@@ -856,7 +1018,9 @@ bool H5SessionLoader::loadH5File(const std::string& filepath, H5SessionData& dat
             }
         }
         
-        // Load video metadata if it exists
+        // ============================================
+        // STEP 5: Load video metadata and determine continuity
+        // ============================================
         if (groupExists(file, "/video_metadata")) {
             data.has_video_metadata = true;
             
@@ -865,32 +1029,58 @@ bool H5SessionLoader::loadH5File(const std::string& filepath, H5SessionData& dat
             } else {
                 std::cout << "  Loaded " << data.frame_metadata.size() << " frame metadata records" << std::endl;
                 
-                // For analysis files, frames should be continuous
-                if (data.is_analysis_file) {
-                    data.has_continuous_frames = true;
-                    std::cout << "  Frame metadata is CONTINUOUS (analysis file)" << std::endl;
+                // Determine if frames are continuous
+                // This is based on the actual data, not just file type
+                if (!data.frame_metadata.empty()) {
+                    uint64_t min_camera_id = data.frame_metadata.front().triggering_camera_frame_id;
+                    uint64_t max_camera_id = data.frame_metadata.back().triggering_camera_frame_id;
+                    size_t expected_count = max_camera_id - min_camera_id + 1;
                     
-                    // Verify continuity
-                    if (!data.frame_metadata.empty()) {
-                        uint64_t min_id = data.frame_metadata.front().triggering_camera_frame_id;
-                        uint64_t max_id = data.frame_metadata.back().triggering_camera_frame_id;
-                        size_t expected_count = max_id - min_id + 1;
+                    // Check if we have exactly one record per camera frame in the range
+                    bool perfectly_continuous = (data.frame_metadata.size() == expected_count);
+                    
+                    // For analysis files, we expect continuous frames (but may have multiple stim per camera)
+                    // For regular files, we don't expect continuity
+                    if (data.is_analysis_file) {
+                        // Analysis files should have no gaps in camera frames
+                        // But may have multiple stimulus frames per camera frame
+                        // So we need to check uniqueness of camera frames
+                        std::set<uint64_t> unique_camera_frames;
+                        for (const auto& record : data.frame_metadata) {
+                            unique_camera_frames.insert(record.triggering_camera_frame_id);
+                        }
                         
-                        if (data.frame_metadata.size() == expected_count) {
-                            std::cout << "  Verified: Frame metadata is perfectly continuous" << std::endl;
-                        } else {
-                            std::cerr << "  WARNING: Frame count mismatch. Expected " << expected_count 
-                                     << " but got " << data.frame_metadata.size() << std::endl;
-                            // Still treat as continuous if it's an analysis file
+                        size_t unique_camera_count = unique_camera_frames.size();
+                        size_t expected_unique = max_camera_id - min_camera_id + 1;
+                        
+                        // Continuous if we have all camera frames in the range (even with duplicates)
+                        data.has_continuous_frames = (unique_camera_count == expected_unique);
+                        
+                        std::cout << "  Frame continuity analysis:" << std::endl;
+                        std::cout << "    Camera frame range: " << min_camera_id << " - " << max_camera_id << std::endl;
+                        std::cout << "    Total metadata records: " << data.frame_metadata.size() << std::endl;
+                        std::cout << "    Unique camera frames: " << unique_camera_count << std::endl;
+                        std::cout << "    Expected camera frames: " << expected_unique << std::endl;
+                        std::cout << "    Continuous: " << (data.has_continuous_frames ? "YES" : "NO") << std::endl;
+                        
+                        if (data.frame_metadata.size() > unique_camera_count) {
+                            std::cout << "    Note: Multiple stimulus frames per camera frame detected" << std::endl;
+                            std::cout << "          (avg " << std::fixed << std::setprecision(2) 
+                                      << (double)data.frame_metadata.size() / unique_camera_count 
+                                      << " stim/camera)" << std::endl;
+                        }
+                    } else {
+                        // Regular files typically have gaps, don't assume continuity
+                        data.has_continuous_frames = perfectly_continuous;
+                        
+                        if (!data.has_continuous_frames) {
+                            std::cout << "  Frame metadata has gaps (normal for regular files)" << std::endl;
                         }
                     }
-                }
-                
-                // Calculate total frames and FPS
-                if (!data.frame_metadata.empty()) {
+                    
+                    // Calculate total frames and FPS
                     data.total_frames = data.frame_metadata.back().stimulus_frame_num + 1;
                     
-                    // Calculate FPS from timestamps if we have enough frames
                     if (data.frame_metadata.size() > 10) {
                         double time_diff = (data.frame_metadata.back().timestamp_ns -
                                           data.frame_metadata.front().timestamp_ns) / 1e9;
@@ -901,31 +1091,30 @@ bool H5SessionLoader::loadH5File(const std::string& filepath, H5SessionData& dat
             }
         }
         
-        // Load analysis-specific data if available
-        if (groupExists(file, "/analysis")) {
-            std::cout << "  Found /analysis group - loading interpolation data" << std::endl;
-            Group analysisGroup = file.openGroup("/analysis");
+        // ============================================
+        // STEP 6: Load analysis-specific data (if present)
+        // ============================================
+        if (has_analysis_group) {
+            std::cout << "\nLoading analysis-specific data:" << std::endl;
             
-            // Load interpolation mask if present
-            if (datasetExists(analysisGroup, "interpolation_mask")) {
-                // Implementation would go here if needed
-                std::cout << "    Interpolation mask found" << std::endl;
+            if (loadAnalysisData(file, data)) {
+                std::cout << "  ✅ Successfully loaded analysis data" << std::endl;
+                
+                // loadAnalysisData sets is_analysis_file and has_continuous_frames
+                // But let's verify it matches our expectations
+                if (!data.has_continuous_frames) {
+                    std::cerr << "  ⚠️  WARNING: Analysis file but frames not continuous!" << std::endl;
+                }
+            } else {
+                std::cerr << "  ⚠️  Failed to load analysis data completely" << std::endl;
             }
-            
-            // Load gap info if present  
-            if (datasetExists(analysisGroup, "gap_info")) {
-                // Implementation would go here if needed
-                std::cout << "    Gap info found" << std::endl;
-            }
-            
-            analysisGroup.close();
         }
         
-        // Load protocol and calibration snapshots
+        // ============================================
+        // STEP 7: Load calibration and protocol data
+        // ============================================
         loadProtocolSnapshot(file, data.protocol_json);
         loadCalibrationSnapshot(file, data.arena_config_json);
-        
-        // Load enhanced calibration data if available
         loadCalibrationSnapshotEnhanced(file, data.arena_config_json, data.camera_calibrations);
         
         // Try to load homography directly from /homography dataset (for analysis files)
@@ -936,12 +1125,26 @@ bool H5SessionLoader::loadH5File(const std::string& filepath, H5SessionData& dat
         
         file.close();
         
-        std::cout << "Successfully loaded H5 file" << std::endl;
-        std::cout << "  Total frames: " << data.total_frames << std::endl;
-        std::cout << "  Estimated FPS: " << data.fps << std::endl;
-        if (data.has_continuous_frames) {
-            std::cout << "  Frame coverage: CONTINUOUS (no gaps)" << std::endl;
+        // ============================================
+        // STEP 8: Final summary
+        // ============================================
+        std::cout << "\n" << std::string(60, '=') << std::endl;
+        std::cout << "H5 FILE LOADING SUMMARY" << std::endl;
+        std::cout << std::string(60, '=') << std::endl;
+        std::cout << "File type: " << (data.is_analysis_file ? "ANALYSIS" : "REGULAR") << std::endl;
+        std::cout << "Total stimulus frames: " << data.total_frames << std::endl;
+        std::cout << "Frame metadata records: " << data.frame_metadata.size() << std::endl;
+        std::cout << "Chaser state records: " << data.chaser_states.size() << std::endl;
+        std::cout << "Estimated FPS: " << std::fixed << std::setprecision(2) << data.fps << std::endl;
+        std::cout << "Frame coverage: " << (data.has_continuous_frames ? "CONTINUOUS" : "HAS GAPS") << std::endl;
+        
+        if (data.is_analysis_file && !data.interpolation_mask.empty()) {
+            std::cout << "Interpolation data: " << std::endl;
+            std::cout << "  Original frames: " << data.getOriginalFrameCount() << std::endl;
+            std::cout << "  Interpolated frames: " << data.getInterpolatedFrameCount() << std::endl;
         }
+        
+        std::cout << std::string(60, '=') << std::endl;
         
         return true;
         
@@ -953,6 +1156,7 @@ bool H5SessionLoader::loadH5File(const std::string& filepath, H5SessionData& dat
         return false;
     }
 }
+
 
 
 // New helper method for continuous frame access

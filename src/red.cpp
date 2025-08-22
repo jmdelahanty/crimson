@@ -1117,15 +1117,15 @@ int main(int, char **) {
                             
                             // DEBUG: Add this to see what's happening
                             if (!zarr_boxes.empty()) {
-                                std::cout << "Drawing " << zarr_boxes.size() << " zarr boxes for frame " 
-                                        << current_frame_num << " (interpolated=" << is_zarr_interpolated << ")" << std::endl;
-                                for (const auto& box : zarr_boxes) {
-                                    std::cout << "  Box: x_min=" << box.x_min << ", y_min=" << box.y_min 
-                                            << ", width=" << box.width << ", height=" << box.height 
-                                            << ", class_id=" << box.class_id << std::endl;
-                                }
+                                // std::cout << "Drawing " << zarr_boxes.size() << " zarr boxes for frame " 
+                                //         << current_frame_num << " (interpolated=" << is_zarr_interpolated << ")" << std::endl;
+                                // for (const auto& box : zarr_boxes) {
+                                //     std::cout << "  Box: x_min=" << box.x_min << ", y_min=" << box.y_min 
+                                //             << ", width=" << box.width << ", height=" << box.height 
+                                //             << ", class_id=" << box.class_id << std::endl;
+                                // }
                             } else {
-                                std::cout << "No zarr boxes to draw for frame " << current_frame_num << std::endl;
+                                // std::cout << "No zarr boxes to draw for frame " << current_frame_num << std::endl;
                             }
                             
                             // Draw the boxes
@@ -1148,8 +1148,8 @@ int main(int, char **) {
                                     };
                                     
                                     // DEBUG: Check the coordinates
-                                    std::cout << "    Drawing at: x=[" << x_coords[0] << "-" << x_coords[1] 
-                                            << "], y=[" << y_coords[2] << "-" << y_coords[0] << "]" << std::endl;
+                                    // std::cout << "    Drawing at: x=[" << x_coords[0] << "-" << x_coords[1] 
+                                    //         << "], y=[" << y_coords[2] << "-" << y_coords[0] << "]" << std::endl;
                                     
                                     // Choose color based on whether this frame is interpolated
                                     ImVec4 box_color;
@@ -1157,14 +1157,14 @@ int main(int, char **) {
                                     
                                     if (is_zarr_interpolated && use_interpolated_detections) {
                                         // Orange/yellow for interpolated frames
-                                        box_color = ImVec4(1.0f, 0.7f, 0.0f, 0.9f);
-                                        line_width = 2.5f;
-                                        std::cout << "    Using ORANGE color for interpolated box" << std::endl;
+                                        // box_color = ImVec4(1.0f, 0.7f, 0.0f, 0.9f);
+                                        // line_width = 2.5f;
+                                        // std::cout << "    Using ORANGE color for interpolated box" << std::endl;
                                     } else {
                                         // Green for original detections
-                                        box_color = ImVec4(0.2f, 1.0f, 0.2f, 1.0f);
-                                        line_width = 2.0f;
-                                        std::cout << "    Using GREEN color for original box" << std::endl;
+                                        // box_color = ImVec4(0.2f, 1.0f, 0.2f, 1.0f);
+                                        // line_width = 2.0f;
+                                        // std::cout << "    Using GREEN color for original box" << std::endl;
                                     }
                                     
                                     ImPlot::SetNextLineStyle(box_color, line_width);

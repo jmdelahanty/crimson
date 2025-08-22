@@ -1,1 +1,52 @@
-build/**
+# --- Build artifacts ---
+/build/
+/release/
+/CMakeFiles/
+/CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# --- Binary files ---
+*.o
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+*.a
+*.lib
+*.pdb
+
+# --- Logs and temporary files ---
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+
+# --- IDE/editor files ---
+.vscode/
+.idea/
+*.code-workspace
+*.DS_Store
+
+# --- Python cache ---
+__pycache__/
+*.pyc
+*.pyo
+
+# --- Jupyter notebooks checkpoints ---
+.ipynb_checkpoints/
+
+# --- Data/output (adjust if you want to keep some) ---
+*.mp4
+*.avi
+*.png
+*.jpg
+*.jpeg
+*.csv
+*.h5
+*.zarr
+
+# --- Backups ---
+lib_backup/
