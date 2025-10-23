@@ -35,30 +35,77 @@ def inspect_zarr(zarr_path):
             else:
                 print(f"  {key}: Group")
         
-        # Check for specific arrays we expect
-        expected_arrays = ['bboxes', 'scores', 'class_ids', 'n_detections']
-        print("\nExpected Arrays:")
-        for arr_name in expected_arrays:
-            if arr_name in store:
-                arr = store[arr_name]
-                print(f"  {arr_name}:")
-                print(f"    Shape: {arr.shape}")
-                print(f"    Dtype: {arr.dtype}")
-                print(f"    Chunks: {arr.chunks}")
-                print(f"    Fill value: {arr.fill_value}")
-                
-                # Show sample data
-                if arr.shape[0] > 0:
-                    print(f"    Frame 0 data: {arr[0]}")
-                    
-                    # Check for fill values
-                    if arr_name == 'bboxes' and arr.shape[0] > 0:
-                        # Check if any boxes have -1 (fill value)
-                        sample = arr[:min(10, arr.shape[0])]
-                        has_fill = np.any(sample == -1.0)
-                        print(f"    Has fill values in first 10 frames: {has_fill}")
+        # Inspect detection runs (Palette layout)
+        if "detection_runs" in store:
+            detect_group = store["detection_runs"]
+            latest = detect_group.attrs.get("latest", detect_group.attrs.get("latest_completed"))
+            print("\nDetection Runs:")
+            print(f"  Available runs: {list(detect_group.keys())}")
+            if latest:
+                print(f"  Latest run: {latest}")
+                if latest in detect_group:
+                    run = detect_group[latest]
+                    for key in ["n_detections", "bboxes", "scores", "class_ids"]:
+                        if key in run:
+                            arr = run[key]
+                            print(f"    {key}: shape={arr.shape}, dtype={arr.dtype}, chunks={arr.chunks}")
+                        else:
+                            print(f"    {key}: MISSING")
             else:
-                print(f"  {arr_name}: NOT FOUND")
+                print("  No 'latest' attribute found on detection_runs")
+        else:
+            print("\nDetection Runs: NOT PRESENT")
+
+        # Inspect refined detect runs for interpolation overlays
+        if "refined_detect_runs" in store:
+            refined_group = store["refined_detect_runs"]
+            refined_latest = refined_group.attrs.get("latest", refined_group.attrs.get("latest_completed"))
+            print("\nRefined Detect Runs:")
+            print(f"  Available runs: {list(refined_group.keys())}")
+            if refined_latest and refined_latest in refined_group:
+                run = refined_group[refined_latest]
+                # Check both root and common subgroups
+                candidates = ["interpolated", "filtered", ""]
+                for sub in candidates:
+                    node = run if sub == "" else run.get(sub)
+                    if node is None:
+                        continue
+                    label = "root" if sub == "" else sub
+                    print(f"    Subgroup '{label}': keys={list(node.keys())}")
+                    for key in ["bboxes", "bbox_norm_coords", "n_detections", "scores", "class_ids", "detection_source"]:
+                        if key in node:
+                            arr = node[key]
+                            print(f"      {key}: shape={arr.shape}, dtype={arr.dtype}")
+            else:
+                print("  No latest refined detect run found")
+        else:
+            print("\nRefined Detect Runs: NOT PRESENT")
+
+        # Inspect analysis stimulus runs for interpolation mask
+        if "analysis" in store and "stimulus_runs" in store["analysis"]:
+            stim_group = store["analysis"]["stimulus_runs"]
+            stim_latest = stim_group.attrs.get("latest", stim_group.attrs.get("latest_completed"))
+            print("\nStimulus Runs:")
+            print(f"  Available runs: {list(stim_group.keys())}")
+            if stim_latest and stim_latest in stim_group:
+                run = stim_group[stim_latest]
+                print(f"  Latest run: {stim_latest}")
+                if "interpolation_mask" in run:
+                    mask = run["interpolation_mask"]
+                    print(f"    interpolation_mask: shape={mask.shape}, dtype={mask.dtype}")
+                if "frame_alignment" in run:
+                    align = run["frame_alignment"]
+                    print(f"    frame_alignment keys: {list(align.keys())}")
+                    if "camera_to_metadata_index" in align:
+                        arr = align["camera_to_metadata_index"]
+                        print(f"      camera_to_metadata_index: shape={arr.shape}, dtype={arr.dtype}")
+                    if "camera_interpolation_mask" in align:
+                        arr = align["camera_interpolation_mask"]
+                        print(f"      camera_interpolation_mask: shape={arr.shape}, dtype={arr.dtype}")
+            else:
+                print("  No latest stimulus run found")
+        else:
+            print("\nStimulus Runs: NOT PRESENT")
         
         # Check metadata
         if hasattr(store, 'attrs'):

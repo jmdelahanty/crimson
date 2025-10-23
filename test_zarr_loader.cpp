@@ -37,8 +37,30 @@ void testBasicLoading(const std::string& zarr_path) {
         std::cout << "  Total frames: " << loader.getTotalFrames() << std::endl;
         std::cout << "  Max detections per frame: " << loader.getMaxDetections() << std::endl;
         std::cout << "  FPS: " << loader.getFPS() << std::endl;
+        std::cout << "  Resolution: " << loader.getImageWidth() << "x" << loader.getImageHeight() << std::endl;
+        if (!loader.getDetectRunName().empty()) {
+            std::cout << "  Detect run: " << loader.getDetectRunName() << std::endl;
+            if (!loader.getDetectRunMethod().empty()) {
+                std::cout << "    Method: " << loader.getDetectRunMethod() << std::endl;
+            }
+            if (!loader.getDetectRunCreatedAt().empty()) {
+                std::cout << "    Created: " << loader.getDetectRunCreatedAt() << std::endl;
+            }
+        }
         std::cout << "  Has scores: " << (loader.hasScores() ? "Yes" : "No") << std::endl;
         std::cout << "  Has class IDs: " << (loader.hasClassIDs() ? "Yes" : "No") << std::endl;
+        if (loader.hasInterpolation()) {
+            std::cout << "  Interpolation method: " << loader.getInterpolationMethod() << std::endl;
+            std::cout << "  Interpolation created: " << loader.getInterpolationCreatedAt() << std::endl;
+            std::string source_run = loader.getInterpolationSourceRun();
+            if (!source_run.empty()) {
+                std::cout << "  Interpolation source run: " << source_run << std::endl;
+            }
+            std::string stimulus_run = loader.getStimulusRunName();
+            if (!stimulus_run.empty()) {
+                std::cout << "  Stimulus run: " << stimulus_run << std::endl;
+            }
+        }
     } else {
         std::cout << RED << "✗ Failed to load zarr file: " << error_msg << RESET << std::endl;
     }
@@ -173,6 +195,16 @@ void testRawDetections(const std::string& zarr_path) {
                 std::cout << "      Class: " << raw_dets.class_ids[i] << std::endl;
             }
         }
+    }
+
+    if (loader.hasInterpolation()) {
+        auto interp_dets = loader.getRawDetections(test_frame, true);
+        std::cout << "\n  Interpolated detections for frame " << test_frame
+                  << ": " << interp_dets.boxes.size() << std::endl;
+        std::cout << "  Has refined detections: "
+                  << (loader.hasRefinedDetections() ? "Yes" : "No") << std::endl;
+        std::cout << "  Has stimulus mask: "
+                  << (loader.hasStimulusAlignment() ? "Yes" : "No") << std::endl;
     }
 }
 

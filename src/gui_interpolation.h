@@ -89,6 +89,8 @@ static void gui_show_interpolation_debug_window(
         ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Zarr Interpolation Available");
         
         bool is_interpolated = zarr_loader->isFrameInterpolated(current_frame);
+        bool has_refined = zarr_loader->hasRefinedDetections();
+        bool has_stimulus = zarr_loader->hasStimulusAlignment();
         
         if (is_interpolated) {
             ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f), 
@@ -100,6 +102,18 @@ static void gui_show_interpolation_debug_window(
         
         ImGui::Text("Method: %s", zarr_loader->getInterpolationMethod().c_str());
         ImGui::Text("Created: %s", zarr_loader->getInterpolationCreatedAt().c_str());
+        ImGui::Text("Refined detections: %s", has_refined ? "Yes" : "No");
+        ImGui::Text("Stimulus alignment: %s", has_stimulus ? "Yes" : "No");
+
+        std::string source_run = zarr_loader->getInterpolationSourceRun();
+        if (!source_run.empty()) {
+            ImGui::Text("Source detection run: %s", source_run.c_str());
+        }
+
+        std::string stimulus_run = zarr_loader->getStimulusRunName();
+        if (!stimulus_run.empty()) {
+            ImGui::Text("Stimulus run: %s", stimulus_run.c_str());
+        }
         
         // Show detection count
         int32_t det_count = zarr_loader->getDetectionsForFrame(current_frame);

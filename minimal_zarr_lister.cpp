@@ -67,9 +67,11 @@ int main(int argc, char* argv[]) {
     std::cout << "Zarr store opened successfully." << std::endl;
 
     // --- Perform the diagnostic listings ---
-    list_directory_contents(store, ""); // List root directory
-    list_directory_contents(store, "analysis/"); // List analysis directory
-    list_directory_contents(store, "interpolation_runs/"); // List interpolation_runs directory
+    list_directory_contents(store, ""); // Root directory
+    list_directory_contents(store, "detection_runs/");
+    list_directory_contents(store, "refined_detect_runs/");
+    list_directory_contents(store, "analysis/stimulus_runs/");
+    list_directory_contents(store, "interpolation_runs/"); // Legacy fallback
 
     return 0;
 }

@@ -62,30 +62,49 @@ struct LoggedBoundingBox {
 
 ### Zarr Detection Files
 
-#### File Structure
+#### File Structure (Palette Layout)
 ```
 2025-08-12T20-25-51Z_arena_4_chaser_detections.zarr/
-├── .zattrs (metadata)
-│   ├── fps: 60.0
-│   ├── video_path
-│   ├── model_path
-│   ├── class_names: {"0": "fish"}
-│   └── other metadata
-├── /bboxes/
-│   └── .zarray (shape: [n_frames, max_detections, 4], dtype: float32)
-├── /scores/
-│   └── .zarray (shape: [n_frames, max_detections], dtype: float32)
-├── /class_ids/
-│   └── .zarray (shape: [n_frames, max_detections], dtype: int32)
-└── /n_detections/
-    └── .zarray (shape: [n_frames], dtype: int32)
+├── .zattrs
+│   ├── total_frames: 72000
+│   ├── width: 1920
+│   ├── height: 1080
+│   └── fps: 60.0
+├── raw_video/
+│   └── images_full/.zarray  (shape: [frames, height, width])
+├── detection_runs/
+│   ├── .zattrs {"latest": "detect_2025-08-12_20-25-52"}
+│   └── detect_2025-08-12_20-25-52/
+│       ├── n_detections/.zarray     (int32, [total_frames])
+│       ├── bboxes/.zarray           (float32, [total_detections, 4])
+│       ├── scores/.zarray           (float32, [total_detections]) optional
+│       └── class_ids/.zarray        (int32, [total_detections]) optional
+├── refined_detect_runs/
+│   └── refine_2025-08-12_20-40-00/
+│       ├── interpolated/
+│       │   ├── bboxes/.zarray
+│       │   ├── n_detections/.zarray
+│       │   ├── detection_source/.zarray (0 = original, 1 = interpolated) optional
+│       │   └── scores/class_ids (optional)
+│       └── filtered/…
+├── analysis/
+│   └── stimulus_runs/
+│       ├── .zattrs {"latest": "stimulus_2025-08-12_20-40-10"}
+│       └── stimulus_2025-08-12_20-40-10/
+│           ├── interpolation_mask/.zarray (bool, [metadata_rows])
+│           └── frame_alignment/
+│               ├── camera_to_metadata_index/.zarray (int64, [total_frames])
+│               └── camera_interpolation_mask/.zarray (bool, [total_frames])
+└── …
 ```
 
 #### Key Characteristics
-- **Bounding box format**: `[x_min, y_min, x_max, y_max]` (different from H5's width/height)
-- **Chunking**: Data is chunked (e.g., 100 frames per chunk) for efficient access
-- **Fill values**: -1.0 for missing detections
-- **Single detection per frame**: In this example, max_detections = 1
+- **Detection runs**: Every stage writes to `{stage}_runs/<timestamp>`. The `detection_runs/.zattrs["latest"]` pointer selects the active run and pairs a dense `n_detections` vector with flattened `bboxes`/`scores` columns.
+- **Normalized boxes**: `bboxes` stores `[cx, cy, w, h]` normalized to full-resolution pixels. Loaders multiply by root `width`/`height` to recover `[x_min, y_min, x_max, y_max]`.
+- **Flat storage**: Detections are stored as flat arrays and reshaped per frame using prefix sums of `n_detections` (legacy exports still expose `frame_indices`).
+- **Refinement**: `refined_detect_runs/<run>/interpolated` mirrors the detection schema and adds QA flags such as `detection_source` so consumers can identify interpolated boxes.
+- **Stimulus alignment**: `analysis/stimulus_runs/<run>` provides interpolation masks and camera-frame alignment arrays so viewers can flag frames synthesized during metadata interpolation.
+- **Legacy support**: Older exports store dense `[frames, max_detections, 4]` arrays at the root (`/bboxes`, `/scores`, …). The loader still falls back to this layout when flattened runs are absent.
 
 ### Integration in Crimson
 
