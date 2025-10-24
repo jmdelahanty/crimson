@@ -14,6 +14,8 @@
 #include "yolo_detection.h"
 #include "h5_loader.h"
 #include <ImGuiFileDialog.h>
+#include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <iostream>
 #include <stdio.h>
@@ -137,6 +139,7 @@ int main(int, char **) {
     bool video_loaded = false;
     bool cpu_buffer_toggle = true;
     bool plot_keypoints_flag = false;
+    bool show_heading_arrows = true;
     int current_frame_num = 0;
     bool skeleton_chosen = false;
     std::vector<std::string> imgs_names;
@@ -423,75 +426,85 @@ int main(int, char **) {
             }
 
             if (zarr_loaded) {
-                // Get the actual bounding boxes (including interpolated ones if available)
                 std::vector<LoggedBoundingBox> zarr_boxes;
-                bool is_interpolated = false;
-                
-                // Check if we have interpolation and if this frame is interpolated
+                bool frame_is_interpolated = false;
+
                 if (zarr_loader.hasInterpolation()) {
-                    is_interpolated = zarr_loader.isFrameInterpolated(current_frame_num);
-                    
-                    // Get interpolated boxes if enabled
+                    frame_is_interpolated = zarr_loader.isFrameInterpolated(current_frame_num);
                     if (use_interpolated_detections) {
                         zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num, true);
                     } else {
                         zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num, false);
                     }
                 } else {
-                    // No interpolation available, get regular boxes
                     zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num);
                 }
-                
-                // Display the detection count with appropriate coloring
+
+                const bool need_details =
+                    zarr_loader.hasScores() || zarr_loader.hasHeadingData();
+                ZarrDetectionLoader::FrameDetections detection_details;
+                if (need_details) {
+                    detection_details = zarr_loader.getRawDetections(
+                        current_frame_num, use_interpolated_detections);
+                }
+
                 if (!zarr_boxes.empty()) {
-                    if (is_interpolated && use_interpolated_detections) {
-                        // Orange color for interpolated detections
-                        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f), 
-                                        "[Zarr] Detections:    Found %zu (INTERPOLATED)", zarr_boxes.size());
-                    } else if (is_interpolated && !use_interpolated_detections) {
-                        // Show that interpolation is available but not being used
-                        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), 
-                                        "[Zarr] Detections:    Found %zu (original, interp available)", zarr_boxes.size());
+                    if (frame_is_interpolated && use_interpolated_detections) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f),
+                                           "[Zarr] Detections:    Found %zu (INTERPOLATED)",
+                                           zarr_boxes.size());
+                    } else if (frame_is_interpolated && !use_interpolated_detections) {
+                        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f),
+                                           "[Zarr] Detections:    Found %zu (original, interp available)",
+                                           zarr_boxes.size());
                     } else {
-                        // Green color for original detections
-                        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), 
-                                        "[Zarr] Detections:    Found %zu", zarr_boxes.size());
+                        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f),
+                                           "[Zarr] Detections:    Found %zu", zarr_boxes.size());
                     }
-                    
-                    // Show additional info if available
-                    if (zarr_loader.hasScores()) {
-                        ZarrDetectionLoader::FrameDetections detections = zarr_loader.getRawDetections(current_frame_num, use_interpolated_detections);
-                        if (!detections.scores.empty()) {
-                            float max_score = *std::max_element(detections.scores.begin(), 
-                                                            detections.scores.end());
-                            ImGui::Text("  Max confidence: %.2f", max_score);
-                        }
+
+                    if (zarr_loader.hasScores() && !detection_details.scores.empty()) {
+                        float max_score = *std::max_element(
+                            detection_details.scores.begin(), detection_details.scores.end());
+                        ImGui::Text("  Max confidence: %.2f", max_score);
                     }
-                    
+
                     if (zarr_loader.hasClassIDs()) {
                         ImGui::Text("  Has class IDs: Yes");
                     }
-                    
-                    // Show interpolation info if available
+
+                    if (zarr_loader.hasHeadingData()) {
+                        if (!use_interpolated_detections &&
+                            !detection_details.heading_valid.empty()) {
+                            size_t valid_headings =
+                                std::count(detection_details.heading_valid.begin(),
+                                           detection_details.heading_valid.end(), 1);
+                            ImGui::Text("  Heading vectors: %zu valid", valid_headings);
+                        } else {
+                            ImGui::Text("  Heading vectors available (use original detections)");
+                        }
+                    }
+
                     if (zarr_loader.hasInterpolation()) {
                         ImGui::Text("  Interpolation available: Yes");
-                        ImGui::Text("  Current frame interpolated: %s", is_interpolated ? "Yes" : "No");
-                        ImGui::Text("  Using interpolation: %s", use_interpolated_detections ? "Yes" : "No");
-                        ImGui::Text("  Method: %s", zarr_loader.getInterpolationMethod().c_str());
+                        ImGui::Text("  Current frame interpolated: %s",
+                                    frame_is_interpolated ? "Yes" : "No");
+                        ImGui::Text("  Using interpolation: %s",
+                                    use_interpolated_detections ? "Yes" : "No");
+                        ImGui::Text("  Method: %s",
+                                    zarr_loader.getInterpolationMethod().c_str());
                     }
                 } else {
-                    // No detections found
-                    if (zarr_loader.hasInterpolation() && is_interpolated) {
-                        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), 
-                                        "[Zarr] Detections:    None (frame is interpolated)");
+                    if (zarr_loader.hasInterpolation() && frame_is_interpolated) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f),
+                                           "[Zarr] Detections:    None (frame is interpolated)");
                     } else {
-                        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 
-                                        "[Zarr] Detections:    None");
+                        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f),
+                                           "[Zarr] Detections:    None");
                     }
                 }
             } else {
-                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), 
-                                "[Zarr] Detections:    Not loaded");
+                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
+                                   "[Zarr] Detections:    Not loaded");
             }
 
             if (zarr_loaded && zarr_loader.hasInterpolation()) {
@@ -507,6 +520,23 @@ int main(int, char **) {
                 if (current_interpolated) {
                     ImGui::SameLine();
                     ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f), "(Current frame is interpolated)");
+                }
+            }
+
+            if (zarr_loaded && zarr_loader.hasHeadingData()) {
+                ImGui::Separator();
+                ImGui::Text("Heading Overlay:");
+                if (use_interpolated_detections) {
+                    ImGui::TextWrapped("Heading arrows are unavailable while interpolated detections are displayed.");
+                } else {
+                    ImGui::Checkbox("Show heading arrows", &show_heading_arrows);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Visualize swim bladder headings from the keypoints run.");
+                    }
+                    if (!zarr_loader.getKeypointsRunName().empty()) {
+                        ImGui::Text("  Keypoints run: %s",
+                                    zarr_loader.getKeypointsRunName().c_str());
+                    }
                 }
             }
 
@@ -1147,24 +1177,11 @@ int main(int, char **) {
                                         (double)scene->image_height[j] - box.y_min
                                     };
                                     
-                                    // DEBUG: Check the coordinates
-                                    // std::cout << "    Drawing at: x=[" << x_coords[0] << "-" << x_coords[1] 
-                                    //         << "], y=[" << y_coords[2] << "-" << y_coords[0] << "]" << std::endl;
-                                    
-                                    // Choose color based on whether this frame is interpolated
-                                    ImVec4 box_color;
-                                    float line_width;
-                                    
+                                    ImVec4 box_color = ImVec4(0.2f, 1.0f, 0.2f, 1.0f);
+                                    float line_width = 2.0f;
                                     if (is_zarr_interpolated && use_interpolated_detections) {
-                                        // Orange/yellow for interpolated frames
-                                        // box_color = ImVec4(1.0f, 0.7f, 0.0f, 0.9f);
-                                        // line_width = 2.5f;
-                                        // std::cout << "    Using ORANGE color for interpolated box" << std::endl;
-                                    } else {
-                                        // Green for original detections
-                                        // box_color = ImVec4(0.2f, 1.0f, 0.2f, 1.0f);
-                                        // line_width = 2.0f;
-                                        // std::cout << "    Using GREEN color for original box" << std::endl;
+                                        box_color = ImVec4(1.0f, 0.7f, 0.0f, 0.9f);
+                                        line_width = 2.5f;
                                     }
                                     
                                     ImPlot::SetNextLineStyle(box_color, line_width);
@@ -1175,6 +1192,73 @@ int main(int, char **) {
                                     }
                                     
                                     ImPlot::PlotLine(label.c_str(), x_coords, y_coords, 5);
+                                }
+                            }
+
+                            if (show_heading_arrows &&
+                                zarr_loader.hasHeadingData() &&
+                                !use_interpolated_detections) {
+                                ZarrDetectionLoader::FrameDetections heading_details =
+                                    zarr_loader.getRawDetections(current_frame_num,
+                                                                 /*use_interpolated=*/false);
+
+                                const size_t det_count = heading_details.boxes.size();
+                                if (det_count > 0 &&
+                                    heading_details.heading_valid.size() == det_count &&
+                                    heading_details.headings_deg.size() == det_count) {
+                                    ImDrawList* plot_draw_list = ImPlot::GetPlotDrawList();
+                                    const ImU32 arrow_color =
+                                        ImGui::GetColorU32(ImVec4(1.0f, 0.25f, 0.1f, 0.95f));
+                                    const float arrow_thickness = 2.0f;
+                                    const float scene_height_f =
+                                        static_cast<float>(scene->image_height[j]);
+
+                                    for (size_t det_idx = 0; det_idx < det_count; ++det_idx) {
+                                        if (heading_details.heading_valid[det_idx] == 0) {
+                                            continue;
+                                        }
+
+                                        const auto& box = heading_details.boxes[det_idx];
+                                        if (det_idx >= heading_details.swim_bladder_pixels.size()) {
+                                            continue;
+                                        }
+
+                                        float box_width = std::max(0.0f, box[2] - box[0]);
+                                        float box_height = std::max(0.0f, box[3] - box[1]);
+                                        float base_x = heading_details.swim_bladder_pixels[det_idx][0];
+                                        float base_y = heading_details.swim_bladder_pixels[det_idx][1];
+
+                                        float heading_deg = heading_details.headings_deg[det_idx];
+                                        float heading_rad =
+                                            heading_deg * static_cast<float>(M_PI) / 180.0f;
+
+                                        float arrow_len =
+                                            std::max(30.0f, std::max(box_width, box_height) * 0.65f);
+                                        float end_x = base_x + std::cos(heading_rad) * arrow_len;
+                                        float end_y = base_y - std::sin(heading_rad) * arrow_len;
+
+                                        ImPlotPoint plot_start(base_x, scene_height_f - base_y);
+                                        ImPlotPoint plot_end(end_x, scene_height_f - end_y);
+                                        ImVec2 p0 = ImPlot::PlotToPixels(plot_start);
+                                        ImVec2 p1 = ImPlot::PlotToPixels(plot_end);
+
+                                        plot_draw_list->AddLine(p0, p1, arrow_color, arrow_thickness);
+
+                                        ImVec2 dir = ImVec2(p0.x - p1.x, p0.y - p1.y);
+                                        float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+                                        if (len > 1e-3f) {
+                                            dir.x /= len;
+                                            dir.y /= len;
+                                            float head_size = 8.0f;
+                                            ImVec2 left = ImVec2(
+                                                p1.x + dir.x * head_size + dir.y * head_size * 0.5f,
+                                                p1.y + dir.y * head_size - dir.x * head_size * 0.5f);
+                                            ImVec2 right = ImVec2(
+                                                p1.x + dir.x * head_size - dir.y * head_size * 0.5f,
+                                                p1.y + dir.y * head_size + dir.x * head_size * 0.5f);
+                                            plot_draw_list->AddTriangleFilled(p1, left, right, arrow_color);
+                                        }
+                                    }
                                 }
                             }
                         }

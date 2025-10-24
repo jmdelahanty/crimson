@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.18)
 project(redgui LANGUAGES CXX CUDA)
 
+# ----------------------- Build toggles -----------------------
+option(ENABLE_NVML "Link against NVIDIA Management Library (NVML)" ON)
+
 # Set output directory for executables
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/release)
 
@@ -53,9 +56,24 @@ set(FFMPEG_INCLUDE_DIRS ${AVFORMAT_INCLUDE_DIR})
 set(FFMPEG_LIBRARIES ${AVFORMAT_LIBRARY} ${AVCODEC_LIBRARY} ${AVUTIL_LIBRARY} ${SWSCALE_LIBRARY} ${SWRESAMPLE_LIBRARY})
 
 # --- NVIDIA Libraries ---
-find_library(NVENC_LIBRARY nvidia-encode HINTS /usr/lib/x86_64-linux-gnu /usr/lib)
-find_path(NVML_INCLUDE_DIR nvml.h HINTS ${CUDA_TOOLKIT_ROOT_DIR}/include /usr/include)
-find_library(NVML_LIBRARY NAMES nvidia-ml nvml HINTS /usr/lib/x86_64-linux-gnu /usr/lib64)
+# NVENC (Video Codec SDK runtime)
+find_library(NVENC_LIBRARY
+    NAMES nvidia-encode
+    HINTS /usr/lib/x86_64-linux-gnu /usr/lib /usr/lib64
+)
+
+# NVML headers (from libnvidia-ml-dev OR CUDA Toolkit)
+find_path(NVML_INCLUDE_DIR nvml.h
+    HINTS ${CUDA_TOOLKIT_ROOT_DIR}/include /usr/local/cuda/include /usr/include
+)
+
+# NVML library: accept both unversioned .so and SONAME .so.1
+if(ENABLE_NVML)
+    find_library(NVML_LIBRARY
+        NAMES nvidia-ml nvml libnvidia-ml.so libnvidia-ml.so.1 nvidia-ml.so nvidia-ml.so.1
+        HINTS /lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu /usr/lib64 /usr/local/lib64 /usr/lib
+    )
+endif()
 
 # --- CUDA Libraries ---
 find_library(CUDA_DRIVER cuda HINTS ${CUDA_TOOLKIT_ROOT_DIR}/lib64 /usr/local/cuda/lib64)
@@ -146,7 +164,85 @@ FetchContent_Declare(
 # This will download and configure TensorStore
 FetchContent_MakeAvailable(tensorstore)
 
+# ============================================================================
+# TensorStore Zarr3 build/test-time verification
+# ============================================================================
+option(ENABLE_TENSORSTORE_ZARR3_CHECK "Build and run a small runtime check to verify zarr3 driver support" ON)
+
+if(ENABLE_TENSORSTORE_ZARR3_CHECK)
+  # --------------------------------------------------------------------------
+  # Create a tiny runtime checker to confirm that TensorStore's zarr3 driver is
+  # actually registered in this build. The checker will attempt to open an
+  # in-memory zarr3 array; if successful, it prints "Zarr3: OK".
+  # --------------------------------------------------------------------------
+
+  # Write source file to tools/ if it doesn't exist already
+  set(TS_ZARR3_CHECK_SRC ${CMAKE_CURRENT_SOURCE_DIR}/tools/ts_zarr3_check.cpp)
+  if(NOT EXISTS ${TS_ZARR3_CHECK_SRC})
+    file(WRITE ${TS_ZARR3_CHECK_SRC}
+"#include <iostream>
+#include <tensorstore/tensorstore.h>
+#include <tensorstore/context.h>
+
+int main() {
+  auto ctx = tensorstore::Context::Default();
+  auto spec_result = tensorstore::Spec::FromJson(R\"json(
+    {
+      \"driver\": \"zarr3\",
+      \"kvstore\": {\"driver\": \"memory\"},
+      \"dtype\": \"uint8\",
+      \"shape\": [1],
+      \"create\": true,
+      \"open\": true
+    }
+  )json\");
+  if (!spec_result.ok()) {
+    std::cerr << \"Spec parse failed: \" << spec_result.status() << \"\\n\";
+    return 2;
+  }
+  auto open_result = tensorstore::Open(*spec_result, ctx).result();
+  if (!open_result.ok()) {
+    std::cerr << \"Open failed: \" << open_result.status() << \"\\n\";
+    return 3;
+  }
+  std::cout << \"Zarr3: OK\\n\";
+  return 0;
+}
+")
+  endif()
+
+  # --------------------------------------------------------------------------
+  # Build and register the test
+  # --------------------------------------------------------------------------
+  add_executable(ts_zarr3_check ${TS_ZARR3_CHECK_SRC})
+  target_link_libraries(ts_zarr3_check PRIVATE
+    tensorstore::all_drivers
+    Threads::Threads
+  )
+  target_compile_features(ts_zarr3_check PRIVATE cxx_std_17)
+
+  # Enable testing and add a ctest entry
+  enable_testing()
+  add_test(NAME tensorstore_zarr3_check COMMAND ts_zarr3_check)
+
+  # Convenience target: run the test automatically during build
+  add_custom_target(probe_zarr3 ALL
+    COMMAND ${CMAKE_CTEST_COMMAND} -R tensorstore_zarr3_check --output-on-failure
+    DEPENDS ts_zarr3_check
+    COMMENT "Probing TensorStore for zarr3 driver support..."
+  )
+endif()
+
 message(STATUS "TensorStore configured successfully")
+
+# Tiny Zarr v3 (Palette) smoke test
+add_executable(test_zarr3_read tools/test_zarr3_read.cpp)
+target_link_libraries(test_zarr3_read PRIVATE
+    tensorstore::all_drivers
+    Threads::Threads
+    nlohmann_json::nlohmann_json
+)
+target_compile_features(test_zarr3_read PRIVATE cxx_std_17)
 
 # --- Source Files ---
 # CUDA sources
@@ -191,7 +287,6 @@ target_include_directories(redgui PRIVATE
     ${FFMPEG_INCLUDE_DIRS}
     ${HDF5_INCLUDE_DIRS}
     ${GLEW_INCLUDE_DIRS}
-    ${NVML_INCLUDE_DIR}
     ${TENSORRT_INCLUDE_DIR}
 )
 
@@ -231,10 +326,20 @@ target_link_libraries(redgui PRIVATE
     Threads::Threads
 )
 
-# Add NVML if found
-if(NVML_LIBRARY)
-    target_link_libraries(redgui PRIVATE ${NVML_LIBRARY})
-    target_compile_definitions(redgui PRIVATE USE_NVML)
+# Add NVML if enabled
+if(ENABLE_NVML)
+    if(NVML_LIBRARY)
+        target_link_libraries(redgui PRIVATE ${NVML_LIBRARY})
+        target_compile_definitions(redgui PRIVATE USE_NVML)
+        if(NVML_INCLUDE_DIR)
+            target_include_directories(redgui PRIVATE ${NVML_INCLUDE_DIR})
+        endif()
+    else()
+        message(WARNING
+            "NVML requested but not found. "
+            "Set -DENABLE_NVML=OFF to build without it, "
+            "or install headers (libnvidia-ml-dev) and ensure libnvidia-ml.so[.1] is present.")
+    endif()
 endif()
 
 # Add TensorRT if found
@@ -250,17 +355,21 @@ target_compile_definitions(redgui PRIVATE
 
 # --- Post-Build Commands ---
 # Copy font files if they exist
+set(FONT_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/fonts")
 set(FONT_FILES
-    "src/Roboto-Regular.ttf"
-    "src/fa-solid-900.ttf"
+    "Roboto-Regular.ttf"
+    "fa-solid-900.ttf"
+    "fontawesome-webfont.ttf"
+    "forkawesome-webfont.ttf"
 )
 
 foreach(FONT_FILE ${FONT_FILES})
-    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${FONT_FILE})
+    if(EXISTS ${FONT_SOURCE_DIR}/${FONT_FILE})
         add_custom_command(TARGET redgui POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:redgui>/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy
-            "${CMAKE_CURRENT_SOURCE_DIR}/${FONT_FILE}"
-            "$<TARGET_FILE_DIR:redgui>/"
+                "${FONT_SOURCE_DIR}/${FONT_FILE}"
+                "$<TARGET_FILE_DIR:redgui>/fonts/${FONT_FILE}"
         )
     endif()
 endforeach()
@@ -279,18 +388,19 @@ if(TENSORRT_FOUND)
 else()
     message(STATUS "  TensorRT: NOT FOUND")
 endif()
-if(NVML_LIBRARY)
-    message(STATUS "  NVML: FOUND")
+if(ENABLE_NVML)
+    if(NVML_LIBRARY)
+        message(STATUS "  NVML: FOUND -> ${NVML_LIBRARY}")
+    else()
+        message(STATUS "  NVML: NOT FOUND (set -DENABLE_NVML=OFF to skip)")
+    endif()
 endif()
 message(STATUS "  Output Directory: ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 message(STATUS "========================================")
 
 # ============================================================================
-# ADDED: Build the minimal Zarr lister diagnostic tool
-# # ============================================================================
-# add_executable(minimal_zarr_lister src/minimal_zarr_lister.cpp)
+# Diagnostics and tooling
+# ============================================================================
 
-# # Link the lister only to what it needs, which is handled by tensorstore::all_drivers
-# target_link_libraries(minimal_zarr_lister PRIVATE
-#     tensorstore::all_drivers
-# )
+add_executable(debug_detect_run tools/debug_detect_run.cpp)
+target_link_libraries(debug_detect_run PRIVATE tensorstore::all_drivers)

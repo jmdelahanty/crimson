@@ -98,6 +98,14 @@ struct ZarrDetectionData {
     std::vector<int32_t> flat_class_ids;                // optional, same length as frame_indices
     std::vector<size_t> frame_offsets;                  // size total_frames + 1
 
+    // Optional heading / keypoint data aligned with detections
+    std::vector<float> flat_headings_deg;               // heading angle per detection
+    std::vector<std::array<float, 2>> flat_swim_bladder_px;  // swim bladder anchor in pixel coords
+    std::vector<uint8_t> flat_heading_valid;            // 1 if heading data valid
+    bool has_heading_data = false;
+    std::string keypoints_run_name;
+    std::string keypoints_source_crop_run;
+
     // Interpolation data
     InterpolationRunData latest_interpolation;
     bool has_interpolation = false;
@@ -133,6 +141,7 @@ public:
     bool hasScores() const { return data_.has_scores; }
     bool hasClassIDs() const { return data_.has_class_ids; }
     bool hasInterpolation() const { return data_.has_interpolation; }
+    const std::string& getKeypointsRunName() const { return data_.keypoints_run_name; }
     bool hasStimulusAlignment() const {
         return data_.has_interpolation && data_.latest_interpolation.has_stimulus_alignment;
     }
@@ -179,8 +188,13 @@ public:
         std::vector<int32_t> class_ids;
         size_t frame_id;
         bool is_interpolated = false;
+        std::vector<float> headings_deg;
+        std::vector<std::array<float, 2>> swim_bladder_pixels;
+        std::vector<uint8_t> heading_valid;
     };
     FrameDetections getRawDetections(size_t frame_id, bool use_interpolated = true) const;
+
+    bool hasHeadingData() const { return data_.has_heading_data; }
     
     // Static helper to find zarr files in a directory
     static std::optional<std::string> findZarrDetectionFile(const std::string& directory);
@@ -188,6 +202,7 @@ public:
 private:
     ZarrDetectionData data_;
     ts::Context context_;
+    std::string root_path_;
     
     // Loading functions
     bool loadStandardFormat(const ts::kvstore::KvStore& store);
@@ -228,6 +243,7 @@ private:
     bool loadPaletteInterpolationRun(const ts::kvstore::KvStore& store,
                                      const std::string& run_name,
                                      const std::string& subgroup);
+    bool loadKeypointHeadingData(const ts::kvstore::KvStore& store);
     
     // Helper conversion function
     LoggedBoundingBox convertToLoggedBox(

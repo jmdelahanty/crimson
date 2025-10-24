@@ -1,48 +1,156 @@
 #include "zarr_loader.h"
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <filesystem>
+#include <absl/strings/cord.h>
 #include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <cstring>
 #include <cstdint>
-#include <stdexcept>
+#include <limits>
 #include <optional>
-#include <tensorstore/kvstore/operations.h>
+#include <stdexcept>
 #include <tensorstore/cast.h>
 #include <tensorstore/driver/zarr/dtype.h>
+#include <tensorstore/kvstore/operations.h>
 
 using json = nlohmann::json;
 
 namespace {
-bool kvEntryExists(const ts::kvstore::KvStore& store, const std::string& key) {
-    auto result = ts::kvstore::Read(store, key).result();
-    return result.ok();
+std::string appendPath(const std::string& base, const std::string& suffix) {
+    if (base.empty()) {
+        return suffix;
+    }
+    if (base.back() == '/') {
+        return base + suffix;
+    }
+    return base + "/" + suffix;
 }
 
-bool arrayExists(const ts::kvstore::KvStore& store, const std::string& array_path) {
-    return kvEntryExists(store, array_path + ".zarray");
-}
+std::optional<json> readAttrsAny(const ts::kvstore::KvStore& store,
+                                 const std::string& path) {
+    auto json_key = appendPath(path, "zarr.json");
+    auto json_result = ts::kvstore::Read(store, json_key).result();
+    if (json_result.ok() && json_result.value().has_value()) {
+        try {
+            std::string payload;
+            absl::CopyCordToString(json_result.value().value, &payload);
+            if (!payload.empty()) {
+                json meta = json::parse(payload);
+                if (meta.contains("attributes") && meta["attributes"].is_object()) {
+                    return meta["attributes"];
+                }
+                return meta;
+            }
+        } catch (const json::parse_error& e) {
+            std::cerr << "Failed to parse JSON at " << json_key << ": " << e.what() << std::endl;
+        } catch (...) {
+            // Ignore and fall back to v2 attrs.
+        }
+    }
 
-std::optional<json> readJsonAttrs(const ts::kvstore::KvStore& store,
-                                  const std::string& path) {
-    auto result = ts::kvstore::Read(store, path).result();
-    if (!result.ok()) {
+    auto zattrs_key = appendPath(path, ".zattrs");
+    auto attrs_result = ts::kvstore::Read(store, zattrs_key).result();
+    if (!attrs_result.ok()) {
         return std::nullopt;
     }
-    const auto& read_result = result.value();
+    const auto& read_result = attrs_result.value();
     if (!read_result.has_value()) {
         return std::nullopt;
     }
     std::string payload;
-    read_result.value.AppendToString(&payload);
+    absl::CopyCordToString(read_result.value, &payload);
     if (payload.empty()) {
         return json::object();
     }
     try {
         return json::parse(payload);
     } catch (const json::parse_error& e) {
-        std::cerr << "Failed to parse JSON at " << path << ": " << e.what() << std::endl;
+        std::cerr << "Failed to parse JSON at " << zattrs_key << ": " << e.what() << std::endl;
         return std::nullopt;
     }
+}
+
+template <typename T, int Rank>
+ts::Result<ts::TensorStore<T, Rank>> openArrayAny(
+    const ts::kvstore::KvStore& store,
+    const std::string& path,
+    const ts::Context& context) {
+
+    auto store_spec = store.spec();
+    if (!store_spec.ok()) {
+        return store_spec.status();
+    }
+
+    auto kv_json_or = store_spec.value().ToJson();
+    if (!kv_json_or.ok()) {
+        return kv_json_or.status();
+    }
+
+    auto try_open = [&](const char* driver) {
+        json spec = {
+            {"driver", driver},
+            {"kvstore", kv_json_or.value()},
+            {"path", path}
+        };
+        return ts::Open<T, Rank>(
+                   spec,
+                   ts::OpenMode::open,
+                   ts::ReadWriteMode::read,
+                   context)
+            .result();
+    };
+
+    auto v3_result = try_open("zarr3");
+    if (v3_result.ok()) {
+        return v3_result;
+    }
+    auto v2_result = try_open("zarr");
+    if (v2_result.ok()) {
+        return v2_result;
+    }
+    return v2_result;
+}
+
+bool arrayExists(const ts::kvstore::KvStore& store, const std::string& path) {
+    auto v3 = ts::kvstore::Read(store, appendPath(path, "zarr.json")).result();
+    if (v3.ok() && v3.value().has_value()) {
+        return true;
+    }
+    auto result = ts::kvstore::Read(store, appendPath(path, ".zarray")).result();
+    return result.ok() && result.value().has_value();
+}
+
+std::vector<std::string> collect_runs_fs(const std::string& root_path,
+                                            const std::string& group_dir,
+                                            std::initializer_list<std::string> required_arrays) {
+    namespace fs = std::filesystem;
+    fs::path base = fs::path(root_path) / group_dir;
+    std::vector<std::string> candidates;
+    if (!fs::exists(base) || !fs::is_directory(base)) {
+        return candidates;
+    }
+
+    for (const auto& entry : fs::directory_iterator(base)) {
+        if (!entry.is_directory()) {
+            continue;
+        }
+        const auto name = entry.path().filename().string();
+        bool ok = true;
+        for (const auto& req : required_arrays) {
+            if (!fs::exists(entry.path() / req / "zarr.json")) {
+                ok = false;
+                break;
+            }
+        }
+        if (ok) {
+            candidates.push_back(name);
+        }
+    }
+
+    std::sort(candidates.begin(), candidates.end());
+    return candidates;
 }
 
 std::string extractLatestRunName(const json& attrs) {
@@ -180,6 +288,8 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
             return false;
         }
 
+        root_path_ = filepath;
+
         // Open the kvstore
         auto spec_result = ts::kvstore::Spec::FromJson({
             {"driver", "file"},
@@ -200,9 +310,43 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
         }
         auto store = store_result.value();
 
-        // Populate metadata first; continue even if it fails (legacy files may not have it)
-        if (!loadMetadata(store)) {
-            std::cout << "  Warning: Could not read root metadata (.zattrs)" << std::endl;
+        // Debug probes to help diagnose layout selection.
+        {
+            auto probe = ts::kvstore::Read(store, "detect_runs/zarr.json").result();
+            if (probe.ok()) {
+                bool has_value = probe.value().has_value();
+                std::cout << "  probe detect_runs/zarr.json: "
+                          << (has_value ? "FOUND" : "MISSING") << std::endl;
+                if (has_value) {
+                    std::string payload;
+                    absl::CopyCordToString(probe.value().value, &payload);
+                    try {
+                        auto json_meta = json::parse(payload);
+                        std::string latest_run = "<unset>";
+                        if (json_meta.contains("attributes") &&
+                            json_meta["attributes"].is_object() &&
+                            json_meta["attributes"].contains("latest") &&
+                            json_meta["attributes"]["latest"].is_string()) {
+                            latest_run = json_meta["attributes"]["latest"].get<std::string>();
+                        }
+                        std::cout << "    latest=" << latest_run << std::endl;
+                        if (latest_run != "<unset>") {
+                            std::string base = "detect_runs/" + latest_run + "/";
+                            auto fi = ts::kvstore::Read(store, base + "frame_indices/zarr.json").result();
+                            auto boxes = ts::kvstore::Read(store, base + "bbox_norm_coords/zarr.json").result();
+                            std::cout << "    " << base << "frame_indices/zarr.json: "
+                                      << (fi.ok() && fi.value().has_value() ? "FOUND" : "MISSING") << std::endl;
+                            std::cout << "    " << base << "bbox_norm_coords/zarr.json: "
+                                      << (boxes.ok() && boxes.value().has_value() ? "FOUND" : "MISSING") << std::endl;
+                        }
+                    } catch (const std::exception& e) {
+                        std::cout << "    parse error: " << e.what() << std::endl;
+                    }
+                }
+            } else {
+                std::cout << "  probe detect_runs/zarr.json: ERROR "
+                          << probe.status().ToString() << std::endl;
+            }
         }
 
         bool loaded_layout = false;
@@ -220,6 +364,18 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
                 error_message = "Failed to load supported zarr layouts (palette or legacy)";
                 return false;
             }
+        } else {
+            if (loadKeypointHeadingData(store)) {
+                std::cout << "  Loaded keypoint headings from '"
+                          << data_.keypoints_run_name << "'" << std::endl;
+            } else {
+                std::cout << "  No keypoint heading data available" << std::endl;
+            }
+        }
+
+        // Populate metadata; continue even if it fails (legacy files may not have it)
+        if (!loadMetadata(store)) {
+            std::cout << "  Warning: Could not read root metadata (zarr.json/.zattrs)" << std::endl;
         }
         
         // Validate we have essential data
@@ -234,12 +390,28 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
             
             // Validate interpolation data matches main data dimensions
             if (data_.has_interpolation) {
-                auto interp_domain = data_.latest_interpolation.bboxes_store.domain();
-                if (interp_domain.shape()[0] != data_.total_frames) {
-                    std::cerr << "  Warning: Interpolation frame count mismatch. "
-                              << "Expected " << data_.total_frames 
-                              << " but got " << interp_domain.shape()[0] << std::endl;
-                    data_.has_interpolation = false;
+                if (!data_.latest_interpolation.uses_palette_layout &&
+                    data_.latest_interpolation.bboxes_store.valid()) {
+                    auto interp_domain = data_.latest_interpolation.bboxes_store.domain();
+                    if (interp_domain.rank() > 0 &&
+                        interp_domain.shape()[0] != data_.total_frames) {
+                        std::cerr << "  Warning: Interpolation frame count mismatch. "
+                                  << "Expected " << data_.total_frames 
+                                  << " but got " << interp_domain.shape()[0] << std::endl;
+                        data_.has_interpolation = false;
+                    }
+                } else if (data_.latest_interpolation.uses_palette_layout &&
+                           !data_.latest_interpolation.frame_offsets.empty()) {
+                    size_t palette_frames =
+                        data_.latest_interpolation.frame_offsets.size() > 0
+                            ? data_.latest_interpolation.frame_offsets.size() - 1
+                            : 0;
+                    if (palette_frames != data_.total_frames) {
+                        std::cerr << "  Warning: Interpolation frame count mismatch. "
+                                  << "Expected " << data_.total_frames
+                                  << " but got " << palette_frames << std::endl;
+                        data_.has_interpolation = false;
+                    }
                 }
             }
         } else {
@@ -285,26 +457,10 @@ bool ZarrDetectionLoader::readInt32Array(const ts::kvstore::KvStore& store,
                                         const std::string& path,
                                         std::vector<int32_t>& out) {
     try {
-        json spec;
-        spec["driver"] = "zarr";
-        auto store_spec = store.spec();
-        if (!store_spec.ok()) {
-            return false;
-        }
-        spec["kvstore"] = store_spec.value().ToJson().value();
-        spec["path"] = path;
-
-        auto open_result = ts::Open<int32_t, 1>(
-            spec,
-            ts::OpenMode::open,
-            ts::ReadWriteMode::read,
-            context_
-        ).result();
-
+        auto open_result = openArrayAny<int32_t, 1>(store, path, context_);
         if (!open_result.ok()) {
             return false;
         }
-
         auto array_result = ts::Read(open_result.value()).result();
         if (!array_result.ok()) {
             return false;
@@ -331,26 +487,10 @@ bool ZarrDetectionLoader::readInt64Array(const ts::kvstore::KvStore& store,
                                         const std::string& path,
                                         std::vector<int64_t>& out) {
     try {
-        json spec;
-        spec["driver"] = "zarr";
-        auto store_spec = store.spec();
-        if (!store_spec.ok()) {
-            return false;
-        }
-        spec["kvstore"] = store_spec.value().ToJson().value();
-        spec["path"] = path;
-
-        auto open_result = ts::Open<int64_t, 1>(
-            spec,
-            ts::OpenMode::open,
-            ts::ReadWriteMode::read,
-            context_
-        ).result();
-
+        auto open_result = openArrayAny<int64_t, 1>(store, path, context_);
         if (!open_result.ok()) {
             return false;
         }
-
         auto array_result = ts::Read(open_result.value()).result();
         if (!array_result.ok()) {
             return false;
@@ -377,40 +517,47 @@ bool ZarrDetectionLoader::readFloatArray(const ts::kvstore::KvStore& store,
                                         const std::string& path,
                                         std::vector<float>& out) {
     try {
-        json spec;
-        spec["driver"] = "zarr";
-        auto store_spec = store.spec();
-        if (!store_spec.ok()) {
-            return false;
-        }
-        spec["kvstore"] = store_spec.value().ToJson().value();
-        spec["path"] = path;
+        auto open_result = openArrayAny<float, 1>(store, path, context_);
 
-        auto open_result = ts::Open<float, 1>(
-            spec,
-            ts::OpenMode::open,
-            ts::ReadWriteMode::read,
-            context_
-        ).result();
-
-        if (!open_result.ok()) {
-            return false;
+        if (open_result.ok()) {
+            auto array_result = ts::Read(open_result.value()).result();
+            if (!array_result.ok()) {
+                return false;
+            }
+            auto array = array_result.value();
+            if (array.rank() != 1) {
+                return false;
+            }
+            size_t length = static_cast<size_t>(array.shape()[0]);
+            out.resize(length);
+            const auto* data = static_cast<const float*>(array.data());
+            std::copy(data, data + length, out.begin());
+            return true;
         }
 
-        auto array_result = ts::Read(open_result.value()).result();
-        if (!array_result.ok()) {
+        // Fallback for float64 datasets
+        auto open_double = openArrayAny<double, 1>(store, path, context_);
+
+        if (!open_double.ok()) {
             return false;
         }
 
-        auto array = array_result.value();
+        auto array_double = ts::Read(open_double.value()).result();
+        if (!array_double.ok()) {
+            return false;
+        }
+
+        auto array = array_double.value();
         if (array.rank() != 1) {
             return false;
         }
 
         size_t length = static_cast<size_t>(array.shape()[0]);
         out.resize(length);
-        const auto* data = static_cast<const float*>(array.data());
-        std::copy(data, data + length, out.begin());
+        const auto* data = static_cast<const double*>(array.data());
+        for (size_t i = 0; i < length; ++i) {
+            out[i] = static_cast<float>(data[i]);
+        }
         return true;
 
     } catch (const std::exception& e) {
@@ -423,27 +570,38 @@ bool ZarrDetectionLoader::readFloatMatrix(const ts::kvstore::KvStore& store,
                                          const std::string& path,
                                          std::vector<std::array<float, 4>>& out) {
     try {
-        json spec;
-        spec["driver"] = "zarr";
-        auto store_spec = store.spec();
-        if (!store_spec.ok()) {
+        auto open_result = openArrayAny<float, 2>(store, path, context_);
+
+        if (open_result.ok()) {
+            auto array_result = ts::Read(open_result.value()).result();
+            if (!array_result.ok()) {
+                return false;
+            }
+            auto array = array_result.value();
+            if (array.rank() != 2 || array.shape()[1] != 4) {
+                return false;
+            }
+
+            size_t rows = static_cast<size_t>(array.shape()[0]);
+            out.resize(rows);
+            const auto* data = static_cast<const float*>(array.data());
+            for (size_t row = 0; row < rows; ++row) {
+                out[row][0] = data[row * 4 + 0];
+                out[row][1] = data[row * 4 + 1];
+                out[row][2] = data[row * 4 + 2];
+                out[row][3] = data[row * 4 + 3];
+            }
+            return true;
+        }
+
+        // Fallback for float64 datasets
+        auto open_double = openArrayAny<double, 2>(store, path, context_);
+
+        if (!open_double.ok()) {
             return false;
         }
-        spec["kvstore"] = store_spec.value().ToJson().value();
-        spec["path"] = path;
 
-        auto open_result = ts::Open<float, 2>(
-            spec,
-            ts::OpenMode::open,
-            ts::ReadWriteMode::read,
-            context_
-        ).result();
-
-        if (!open_result.ok()) {
-            return false;
-        }
-
-        auto array_result = ts::Read(open_result.value()).result();
+        auto array_result = ts::Read(open_double.value()).result();
         if (!array_result.ok()) {
             return false;
         }
@@ -455,12 +613,12 @@ bool ZarrDetectionLoader::readFloatMatrix(const ts::kvstore::KvStore& store,
 
         size_t rows = static_cast<size_t>(array.shape()[0]);
         out.resize(rows);
-        const auto* data = static_cast<const float*>(array.data());
+        const auto* data = static_cast<const double*>(array.data());
         for (size_t row = 0; row < rows; ++row) {
-            out[row][0] = data[row * 4 + 0];
-            out[row][1] = data[row * 4 + 1];
-            out[row][2] = data[row * 4 + 2];
-            out[row][3] = data[row * 4 + 3];
+            out[row][0] = static_cast<float>(data[row * 4 + 0]);
+            out[row][1] = static_cast<float>(data[row * 4 + 1]);
+            out[row][2] = static_cast<float>(data[row * 4 + 2]);
+            out[row][3] = static_cast<float>(data[row * 4 + 3]);
         }
         return true;
 
@@ -474,21 +632,7 @@ bool ZarrDetectionLoader::readBoolArray(const ts::kvstore::KvStore& store,
                                        const std::string& path,
                                        std::vector<uint8_t>& out) {
     try {
-        json spec;
-        spec["driver"] = "zarr";
-        auto store_spec = store.spec();
-        if (!store_spec.ok()) {
-            return false;
-        }
-        spec["kvstore"] = store_spec.value().ToJson().value();
-        spec["path"] = path;
-
-        auto open_result = ts::Open<bool, 1>(
-            spec,
-            ts::OpenMode::open,
-            ts::ReadWriteMode::read,
-            context_
-        ).result();
+        auto open_result = openArrayAny<bool, 1>(store, path, context_);
 
         if (!open_result.ok()) {
             return false;
@@ -530,30 +674,26 @@ bool ZarrDetectionLoader::loadPaletteInterpolationRun(const ts::kvstore::KvStore
         interp.has_flat_detections = true;
 
         // Try to read run-level metadata
-        auto run_attrs_result = ts::kvstore::Read(store, "refined_runs/" + run_name + "/.zattrs").result();
-        if (run_attrs_result.ok() && run_attrs_result.value().has_value()) {
-            auto run_attrs = json::parse(run_attrs_result.value().value.Flatten());
-            if (run_attrs.contains("created_at") && run_attrs["created_at"].is_string()) {
-                interp.created_at = run_attrs["created_at"].get<std::string>();
+        std::string run_prefix = "refined_runs/" + run_name;
+        if (auto run_attrs = readAttrsAny(store, run_prefix)) {
+            if (run_attrs->contains("created_at") && (*run_attrs)["created_at"].is_string()) {
+                interp.created_at = (*run_attrs)["created_at"].get<std::string>();
             }
-            if (run_attrs.contains("completed_at_utc") && run_attrs["completed_at_utc"].is_string()) {
-                interp.created_at = run_attrs["completed_at_utc"].get<std::string>();
+            if (run_attrs->contains("completed_at_utc") && (*run_attrs)["completed_at_utc"].is_string()) {
+                interp.created_at = (*run_attrs)["completed_at_utc"].get<std::string>();
             }
-            if (run_attrs.contains("method") && run_attrs["method"].is_string()) {
-                interp.method = run_attrs["method"].get<std::string>();
+            if (run_attrs->contains("method") && (*run_attrs)["method"].is_string()) {
+                interp.method = (*run_attrs)["method"].get<std::string>();
             }
         }
 
-        std::string base_path = "refined_runs/" + run_name + "/" + subgroup + "/";
-
-        auto subgroup_attrs_result = ts::kvstore::Read(store, base_path + ".zattrs").result();
-        if (subgroup_attrs_result.ok() && subgroup_attrs_result.value().has_value()) {
-            auto subgroup_attrs = json::parse(subgroup_attrs_result.value().value.Flatten());
-            if (subgroup_attrs.contains("created_at") && subgroup_attrs["created_at"].is_string()) {
-                interp.created_at = subgroup_attrs["created_at"].get<std::string>();
+        std::string base_path = run_prefix + "/" + subgroup + "/";
+        if (auto subgroup_attrs = readAttrsAny(store, base_path)) {
+            if (subgroup_attrs->contains("created_at") && (*subgroup_attrs)["created_at"].is_string()) {
+                interp.created_at = (*subgroup_attrs)["created_at"].get<std::string>();
             }
-            if (subgroup_attrs.contains("method") && subgroup_attrs["method"].is_string()) {
-                interp.method = subgroup_attrs["method"].get<std::string>();
+            if (subgroup_attrs->contains("method") && (*subgroup_attrs)["method"].is_string()) {
+                interp.method = (*subgroup_attrs)["method"].get<std::string>();
             }
         }
 
@@ -771,14 +911,32 @@ bool ZarrDetectionLoader::loadDetectionRunFromGroup(
     const ts::kvstore::KvStore& store,
     const std::string& group_path) {
 
-    auto group_attrs = readJsonAttrs(store, group_path + "/.zattrs");
-    if (!group_attrs.has_value()) {
-        return false;
+    std::string latest_run;
+    if (auto group_attrs = readAttrsAny(store, group_path)) {
+        latest_run = extractLatestRunName(*group_attrs);
     }
 
-    std::string latest_run = extractLatestRunName(*group_attrs);
     if (latest_run.empty()) {
-        return false;
+        if (root_path_.empty()) {
+            return false;
+        }
+        auto candidates = collect_runs_fs(
+            root_path_,
+            group_path,
+            {"frame_indices", "bbox_norm_coords"});
+        candidates.erase(
+            std::remove_if(
+                candidates.begin(),
+                candidates.end(),
+                [](const std::string& name) {
+                    return name.rfind("detect_", 0) != 0 &&
+                           name.rfind("detection_", 0) != 0;
+                }),
+            candidates.end());
+        if (candidates.empty()) {
+            return false;
+        }
+        latest_run = candidates.back();
     }
 
     std::string base_path = group_path + "/" + latest_run + "/";
@@ -832,7 +990,7 @@ bool ZarrDetectionLoader::loadDetectionRunFromGroup(
 
     data_.detect_run_name = latest_run;
 
-    if (auto run_attrs = readJsonAttrs(store, base_path + ".zattrs")) {
+    if (auto run_attrs = readAttrsAny(store, base_path)) {
         populateDetectionMetadata(*run_attrs, data_);
     }
 
@@ -860,25 +1018,14 @@ bool ZarrDetectionLoader::loadFlattenedRun(
     has_class_ids_out = false;
 
     std::vector<int32_t> frame_indices_local;
-    bool has_frame_indices = arrayExists(store, base_path + "frame_indices");
-    if (has_frame_indices) {
-        if (!readInt32Array(store, base_path + "frame_indices", frame_indices_local)) {
-            return false;
-        }
-    }
+    bool has_frame_indices = readInt32Array(store, base_path + "frame_indices", frame_indices_local);
 
     std::vector<std::array<float, 4>> boxes_local;
-    if (arrayExists(store, base_path + "bbox_norm_coords")) {
-        if (!readFloatMatrix(store, base_path + "bbox_norm_coords", boxes_local)) {
-            return false;
-        }
-    } else if (arrayExists(store, base_path + "bboxes")) {
+    if (!readFloatMatrix(store, base_path + "bbox_norm_coords", boxes_local)) {
         if (!readFloatMatrix(store, base_path + "bboxes", boxes_local)) {
+            std::cerr << "  No bounding box array found under " << base_path << std::endl;
             return false;
         }
-    } else {
-        std::cerr << "  No bounding box array found under " << base_path << std::endl;
-        return false;
     }
 
     size_t total_detections = boxes_local.size();
@@ -887,11 +1034,7 @@ bool ZarrDetectionLoader::loadFlattenedRun(
     }
 
     std::vector<int32_t> n_detections_disk;
-    if (arrayExists(store, base_path + "n_detections")) {
-        if (readInt32Array(store, base_path + "n_detections", n_detections_disk)) {
-            // success
-        }
-    }
+    readInt32Array(store, base_path + "n_detections", n_detections_disk);
 
     if (!has_frame_indices && n_detections_disk.empty()) {
         std::cerr << "  Missing both frame_indices and n_detections for " << base_path << std::endl;
@@ -903,38 +1046,29 @@ bool ZarrDetectionLoader::loadFlattenedRun(
         return false;
     }
 
-    // Optional scores
     scores_out.clear();
-    if (arrayExists(store, base_path + "scores")) {
-        if (readFloatArray(store, base_path + "scores", scores_out) &&
-            scores_out.size() == total_detections) {
-            has_scores_out = true;
-        } else {
-            std::cerr << "  Warning: scores mismatch under " << base_path << ", ignoring" << std::endl;
-            scores_out.clear();
-            has_scores_out = false;
-        }
+    if (readFloatArray(store, base_path + "scores", scores_out) &&
+        scores_out.size() == total_detections) {
+        has_scores_out = true;
+    } else {
+        scores_out.clear();
+        has_scores_out = false;
     }
 
-    // Optional class IDs
     class_ids_out.clear();
-    if (arrayExists(store, base_path + "class_ids")) {
-        if (readInt32Array(store, base_path + "class_ids", class_ids_out) &&
-            class_ids_out.size() == total_detections) {
-            has_class_ids_out = true;
-        } else {
-            std::cerr << "  Warning: class_ids mismatch under " << base_path << ", ignoring" << std::endl;
-            class_ids_out.clear();
-            has_class_ids_out = false;
-        }
+    if (readInt32Array(store, base_path + "class_ids", class_ids_out) &&
+        class_ids_out.size() == total_detections) {
+        has_class_ids_out = true;
+    } else {
+        class_ids_out.clear();
+        has_class_ids_out = false;
     }
 
-    // Optional detection_source
     if (detection_source_out) {
         std::vector<int32_t> detection_source_raw;
         if (readInt32Array(store, base_path + "detection_source", detection_source_raw) &&
             detection_source_raw.size() == total_detections) {
-            detection_source_out->resize(detection_source_raw.size());
+            detection_source_out->assign(detection_source_raw.size(), 0);
             for (size_t i = 0; i < detection_source_raw.size(); ++i) {
                 (*detection_source_out)[i] = detection_source_raw[i] != 0 ? 1 : 0;
             }
@@ -1086,14 +1220,41 @@ bool ZarrDetectionLoader::loadFlattenedRun(
 }
 
 bool ZarrDetectionLoader::loadRefinedDetectRuns(const ts::kvstore::KvStore& store) {
-    auto group_attrs = readJsonAttrs(store, "refined_detect_runs/.zattrs");
-    if (!group_attrs.has_value()) {
-        return false;
+    auto group_attrs = readAttrsAny(store, "refined_detect_runs");
+
+    std::string latest_run;
+    if (group_attrs.has_value()) {
+        latest_run = extractLatestRunName(*group_attrs);
     }
 
-    std::string latest_run = extractLatestRunName(*group_attrs);
     if (latest_run.empty()) {
-        return false;
+        if (root_path_.empty()) {
+            return false;
+        }
+        auto candidates = collect_runs_fs(
+            root_path_,
+            "refined_detect_runs",
+            {"interpolated/frame_indices", "interpolated/bbox_norm_coords"});
+        if (candidates.empty()) {
+            auto filtered = collect_runs_fs(
+                root_path_,
+                "refined_detect_runs",
+                {"filtered/frame_indices", "filtered/bbox_norm_coords"});
+            candidates.insert(candidates.end(), filtered.begin(), filtered.end());
+        }
+        candidates.erase(
+            std::remove_if(
+                candidates.begin(),
+                candidates.end(),
+                [](const std::string& name) {
+                    return name.rfind("refined_detect_", 0) != 0;
+                }),
+            candidates.end());
+        std::sort(candidates.begin(), candidates.end());
+        if (candidates.empty()) {
+            return false;
+        }
+        latest_run = candidates.back();
     }
 
     std::string run_base = "refined_detect_runs/" + latest_run + "/";
@@ -1104,7 +1265,7 @@ bool ZarrDetectionLoader::loadRefinedDetectRuns(const ts::kvstore::KvStore& stor
     refined.uses_palette_layout = true;
     refined.has_flat_detections = false;
 
-    if (auto run_attrs = readJsonAttrs(store, run_base + ".zattrs")) {
+    if (auto run_attrs = readAttrsAny(store, run_base)) {
         populateInterpolationMetadata(*run_attrs, refined);
     }
 
@@ -1117,11 +1278,6 @@ bool ZarrDetectionLoader::loadRefinedDetectRuns(const ts::kvstore::KvStore& stor
 
     for (const auto& subgroup : kSubgroups) {
         std::string base_path = run_base + subgroup;
-        if (!(arrayExists(store, base_path + "bbox_norm_coords") ||
-              arrayExists(store, base_path + "bboxes"))) {
-            continue;
-        }
-
         size_t resolved_frames = data_.total_frames;
         std::vector<int32_t> frame_indices;
         std::vector<std::array<float, 4>> boxes;
@@ -1205,8 +1361,275 @@ bool ZarrDetectionLoader::loadRefinedDetectRuns(const ts::kvstore::KvStore& stor
     return false;
 }
 
+bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& store) {
+    data_.flat_headings_deg.clear();
+    data_.flat_swim_bladder_px.clear();
+    data_.flat_heading_valid.clear();
+    data_.has_heading_data = false;
+    data_.keypoints_run_name.clear();
+    data_.keypoints_source_crop_run.clear();
+
+    if (data_.layout != ZarrLayoutType::kPaletteRuns) {
+        return false;
+    }
+
+    if (data_.frame_offsets.size() < 2) {
+        return false;
+    }
+
+    const size_t total_detections = data_.bbox_norm_coords.size();
+    if (total_detections == 0) {
+        return false;
+    }
+
+    std::string latest_run;
+    if (auto group_attrs = readAttrsAny(store, "keypoints_runs")) {
+        latest_run = extractLatestRunName(*group_attrs);
+    }
+
+    if (latest_run.empty()) {
+        if (root_path_.empty()) {
+            return false;
+        }
+        auto candidates = collect_runs_fs(
+            root_path_,
+            "keypoints_runs",
+            {"frame_indices", "keypoints_roi", "heading"});
+        if (candidates.empty()) {
+            return false;
+        }
+        latest_run = candidates.back();
+    }
+
+    std::string run_base = "keypoints_runs/" + latest_run + "/";
+
+    std::vector<int32_t> kp_frame_indices;
+    if (!readInt32Array(store, run_base + "frame_indices", kp_frame_indices)) {
+        return false;
+    }
+    if (kp_frame_indices.empty()) {
+        return false;
+    }
+    const size_t roi_count = kp_frame_indices.size();
+
+    std::vector<float> heading_values;
+    if (!readFloatArray(store, run_base + "heading", heading_values)) {
+        heading_values.assign(roi_count, 0.0f);
+    } else if (heading_values.size() != roi_count) {
+        heading_values.resize(roi_count, 0.0f);
+    }
+
+    std::vector<uint8_t> detection_success;
+    if (!readBoolArray(store, run_base + "detection_success", detection_success) ||
+        detection_success.size() != roi_count) {
+        detection_success.assign(roi_count, 1);
+    }
+
+    size_t num_keypoints = 0;
+    size_t coord_dim = 0;
+    std::vector<float> kp_values;
+
+    auto load_keypoints_dataset = [&](const std::string& dataset_path) -> bool {
+        auto store_float = openArrayAny<float, 3>(store, dataset_path, context_);
+        if (store_float.ok()) {
+            auto array_result = ts::Read(store_float.value()).result();
+            if (!array_result.ok()) {
+                return false;
+            }
+            auto array = array_result.value();
+            auto shape = array.shape();
+            if (shape.size() != 3 ||
+                shape[0] != static_cast<tensorstore::Index>(roi_count)) {
+                return false;
+            }
+            num_keypoints = static_cast<size_t>(shape[1]);
+            coord_dim = static_cast<size_t>(shape[2]);
+            if (num_keypoints == 0 || coord_dim < 2) {
+                return false;
+            }
+            size_t total_values = roi_count * num_keypoints * coord_dim;
+            kp_values.resize(total_values);
+            const float* data_ptr = static_cast<const float*>(array.data());
+            std::copy(data_ptr, data_ptr + total_values, kp_values.begin());
+            return true;
+        }
+
+        auto store_double = openArrayAny<double, 3>(store, dataset_path, context_);
+        if (!store_double.ok()) {
+            return false;
+        }
+        auto array_result = ts::Read(store_double.value()).result();
+        if (!array_result.ok()) {
+            return false;
+        }
+        auto array = array_result.value();
+        auto shape = array.shape();
+        if (shape.size() != 3 ||
+            shape[0] != static_cast<tensorstore::Index>(roi_count)) {
+            return false;
+        }
+        num_keypoints = static_cast<size_t>(shape[1]);
+        coord_dim = static_cast<size_t>(shape[2]);
+        if (num_keypoints == 0 || coord_dim < 2) {
+            return false;
+        }
+        size_t total_values = roi_count * num_keypoints * coord_dim;
+        kp_values.resize(total_values);
+        const double* data_ptr = static_cast<const double*>(array.data());
+        for (size_t i = 0; i < total_values; ++i) {
+            kp_values[i] = static_cast<float>(data_ptr[i]);
+        }
+        return true;
+    };
+
+    if (!load_keypoints_dataset(run_base + "keypoints_roi") &&
+        !load_keypoints_dataset(run_base + "keypoints_norm")) {
+        return false;
+    }
+
+    auto run_attrs = readAttrsAny(store, run_base);
+    size_t swim_index = 0;
+    if (run_attrs.has_value() &&
+        run_attrs->contains("keypoint_labels") &&
+        (*run_attrs)["keypoint_labels"].is_array()) {
+        const auto& labels = (*run_attrs)["keypoint_labels"];
+        for (size_t i = 0; i < labels.size(); ++i) {
+            if (labels[i].is_string()) {
+                std::string label = labels[i].get<std::string>();
+                std::string lowered = label;
+                std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                if (lowered.find("bladder") != std::string::npos ||
+                    lowered.find("swim") != std::string::npos) {
+                    swim_index = i;
+                    break;
+                }
+            }
+        }
+    }
+
+    std::string crop_run;
+    if (run_attrs.has_value() && run_attrs->contains("source_crop_run") &&
+        (*run_attrs)["source_crop_run"].is_string()) {
+        crop_run = (*run_attrs)["source_crop_run"].get<std::string>();
+    }
+
+    std::vector<float> roi_offsets;
+    bool roi_ok = false;
+    if (!crop_run.empty()) {
+        std::string crop_base = "crop_runs/" + crop_run + "/";
+        auto roi_float_store =
+            openArrayAny<float, 2>(store, crop_base + "roi_coordinates_full", context_);
+        if (roi_float_store.ok()) {
+            auto roi_array_result = ts::Read(roi_float_store.value()).result();
+            if (roi_array_result.ok()) {
+                auto roi_array = roi_array_result.value();
+                auto roi_shape = roi_array.shape();
+                if (roi_shape.size() == 2 &&
+                    roi_shape[0] == static_cast<tensorstore::Index>(roi_count)) {
+                    size_t cols = static_cast<size_t>(roi_shape[1]);
+                    if (cols >= 2) {
+                        roi_offsets.assign(roi_count * 2, 0.0f);
+                        const float* roi_ptr = static_cast<const float*>(roi_array.data());
+                        for (size_t i = 0; i < roi_count; ++i) {
+                            roi_offsets[i * 2 + 0] = roi_ptr[i * cols + 0]; // y / row
+                            roi_offsets[i * 2 + 1] = roi_ptr[i * cols + 1]; // x / col
+                        }
+                        roi_ok = true;
+                    }
+                }
+            }
+        } else {
+            auto roi_int_store =
+                openArrayAny<int32_t, 2>(store, crop_base + "roi_coordinates_full", context_);
+            if (roi_int_store.ok()) {
+                auto roi_array_result = ts::Read(roi_int_store.value()).result();
+                if (roi_array_result.ok()) {
+                    auto roi_array = roi_array_result.value();
+                    auto roi_shape = roi_array.shape();
+                    if (roi_shape.size() == 2 &&
+                        roi_shape[0] == static_cast<tensorstore::Index>(roi_count)) {
+                        size_t cols = static_cast<size_t>(roi_shape[1]);
+                        if (cols >= 2) {
+                            roi_offsets.assign(roi_count * 2, 0.0f);
+                            const int32_t* roi_ptr = static_cast<const int32_t*>(roi_array.data());
+                            for (size_t i = 0; i < roi_count; ++i) {
+                                roi_offsets[i * 2 + 0] = static_cast<float>(roi_ptr[i * cols + 0]);
+                                roi_offsets[i * 2 + 1] = static_cast<float>(roi_ptr[i * cols + 1]);
+                            }
+                            roi_ok = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    const float nan_value = std::numeric_limits<float>::quiet_NaN();
+    data_.flat_headings_deg.assign(total_detections, 0.0f);
+    data_.flat_swim_bladder_px.assign(
+        total_detections, std::array<float, 2>{nan_value, nan_value});
+    data_.flat_heading_valid.assign(total_detections, 0);
+
+    std::vector<size_t> frame_cursor(
+        data_.frame_offsets.size() > 0 ? data_.frame_offsets.size() - 1 : 0, 0);
+    size_t filled = 0;
+
+    for (size_t roi_index = 0; roi_index < roi_count; ++roi_index) {
+        int32_t frame = kp_frame_indices[roi_index];
+        if (frame < 0) {
+            continue;
+        }
+        if (static_cast<size_t>(frame) >= frame_cursor.size()) {
+            continue;
+        }
+
+        size_t start = data_.frame_offsets[frame];
+        size_t end = data_.frame_offsets[frame + 1];
+        if (start >= end) {
+            frame_cursor[frame]++;
+            continue;
+        }
+
+        size_t offset = frame_cursor[frame];
+        if (start + offset >= end) {
+            frame_cursor[frame]++;
+            continue;
+        }
+
+        size_t det_index = start + offset;
+        frame_cursor[frame]++;
+
+        bool success = detection_success[roi_index] != 0;
+        data_.flat_heading_valid[det_index] = success ? 1 : 0;
+        data_.flat_headings_deg[det_index] =
+            roi_index < heading_values.size() ? heading_values[roi_index] : 0.0f;
+
+        if (roi_ok && roi_offsets.size() >= (roi_index * 2 + 2) &&
+            swim_index < num_keypoints) {
+            size_t stride = num_keypoints * coord_dim;
+            size_t kp_base = roi_index * stride + swim_index * coord_dim;
+            float kp_x = kp_values[kp_base + 0];
+            float kp_y = kp_values[kp_base + 1];
+            float offset_y = roi_offsets[roi_index * 2 + 0];
+            float offset_x = roi_offsets[roi_index * 2 + 1];
+            data_.flat_swim_bladder_px[det_index] = {offset_x + kp_x, offset_y + kp_y};
+        }
+
+        filled++;
+    }
+
+    data_.has_heading_data = filled > 0;
+    if (data_.has_heading_data) {
+        data_.keypoints_run_name = latest_run;
+        data_.keypoints_source_crop_run = crop_run;
+    }
+
+    return data_.has_heading_data;
+}
+
 bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& store) {
-    auto group_attrs = readJsonAttrs(store, "analysis/stimulus_runs/.zattrs");
+    auto group_attrs = readAttrsAny(store, "analysis/stimulus_runs");
     if (!group_attrs.has_value()) {
         return false;
     }
@@ -1224,7 +1647,7 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
     std::vector<int32_t> camera_to_metadata_index;
     std::vector<uint8_t> metadata_mask;
 
-    if (auto run_attrs = readJsonAttrs(store, run_base + ".zattrs")) {
+    if (auto run_attrs = readAttrsAny(store, run_base)) {
         if (run_attrs->contains("created_at_utc") && (*run_attrs)["created_at_utc"].is_string()) {
             stimulus_created_at = (*run_attrs)["created_at_utc"].get<std::string>();
         } else if (run_attrs->contains("created_at") && (*run_attrs)["created_at"].is_string()) {
@@ -1232,7 +1655,7 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
         }
     }
 
-    if (auto align_attrs = readJsonAttrs(store, run_base + "frame_alignment/.zattrs")) {
+    if (auto align_attrs = readAttrsAny(store, run_base + "frame_alignment")) {
         if (align_attrs->contains("camera_frame_offset") &&
             (*align_attrs)["camera_frame_offset"].is_number_integer()) {
             camera_frame_offset = (*align_attrs)["camera_frame_offset"].get<int64_t>();
@@ -1337,7 +1760,7 @@ bool ZarrDetectionLoader::loadStandardFormat(const ts::kvstore::KvStore& store) 
     try {
         // Load metadata first
         if (!loadMetadata(store)) {
-            std::cerr << "Warning: Could not load metadata from .zattrs" << std::endl;
+            std::cerr << "Warning: Could not load metadata from zarr.json/.zattrs" << std::endl;
         }
 
         data_.layout = ZarrLayoutType::kLegacyGrid;
@@ -1358,11 +1781,8 @@ bool ZarrDetectionLoader::loadStandardFormat(const ts::kvstore::KvStore& store) 
 
         // Try to load n_detections array
         bool has_n_detections = false;
-        
-        // Check if n_detections exists
-        auto n_det_check = ts::kvstore::Read(store, "n_detections/.zarray").result();
-        if (n_det_check.ok()) {
-            // n_detections array exists, load it
+
+        if (arrayExists(store, "n_detections")) {
             if (loadNDetections(store, "n_detections")) {
                 has_n_detections = true;
                 std::cout << "  Loaded n_detections array" << std::endl;
@@ -1422,8 +1842,7 @@ bool ZarrDetectionLoader::loadStandardFormat(const ts::kvstore::KvStore& store) 
             }
         }
 
-        auto scores_check = ts::kvstore::Read(store, "scores/.zarray").result();
-        if (scores_check.ok()) {
+        if (arrayExists(store, "scores")) {
             if (loadScores(store, "scores")) {
                 std::cout << "  Loaded scores array" << std::endl;
                 data_.has_scores = true;
@@ -1434,8 +1853,7 @@ bool ZarrDetectionLoader::loadStandardFormat(const ts::kvstore::KvStore& store) 
             std::cout << "  No scores array found (optional)" << std::endl;
         }
 
-        auto class_check = ts::kvstore::Read(store, "class_ids/.zarray").result();
-        if (class_check.ok()) {
+        if (arrayExists(store, "class_ids")) {
             if (loadClassIDs(store, "class_ids")) {
                 std::cout << "  Loaded class_ids array" << std::endl;
                 data_.has_class_ids = true;
@@ -1469,17 +1887,7 @@ bool ZarrDetectionLoader::loadStandardFormat(const ts::kvstore::KvStore& store) 
 bool ZarrDetectionLoader::loadBoundingBoxes(const ts::kvstore::KvStore& store,
                                            const std::string& path) {
     try {
-        json spec;
-        spec["driver"] = "zarr";
-        spec["kvstore"] = store.spec().value().ToJson().value();
-        spec["path"] = path;
-
-        auto open_result = ts::Open<float, 3>(
-            spec,
-            ts::OpenMode::open,
-            ts::ReadWriteMode::read,
-            context_
-        ).result();
+        auto open_result = openArrayAny<float, 3>(store, path, context_);
 
         if (!open_result.ok()) {
             return false;
@@ -1501,17 +1909,7 @@ bool ZarrDetectionLoader::loadBoundingBoxes(const ts::kvstore::KvStore& store,
 bool ZarrDetectionLoader::loadScores(const ts::kvstore::KvStore& store,
                                     const std::string& path) {
     try {
-        json spec;
-        spec["driver"] = "zarr";
-        spec["kvstore"] = store.spec().value().ToJson().value();
-        spec["path"] = path;
-
-        auto open_result = ts::Open<float, 2>(
-            spec,
-            ts::OpenMode::open,
-            ts::ReadWriteMode::read,
-            context_
-        ).result();
+        auto open_result = openArrayAny<float, 2>(store, path, context_);
 
         if (!open_result.ok()) {
             return false;
@@ -1529,17 +1927,7 @@ bool ZarrDetectionLoader::loadScores(const ts::kvstore::KvStore& store,
 bool ZarrDetectionLoader::loadClassIDs(const ts::kvstore::KvStore& store,
                                       const std::string& path) {
     try {
-        json spec;
-        spec["driver"] = "zarr";
-        spec["kvstore"] = store.spec().value().ToJson().value();
-        spec["path"] = path;
-
-        auto open_result = ts::Open<int32_t, 2>(
-            spec,
-            ts::OpenMode::open,
-            ts::ReadWriteMode::read,
-            context_
-        ).result();
+        auto open_result = openArrayAny<int32_t, 2>(store, path, context_);
 
         if (!open_result.ok()) {
             return false;
@@ -1557,17 +1945,7 @@ bool ZarrDetectionLoader::loadClassIDs(const ts::kvstore::KvStore& store,
 bool ZarrDetectionLoader::loadNDetections(const ts::kvstore::KvStore& store,
                                          const std::string& path) {
     try {
-        json spec;
-        spec["driver"] = "zarr";
-        spec["kvstore"] = store.spec().value().ToJson().value();
-        spec["path"] = path;
-
-        auto open_result = ts::Open<int32_t, 1>(
-            spec,
-            ts::OpenMode::open,
-            ts::ReadWriteMode::read,
-            context_
-        ).result();
+        auto open_result = openArrayAny<int32_t, 1>(store, path, context_);
 
         if (!open_result.ok()) {
             return false;
@@ -1600,51 +1978,40 @@ bool ZarrDetectionLoader::loadMetadata(const ts::kvstore::KvStore& store) {
     try {
         bool metadata_found = false;
 
-        auto attrs_result = ts::kvstore::Read(store, ".zattrs").result();
-        if (attrs_result.ok() && attrs_result.value().has_value()) {
-            auto attrs = json::parse(attrs_result.value().value.Flatten());
+        if (auto attrs = readAttrsAny(store, "")) {
             metadata_found = true;
 
-            if (attrs.contains("video_path") && attrs["video_path"].is_string()) {
-                data_.video_path = attrs["video_path"].get<std::string>();
+            if (attrs->contains("video_path") && (*attrs)["video_path"].is_string()) {
+                data_.video_path = (*attrs)["video_path"].get<std::string>();
             }
-            if (attrs.contains("fps") && attrs["fps"].is_number()) {
-                data_.fps = attrs["fps"].get<double>();
+            if (attrs->contains("fps") && (*attrs)["fps"].is_number()) {
+                data_.fps = (*attrs)["fps"].get<double>();
             }
-            if (attrs.contains("model_path") && attrs["model_path"].is_string()) {
-                data_.model_path = attrs["model_path"].get<std::string>();
+            if (attrs->contains("model_path") && (*attrs)["model_path"].is_string()) {
+                data_.model_path = (*attrs)["model_path"].get<std::string>();
             }
-            if (attrs.contains("total_frames") && attrs["total_frames"].is_number()) {
-                data_.total_frames = static_cast<size_t>(attrs["total_frames"].get<double>());
+            if (attrs->contains("total_frames") && (*attrs)["total_frames"].is_number()) {
+                data_.total_frames = static_cast<size_t>((*attrs)["total_frames"].get<double>());
             }
-            if (attrs.contains("width") && attrs["width"].is_number()) {
-                data_.image_width = static_cast<int>(attrs["width"].get<double>());
+            if (attrs->contains("width") && (*attrs)["width"].is_number()) {
+                data_.image_width = static_cast<int>((*attrs)["width"].get<double>());
             }
-            if (attrs.contains("height") && attrs["height"].is_number()) {
-                data_.image_height = static_cast<int>(attrs["height"].get<double>());
+            if (attrs->contains("height") && (*attrs)["height"].is_number()) {
+                data_.image_height = static_cast<int>((*attrs)["height"].get<double>());
             }
-            if (attrs.contains("frame_width") && attrs["frame_width"].is_number()) {
-                data_.image_width = static_cast<int>(attrs["frame_width"].get<double>());
+            if (attrs->contains("frame_width") && (*attrs)["frame_width"].is_number()) {
+                data_.image_width = static_cast<int>((*attrs)["frame_width"].get<double>());
             }
-            if (attrs.contains("frame_height") && attrs["frame_height"].is_number()) {
-                data_.image_height = static_cast<int>(attrs["frame_height"].get<double>());
+            if (attrs->contains("frame_height") && (*attrs)["frame_height"].is_number()) {
+                data_.image_height = static_cast<int>((*attrs)["frame_height"].get<double>());
             }
         }
 
-        auto store_spec = store.spec();
-        if (store_spec.ok() &&
-            (data_.image_width <= 0 || data_.image_height <= 0 || data_.total_frames == 0)) {
-            json video_spec;
-            video_spec["driver"] = "zarr";
-            video_spec["kvstore"] = store_spec.value().ToJson().value();
-            video_spec["path"] = "raw_video/images_full";
-
-            auto video_result = ts::Open<uint8_t, 3>(
-                video_spec,
-                ts::OpenMode::open,
-                ts::ReadWriteMode::read,
-                context_
-            ).result();
+        if (data_.image_width <= 0 || data_.image_height <= 0 || data_.total_frames == 0) {
+            auto video_result = openArrayAny<uint8_t, 3>(
+                store,
+                "raw_video/images_full",
+                context_);
 
             if (video_result.ok()) {
                 auto domain = video_result.value().domain();
@@ -1662,13 +2029,10 @@ bool ZarrDetectionLoader::loadMetadata(const ts::kvstore::KvStore& store) {
                 }
             } else {
                 // Try downsampled images as a fallback
-                video_spec["path"] = "raw_video/images_ds";
-                video_result = ts::Open<uint8_t, 3>(
-                    video_spec,
-                    ts::OpenMode::open,
-                    ts::ReadWriteMode::read,
-                    context_
-                ).result();
+                video_result = openArrayAny<uint8_t, 3>(
+                    store,
+                    "raw_video/images_ds",
+                    context_);
 
                 if (video_result.ok()) {
                     auto domain = video_result.value().domain();
@@ -1843,34 +2207,17 @@ bool ZarrDetectionLoader::loadInterpolationRuns(const ts::kvstore::KvStore& stor
         data_.latest_interpolation = InterpolationRunData();
 
         if (data_.layout == ZarrLayoutType::kPaletteRuns) {
-            auto refined_attrs_result = ts::kvstore::Read(store, "refined_runs/.zattrs").result();
-            if (refined_attrs_result.ok() && refined_attrs_result.value().has_value()) {
-                auto attrs_json = json::parse(refined_attrs_result.value().value.Flatten());
-                std::string latest_run = "";
-                if (attrs_json.contains("latest")) {
-                    latest_run = attrs_json["latest"].get<std::string>();
-                } else if (attrs_json.contains("latest_completed")) {
-                    latest_run = attrs_json["latest_completed"].get<std::string>();
-                }
+            if (auto refined_attrs = readAttrsAny(store, "refined_runs")) {
+                std::string latest_run = extractLatestRunName(*refined_attrs);
 
                 if (!latest_run.empty()) {
                     std::string base_path = "refined_runs/" + latest_run + "/";
                     std::string subgroup;
 
-                    auto interpolated_check = ts::kvstore::Read(
-                        store,
-                        base_path + "interpolated/frame_indices/.zarray"
-                    ).result();
-                    if (interpolated_check.ok()) {
+                    if (arrayExists(store, base_path + "interpolated/frame_indices")) {
                         subgroup = "interpolated";
-                    } else {
-                        auto filtered_check = ts::kvstore::Read(
-                            store,
-                            base_path + "filtered/frame_indices/.zarray"
-                        ).result();
-                        if (filtered_check.ok()) {
-                            subgroup = "filtered";
-                        }
+                    } else if (arrayExists(store, base_path + "filtered/frame_indices")) {
+                        subgroup = "filtered";
                     }
 
                     if (!subgroup.empty()) {
@@ -1888,93 +2235,32 @@ bool ZarrDetectionLoader::loadInterpolationRuns(const ts::kvstore::KvStore& stor
             // Fall through to legacy loaders if refined data not available
         }
 
-        // The actual interpolation run we know exists is:
-        // /interpolation_runs/interp_linear_20250820_125819/
-        // Let's check for it directly first
-        
-        std::string known_run = "interp_linear_20250820_125819";
-        std::string test_path = "interpolation_runs/" + known_run + "/bboxes/.zarray";
-        
-        auto test_result = ts::kvstore::Read(store, test_path).result();
-        if (test_result.ok()) {
-            std::cout << "  Found interpolation run: " << known_run << std::endl;
-            std::cout << "  Loading run: " << known_run << std::endl;
-            return loadLatestInterpolationRun(store, known_run);
-        }
-        
-        // If that didn't work, try scanning for other patterns
         std::vector<std::string> run_names;
-        
-        // Common prefixes for interpolation runs
-        std::vector<std::string> prefixes = {
-            "interp_linear_",
-            "interp_cubic_",
-            "interp_nearest_",
-            "interp_"
-        };
-        
-        // Scan for runs with these patterns
-        // Since we know the format is typically prefix + YYYYMMDD_HHMMSS
-        // Let's try dates from today backwards
-        auto now = std::chrono::system_clock::now();
-        
-        for (int days_back = 0; days_back < 365; ++days_back) {  // Check up to a year back
-            auto check_time = now - std::chrono::hours(24 * days_back);
-            auto check_time_t = std::chrono::system_clock::to_time_t(check_time);
-            struct tm* tm_check = std::localtime(&check_time_t);
-            
-            // Try different times of day
-            for (int hour = 23; hour >= 0; hour -= 4) {
-                for (int min = 59; min >= 0; min -= 30) {
-                    for (int sec = 59; sec >= 0; sec -= 30) {
-                        // Try each prefix
-                        for (const auto& prefix : prefixes) {
-                            char run_name[100];
-                            snprintf(run_name, sizeof(run_name), 
-                                    "%s%04d%02d%02d_%02d%02d%02d",
-                                    prefix.c_str(),
-                                    tm_check->tm_year + 1900,
-                                    tm_check->tm_mon + 1,
-                                    tm_check->tm_mday,
-                                    hour, min, sec);
-                            
-                            // Check if this run exists by looking for its bboxes array
-                            std::string bbox_path = std::string("interpolation_runs/") + 
-                                                   run_name + "/bboxes/.zarray";
-                            auto result = ts::kvstore::Read(store, bbox_path).result();
-                            
-                            if (result.ok()) {
-                                run_names.push_back(run_name);
-                                std::cout << "    Found interpolation run: " << run_name << std::endl;
-                                
-                                // If we found one, that's probably enough
-                                goto found_some;
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // Stop early if we found something
-            if (!run_names.empty()) {
-                break;
-            }
+        if (!root_path_.empty()) {
+            run_names = collect_runs_fs(
+                root_path_,
+                "interpolation_runs",
+                {"bboxes", "interpolation_mask"});
         }
-        
-        found_some:
+
+        run_names.erase(
+            std::remove_if(
+                run_names.begin(),
+                run_names.end(),
+                [](const std::string& name) {
+                    return name.rfind("interp_", 0) != 0;
+                }),
+            run_names.end());
+
         if (run_names.empty()) {
             std::cout << "  No interpolation runs found" << std::endl;
             return false;
         }
-        
-        // Sort to get the latest (timestamp format means alphabetical = chronological)
-        std::sort(run_names.begin(), run_names.end());
-        std::string latest_run = run_names.back();
-        
+
         std::cout << "  Found " << run_names.size() << " interpolation run(s)" << std::endl;
+        std::string latest_run = run_names.back();
         std::cout << "  Loading latest run: " << latest_run << std::endl;
-        
-        // Load the latest interpolation run
+
         return loadLatestInterpolationRun(store, latest_run);
         
     } catch (const std::exception& e) {
@@ -1991,37 +2277,34 @@ bool ZarrDetectionLoader::loadLatestInterpolationRun(const ts::kvstore::KvStore&
         std::string base_path = "interpolation_runs/" + run_name + "/";
         
         // Try to load metadata, but don't fail if it's missing or empty
-        auto attrs_result = ts::kvstore::Read(store, base_path + ".zattrs").result();
-        if (attrs_result.ok() && attrs_result.value().has_value()) {
-            // Convert Cord to string using Flatten()
-            std::string attrs_str = std::string(attrs_result.value().value.Flatten());
-            
-            // Check if the string is not empty before parsing
-            if (!attrs_str.empty()) {
-                try {
-                    auto attrs_json = nlohmann::json::parse(attrs_str);
-                    
-                    data_.latest_interpolation.run_name = run_name;
-                    data_.latest_interpolation.created_at = attrs_json.value("created_at", "");
-                    data_.latest_interpolation.method = attrs_json.value("method", "linear");
-                    
-                    std::cout << "    Created: " << data_.latest_interpolation.created_at << std::endl;
-                    std::cout << "    Method: " << data_.latest_interpolation.method << std::endl;
-                } catch (const nlohmann::json::parse_error& e) {
-                    std::cout << "    Warning: Could not parse .zattrs (may be empty): " << e.what() << std::endl;
-                    // Continue with defaults
-                    data_.latest_interpolation.run_name = run_name;
-                    data_.latest_interpolation.method = "linear";  // Reasonable default
-                }
-            } else {
-                std::cout << "    Warning: Empty .zattrs file, using defaults" << std::endl;
-                data_.latest_interpolation.run_name = run_name;
+        data_.latest_interpolation.run_name = run_name;
+        data_.latest_interpolation.method.clear();
+        data_.latest_interpolation.created_at.clear();
+
+        bool metadata_loaded = false;
+        if (auto attrs = readAttrsAny(store, base_path)) {
+            metadata_loaded = true;
+            if (attrs->contains("created_at") && (*attrs)["created_at"].is_string()) {
+                data_.latest_interpolation.created_at = (*attrs)["created_at"].get<std::string>();
+            }
+            if (data_.latest_interpolation.created_at.empty() &&
+                attrs->contains("created_at_utc") && (*attrs)["created_at_utc"].is_string()) {
+                data_.latest_interpolation.created_at =
+                    (*attrs)["created_at_utc"].get<std::string>();
+            }
+            if (attrs->contains("method") && (*attrs)["method"].is_string()) {
+                data_.latest_interpolation.method = (*attrs)["method"].get<std::string>();
+            }
+            std::cout << "    Loaded interpolation metadata from zarr.json/.zattrs" << std::endl;
+        } else {
+            std::cout << "    No zarr.json/.zattrs metadata found, using defaults" << std::endl;
+        }
+
+        if (metadata_loaded) {
+            if (data_.latest_interpolation.method.empty()) {
                 data_.latest_interpolation.method = "linear";
             }
         } else {
-            std::cout << "    No .zattrs found, using defaults" << std::endl;
-            data_.latest_interpolation.run_name = run_name;
-            // Extract method from run name if possible (e.g., "interp_linear_20250820_125819")
             if (run_name.find("_linear_") != std::string::npos) {
                 data_.latest_interpolation.method = "linear";
             } else if (run_name.find("_cubic_") != std::string::npos) {
@@ -2032,23 +2315,20 @@ bool ZarrDetectionLoader::loadLatestInterpolationRun(const ts::kvstore::KvStore&
                 data_.latest_interpolation.method = "unknown";
             }
         }
+
+        if (!data_.latest_interpolation.created_at.empty()) {
+            std::cout << "    Created: " << data_.latest_interpolation.created_at << std::endl;
+        }
+        std::cout << "    Method: " << data_.latest_interpolation.method << std::endl;
         
         // Now load the actual data arrays - these are required
         
-        // Load interpolated bboxes
-        json spec;
-        spec["driver"] = "zarr";
-        spec["kvstore"] = store.spec().value().ToJson().value();
-        spec["path"] = base_path + "bboxes";
-        
         std::cout << "    Loading interpolated bboxes from: " << base_path + "bboxes" << std::endl;
         
-        auto bbox_result = ts::Open<float, 3>(
-            spec,
-            ts::OpenMode::open,
-            ts::ReadWriteMode::read,
-            context_
-        ).result();
+        auto bbox_result = openArrayAny<float, 3>(
+            store,
+            base_path + "bboxes",
+            context_);
         
         if (!bbox_result.ok()) {
             std::cerr << "Failed to load interpolated bboxes: " << bbox_result.status().ToString() << std::endl;
@@ -2059,16 +2339,12 @@ bool ZarrDetectionLoader::loadLatestInterpolationRun(const ts::kvstore::KvStore&
         std::cout << "    Successfully loaded interpolated bboxes" << std::endl;
         
         // Load interpolation mask (true = interpolated, false = original)
-        spec["path"] = base_path + "interpolation_mask";
-        
         std::cout << "    Loading interpolation mask from: " << base_path + "interpolation_mask" << std::endl;
         
-        auto mask_result = ts::Open<bool, 1>(
-            spec,
-            ts::OpenMode::open,
-            ts::ReadWriteMode::read,
-            context_
-        ).result();
+        auto mask_result = openArrayAny<bool, 1>(
+            store,
+            base_path + "interpolation_mask",
+            context_);
         
         if (!mask_result.ok()) {
             std::cerr << "Failed to load interpolation mask: " << mask_result.status().ToString() << std::endl;
@@ -2178,6 +2454,7 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
     
     FrameDetections result;
     result.frame_id = frame_id;
+    const float nan_value = std::numeric_limits<float>::quiet_NaN();
     
     if (frame_id >= data_.total_frames) {
         return result;
@@ -2208,6 +2485,8 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
         const bool has_class_ids = want_interpolated
             ? !data_.latest_interpolation.flat_class_ids.empty()
             : data_.has_class_ids;
+        const bool can_use_headings =
+            data_.has_heading_data && !want_interpolated;
 
         if (offsets.empty() || frame_id + 1 >= offsets.size()) {
             return result;
@@ -2215,6 +2494,12 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
 
         size_t start = offsets[frame_id];
         size_t end = offsets[frame_id + 1];
+
+        if (can_use_headings) {
+            result.headings_deg.reserve(end - start);
+            result.swim_bladder_pixels.reserve(end - start);
+            result.heading_valid.reserve(end - start);
+        }
 
         for (size_t idx = start; idx < end && idx < boxes_source.size(); ++idx) {
             auto pixel_box = normalizedBoxToPixels(
@@ -2234,6 +2519,27 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                 result.class_ids.push_back(class_source[idx]);
             } else {
                 result.class_ids.push_back(0);
+            }
+
+            if (can_use_headings) {
+                float heading = (idx < data_.flat_headings_deg.size())
+                    ? data_.flat_headings_deg[idx]
+                    : 0.0f;
+                uint8_t valid = (idx < data_.flat_heading_valid.size())
+                    ? data_.flat_heading_valid[idx]
+                    : 0;
+                std::array<float, 2> anchor = {nan_value, nan_value};
+                if (idx < data_.flat_swim_bladder_px.size()) {
+                    anchor = data_.flat_swim_bladder_px[idx];
+                }
+                if (std::isnan(anchor[0]) || std::isnan(anchor[1])) {
+                    float cx = pixel_box[0] + 0.5f * (pixel_box[2] - pixel_box[0]);
+                    float cy = pixel_box[1] + 0.5f * (pixel_box[3] - pixel_box[1]);
+                    anchor = {cx, cy};
+                }
+                result.headings_deg.push_back(heading);
+                result.swim_bladder_pixels.push_back(anchor);
+                result.heading_valid.push_back(valid);
             }
         }
 
@@ -2288,9 +2594,6 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                     break;  // Assuming detections are packed at the beginning
                 }
             }
-            
-            std::cout << "Interpolated frame " << frame_id << ": found " 
-                      << valid_detections << " valid detections" << std::endl;
         } else {
             // Use original n_detections for non-interpolated frames
             valid_detections = data_.n_detections[frame_id];
