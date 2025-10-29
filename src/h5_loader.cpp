@@ -5,6 +5,10 @@
 
 using namespace H5;
 
+namespace {
+constexpr bool kH5DebugLoggingEnabled = false;
+}
+
 H5SessionLoader::H5SessionLoader() {
     // Turn off HDF5 error printing by default
     H5::Exception::dontPrint();
@@ -430,7 +434,7 @@ FrameMetadataRecord* H5SessionLoader::getFrameMetadataByCameraID(H5SessionData& 
     if (camera_frame_id == last_camera_frame) {
         consecutive_same_frame++;
     } else {
-        if (consecutive_same_frame > 1) {
+        if (kH5DebugLoggingEnabled && consecutive_same_frame > 1) {
             std::cout << "[H5_DEBUG] Frame " << last_camera_frame 
                       << " was looked up " << consecutive_same_frame + 1 
                       << " times in a row" << std::endl;
@@ -442,7 +446,7 @@ FrameMetadataRecord* H5SessionLoader::getFrameMetadataByCameraID(H5SessionData& 
     call_count++;
     
     // Log every 100th call or first 10 calls for debugging
-    bool should_log = (call_count <= 10) || (call_count % 100 == 0);
+    bool should_log = kH5DebugLoggingEnabled && ((call_count <= 10) || (call_count % 100 == 0));
     
     if (should_log) {
         std::cout << "\n[H5_LOOKUP] Call #" << call_count 
@@ -541,7 +545,7 @@ FrameMetadataRecord* H5SessionLoader::getFrameMetadataByCameraID(H5SessionData& 
     
     // Log if we found multiple matches (this causes blinking!)
     if (matching_indices.size() > 1) {
-        if (should_log || matching_indices.size() > 2) {  // Always log if more than 2
+        if (kH5DebugLoggingEnabled && (should_log || matching_indices.size() > 2)) {  // Always log if more than 2
             std::cout << "  [H5_DEBUG] ⚠️  Found " << matching_indices.size() 
                       << " MULTIPLE matches for camera frame " << camera_frame_id << "!" << std::endl;
             
@@ -579,7 +583,7 @@ std::vector<LoggedChaserState> H5SessionLoader::getChaserStatesForFrame(const H5
     static int chaser_call_count = 0;
     chaser_call_count++;
     
-    bool should_log = (chaser_call_count <= 10) || (chaser_call_count % 100 == 0);
+    bool should_log = kH5DebugLoggingEnabled && ((chaser_call_count <= 10) || (chaser_call_count % 100 == 0));
     
     std::vector<LoggedChaserState> result;
     for (const auto& state : data.chaser_states) {
@@ -602,7 +606,7 @@ std::vector<LoggedChaserState> H5SessionLoader::getChaserStatesForFrame(const H5
     }
     
     // Warn if multiple chaser states for same stimulus frame
-    if (result.size() > 1) {
+    if (kH5DebugLoggingEnabled && result.size() > 1) {
         std::cout << "  [H5_CHASER] ⚠️  WARNING: Multiple chaser states (" << result.size() 
                   << ") for stimulus frame " << frame_num << "!" << std::endl;
     }
@@ -1217,4 +1221,3 @@ bool H5SessionLoader::loadHomographyDirect(H5::H5File& file, cv::Mat& homography
         return false;
     }
 }
-

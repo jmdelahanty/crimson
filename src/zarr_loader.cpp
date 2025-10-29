@@ -1368,6 +1368,21 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     data_.has_heading_data = false;
     data_.keypoints_run_name.clear();
     data_.keypoints_source_crop_run.clear();
+    data_.mask_roi_indices.clear();
+    data_.roi_offset_x.clear();
+    data_.roi_offset_y.clear();
+    data_.roi_width_px.clear();
+    data_.roi_height_px.clear();
+    data_.eye_mask_feret_axes_major.clear();
+    data_.eye_mask_feret_axes_minor.clear();
+    data_.eye_masks_have_feret_axes = false;
+    data_.has_eye_masks = false;
+    data_.eye_masks_loaded = false;
+    data_.eye_masks_run_name.clear();
+    data_.eye_masks_store = ts::TensorStore<uint8_t, 4>();
+    data_.eye_mask_roi_count = 0;
+    data_.eye_mask_height = 0;
+    data_.eye_mask_width = 0;
 
     if (data_.layout != ZarrLayoutType::kPaletteRuns) {
         return false;
@@ -1428,8 +1443,15 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     size_t num_keypoints = 0;
     size_t coord_dim = 0;
     std::vector<float> kp_values;
+    enum class KeypointSpace {
+        kImage,
+        kRoi,
+        kNormalized
+    };
+    KeypointSpace keypoint_space = KeypointSpace::kImage;
 
-    auto load_keypoints_dataset = [&](const std::string& dataset_path) -> bool {
+    auto load_keypoints_dataset = [&](const std::string& dataset_path,
+                                      KeypointSpace space) -> bool {
         auto store_float = openArrayAny<float, 3>(store, dataset_path, context_);
         if (store_float.ok()) {
             auto array_result = ts::Read(store_float.value()).result();
@@ -1451,6 +1473,7 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
             kp_values.resize(total_values);
             const float* data_ptr = static_cast<const float*>(array.data());
             std::copy(data_ptr, data_ptr + total_values, kp_values.begin());
+            keypoint_space = space;
             return true;
         }
 
@@ -1479,11 +1502,13 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
         for (size_t i = 0; i < total_values; ++i) {
             kp_values[i] = static_cast<float>(data_ptr[i]);
         }
+        keypoint_space = space;
         return true;
     };
 
-    if (!load_keypoints_dataset(run_base + "keypoints_roi") &&
-        !load_keypoints_dataset(run_base + "keypoints_norm")) {
+    if (!load_keypoints_dataset(run_base + "keypoints_img", KeypointSpace::kImage) &&
+        !load_keypoints_dataset(run_base + "keypoints_roi", KeypointSpace::kRoi) &&
+        !load_keypoints_dataset(run_base + "keypoints_norm", KeypointSpace::kNormalized)) {
         return false;
     }
 
@@ -1508,16 +1533,97 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
         }
     }
 
-    std::string crop_run;
+    auto normalizeCropName = [](const std::string& name) -> std::string {
+        constexpr std::string_view prefix = "crop_runs/";
+        if (name.rfind(prefix.data(), 0) == 0) {
+            return name.substr(prefix.size());
+        }
+        return name;
+    };
+
+    std::vector<std::string> crop_candidates;
+    auto addCandidate = [&](const std::string& candidate) {
+        if (candidate.empty()) {
+            return;
+        }
+        std::string normalized = normalizeCropName(candidate);
+        if (std::find(crop_candidates.begin(), crop_candidates.end(), normalized) == crop_candidates.end()) {
+            crop_candidates.push_back(normalized);
+        }
+    };
+
     if (run_attrs.has_value() && run_attrs->contains("source_crop_run") &&
         (*run_attrs)["source_crop_run"].is_string()) {
-        crop_run = (*run_attrs)["source_crop_run"].get<std::string>();
+        addCandidate((*run_attrs)["source_crop_run"].get<std::string>());
+    }
+
+    if (auto crop_group_attrs = readAttrsAny(store, "crop_runs")) {
+        std::string latest = extractLatestRunName(*crop_group_attrs);
+        if (!latest.empty()) {
+            addCandidate(latest);
+        }
+    }
+
+    if (!root_path_.empty()) {
+        auto fs_candidates = collect_runs_fs(
+            root_path_,
+            "crop_runs",
+            {"roi_coordinates_full"});
+        for (const auto& name : fs_candidates) {
+            addCandidate(name);
+        }
     }
 
     std::vector<float> roi_offsets;
     bool roi_ok = false;
-    if (!crop_run.empty()) {
-        std::string crop_base = "crop_runs/" + crop_run + "/";
+    std::string crop_run;
+    float roi_height_px = 0.0f;
+    float roi_width_px = 0.0f;
+    bool roi_size_available = false;
+
+    auto updateRoiSizeFromAttrs = [&](const std::string& crop_base) {
+        if (roi_size_available) {
+            return;
+        }
+        if (auto crop_attrs = readAttrsAny(store, crop_base)) {
+            const auto& attrs = *crop_attrs;
+            if (attrs.contains("roi_size") && attrs["roi_size"].is_array()) {
+                const auto& roi_size_attr = attrs["roi_size"];
+                if (roi_size_attr.size() >= 2) {
+                    if (roi_size_attr[0].is_number() && roi_size_attr[1].is_number()) {
+                        roi_height_px = static_cast<float>(roi_size_attr[0].get<double>());
+                        roi_width_px = static_cast<float>(roi_size_attr[1].get<double>());
+                        if (roi_height_px > 0.0f && roi_width_px > 0.0f) {
+                            roi_size_available = true;
+                        }
+                    }
+                }
+            }
+        }
+        if (!roi_size_available) {
+            auto roi_image_store =
+                openArrayAny<uint8_t, 3>(store, crop_base + "roi_images", context_);
+            if (roi_image_store.ok()) {
+                auto domain = roi_image_store.value().domain();
+                auto shape = domain.shape();
+                if (shape.size() == 3) {
+                    float inferred_height = static_cast<float>(shape[1]);
+                    float inferred_width = static_cast<float>(shape[2]);
+                    if (inferred_height > 0.0f && inferred_width > 0.0f) {
+                        roi_height_px = inferred_height;
+                        roi_width_px = inferred_width;
+                        roi_size_available = true;
+                    }
+                }
+            }
+        }
+    };
+
+    auto tryLoadCropRun = [&](const std::string& candidate) -> bool {
+        if (candidate.empty()) {
+            return false;
+        }
+        std::string crop_base = "crop_runs/" + candidate + "/";
         auto roi_float_store =
             openArrayAny<float, 2>(store, crop_base + "roi_coordinates_full", context_);
         if (roi_float_store.ok()) {
@@ -1532,37 +1638,57 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
                         roi_offsets.assign(roi_count * 2, 0.0f);
                         const float* roi_ptr = static_cast<const float*>(roi_array.data());
                         for (size_t i = 0; i < roi_count; ++i) {
-                            roi_offsets[i * 2 + 0] = roi_ptr[i * cols + 0]; // y / row
-                            roi_offsets[i * 2 + 1] = roi_ptr[i * cols + 1]; // x / col
+                            roi_offsets[i * 2 + 0] = roi_ptr[i * cols + 0]; // x / column
+                            roi_offsets[i * 2 + 1] = roi_ptr[i * cols + 1]; // y / row
                         }
-                        roi_ok = true;
-                    }
-                }
-            }
-        } else {
-            auto roi_int_store =
-                openArrayAny<int32_t, 2>(store, crop_base + "roi_coordinates_full", context_);
-            if (roi_int_store.ok()) {
-                auto roi_array_result = ts::Read(roi_int_store.value()).result();
-                if (roi_array_result.ok()) {
-                    auto roi_array = roi_array_result.value();
-                    auto roi_shape = roi_array.shape();
-                    if (roi_shape.size() == 2 &&
-                        roi_shape[0] == static_cast<tensorstore::Index>(roi_count)) {
-                        size_t cols = static_cast<size_t>(roi_shape[1]);
-                        if (cols >= 2) {
-                            roi_offsets.assign(roi_count * 2, 0.0f);
-                            const int32_t* roi_ptr = static_cast<const int32_t*>(roi_array.data());
-                            for (size_t i = 0; i < roi_count; ++i) {
-                                roi_offsets[i * 2 + 0] = static_cast<float>(roi_ptr[i * cols + 0]);
-                                roi_offsets[i * 2 + 1] = static_cast<float>(roi_ptr[i * cols + 1]);
-                            }
-                            roi_ok = true;
-                        }
+                        updateRoiSizeFromAttrs(crop_base);
+                        return true;
                     }
                 }
             }
         }
+
+        auto roi_int_store =
+            openArrayAny<int32_t, 2>(store, crop_base + "roi_coordinates_full", context_);
+        if (roi_int_store.ok()) {
+            auto roi_array_result = ts::Read(roi_int_store.value()).result();
+            if (roi_array_result.ok()) {
+                auto roi_array = roi_array_result.value();
+                auto roi_shape = roi_array.shape();
+                if (roi_shape.size() == 2 &&
+                    roi_shape[0] == static_cast<tensorstore::Index>(roi_count)) {
+                    size_t cols = static_cast<size_t>(roi_shape[1]);
+                    if (cols >= 2) {
+                        roi_offsets.assign(roi_count * 2, 0.0f);
+                        const int32_t* roi_ptr = static_cast<const int32_t*>(roi_array.data());
+                        for (size_t i = 0; i < roi_count; ++i) {
+                            roi_offsets[i * 2 + 0] = static_cast<float>(roi_ptr[i * cols + 0]);
+                            roi_offsets[i * 2 + 1] = static_cast<float>(roi_ptr[i * cols + 1]);
+                        }
+                        updateRoiSizeFromAttrs(crop_base);
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    };
+
+    for (const auto& candidate : crop_candidates) {
+        if (tryLoadCropRun(candidate)) {
+            crop_run = candidate;
+            roi_ok = true;
+            break;
+        }
+    }
+
+    if (!roi_ok && !crop_candidates.empty()) {
+        std::cerr << "[HEADING_WARNING] Failed to load ROI offsets from crop_runs for any candidate ("
+                  << crop_candidates.size() << " tried)." << std::endl;
+    }
+
+    if (!roi_ok) {
+        roi_offsets.clear();
     }
 
     const float nan_value = std::numeric_limits<float>::quiet_NaN();
@@ -1570,6 +1696,11 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     data_.flat_swim_bladder_px.assign(
         total_detections, std::array<float, 2>{nan_value, nan_value});
     data_.flat_heading_valid.assign(total_detections, 0);
+    data_.mask_roi_indices.assign(total_detections, -1);
+    data_.roi_offset_x.assign(total_detections, nan_value);
+    data_.roi_offset_y.assign(total_detections, nan_value);
+    data_.roi_width_px.assign(total_detections, 0.0f);
+    data_.roi_height_px.assign(total_detections, 0.0f);
 
     std::vector<size_t> frame_cursor(
         data_.frame_offsets.size() > 0 ? data_.frame_offsets.size() - 1 : 0, 0);
@@ -1600,20 +1731,169 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
         size_t det_index = start + offset;
         frame_cursor[frame]++;
 
+        data_.mask_roi_indices[det_index] = (roi_ok && roi_offsets.size() >= (roi_index * 2 + 2))
+                                                ? static_cast<int32_t>(roi_index)
+                                                : -1;
+
+        std::array<float, 4> pixel_box = {nan_value, nan_value, nan_value, nan_value};
+        bool have_pixel_box = false;
+        if (det_index < data_.bbox_norm_coords.size() &&
+            data_.image_width > 0 && data_.image_height > 0) {
+            pixel_box = normalizedBoxToPixels(
+                data_.bbox_norm_coords[det_index],
+                data_.image_width,
+                data_.image_height);
+            have_pixel_box = true;
+        }
+
+        float roi_width_for_det = roi_size_available
+                                      ? roi_width_px
+                                      : (have_pixel_box ? std::max(0.0f, pixel_box[2] - pixel_box[0]) : 0.0f);
+        float roi_height_for_det = roi_size_available
+                                       ? roi_height_px
+                                       : (have_pixel_box ? std::max(0.0f, pixel_box[3] - pixel_box[1]) : 0.0f);
+
         bool success = detection_success[roi_index] != 0;
         data_.flat_heading_valid[det_index] = success ? 1 : 0;
         data_.flat_headings_deg[det_index] =
             roi_index < heading_values.size() ? heading_values[roi_index] : 0.0f;
 
-        if (roi_ok && roi_offsets.size() >= (roi_index * 2 + 2) &&
-            swim_index < num_keypoints) {
+        float offset_x_det = nan_value;
+        float offset_y_det = nan_value;
+        if (roi_ok && roi_offsets.size() >= (roi_index * 2 + 2)) {
+            float raw_offset_x = roi_offsets[roi_index * 2 + 0];
+            float raw_offset_y = roi_offsets[roi_index * 2 + 1];
+            if (std::isfinite(raw_offset_x) && std::isfinite(raw_offset_y)) {
+                offset_x_det = raw_offset_x;
+                offset_y_det = raw_offset_y;
+            }
+        }
+
+        bool assigned_anchor = false;
+        float assigned_x = nan_value;
+        float assigned_y = nan_value;
+
+        if (!kp_values.empty() && swim_index < num_keypoints) {
             size_t stride = num_keypoints * coord_dim;
             size_t kp_base = roi_index * stride + swim_index * coord_dim;
-            float kp_x = kp_values[kp_base + 0];
-            float kp_y = kp_values[kp_base + 1];
-            float offset_y = roi_offsets[roi_index * 2 + 0];
-            float offset_x = roi_offsets[roi_index * 2 + 1];
-            data_.flat_swim_bladder_px[det_index] = {offset_x + kp_x, offset_y + kp_y};
+            if (kp_base + 1 < kp_values.size()) {
+                float kp_x = kp_values[kp_base + 0];
+                float kp_y = kp_values[kp_base + 1];
+
+                if (keypoint_space == KeypointSpace::kImage) {
+                    if (std::isfinite(kp_x) && std::isfinite(kp_y)) {
+                        assigned_x = kp_x;
+                        assigned_y = kp_y;
+                        assigned_anchor = true;
+                    }
+                } else if (std::isfinite(offset_x_det) && std::isfinite(offset_y_det)) {
+                    float local_x = kp_x;
+                    float local_y = kp_y;
+
+                    if (keypoint_space == KeypointSpace::kNormalized) {
+                        float scale_x = roi_width_for_det;
+                        float scale_y = roi_height_for_det;
+
+                        if (scale_x <= 0.0f || scale_y <= 0.0f) {
+                            if (have_pixel_box) {
+                                scale_x = std::max(0.0f, pixel_box[2] - pixel_box[0]);
+                                scale_y = std::max(0.0f, pixel_box[3] - pixel_box[1]);
+                                roi_width_for_det = scale_x;
+                                roi_height_for_det = scale_y;
+                            }
+                        }
+
+                        if (scale_x > 0.0f && scale_y > 0.0f) {
+                            local_x = kp_x * scale_x;
+                            local_y = kp_y * scale_y;
+                        } else {
+                            local_x = nan_value;
+                            local_y = nan_value;
+                        }
+                    }
+
+                    if (std::isfinite(local_x) && std::isfinite(local_y)) {
+                        assigned_x = offset_x_det + local_x;
+                        assigned_y = offset_y_det + local_y;
+                        assigned_anchor = true;
+                    }
+                }
+            }
+        }
+
+        if (!assigned_anchor && have_pixel_box) {
+            float fallback_x = 0.5f * (pixel_box[0] + pixel_box[2]);
+            float fallback_y = 0.5f * (pixel_box[1] + pixel_box[3]);
+            if (std::isfinite(fallback_x) && std::isfinite(fallback_y)) {
+                assigned_x = fallback_x;
+                assigned_y = fallback_y;
+                assigned_anchor = true;
+            }
+        }
+
+        if (assigned_anchor) {
+            data_.flat_swim_bladder_px[det_index] = {assigned_x, assigned_y};
+        }
+
+        if (std::isfinite(offset_x_det) && std::isfinite(offset_y_det)) {
+            data_.roi_offset_x[det_index] = offset_x_det;
+            data_.roi_offset_y[det_index] = offset_y_det;
+        }
+
+        if (roi_width_for_det > 0.0f && roi_height_for_det > 0.0f) {
+            data_.roi_width_px[det_index] = roi_width_for_det;
+            data_.roi_height_px[det_index] = roi_height_for_det;
+        } else if (have_pixel_box) {
+            data_.roi_width_px[det_index] = std::max(0.0f, pixel_box[2] - pixel_box[0]);
+            data_.roi_height_px[det_index] = std::max(0.0f, pixel_box[3] - pixel_box[1]);
+        }
+
+        constexpr int kMaxDetailLogs = 12;
+        static int detail_log_count = 0;
+        if (detail_log_count < kMaxDetailLogs) {
+            std::cout << "[HEADING_LOAD_DETAIL] roi=" << roi_index
+                      << " frame=" << frame
+                      << " det_index=" << det_index
+                      << " success=" << static_cast<int>(success)
+                      << " kp=(";
+            if (!kp_values.empty()) {
+                size_t stride = num_keypoints * coord_dim;
+                size_t kp_base = roi_index * stride + swim_index * coord_dim;
+                if (kp_base + 1 < kp_values.size()) {
+                    float kp_x = kp_values[kp_base + 0];
+                    float kp_y = kp_values[kp_base + 1];
+                    std::cout << kp_x << ", " << kp_y << ")";
+                } else {
+                    std::cout << "out_of_range, out_of_range)";
+                }
+            } else {
+                std::cout << "n/a, n/a)";
+            }
+            std::cout << " space=";
+            switch (keypoint_space) {
+                case KeypointSpace::kImage:
+                    std::cout << "image";
+                    break;
+                case KeypointSpace::kRoi:
+                    std::cout << "roi";
+                    break;
+                case KeypointSpace::kNormalized:
+                    std::cout << "normalized";
+                    break;
+            }
+            if (std::isfinite(offset_x_det) && std::isfinite(offset_y_det)) {
+                std::cout << " roi_offsets=(y=" << offset_y_det << ", x=" << offset_x_det << ")";
+            } else {
+                std::cout << " roi_offsets=UNAVAILABLE";
+            }
+            std::cout << " roi_size=(" << roi_height_for_det << ", " << roi_width_for_det << ")";
+            if (assigned_anchor) {
+                std::cout << " assigned=yes anchor=(" << assigned_x << ", " << assigned_y << ")";
+            } else {
+                std::cout << " assigned=no anchor=(nan, nan)";
+            }
+            std::cout << std::endl;
+            detail_log_count++;
         }
 
         filled++;
@@ -1623,9 +1903,430 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     if (data_.has_heading_data) {
         data_.keypoints_run_name = latest_run;
         data_.keypoints_source_crop_run = crop_run;
+
+        constexpr size_t kMaxLogEntries = 8;
+        for (size_t i = 0; i < std::min(kMaxLogEntries, data_.flat_swim_bladder_px.size()); ++i) {
+            const auto& anchor = data_.flat_swim_bladder_px[i];
+            const float heading = i < data_.flat_headings_deg.size() ? data_.flat_headings_deg[i] : 0.0f;
+            const uint8_t valid = i < data_.flat_heading_valid.size() ? data_.flat_heading_valid[i] : 0;
+            std::cout << "[HEADING_LOAD_DEBUG] idx " << i
+                      << " anchor=(" << anchor[0] << ", " << anchor[1]
+                      << ") heading=" << heading
+                      << " valid=" << static_cast<int>(valid)
+                      << " finite=" << (std::isfinite(anchor[0]) && std::isfinite(anchor[1]))
+                      << std::endl;
+        }
+    }
+
+    if (!data_.has_eye_masks) {
+        loadRefinedEyeMaskData(store, roi_count);
     }
 
     return data_.has_heading_data;
+}
+
+bool ZarrDetectionLoader::loadRefinedEyeMaskData(const ts::kvstore::KvStore& store,
+                                                 size_t roi_count) {
+    data_.eye_masks_run_name.clear();
+    data_.eye_masks_loaded = false;
+    data_.has_eye_masks = false;
+    data_.eye_masks_store = ts::TensorStore<uint8_t, 4>();
+    data_.eye_mask_roi_count = 0;
+    data_.eye_mask_height = 0;
+    data_.eye_mask_width = 0;
+    data_.eye_mask_feret_axes_major.clear();
+    data_.eye_mask_feret_axes_minor.clear();
+    data_.eye_masks_have_feret_axes = false;
+
+    if (data_.layout != ZarrLayoutType::kPaletteRuns) {
+        return false;
+    }
+
+    std::string latest_run;
+    if (auto group_attrs = readAttrsAny(store, "refined_eye_masks_runs")) {
+        latest_run = extractLatestRunName(*group_attrs);
+    }
+
+    if (latest_run.empty() && !root_path_.empty()) {
+        auto fs_candidates = collect_runs_fs(
+            root_path_,
+            "refined_eye_masks_runs",
+            {"masks_roi"});
+        if (!fs_candidates.empty()) {
+            latest_run = fs_candidates.back();
+        }
+    }
+
+    if (latest_run.empty()) {
+        return false;
+    }
+
+    std::string run_base = "refined_eye_masks_runs/" + latest_run + "/";
+
+    std::vector<int32_t> mask_frame_indices;
+    if (!readInt32Array(store, run_base + "frame_indices", mask_frame_indices)) {
+        std::cout << "[EYE_MASK_WARNING] refined_eye_masks run '" << latest_run
+                  << "' missing frame_indices; skipping mask overlay." << std::endl;
+        return false;
+    }
+    if (mask_frame_indices.size() != roi_count) {
+        std::cout << "[EYE_MASK_WARNING] refined_eye_masks run '" << latest_run
+                  << "' frame_indices size (" << mask_frame_indices.size()
+                  << ") does not match keypoint ROI count (" << roi_count << ")." << std::endl;
+        if (mask_frame_indices.empty()) {
+            return false;
+        }
+    }
+
+    auto masks_store_result =
+        openArrayAny<uint8_t, 4>(store, run_base + "masks_roi", context_);
+    if (!masks_store_result.ok()) {
+        std::cout << "[EYE_MASK_WARNING] Failed to open refined eye masks for run '"
+                  << latest_run << "': " << masks_store_result.status().ToString() << std::endl;
+        return false;
+    }
+
+    auto domain = masks_store_result.value().domain();
+    auto shape = domain.shape();
+    if (shape.size() != 4) {
+        std::cout << "[EYE_MASK_WARNING] Unexpected masks_roi rank in run '"
+                  << latest_run << "' (expected 4, got " << shape.size() << ")." << std::endl;
+        return false;
+    }
+
+    size_t roi_dim = static_cast<size_t>(shape[0]);
+    size_t channel_dim = static_cast<size_t>(shape[1]);
+    size_t mask_rows = static_cast<size_t>(shape[2]);
+    size_t mask_cols = static_cast<size_t>(shape[3]);
+
+    if (roi_dim == 0 || channel_dim == 0 || mask_rows == 0 || mask_cols == 0) {
+        std::cout << "[EYE_MASK_WARNING] masks_roi dataset '" << latest_run
+                  << "' has empty dimensions; skipping." << std::endl;
+        return false;
+    }
+
+    data_.mask_chunk_cache.clear();
+    data_.eye_masks_store = masks_store_result.value();
+    data_.eye_masks_run_name = latest_run;
+    data_.eye_masks_loaded = true;
+    data_.has_eye_masks = true;
+    data_.eye_mask_roi_count = roi_dim;
+    data_.eye_mask_height = mask_rows;
+    data_.eye_mask_width = mask_cols;
+    data_.eye_mask_chunk_rows = 0;
+    auto chunk_layout_result = data_.eye_masks_store.chunk_layout();
+    if (chunk_layout_result.ok()) {
+        const auto& chunk_layout = chunk_layout_result.value();
+        auto chunk_shape = chunk_layout.read_chunk_shape();
+        if (!chunk_shape.empty()) {
+            auto chunk_size = chunk_shape[0];
+            if (chunk_size > 0) {
+                data_.eye_mask_chunk_rows =
+                    static_cast<size_t>(chunk_size);
+            }
+        }
+    }
+    if (data_.eye_mask_chunk_rows == 0) {
+        data_.eye_mask_chunk_rows = std::min<size_t>(roi_dim, 512);
+    }
+
+    auto loadFeretAxes = [&](const std::string& dataset_name,
+                             std::vector<std::array<std::array<float, 4>, 2>>& target) -> bool {
+        target.clear();
+        auto axes_store =
+            openArrayAny<float, 3>(store, run_base + dataset_name, context_);
+        if (!axes_store.ok()) {
+            return false;
+        }
+        auto axes_result = ts::Read(axes_store.value()).result();
+        if (!axes_result.ok()) {
+            std::cout << "[EYE_MASK_WARNING] Failed to read " << dataset_name
+                      << " for run '" << latest_run << "': "
+                      << axes_result.status().ToString() << std::endl;
+            return false;
+        }
+
+        auto axes_array = axes_result.value();
+        auto axes_shape = axes_array.shape();
+        if (axes_shape.size() != 3 ||
+            axes_shape[0] != static_cast<ts::Index>(roi_dim) ||
+            axes_shape[1] < 1 || axes_shape[2] < 4) {
+            std::cout << "[EYE_MASK_WARNING] Unexpected shape for " << dataset_name
+                      << " in run '" << latest_run << "' (expected "
+                      << roi_dim << "x2x4, got ";
+            for (size_t i = 0; i < axes_shape.size(); ++i) {
+                std::cout << axes_shape[i] << (i + 1 < axes_shape.size() ? "x" : "");
+            }
+            std::cout << ")." << std::endl;
+            return false;
+        }
+
+        const float nan_value = std::numeric_limits<float>::quiet_NaN();
+        target.resize(roi_dim);
+        for (auto& roi_entry : target) {
+            roi_entry = {std::array<float, 4>{nan_value, nan_value, nan_value, nan_value},
+                         std::array<float, 4>{nan_value, nan_value, nan_value, nan_value}};
+        }
+
+        const size_t eye_dim = std::min<size_t>(2, static_cast<size_t>(axes_shape[1]));
+        const size_t axis_len = std::min<size_t>(4, static_cast<size_t>(axes_shape[2]));
+
+        for (size_t roi = 0; roi < roi_dim; ++roi) {
+            for (size_t eye = 0; eye < eye_dim; ++eye) {
+                std::array<float, 4> values = {nan_value, nan_value, nan_value, nan_value};
+                bool all_finite = true;
+                for (size_t idx = 0; idx < axis_len; ++idx) {
+                    float value = axes_array( static_cast<ts::Index>(roi),
+                                             static_cast<ts::Index>(eye),
+                                             static_cast<ts::Index>(idx));
+                    values[idx] = value;
+                    if (!std::isfinite(value)) {
+                        all_finite = false;
+                        break;
+                    }
+                }
+                if (!all_finite) {
+                    continue;
+                }
+                float dx = values[0] - values[2];
+                float dy = values[1] - values[3];
+                if (std::fabs(dx) < 1e-5f && std::fabs(dy) < 1e-5f) {
+                    continue;
+                }
+                target[roi][eye] = values;
+            }
+        }
+        return true;
+    };
+
+    bool feret_major_ok =
+        loadFeretAxes("feret_axes_major", data_.eye_mask_feret_axes_major);
+    bool feret_minor_ok =
+        loadFeretAxes("feret_axes_minor", data_.eye_mask_feret_axes_minor);
+    data_.eye_masks_have_feret_axes = feret_major_ok && feret_minor_ok;
+
+    std::cout << "  Refined eye mask run '" << latest_run
+              << "' loaded (" << channel_dim << " channels, "
+              << mask_cols << "x" << mask_rows << " masks)" << std::endl;
+    return true;
+}
+
+const ZarrDetectionData::EyeMaskChunkCacheEntry*
+ZarrDetectionLoader::findEyeMaskChunk(size_t chunk_id) const {
+    for (auto& entry : data_.mask_chunk_cache) {
+        if (entry.chunk_id == chunk_id) {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
+                                             bool allow_prefetch) const {
+    if (!data_.eye_masks_loaded || data_.eye_mask_roi_count == 0) {
+        return false;
+    }
+
+    auto& cache = data_.mask_chunk_cache;
+    auto it = std::find_if(cache.begin(), cache.end(),
+                           [&](const ZarrDetectionData::EyeMaskChunkCacheEntry& entry) {
+                               return entry.chunk_id == chunk_id;
+                           });
+    if (it != cache.end()) {
+        if (std::next(it) != cache.end()) {
+            ZarrDetectionData::EyeMaskChunkCacheEntry entry = std::move(*it);
+            cache.erase(it);
+            cache.push_back(std::move(entry));
+        }
+        return true;
+    }
+
+    size_t chunk_rows =
+        data_.eye_mask_chunk_rows > 0 ? data_.eye_mask_chunk_rows : 512;
+    size_t chunk_start = chunk_id * chunk_rows;
+    if (chunk_start >= data_.eye_mask_roi_count) {
+        return false;
+    }
+    size_t chunk_end =
+        std::min(chunk_start + chunk_rows, data_.eye_mask_roi_count);
+
+    auto slice = data_.eye_masks_store |
+                 ts::Dims(0).HalfOpenInterval(
+                     static_cast<ts::Index>(chunk_start),
+                     static_cast<ts::Index>(chunk_end));
+    auto read_result = ts::Read(slice).result();
+    if (!read_result.ok()) {
+        std::cerr << "[EYE_MASK_WARNING] Failed to read mask chunk "
+                  << chunk_id << ": " << read_result.status().ToString()
+                  << std::endl;
+        return false;
+    }
+
+    auto array = read_result.value();
+    auto shape = array.shape();
+    if (shape.size() != 4) {
+        std::cerr << "[EYE_MASK_WARNING] Unexpected mask chunk rank ("
+                  << shape.size() << ")" << std::endl;
+        return false;
+    }
+
+    size_t chunk_len = static_cast<size_t>(shape[0]);
+    size_t channels = static_cast<size_t>(shape[1]);
+    size_t rows = static_cast<size_t>(shape[2]);
+    size_t cols = static_cast<size_t>(shape[3]);
+
+    ZarrDetectionData::EyeMaskChunkCacheEntry entry;
+    entry.chunk_id = chunk_id;
+    entry.chunk_start = chunk_start;
+    entry.chunk_length = chunk_len;
+    entry.pixel_indices.resize(chunk_len);
+
+    const uint8_t* base_ptr =
+        static_cast<const uint8_t*>(array.byte_strided_origin_pointer());
+    auto byte_strides = array.byte_strides();
+    if (byte_strides.size() != 4) {
+        std::cerr << "[EYE_MASK_WARNING] Unexpected mask chunk stride rank ("
+                  << byte_strides.size() << ")" << std::endl;
+        return false;
+    }
+
+    const ts::Index stride_roi = byte_strides[0];
+    const ts::Index stride_channel = byte_strides[1];
+    const ts::Index stride_row = byte_strides[2];
+    const ts::Index stride_col = byte_strides[3];
+
+    for (size_t roi = 0; roi < chunk_len; ++roi) {
+        const auto roi_offset =
+            stride_roi * static_cast<ts::Index>(roi);
+        const uint8_t* roi_ptr = base_ptr + roi_offset;
+        for (size_t channel = 0; channel < std::min<size_t>(channels, 2); ++channel) {
+            auto& indices_vec = entry.pixel_indices[roi][channel];
+            indices_vec.clear();
+            indices_vec.reserve(256);
+
+            const auto channel_offset =
+                stride_channel * static_cast<ts::Index>(channel);
+            const uint8_t* channel_ptr = roi_ptr + channel_offset;
+            for (size_t r = 0; r < rows; ++r) {
+                const auto row_offset =
+                    stride_row * static_cast<ts::Index>(r);
+                const uint8_t* row_ptr = channel_ptr + row_offset;
+                for (size_t c = 0; c < cols; ++c) {
+                    const auto col_offset =
+                        stride_col * static_cast<ts::Index>(c);
+                    const uint8_t* elem_ptr = row_ptr + col_offset;
+                    if (*elem_ptr != 0) {
+                        indices_vec.push_back(
+                            static_cast<uint16_t>(r * cols + c));
+                    }
+                }
+            }
+        }
+    }
+
+    if (cache.size() >= kEyeMaskChunkCacheCapacity) {
+        cache.erase(cache.begin());
+    }
+    cache.push_back(std::move(entry));
+
+    if (allow_prefetch) {
+        prefetchAdjacentEyeMaskChunks(chunk_id);
+    }
+    return true;
+}
+
+void ZarrDetectionLoader::prefetchAdjacentEyeMaskChunks(size_t chunk_id) const {
+    size_t chunk_rows =
+        data_.eye_mask_chunk_rows > 0 ? data_.eye_mask_chunk_rows : 512;
+    if (chunk_id > 0) {
+        ensureEyeMaskChunk(chunk_id - 1, /*allow_prefetch=*/false);
+    }
+    if ((chunk_id + 1) * chunk_rows < data_.eye_mask_roi_count) {
+        ensureEyeMaskChunk(chunk_id + 1, /*allow_prefetch=*/false);
+    }
+}
+
+bool ZarrDetectionLoader::populateEyeMaskEntry(
+    size_t roi_index, FrameDetections::EyeMask& out_mask) const {
+    if (!data_.eye_masks_loaded || roi_index >= data_.eye_mask_roi_count) {
+        return false;
+    }
+    size_t chunk_rows =
+        data_.eye_mask_chunk_rows > 0 ? data_.eye_mask_chunk_rows : 512;
+    size_t chunk_id = roi_index / chunk_rows;
+    if (!ensureEyeMaskChunk(chunk_id)) {
+        return false;
+    }
+    const auto* entry = findEyeMaskChunk(chunk_id);
+    if (entry == nullptr) {
+        return false;
+    }
+    size_t local_index = roi_index - entry->chunk_start;
+    if (local_index >= entry->pixel_indices.size()) {
+        return false;
+    }
+
+    out_mask.rows = static_cast<int>(data_.eye_mask_height);
+    out_mask.cols = static_cast<int>(data_.eye_mask_width);
+    out_mask.valid = false;
+    out_mask.has_feret_axes = false;
+    for (size_t channel = 0; channel < 2; ++channel) {
+        out_mask.pixel_indices[channel] =
+            entry->pixel_indices[local_index][channel];
+        if (!out_mask.pixel_indices[channel].empty()) {
+            out_mask.valid = true;
+        }
+
+        if (roi_index < data_.eye_mask_feret_axes_major.size()) {
+            const auto& axis_vals =
+                data_.eye_mask_feret_axes_major[roi_index][channel];
+            bool axis_valid = true;
+            for (float value : axis_vals) {
+                if (!std::isfinite(value)) {
+                    axis_valid = false;
+                    break;
+                }
+            }
+            if (axis_valid) {
+                float dx = axis_vals[0] - axis_vals[2];
+                float dy = axis_vals[1] - axis_vals[3];
+                if (std::fabs(dx) > 1e-5f || std::fabs(dy) > 1e-5f) {
+                    auto& segment = out_mask.feret_major[channel];
+                    segment.valid = true;
+                    segment.x0 = axis_vals[0];
+                    segment.y0 = axis_vals[1];
+                    segment.x1 = axis_vals[2];
+                    segment.y1 = axis_vals[3];
+                    out_mask.has_feret_axes = true;
+                }
+            }
+        }
+        if (roi_index < data_.eye_mask_feret_axes_minor.size()) {
+            const auto& axis_vals =
+                data_.eye_mask_feret_axes_minor[roi_index][channel];
+            bool axis_valid = true;
+            for (float value : axis_vals) {
+                if (!std::isfinite(value)) {
+                    axis_valid = false;
+                    break;
+                }
+            }
+            if (axis_valid) {
+                float dx = axis_vals[0] - axis_vals[2];
+                float dy = axis_vals[1] - axis_vals[3];
+                if (std::fabs(dx) > 1e-5f || std::fabs(dy) > 1e-5f) {
+                    auto& segment = out_mask.feret_minor[channel];
+                    segment.valid = true;
+                    segment.x0 = axis_vals[0];
+                    segment.y0 = axis_vals[1];
+                    segment.x1 = axis_vals[2];
+                    segment.y1 = axis_vals[3];
+                    out_mask.has_feret_axes = true;
+                }
+            }
+        }
+    }
+    return out_mask.valid;
 }
 
 bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& store) {
@@ -2450,10 +3151,11 @@ std::vector<LoggedBoundingBox> ZarrDetectionLoader::getBoundingBoxesForFrame(
 }
 
 ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
-    size_t frame_id, bool use_interpolated) const {
+    size_t frame_id, bool use_interpolated, bool include_eye_masks) const {
     
     FrameDetections result;
     result.frame_id = frame_id;
+    result.includes_eye_masks = false;
     const float nan_value = std::numeric_limits<float>::quiet_NaN();
     
     if (frame_id >= data_.total_frames) {
@@ -2487,6 +3189,9 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
             : data_.has_class_ids;
         const bool can_use_headings =
             data_.has_heading_data && !want_interpolated;
+        const bool can_use_eye_masks =
+            include_eye_masks && data_.has_eye_masks &&
+            data_.eye_masks_loaded && !want_interpolated;
 
         if (offsets.empty() || frame_id + 1 >= offsets.size()) {
             return result;
@@ -2499,6 +3204,10 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
             result.headings_deg.reserve(end - start);
             result.swim_bladder_pixels.reserve(end - start);
             result.heading_valid.reserve(end - start);
+        }
+        if (can_use_eye_masks) {
+            result.eye_masks.reserve(end - start);
+            result.includes_eye_masks = true;
         }
 
         for (size_t idx = start; idx < end && idx < boxes_source.size(); ++idx) {
@@ -2540,6 +3249,33 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                 result.headings_deg.push_back(heading);
                 result.swim_bladder_pixels.push_back(anchor);
                 result.heading_valid.push_back(valid);
+            }
+
+            if (can_use_eye_masks) {
+                FrameDetections::EyeMask mask_entry;
+                mask_entry.offset_x =
+                    (idx < data_.roi_offset_x.size()) ? data_.roi_offset_x[idx] : nan_value;
+                mask_entry.offset_y =
+                    (idx < data_.roi_offset_y.size()) ? data_.roi_offset_y[idx] : nan_value;
+                mask_entry.roi_width =
+                    (idx < data_.roi_width_px.size()) ? data_.roi_width_px[idx] : 0.0f;
+                mask_entry.roi_height =
+                    (idx < data_.roi_height_px.size()) ? data_.roi_height_px[idx] : 0.0f;
+                mask_entry.rows = static_cast<int>(data_.eye_mask_height);
+                mask_entry.cols = static_cast<int>(data_.eye_mask_width);
+
+                int32_t roi_lookup =
+                    (idx < data_.mask_roi_indices.size()) ? data_.mask_roi_indices[idx] : -1;
+                bool offsets_valid = std::isfinite(mask_entry.offset_x) && std::isfinite(mask_entry.offset_y);
+                bool dims_valid = (mask_entry.roi_width > 0.0f && mask_entry.roi_height > 0.0f);
+
+                if (roi_lookup >= 0 &&
+                    static_cast<size_t>(roi_lookup) < data_.eye_mask_roi_count &&
+                    offsets_valid && dims_valid) {
+                    populateEyeMaskEntry(static_cast<size_t>(roi_lookup), mask_entry);
+                }
+
+                result.eye_masks.push_back(std::move(mask_entry));
             }
         }
 

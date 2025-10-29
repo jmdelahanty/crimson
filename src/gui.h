@@ -32,9 +32,9 @@ static void gui_draw_chaser_state(const std::vector<LoggedChaserState>& states, 
         // if (state.is_chasing) {
 
             // --- START: ADDED DEBUG PRINT ---
-            std::cout << "Frame: " << state.stimulus_frame_num
-                      << " | Chaser: (" << state.chaser_pos_x << ", " << state.chaser_pos_y << ")"
-                      << " | Target: (" << state.target_pos_x << ", " << state.target_pos_y << ")" << std::endl;
+            // std::cout << "Frame: " << state.stimulus_frame_num
+            //           << " | Chaser: (" << state.chaser_pos_x << ", " << state.chaser_pos_y << ")"
+            //           << " | Target: (" << state.target_pos_x << ", " << state.target_pos_y << ")" << std::endl;
             // --- END: ADDED DEBUG PRINT ---
 
             std::vector<cv::Point2f> src_points;

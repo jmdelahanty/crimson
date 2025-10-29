@@ -13,7 +13,9 @@
 #include <vector>
 #include <string>
 #include <optional>
+#include <deque>
 #include <filesystem>
+#include <limits>
 #include "h5_loader.h"  // For LoggedBoundingBox structure compatibility
 
 namespace ts = tensorstore;
@@ -105,6 +107,29 @@ struct ZarrDetectionData {
     bool has_heading_data = false;
     std::string keypoints_run_name;
     std::string keypoints_source_crop_run;
+    std::vector<int32_t> mask_roi_indices;
+    std::vector<float> roi_offset_x;
+    std::vector<float> roi_offset_y;
+    std::vector<float> roi_width_px;
+    std::vector<float> roi_height_px;
+    bool has_eye_masks = false;
+    bool eye_masks_loaded = false;
+    std::string eye_masks_run_name;
+    ts::TensorStore<uint8_t, 4> eye_masks_store;
+    size_t eye_mask_roi_count = 0;
+    size_t eye_mask_height = 0;
+    size_t eye_mask_width = 0;
+    size_t eye_mask_chunk_rows = 0;
+    std::vector<std::array<std::array<float, 4>, 2>> eye_mask_feret_axes_major;
+    std::vector<std::array<std::array<float, 4>, 2>> eye_mask_feret_axes_minor;
+    bool eye_masks_have_feret_axes = false;
+    struct EyeMaskChunkCacheEntry {
+        size_t chunk_id = std::numeric_limits<size_t>::max();
+        size_t chunk_start = 0;
+        size_t chunk_length = 0;
+        std::vector<std::array<std::vector<uint16_t>, 2>> pixel_indices;
+    };
+    mutable std::vector<EyeMaskChunkCacheEntry> mask_chunk_cache;
 
     // Interpolation data
     InterpolationRunData latest_interpolation;
@@ -115,6 +140,7 @@ class ZarrDetectionLoader {
 public:
     ZarrDetectionLoader();
     ~ZarrDetectionLoader();
+    static constexpr size_t kEyeMaskChunkCacheCapacity = 3;
     
     // Main loading function
     bool loadZarrFile(const std::string& filepath, std::string& error_message);
@@ -142,6 +168,8 @@ public:
     bool hasClassIDs() const { return data_.has_class_ids; }
     bool hasInterpolation() const { return data_.has_interpolation; }
     const std::string& getKeypointsRunName() const { return data_.keypoints_run_name; }
+    bool hasEyeMasks() const { return data_.has_eye_masks; }
+    const std::string& getEyeMaskRunName() const { return data_.eye_masks_run_name; }
     bool hasStimulusAlignment() const {
         return data_.has_interpolation && data_.latest_interpolation.has_stimulus_alignment;
     }
@@ -191,8 +219,32 @@ public:
         std::vector<float> headings_deg;
         std::vector<std::array<float, 2>> swim_bladder_pixels;
         std::vector<uint8_t> heading_valid;
+        struct EyeMask {
+            bool valid = false;
+            int rows = 0;
+            int cols = 0;
+            float offset_x = std::numeric_limits<float>::quiet_NaN();
+            float offset_y = std::numeric_limits<float>::quiet_NaN();
+            float roi_width = 0.0f;
+            float roi_height = 0.0f;
+            std::array<std::vector<uint16_t>, 2> pixel_indices;
+            struct AxisSegment {
+                bool valid = false;
+                float x0 = 0.0f;
+                float y0 = 0.0f;
+                float x1 = 0.0f;
+                float y1 = 0.0f;
+            };
+            std::array<AxisSegment, 2> feret_major;
+            std::array<AxisSegment, 2> feret_minor;
+            bool has_feret_axes = false;
+        };
+        std::vector<EyeMask> eye_masks;
+        bool includes_eye_masks = false;
     };
-    FrameDetections getRawDetections(size_t frame_id, bool use_interpolated = true) const;
+    FrameDetections getRawDetections(size_t frame_id,
+                                     bool use_interpolated = true,
+                                     bool include_eye_masks = false) const;
 
     bool hasHeadingData() const { return data_.has_heading_data; }
     
@@ -244,6 +296,11 @@ private:
                                      const std::string& run_name,
                                      const std::string& subgroup);
     bool loadKeypointHeadingData(const ts::kvstore::KvStore& store);
+    bool loadRefinedEyeMaskData(const ts::kvstore::KvStore& store, size_t roi_count);
+    const ZarrDetectionData::EyeMaskChunkCacheEntry* findEyeMaskChunk(size_t chunk_id) const;
+    bool ensureEyeMaskChunk(size_t chunk_id, bool allow_prefetch = true) const;
+    void prefetchAdjacentEyeMaskChunks(size_t chunk_id) const;
+    bool populateEyeMaskEntry(size_t roi_index, FrameDetections::EyeMask& out_mask) const;
     
     // Helper conversion function
     LoggedBoundingBox convertToLoggedBox(

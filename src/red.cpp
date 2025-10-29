@@ -140,9 +140,59 @@ int main(int, char **) {
     bool cpu_buffer_toggle = true;
     bool plot_keypoints_flag = false;
     bool show_heading_arrows = true;
+    bool show_eye_masks = false;
     int current_frame_num = 0;
     bool skeleton_chosen = false;
     std::vector<std::string> imgs_names;
+
+    constexpr bool kHeadingDebugLoggingEnabled = false;
+    constexpr int kHeadingDebugMaxMessages = 400;
+    int heading_debug_message_count = 0;
+    int heading_debug_draw_log_count = 0;
+    int heading_debug_entry_log_count = 0;
+    int heading_debug_last_frame_logged = -1;
+    bool heading_debug_logged_toggle_disabled = false;
+    bool heading_debug_logged_no_data = false;
+    bool heading_debug_logged_interpolated = false;
+    auto headingDebugLog = [&](const std::string &message) {
+        if (!kHeadingDebugLoggingEnabled) {
+            return;
+        }
+        if (heading_debug_message_count >= kHeadingDebugMaxMessages) {
+            if (heading_debug_message_count == kHeadingDebugMaxMessages) {
+                std::cout << "[HEADING_DEBUG] Log limit reached, suppressing further messages"
+                          << std::endl;
+            }
+            heading_debug_message_count++;
+            return;
+        }
+        std::cout << "[HEADING_DEBUG] " << message << std::endl;
+        heading_debug_message_count++;
+    };
+
+    constexpr bool kEyeMaskDebugLoggingEnabled = true;
+    constexpr int kEyeMaskDebugMaxMessages = 200;
+    int eye_mask_debug_message_count = 0;
+    int eye_mask_debug_entry_log_count = 0;
+    int eye_mask_debug_draw_log_count = 0;
+    int eye_mask_debug_last_frame_logged = -1;
+    bool eye_mask_debug_logged_toggle_disabled = false;
+    bool eye_mask_debug_logged_no_data = false;
+    auto eyeMaskDebugLog = [&](const std::string &message) {
+        if (!kEyeMaskDebugLoggingEnabled) {
+            return;
+        }
+        if (eye_mask_debug_message_count >= kEyeMaskDebugMaxMessages) {
+            if (eye_mask_debug_message_count == kEyeMaskDebugMaxMessages) {
+                std::cout << "[EYE_MASK_DEBUG] Log limit reached, suppressing further messages"
+                          << std::endl;
+            }
+            eye_mask_debug_message_count++;
+            return;
+        }
+        std::cout << "[EYE_MASK_DEBUG] " << message << std::endl;
+        eye_mask_debug_message_count++;
+    };
 
     // for labeling
     SkeletonContext *skeleton;
@@ -409,7 +459,7 @@ int main(int, char **) {
                     if (!chaser_states.empty()) {
                         ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[H5] Chaser/Target:    Found %zu states", chaser_states.size());
                     } else {
-                        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "[H5] Chaser/Target:    None for stimulus frame %llu", frame_meta->stimulus_frame_num);
+                    ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "[H5] Chaser/Target:    None for stimulus frame %lu", static_cast<unsigned long>(frame_meta->stimulus_frame_num));
                     }
                 } else {
                     ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "[H5] Chaser/Target:    No frame metadata found for camera frame");
@@ -536,6 +586,31 @@ int main(int, char **) {
                     if (!zarr_loader.getKeypointsRunName().empty()) {
                         ImGui::Text("  Keypoints run: %s",
                                     zarr_loader.getKeypointsRunName().c_str());
+                    }
+                }
+            }
+
+            if (zarr_loaded && zarr_loader.hasEyeMasks()) {
+                ImGui::Separator();
+                ImGui::Text("Eye Mask Overlay:");
+                if (use_interpolated_detections) {
+                    if (kEyeMaskDebugLoggingEnabled && !eye_mask_debug_logged_toggle_disabled) {
+                        eyeMaskDebugLog("Eye mask overlay suppressed because interpolated detections are enabled.");
+                        eye_mask_debug_logged_toggle_disabled = true;
+                    }
+                    ImGui::TextWrapped("Eye masks are unavailable while interpolated detections are displayed.");
+                } else {
+                    if (kEyeMaskDebugLoggingEnabled && eye_mask_debug_logged_toggle_disabled) {
+                        eyeMaskDebugLog("Eye mask overlay toggle re-enabled; attempting to draw masks.");
+                        eye_mask_debug_logged_toggle_disabled = false;
+                    }
+                    ImGui::Checkbox("Show refined eye masks", &show_eye_masks);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Visualize refined eye masks as semi-transparent overlays.");
+                    }
+                    if (!zarr_loader.getEyeMaskRunName().empty()) {
+                        ImGui::Text("  Eye mask run: %s",
+                                    zarr_loader.getEyeMaskRunName().c_str());
                     }
                 }
             }
@@ -1195,31 +1270,136 @@ int main(int, char **) {
                                 }
                             }
 
-                            if (show_heading_arrows &&
-                                zarr_loader.hasHeadingData() &&
-                                !use_interpolated_detections) {
+                            const bool heading_overlay_enabled = show_heading_arrows;
+                            const bool heading_data_available = zarr_loader.hasHeadingData();
+                            const bool using_interpolated_for_boxes = use_interpolated_detections;
+                            const bool eye_mask_overlay_enabled = show_eye_masks;
+                            const bool eye_mask_data_available = zarr_loader.hasEyeMasks();
+                            const bool can_draw_headings =
+                                heading_overlay_enabled && heading_data_available && !using_interpolated_for_boxes;
+                            const bool can_draw_eye_masks =
+                                eye_mask_overlay_enabled && eye_mask_data_available && !using_interpolated_for_boxes;
+                            const float scene_height_f =
+                                static_cast<float>(scene->image_height[j]);
+
+                            if (kHeadingDebugLoggingEnabled) {
+                                if (!heading_overlay_enabled) {
+                                    if (!heading_debug_logged_toggle_disabled) {
+                                        headingDebugLog("Heading overlay disabled via UI toggle; skipping arrow drawing.");
+                                        heading_debug_logged_toggle_disabled = true;
+                                    }
+                                } else {
+                                    if (heading_debug_logged_toggle_disabled) {
+                                        headingDebugLog("Heading overlay toggle enabled; attempting to draw arrows.");
+                                        heading_debug_logged_toggle_disabled = false;
+                                    }
+
+                                    if (!heading_data_available) {
+                                        if (!heading_debug_logged_no_data) {
+                                            headingDebugLog("Zarr loader reports no heading data; arrows will not be drawn.");
+                                            heading_debug_logged_no_data = true;
+                                        }
+                                    } else if (heading_debug_logged_no_data) {
+                                        headingDebugLog("Heading data detected; resuming arrow attempts.");
+                                        heading_debug_logged_no_data = false;
+                                    }
+
+                                    if (using_interpolated_for_boxes) {
+                                        if (!heading_debug_logged_interpolated) {
+                                            headingDebugLog("Interpolated detections enabled; heading arrows require original detections.");
+                                            heading_debug_logged_interpolated = true;
+                                        }
+                                    } else if (heading_debug_logged_interpolated) {
+                                        headingDebugLog("Using original detections again; heading arrows may render.");
+                                        heading_debug_logged_interpolated = false;
+                                    }
+                                }
+                            }
+
+                            if (kEyeMaskDebugLoggingEnabled) {
+                                if (!show_eye_masks) {
+                                    if (!eye_mask_debug_logged_toggle_disabled) {
+                                        eyeMaskDebugLog("Eye mask overlay disabled via UI toggle; skipping mask drawing.");
+                                        eye_mask_debug_logged_toggle_disabled = true;
+                                    }
+                                } else if (eye_mask_debug_logged_toggle_disabled) {
+                                    eyeMaskDebugLog("Eye mask overlay toggle enabled; attempting to draw masks.");
+                                    eye_mask_debug_logged_toggle_disabled = false;
+                                }
+
+                                if (!zarr_loader.hasEyeMasks()) {
+                                    if (!eye_mask_debug_logged_no_data) {
+                                        eyeMaskDebugLog("Zarr loader reports no eye mask data.");
+                                        eye_mask_debug_logged_no_data = true;
+                                    }
+                                } else if (eye_mask_debug_logged_no_data) {
+                                    eyeMaskDebugLog("Eye mask data detected; masks may render.");
+                                    eye_mask_debug_logged_no_data = false;
+                                }
+                            }
+
+                            if (can_draw_headings) {
+                                if (kHeadingDebugLoggingEnabled &&
+                                    heading_debug_entry_log_count < 200 &&
+                                    heading_debug_last_frame_logged != current_frame_num) {
+                                    headingDebugLog("Frame " + std::to_string(current_frame_num) +
+                                                    ": entering heading draw path (overlay_enabled=" +
+                                                    (heading_overlay_enabled ? "1" : "0") +
+                                                    ", heading_data=" +
+                                                    (heading_data_available ? "1" : "0") +
+                                                    ", using_interpolated=" +
+                                                    (using_interpolated_for_boxes ? "1" : "0") + ").");
+                                    heading_debug_last_frame_logged = current_frame_num;
+                                    heading_debug_entry_log_count++;
+                                }
+
                                 ZarrDetectionLoader::FrameDetections heading_details =
-                                    zarr_loader.getRawDetections(current_frame_num,
-                                                                 /*use_interpolated=*/false);
+                                    zarr_loader.getRawDetections(
+                                        current_frame_num,
+                                        /*use_interpolated=*/false,
+                                        /*include_eye_masks=*/false);
 
                                 const size_t det_count = heading_details.boxes.size();
+                                const size_t valid_count = heading_details.heading_valid.size();
+                                const size_t heading_count = heading_details.headings_deg.size();
+                                const size_t swim_bladder_count = heading_details.swim_bladder_pixels.size();
+
                                 if (det_count > 0 &&
-                                    heading_details.heading_valid.size() == det_count &&
-                                    heading_details.headings_deg.size() == det_count) {
+                                    valid_count == det_count &&
+                                    heading_count == det_count) {
+                                    if (kHeadingDebugLoggingEnabled) {
+                                        headingDebugLog("Frame " + std::to_string(current_frame_num) +
+                                                        ": processing " + std::to_string(det_count) +
+                                                        " detections (heading_valid=" + std::to_string(valid_count) +
+                                                        ", headings_deg=" + std::to_string(heading_count) +
+                                                        ", swim_bladder=" + std::to_string(swim_bladder_count) + ").");
+                                    }
+
                                     ImDrawList* plot_draw_list = ImPlot::GetPlotDrawList();
                                     const ImU32 arrow_color =
                                         ImGui::GetColorU32(ImVec4(1.0f, 0.25f, 0.1f, 0.95f));
                                     const float arrow_thickness = 2.0f;
-                                    const float scene_height_f =
-                                        static_cast<float>(scene->image_height[j]);
 
                                     for (size_t det_idx = 0; det_idx < det_count; ++det_idx) {
                                         if (heading_details.heading_valid[det_idx] == 0) {
+                                            if (kHeadingDebugLoggingEnabled && heading_debug_draw_log_count < 80) {
+                                                headingDebugLog("Frame " + std::to_string(current_frame_num) +
+                                                                ": detection " + std::to_string(det_idx) +
+                                                                " skipped (heading_valid == 0).");
+                                                heading_debug_draw_log_count++;
+                                            }
                                             continue;
                                         }
 
                                         const auto& box = heading_details.boxes[det_idx];
                                         if (det_idx >= heading_details.swim_bladder_pixels.size()) {
+                                            if (kHeadingDebugLoggingEnabled && heading_debug_draw_log_count < 80) {
+                                                headingDebugLog("Frame " + std::to_string(current_frame_num) +
+                                                                ": detection " + std::to_string(det_idx) +
+                                                                " lacks swim bladder pixel data (available=" +
+                                                                std::to_string(swim_bladder_count) + ").");
+                                                heading_debug_draw_log_count++;
+                                            }
                                             continue;
                                         }
 
@@ -1228,14 +1408,61 @@ int main(int, char **) {
                                         float base_x = heading_details.swim_bladder_pixels[det_idx][0];
                                         float base_y = heading_details.swim_bladder_pixels[det_idx][1];
 
+                                        if (!std::isfinite(base_x) || !std::isfinite(base_y)) {
+                                            float fallback_x = 0.5f * (box[0] + box[2]);
+                                            float fallback_y = 0.5f * (box[1] + box[3]);
+                                            if (kHeadingDebugLoggingEnabled && heading_debug_draw_log_count < 120) {
+                                                headingDebugLog("Frame " + std::to_string(current_frame_num) +
+                                                                ": detection " + std::to_string(det_idx) +
+                                                                " had invalid swim bladder coords (" +
+                                                                std::to_string(base_x) + ", " +
+                                                                std::to_string(base_y) +
+                                                                "); using bounding box center (" +
+                                                                std::to_string(fallback_x) + ", " +
+                                                                std::to_string(fallback_y) + ").");
+                                                heading_debug_draw_log_count++;
+                                            }
+                                            base_x = fallback_x;
+                                            base_y = fallback_y;
+                                        }
+
+                                        if (kHeadingDebugLoggingEnabled &&
+                                            heading_debug_draw_log_count < 120) {
+                                            headingDebugLog("Frame " + std::to_string(current_frame_num) +
+                                                            ": detection " + std::to_string(det_idx) +
+                                                            " bbox=[" + std::to_string(box[0]) + ", " +
+                                                            std::to_string(box[1]) + ", " +
+                                                            std::to_string(box[2]) + ", " +
+                                                            std::to_string(box[3]) + "] base=(" +
+                                                            std::to_string(base_x) + ", " +
+                                                            std::to_string(base_y) + ").");
+                                            heading_debug_draw_log_count++;
+                                        }
+
                                         float heading_deg = heading_details.headings_deg[det_idx];
                                         float heading_rad =
                                             heading_deg * static_cast<float>(M_PI) / 180.0f;
 
+                                        float bbox_scale =
+                                            std::max(box_width, box_height) * 1.25f;
+                                        float frame_scale = scene_height_f * 0.02f;
                                         float arrow_len =
-                                            std::max(30.0f, std::max(box_width, box_height) * 0.65f);
+                                            std::max(60.0f, std::max(bbox_scale, frame_scale));
                                         float end_x = base_x + std::cos(heading_rad) * arrow_len;
                                         float end_y = base_y - std::sin(heading_rad) * arrow_len;
+
+                                        if (kHeadingDebugLoggingEnabled && heading_debug_draw_log_count < 80) {
+                                            headingDebugLog("Frame " + std::to_string(current_frame_num) +
+                                                            ": drawing heading arrow det " +
+                                                            std::to_string(det_idx) + " base=(" +
+                                                            std::to_string(base_x) + ", " +
+                                                            std::to_string(base_y) + ") heading_deg=" +
+                                                            std::to_string(heading_deg) + " arrow_len=" +
+                                                            std::to_string(arrow_len) + " end=(" +
+                                                            std::to_string(end_x) + ", " +
+                                                            std::to_string(end_y) + ").");
+                                            heading_debug_draw_log_count++;
+                                        }
 
                                         ImPlotPoint plot_start(base_x, scene_height_f - base_y);
                                         ImPlotPoint plot_end(end_x, scene_height_f - end_y);
@@ -1259,10 +1486,282 @@ int main(int, char **) {
                                             plot_draw_list->AddTriangleFilled(p1, left, right, arrow_color);
                                         }
                                     }
+                                } else if (kHeadingDebugLoggingEnabled && can_draw_headings) {
+                                    headingDebugLog("Frame " + std::to_string(current_frame_num) +
+                                                    ": heading data mismatch (boxes=" + std::to_string(det_count) +
+                                                    ", heading_valid=" + std::to_string(valid_count) +
+                                                    ", headings_deg=" + std::to_string(heading_count) +
+                                                    ", swim_bladder=" + std::to_string(swim_bladder_count) + ").");
+                                }
+                            }
+
+                            if (can_draw_eye_masks) {
+                                ZarrDetectionLoader::FrameDetections mask_details =
+                                    zarr_loader.getRawDetections(
+                                        current_frame_num,
+                                        /*use_interpolated=*/false,
+                                        /*include_eye_masks=*/true);
+                                if (mask_details.includes_eye_masks) {
+                                    size_t mask_count =
+                                        std::min(mask_details.eye_masks.size(),
+                                                 mask_details.boxes.size());
+                                    if (mask_count > 0) {
+                                        if (kEyeMaskDebugLoggingEnabled &&
+                                            eye_mask_debug_entry_log_count < 200 &&
+                                            eye_mask_debug_last_frame_logged != current_frame_num) {
+                                            eyeMaskDebugLog("Frame " + std::to_string(current_frame_num) +
+                                                            ": entering eye mask draw path (masks=" +
+                                                            std::to_string(mask_count) + ").");
+                                            eye_mask_debug_last_frame_logged = current_frame_num;
+                                            eye_mask_debug_entry_log_count++;
+                                        }
+                                        for (size_t det_idx = 0; det_idx < mask_count; ++det_idx) {
+                                            const auto& mask_info = mask_details.eye_masks[det_idx];
+                                            if (!mask_info.valid) {
+                                                if (kEyeMaskDebugLoggingEnabled && eye_mask_debug_draw_log_count < 80) {
+                                                    eyeMaskDebugLog("Frame " + std::to_string(current_frame_num) +
+                                                                    ": mask entry " + std::to_string(det_idx) +
+                                                                    " marked invalid; skipping.");
+                                                    eye_mask_debug_draw_log_count++;
+                                                }
+                                                continue;
+                                            }
+                                            if (!std::isfinite(mask_info.offset_x) ||
+                                                !std::isfinite(mask_info.offset_y)) {
+                                                if (kEyeMaskDebugLoggingEnabled && eye_mask_debug_draw_log_count < 80) {
+                                                    eyeMaskDebugLog("Frame " + std::to_string(current_frame_num) +
+                                                                    ": mask entry " + std::to_string(det_idx) +
+                                                                    " has non-finite offsets; skipping.");
+                                                    eye_mask_debug_draw_log_count++;
+                                                }
+                                                continue;
+                                            }
+                                            if (mask_info.roi_width <= 0.0f || mask_info.roi_height <= 0.0f) {
+                                                if (kEyeMaskDebugLoggingEnabled && eye_mask_debug_draw_log_count < 80) {
+                                                    eyeMaskDebugLog("Frame " + std::to_string(current_frame_num) +
+                                                                    ": mask entry " + std::to_string(det_idx) +
+                                                                    " has invalid ROI size (" +
+                                                                    std::to_string(mask_info.roi_width) + "x" +
+                                                                    std::to_string(mask_info.roi_height) + "); skipping.");
+                                                    eye_mask_debug_draw_log_count++;
+                                                }
+                                                continue;
+                                            }
+                                            if (mask_info.rows <= 0 || mask_info.cols <= 0) {
+                                                if (kEyeMaskDebugLoggingEnabled && eye_mask_debug_draw_log_count < 80) {
+                                                    eyeMaskDebugLog("Frame " + std::to_string(current_frame_num) +
+                                                                    ": mask entry " + std::to_string(det_idx) +
+                                                                    " has invalid matrix dimensions (" +
+                                                                    std::to_string(mask_info.rows) + "x" +
+                                                                    std::to_string(mask_info.cols) + "); skipping.");
+                                                    eye_mask_debug_draw_log_count++;
+                                                }
+                                                continue;
+                                            }
+                                            if (mask_info.rows <= 0 || mask_info.cols <= 0) {
+                                                if (kEyeMaskDebugLoggingEnabled && eye_mask_debug_draw_log_count < 80) {
+                                                    eyeMaskDebugLog("Frame " + std::to_string(current_frame_num) +
+                                                                    ": mask entry " + std::to_string(det_idx) +
+                                                                    " has invalid matrix dimensions (" +
+                                                                    std::to_string(mask_info.rows) + "x" +
+                                                                    std::to_string(mask_info.cols) + "); skipping.");
+                                                    eye_mask_debug_draw_log_count++;
+                                                }
+                                                continue;
+                                            }
+                                            double cell_w = mask_info.roi_width / static_cast<double>(mask_info.cols);
+                                            double cell_h = mask_info.roi_height / static_cast<double>(mask_info.rows);
+                                            for (int eye = 0; eye < 2; ++eye) {
+                                                const auto& pixel_indices = mask_info.pixel_indices[eye];
+                                                bool has_pixels = !pixel_indices.empty();
+                                                if (!has_pixels) {
+                                                    if (kEyeMaskDebugLoggingEnabled && eye_mask_debug_draw_log_count < 80) {
+                                                        eyeMaskDebugLog("Frame " + std::to_string(current_frame_num) +
+                                                                        ": mask entry " + std::to_string(det_idx) +
+                                                                        " eye " + std::to_string(eye) +
+                                                                        " has no non-zero pixels.");
+                                                        eye_mask_debug_draw_log_count++;
+                                                    }
+                                                } else if (kEyeMaskDebugLoggingEnabled && eye_mask_debug_draw_log_count < 80) {
+                                                    eyeMaskDebugLog("Frame " + std::to_string(current_frame_num) +
+                                                                    ": drawing eye mask det " + std::to_string(det_idx) +
+                                                                    " eye=" + std::to_string(eye) +
+                                                                    " offset=(" + std::to_string(mask_info.offset_x) + ", " +
+                                                                    std::to_string(mask_info.offset_y) + ") size=(" +
+                                                                    std::to_string(mask_info.roi_width) + ", " +
+                                                                    std::to_string(mask_info.roi_height) + ").");
+                                                    eye_mask_debug_draw_log_count++;
+                                                }
+
+                                                std::string base_id = (eye == 0)
+                                                                          ? "##eye_mask_left_" + std::to_string(det_idx)
+                                                                          : "##eye_mask_right_" + std::to_string(det_idx);
+                                                ImVec4 base_color = (eye == 0)
+                                                                        ? ImVec4(0.2f, 0.6f, 1.0f, 0.35f)
+                                                                        : ImVec4(1.0f, 0.3f, 0.6f, 0.35f);
+
+                                                std::vector<double> xs;
+                                                std::vector<double> ys;
+                                                if (has_pixels) {
+                                                    xs.reserve(pixel_indices.size());
+                                                    ys.reserve(pixel_indices.size());
+                                                    for (uint16_t linear : pixel_indices) {
+                                                        uint16_t row = linear / static_cast<uint16_t>(mask_info.cols);
+                                                        uint16_t col = linear % static_cast<uint16_t>(mask_info.cols);
+                                                        double px = mask_info.offset_x +
+                                                                    (static_cast<double>(col) + 0.5) * cell_w;
+                                                        double py = mask_info.offset_y +
+                                                                    (static_cast<double>(row) + 0.5) * cell_h;
+                                                        xs.push_back(px);
+                                                        ys.push_back(scene_height_f - py);
+                                                    }
+                                                    if (!xs.empty()) {
+                                                        ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 3.0f, base_color, 1.0f,
+                                                                                    base_color);
+                                                        ImPlot::PlotScatter((base_id + "_pts").c_str(), xs.data(), ys.data(),
+                                                                            static_cast<int>(xs.size()));
+                                                    }
+                                                }
+
+                                                if (mask_info.has_feret_axes && cell_w > 0.0 && cell_h > 0.0) {
+                                                    auto roiToWorld = [&](float roi_x, float roi_y) -> std::pair<double, double> {
+                                                        double px = mask_info.offset_x +
+                                                                    static_cast<double>(roi_x) * cell_w;
+                                                        double py = mask_info.offset_y +
+                                                                    static_cast<double>(roi_y) * cell_h;
+                                                        return {px, py};
+                                                    };
+                                                    auto worldToScene = [&](double world_x, double world_y) -> std::pair<double, double> {
+                                                        return {world_x, scene_height_f - world_y};
+                                                    };
+                                                    auto roiToScene = [&](float roi_x, float roi_y) -> std::pair<double, double> {
+                                                        auto world = roiToWorld(roi_x, roi_y);
+                                                        return worldToScene(world.first, world.second);
+                                                    };
+                                                    auto draw_axis =
+                                                        [&](const ZarrDetectionLoader::FrameDetections::EyeMask::AxisSegment& axis,
+                                                            const std::string& label, const ImVec4& color, float thickness) {
+                                                            if (!axis.valid) {
+                                                                return;
+                                                            }
+                                                            auto p0 = roiToScene(axis.x0, axis.y0);
+                                                            auto p1 = roiToScene(axis.x1, axis.y1);
+                                                            double x_vals[2] = {p0.first, p1.first};
+                                                            double y_vals[2] = {p0.second, p1.second};
+                                                            ImPlot::SetNextLineStyle(color, thickness);
+                                                            ImPlot::PlotLine(label.c_str(), x_vals, y_vals, 2);
+                                                        };
+
+                                                    ImVec4 major_color = base_color;
+                                                    major_color.w = 0.9f;
+                                                        ImVec4 minor_color = base_color;
+                                                        minor_color.x = std::min(1.0f, minor_color.x + 0.15f);
+                                                        minor_color.y = std::min(1.0f, minor_color.y + 0.15f);
+                                                        minor_color.z = std::min(1.0f, minor_color.z + 0.15f);
+                                                        minor_color.w = 0.75f;
+
+                                                    draw_axis(mask_info.feret_major[eye],
+                                                              base_id + "_feret_major",
+                                                              major_color,
+                                                              2.5f);
+                                                    draw_axis(mask_info.feret_minor[eye],
+                                                              base_id + "_feret_minor",
+                                                              minor_color,
+                                                              1.8f);
+
+                                                    const auto& minor_axis = mask_info.feret_minor[eye];
+                                                    if (minor_axis.valid) {
+                                                        auto endpoint0_world = roiToWorld(minor_axis.x0, minor_axis.y0);
+                                                        auto endpoint1_world = roiToWorld(minor_axis.x1, minor_axis.y1);
+                                                        auto center_world = roiToWorld(
+                                                            0.5f * (minor_axis.x0 + minor_axis.x1),
+                                                            0.5f * (minor_axis.y0 + minor_axis.y1));
+
+                                                        double det_center_x =
+                                                            0.5 * (mask_details.boxes[det_idx][0] + mask_details.boxes[det_idx][2]);
+                                                        double det_center_y =
+                                                            0.5 * (mask_details.boxes[det_idx][1] + mask_details.boxes[det_idx][3]);
+
+                                                        auto squaredDistance = [](double ax, double ay, double bx, double by) -> double {
+                                                            double dx = ax - bx;
+                                                            double dy = ay - by;
+                                                            return dx * dx + dy * dy;
+                                                        };
+
+                                                        double dist0 = squaredDistance(endpoint0_world.first, endpoint0_world.second,
+                                                                                       det_center_x, det_center_y);
+                                                        double dist1 = squaredDistance(endpoint1_world.first, endpoint1_world.second,
+                                                                                       det_center_x, det_center_y);
+                                                        auto outward_endpoint = (dist0 >= dist1) ? endpoint0_world : endpoint1_world;
+
+                                                        ImVec2 dir_world = ImVec2(
+                                                            static_cast<float>(outward_endpoint.first - center_world.first),
+                                                            static_cast<float>(outward_endpoint.second - center_world.second));
+                                                        float dir_len = std::sqrt(dir_world.x * dir_world.x +
+                                                                                  dir_world.y * dir_world.y);
+                                                        if (dir_len > 1e-3f) {
+                                                            dir_world.x /= dir_len;
+                                                            dir_world.y /= dir_len;
+
+                                                            float roi_span = std::max(mask_info.roi_width, mask_info.roi_height);
+                                                            float beam_length = std::max(roi_span * 3.5f, 80.0f);
+                                                            float beam_width = std::max(roi_span * 0.75f, 25.0f);
+
+                                                            ImVec2 base_center_world = ImVec2(
+                                                                static_cast<float>(center_world.first - dir_world.x * (roi_span * 0.15f)),
+                                                                static_cast<float>(center_world.second - dir_world.y * (roi_span * 0.15f)));
+                                                            ImVec2 apex_world = ImVec2(
+                                                                base_center_world.x + dir_world.x * beam_length,
+                                                                base_center_world.y + dir_world.y * beam_length);
+
+                                                            ImVec2 perp_world = ImVec2(-dir_world.y, dir_world.x);
+                                                            float perp_len = std::sqrt(perp_world.x * perp_world.x +
+                                                                                        perp_world.y * perp_world.y);
+                                                            if (perp_len > 1e-3f) {
+                                                                perp_world.x /= perp_len;
+                                                                perp_world.y /= perp_len;
+                                                            }
+
+                                                            ImVec2 left_world = ImVec2(
+                                                                base_center_world.x + perp_world.x * (beam_width * 0.5f),
+                                                                base_center_world.y + perp_world.y * (beam_width * 0.5f));
+                                                            ImVec2 right_world = ImVec2(
+                                                                base_center_world.x - perp_world.x * (beam_width * 0.5f),
+                                                                base_center_world.y - perp_world.y * (beam_width * 0.5f));
+
+                                                            auto left_scene_pair = worldToScene(left_world.x, left_world.y);
+                                                            auto right_scene_pair = worldToScene(right_world.x, right_world.y);
+                                                            auto apex_scene_pair = worldToScene(apex_world.x, apex_world.y);
+
+                                                            ImVec2 tri_points[3];
+                                                            tri_points[0] = ImPlot::PlotToPixels(
+                                                                ImPlotPoint(left_scene_pair.first, left_scene_pair.second));
+                                                            tri_points[1] = ImPlot::PlotToPixels(
+                                                                ImPlotPoint(right_scene_pair.first, right_scene_pair.second));
+                                                            tri_points[2] = ImPlot::PlotToPixels(
+                                                                ImPlotPoint(apex_scene_pair.first, apex_scene_pair.second));
+
+                                                            ImVec4 beam_color = base_color;
+                                                            beam_color.w = 0.16f;
+
+                                                            ImDrawList* beam_draw_list = ImPlot::GetPlotDrawList();
+                                                            beam_draw_list->AddConvexPolyFilled(
+                                                                tri_points,
+                                                                3,
+                                                                ImGui::ColorConvertFloat4ToU32(beam_color));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else if (kEyeMaskDebugLoggingEnabled) {
+                                    eyeMaskDebugLog("Frame " + std::to_string(current_frame_num) +
+                                                    ": eye mask data unavailable in detection results.");
                                 }
                             }
                         }
-                        
+
                         // === ADD INTERPOLATION STATUS OVERLAY === //
                         if ((zarr_loaded && zarr_loader.hasInterpolation()) || 
                             (h5_loaded && h5_data.is_analysis_file)) {
