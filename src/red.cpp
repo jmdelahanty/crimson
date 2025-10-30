@@ -15,8 +15,12 @@
 #include "h5_loader.h"
 #include <ImGuiFileDialog.h>
 #include <algorithm>
+#include <deque>
 #include <cmath>
 #include <chrono>
+#include <limits>
+#include <sstream>
+#include <unordered_map>
 #include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
@@ -64,6 +68,77 @@ struct PlaybackState {
     std::chrono::steady_clock::time_point last_wall_time_playspeed =
         std::chrono::steady_clock::now();
 };
+
+struct EyeOrientationSmoother {
+    struct History {
+        std::deque<double> angles;
+        double last_unwrapped = std::numeric_limits<double>::quiet_NaN();
+    };
+
+    static constexpr size_t kMaxSamples = 60;
+
+    void resetIfRunChanged(const std::string& run_id) {
+        if (run_id != current_run_) {
+            histories_.clear();
+            current_run_ = run_id;
+        }
+    }
+
+    ImVec2 smoothDirection(int32_t roi_index, int eye, const ImVec2& raw_dir) {
+        if (roi_index < 0 || eye < 0 || eye >= 2) {
+            return raw_dir;
+        }
+        double raw_angle = std::atan2(raw_dir.y, raw_dir.x);
+        if (!std::isfinite(raw_angle)) {
+            return raw_dir;
+        }
+
+        auto& history = histories_[roi_index][eye];
+
+        double unwrapped = raw_angle;
+        if (std::isfinite(history.last_unwrapped)) {
+            while (unwrapped - history.last_unwrapped > M_PI) {
+                unwrapped -= 2.0 * M_PI;
+            }
+            while (unwrapped - history.last_unwrapped < -M_PI) {
+                unwrapped += 2.0 * M_PI;
+            }
+        }
+        history.last_unwrapped = unwrapped;
+
+        history.angles.push_back(unwrapped);
+        if (history.angles.size() > kMaxSamples) {
+            history.angles.pop_front();
+        }
+
+        std::vector<double> sorted(history.angles.begin(), history.angles.end());
+        std::sort(sorted.begin(), sorted.end());
+        double median = sorted[sorted.size() / 2];
+        if ((sorted.size() % 2) == 0 && sorted.size() >= 2) {
+            median = 0.5 * (sorted[sorted.size() / 2 - 1] + sorted[sorted.size() / 2]);
+        }
+
+        double wrapped = std::fmod(median, 2.0 * M_PI);
+        if (wrapped <= -M_PI) wrapped += 2.0 * M_PI;
+        if (wrapped > M_PI) wrapped -= 2.0 * M_PI;
+
+        ImVec2 smoothed(static_cast<float>(std::cos(wrapped)),
+                        static_cast<float>(std::sin(wrapped)));
+        float len = std::sqrt(smoothed.x * smoothed.x + smoothed.y * smoothed.y);
+        if (len > 1e-6f) {
+            smoothed.x /= len;
+            smoothed.y /= len;
+            return smoothed;
+        }
+        return raw_dir;
+    }
+
+private:
+    std::unordered_map<int32_t, std::array<History, 2>> histories_;
+    std::string current_run_;
+};
+
+static EyeOrientationSmoother g_eye_orientation_smoother;
 
 void seek_all_cameras(render_scene *scene, int frame_number, double video_fps,
                       PlaybackState &state, bool seek_accurate) {
@@ -170,8 +245,8 @@ int main(int, char **) {
         heading_debug_message_count++;
     };
 
-    constexpr bool kEyeMaskDebugLoggingEnabled = true;
-    constexpr int kEyeMaskDebugMaxMessages = 200;
+    constexpr bool kEyeMaskDebugLoggingEnabled = false;
+    constexpr int kEyeMaskDebugMaxMessages = 100;
     int eye_mask_debug_message_count = 0;
     int eye_mask_debug_entry_log_count = 0;
     int eye_mask_debug_draw_log_count = 0;
@@ -1496,6 +1571,9 @@ int main(int, char **) {
                             }
 
                             if (can_draw_eye_masks) {
+                                g_eye_orientation_smoother.resetIfRunChanged(
+                                    zarr_loader.getEyeMaskRunName() + "|" +
+                                    zarr_loader.getEyeAngleRunName());
                                 ZarrDetectionLoader::FrameDetections mask_details =
                                     zarr_loader.getRawDetections(
                                         current_frame_num,
@@ -1676,6 +1754,16 @@ int main(int, char **) {
                                                         auto center_world = roiToWorld(
                                                             0.5f * (minor_axis.x0 + minor_axis.x1),
                                                             0.5f * (minor_axis.y0 + minor_axis.y1));
+                                                        if (mask_info.has_eye_angles && mask_info.feret_angle_valid[eye]) {
+                                                            auto center_scene = worldToScene(center_world.first, center_world.second);
+                                                            char angle_label[32];
+                                                            std::snprintf(angle_label, sizeof(angle_label), "%+.1f°",
+                                                                          mask_info.feret_minor_angle_deg[eye]);
+                                                            ImPlot::PlotText(angle_label,
+                                                                             center_scene.first,
+                                                                             center_scene.second,
+                                                                             ImVec2(0.0f, -12.0f));
+                                                        }
 
                                                         double det_center_x =
                                                             0.5 * (mask_details.boxes[det_idx][0] + mask_details.boxes[det_idx][2]);
@@ -1703,16 +1791,27 @@ int main(int, char **) {
                                                             dir_world.x /= dir_len;
                                                             dir_world.y /= dir_len;
 
+                                                            ImVec2 smoothed_dir =
+                                                                g_eye_orientation_smoother.smoothDirection(
+                                                                    mask_info.roi_index, eye, dir_world);
+                                                            float smooth_len = std::sqrt(smoothed_dir.x * smoothed_dir.x +
+                                                                                          smoothed_dir.y * smoothed_dir.y);
+                                                            if (smooth_len > 1e-3f) {
+                                                                smoothed_dir.x /= smooth_len;
+                                                                smoothed_dir.y /= smooth_len;
+                                                                dir_world = smoothed_dir;
+                                                            }
+
                                                             float roi_span = std::max(mask_info.roi_width, mask_info.roi_height);
                                                             float beam_length = std::max(roi_span * 3.5f, 80.0f);
                                                             float beam_width = std::max(roi_span * 0.75f, 25.0f);
 
-                                                            ImVec2 base_center_world = ImVec2(
+                                                            ImVec2 apex_world = ImVec2(
                                                                 static_cast<float>(center_world.first - dir_world.x * (roi_span * 0.15f)),
                                                                 static_cast<float>(center_world.second - dir_world.y * (roi_span * 0.15f)));
-                                                            ImVec2 apex_world = ImVec2(
-                                                                base_center_world.x + dir_world.x * beam_length,
-                                                                base_center_world.y + dir_world.y * beam_length);
+                                                            ImVec2 base_center_world = ImVec2(
+                                                                apex_world.x + dir_world.x * beam_length,
+                                                                apex_world.y + dir_world.y * beam_length);
 
                                                             ImVec2 perp_world = ImVec2(-dir_world.y, dir_world.x);
                                                             float perp_len = std::sqrt(perp_world.x * perp_world.x +
@@ -1759,6 +1858,35 @@ int main(int, char **) {
                                     eyeMaskDebugLog("Frame " + std::to_string(current_frame_num) +
                                                     ": eye mask data unavailable in detection results.");
                                 }
+                            }
+                        }
+
+                        if (zarr_loaded && zarr_loader.hasStimulusEvents()) {
+                            auto frame_events = zarr_loader.getStimulusEventsForFrame(current_frame_num);
+                            if (!frame_events.empty()) {
+                                std::string events_text;
+                                for (size_t i = 0; i < frame_events.size(); ++i) {
+                                    if (i > 0) {
+                                        events_text += "\n";
+                                    }
+                                    events_text += frame_events[i];
+                                }
+
+                                ImVec2 plot_pos = ImPlot::GetPlotPos();
+                                ImDrawList* draw_list = ImPlot::GetPlotDrawList();
+                                ImVec2 overlay_origin = ImVec2(plot_pos.x + 12.0f, plot_pos.y + 12.0f);
+                                ImVec2 text_size = ImGui::CalcTextSize(events_text.c_str(), nullptr, false, -1.0f);
+                                ImVec2 box_min = overlay_origin;
+                                ImVec2 box_max = ImVec2(box_min.x + text_size.x + 12.0f,
+                                                        box_min.y + text_size.y + 8.0f);
+
+                                draw_list->AddRectFilled(box_min, box_max,
+                                                         IM_COL32(0, 0, 0, 180), 4.0f);
+                                draw_list->AddRect(box_min, box_max,
+                                                   IM_COL32(80, 180, 255, 220), 4.0f);
+                                draw_list->AddText(ImVec2(box_min.x + 6.0f, box_min.y + 4.0f),
+                                                   IM_COL32(200, 220, 255, 255),
+                                                   events_text.c_str());
                             }
                         }
 
@@ -2260,6 +2388,149 @@ int main(int, char **) {
                             ImGui::Text("Subject Metadata:");
                             for (const auto& [key, value] : h5_data.session_info.subject_metadata) {
                                 ImGui::Text("  %s: %s", key.c_str(), value.c_str());
+                            }
+                        }
+                    }
+                    ImGui::End();
+                }
+
+
+                // Stimulus Event Timeline Window
+                if (zarr_loaded) {
+                    if (ImGui::Begin("Stimulus Event Timeline")) {
+                        auto timeline = zarr_loader.getStimulusEventTimeline();
+                        if (timeline.empty()) {
+                            ImGui::TextUnformatted("No stimulus events found.");
+                        } else {
+                            static int selected_event_idx = -1;
+                            if (selected_event_idx >= static_cast<int>(timeline.size())) {
+                                selected_event_idx = -1;
+                            }
+
+                            std::vector<double> x_values(timeline.size());
+                            std::vector<double> y_values(timeline.size());
+                            for (size_t i = 0; i < timeline.size(); ++i) {
+                                const auto& evt = timeline[i];
+                                int32_t frame = std::max(evt.stimulus_frame_num, 0);
+                                x_values[i] = static_cast<double>(frame);
+                                y_values[i] = -0.4 + 0.2 * static_cast<double>(i % 5);
+                            }
+
+                            size_t timeline_signature = timeline.size();
+                            if (!timeline.empty()) {
+                                timeline_signature = timeline_signature * 1315423911u +
+                                                     static_cast<size_t>(timeline.front().stimulus_frame_num);
+                                timeline_signature = timeline_signature * 2654435761u +
+                                                     static_cast<size_t>(timeline.back().stimulus_frame_num);
+                            }
+                            static size_t cached_timeline_signature = 0;
+
+                            double default_max_frame =
+                                static_cast<double>(std::max<size_t>(1, zarr_loader.getTotalFrames()));
+                            if (!x_values.empty()) {
+                                default_max_frame = std::max(default_max_frame, x_values.back() + 1.0);
+                            }
+
+                            ImVec2 plot_size = ImVec2(ImGui::GetContentRegionAvail().x, 170.0f);
+                            if (ImPlot::BeginPlot("##stimulus_timeline_plot", plot_size,
+                                                  ImPlotFlags_NoLegend | ImPlotFlags_NoMouseText)) {
+                                ImPlot::SetupAxes("Frame", nullptr, ImPlotAxisFlags_NoHighlight,
+                                                  ImPlotAxisFlags_NoDecorations);
+                                ImPlot::SetupAxis(ImAxis_Y1, nullptr,
+                                                  ImPlotAxisFlags_NoDecorations | ImPlotAxisFlags_Lock);
+                                ImPlot::SetupAxisLimits(ImAxis_Y1, -1.0, 1.0, ImGuiCond_Always);
+                                if (timeline_signature != cached_timeline_signature) {
+                                    ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, default_max_frame, ImGuiCond_Always);
+                                    cached_timeline_signature = timeline_signature;
+                                }
+
+                                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 6.0f,
+                                                           ImVec4(0.2f, 0.6f, 1.0f, 0.9f), 1.5f,
+                                                           ImVec4(0, 0, 0, 0));
+                                ImPlot::PlotScatter("Stimulus Events", x_values.data(), y_values.data(),
+                                                    static_cast<int>(x_values.size()));
+
+                                double current_line_x[2] = {static_cast<double>(current_frame_num),
+                                                            static_cast<double>(current_frame_num)};
+                                double current_line_y[2] = {-1.0, 1.0};
+                                ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), 2.0f);
+                                ImPlot::PlotLine("Current Frame", current_line_x, current_line_y, 2);
+
+                                int hovered_event_idx = -1;
+                                constexpr float kSelectionRadiusPx = 12.0f;
+                                if (ImPlot::IsPlotHovered()) {
+                                    ImVec2 mouse_pos = ImGui::GetIO().MousePos;
+                                    float best_distance = kSelectionRadiusPx;
+                                    for (size_t i = 0; i < x_values.size(); ++i) {
+                                        ImVec2 event_pixels =
+                                            ImPlot::PlotToPixels(ImPlotPoint(x_values[i], y_values[i]));
+                                        float dx = mouse_pos.x - event_pixels.x;
+                                        float dy = mouse_pos.y - event_pixels.y;
+                                        float distance = std::sqrt(dx * dx + dy * dy);
+                                        if (distance < best_distance) {
+                                            best_distance = distance;
+                                            hovered_event_idx = static_cast<int>(i);
+                                        }
+                                    }
+
+                                    if (hovered_event_idx != -1 &&
+                                        ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                                        selected_event_idx = hovered_event_idx;
+                                        int target_frame =
+                                            timeline[hovered_event_idx].stimulus_frame_num;
+                                        if (target_frame >= 0) {
+                                            ps.slider_frame_number = target_frame;
+                                            seek_all_cameras(scene, target_frame, video_fps, ps, false);
+                                        }
+                                    }
+                                }
+
+                                if (hovered_event_idx != -1) {
+                                    ImGui::SetTooltip("Frame %d\n%s",
+                                                      timeline[hovered_event_idx].stimulus_frame_num,
+                                                      timeline[hovered_event_idx].label.c_str());
+                                }
+
+                                if (selected_event_idx >= 0 &&
+                                    selected_event_idx < static_cast<int>(x_values.size())) {
+                                    double selected_x = x_values[selected_event_idx];
+                                    double selected_y = y_values[selected_event_idx];
+                                    ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 9.0f,
+                                                               ImVec4(1.0f, 0.5f, 0.2f, 1.0f), 2.0f,
+                                                               ImVec4(0, 0, 0, 0));
+                                    ImPlot::PlotScatter("Selected Event", &selected_x, &selected_y, 1);
+                                }
+                                ImPlot::EndPlot();
+                            }
+
+                            ImGui::SeparatorText("Event List");
+                            ImGui::BeginChild("##stimulus_event_list", ImVec2(0, 200), true);
+                            for (size_t i = 0; i < timeline.size(); ++i) {
+                                const auto& evt = timeline[i];
+                                std::ostringstream row_label;
+                                row_label << "Frame " << evt.stimulus_frame_num << "  " << evt.label;
+                                ImGui::PushID(static_cast<int>(i));
+                                bool is_selected = (selected_event_idx == static_cast<int>(i));
+                                if (ImGui::Selectable(row_label.str().c_str(), is_selected)) {
+                                    selected_event_idx = static_cast<int>(i);
+                                    int target_frame = evt.stimulus_frame_num;
+                                    if (target_frame >= 0) {
+                                        ps.slider_frame_number = target_frame;
+                                        seek_all_cameras(scene, target_frame, video_fps, ps, false);
+                                    }
+                                }
+                                ImGui::PopID();
+                            }
+                            ImGui::EndChild();
+
+                            if (selected_event_idx >= 0 &&
+                                selected_event_idx < static_cast<int>(timeline.size())) {
+                                const auto& evt = timeline[selected_event_idx];
+                                ImGui::Separator();
+                                ImGui::Text("Selected Event:");
+                                ImGui::BulletText("Frame: %d", evt.stimulus_frame_num);
+                                ImGui::BulletText("Type ID: %d", evt.event_type_id);
+                                ImGui::BulletText("%s", evt.label.c_str());
                             }
                         }
                     }

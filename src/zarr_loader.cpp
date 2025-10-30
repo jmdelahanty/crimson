@@ -48,15 +48,25 @@ std::optional<json> readAttrsAny(const ts::kvstore::KvStore& store,
         } catch (...) {
             // Ignore and fall back to v2 attrs.
         }
+    } else {
+        if (!json_result.ok()) {
+            std::cout << "  [AttrProbe] Read error for " << json_key << ": "
+                      << json_result.status() << std::endl;
+        } else {
+            std::cout << "  [AttrProbe] No value at " << json_key << std::endl;
+        }
     }
 
     auto zattrs_key = appendPath(path, ".zattrs");
     auto attrs_result = ts::kvstore::Read(store, zattrs_key).result();
     if (!attrs_result.ok()) {
+        std::cout << "  [AttrProbe] Read error for " << zattrs_key << ": "
+                  << attrs_result.status() << std::endl;
         return std::nullopt;
     }
     const auto& read_result = attrs_result.value();
     if (!read_result.has_value()) {
+        std::cout << "  [AttrProbe] No value at " << zattrs_key << std::endl;
         return std::nullopt;
     }
     std::string payload;
@@ -120,6 +130,46 @@ bool arrayExists(const ts::kvstore::KvStore& store, const std::string& path) {
     }
     auto result = ts::kvstore::Read(store, appendPath(path, ".zarray")).result();
     return result.ok() && result.value().has_value();
+}
+
+#pragma pack(push, 1)
+struct StimulusEventRowV3 {
+    int64_t timestamp_ns_epoch = 0;
+    int64_t timestamp_ns_session = 0;
+    int32_t event_type_id = 0;
+    int32_t current_step_index = 0;
+    uint64_t stimulus_frame_num = 0;
+    uint64_t camera_frame_id = 0;
+    char name_or_context[256];
+    int32_t stimulus_mode_id = 0;
+    char details_json[1024];
+};
+#pragma pack(pop)
+
+std::string stringFromFixedBuffer(const char* buffer, size_t size) {
+    const char* end = static_cast<const char*>(
+        std::memchr(buffer, '\0', size));
+    if (!end) {
+        return std::string(buffer, buffer + size);
+    }
+    return std::string(buffer, end);
+}
+
+int32_t clampToInt32(int64_t value) {
+    if (value < std::numeric_limits<int32_t>::min()) {
+        return std::numeric_limits<int32_t>::min();
+    }
+    if (value > std::numeric_limits<int32_t>::max()) {
+        return std::numeric_limits<int32_t>::max();
+    }
+    return static_cast<int32_t>(value);
+}
+
+int32_t clampUint64ToInt32(uint64_t value) {
+    if (value > static_cast<uint64_t>(std::numeric_limits<int32_t>::max())) {
+        return -1;
+    }
+    return static_cast<int32_t>(value);
 }
 
 std::vector<std::string> collect_runs_fs(const std::string& root_path,
@@ -662,9 +712,40 @@ bool ZarrDetectionLoader::readBoolArray(const ts::kvstore::KvStore& store,
     }
 }
 
+bool ZarrDetectionLoader::readStringArray(const ts::kvstore::KvStore& store,
+                                         const std::string& path,
+                                         std::vector<std::string>& out) {
+    try {
+        auto open_result = openArrayAny<std::string, 1>(store, path, context_);
+        if (!open_result.ok()) {
+            return false;
+        }
+        auto array_result = ts::Read(open_result.value()).result();
+        if (!array_result.ok()) {
+            return false;
+        }
+
+        auto array = array_result.value();
+        if (array.rank() != 1) {
+            return false;
+        }
+
+        size_t length = static_cast<size_t>(array.shape()[0]);
+        out.resize(length);
+        for (size_t i = 0; i < length; ++i) {
+            out[i] = array(static_cast<ts::Index>(i));
+        }
+        return true;
+
+    } catch (const std::exception& e) {
+        std::cerr << "Error reading string array at " << path << ": " << e.what() << std::endl;
+        return false;
+    }
+}
+
 bool ZarrDetectionLoader::loadPaletteInterpolationRun(const ts::kvstore::KvStore& store,
-                                                      const std::string& run_name,
-                                                      const std::string& subgroup) {
+                                                       const std::string& run_name,
+                                                       const std::string& subgroup) {
     try {
         data_.latest_interpolation = InterpolationRunData();
         auto& interp = data_.latest_interpolation;
@@ -1377,6 +1458,13 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     data_.eye_mask_feret_axes_minor.clear();
     data_.eye_masks_have_feret_axes = false;
     data_.has_eye_masks = false;
+    data_.eye_angle_run_name.clear();
+    data_.eye_angle_frame_indices.clear();
+    data_.eye_angle_valid_mask.clear();
+    data_.eye_angle_left_deg.clear();
+    data_.eye_angle_right_deg.clear();
+    data_.eye_angle_indices_by_frame.clear();
+    data_.has_eye_angles = false;
     data_.eye_masks_loaded = false;
     data_.eye_masks_run_name.clear();
     data_.eye_masks_store = ts::TensorStore<uint8_t, 4>();
@@ -1921,6 +2009,9 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     if (!data_.has_eye_masks) {
         loadRefinedEyeMaskData(store, roi_count);
     }
+    if (!data_.has_eye_angles) {
+        loadEyeAngleData(store, roi_count);
+    }
 
     return data_.has_heading_data;
 }
@@ -2111,6 +2202,128 @@ bool ZarrDetectionLoader::loadRefinedEyeMaskData(const ts::kvstore::KvStore& sto
     return true;
 }
 
+bool ZarrDetectionLoader::loadEyeAngleData(const ts::kvstore::KvStore& store,
+                                           size_t roi_count) {
+    data_.eye_angle_run_name.clear();
+    data_.eye_angle_frame_indices.clear();
+    data_.eye_angle_valid_mask.clear();
+    data_.eye_angle_left_deg.clear();
+    data_.eye_angle_right_deg.clear();
+    data_.eye_angle_indices_by_frame.clear();
+    data_.has_eye_angles = false;
+
+    std::string latest_run;
+    if (auto group_attrs = readAttrsAny(store, "analysis/eye_angle_runs")) {
+        latest_run = extractLatestRunName(*group_attrs);
+    }
+
+    if (latest_run.empty() && !root_path_.empty()) {
+        auto fs_candidates = collect_runs_fs(
+            root_path_, "analysis/eye_angle_runs",
+            {"angles/roi/left_feret_minor_signed_deg"});
+        if (!fs_candidates.empty()) {
+            latest_run = fs_candidates.back();
+        }
+    }
+
+    if (latest_run.empty()) {
+        return false;
+    }
+
+    std::string base = "analysis/eye_angle_runs/" + latest_run + "/angles/roi/";
+
+    std::vector<float> left_angles;
+    if (!readFloatArray(store, base + "left_feret_minor_signed_deg", left_angles)) {
+        std::cout << "[EYE_ANGLE_WARNING] Failed to read left_feret_minor_signed_deg for run '"
+                  << latest_run << "'" << std::endl;
+        return false;
+    }
+    std::vector<float> right_angles;
+    if (!readFloatArray(store, base + "right_feret_minor_signed_deg", right_angles)) {
+        std::cout << "[EYE_ANGLE_WARNING] Failed to read right_feret_minor_signed_deg for run '"
+                  << latest_run << "'" << std::endl;
+        return false;
+    }
+
+    if (left_angles.empty() || right_angles.empty()) {
+        return false;
+    }
+
+    std::vector<int32_t> frame_indices;
+    readInt32Array(store, base + "frame_indices", frame_indices);
+
+    std::vector<uint8_t> valid_mask;
+    if (!readBoolArray(store, base + "valid_mask", valid_mask)) {
+        valid_mask.assign(left_angles.size(), 1);
+    }
+
+    size_t count = std::min(left_angles.size(), right_angles.size());
+    if (!frame_indices.empty()) {
+        count = std::min(count, frame_indices.size());
+    }
+    if (!valid_mask.empty()) {
+        count = std::min(count, valid_mask.size());
+    }
+
+    if (count == 0) {
+        return false;
+    }
+
+    left_angles.resize(count);
+    right_angles.resize(count);
+
+    if (frame_indices.empty()) {
+        frame_indices.assign(count, -1);
+    } else if (frame_indices.size() != count) {
+        frame_indices.resize(count, -1);
+    }
+
+    if (valid_mask.empty()) {
+        valid_mask.assign(count, 1);
+    } else if (valid_mask.size() != count) {
+        valid_mask.resize(count, 1);
+    }
+
+    data_.eye_angle_run_name = latest_run;
+    data_.eye_angle_left_deg = std::move(left_angles);
+    data_.eye_angle_right_deg = std::move(right_angles);
+    data_.eye_angle_frame_indices = std::move(frame_indices);
+    data_.eye_angle_valid_mask = std::move(valid_mask);
+
+    size_t max_frame_index = 0;
+    for (auto frame : data_.eye_angle_frame_indices) {
+        if (frame >= 0) {
+            max_frame_index = std::max(max_frame_index,
+                                       static_cast<size_t>(frame));
+        }
+    }
+    size_t desired_size = std::max({max_frame_index + 1,
+                                    data_.total_frames,
+                                    roi_count});
+    data_.eye_angle_indices_by_frame.clear();
+    data_.eye_angle_indices_by_frame.resize(desired_size);
+    for (size_t i = 0; i < data_.eye_angle_frame_indices.size(); ++i) {
+        int32_t frame = data_.eye_angle_frame_indices[i];
+        if (frame < 0) continue;
+        size_t frame_index = static_cast<size_t>(frame);
+        if (frame_index >= data_.eye_angle_indices_by_frame.size()) {
+            data_.eye_angle_indices_by_frame.resize(frame_index + 1);
+        }
+        data_.eye_angle_indices_by_frame[frame_index].push_back(i);
+    }
+
+    data_.has_eye_angles = true;
+    std::cout << "  Eye angle run '" << latest_run << "' loaded ("
+              << data_.eye_angle_left_deg.size()
+              << " ROI entries)" << std::endl;
+    if (roi_count > 0 && data_.eye_angle_left_deg.size() != roi_count) {
+        std::cout << "    [EYE_ANGLE_WARNING] ROI count mismatch: angles="
+                  << data_.eye_angle_left_deg.size()
+                  << ", expected " << roi_count << std::endl;
+    }
+    return true;
+}
+
 const ZarrDetectionData::EyeMaskChunkCacheEntry*
 ZarrDetectionLoader::findEyeMaskChunk(size_t chunk_id) const {
     for (auto& entry : data_.mask_chunk_cache) {
@@ -2270,6 +2483,12 @@ bool ZarrDetectionLoader::populateEyeMaskEntry(
     out_mask.cols = static_cast<int>(data_.eye_mask_width);
     out_mask.valid = false;
     out_mask.has_feret_axes = false;
+    const float angle_nan = std::numeric_limits<float>::quiet_NaN();
+    out_mask.feret_minor_angle_deg[0] = angle_nan;
+    out_mask.feret_minor_angle_deg[1] = angle_nan;
+    out_mask.feret_angle_valid = {0, 0};
+    out_mask.has_eye_angles = false;
+    out_mask.roi_index = static_cast<int32_t>(roi_index);
     for (size_t channel = 0; channel < 2; ++channel) {
         out_mask.pixel_indices[channel] =
             entry->pixel_indices[local_index][channel];
@@ -2330,15 +2549,31 @@ bool ZarrDetectionLoader::populateEyeMaskEntry(
 }
 
 bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& store) {
-    auto group_attrs = readAttrsAny(store, "analysis/stimulus_runs");
-    if (!group_attrs.has_value()) {
-        return false;
+    std::optional<std::string> latest_run_opt;
+    if (auto group_attrs = readAttrsAny(store, "analysis/stimulus_runs")) {
+        auto latest = extractLatestRunName(*group_attrs);
+        if (!latest.empty()) {
+            latest_run_opt = latest;
+        } else {
+            std::cout << "  [Stimulus] No 'latest' pointer in analysis/stimulus_runs attrs" << std::endl;
+        }
+    } else {
+        std::cout << "  [Stimulus] analysis/stimulus_runs attrs missing" << std::endl;
     }
 
-    std::string latest_run = extractLatestRunName(*group_attrs);
-    if (latest_run.empty()) {
+    if (!latest_run_opt.has_value() && !root_path_.empty()) {
+        auto candidates = collect_runs_fs(root_path_, "analysis/stimulus_runs", {});
+        if (!candidates.empty()) {
+            latest_run_opt = candidates.back();
+            std::cout << "  [Stimulus] Falling back to filesystem run '" << *latest_run_opt
+                      << "'" << std::endl;
+        }
+    }
+
+    if (!latest_run_opt.has_value()) {
         return false;
     }
+    const std::string& latest_run = *latest_run_opt;
 
     std::string run_base = "analysis/stimulus_runs/" + latest_run + "/";
     std::cout << "  Loading stimulus alignment run '" << latest_run << "'" << std::endl;
@@ -2454,7 +2689,268 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
     data_.has_interpolation = true;
     std::cout << "  Stimulus alignment '" << latest_run
               << "' loaded with frame mask for " << frame_count << " frames" << std::endl;
+
+    loadStimulusEventEnums(store);
+    if (!loadStimulusEventsForRun(store, run_base)) {
+        std::cout << "  Stimulus run '" << latest_run
+                  << "' does not contain events metadata." << std::endl;
+    }
     return true;
+}
+
+void ZarrDetectionLoader::loadStimulusEventEnums(const ts::kvstore::KvStore& store) {
+    if (!data_.event_type_names.empty()) {
+        return;
+    }
+
+    const std::vector<std::pair<std::string, std::string>> candidates = {
+        {"analysis/enums/events/event_type_id", "analysis/enums/events/name"},
+        {"analysis/enums/events/event_type_id", "analysis/enums/events/value"},
+        {"analysis/enums/events/id", "analysis/enums/events/name"},
+        {"analysis/enums/events/id", "analysis/enums/events/value"},
+        {"analysis/enums/events/ids", "analysis/enums/events/names"}
+    };
+
+    for (const auto& candidate : candidates) {
+        std::vector<int32_t> ids32;
+        if (!readInt32Array(store, candidate.first, ids32)) {
+            std::vector<int64_t> ids64;
+            if (!readInt64Array(store, candidate.first, ids64)) {
+                continue;
+            }
+            ids32.resize(ids64.size());
+            for (size_t i = 0; i < ids64.size(); ++i) {
+                ids32[i] = static_cast<int32_t>(ids64[i]);
+            }
+        }
+
+        std::vector<std::string> names;
+        if (!readStringArray(store, candidate.second, names)) {
+            continue;
+        }
+
+        size_t count = std::min(ids32.size(), names.size());
+        if (count == 0) {
+            continue;
+        }
+
+        data_.event_type_names.clear();
+        for (size_t i = 0; i < count; ++i) {
+            data_.event_type_names[ids32[i]] = names[i];
+        }
+        std::cout << "  Loaded " << data_.event_type_names.size()
+                  << " stimulus event type labels" << std::endl;
+        return;
+    }
+}
+
+bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& store,
+                                                   const std::string& run_base) {
+    std::string events_base = run_base + "events/";
+    bool has_column_layout = arrayExists(store, events_base + "stimulus_frame_num");
+    bool has_structured_layout = arrayExists(store, run_base + "events");
+
+    if ((!has_column_layout || !has_structured_layout) && !root_path_.empty()) {
+        namespace fs = std::filesystem;
+        fs::path root(root_path_);
+        if (!has_column_layout) {
+            fs::path column_probe =
+                root / fs::path(events_base) / "stimulus_frame_num" / "zarr.json";
+            if (fs::exists(column_probe)) {
+                has_column_layout = true;
+            }
+        }
+        if (!has_structured_layout) {
+            fs::path structured_probe =
+                root / fs::path(run_base) / "events" / "zarr.json";
+            if (fs::exists(structured_probe)) {
+                has_structured_layout = true;
+            }
+        }
+    }
+
+    if (!has_column_layout && !has_structured_layout) {
+        std::cout << "  [Stimulus] No events dataset at " << events_base << " or "
+                  << run_base << "events" << std::endl;
+    } else if (has_column_layout && has_structured_layout) {
+        std::cout << "  [Stimulus] Events available in both column and structured layouts; "
+                     "using column arrays."
+                  << std::endl;
+    } else if (has_structured_layout) {
+        std::cout << "  [Stimulus] Events stored as structured array." << std::endl;
+    } else if (has_column_layout) {
+        std::cout << "  [Stimulus] Events stored as column arrays." << std::endl;
+    }
+
+    auto finalize_events = [&](size_t max_frame) {
+        size_t size_needed = std::max<size_t>(data_.total_frames,
+                                              max_frame + 1);
+        if (data_.stimulus_events_by_frame.size() < size_needed) {
+            data_.stimulus_events_by_frame.resize(size_needed);
+        }
+        for (auto& vec : data_.stimulus_events_by_frame) {
+            vec.clear();
+        }
+        for (size_t idx = 0; idx < data_.stimulus_events.size(); ++idx) {
+            int32_t frame = data_.stimulus_events[idx].stimulus_frame_num;
+            if (frame < 0) continue;
+            size_t frame_index = static_cast<size_t>(frame);
+            if (frame_index >= data_.stimulus_events_by_frame.size()) {
+                data_.stimulus_events_by_frame.resize(frame_index + 1);
+            }
+            data_.stimulus_events_by_frame[frame_index].push_back(idx);
+        }
+
+        data_.has_stimulus_events = !data_.stimulus_events.empty();
+        if (data_.has_stimulus_events) {
+            std::cout << "  Loaded " << data_.stimulus_events.size()
+                      << " stimulus events" << std::endl;
+        } else {
+            std::cout << "  No stimulus events found for run '" << run_base
+                      << "'" << std::endl;
+        }
+        return data_.has_stimulus_events;
+    };
+
+    if (has_column_layout) {
+        auto readInt32Or64 = [&](const std::string& path, std::vector<int32_t>& dest) -> bool {
+            if (readInt32Array(store, path, dest)) {
+                return true;
+            }
+            std::vector<int64_t> tmp64;
+            if (!readInt64Array(store, path, tmp64)) {
+                return false;
+            }
+            dest.resize(tmp64.size());
+            for (size_t i = 0; i < tmp64.size(); ++i) {
+                dest[i] = static_cast<int32_t>(tmp64[i]);
+            }
+            return true;
+        };
+
+        std::vector<int32_t> stimulus_frames;
+        if (!readInt32Or64(events_base + "stimulus_frame_num", stimulus_frames)) {
+            return false;
+        }
+        size_t count = stimulus_frames.size();
+        if (count == 0) {
+            data_.stimulus_events.clear();
+            data_.stimulus_events_by_frame.clear();
+            data_.has_stimulus_events = false;
+            return true;
+        }
+
+        std::vector<int32_t> camera_frames;
+        if (!readInt32Or64(events_base + "camera_frame_id", camera_frames)) {
+            camera_frames.assign(count, -1);
+        }
+
+        std::vector<int32_t> event_type_ids;
+        if (!readInt32Or64(events_base + "event_type_id", event_type_ids)) {
+            event_type_ids.assign(count, -1);
+        }
+
+        std::vector<int64_t> timestamps;
+        if (!readInt64Array(store, events_base + "timestamp_ns_session", timestamps)) {
+            timestamps.assign(count, 0);
+        }
+        if (timestamps.size() != count) {
+            timestamps.resize(count, 0);
+        }
+
+        std::vector<std::string> names;
+        if (!readStringArray(store, events_base + "name_or_context", names)) {
+            names.assign(count, std::string());
+        }
+
+        std::vector<std::string> details;
+        if (!readStringArray(store, events_base + "details_json", details)) {
+            details.assign(count, std::string());
+        }
+
+        auto sync_size = [&](auto& vec, const auto& default_value) {
+            if (vec.size() != count) {
+                vec.resize(count, default_value);
+            }
+        };
+        sync_size(camera_frames, int32_t{-1});
+        sync_size(event_type_ids, int32_t{-1});
+        sync_size(names, std::string());
+        sync_size(details, std::string());
+
+        data_.stimulus_events.clear();
+        data_.stimulus_events.reserve(count);
+
+        size_t max_frame = 0;
+        for (size_t i = 0; i < count; ++i) {
+            ZarrDetectionData::EventLogEntry entry;
+            entry.stimulus_frame_num = stimulus_frames[i];
+            entry.camera_frame_id = (i < camera_frames.size()) ? camera_frames[i] : -1;
+            entry.timestamp_ns_session = (i < timestamps.size()) ? timestamps[i] : 0;
+            entry.event_type_id = (i < event_type_ids.size()) ? event_type_ids[i] : -1;
+            if (i < names.size()) entry.name_or_context = names[i];
+            if (i < details.size()) entry.details_json = details[i];
+            if (entry.stimulus_frame_num >= 0) {
+                max_frame = std::max(max_frame,
+                                     static_cast<size_t>(entry.stimulus_frame_num));
+            }
+            data_.stimulus_events.push_back(std::move(entry));
+        }
+        return finalize_events(max_frame);
+    }
+
+    if (!has_structured_layout) {
+        data_.stimulus_events.clear();
+        data_.stimulus_events_by_frame.clear();
+        data_.has_stimulus_events = false;
+        return false;
+    }
+
+    auto open_result = openArrayAny<StimulusEventRowV3, 1>(
+        store, run_base + "events", context_);
+    if (!open_result.ok()) {
+        std::cerr << "Failed to open structured stimulus events array: "
+                  << open_result.status() << std::endl;
+        return false;
+    }
+
+    auto read_result = ts::Read(open_result.value()).result();
+    if (!read_result.ok()) {
+        std::cerr << "Failed to read structured stimulus events array: "
+                  << read_result.status() << std::endl;
+        return false;
+    }
+
+    auto array = read_result.value();
+    if (array.rank() != 1) {
+        std::cerr << "Structured stimulus events array has unexpected rank "
+                  << array.rank() << std::endl;
+        return false;
+    }
+
+    size_t count = static_cast<size_t>(array.shape()[0]);
+    data_.stimulus_events.clear();
+    data_.stimulus_events.reserve(count);
+
+    const auto* rows = static_cast<const StimulusEventRowV3*>(array.data());
+    size_t max_frame = 0;
+    for (size_t i = 0; i < count; ++i) {
+        const auto& row = rows[i];
+        ZarrDetectionData::EventLogEntry entry;
+        entry.stimulus_frame_num = clampUint64ToInt32(row.stimulus_frame_num);
+        entry.camera_frame_id = clampUint64ToInt32(row.camera_frame_id);
+        entry.timestamp_ns_session = row.timestamp_ns_session;
+        entry.event_type_id = clampToInt32(row.event_type_id);
+        entry.name_or_context = stringFromFixedBuffer(row.name_or_context, sizeof(row.name_or_context));
+        entry.details_json = stringFromFixedBuffer(row.details_json, sizeof(row.details_json));
+        if (entry.stimulus_frame_num >= 0) {
+            max_frame = std::max(max_frame,
+                                 static_cast<size_t>(entry.stimulus_frame_num));
+        }
+        data_.stimulus_events.push_back(std::move(entry));
+    }
+
+    return finalize_events(max_frame);
 }
 
 bool ZarrDetectionLoader::loadStandardFormat(const ts::kvstore::KvStore& store) {
@@ -3266,6 +3762,7 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
 
                 int32_t roi_lookup =
                     (idx < data_.mask_roi_indices.size()) ? data_.mask_roi_indices[idx] : -1;
+                mask_entry.roi_index = roi_lookup;
                 bool offsets_valid = std::isfinite(mask_entry.offset_x) && std::isfinite(mask_entry.offset_y);
                 bool dims_valid = (mask_entry.roi_width > 0.0f && mask_entry.roi_height > 0.0f);
 
@@ -3273,6 +3770,27 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                     static_cast<size_t>(roi_lookup) < data_.eye_mask_roi_count &&
                     offsets_valid && dims_valid) {
                     populateEyeMaskEntry(static_cast<size_t>(roi_lookup), mask_entry);
+                }
+                if (data_.has_eye_angles && roi_lookup >= 0) {
+                    size_t roi_idx = static_cast<size_t>(roi_lookup);
+                    bool roi_valid = data_.eye_angle_valid_mask.empty() ||
+                                     (roi_idx < data_.eye_angle_valid_mask.size() &&
+                                      data_.eye_angle_valid_mask[roi_idx] != 0);
+                    if (roi_idx < data_.eye_angle_left_deg.size()) {
+                        float left_angle = data_.eye_angle_left_deg[roi_idx];
+                        mask_entry.feret_minor_angle_deg[0] = left_angle;
+                        mask_entry.feret_angle_valid[0] =
+                            (roi_valid && std::isfinite(left_angle)) ? 1 : 0;
+                    }
+                    if (roi_idx < data_.eye_angle_right_deg.size()) {
+                        float right_angle = data_.eye_angle_right_deg[roi_idx];
+                        mask_entry.feret_minor_angle_deg[1] = right_angle;
+                        mask_entry.feret_angle_valid[1] =
+                            (roi_valid && std::isfinite(right_angle)) ? 1 : 0;
+                    }
+                    mask_entry.has_eye_angles =
+                        (mask_entry.feret_angle_valid[0] != 0) ||
+                        (mask_entry.feret_angle_valid[1] != 0);
                 }
 
                 result.eye_masks.push_back(std::move(mask_entry));
@@ -3395,5 +3913,87 @@ std::vector<LoggedBoundingBox> ZarrDetectionLoader::convertDetectionsToLoggedBox
         result.push_back(box);
     }
     
+    return result;
+}
+
+std::string ZarrDetectionLoader::formatStimulusEvent(
+    const ZarrDetectionData::EventLogEntry& entry) const {
+    auto trim = [](std::string text) -> std::string {
+        auto begin = std::find_if(text.begin(), text.end(),
+                                  [](unsigned char ch) { return !std::isspace(ch); });
+        auto end = std::find_if(text.rbegin(), text.rend(),
+                                [](unsigned char ch) { return !std::isspace(ch); }).base();
+        if (begin >= end) {
+            return std::string();
+        }
+        return std::string(begin, end);
+    };
+
+    std::string label;
+    auto it = data_.event_type_names.find(entry.event_type_id);
+    if (it != data_.event_type_names.end()) {
+        label = it->second;
+    }
+    std::string context = trim(entry.name_or_context);
+    if (label.empty()) {
+        label = !context.empty() ? context
+                                 : ("Event " + std::to_string(entry.event_type_id));
+    } else if (!context.empty() && context != label) {
+        label += " - " + context;
+    }
+
+    std::string details = trim(entry.details_json);
+    if (!details.empty() && details != "{}" && details != "null") {
+        if (details.size() > 96) {
+            details.resize(93);
+            details += "...";
+        }
+        label += " [" + details + "]";
+    }
+    return label;
+}
+
+std::vector<std::string> ZarrDetectionLoader::getStimulusEventsForFrame(
+    size_t frame_id) const {
+    std::vector<std::string> result;
+    if (!data_.has_stimulus_events) {
+        return result;
+    }
+    if (frame_id >= data_.stimulus_events_by_frame.size()) {
+        return result;
+    }
+    for (size_t idx : data_.stimulus_events_by_frame[frame_id]) {
+        if (idx >= data_.stimulus_events.size()) {
+            continue;
+        }
+        result.push_back(formatStimulusEvent(data_.stimulus_events[idx]));
+    }
+    return result;
+}
+
+std::vector<ZarrDetectionLoader::StimulusEventSummary>
+ZarrDetectionLoader::getStimulusEventTimeline() const {
+    std::vector<StimulusEventSummary> result;
+    if (!data_.has_stimulus_events) {
+        return result;
+    }
+
+    result.reserve(data_.stimulus_events.size());
+    for (const auto& entry : data_.stimulus_events) {
+        StimulusEventSummary summary;
+        summary.stimulus_frame_num = entry.stimulus_frame_num;
+        summary.event_type_id = entry.event_type_id;
+        summary.label = formatStimulusEvent(entry);
+        result.push_back(std::move(summary));
+    }
+
+    std::sort(result.begin(), result.end(),
+              [](const StimulusEventSummary& a,
+                 const StimulusEventSummary& b) {
+                  if (a.stimulus_frame_num == b.stimulus_frame_num) {
+                      return a.event_type_id < b.event_type_id;
+                  }
+                  return a.stimulus_frame_num < b.stimulus_frame_num;
+              });
     return result;
 }

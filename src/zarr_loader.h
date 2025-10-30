@@ -16,6 +16,7 @@
 #include <deque>
 #include <filesystem>
 #include <limits>
+#include <unordered_map>
 #include "h5_loader.h"  // For LoggedBoundingBox structure compatibility
 
 namespace ts = tensorstore;
@@ -121,19 +122,40 @@ struct ZarrDetectionData {
     size_t eye_mask_width = 0;
     size_t eye_mask_chunk_rows = 0;
     std::vector<std::array<std::array<float, 4>, 2>> eye_mask_feret_axes_major;
-    std::vector<std::array<std::array<float, 4>, 2>> eye_mask_feret_axes_minor;
-    bool eye_masks_have_feret_axes = false;
-    struct EyeMaskChunkCacheEntry {
-        size_t chunk_id = std::numeric_limits<size_t>::max();
-        size_t chunk_start = 0;
-        size_t chunk_length = 0;
-        std::vector<std::array<std::vector<uint16_t>, 2>> pixel_indices;
-    };
-    mutable std::vector<EyeMaskChunkCacheEntry> mask_chunk_cache;
+   std::vector<std::array<std::array<float, 4>, 2>> eye_mask_feret_axes_minor;
+   bool eye_masks_have_feret_axes = false;
+   struct EyeMaskChunkCacheEntry {
+       size_t chunk_id = std::numeric_limits<size_t>::max();
+       size_t chunk_start = 0;
+       size_t chunk_length = 0;
+       std::vector<std::array<std::vector<uint16_t>, 2>> pixel_indices;
+   };
+   mutable std::vector<EyeMaskChunkCacheEntry> mask_chunk_cache;
+
+    bool has_eye_angles = false;
+    std::string eye_angle_run_name;
+    std::vector<int32_t> eye_angle_frame_indices;
+    std::vector<uint8_t> eye_angle_valid_mask;
+    std::vector<float> eye_angle_left_deg;
+    std::vector<float> eye_angle_right_deg;
+    std::vector<std::vector<size_t>> eye_angle_indices_by_frame;
 
     // Interpolation data
     InterpolationRunData latest_interpolation;
     bool has_interpolation = false;
+
+    struct EventLogEntry {
+        int32_t stimulus_frame_num = -1;
+        int32_t camera_frame_id = -1;
+        int64_t timestamp_ns_session = 0;
+        int32_t event_type_id = -1;
+        std::string name_or_context;
+        std::string details_json;
+    };
+    std::vector<EventLogEntry> stimulus_events;
+    std::unordered_map<int32_t, std::string> event_type_names;
+    std::vector<std::vector<size_t>> stimulus_events_by_frame;
+    bool has_stimulus_events = false;
 };
 
 class ZarrDetectionLoader {
@@ -170,9 +192,19 @@ public:
     const std::string& getKeypointsRunName() const { return data_.keypoints_run_name; }
     bool hasEyeMasks() const { return data_.has_eye_masks; }
     const std::string& getEyeMaskRunName() const { return data_.eye_masks_run_name; }
+    bool hasEyeAngleData() const { return data_.has_eye_angles; }
+    const std::string& getEyeAngleRunName() const { return data_.eye_angle_run_name; }
     bool hasStimulusAlignment() const {
         return data_.has_interpolation && data_.latest_interpolation.has_stimulus_alignment;
     }
+    bool hasStimulusEvents() const { return data_.has_stimulus_events; }
+    std::vector<std::string> getStimulusEventsForFrame(size_t frame_id) const;
+    struct StimulusEventSummary {
+        int32_t stimulus_frame_num = -1;
+        int32_t event_type_id = -1;
+        std::string label;
+    };
+    std::vector<StimulusEventSummary> getStimulusEventTimeline() const;
     bool hasRefinedDetections() const {
         return data_.has_interpolation && data_.latest_interpolation.has_flat_detections;
     }
@@ -227,6 +259,7 @@ public:
             float offset_y = std::numeric_limits<float>::quiet_NaN();
             float roi_width = 0.0f;
             float roi_height = 0.0f;
+            int32_t roi_index = -1;
             std::array<std::vector<uint16_t>, 2> pixel_indices;
             struct AxisSegment {
                 bool valid = false;
@@ -238,6 +271,11 @@ public:
             std::array<AxisSegment, 2> feret_major;
             std::array<AxisSegment, 2> feret_minor;
             bool has_feret_axes = false;
+            std::array<float, 2> feret_minor_angle_deg = {
+                std::numeric_limits<float>::quiet_NaN(),
+                std::numeric_limits<float>::quiet_NaN()};
+            std::array<uint8_t, 2> feret_angle_valid = {0, 0};
+            bool has_eye_angles = false;
         };
         std::vector<EyeMask> eye_masks;
         bool includes_eye_masks = false;
@@ -286,11 +324,15 @@ private:
     bool readFloatArray(const ts::kvstore::KvStore& store, const std::string& path, std::vector<float>& out);
     bool readFloatMatrix(const ts::kvstore::KvStore& store, const std::string& path, std::vector<std::array<float, 4>>& out);
     bool readBoolArray(const ts::kvstore::KvStore& store, const std::string& path, std::vector<uint8_t>& out);
+    bool readStringArray(const ts::kvstore::KvStore& store, const std::string& path, std::vector<std::string>& out);
 
     // New: Load interpolation data
     bool loadInterpolationRuns(const ts::kvstore::KvStore& store);
     bool loadRefinedDetectRuns(const ts::kvstore::KvStore& store);
     bool loadStimulusAlignment(const ts::kvstore::KvStore& store);
+    bool loadEyeAngleData(const ts::kvstore::KvStore& store, size_t roi_count);
+    bool loadStimulusEventsForRun(const ts::kvstore::KvStore& store, const std::string& run_base);
+    void loadStimulusEventEnums(const ts::kvstore::KvStore& store);
     bool loadLatestInterpolationRun(const ts::kvstore::KvStore& store, const std::string& run_name);
     bool loadPaletteInterpolationRun(const ts::kvstore::KvStore& store,
                                      const std::string& run_name,
@@ -317,6 +359,7 @@ private:
         const FrameDetections& detections, 
         size_t frame_id
     ) const;
+    std::string formatStimulusEvent(const ZarrDetectionData::EventLogEntry& entry) const;
 };
 
 // Standalone helper function
