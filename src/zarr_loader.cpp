@@ -12,6 +12,8 @@
 #include <limits>
 #include <optional>
 #include <stdexcept>
+#include <sstream>
+#include <type_traits>
 #include <tensorstore/cast.h>
 #include <tensorstore/driver/zarr/dtype.h>
 #include <tensorstore/kvstore/operations.h>
@@ -171,6 +173,45 @@ int32_t clampUint64ToInt32(uint64_t value) {
         return -1;
     }
     return static_cast<int32_t>(value);
+}
+
+template <typename Source>
+int32_t convertToInt32WithClamp(Source value, bool& overflow_flag) {
+    if constexpr (std::is_same_v<Source, bool>) {
+        return value ? 1 : 0;
+    } else if constexpr (std::is_signed_v<Source>) {
+        int64_t as64 = static_cast<int64_t>(value);
+        if (as64 < std::numeric_limits<int32_t>::min()) {
+            overflow_flag = true;
+            return std::numeric_limits<int32_t>::min();
+        }
+        if (as64 > std::numeric_limits<int32_t>::max()) {
+            overflow_flag = true;
+            return std::numeric_limits<int32_t>::max();
+        }
+        return static_cast<int32_t>(as64);
+    } else {
+        if (value > static_cast<Source>(std::numeric_limits<int32_t>::max())) {
+            overflow_flag = true;
+            return std::numeric_limits<int32_t>::max();
+        }
+        return static_cast<int32_t>(value);
+    }
+}
+
+template <typename Source>
+int64_t convertToInt64WithClamp(Source value, bool& overflow_flag) {
+    if constexpr (std::is_same_v<Source, bool>) {
+        return value ? 1 : 0;
+    } else if constexpr (std::is_signed_v<Source>) {
+        return static_cast<int64_t>(value);
+    } else {
+        if (value > static_cast<Source>(std::numeric_limits<int64_t>::max())) {
+            overflow_flag = true;
+            return std::numeric_limits<int64_t>::max();
+        }
+        return static_cast<int64_t>(value);
+    }
 }
 
 std::vector<std::string> collect_runs_fs(const std::string& root_path,
@@ -516,26 +557,64 @@ bool ZarrDetectionLoader::readInt32Array(const ts::kvstore::KvStore& store,
                                         const std::string& path,
                                         std::vector<int32_t>& out) {
     try {
-        auto open_result = openArrayAny<int32_t, 1>(store, path, context_);
-        if (!open_result.ok()) {
-            return false;
-        }
-        auto array_result = ts::Read(open_result.value()).result();
-        if (!array_result.ok()) {
-            return false;
+        std::vector<std::string> failure_messages;
+        auto attempt = [&](auto type_token, const char* label) -> bool {
+            using Source = decltype(type_token);
+            auto open_result = openArrayAny<Source, 1>(store, path, context_);
+            if (!open_result.ok()) {
+                std::ostringstream oss;
+                oss << "open as " << label << " failed: " << open_result.status();
+                failure_messages.push_back(oss.str());
+                return false;
+            }
+
+            auto array_result = ts::Read(open_result.value()).result();
+            if (!array_result.ok()) {
+                std::ostringstream oss;
+                oss << "read as " << label << " failed: " << array_result.status();
+                failure_messages.push_back(oss.str());
+                return false;
+            }
+
+            auto array = array_result.value();
+            if (array.rank() != 1) {
+                std::ostringstream oss;
+                oss << "rank mismatch for " << label << " (expected 1, got " << array.rank() << ")";
+                failure_messages.push_back(oss.str());
+                return false;
+            }
+
+            size_t length = static_cast<size_t>(array.shape()[0]);
+            out.resize(length);
+            const auto* data = static_cast<const Source*>(array.data());
+            bool overflow = false;
+            for (size_t i = 0; i < length; ++i) {
+                out[i] = convertToInt32WithClamp<Source>(data[i], overflow);
+            }
+            std::cout << "  [ReadInt32Array] '" << path << "' read as " << label
+                      << " (" << length << " rows"
+                      << (overflow ? ", overflow clamp applied" : "") << ")"
+                      << std::endl;
+            return true;
+        };
+
+        if (attempt(int32_t{}, "int32_t") ||
+            attempt(uint32_t{}, "uint32_t") ||
+            attempt(int64_t{}, "int64_t") ||
+            attempt(uint64_t{}, "uint64_t") ||
+            attempt(int16_t{}, "int16_t") ||
+            attempt(uint16_t{}, "uint16_t") ||
+            attempt(int8_t{}, "int8_t") ||
+            attempt(uint8_t{}, "uint8_t")) {
+            return true;
         }
 
-        auto array = array_result.value();
-        if (array.rank() != 1) {
-            return false;
+        std::cout << "  [ReadInt32Array] '" << path << "' failed after dtype attempts:"
+                  << std::endl;
+        for (const auto& msg : failure_messages) {
+            std::cout << "    - " << msg << std::endl;
         }
-
-        size_t length = static_cast<size_t>(array.shape()[0]);
-        out.resize(length);
-        const auto* data = static_cast<const int32_t*>(array.data());
-        std::copy(data, data + length, out.begin());
-        return true;
-
+        return false;
     } catch (const std::exception& e) {
         std::cerr << "Error reading int32 array at " << path << ": " << e.what() << std::endl;
         return false;
@@ -546,26 +625,64 @@ bool ZarrDetectionLoader::readInt64Array(const ts::kvstore::KvStore& store,
                                         const std::string& path,
                                         std::vector<int64_t>& out) {
     try {
-        auto open_result = openArrayAny<int64_t, 1>(store, path, context_);
-        if (!open_result.ok()) {
-            return false;
-        }
-        auto array_result = ts::Read(open_result.value()).result();
-        if (!array_result.ok()) {
-            return false;
+        std::vector<std::string> failure_messages;
+        auto attempt = [&](auto type_token, const char* label) -> bool {
+            using Source = decltype(type_token);
+            auto open_result = openArrayAny<Source, 1>(store, path, context_);
+            if (!open_result.ok()) {
+                std::ostringstream oss;
+                oss << "open as " << label << " failed: " << open_result.status();
+                failure_messages.push_back(oss.str());
+                return false;
+            }
+
+            auto array_result = ts::Read(open_result.value()).result();
+            if (!array_result.ok()) {
+                std::ostringstream oss;
+                oss << "read as " << label << " failed: " << array_result.status();
+                failure_messages.push_back(oss.str());
+                return false;
+            }
+
+            auto array = array_result.value();
+            if (array.rank() != 1) {
+                std::ostringstream oss;
+                oss << "rank mismatch for " << label << " (expected 1, got " << array.rank() << ")";
+                failure_messages.push_back(oss.str());
+                return false;
+            }
+
+            size_t length = static_cast<size_t>(array.shape()[0]);
+            out.resize(length);
+            const auto* data = static_cast<const Source*>(array.data());
+            bool overflow = false;
+            for (size_t i = 0; i < length; ++i) {
+                out[i] = convertToInt64WithClamp<Source>(data[i], overflow);
+            }
+            std::cout << "  [ReadInt64Array] '" << path << "' read as " << label
+                      << " (" << length << " rows"
+                      << (overflow ? ", overflow clamp applied" : "") << ")"
+                      << std::endl;
+            return true;
+        };
+
+        if (attempt(int64_t{}, "int64_t") ||
+            attempt(uint64_t{}, "uint64_t") ||
+            attempt(int32_t{}, "int32_t") ||
+            attempt(uint32_t{}, "uint32_t") ||
+            attempt(int16_t{}, "int16_t") ||
+            attempt(uint16_t{}, "uint16_t") ||
+            attempt(int8_t{}, "int8_t") ||
+            attempt(uint8_t{}, "uint8_t")) {
+            return true;
         }
 
-        auto array = array_result.value();
-        if (array.rank() != 1) {
-            return false;
+        std::cout << "  [ReadInt64Array] '" << path << "' failed after dtype attempts:"
+                  << std::endl;
+        for (const auto& msg : failure_messages) {
+            std::cout << "    - " << msg << std::endl;
         }
-
-        size_t length = static_cast<size_t>(array.shape()[0]);
-        out.resize(length);
-        const auto* data = static_cast<const int64_t*>(array.data());
-        std::copy(data, data + length, out.begin());
-        return true;
-
+        return false;
     } catch (const std::exception& e) {
         std::cerr << "Error reading int64 array at " << path << ": " << e.what() << std::endl;
         return false;
@@ -725,26 +842,99 @@ bool ZarrDetectionLoader::readStringArray(const ts::kvstore::KvStore& store,
                                          const std::string& path,
                                          std::vector<std::string>& out) {
     try {
-        auto open_result = openArrayAny<std::string, 1>(store, path, context_);
-        if (!open_result.ok()) {
-            return false;
-        }
-        auto array_result = ts::Read(open_result.value()).result();
-        if (!array_result.ok()) {
-            return false;
+        std::vector<std::string> failure_messages;
+
+        auto read_as_strings = [&]() -> bool {
+            auto open_result = openArrayAny<std::string, 1>(store, path, context_);
+            if (!open_result.ok()) {
+                std::ostringstream oss;
+                oss << "open as std::string failed: " << open_result.status();
+                failure_messages.push_back(oss.str());
+                return false;
+            }
+
+            auto array_result = ts::Read(open_result.value()).result();
+            if (!array_result.ok()) {
+                std::ostringstream oss;
+                oss << "read as std::string failed: " << array_result.status();
+                failure_messages.push_back(oss.str());
+                return false;
+            }
+
+            auto array = array_result.value();
+            if (array.rank() != 1) {
+                std::ostringstream oss;
+                oss << "rank mismatch for std::string (expected 1, got " << array.rank() << ")";
+                failure_messages.push_back(oss.str());
+                return false;
+            }
+
+            size_t length = static_cast<size_t>(array.shape()[0]);
+            out.resize(length);
+            for (size_t i = 0; i < length; ++i) {
+                out[i] = array(static_cast<ts::Index>(i));
+            }
+            std::cout << "  [ReadStringArray] '" << path << "' read as std::string ("
+                      << length << " rows)" << std::endl;
+            return true;
+        };
+
+        auto read_as_bytes2d = [&](auto type_token, const char* label) -> bool {
+            using Element = decltype(type_token);
+            auto open_result = openArrayAny<Element, 2>(store, path, context_);
+            if (!open_result.ok()) {
+                std::ostringstream oss;
+                oss << "open as " << label << " failed: " << open_result.status();
+                failure_messages.push_back(oss.str());
+                return false;
+            }
+
+            auto array_result = ts::Read(open_result.value()).result();
+            if (!array_result.ok()) {
+                std::ostringstream oss;
+                oss << "read as " << label << " failed: " << array_result.status();
+                failure_messages.push_back(oss.str());
+                return false;
+            }
+
+            auto array = array_result.value();
+            if (array.rank() != 2) {
+                std::ostringstream oss;
+                oss << "rank mismatch for " << label << " (expected 2, got " << array.rank() << ")";
+                failure_messages.push_back(oss.str());
+                return false;
+            }
+
+            size_t rows = static_cast<size_t>(array.shape()[0]);
+            size_t width = static_cast<size_t>(array.shape()[1]);
+            out.resize(rows);
+            const auto* data = static_cast<const Element*>(array.data());
+            for (size_t row = 0; row < rows; ++row) {
+                const auto* row_ptr = data + row * width;
+                size_t length = 0;
+                while (length < width && row_ptr[length] != static_cast<Element>(0)) {
+                    ++length;
+                }
+                out[row] = std::string(reinterpret_cast<const char*>(row_ptr),
+                                       reinterpret_cast<const char*>(row_ptr + length));
+            }
+            std::cout << "  [ReadStringArray] '" << path << "' read as " << label
+                      << " (" << rows << " rows, width " << width << ")" << std::endl;
+            return true;
+        };
+
+        if (read_as_strings() ||
+            read_as_bytes2d(uint8_t{}, "uint8_t[rows, width]") ||
+            read_as_bytes2d(char{}, "char[rows, width]")) {
+            return true;
         }
 
-        auto array = array_result.value();
-        if (array.rank() != 1) {
-            return false;
+        std::cout << "  [ReadStringArray] '" << path << "' failed after dtype attempts:"
+                  << std::endl;
+        for (const auto& msg : failure_messages) {
+            std::cout << "    - " << msg << std::endl;
         }
-
-        size_t length = static_cast<size_t>(array.shape()[0]);
-        out.resize(length);
-        for (size_t i = 0; i < length; ++i) {
-            out[i] = array(static_cast<ts::Index>(i));
-        }
-        return true;
+        return false;
 
     } catch (const std::exception& e) {
         std::cerr << "Error reading string array at " << path << ": " << e.what() << std::endl;
@@ -2562,6 +2752,7 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
     if (auto group_attrs = readAttrsAny(store, "analysis/stimulus_runs")) {
         auto latest = extractLatestRunName(*group_attrs);
         if (!latest.empty()) {
+            std::cout << "  [Stimulus] Attr latest run candidate: '" << latest << "'" << std::endl;
             latest_run_opt = latest;
         } else {
             std::cout << "  [Stimulus] No 'latest' pointer in analysis/stimulus_runs attrs" << std::endl;
@@ -2596,6 +2787,8 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
     if (!events_loaded) {
         std::cout << "  Stimulus run '" << latest_run
                   << "' does not contain events metadata." << std::endl;
+    } else {
+        std::cout << "  Stimulus run '" << latest_run << "' events metadata loaded" << std::endl;
     }
 
     std::string stimulus_created_at;
@@ -2743,6 +2936,8 @@ void ZarrDetectionLoader::loadStimulusEventEnums(const ts::kvstore::KvStore& sto
                   << " stimulus event type labels" << std::endl;
         return;
     }
+
+    std::cout << "  [Stimulus] No stimulus event enum labels loaded from known paths" << std::endl;
 }
 
 bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& store,
@@ -2750,6 +2945,12 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
     std::string events_base = run_base + "events/";
     bool has_column_layout = arrayExists(store, events_base + "stimulus_frame_num");
     bool has_structured_layout = arrayExists(store, run_base + "events");
+
+    std::cout << "  [StimulusEvents] Inspecting run '" << run_base << "'" << std::endl;
+    std::cout << "    events_base='" << events_base << "'" << std::endl;
+    std::cout << "    column layout present: " << (has_column_layout ? "yes" : "no")
+              << ", structured layout present: " << (has_structured_layout ? "yes" : "no")
+              << std::endl;
 
     if ((!has_column_layout || !has_structured_layout) && !root_path_.empty()) {
         namespace fs = std::filesystem;
@@ -2759,6 +2960,8 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
                 root / fs::path(events_base) / "stimulus_frame_num" / "zarr.json";
             if (fs::exists(column_probe)) {
                 has_column_layout = true;
+                std::cout << "    column layout detected via filesystem probe at "
+                          << column_probe << std::endl;
             }
         }
         if (!has_structured_layout) {
@@ -2766,6 +2969,8 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
                 root / fs::path(run_base) / "events" / "zarr.json";
             if (fs::exists(structured_probe)) {
                 has_structured_layout = true;
+                std::cout << "    structured layout detected via filesystem probe at "
+                          << structured_probe << std::endl;
             }
         }
     }
@@ -2784,6 +2989,8 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
     }
 
     auto finalize_events = [&](size_t max_frame) {
+        std::cout << "  [StimulusEvents] Finalizing events (max_frame=" << max_frame << ")"
+                  << std::endl;
         size_t size_needed = std::max<size_t>(data_.total_frames,
                                               max_frame + 1);
         if (data_.stimulus_events_by_frame.size() < size_needed) {
@@ -2806,6 +3013,22 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
         if (data_.has_stimulus_events) {
             std::cout << "  Loaded " << data_.stimulus_events.size()
                       << " stimulus events" << std::endl;
+            const auto& sample = data_.stimulus_events.front();
+            std::cout << "  [StimulusEvents] Sample entry: stimulus_frame="
+                      << sample.stimulus_frame_num << ", camera_frame="
+                      << sample.camera_frame_id << ", event_type="
+                      << sample.event_type_id << ", name='"
+                      << sample.name_or_context << "'" << std::endl;
+            size_t missing_camera = 0;
+            for (const auto& entry : data_.stimulus_events) {
+                if (entry.camera_frame_id < 0) {
+                    ++missing_camera;
+                }
+            }
+            if (missing_camera > 0) {
+                std::cout << "  [StimulusEvents] Entries lacking camera_frame_id: "
+                          << missing_camera << std::endl;
+            }
         } else {
             std::cout << "  No stimulus events found for run '" << run_base
                       << "'" << std::endl;
@@ -2815,16 +3038,30 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
 
     if (has_column_layout) {
         auto readInt32Or64 = [&](const std::string& path, std::vector<int32_t>& dest) -> bool {
+            std::cout << "  [StimulusEvents] Reading column '" << path << "'" << std::endl;
             if (readInt32Array(store, path, dest)) {
                 return true;
             }
+            std::cout << "  [StimulusEvents] Falling back to int64_t reader for '" << path
+                      << "'" << std::endl;
             std::vector<int64_t> tmp64;
             if (!readInt64Array(store, path, tmp64)) {
+                std::cout << "  [StimulusEvents] Failed to read '" << path
+                          << "' as int64_t" << std::endl;
                 return false;
             }
             dest.resize(tmp64.size());
+            bool overflow = false;
             for (size_t i = 0; i < tmp64.size(); ++i) {
-                dest[i] = static_cast<int32_t>(tmp64[i]);
+                int32_t converted = clampToInt32(tmp64[i]);
+                if (converted != static_cast<int32_t>(tmp64[i])) {
+                    overflow = true;
+                }
+                dest[i] = converted;
+            }
+            if (overflow) {
+                std::cout << "  [StimulusEvents] '" << path
+                          << "' required clamp during int64->int32 conversion" << std::endl;
             }
             return true;
         };
@@ -2835,6 +3072,7 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
         }
         size_t count = stimulus_frames.size();
         if (count == 0) {
+            std::cout << "  [StimulusEvents] Column layout contained zero rows" << std::endl;
             data_.stimulus_events.clear();
             data_.stimulus_events_by_frame.clear();
             data_.has_stimulus_events = false;
@@ -2843,16 +3081,22 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
 
         std::vector<int32_t> camera_frames;
         if (!readInt32Or64(events_base + "camera_frame_id", camera_frames)) {
+            std::cout << "  [StimulusEvents] camera_frame_id missing; defaulting to -1"
+                      << std::endl;
             camera_frames.assign(count, -1);
         }
 
         std::vector<int32_t> event_type_ids;
         if (!readInt32Or64(events_base + "event_type_id", event_type_ids)) {
+            std::cout << "  [StimulusEvents] event_type_id missing; defaulting to -1"
+                      << std::endl;
             event_type_ids.assign(count, -1);
         }
 
         std::vector<int64_t> timestamps;
         if (!readInt64Array(store, events_base + "timestamp_ns_session", timestamps)) {
+            std::cout << "  [StimulusEvents] timestamp_ns_session missing; defaulting to 0"
+                      << std::endl;
             timestamps.assign(count, 0);
         }
         if (timestamps.size() != count) {
@@ -2861,11 +3105,15 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
 
         std::vector<std::string> names;
         if (!readStringArray(store, events_base + "name_or_context", names)) {
+            std::cout << "  [StimulusEvents] name_or_context missing; defaulting to empty string"
+                      << std::endl;
             names.assign(count, std::string());
         }
 
         std::vector<std::string> details;
         if (!readStringArray(store, events_base + "details_json", details)) {
+            std::cout << "  [StimulusEvents] details_json missing; defaulting to empty string"
+                      << std::endl;
             details.assign(count, std::string());
         }
 
@@ -2897,6 +3145,8 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
             }
             data_.stimulus_events.push_back(std::move(entry));
         }
+        std::cout << "  [StimulusEvents] Column layout produced "
+                  << data_.stimulus_events.size() << " entries" << std::endl;
         return finalize_events(max_frame);
     }
 
@@ -2904,6 +3154,8 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
         data_.stimulus_events.clear();
         data_.stimulus_events_by_frame.clear();
         data_.has_stimulus_events = false;
+        std::cout << "  [StimulusEvents] Structured layout absent and column layout failed"
+                  << std::endl;
         return false;
     }
 
@@ -2932,6 +3184,8 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
     size_t count = static_cast<size_t>(array.shape()[0]);
     data_.stimulus_events.clear();
     data_.stimulus_events.reserve(count);
+    std::cout << "  [StimulusEvents] Structured layout contains " << count << " rows"
+              << std::endl;
 
     const auto* rows = static_cast<const StimulusEventRowV3*>(array.data());
     size_t max_frame = 0;
@@ -2950,6 +3204,8 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
         }
         data_.stimulus_events.push_back(std::move(entry));
     }
+    std::cout << "  [StimulusEvents] Structured layout parsed "
+              << data_.stimulus_events.size() << " events" << std::endl;
 
     return finalize_events(max_frame);
 }

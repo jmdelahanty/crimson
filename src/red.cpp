@@ -2369,6 +2369,26 @@ int main(int, char **) {
         if (zarr_loaded) {
             if (ImGui::Begin("Stimulus Event Timeline")) {
                 auto timeline = zarr_loader.getStimulusEventTimeline();
+                static size_t last_logged_timeline_count = std::numeric_limits<size_t>::max();
+                if (timeline.size() != last_logged_timeline_count) {
+                    size_t missing_camera = 0;
+                    for (const auto& evt : timeline) {
+                        if (evt.camera_frame_id < 0) {
+                            ++missing_camera;
+                        }
+                    }
+                    std::cout << "  [StimulusTimeline] Entries=" << timeline.size()
+                              << ", missing_camera_ids=" << missing_camera << std::endl;
+                    const size_t preview = std::min<size_t>(timeline.size(), 5);
+                    for (size_t i = 0; i < preview; ++i) {
+                        const auto& evt = timeline[i];
+                        std::cout << "    [" << i << "] stim_frame=" << evt.stimulus_frame_num
+                                  << ", cam_frame=" << evt.camera_frame_id
+                                  << ", type=" << evt.event_type_id
+                                  << ", label='" << evt.label << "'" << std::endl;
+                    }
+                    last_logged_timeline_count = timeline.size();
+                }
                 if (timeline.empty()) {
                     ImGui::TextUnformatted("No stimulus events found.");
                 } else {
