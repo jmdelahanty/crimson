@@ -122,7 +122,7 @@ struct ZarrDetectionData {
     size_t eye_mask_width = 0;
     size_t eye_mask_chunk_rows = 0;
     std::vector<std::array<std::array<float, 4>, 2>> eye_mask_feret_axes_major;
-   std::vector<std::array<std::array<float, 4>, 2>> eye_mask_feret_axes_minor;
+    std::vector<std::array<std::array<float, 4>, 2>> eye_mask_feret_axes_minor;
    bool eye_masks_have_feret_axes = false;
    struct EyeMaskChunkCacheEntry {
        size_t chunk_id = std::numeric_limits<size_t>::max();
@@ -156,6 +156,18 @@ struct ZarrDetectionData {
     std::unordered_map<int32_t, std::string> event_type_names;
     std::vector<std::vector<size_t>> stimulus_events_by_frame;
     bool has_stimulus_events = false;
+    bool has_stimulus_alignment_data = false;
+    int64_t stimulus_camera_frame_offset = 0;
+
+    // Movement analysis (analysis/movement_runs)
+    bool has_movement_data = false;
+    std::string movement_category;
+    std::string movement_run_name;
+    std::string movement_track_id;
+    std::vector<float> movement_time_seconds;
+    std::vector<float> movement_smoothed_speed_mm;
+    std::vector<float> movement_instant_speed_mm;
+    std::vector<int32_t> movement_frame_indices;
 };
 
 class ZarrDetectionLoader {
@@ -194,13 +206,12 @@ public:
     const std::string& getEyeMaskRunName() const { return data_.eye_masks_run_name; }
     bool hasEyeAngleData() const { return data_.has_eye_angles; }
     const std::string& getEyeAngleRunName() const { return data_.eye_angle_run_name; }
-    bool hasStimulusAlignment() const {
-        return data_.has_interpolation && data_.latest_interpolation.has_stimulus_alignment;
-    }
+    bool hasStimulusAlignment() const { return data_.has_stimulus_alignment_data; }
     bool hasStimulusEvents() const { return data_.has_stimulus_events; }
     std::vector<std::string> getStimulusEventsForFrame(size_t frame_id) const;
     struct StimulusEventSummary {
         int32_t stimulus_frame_num = -1;
+        int32_t camera_frame_id = -1;
         int32_t event_type_id = -1;
         std::string label;
     };
@@ -240,6 +251,38 @@ public:
     std::string getStimulusRunName() const {
         return data_.has_interpolation ? data_.latest_interpolation.stimulus_run_name : "";
     }
+    
+    // Movement analysis accessors
+    bool hasMovementData() const { return data_.has_movement_data; }
+    const std::vector<float>& getMovementTimeSeconds() const { return data_.movement_time_seconds; }
+    const std::vector<float>& getMovementSmoothedSpeedMm() const { return data_.movement_smoothed_speed_mm; }
+    const std::vector<float>& getMovementInstantaneousSpeedMm() const { return data_.movement_instant_speed_mm; }
+    const std::vector<int32_t>& getMovementFrameIndices() const { return data_.movement_frame_indices; }
+    const std::string& getMovementRunName() const { return data_.movement_run_name; }
+    const std::string& getMovementTrackId() const { return data_.movement_track_id; }
+    const std::string& getMovementCategory() const { return data_.movement_category; }
+
+    // Stimulus chaser overlays (placeholder implementations)
+    struct ChaserBoundingBox {
+        int32_t fish_id = -1;
+        float x_px = 0.0f;
+        float y_px = 0.0f;
+        float width_px = 0.0f;
+        float height_px = 0.0f;
+        float centroid_x = 0.0f;
+        float centroid_y = 0.0f;
+    };
+    struct ChaserState {
+        int32_t stimulus_frame_num = -1;
+        int32_t camera_frame_id = -1;
+        int32_t chaser_index = -1;
+        float chaser_pos_x = 0.0f;
+        float chaser_pos_y = 0.0f;
+        float target_pos_x = 0.0f;
+        float target_pos_y = 0.0f;
+    };
+    std::vector<ChaserBoundingBox> getChaserBoundingBoxesForFrame(size_t /*frame_id*/) const { return {}; }
+    std::vector<ChaserState> getChaserStatesForFrame(size_t /*frame_id*/) const { return {}; }
     
     // Get raw detection data for a frame (for advanced use)
     struct FrameDetections {
@@ -343,6 +386,7 @@ private:
     bool ensureEyeMaskChunk(size_t chunk_id, bool allow_prefetch = true) const;
     void prefetchAdjacentEyeMaskChunks(size_t chunk_id) const;
     bool populateEyeMaskEntry(size_t roi_index, FrameDetections::EyeMask& out_mask) const;
+    bool loadMovementData(const ts::kvstore::KvStore& store);
     
     // Helper conversion function
     LoggedBoundingBox convertToLoggedBox(

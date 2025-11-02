@@ -2674,17 +2674,32 @@ int main(int, char **) {
                 const auto& smoothed_speed = zarr_loader.getMovementSmoothedSpeedMm();
                 const auto& instant_speed = zarr_loader.getMovementInstantaneousSpeedMm();
                 const auto& frame_indices = zarr_loader.getMovementFrameIndices();
+                static bool show_smoothed = true;
+                static bool show_instantaneous = false;
 
-                if (time_data.empty() || smoothed_speed.empty()) {
+                bool smoothed_available = !smoothed_speed.empty();
+                bool instant_available = !instant_speed.empty();
+                if (time_data.empty() || (!smoothed_available && !instant_available)) {
                     ImGui::TextUnformatted("No speed data available.");
                 } else {
-                    ImGui::Text("Movement Run: %s | Track: %s",
-                               zarr_loader.getMovementRunName().c_str(),
-                               zarr_loader.getMovementTrackId().c_str());
-                    ImGui::Text("Data points: %zu", time_data.size());
+                    if (!smoothed_available && show_smoothed) {
+                        show_smoothed = false;
+                    }
+                    if (!instant_available && show_instantaneous) {
+                        show_instantaneous = false;
+                    }
 
-                    static bool show_smoothed = true;
-                    static bool show_instantaneous = false;
+                    if (!zarr_loader.getMovementCategory().empty()) {
+                        ImGui::Text("Movement Run: %s/%s | Track: %s",
+                                   zarr_loader.getMovementCategory().c_str(),
+                                   zarr_loader.getMovementRunName().c_str(),
+                                   zarr_loader.getMovementTrackId().c_str());
+                    } else {
+                        ImGui::Text("Movement Run: %s | Track: %s",
+                                  zarr_loader.getMovementRunName().c_str(),
+                               zarr_loader.getMovementTrackId().c_str());
+                    }
+                    ImGui::Text("Data points: %zu", time_data.size());
 
                     ImGui::Checkbox("Show Smoothed Speed", &show_smoothed);
                     ImGui::SameLine();
@@ -2703,10 +2718,10 @@ int main(int, char **) {
 
                     for (size_t i = 0; i < time_data.size(); ++i) {
                         time_plot.push_back(static_cast<double>(time_data[i]));
-                        if (i < smoothed_speed.size()) {
+                        if (smoothed_available && i < smoothed_speed.size()) {
                             smoothed_plot.push_back(static_cast<double>(smoothed_speed[i]));
                         }
-                        if (!instant_speed.empty() && i < instant_speed.size()) {
+                        if (instant_available && i < instant_speed.size()) {
                             instant_plot.push_back(static_cast<double>(instant_speed[i]));
                         }
                     }
@@ -2718,7 +2733,7 @@ int main(int, char **) {
 
                         // Find max speed for Y axis
                         double max_speed = 0.0;
-                        if (show_smoothed) {
+                        if (show_smoothed && !smoothed_plot.empty()) {
                             max_speed = std::max(max_speed, *std::max_element(smoothed_plot.begin(), smoothed_plot.end()));
                         }
                         if (show_instantaneous && !instant_plot.empty()) {
@@ -2726,7 +2741,7 @@ int main(int, char **) {
                         }
                         ImPlot::SetupAxisLimits(ImAxis_Y1, 0, max_speed * 1.1, ImGuiCond_Once);
 
-                        if (show_smoothed) {
+                        if (show_smoothed && !smoothed_plot.empty()) {
                             ImPlot::SetNextLineStyle(ImVec4(0.2f, 0.7f, 1.0f, 1.0f), 2.0f);
                             ImPlot::PlotLine("Smoothed Speed", time_plot.data(), smoothed_plot.data(),
                                            static_cast<int>(time_plot.size()));

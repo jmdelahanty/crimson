@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstring>
 #include <cstdint>
+#include <utility>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -466,6 +467,14 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
             }
         } else {
             std::cout << "  No interpolation data available in 'interpolation_runs'" << std::endl;
+        }
+
+        if (loadMovementData(store)) {
+            std::cout << "  Loaded movement analysis run '" << data_.movement_category
+                      << "/" << data_.movement_run_name << "' (track "
+                      << data_.movement_track_id << ")" << std::endl;
+        } else {
+            std::cout << "  No movement analysis data available" << std::endl;
         }
         
         std::cout << "Successfully loaded zarr file: " << filepath << std::endl;
@@ -2577,6 +2586,17 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
 
     std::string run_base = "analysis/stimulus_runs/" + latest_run + "/";
     std::cout << "  Loading stimulus alignment run '" << latest_run << "'" << std::endl;
+    data_.has_stimulus_alignment_data = false;
+    data_.stimulus_camera_frame_offset = 0;
+
+    // Always attempt to load stimulus event metadata, even if frame alignment
+    // data is missing. This keeps the event timeline available in the UI.
+    loadStimulusEventEnums(store);
+    bool events_loaded = loadStimulusEventsForRun(store, run_base);
+    if (!events_loaded) {
+        std::cout << "  Stimulus run '" << latest_run
+                  << "' does not contain events metadata." << std::endl;
+    }
 
     std::string stimulus_created_at;
     int64_t camera_frame_offset = 0;
@@ -2618,15 +2638,15 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
         metadata_mask
     );
 
-    if (!has_camera_mask && !has_camera_mapping) {
+    if (!has_camera_mask || camera_mask.empty()) {
         std::cout << "  Stimulus run '" << latest_run
-                  << "' missing frame alignment data" << std::endl;
+                  << "' missing camera_interpolation_mask data" << std::endl;
         return false;
     }
 
-    if (!has_camera_mask && !(has_camera_mapping && has_metadata_mask)) {
+    if (!has_camera_mapping || camera_to_metadata_raw.empty()) {
         std::cout << "  Stimulus run '" << latest_run
-                  << "' missing interpolation mask" << std::endl;
+                  << "' missing camera_to_metadata_index data" << std::endl;
         return false;
     }
 
@@ -2637,14 +2657,8 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
         }
     }
 
-    size_t frame_count = 0;
-    std::vector<uint8_t> stored_mask;
-    if (has_camera_mask) {
-        frame_count = camera_mask.size();
-        stored_mask = camera_mask;
-    } else if (has_camera_mapping) {
-        frame_count = camera_to_metadata_raw.size();
-    }
+    size_t frame_count = camera_mask.size();
+    std::vector<uint8_t> stored_mask = camera_mask;
 
     if (frame_count == 0) {
         std::cout << "  Stimulus alignment has zero frames" << std::endl;
@@ -2652,19 +2666,9 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
     }
 
     std::vector<uint8_t> new_mask(frame_count, 0);
-    if (has_camera_mask) {
-        for (size_t i = 0; i < frame_count; ++i) {
-            bool original = camera_mask[i] != 0;
-            new_mask[i] = original ? 0 : 1;
-        }
-    } else if (has_camera_mapping && has_metadata_mask) {
-        for (size_t i = 0; i < frame_count; ++i) {
-            int64_t meta_idx = camera_to_metadata_raw[i];
-            if (meta_idx >= 0 && static_cast<size_t>(meta_idx) < metadata_mask.size()) {
-                bool original = metadata_mask[static_cast<size_t>(meta_idx)] != 0;
-                new_mask[i] = original ? 0 : 1;
-            }
-        }
+    for (size_t i = 0; i < frame_count; ++i) {
+        bool original = camera_mask[i] != 0;
+        new_mask[i] = original ? 0 : 1;
     }
 
     auto& interp = data_.latest_interpolation;
@@ -2687,14 +2691,11 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
     interp.stimulus_interpolation_mask = std::move(stored_mask);
     interp.has_stimulus_alignment = true;
     data_.has_interpolation = true;
+    data_.has_stimulus_alignment_data = true;
+    data_.stimulus_camera_frame_offset = camera_frame_offset;
     std::cout << "  Stimulus alignment '" << latest_run
               << "' loaded with frame mask for " << frame_count << " frames" << std::endl;
 
-    loadStimulusEventEnums(store);
-    if (!loadStimulusEventsForRun(store, run_base)) {
-        std::cout << "  Stimulus run '" << latest_run
-                  << "' does not contain events metadata." << std::endl;
-    }
     return true;
 }
 
@@ -2951,6 +2952,185 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
     }
 
     return finalize_events(max_frame);
+}
+
+bool ZarrDetectionLoader::loadMovementData(const ts::kvstore::KvStore& store) {
+    data_.has_movement_data = false;
+    data_.movement_time_seconds.clear();
+    data_.movement_smoothed_speed_mm.clear();
+    data_.movement_instant_speed_mm.clear();
+    data_.movement_frame_indices.clear();
+    data_.movement_run_name.clear();
+    data_.movement_track_id.clear();
+    data_.movement_category.clear();
+
+    const std::vector<std::pair<std::string, std::string>> categories = {
+        {"analysis/movement_runs/online_refined", "online_refined"},
+        {"analysis/movement_runs/online", "online"},
+        {"analysis/movement_runs/offline", "offline"}
+    };
+
+    for (const auto& [group_path, category_name] : categories) {
+        std::string run_name;
+        if (auto group_attrs = readAttrsAny(store, group_path)) {
+            run_name = extractLatestRunName(*group_attrs);
+        }
+        if (run_name.empty() && !root_path_.empty()) {
+            auto runs = collect_runs_fs(root_path_, group_path, {});
+            if (!runs.empty()) {
+                run_name = runs.back();
+            }
+        }
+        if (run_name.empty()) {
+            continue;
+        }
+
+        std::string run_base = group_path + "/" + run_name + "/";
+        float pixels_per_mm = 0.0f;
+        std::string preferred_track;
+        if (auto run_attrs = readAttrsAny(store, run_base)) {
+            auto readPixelsPerMm = [&](const char* key) {
+                if (run_attrs->contains(key) && (*run_attrs)[key].is_number()) {
+                    pixels_per_mm = static_cast<float>((*run_attrs)[key].get<double>());
+                }
+            };
+            readPixelsPerMm("pixels_per_mm");
+            readPixelsPerMm("pixels_per_mm_camera");
+            readPixelsPerMm("pixel_to_mm");
+
+            auto readTrackKey = [&](const char* key) {
+                if (preferred_track.empty() && run_attrs->contains(key)) {
+                    const auto& value = (*run_attrs)[key];
+                    if (value.is_string()) {
+                        preferred_track = value.get<std::string>();
+                    } else if (value.is_number_integer()) {
+                        preferred_track = "id_" + std::to_string(value.get<int>());
+                    }
+                }
+            };
+            readTrackKey("primary_track");
+            readTrackKey("default_track");
+            readTrackKey("track_id");
+        }
+
+        namespace fs = std::filesystem;
+        std::string track_id = preferred_track;
+        fs::path track_root;
+        if (!root_path_.empty()) {
+            track_root = fs::path(root_path_) / group_path / run_name / "tracks";
+        }
+        if (track_id.empty()) {
+            std::vector<std::string> track_candidates;
+            if (!track_root.empty() && fs::exists(track_root) && fs::is_directory(track_root)) {
+                for (const auto& entry : fs::directory_iterator(track_root)) {
+                    if (entry.is_directory()) {
+                        track_candidates.push_back(entry.path().filename().string());
+                    }
+                }
+            }
+            if (!track_candidates.empty()) {
+                std::sort(track_candidates.begin(), track_candidates.end());
+                auto it = std::find(track_candidates.begin(), track_candidates.end(), "id_0");
+                if (it != track_candidates.end()) {
+                    track_id = *it;
+                } else {
+                    track_id = track_candidates.front();
+                }
+            }
+        }
+        if (track_id.empty()) {
+            continue;
+        }
+
+        std::string track_base = run_base + "tracks/" + track_id + "/";
+
+        std::vector<float> time_seconds;
+        if (!readFloatArray(store, track_base + "time_seconds", time_seconds) || time_seconds.empty()) {
+            continue;
+        }
+
+        auto readSpeedArray = [&](const std::vector<std::string>& names,
+                                  std::vector<float>& dest) -> bool {
+            for (const auto& name : names) {
+                if (readFloatArray(store, track_base + name, dest) && !dest.empty()) {
+                    return true;
+                }
+            }
+            dest.clear();
+            return false;
+        };
+
+        std::vector<float> smoothed_mm;
+        if (!readSpeedArray({"smoothed_speed_mm", "smoothed_speed_mm_per_s"}, smoothed_mm)) {
+            std::vector<float> smoothed_px;
+            if (readSpeedArray({"smoothed_speed_px", "smoothed_speed_px_per_s"}, smoothed_px) &&
+                pixels_per_mm > 1e-6f) {
+                smoothed_mm.resize(smoothed_px.size());
+                for (size_t i = 0; i < smoothed_px.size(); ++i) {
+                    smoothed_mm[i] = smoothed_px[i] / pixels_per_mm;
+                }
+            }
+        }
+
+        std::vector<float> instant_mm;
+        if (!readSpeedArray({"instantaneous_speed_mm", "instantaneous_speed_mm_per_s"}, instant_mm)) {
+            std::vector<float> instant_px;
+            if (readSpeedArray({"instantaneous_speed_px", "instantaneous_speed_px_per_s"}, instant_px) &&
+                pixels_per_mm > 1e-6f) {
+                instant_mm.resize(instant_px.size());
+                for (size_t i = 0; i < instant_px.size(); ++i) {
+                    instant_mm[i] = instant_px[i] / pixels_per_mm;
+                }
+            }
+        }
+
+        std::vector<int32_t> frame_indices;
+        if (!readInt32Array(store, track_base + "frames", frame_indices)) {
+            std::vector<int64_t> frames64;
+            if (readInt64Array(store, track_base + "frames", frames64)) {
+                frame_indices.resize(frames64.size());
+                for (size_t i = 0; i < frames64.size(); ++i) {
+                    frame_indices[i] = clampToInt32(frames64[i]);
+                }
+            }
+        }
+
+        size_t sample_count = time_seconds.size();
+        if (!smoothed_mm.empty()) {
+            sample_count = std::min(sample_count, smoothed_mm.size());
+        }
+        if (!instant_mm.empty()) {
+            sample_count = std::min(sample_count, instant_mm.size());
+        }
+        if (!frame_indices.empty()) {
+            sample_count = std::min(sample_count, frame_indices.size());
+        }
+        if (sample_count == 0) {
+            continue;
+        }
+
+        auto trim_to = [&](auto& vec) {
+            if (!vec.empty() && vec.size() > sample_count) {
+                vec.resize(sample_count);
+            }
+        };
+        trim_to(time_seconds);
+        trim_to(smoothed_mm);
+        trim_to(instant_mm);
+        trim_to(frame_indices);
+
+        data_.movement_time_seconds = std::move(time_seconds);
+        data_.movement_smoothed_speed_mm = std::move(smoothed_mm);
+        data_.movement_instant_speed_mm = std::move(instant_mm);
+        data_.movement_frame_indices = std::move(frame_indices);
+        data_.movement_run_name = run_name;
+        data_.movement_track_id = track_id;
+        data_.movement_category = category_name;
+        data_.has_movement_data = true;
+        return true;
+    }
+
+    return false;
 }
 
 bool ZarrDetectionLoader::loadStandardFormat(const ts::kvstore::KvStore& store) {
@@ -3982,6 +4162,7 @@ ZarrDetectionLoader::getStimulusEventTimeline() const {
     for (const auto& entry : data_.stimulus_events) {
         StimulusEventSummary summary;
         summary.stimulus_frame_num = entry.stimulus_frame_num;
+        summary.camera_frame_id = entry.camera_frame_id;
         summary.event_type_id = entry.event_type_id;
         summary.label = formatStimulusEvent(entry);
         result.push_back(std::move(summary));
