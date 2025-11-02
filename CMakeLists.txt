@@ -244,6 +244,14 @@ target_link_libraries(test_zarr3_read PRIVATE
 )
 target_compile_features(test_zarr3_read PRIVATE cxx_std_17)
 
+add_executable(zarr_calibration_probe tools/zarr_calibration_probe.cpp)
+target_link_libraries(zarr_calibration_probe PRIVATE
+    tensorstore::all_drivers
+    Threads::Threads
+    nlohmann_json::nlohmann_json
+)
+target_compile_features(zarr_calibration_probe PRIVATE cxx_std_17)
+
 # --- Source Files ---
 # CUDA sources
 set(CUDA_SOURCES "")

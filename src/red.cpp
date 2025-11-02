@@ -12,7 +12,6 @@
 #include "skeleton.h"
 #include "utils.h"
 #include "yolo_detection.h"
-#include "h5_loader.h"
 #include <ImGuiFileDialog.h>
 #include <algorithm>
 #include <deque>
@@ -20,6 +19,7 @@
 #include <chrono>
 #include <limits>
 #include <sstream>
+#include <numeric>
 #include <unordered_map>
 #include <iostream>
 #include <stdio.h>
@@ -46,9 +46,8 @@ std::vector<unsigned char *> yolo_input_frames_rgba(MAX_VIEWS);
 std::unordered_map<std::string, std::atomic<bool>> window_need_decoding;
 std::unordered_map<std::string, std::atomic<int>> latest_decoded_frame;
 
-// 2. Add these variables near your other global variables
+// Global variables
 ZarrDetectionLoader* zarr_loader = nullptr;
-H5SessionData* h5_session_data = nullptr;
 bool show_interpolation_debug = false;
 bool use_interpolated_detections = true;  // Toggle for using interpolated vs original
 
@@ -192,9 +191,6 @@ int main(int, char **) {
     std::vector<CameraParams> camera_params;
     std::vector<std::thread> decoder_threads;
     std::vector<FFmpegDemuxer *> demuxers;
-
-    H5SessionData h5_data;
-    bool h5_loaded = false;
 
     // Zarr loading
     ZarrDetectionLoader zarr_loader;
@@ -516,32 +512,7 @@ int main(int, char **) {
             ImGui::Text("Inspecting Frame: %d", current_frame_num);
             ImGui::Separator();
 
-            // 1. Check for H5 Bounding Boxes
-            if (h5_loaded && h5_data.has_tracking_data) {
-                auto boxes_for_frame = H5SessionLoader::getBoundingBoxesForFrame(h5_data, current_frame_num);
-                if (!boxes_for_frame.empty()) {
-                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[H5] Bounding Boxes:  Found %zu", boxes_for_frame.size());
-                } else {
-                    ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "[H5] Bounding Boxes:  None");
-                }
-            }
-
-            // 2. Check for H5 Chaser/Target States
-            if (h5_loaded) {
-                auto frame_meta = H5SessionLoader::getFrameMetadataByCameraID(h5_data, current_frame_num);
-                if (frame_meta) {
-                    auto chaser_states = H5SessionLoader::getChaserStatesForFrame(h5_data, frame_meta->stimulus_frame_num);
-                    if (!chaser_states.empty()) {
-                        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[H5] Chaser/Target:    Found %zu states", chaser_states.size());
-                    } else {
-                    ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "[H5] Chaser/Target:    None for stimulus frame %lu", static_cast<unsigned long>(frame_meta->stimulus_frame_num));
-                    }
-                } else {
-                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "[H5] Chaser/Target:    No frame metadata found for camera frame");
-                }
-            }
-
-            // 3. Check for Labeled Keypoints
+            // Check for Labeled Keypoints
             if (plot_keypoints_flag) {
                 if (keypoints_map.count(current_frame_num)) {
                     ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[Manual] Keypoints:   Found");
@@ -718,49 +689,6 @@ int main(int, char **) {
                     std::cout << "No Zarr detection file found (optional): " << zarr_error << std::endl;
                 }
 
-                // Try to load H5 file from the selected directory
-                if (loadH5SessionFromDirectory(root_dir, h5_data, error_message)) {
-                    h5_loaded = true;
-                    std::cout << "Successfully loaded H5 session file" << std::endl;
-                    std::cout << "  Session UUID: " << h5_data.session_info.session_uuid << std::endl;
-                    std::cout << "  Protocol: " << h5_data.session_info.protocol_name_from_definition << std::endl;
-                    std::cout << "  Total frames: " << h5_data.total_frames << std::endl;
-                    std::cout << "  Events: " << h5_data.events.size() << std::endl;
-
-                    if (h5_data.has_tracking_data) {
-                        std::cout << "  Bounding boxes: " << h5_data.bounding_boxes.size() << std::endl;
-                        std::cout << "  Chaser states: " << h5_data.chaser_states.size() << std::endl;
-                    }
-
-                    // Sync FPS with video if available
-                    if (h5_data.fps > 0 && h5_data.has_video_metadata) {
-                        std::cout << "  H5 FPS: " << h5_data.fps << ", Video FPS: " << video_fps << std::endl;
-                        // Optionally sync: video_fps = h5_data.fps;
-                    }
-                } else {
-                    // H5 file not found or failed to load - this is optional, not an error
-                    std::cout << "No H5 session file found in directory (optional)" << std::endl;
-                    h5_loaded = false;
-                }
-
-                if (loadZarrDetectionFromDirectory(root_dir, zarr_loader, error_message)) {
-                    zarr_loaded = true;
-                    std::cout << "Successfully loaded Zarr detection file" << std::endl;
-                    std::cout << "  Total frames: " << zarr_loader.getTotalFrames() << std::endl;
-                    std::cout << "  FPS: " << zarr_loader.getFPS() << std::endl;
-                    
-                    // Check if frame counts match between video and detections
-                    if (video_loaded && zarr_loader.getTotalFrames() > 0) {
-                        if (zarr_loader.getTotalFrames() != dc_context->total_num_frame) {
-                            std::cout << "  WARNING: Zarr frames (" << zarr_loader.getTotalFrames()
-                                      << ") != Video frames (" << dc_context->total_num_frame << ")" << std::endl;
-                        }
-                    }
-                } else {
-                    std::cout << "No Zarr detection file found (optional): " << error_message << std::endl;
-                    zarr_loaded = false;
-                }
-
                 // check if it is mp4, if it is mp4 files
                 auto first_selection =
                     *selected_files.begin(); // Dereferencing iterator
@@ -861,88 +789,26 @@ int main(int, char **) {
                     video_loaded = true;
                 }
 
-                // After loading video and H5, load camera calibration
+                // After loading video, load camera calibration
                 if (video_loaded) {
-                    camera_params.resize(scene->num_cams); // Ensure vector is sized
-                    if (h5_loaded) {
-                        // Parse the arena config JSON to calculate the coordinate system offset
-                        if (!h5_data.arena_config_json.empty()) {
-                            try {
-                                json config = json::parse(h5_data.arena_config_json);
+                    camera_params.resize(scene->num_cams);
+                    std::cout << "\n=== Loading Camera Calibrations from YAML ===" << std::endl;
+                    for (size_t i = 0; i < camera_names.size(); ++i) {
+                        std::cout << "\nProcessing camera " << i << ": " << camera_names[i] << std::endl;
 
-                                // Extract the center of the stimulus (swimmable) area
-                                float swim_x = config.value("swimmable_area_center_x_px", 0.0f);
-                                float swim_y = config.value("swimmable_area_center_y_px", 0.0f);
-
-                                std::cout << "[Offset Calc] Swimmable area center: (" << swim_x << ", " << swim_y << ")" << std::endl;
-
-                                // Extract the calibration (sub_arena) dimensions and position
-                                float sub_x = config.value("sub_arena_x_px", 0.0f);
-                                float sub_y = config.value("sub_arena_y_px", 0.0f);
-                                float sub_w = config.value("sub_arena_width_px", 0.0f);
-                                float sub_h = config.value("sub_arena_height_px", 0.0f);
-                                
-                                // Correctly calculate the CENTER of the calibration area
-                                float calib_center_x = sub_x + (sub_w / 2.0f);
-                                float calib_center_y = sub_y + (sub_h / 2.0f);
-                                
-                                // **FIXED CALCULATION:**
-                                // Calculate the final offset by finding the difference between the two centers
-                                // and then adjusting by the swimmable area's center again.
-                                float offsetX = (calib_center_x - swim_x) - swim_x;
-                                float offsetY = (calib_center_y - swim_y) - swim_y;
-
-                                std::cout << "[Offset Calc] Calibration center: (" << calib_center_x << ", " << calib_center_y << ")" << std::endl;
-
-                                // Store the corrected offset in each camera's parameters
-                                for (size_t i = 0; i < camera_params.size(); ++i) {
-                                    camera_params[i].stimulus_offset_x = offsetX;
-                                    camera_params[i].stimulus_offset_y = offsetY;
-                                }
-                                std::cout << "[Offset Calc] Corrected stimulus offset: (" << offsetX << ", " << offsetY << ")" << std::endl;
-
-                            } catch (const json::exception& e) {
-                                std::cerr << "Warning: Could not parse arena_config.json to calculate offset: " << e.what() << std::endl;
-                            }
-                        }
-                        std::cout << "\n=== Loading Camera Calibrations from H5 ===" << std::endl;
-                        for (size_t i = 0; i < camera_names.size(); ++i) {
-                            std::string h5_camera_id = camera_names[i];
-
-                            // ** FIX 1: Strip the "Cam" prefix to match H5 key **
-                            if (h5_camera_id.rfind("Cam", 0) == 0) {
-                                h5_camera_id = h5_camera_id.substr(3);
-                            }
-
-                            std::cout << "\nProcessing camera " << i << ": " << camera_names[i]
-                                    << " (using ID: " << h5_camera_id << " for H5 lookup)" << std::endl;
-
-                            // ** FIX 2: Use the enhanced loading function **
-                            if (!camera_load_calibration_from_h5_enhanced(
-                                    h5_data,          // Pass the entire H5 data structure
-                                    h5_camera_id,     // Use the corrected camera ID
-                                    camera_params[i], // Output parameters
-                                    error_message)) {
-
-                                std::cerr << "Warning: Failed to load calibration for camera " << camera_names[i]
-                                        << " from H5 file: " << error_message << std::endl;
-
-                                // Attempt to fall back to loading from a separate YAML file
-                                std::string yaml_file = root_dir + "/calibration/" + camera_names[i] + ".yaml";
-                                if (std::filesystem::exists(yaml_file)) {
-                                    std::cout << "--> H5 failed, attempting fallback to YAML file: " << yaml_file << std::endl;
-                                    if (!camera_load_params_from_yaml(yaml_file, camera_params[i], error_message)) {
-                                        // If both H5 and YAML fail, show an error
-                                        show_error = true;
-                                        break;
-                                    }
-                                } else {
-                                    std::cout << "--> No fallback YAML file found." << std::endl;
-                                }
+                        // Load calibration from YAML file
+                        std::string yaml_file = root_dir + "/calibration/" + camera_names[i] + ".yaml";
+                        if (std::filesystem::exists(yaml_file)) {
+                            std::cout << "Loading homography from YAML for camera: " << camera_names[i] << std::endl;
+                            if (!camera_load_params_from_yaml(yaml_file, camera_params[i], error_message)) {
+                                std::cerr << "Error: Failed to load calibration from YAML: " << error_message << std::endl;
+                                show_error = true;
+                                break;
                             } else {
-                                // Print debug info to confirm what was successfully loaded from H5
                                 camera_print_calibration_details(camera_params[i], camera_names[i]);
                             }
+                        } else {
+                            std::cerr << "Warning: No calibration YAML file found at: " << yaml_file << std::endl;
                         }
                     }
                 }
@@ -1225,61 +1091,7 @@ int main(int, char **) {
                                 yolo_classid.at(j), scene->image_height[j]);
                         }
 
-                        // === ENHANCED H5 BOUNDING BOX RENDERING === //
-                        if (h5_loaded && h5_data.has_tracking_data) {
-                            // Get all bounding boxes for this camera's frame ID
-                            auto boxes_for_frame = H5SessionLoader::getBoundingBoxesForFrame(h5_data, current_frame_num);
-                            
-                            if (!boxes_for_frame.empty()) {
-                                // Check if this frame is interpolated (for H5 analysis files)
-                                bool is_h5_interpolated = h5_data.is_analysis_file && 
-                                                        h5_data.isFrameInterpolated(current_frame_num);
-                                
-                                // Draw the bounding boxes with interpolation indication
-                                for (const auto& box : boxes_for_frame) {
-                                    double x_coords[5] = {
-                                        box.x_min, 
-                                        box.x_min + box.width, 
-                                        box.x_min + box.width, 
-                                        box.x_min, 
-                                        box.x_min
-                                    };
-                                    
-                                    double y_coords[5] = {
-                                        (double)scene->image_height[j] - box.y_min,
-                                        (double)scene->image_height[j] - box.y_min,
-                                        (double)scene->image_height[j] - (box.y_min + box.height),
-                                        (double)scene->image_height[j] - (box.y_min + box.height),
-                                        (double)scene->image_height[j] - box.y_min
-                                    };
-                                    
-                                    // Blue tones for H5 boxes
-                                    ImVec4 color;
-                                    if (is_h5_interpolated) {
-                                        color = ImVec4(0.5f, 0.5f, 1.0f, 0.9f);  // Light blue for interpolated
-                                    } else {
-                                        color = ImVec4(0.2f, 0.2f, 1.0f, 1.0f);  // Blue for original
-                                    }
-                                    
-                                    ImPlot::SetNextLineStyle(color, 2.0f);
-                                    std::string label = "H5_" + std::to_string(box.class_id);
-                                    if (is_h5_interpolated) label += " [I]";
-                                    ImPlot::PlotLine(label.c_str(), x_coords, y_coords, 5);
-                                }
-                            }
-
-                            // Get the frame metadata to find the corresponding stimulus frame num
-                            auto frame_meta = H5SessionLoader::getFrameMetadataByCameraID(h5_data, current_frame_num);
-                            if (frame_meta) {
-                                // Get chaser states for this stimulus frame
-                                auto chaser_states = H5SessionLoader::getChaserStatesForFrame(h5_data, frame_meta->stimulus_frame_num);
-                                if (!chaser_states.empty()) {
-                                    gui_draw_chaser_state(chaser_states, scene->image_height[j], camera_params[j]);
-                                }
-                            }
-                        }
-                        
-                        // === ENHANCED ZARR BOUNDING BOX RENDERING === //
+                        // === ZARR BOUNDING BOX RENDERING === //
                         if (zarr_loaded) {
                             // Check interpolation status for this frame
                             bool is_zarr_interpolated = zarr_loader.hasInterpolation() && 
@@ -1342,6 +1154,119 @@ int main(int, char **) {
                                     }
                                     
                                     ImPlot::PlotLine(label.c_str(), x_coords, y_coords, 5);
+                                }
+                            }
+
+                            // Draw chaser bounding boxes and target positions
+                            if (zarr_loaded) {
+                                auto chaser_bboxes = zarr_loader.getChaserBoundingBoxesForFrame(current_frame_num);
+                                auto chaser_states = zarr_loader.getChaserStatesForFrame(current_frame_num);
+
+                                // Debug: Print what we found
+                                static bool debug_printed = false;
+                                static int frames_with_data = 0;
+                                if (chaser_bboxes.size() > 0 || chaser_states.size() > 0) {
+                                    frames_with_data++;
+                                    if (!debug_printed) {
+                                        std::cout << "\n=== CHASER DATA DEBUG ===" << std::endl;
+                                        std::cout << "Camera frame " << current_frame_num << ": Found " << chaser_bboxes.size()
+                                                  << " chaser bboxes, " << chaser_states.size() << " chaser states" << std::endl;
+
+                                        if (chaser_bboxes.size() > 0) {
+                                            std::cout << "  First bbox: fish_id=" << chaser_bboxes[0].fish_id
+                                                      << ", x=" << chaser_bboxes[0].x_px << ", y=" << chaser_bboxes[0].y_px
+                                                      << ", w=" << chaser_bboxes[0].width_px << ", h=" << chaser_bboxes[0].height_px << std::endl;
+                                        }
+
+                                        if (chaser_states.size() > 0) {
+                                            std::cout << "  First state: stimulus_frame=" << chaser_states[0].stimulus_frame_num
+                                                      << ", camera_frame=" << chaser_states[0].camera_frame_id << std::endl;
+                                            std::cout << "    chaser=(" << chaser_states[0].chaser_pos_x << "," << chaser_states[0].chaser_pos_y << ")"
+                                                      << " target=(" << chaser_states[0].target_pos_x << "," << chaser_states[0].target_pos_y << ")" << std::endl;
+                                            std::cout << "  Camera params: has_homography=" << camera_params[j].has_valid_homography
+                                                      << ", offsetX=" << camera_params[j].stimulus_offset_x
+                                                      << ", offsetY=" << camera_params[j].stimulus_offset_y << std::endl;
+                                        }
+                                        debug_printed = true;
+                                    }
+                                }
+
+                                // Print summary after a while
+                                static int last_frame_checked = -1;
+                                if (current_frame_num > last_frame_checked + 1000) {
+                                    std::cout << "Frames " << (last_frame_checked + 1) << "-" << current_frame_num
+                                              << ": " << frames_with_data << " frames had chaser data" << std::endl;
+                                    frames_with_data = 0;
+                                    last_frame_checked = current_frame_num;
+                                }
+
+                                // Draw chaser bounding boxes with centroids
+                                for (const auto& bbox : chaser_bboxes) {
+                                    // Draw bounding box in cyan
+                                    double x_coords[5] = {
+                                        bbox.x_px,
+                                        bbox.x_px + bbox.width_px,
+                                        bbox.x_px + bbox.width_px,
+                                        bbox.x_px,
+                                        bbox.x_px
+                                    };
+
+                                    double y_coords[5] = {
+                                        (double)scene->image_height[j] - bbox.y_px,
+                                        (double)scene->image_height[j] - bbox.y_px,
+                                        (double)scene->image_height[j] - (bbox.y_px + bbox.height_px),
+                                        (double)scene->image_height[j] - (bbox.y_px + bbox.height_px),
+                                        (double)scene->image_height[j] - bbox.y_px
+                                    };
+
+                                    ImPlot::SetNextLineStyle(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), 2.0f);  // Cyan
+                                    std::string label = "Chaser_" + std::to_string(bbox.fish_id);
+                                    ImPlot::PlotLine(label.c_str(), x_coords, y_coords, 5);
+
+                                    // Draw centroid as a small circle (using scatter plot)
+                                    double centroid_x = bbox.centroid_x;
+                                    double centroid_y = (double)scene->image_height[j] - bbox.centroid_y;
+                                    ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 5.0f, ImVec4(0.0f, 1.0f, 1.0f, 1.0f), IMPLOT_AUTO, ImVec4(0.0f, 1.0f, 1.0f, 1.0f));
+                                    ImPlot::PlotScatter((label + "_centroid").c_str(), &centroid_x, &centroid_y, 1);
+                                }
+
+                                // Draw target positions from chaser_states
+                                // Transform stimulus coordinates to camera coordinates using homography
+                                if (!chaser_states.empty() && camera_params[j].has_valid_homography) {
+                                    float offsetX = camera_params[j].stimulus_offset_x;
+                                    float offsetY = camera_params[j].stimulus_offset_y;
+
+                                    for (const auto& state : chaser_states) {
+                                        std::vector<cv::Point2f> src_points;
+                                        std::vector<cv::Point2f> dst_points;
+
+                                        // Transform target position from stimulus space to camera space
+                                        src_points.push_back(cv::Point2f(state.target_pos_x + offsetX, state.target_pos_y + offsetY));
+                                        cv::perspectiveTransform(src_points, dst_points, camera_params[j].inverse_homography_matrix);
+
+                                        if (!dst_points.empty()) {
+                                            double target_x = dst_points[0].x;
+                                            double target_y = (double)scene->image_height[j] - dst_points[0].y;
+
+                                            // Draw target as a larger red circle (easier to see)
+                                            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 12.0f, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.5f, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
+                                            std::string target_label = "Target_" + std::to_string(state.chaser_index);
+                                            ImPlot::PlotScatter(target_label.c_str(), &target_x, &target_y, 1);
+                                        }
+
+                                        // Transform chaser position from stimulus space to camera space
+                                        src_points[0] = cv::Point2f(state.chaser_pos_x + offsetX, state.chaser_pos_y + offsetY);
+                                        cv::perspectiveTransform(src_points, dst_points, camera_params[j].inverse_homography_matrix);
+
+                                        if (!dst_points.empty()) {
+                                            double chaser_x = dst_points[0].x;
+                                            double chaser_y = (double)scene->image_height[j] - dst_points[0].y;
+
+                                            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8.0f, ImVec4(1.0f, 1.0f, 0.0f, 1.0f), 2.0f, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+                                            std::string chaser_label = "Chaser_state_" + std::to_string(state.chaser_index);
+                                            ImPlot::PlotScatter(chaser_label.c_str(), &chaser_x, &chaser_y, 1);
+                                        }
+                                    }
                                 }
                             }
 
@@ -1891,26 +1816,19 @@ int main(int, char **) {
                         }
 
                         // === ADD INTERPOLATION STATUS OVERLAY === //
-                        if ((zarr_loaded && zarr_loader.hasInterpolation()) || 
-                            (h5_loaded && h5_data.is_analysis_file)) {
-                            
+                        if (zarr_loaded && zarr_loader.hasInterpolation()) {
+
                             // Determine interpolation status
                             bool any_interpolated = false;
                             std::string source = "";
-                            
-                            if (zarr_loaded && zarr_loader.hasInterpolation() && 
+
+                            if (zarr_loader.hasInterpolation() &&
                                 zarr_loader.isFrameInterpolated(current_frame_num) && use_interpolated_detections) {
                                 any_interpolated = true;
                                 source = "Zarr";
                             }
-                            
-                            if (h5_loaded && h5_data.is_analysis_file && 
-                                h5_data.isFrameInterpolated(current_frame_num)) {
-                                any_interpolated = true;
-                                source = source.empty() ? "H5" : source + "/H5";
-                            }
-                            
-                            if (any_interpolated || (zarr_loader.hasInterpolation() || h5_data.is_analysis_file)) {
+
+                            if (any_interpolated || zarr_loader.hasInterpolation()) {
                                 // Get the plot limits
                                 ImPlotRect limits = ImPlot::GetPlotLimits();
                                 
@@ -2366,247 +2284,6 @@ int main(int, char **) {
                     }
                 }
 
-                // Session Info Window
-                if (h5_loaded) {
-                    if (ImGui::Begin("H5 Session Info")) {
-                        ImGui::Text("Session UUID: %s", h5_data.session_info.session_uuid.c_str());
-                        ImGui::Text("Start Time: %s", h5_data.session_info.session_start_iso8601_utc.c_str());
-                        ImGui::Text("Protocol: %s", h5_data.session_info.protocol_name_from_definition.c_str());
-                        ImGui::Text("Rig ID: %s", h5_data.session_info.rig_id.c_str());
-                        ImGui::Text("Arena ID: %s", h5_data.session_info.arena_id.c_str());
-                        ImGui::Text("Output Size: %dx%d",
-                                h5_data.session_info.stimulus_output_width,
-                                h5_data.session_info.stimulus_output_height);
-
-                        if (!h5_data.session_info.operator_notes.empty()) {
-                            ImGui::Separator();
-                            ImGui::TextWrapped("Notes: %s", h5_data.session_info.operator_notes.c_str());
-                        }
-
-                        if (!h5_data.session_info.subject_metadata.empty()) {
-                            ImGui::Separator();
-                            ImGui::Text("Subject Metadata:");
-                            for (const auto& [key, value] : h5_data.session_info.subject_metadata) {
-                                ImGui::Text("  %s: %s", key.c_str(), value.c_str());
-                            }
-                        }
-                    }
-                    ImGui::End();
-                }
-
-
-                // Stimulus Event Timeline Window
-                if (zarr_loaded) {
-                    if (ImGui::Begin("Stimulus Event Timeline")) {
-                        auto timeline = zarr_loader.getStimulusEventTimeline();
-                        if (timeline.empty()) {
-                            ImGui::TextUnformatted("No stimulus events found.");
-                        } else {
-                            static int selected_event_idx = -1;
-                            if (selected_event_idx >= static_cast<int>(timeline.size())) {
-                                selected_event_idx = -1;
-                            }
-
-                            std::vector<double> x_values(timeline.size());
-                            std::vector<double> y_values(timeline.size());
-                            for (size_t i = 0; i < timeline.size(); ++i) {
-                                const auto& evt = timeline[i];
-                                int32_t frame = std::max(evt.stimulus_frame_num, 0);
-                                x_values[i] = static_cast<double>(frame);
-                                y_values[i] = -0.4 + 0.2 * static_cast<double>(i % 5);
-                            }
-
-                            size_t timeline_signature = timeline.size();
-                            if (!timeline.empty()) {
-                                timeline_signature = timeline_signature * 1315423911u +
-                                                     static_cast<size_t>(timeline.front().stimulus_frame_num);
-                                timeline_signature = timeline_signature * 2654435761u +
-                                                     static_cast<size_t>(timeline.back().stimulus_frame_num);
-                            }
-                            static size_t cached_timeline_signature = 0;
-
-                            double default_max_frame =
-                                static_cast<double>(std::max<size_t>(1, zarr_loader.getTotalFrames()));
-                            if (!x_values.empty()) {
-                                default_max_frame = std::max(default_max_frame, x_values.back() + 1.0);
-                            }
-
-                            ImVec2 plot_size = ImVec2(ImGui::GetContentRegionAvail().x, 170.0f);
-                            if (ImPlot::BeginPlot("##stimulus_timeline_plot", plot_size,
-                                                  ImPlotFlags_NoLegend | ImPlotFlags_NoMouseText)) {
-                                ImPlot::SetupAxes("Frame", nullptr, ImPlotAxisFlags_NoHighlight,
-                                                  ImPlotAxisFlags_NoDecorations);
-                                ImPlot::SetupAxis(ImAxis_Y1, nullptr,
-                                                  ImPlotAxisFlags_NoDecorations | ImPlotAxisFlags_Lock);
-                                ImPlot::SetupAxisLimits(ImAxis_Y1, -1.0, 1.0, ImGuiCond_Always);
-                                if (timeline_signature != cached_timeline_signature) {
-                                    ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, default_max_frame, ImGuiCond_Always);
-                                    cached_timeline_signature = timeline_signature;
-                                }
-
-                                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 6.0f,
-                                                           ImVec4(0.2f, 0.6f, 1.0f, 0.9f), 1.5f,
-                                                           ImVec4(0, 0, 0, 0));
-                                ImPlot::PlotScatter("Stimulus Events", x_values.data(), y_values.data(),
-                                                    static_cast<int>(x_values.size()));
-
-                                double current_line_x[2] = {static_cast<double>(current_frame_num),
-                                                            static_cast<double>(current_frame_num)};
-                                double current_line_y[2] = {-1.0, 1.0};
-                                ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), 2.0f);
-                                ImPlot::PlotLine("Current Frame", current_line_x, current_line_y, 2);
-
-                                int hovered_event_idx = -1;
-                                constexpr float kSelectionRadiusPx = 12.0f;
-                                if (ImPlot::IsPlotHovered()) {
-                                    ImVec2 mouse_pos = ImGui::GetIO().MousePos;
-                                    float best_distance = kSelectionRadiusPx;
-                                    for (size_t i = 0; i < x_values.size(); ++i) {
-                                        ImVec2 event_pixels =
-                                            ImPlot::PlotToPixels(ImPlotPoint(x_values[i], y_values[i]));
-                                        float dx = mouse_pos.x - event_pixels.x;
-                                        float dy = mouse_pos.y - event_pixels.y;
-                                        float distance = std::sqrt(dx * dx + dy * dy);
-                                        if (distance < best_distance) {
-                                            best_distance = distance;
-                                            hovered_event_idx = static_cast<int>(i);
-                                        }
-                                    }
-
-                                    if (hovered_event_idx != -1 &&
-                                        ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                                        selected_event_idx = hovered_event_idx;
-                                        int target_frame =
-                                            timeline[hovered_event_idx].stimulus_frame_num;
-                                        if (target_frame >= 0) {
-                                            ps.slider_frame_number = target_frame;
-                                            seek_all_cameras(scene, target_frame, video_fps, ps, false);
-                                        }
-                                    }
-                                }
-
-                                if (hovered_event_idx != -1) {
-                                    ImGui::SetTooltip("Frame %d\n%s",
-                                                      timeline[hovered_event_idx].stimulus_frame_num,
-                                                      timeline[hovered_event_idx].label.c_str());
-                                }
-
-                                if (selected_event_idx >= 0 &&
-                                    selected_event_idx < static_cast<int>(x_values.size())) {
-                                    double selected_x = x_values[selected_event_idx];
-                                    double selected_y = y_values[selected_event_idx];
-                                    ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 9.0f,
-                                                               ImVec4(1.0f, 0.5f, 0.2f, 1.0f), 2.0f,
-                                                               ImVec4(0, 0, 0, 0));
-                                    ImPlot::PlotScatter("Selected Event", &selected_x, &selected_y, 1);
-                                }
-                                ImPlot::EndPlot();
-                            }
-
-                            ImGui::SeparatorText("Event List");
-                            ImGui::BeginChild("##stimulus_event_list", ImVec2(0, 200), true);
-                            for (size_t i = 0; i < timeline.size(); ++i) {
-                                const auto& evt = timeline[i];
-                                std::ostringstream row_label;
-                                row_label << "Frame " << evt.stimulus_frame_num << "  " << evt.label;
-                                ImGui::PushID(static_cast<int>(i));
-                                bool is_selected = (selected_event_idx == static_cast<int>(i));
-                                if (ImGui::Selectable(row_label.str().c_str(), is_selected)) {
-                                    selected_event_idx = static_cast<int>(i);
-                                    int target_frame = evt.stimulus_frame_num;
-                                    if (target_frame >= 0) {
-                                        ps.slider_frame_number = target_frame;
-                                        seek_all_cameras(scene, target_frame, video_fps, ps, false);
-                                    }
-                                }
-                                ImGui::PopID();
-                            }
-                            ImGui::EndChild();
-
-                            if (selected_event_idx >= 0 &&
-                                selected_event_idx < static_cast<int>(timeline.size())) {
-                                const auto& evt = timeline[selected_event_idx];
-                                ImGui::Separator();
-                                ImGui::Text("Selected Event:");
-                                ImGui::BulletText("Frame: %d", evt.stimulus_frame_num);
-                                ImGui::BulletText("Type ID: %d", evt.event_type_id);
-                                ImGui::BulletText("%s", evt.label.c_str());
-                            }
-                        }
-                    }
-                    ImGui::End();
-                }
-
-
-                // Events Window
-                if (h5_loaded && !h5_data.events.empty()) {
-                    if (ImGui::Begin("H5 Events")) {
-                        // Find events near current frame time
-                        if (video_loaded && h5_data.has_video_metadata) {
-                            auto frame_meta = H5SessionLoader::getFrameMetadata(h5_data, current_frame_num);
-                            if (frame_meta) {
-                                ImGui::Text("Current Frame Timestamp: %.3f s", frame_meta->timestamp_ns / 1e9);
-                                ImGui::Separator();
-                            }
-                        }
-
-                        ImGui::Text("Total Events: %zu", h5_data.events.size());
-
-                        // Show last few events
-                        ImGui::Separator();
-                        ImGui::Text("Recent Events:");
-                        size_t start_idx = h5_data.events.size() > 10 ? h5_data.events.size() - 10 : 0;
-                        for (size_t i = start_idx; i < h5_data.events.size(); i++) {
-                            const auto& event = h5_data.events[i];
-                            ImGui::Text("[%.3fs] Type:%d Step:%d %s",
-                                    event.timestamp_ns_session / 1e9,
-                                    event.event_type_id,
-                                    event.current_step_index,
-                                    event.name_or_context);
-                        }
-                    }
-                    ImGui::End();
-                }
-
-                // Tracking Data Window
-                if (h5_loaded && h5_data.has_tracking_data) {
-                    if (ImGui::Begin("H5 Tracking Data")) {
-                        ImGui::Text("Total Bounding Boxes: %zu", h5_data.bounding_boxes.size());
-                        ImGui::Text("Total Chaser States: %zu", h5_data.chaser_states.size());
-
-                        if (video_loaded) {
-                            ImGui::Separator();
-                            ImGui::Text("Current Frame: %d", current_frame_num);
-
-                            // Get tracking data for current frame
-                            auto boxes = H5SessionLoader::getBoundingBoxesForFrame(h5_data, current_frame_num);
-                            auto chaser_states = H5SessionLoader::getChaserStatesForFrame(h5_data, current_frame_num);
-
-                            if (!boxes.empty()) {
-                                ImGui::Text("Bounding Boxes in Frame: %zu", boxes.size());
-                                for (const auto& box : boxes) {
-                                    ImGui::Text("  Camera %d: [%.1f,%.1f,%.1f,%.1f] Class:%d Conf:%.2f",
-                                            box.payload_camera_id,
-                                            box.x_min, box.y_min, box.width, box.height,
-                                            box.class_id, box.confidence);
-                                }
-                            }
-
-                            if (!chaser_states.empty()) {
-                                ImGui::Text("Chaser States in Frame: %zu", chaser_states.size());
-                                for (const auto& state : chaser_states) {
-                                    ImGui::Text("  Chaser %d: %s Pos:(%.1f,%.1f) Target:(%.1f,%.1f)",
-                                            state.chaser_index,
-                                            state.is_chasing ? "Chasing" : "Not Chasing",
-                                            state.chaser_pos_x, state.chaser_pos_y,
-                                            state.target_pos_x, state.target_pos_y);
-                                }
-                            }
-                        }
-                    }
-                    ImGui::End();
-                }
-
                 if (ImGui::Button("Update keypoints working directory")) {
                     IGFD::FileDialogConfig config;
                     config.countSelectionMax = 1;
@@ -2684,6 +2361,448 @@ int main(int, char **) {
                                      true);
                 }
                 ImGui::Text("Total labeled frames : %zu", keypoints_map.size());
+            }
+            ImGui::End();
+        }
+
+        // Stimulus Event Timeline Window
+        if (zarr_loaded) {
+            if (ImGui::Begin("Stimulus Event Timeline")) {
+                auto timeline = zarr_loader.getStimulusEventTimeline();
+                if (timeline.empty()) {
+                    ImGui::TextUnformatted("No stimulus events found.");
+                } else {
+                    // Helper function to generate consistent colors for event types
+                    auto getEventTypeColor = [](int32_t event_type_id) -> ImVec4 {
+                        // Use hash to generate consistent color for each event type
+                        uint32_t hash = static_cast<uint32_t>(event_type_id) * 2654435761u;
+                        float h = (hash % 360) / 360.0f;  // Hue
+                        float s = 0.7f + 0.25f * ((hash >> 8) % 100) / 100.0f;  // Saturation 0.7-0.95
+                        float v = 0.8f + 0.2f * ((hash >> 16) % 100) / 100.0f;  // Value 0.8-1.0
+
+                        // Convert HSV to RGB
+                        float c = v * s;
+                        float x = c * (1.0f - std::fabs(std::fmod(h * 6.0f, 2.0f) - 1.0f));
+                        float m = v - c;
+                        float r, g, b;
+                        if (h < 1.0f/6.0f) { r = c; g = x; b = 0; }
+                        else if (h < 2.0f/6.0f) { r = x; g = c; b = 0; }
+                        else if (h < 3.0f/6.0f) { r = 0; g = c; b = x; }
+                        else if (h < 4.0f/6.0f) { r = 0; g = x; b = c; }
+                        else if (h < 5.0f/6.0f) { r = x; g = 0; b = c; }
+                        else { r = c; g = 0; b = x; }
+                        return ImVec4(r + m, g + m, b + m, 0.9f);
+                    };
+
+                    // Collect unique event types and create filter state
+                    static std::unordered_map<int32_t, bool> event_type_filter;
+                    static bool filter_initialized = false;
+                    std::unordered_map<int32_t, std::string> event_type_labels;
+                    for (const auto& evt : timeline) {
+                        if (event_type_labels.find(evt.event_type_id) == event_type_labels.end()) {
+                            // Extract just the event type name (before any " - " context)
+                            std::string type_name = evt.label;
+                            size_t dash_pos = type_name.find(" - ");
+                            if (dash_pos != std::string::npos) {
+                                type_name = type_name.substr(0, dash_pos);
+                            }
+                            event_type_labels[evt.event_type_id] = type_name;
+
+                            if (!filter_initialized) {
+                                event_type_filter[evt.event_type_id] = true;  // All enabled by default
+                            }
+                        }
+                    }
+                    filter_initialized = true;
+
+                    static int selected_event_idx = -1;
+                    if (selected_event_idx >= static_cast<int>(timeline.size())) {
+                        selected_event_idx = -1;
+                    }
+
+                    std::vector<double> x_values(timeline.size());
+                    std::vector<double> y_values(timeline.size());
+                    std::vector<int32_t> display_frames(timeline.size());
+                    for (size_t i = 0; i < timeline.size(); ++i) {
+                        const auto& evt = timeline[i];
+                        int32_t frame = evt.camera_frame_id >= 0 ? evt.camera_frame_id
+                                                                 : evt.stimulus_frame_num;
+                        display_frames[i] = frame;
+                        int32_t clamped = frame >= 0 ? frame : 0;
+                        x_values[i] = static_cast<double>(clamped);
+                        y_values[i] = 0.0;  // All events on same line
+                    }
+
+                    size_t timeline_signature = timeline.size();
+                    if (!timeline.empty()) {
+                        auto signature_value = [&](int32_t frame) -> size_t {
+                            return static_cast<size_t>(std::max(frame, 0));
+                        };
+                        timeline_signature = timeline_signature * 1315423911u +
+                                             signature_value(display_frames.front());
+                        timeline_signature = timeline_signature * 2654435761u +
+                                             signature_value(display_frames.back());
+                    }
+                    static size_t cached_timeline_signature = 0;
+
+                    double default_max_frame =
+                        static_cast<double>(std::max<size_t>(1, zarr_loader.getTotalFrames()));
+                    for (int32_t frame : display_frames) {
+                        if (frame >= 0) {
+                            default_max_frame =
+                                std::max(default_max_frame, static_cast<double>(frame + 1));
+                        }
+                    }
+
+                    ImVec2 plot_size = ImVec2(ImGui::GetContentRegionAvail().x, 170.0f);
+                    if (ImPlot::BeginPlot("##stimulus_timeline_plot", plot_size,
+                                          ImPlotFlags_NoLegend | ImPlotFlags_NoMouseText)) {
+                        ImPlot::SetupAxes("Frame", nullptr, ImPlotAxisFlags_NoHighlight,
+                                          ImPlotAxisFlags_NoDecorations);
+                        ImPlot::SetupAxis(ImAxis_Y1, nullptr,
+                                          ImPlotAxisFlags_NoDecorations | ImPlotAxisFlags_Lock);
+                        ImPlot::SetupAxisLimits(ImAxis_Y1, -0.5, 0.5, ImGuiCond_Always);
+                        if (timeline_signature != cached_timeline_signature) {
+                            ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, default_max_frame, ImGuiCond_Always);
+                            cached_timeline_signature = timeline_signature;
+                        }
+
+                        // Plot events grouped by type with consistent colors
+                        for (const auto& [event_type_id, type_label] : event_type_labels) {
+                            // Skip filtered out event types
+                            if (!event_type_filter[event_type_id]) {
+                                continue;
+                            }
+
+                            // Collect events of this type
+                            std::vector<double> type_x_values;
+                            std::vector<double> type_y_values;
+                            for (size_t i = 0; i < timeline.size(); ++i) {
+                                if (timeline[i].event_type_id == event_type_id) {
+                                    type_x_values.push_back(x_values[i]);
+                                    type_y_values.push_back(y_values[i]);
+                                }
+                            }
+
+                            if (!type_x_values.empty()) {
+                                ImVec4 color = getEventTypeColor(event_type_id);
+                                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 6.0f, color, 1.5f,
+                                                           ImVec4(0, 0, 0, 0));
+                                ImPlot::PlotScatter(type_label.c_str(), type_x_values.data(),
+                                                   type_y_values.data(),
+                                                   static_cast<int>(type_x_values.size()));
+                            }
+                        }
+
+                        double current_line_x[2] = {static_cast<double>(current_frame_num),
+                                                    static_cast<double>(current_frame_num)};
+                        double current_line_y[2] = {-1.0, 1.0};
+                        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), 2.0f);
+                        ImPlot::PlotLine("Current Frame", current_line_x, current_line_y, 2);
+
+                        int hovered_event_idx = -1;
+                        constexpr float kSelectionRadiusPx = 12.0f;
+                        if (ImPlot::IsPlotHovered()) {
+                            ImVec2 mouse_pos = ImGui::GetIO().MousePos;
+                            float best_distance = kSelectionRadiusPx;
+                            for (size_t i = 0; i < x_values.size(); ++i) {
+                                ImVec2 event_pixels =
+                                    ImPlot::PlotToPixels(ImPlotPoint(x_values[i], y_values[i]));
+                                float dx = mouse_pos.x - event_pixels.x;
+                                float dy = mouse_pos.y - event_pixels.y;
+                                float distance = std::sqrt(dx * dx + dy * dy);
+                                if (distance < best_distance) {
+                                    best_distance = distance;
+                                    hovered_event_idx = static_cast<int>(i);
+                                }
+                            }
+
+                            if (hovered_event_idx != -1 &&
+                                ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                                selected_event_idx = hovered_event_idx;
+                                const int target_frame = display_frames[hovered_event_idx];
+                                if (target_frame >= 0) {
+                                    ps.slider_frame_number = target_frame;
+                                    seek_all_cameras(scene, target_frame, video_fps, ps, false);
+                                }
+                            }
+                        }
+
+                        if (hovered_event_idx != -1) {
+                            const auto& hovered_evt = timeline[hovered_event_idx];
+                            const int32_t camera_frame = hovered_evt.camera_frame_id;
+                            const int32_t stim_frame = hovered_evt.stimulus_frame_num;
+                            if (camera_frame >= 0) {
+                                if (stim_frame >= 0 && stim_frame != camera_frame) {
+                                    ImGui::SetTooltip("Camera Frame %d\nStimulus Frame %d\n%s",
+                                                      camera_frame,
+                                                      stim_frame,
+                                                      hovered_evt.label.c_str());
+                                } else {
+                                    ImGui::SetTooltip("Camera Frame %d\n%s",
+                                                      camera_frame,
+                                                      hovered_evt.label.c_str());
+                                }
+                            } else {
+                            ImGui::SetTooltip("Frame %d\n%s",
+                                              std::max(stim_frame, 0),
+                                              hovered_evt.label.c_str());
+                            }
+                        }
+
+                        if (selected_event_idx >= 0 &&
+                            selected_event_idx < static_cast<int>(x_values.size())) {
+                            double selected_x = x_values[selected_event_idx];
+                            double selected_y = y_values[selected_event_idx];
+                            ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 9.0f,
+                                                       ImVec4(1.0f, 0.5f, 0.2f, 1.0f), 2.0f,
+                                                       ImVec4(0, 0, 0, 0));
+                            ImPlot::PlotScatter("Selected Event", &selected_x, &selected_y, 1);
+                        }
+                        ImPlot::EndPlot();
+                    }
+
+                    // Legend and Filter UI
+                    ImGui::SeparatorText("Event Type Legend & Filter");
+                    ImGui::BeginChild("##event_type_legend", ImVec2(0, 120), true);
+
+                    // Add "Show All" / "Hide All" buttons
+                    if (ImGui::SmallButton("Show All")) {
+                        for (auto& [type_id, enabled] : event_type_filter) {
+                            enabled = true;
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Hide All")) {
+                        for (auto& [type_id, enabled] : event_type_filter) {
+                            enabled = false;
+                        }
+                    }
+
+                    ImGui::Separator();
+
+                    // Display legend with checkboxes for filtering
+                    int col_count = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / 250.0f));
+                    if (ImGui::BeginTable("##legend_table", col_count, ImGuiTableFlags_SizingStretchSame)) {
+                        int col_idx = 0;
+                        for (const auto& [event_type_id, type_label] : event_type_labels) {
+                            if (col_idx % col_count == 0) {
+                                ImGui::TableNextRow();
+                            }
+                            ImGui::TableNextColumn();
+
+                            // Push unique ID for this event type
+                            ImGui::PushID(event_type_id);
+
+                            ImVec4 color = getEventTypeColor(event_type_id);
+
+                            // Color swatch
+                            ImGui::PushStyleColor(ImGuiCol_Button, color);
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, color);
+                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, color);
+                            ImGui::SmallButton("  ");
+                            ImGui::PopStyleColor(3);
+
+                            ImGui::SameLine();
+
+                            // Checkbox for filtering
+                            bool& enabled = event_type_filter[event_type_id];
+                            ImGui::Checkbox(type_label.c_str(), &enabled);
+
+                            ImGui::PopID();
+
+                            col_idx++;
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::EndChild();
+
+                    ImGui::SeparatorText("Event List");
+                    ImGui::BeginChild("##stimulus_event_list", ImVec2(0, 200), true);
+                    for (size_t i = 0; i < timeline.size(); ++i) {
+                        const auto& evt = timeline[i];
+                        std::ostringstream row_label;
+                        if (evt.camera_frame_id >= 0) {
+                            row_label << "Cam " << evt.camera_frame_id;
+                            if (evt.stimulus_frame_num >= 0 &&
+                                evt.stimulus_frame_num != evt.camera_frame_id) {
+                                row_label << " (Stim " << evt.stimulus_frame_num << ")";
+                            }
+                        } else {
+                            row_label << "Stim " << evt.stimulus_frame_num;
+                        }
+                        row_label << "  " << evt.label;
+                        ImGui::PushID(static_cast<int>(i));
+                        bool is_selected = (selected_event_idx == static_cast<int>(i));
+                        if (ImGui::Selectable(row_label.str().c_str(), is_selected)) {
+                            selected_event_idx = static_cast<int>(i);
+                            int target_frame = evt.camera_frame_id >= 0
+                                                   ? evt.camera_frame_id
+                                                   : evt.stimulus_frame_num;
+                            if (target_frame >= 0) {
+                                ps.slider_frame_number = target_frame;
+                                seek_all_cameras(scene, target_frame, video_fps, ps, false);
+                            }
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::EndChild();
+
+                    if (selected_event_idx >= 0 &&
+                        selected_event_idx < static_cast<int>(timeline.size())) {
+                        const auto& evt = timeline[selected_event_idx];
+                        ImGui::Separator();
+                        ImGui::Text("Selected Event:");
+                        if (evt.camera_frame_id >= 0) {
+                            ImGui::BulletText("Camera Frame: %d", evt.camera_frame_id);
+                        }
+                        if (evt.stimulus_frame_num >= 0) {
+                            ImGui::BulletText("Stimulus Frame: %d", evt.stimulus_frame_num);
+                        }
+                        ImGui::BulletText("Type ID: %d", evt.event_type_id);
+                        ImGui::BulletText("%s", evt.label.c_str());
+                    }
+                }
+            }
+            ImGui::End();
+        }
+
+        // Speed Timeline Window
+        if (zarr_loaded && zarr_loader.hasMovementData()) {
+            if (ImGui::Begin("Speed Timeline")) {
+                const auto& time_data = zarr_loader.getMovementTimeSeconds();
+                const auto& smoothed_speed = zarr_loader.getMovementSmoothedSpeedMm();
+                const auto& instant_speed = zarr_loader.getMovementInstantaneousSpeedMm();
+                const auto& frame_indices = zarr_loader.getMovementFrameIndices();
+
+                if (time_data.empty() || smoothed_speed.empty()) {
+                    ImGui::TextUnformatted("No speed data available.");
+                } else {
+                    ImGui::Text("Movement Run: %s | Track: %s",
+                               zarr_loader.getMovementRunName().c_str(),
+                               zarr_loader.getMovementTrackId().c_str());
+                    ImGui::Text("Data points: %zu", time_data.size());
+
+                    static bool show_smoothed = true;
+                    static bool show_instantaneous = false;
+
+                    ImGui::Checkbox("Show Smoothed Speed", &show_smoothed);
+                    ImGui::SameLine();
+                    ImGui::Checkbox("Show Instantaneous Speed", &show_instantaneous);
+
+                    // Prepare data for plotting
+                    std::vector<double> time_plot;
+                    std::vector<double> smoothed_plot;
+                    std::vector<double> instant_plot;
+
+                    time_plot.reserve(time_data.size());
+                    smoothed_plot.reserve(smoothed_speed.size());
+                    if (!instant_speed.empty()) {
+                        instant_plot.reserve(instant_speed.size());
+                    }
+
+                    for (size_t i = 0; i < time_data.size(); ++i) {
+                        time_plot.push_back(static_cast<double>(time_data[i]));
+                        if (i < smoothed_speed.size()) {
+                            smoothed_plot.push_back(static_cast<double>(smoothed_speed[i]));
+                        }
+                        if (!instant_speed.empty() && i < instant_speed.size()) {
+                            instant_plot.push_back(static_cast<double>(instant_speed[i]));
+                        }
+                    }
+
+                    ImVec2 plot_size = ImVec2(-1, 300);
+                    if (ImPlot::BeginPlot("##speed_plot", plot_size)) {
+                        ImPlot::SetupAxes("Time (s)", "Speed (mm/s)");
+                        ImPlot::SetupAxisLimits(ImAxis_X1, time_plot.front(), time_plot.back(), ImGuiCond_Once);
+
+                        // Find max speed for Y axis
+                        double max_speed = 0.0;
+                        if (show_smoothed) {
+                            max_speed = std::max(max_speed, *std::max_element(smoothed_plot.begin(), smoothed_plot.end()));
+                        }
+                        if (show_instantaneous && !instant_plot.empty()) {
+                            max_speed = std::max(max_speed, *std::max_element(instant_plot.begin(), instant_plot.end()));
+                        }
+                        ImPlot::SetupAxisLimits(ImAxis_Y1, 0, max_speed * 1.1, ImGuiCond_Once);
+
+                        if (show_smoothed) {
+                            ImPlot::SetNextLineStyle(ImVec4(0.2f, 0.7f, 1.0f, 1.0f), 2.0f);
+                            ImPlot::PlotLine("Smoothed Speed", time_plot.data(), smoothed_plot.data(),
+                                           static_cast<int>(time_plot.size()));
+                        }
+
+                        if (show_instantaneous && !instant_plot.empty()) {
+                            ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.5f, 0.2f, 0.6f), 1.0f);
+                            ImPlot::PlotLine("Instantaneous Speed", time_plot.data(), instant_plot.data(),
+                                           static_cast<int>(instant_plot.size()));
+                        }
+
+                        // Draw current time marker if we can map frame to time
+                        if (!frame_indices.empty() && current_frame_num >= 0) {
+                            // Find time corresponding to current frame
+                            // First try exact match
+                            auto it = std::find(frame_indices.begin(), frame_indices.end(), current_frame_num);
+                            double current_time = -1.0;
+
+                            if (it != frame_indices.end()) {
+                                // Exact match found
+                                size_t idx = std::distance(frame_indices.begin(), it);
+                                if (idx < time_data.size()) {
+                                    current_time = static_cast<double>(time_data[idx]);
+                                }
+                            } else {
+                                // No exact match - interpolate
+                                // Find the first frame index >= current_frame_num
+                                auto upper = std::lower_bound(frame_indices.begin(), frame_indices.end(), current_frame_num);
+
+                                if (upper != frame_indices.end() && upper != frame_indices.begin()) {
+                                    // Interpolate between previous and next
+                                    auto lower = upper - 1;
+                                    size_t lower_idx = std::distance(frame_indices.begin(), lower);
+                                    size_t upper_idx = std::distance(frame_indices.begin(), upper);
+
+                                    if (upper_idx < time_data.size() && lower_idx < time_data.size()) {
+                                        int32_t f0 = *lower;
+                                        int32_t f1 = *upper;
+                                        float t0 = time_data[lower_idx];
+                                        float t1 = time_data[upper_idx];
+
+                                        // Linear interpolation
+                                        float alpha = static_cast<float>(current_frame_num - f0) / static_cast<float>(f1 - f0);
+                                        current_time = static_cast<double>(t0 + alpha * (t1 - t0));
+                                    }
+                                } else if (upper == frame_indices.begin() && !time_data.empty()) {
+                                    // Before first frame - use first time
+                                    current_time = static_cast<double>(time_data[0]);
+                                } else if (upper == frame_indices.end() && !time_data.empty()) {
+                                    // After last frame - use last time
+                                    current_time = static_cast<double>(time_data.back());
+                                }
+                            }
+
+                            if (current_time >= 0.0) {
+                                // Get current plot limits for proper vertical line
+                                ImPlotRect limits = ImPlot::GetPlotLimits();
+                                double current_line_x[2] = {current_time, current_time};
+                                double current_line_y[2] = {limits.Y.Min, limits.Y.Max};
+                                ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), 3.0f);
+                                ImPlot::PlotLine("##current_time", current_line_x, current_line_y, 2);
+                            }
+                        }
+
+                        ImPlot::EndPlot();
+                    }
+
+                    // Statistics
+                    ImGui::SeparatorText("Statistics");
+                    if (!smoothed_speed.empty()) {
+                        float avg_speed = std::accumulate(smoothed_speed.begin(), smoothed_speed.end(), 0.0f) / smoothed_speed.size();
+                        float max_spd = *std::max_element(smoothed_speed.begin(), smoothed_speed.end());
+                        ImGui::BulletText("Average Speed (smoothed): %.2f mm/s", avg_speed);
+                        ImGui::BulletText("Max Speed (smoothed): %.2f mm/s", max_spd);
+                    }
+                }
             }
             ImGui::End();
         }
