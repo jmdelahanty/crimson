@@ -9,6 +9,7 @@
 #include <tensorstore/kvstore/kvstore.h>
 #include <tensorstore/open.h>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 #include <string>
@@ -161,13 +162,78 @@ struct ZarrDetectionData {
 
     // Movement analysis (analysis/movement_runs)
     bool has_movement_data = false;
-    std::string movement_category;
-    std::string movement_run_name;
-    std::string movement_track_id;
-    std::vector<float> movement_time_seconds;
-    std::vector<float> movement_smoothed_speed_mm;
-    std::vector<float> movement_instant_speed_mm;
-    std::vector<int32_t> movement_frame_indices;
+    struct MovementSeries {
+        std::string category;
+        std::string run_name;
+        std::string track_id;
+        std::string detection_variant;
+        std::string source_detect_run;
+        double fps = 0.0;
+        double smoothing_seconds = 0.0;
+        int video_width = 0;
+        int video_height = 0;
+        bool from_speed_runs = false;
+        std::vector<float> time_seconds;
+        std::vector<float> smoothed_speed_mm;
+        std::vector<float> instant_speed_mm;
+        std::vector<int32_t> frame_indices;
+    };
+    std::vector<MovementSeries> movement_series;
+    size_t movement_selected_index = std::numeric_limits<size_t>::max();
+
+    struct ChaserBoundingBoxRecord {
+        int32_t camera_frame_id = -1;
+        int32_t stimulus_frame_num = -1;
+        int32_t fish_id = -1;
+        int32_t chaser_index = -1;
+        float x_px = std::numeric_limits<float>::quiet_NaN();
+        float y_px = std::numeric_limits<float>::quiet_NaN();
+        float width_px = std::numeric_limits<float>::quiet_NaN();
+        float height_px = std::numeric_limits<float>::quiet_NaN();
+        float centroid_x = std::numeric_limits<float>::quiet_NaN();
+        float centroid_y = std::numeric_limits<float>::quiet_NaN();
+        float confidence = std::numeric_limits<float>::quiet_NaN();
+        bool is_target = false;
+    };
+    std::vector<ChaserBoundingBoxRecord> chaser_bounding_boxes;
+    std::vector<std::vector<size_t>> chaser_bboxes_by_camera_frame;
+    bool has_chaser_bboxes = false;
+
+    struct ChaserStateRecord {
+        int32_t stimulus_frame_num = -1;
+        int32_t camera_frame_id = -1;
+        int32_t chaser_index = -1;
+        float chaser_pos_x = std::numeric_limits<float>::quiet_NaN();
+        float chaser_pos_y = std::numeric_limits<float>::quiet_NaN();
+        float target_pos_x = std::numeric_limits<float>::quiet_NaN();
+        float target_pos_y = std::numeric_limits<float>::quiet_NaN();
+        float chaser_radius_px = std::numeric_limits<float>::quiet_NaN();
+        float distance_to_target_px = std::numeric_limits<float>::quiet_NaN();
+        float target_speed_px_per_s = std::numeric_limits<float>::quiet_NaN();
+        int64_t timestamp_ns_session = 0;
+        uint8_t is_chasing = 0;
+        bool texture_space = true;
+        double chaser_camera_x = std::numeric_limits<double>::quiet_NaN();
+        double chaser_camera_y = std::numeric_limits<double>::quiet_NaN();
+        double target_camera_x = std::numeric_limits<double>::quiet_NaN();
+        double target_camera_y = std::numeric_limits<double>::quiet_NaN();
+        bool has_camera_coords = false;
+    };
+    std::vector<ChaserStateRecord> chaser_states;
+    std::vector<std::vector<size_t>> chaser_states_by_camera_frame;
+    std::vector<std::vector<size_t>> chaser_states_by_stimulus_frame;
+    bool has_chaser_states = false;
+
+    struct ChaserCoordinateTransform {
+        double texture_width = 0.0;
+        double texture_height = 0.0;
+        double camera_width = 0.0;
+        double camera_height = 0.0;
+        double scale = 1.0;
+        double offset_x_px = 0.0;
+        double offset_y_px = 0.0;
+        bool valid = false;
+    } chaser_transform;
 };
 
 class ZarrDetectionLoader {
@@ -253,14 +319,49 @@ public:
     }
     
     // Movement analysis accessors
-    bool hasMovementData() const { return data_.has_movement_data; }
-    const std::vector<float>& getMovementTimeSeconds() const { return data_.movement_time_seconds; }
-    const std::vector<float>& getMovementSmoothedSpeedMm() const { return data_.movement_smoothed_speed_mm; }
-    const std::vector<float>& getMovementInstantaneousSpeedMm() const { return data_.movement_instant_speed_mm; }
-    const std::vector<int32_t>& getMovementFrameIndices() const { return data_.movement_frame_indices; }
-    const std::string& getMovementRunName() const { return data_.movement_run_name; }
-    const std::string& getMovementTrackId() const { return data_.movement_track_id; }
-    const std::string& getMovementCategory() const { return data_.movement_category; }
+    bool hasMovementData() const {
+        return getSelectedMovementSeries() != nullptr;
+    }
+    const std::vector<float>& getMovementTimeSeconds() const {
+        static const std::vector<float> kEmpty;
+        const auto* series = getSelectedMovementSeries();
+        return series ? series->time_seconds : kEmpty;
+    }
+    const std::vector<float>& getMovementSmoothedSpeedMm() const {
+        static const std::vector<float> kEmpty;
+        const auto* series = getSelectedMovementSeries();
+        return series ? series->smoothed_speed_mm : kEmpty;
+    }
+    const std::vector<float>& getMovementInstantaneousSpeedMm() const {
+        static const std::vector<float> kEmpty;
+        const auto* series = getSelectedMovementSeries();
+        return series ? series->instant_speed_mm : kEmpty;
+    }
+    const std::vector<int32_t>& getMovementFrameIndices() const {
+        static const std::vector<int32_t> kEmpty;
+        const auto* series = getSelectedMovementSeries();
+        return series ? series->frame_indices : kEmpty;
+    }
+    const std::string& getMovementRunName() const {
+        static const std::string kEmpty;
+        const auto* series = getSelectedMovementSeries();
+        return series ? series->run_name : kEmpty;
+    }
+    const std::string& getMovementTrackId() const {
+        static const std::string kEmpty;
+        const auto* series = getSelectedMovementSeries();
+        return series ? series->track_id : kEmpty;
+    }
+    const std::string& getMovementCategory() const {
+        static const std::string kEmpty;
+        const auto* series = getSelectedMovementSeries();
+        return series ? series->category : kEmpty;
+    }
+    size_t getMovementSeriesCount() const;
+    const ZarrDetectionData::MovementSeries* getMovementSeries(size_t index) const;
+    size_t getSelectedMovementSeriesIndex() const;
+    const ZarrDetectionData::MovementSeries* getSelectedMovementSeries() const;
+    bool selectMovementSeries(size_t index);
 
     // Stimulus chaser overlays (placeholder implementations)
     struct ChaserBoundingBox {
@@ -271,6 +372,11 @@ public:
         float height_px = 0.0f;
         float centroid_x = 0.0f;
         float centroid_y = 0.0f;
+        float confidence = std::numeric_limits<float>::quiet_NaN();
+        int32_t camera_frame_id = -1;
+        int32_t stimulus_frame_num = -1;
+        int32_t chaser_index = -1;
+        bool is_target = false;
     };
     struct ChaserState {
         int32_t stimulus_frame_num = -1;
@@ -280,9 +386,20 @@ public:
         float chaser_pos_y = 0.0f;
         float target_pos_x = 0.0f;
         float target_pos_y = 0.0f;
+        float chaser_radius_px = std::numeric_limits<float>::quiet_NaN();
+        float distance_to_target_px = std::numeric_limits<float>::quiet_NaN();
+        float target_speed_px_per_s = std::numeric_limits<float>::quiet_NaN();
+        bool is_chasing = false;
+        int64_t timestamp_ns_session = 0;
+        bool texture_space = true;
+        double chaser_camera_x = std::numeric_limits<double>::quiet_NaN();
+        double chaser_camera_y = std::numeric_limits<double>::quiet_NaN();
+        double target_camera_x = std::numeric_limits<double>::quiet_NaN();
+        double target_camera_y = std::numeric_limits<double>::quiet_NaN();
+        bool has_camera_coords = false;
     };
-    std::vector<ChaserBoundingBox> getChaserBoundingBoxesForFrame(size_t /*frame_id*/) const { return {}; }
-    std::vector<ChaserState> getChaserStatesForFrame(size_t /*frame_id*/) const { return {}; }
+    std::vector<ChaserBoundingBox> getChaserBoundingBoxesForFrame(size_t frame_id) const;
+    std::vector<ChaserState> getChaserStatesForFrame(size_t frame_id) const;
     
     // Get raw detection data for a frame (for advanced use)
     struct FrameDetections {
@@ -376,6 +493,11 @@ private:
     bool loadEyeAngleData(const ts::kvstore::KvStore& store, size_t roi_count);
     bool loadStimulusEventsForRun(const ts::kvstore::KvStore& store, const std::string& run_base);
     void loadStimulusEventEnums(const ts::kvstore::KvStore& store);
+    bool loadChaserStates(const ts::kvstore::KvStore& store, const std::string& run_base);
+    bool loadChaserBoundingBoxes(const ts::kvstore::KvStore& store, const std::string& run_base);
+    bool loadStimulusFrameMetadataMapping(const ts::kvstore::KvStore& store,
+                                          const std::string& run_base,
+                                          std::vector<int32_t>& stimulus_to_camera);
     bool loadLatestInterpolationRun(const ts::kvstore::KvStore& store, const std::string& run_name);
     bool loadPaletteInterpolationRun(const ts::kvstore::KvStore& store,
                                      const std::string& run_name,
@@ -387,6 +509,33 @@ private:
     void prefetchAdjacentEyeMaskChunks(size_t chunk_id) const;
     bool populateEyeMaskEntry(size_t roi_index, FrameDetections::EyeMask& out_mask) const;
     bool loadMovementData(const ts::kvstore::KvStore& store);
+    bool loadSpeedRunMovement(const ts::kvstore::KvStore& store);
+    bool loadLegacyMovementData(const ts::kvstore::KvStore& store);
+    bool loadMovementTrack(const ts::kvstore::KvStore& store,
+                           const std::string& log_tag,
+                           const std::string& run_name,
+                           const std::string& track_id,
+                           const std::string& track_base,
+                           const std::vector<std::string>& frame_names,
+                           const std::vector<std::string>& time_float_names,
+                           const std::vector<std::string>& timestamp_ns_names,
+                           const std::vector<std::string>& smoothed_mm_names,
+                           const std::vector<std::string>& smoothed_px_names,
+                           const std::vector<std::string>& instant_mm_names,
+                           const std::vector<std::string>& instant_px_names,
+                           float pixels_per_mm,
+                           double run_fps,
+                           const std::string& category,
+                           const std::string& detection_variant,
+                           const std::string& source_detect_run,
+                           double smoothing_seconds,
+                           int video_width,
+                           int video_height,
+                           bool from_speed_runs);
+    void finalizeMovementSelection();
+    void rebuildChaserStateIndices();
+    void rebuildChaserBoundingBoxIndices();
+    void updateChaserCameraFramesFromAlignment();
     
     // Helper conversion function
     LoggedBoundingBox convertToLoggedBox(

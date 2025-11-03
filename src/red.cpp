@@ -1200,77 +1200,235 @@ int main(int, char **) {
                                     last_frame_checked = current_frame_num;
                                 }
 
-                                // Draw chaser bounding boxes with centroids
-                                for (const auto& bbox : chaser_bboxes) {
-                                    // Draw bounding box in cyan
-                                    double x_coords[5] = {
-                                        bbox.x_px,
-                                        bbox.x_px + bbox.width_px,
-                                        bbox.x_px + bbox.width_px,
-                                        bbox.x_px,
-                                        bbox.x_px
+                                struct StateOverlay {
+                                    int chaser_index = -1;
+                                    double target_plot_x = 0.0;
+                                    double target_plot_y = 0.0;
+                                    double chaser_plot_x = 0.0;
+                                    double chaser_plot_y = 0.0;
+                                    size_t target_bbox_index = std::numeric_limits<size_t>::max();
+                                    bool has_target = false;
+                                    bool has_chaser = false;
+                                };
+
+                                std::vector<uint8_t> target_bbox_usage(chaser_bboxes.size(), 0);
+                                std::vector<StateOverlay> state_overlays;
+                                state_overlays.reserve(chaser_states.size());
+
+                                const size_t kInvalidBBoxIndex = std::numeric_limits<size_t>::max();
+
+                                auto selectBoundingBoxForTarget = [&](double cam_x, double cam_y) -> size_t {
+                                    auto choose = [&](auto predicate) -> size_t {
+                                        double best_distance = std::numeric_limits<double>::infinity();
+                                        size_t best_index = kInvalidBBoxIndex;
+                                        for (size_t idx = 0; idx < chaser_bboxes.size(); ++idx) {
+                                            const auto& box = chaser_bboxes[idx];
+                                            if (!predicate(box)) {
+                                                continue;
+                                            }
+                                            if (!std::isfinite(box.centroid_x) || !std::isfinite(box.centroid_y)) {
+                                                continue;
+                                            }
+                                            double dx = cam_x - static_cast<double>(box.centroid_x);
+                                            double dy = cam_y - static_cast<double>(box.centroid_y);
+                                            double dist_sq = dx * dx + dy * dy;
+                                            if (dist_sq < best_distance) {
+                                                best_distance = dist_sq;
+                                                best_index = idx;
+                                            }
+                                        }
+                                        return best_index;
                                     };
 
-                                    double y_coords[5] = {
-                                        (double)scene->image_height[j] - bbox.y_px,
-                                        (double)scene->image_height[j] - bbox.y_px,
-                                        (double)scene->image_height[j] - (bbox.y_px + bbox.height_px),
-                                        (double)scene->image_height[j] - (bbox.y_px + bbox.height_px),
-                                        (double)scene->image_height[j] - bbox.y_px
-                                    };
+                                    size_t idx = choose([](const auto& box) { return box.is_target; });
+                                    if (idx != kInvalidBBoxIndex) {
+                                        return idx;
+                                    }
+                                    idx = choose([](const auto& box) { return box.fish_id < 0; });
+                                    if (idx != kInvalidBBoxIndex) {
+                                        return idx;
+                                    }
+                                    return choose([](const auto&) { return true; });
+                                };
 
-                                    ImPlot::SetNextLineStyle(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), 2.0f);  // Cyan
-                                    std::string label = "Chaser_" + std::to_string(bbox.fish_id);
-                                    ImPlot::PlotLine(label.c_str(), x_coords, y_coords, 5);
-
-                                    // Draw centroid as a small circle (using scatter plot)
-                                    double centroid_x = bbox.centroid_x;
-                                    double centroid_y = (double)scene->image_height[j] - bbox.centroid_y;
-                                    ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 5.0f, ImVec4(0.0f, 1.0f, 1.0f, 1.0f), IMPLOT_AUTO, ImVec4(0.0f, 1.0f, 1.0f, 1.0f));
-                                    ImPlot::PlotScatter((label + "_centroid").c_str(), &centroid_x, &centroid_y, 1);
-                                }
-
-                                // Draw target positions from chaser_states
-                                // Transform stimulus coordinates to camera coordinates using homography
-                                if (!chaser_states.empty() && camera_params[j].has_valid_homography) {
-                                    float offsetX = camera_params[j].stimulus_offset_x;
-                                    float offsetY = camera_params[j].stimulus_offset_y;
-
-                                    for (const auto& state : chaser_states) {
-                                        std::vector<cv::Point2f> src_points;
-                                        std::vector<cv::Point2f> dst_points;
-
-                                        // Transform target position from stimulus space to camera space
-                                        src_points.push_back(cv::Point2f(state.target_pos_x + offsetX, state.target_pos_y + offsetY));
-                                        cv::perspectiveTransform(src_points, dst_points, camera_params[j].inverse_homography_matrix);
-
-                                        if (!dst_points.empty()) {
-                                            double target_x = dst_points[0].x;
-                                            double target_y = (double)scene->image_height[j] - dst_points[0].y;
-
-                                            // Draw target as a larger red circle (easier to see)
-                                            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 12.0f, ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 2.5f, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
-                                            std::string target_label = "Target_" + std::to_string(state.chaser_index);
-                                            ImPlot::PlotScatter(target_label.c_str(), &target_x, &target_y, 1);
+                                if (!chaser_states.empty()) {
+                                    auto projectStimulusToCamera = [&](const ZarrDetectionLoader::ChaserState& state,
+                                                                       float stim_x, float stim_y,
+                                                                       bool is_target,
+                                                                       double& out_x, double& out_y) -> bool {
+                                        if (state.has_camera_coords) {
+                                            double cx = is_target ? state.target_camera_x : state.chaser_camera_x;
+                                            double cy = is_target ? state.target_camera_y : state.chaser_camera_y;
+                                            if (!std::isfinite(cx) || !std::isfinite(cy)) {
+                                                return false;
+                                            }
+                                            out_x = cx;
+                                            out_y = static_cast<double>(scene->image_height[j]) - cy;
+                                            return true;
                                         }
 
-                                        // Transform chaser position from stimulus space to camera space
-                                        src_points[0] = cv::Point2f(state.chaser_pos_x + offsetX, state.chaser_pos_y + offsetY);
-                                        cv::perspectiveTransform(src_points, dst_points, camera_params[j].inverse_homography_matrix);
+                                        if (!std::isfinite(stim_x) || !std::isfinite(stim_y)) {
+                                            return false;
+                                        }
 
-                                        if (!dst_points.empty()) {
-                                            double chaser_x = dst_points[0].x;
-                                            double chaser_y = (double)scene->image_height[j] - dst_points[0].y;
+                                        float offsetX = camera_params[j].stimulus_offset_x;
+                                        float offsetY = camera_params[j].stimulus_offset_y;
 
-                                            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 8.0f, ImVec4(1.0f, 1.0f, 0.0f, 1.0f), 2.0f, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
-                                            std::string chaser_label = "Chaser_state_" + std::to_string(state.chaser_index);
-                                            ImPlot::PlotScatter(chaser_label.c_str(), &chaser_x, &chaser_y, 1);
+                                        if (camera_params[j].has_valid_homography) {
+                                            std::vector<cv::Point2f> src_points(1);
+                                            std::vector<cv::Point2f> dst_points;
+                                            src_points[0] = cv::Point2f(stim_x + offsetX, stim_y + offsetY);
+                                            cv::perspectiveTransform(src_points, dst_points, camera_params[j].inverse_homography_matrix);
+                                            if (dst_points.empty()) {
+                                                return false;
+                                            }
+                                            out_x = dst_points[0].x;
+                                            out_y = static_cast<double>(scene->image_height[j]) - dst_points[0].y;
+                                            return true;
+                                        }
+
+                                        constexpr double kProjectorExtent = 358.0;
+                                        double projector_w = kProjectorExtent;
+                                        double projector_h = kProjectorExtent;
+                                        double tex_x = stim_x + offsetX;
+                                        double tex_y = stim_y + offsetY;
+                                        out_x = (tex_x / projector_w) * static_cast<double>(scene->image_width[j]);
+                                        double y = (tex_y / projector_h) * static_cast<double>(scene->image_height[j]);
+                                        out_y = static_cast<double>(scene->image_height[j]) - y;
+                                        return true;
+                                    };
+
+                                    for (const auto& state : chaser_states) {
+                                        StateOverlay overlay;
+                                        overlay.chaser_index = state.chaser_index;
+
+                                        double target_plot_x = 0.0;
+                                        double target_plot_y = 0.0;
+                                        if (projectStimulusToCamera(state,
+                                                                    state.target_pos_x,
+                                                                    state.target_pos_y,
+                                                                    true,
+                                                                    target_plot_x,
+                                                                    target_plot_y)) {
+                                            overlay.has_target = true;
+                                            double target_cam_x = target_plot_x;
+                                            double target_cam_y = static_cast<double>(scene->image_height[j]) - target_plot_y;
+                                            size_t bbox_idx = chaser_bboxes.empty()
+                                                                  ? kInvalidBBoxIndex
+                                                                  : selectBoundingBoxForTarget(target_cam_x, target_cam_y);
+                                            if (bbox_idx != kInvalidBBoxIndex) {
+                                                const auto& bbox = chaser_bboxes[bbox_idx];
+                                                overlay.target_plot_x = static_cast<double>(bbox.centroid_x);
+                                                overlay.target_plot_y =
+                                                    static_cast<double>(scene->image_height[j]) - static_cast<double>(bbox.centroid_y);
+                                                overlay.target_bbox_index = bbox_idx;
+                                                target_bbox_usage[bbox_idx] = 1;
+                                            } else {
+                                                overlay.target_plot_x = target_plot_x;
+                                                overlay.target_plot_y = target_plot_y;
+                                            }
+                                        }
+
+                                        double chaser_plot_x = 0.0;
+                                        double chaser_plot_y = 0.0;
+                                        if (projectStimulusToCamera(state,
+                                                                    state.chaser_pos_x,
+                                                                    state.chaser_pos_y,
+                                                                    false,
+                                                                    chaser_plot_x,
+                                                                    chaser_plot_y)) {
+                                            overlay.has_chaser = true;
+                                            overlay.chaser_plot_x = chaser_plot_x;
+                                            overlay.chaser_plot_y = chaser_plot_y;
+                                        }
+
+                                        state_overlays.push_back(overlay);
+                                    }
+                                }
+
+                                for (size_t idx = 0; idx < chaser_bboxes.size(); ++idx) {
+                                    const auto& bbox = chaser_bboxes[idx];
+                                    if (!std::isfinite(bbox.x_px) || !std::isfinite(bbox.y_px) ||
+                                        !std::isfinite(bbox.width_px) || !std::isfinite(bbox.height_px)) {
+                                        continue;
+                                    }
+
+                                    bool highlight_target =
+                                        bbox.is_target ||
+                                        (idx < target_bbox_usage.size() && target_bbox_usage[idx] != 0);
+
+                                    ImVec4 box_color = highlight_target
+                                                           ? ImVec4(1.0f, 0.2f, 0.2f, 1.0f)
+                                                           : ImVec4(0.0f, 1.0f, 1.0f, 1.0f);
+                                    float line_width = highlight_target ? 2.75f : 2.0f;
+
+                                    double x0 = static_cast<double>(bbox.x_px);
+                                    double x1 = static_cast<double>(bbox.x_px + bbox.width_px);
+                                    double y0 = static_cast<double>(bbox.y_px);
+                                    double y1 = static_cast<double>(bbox.y_px + bbox.height_px);
+
+                                    double x_coords[5] = {x0, x1, x1, x0, x0};
+                                    double y_coords[5] = {
+                                        static_cast<double>(scene->image_height[j]) - y0,
+                                        static_cast<double>(scene->image_height[j]) - y0,
+                                        static_cast<double>(scene->image_height[j]) - y1,
+                                        static_cast<double>(scene->image_height[j]) - y1,
+                                        static_cast<double>(scene->image_height[j]) - y0};
+
+                                    ImPlot::SetNextLineStyle(box_color, line_width);
+                                    std::string label = highlight_target
+                                                            ? "Target BBox##target_bbox_" + std::to_string(idx)
+                                                            : "Chaser BBox " + std::to_string(bbox.fish_id) +
+                                                                  "##chaser_bbox_" + std::to_string(idx);
+                                    ImPlot::PlotLine(label.c_str(), x_coords, y_coords, 5);
+
+                                    if (!highlight_target) {
+                                        if (std::isfinite(bbox.centroid_x) && std::isfinite(bbox.centroid_y)) {
+                                            double centroid_x = static_cast<double>(bbox.centroid_x);
+                                            double centroid_y =
+                                                static_cast<double>(scene->image_height[j]) - static_cast<double>(bbox.centroid_y);
+                                            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle,
+                                                                       5.0f,
+                                                                       ImVec4(0.0f, 1.0f, 1.0f, 1.0f),
+                                                                       IMPLOT_AUTO,
+                                                                       ImVec4(0.0f, 1.0f, 1.0f, 1.0f));
+                                            std::string centroid_label = label + "_centroid";
+                                            ImPlot::PlotScatter(centroid_label.c_str(), &centroid_x, &centroid_y, 1);
                                         }
                                     }
                                 }
-                            }
 
-                            const bool heading_overlay_enabled = show_heading_arrows;
+                                for (const auto& overlay : state_overlays) {
+                                    if (overlay.has_target) {
+                                        double plot_x = overlay.target_plot_x;
+                                        double plot_y = overlay.target_plot_y;
+                                        ImVec4 target_color = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+                                        float outline = overlay.target_bbox_index != kInvalidBBoxIndex ? 2.5f : 2.0f;
+                                        ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle,
+                                                                   12.0f,
+                                                                   target_color,
+                                                                   outline,
+                                                                   target_color);
+                                        std::string target_label = "Target_" + std::to_string(overlay.chaser_index);
+                                        ImPlot::PlotScatter(target_label.c_str(), &plot_x, &plot_y, 1);
+                                    }
+
+                                    if (overlay.has_chaser) {
+                                        double plot_x = overlay.chaser_plot_x;
+                                        double plot_y = overlay.chaser_plot_y;
+                                        ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle,
+                                                                   8.0f,
+                                                                   ImVec4(1.0f, 1.0f, 0.0f, 1.0f),
+                                                                   2.0f,
+                                                                   ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+                                        std::string chaser_label = "Chaser_state_" + std::to_string(overlay.chaser_index);
+                                        ImPlot::PlotScatter(chaser_label.c_str(), &plot_x, &plot_y, 1);
+                                    }
+                                }
+
+                                }
+
+                                const bool heading_overlay_enabled = show_heading_arrows;
                             const bool heading_data_available = zarr_loader.hasHeadingData();
                             const bool using_interpolated_for_boxes = use_interpolated_detections;
                             const bool eye_mask_overlay_enabled = show_eye_masks;
@@ -2690,6 +2848,81 @@ int main(int, char **) {
         // Speed Timeline Window
         if (zarr_loaded && zarr_loader.hasMovementData()) {
             if (ImGui::Begin("Speed Timeline")) {
+                size_t series_count = zarr_loader.getMovementSeriesCount();
+                size_t selected_index = zarr_loader.getSelectedMovementSeriesIndex();
+                const auto* selected_series = zarr_loader.getMovementSeries(selected_index);
+
+                if (series_count > 1) {
+                    std::ostringstream summary;
+                    if (selected_series) {
+                        summary << selected_series->category << "/" << selected_series->run_name
+                                << " (track " << selected_series->track_id << ")";
+                    } else {
+                        summary << "Select dataset";
+                    }
+                    if (ImGui::BeginCombo("Dataset", summary.str().c_str())) {
+                        for (size_t i = 0; i < series_count; ++i) {
+                            const auto* series = zarr_loader.getMovementSeries(i);
+                            if (!series) {
+                                continue;
+                            }
+                            std::ostringstream label;
+                            label << series->category << "/" << series->run_name
+                                  << " (track " << series->track_id << ")";
+                            bool is_selected = (i == selected_index);
+                            if (ImGui::Selectable(label.str().c_str(), is_selected)) {
+                                if (zarr_loader.selectMovementSeries(i)) {
+                                    selected_index = i;
+                                    selected_series = zarr_loader.getMovementSeries(i);
+                                }
+                            }
+                            if (is_selected) {
+                                ImGui::SetItemDefaultFocus();
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+                } else if (selected_series) {
+                    ImGui::Text("Dataset: %s/%s (track %s)",
+                                selected_series->category.c_str(),
+                                selected_series->run_name.c_str(),
+                                selected_series->track_id.c_str());
+                }
+
+                if (selected_series) {
+                    if (!selected_series->detection_variant.empty() ||
+                        !selected_series->source_detect_run.empty()) {
+                        if (!selected_series->source_detect_run.empty()) {
+                            ImGui::Text("Variant: %s | Source run: %s",
+                                        selected_series->detection_variant.empty()
+                                            ? "unknown"
+                                            : selected_series->detection_variant.c_str(),
+                                        selected_series->source_detect_run.c_str());
+                        } else {
+                            ImGui::Text("Variant: %s",
+                                        selected_series->detection_variant.empty()
+                                            ? "unknown"
+                                            : selected_series->detection_variant.c_str());
+                        }
+                    }
+                    if (selected_series->fps > 0.0 || selected_series->smoothing_seconds > 0.0) {
+                        if (selected_series->fps > 0.0 && selected_series->smoothing_seconds > 0.0) {
+                            ImGui::Text("FPS: %.2f | Smoothing: %.2f s",
+                                        selected_series->fps,
+                                        selected_series->smoothing_seconds);
+                        } else if (selected_series->fps > 0.0) {
+                            ImGui::Text("FPS: %.2f", selected_series->fps);
+                        } else {
+                            ImGui::Text("Smoothing: %.2f s", selected_series->smoothing_seconds);
+                        }
+                    }
+                    if (selected_series->video_width > 0 && selected_series->video_height > 0) {
+                        ImGui::Text("Camera size: %dx%d",
+                                    selected_series->video_width,
+                                    selected_series->video_height);
+                    }
+                }
+
                 const auto& time_data = zarr_loader.getMovementTimeSeconds();
                 const auto& smoothed_speed = zarr_loader.getMovementSmoothedSpeedMm();
                 const auto& instant_speed = zarr_loader.getMovementInstantaneousSpeedMm();
@@ -2773,46 +3006,54 @@ int main(int, char **) {
                                            static_cast<int>(instant_plot.size()));
                         }
 
-                        // Draw current time marker if we can map frame to time
-                        if (!frame_indices.empty() && current_frame_num >= 0) {
-                            // Find time corresponding to current frame
-                            // First try exact match
-                            auto it = std::find(frame_indices.begin(), frame_indices.end(), current_frame_num);
+                        // Draw current time marker by mapping current frame to time
+                        if (current_frame_num >= 0) {
                             double current_time = -1.0;
 
-                            if (it != frame_indices.end()) {
-                                // Exact match found
-                                size_t idx = std::distance(frame_indices.begin(), it);
-                                if (idx < time_data.size()) {
-                                    current_time = static_cast<double>(time_data[idx]);
-                                }
-                            } else {
-                                // No exact match - interpolate
-                                // Find the first frame index >= current_frame_num
-                                auto upper = std::lower_bound(frame_indices.begin(), frame_indices.end(), current_frame_num);
-
-                                if (upper != frame_indices.end() && upper != frame_indices.begin()) {
-                                    // Interpolate between previous and next
-                                    auto lower = upper - 1;
-                                    size_t lower_idx = std::distance(frame_indices.begin(), lower);
-                                    size_t upper_idx = std::distance(frame_indices.begin(), upper);
-
-                                    if (upper_idx < time_data.size() && lower_idx < time_data.size()) {
-                                        int32_t f0 = *lower;
-                                        int32_t f1 = *upper;
-                                        float t0 = time_data[lower_idx];
-                                        float t1 = time_data[upper_idx];
-
-                                        // Linear interpolation
-                                        float alpha = static_cast<float>(current_frame_num - f0) / static_cast<float>(f1 - f0);
-                                        current_time = static_cast<double>(t0 + alpha * (t1 - t0));
+                            if (!frame_indices.empty()) {
+                                // First try exact match
+                                auto it = std::find(frame_indices.begin(), frame_indices.end(), current_frame_num);
+                                if (it != frame_indices.end()) {
+                                    size_t idx = std::distance(frame_indices.begin(), it);
+                                    if (idx < time_data.size()) {
+                                        current_time = static_cast<double>(time_data[idx]);
                                     }
-                                } else if (upper == frame_indices.begin() && !time_data.empty()) {
-                                    // Before first frame - use first time
-                                    current_time = static_cast<double>(time_data[0]);
-                                } else if (upper == frame_indices.end() && !time_data.empty()) {
-                                    // After last frame - use last time
-                                    current_time = static_cast<double>(time_data.back());
+                                } else {
+                                    // No exact match - interpolate between surrounding indices
+                                    auto upper = std::lower_bound(frame_indices.begin(), frame_indices.end(), current_frame_num);
+                                    if (upper != frame_indices.end() && upper != frame_indices.begin()) {
+                                        auto lower = upper - 1;
+                                        size_t lower_idx = std::distance(frame_indices.begin(), lower);
+                                        size_t upper_idx = std::distance(frame_indices.begin(), upper);
+
+                                        if (upper_idx < time_data.size() && lower_idx < time_data.size()) {
+                                            int32_t f0 = *lower;
+                                            int32_t f1 = *upper;
+                                            float t0 = time_data[lower_idx];
+                                            float t1 = time_data[upper_idx];
+                                            float delta_f = static_cast<float>(f1 - f0);
+                                            if (delta_f != 0.0f) {
+                                                float alpha = static_cast<float>(current_frame_num - f0) / delta_f;
+                                                current_time = static_cast<double>(t0 + alpha * (t1 - t0));
+                                            }
+                                        }
+                                    } else if (upper == frame_indices.begin() && !time_data.empty()) {
+                                        current_time = static_cast<double>(time_data.front());
+                                    } else if (upper == frame_indices.end() && !time_data.empty()) {
+                                        current_time = static_cast<double>(time_data.back());
+                                    }
+                                }
+                            }
+
+                            // If movement data isn't indexed by frame, fall back to wall-clock estimate
+                            if (current_time < 0.0 && video_fps > 0.0) {
+                                double estimated_time = static_cast<double>(current_frame_num) / video_fps;
+                                if (!time_data.empty()) {
+                                    double min_time = static_cast<double>(time_data.front());
+                                    double max_time = static_cast<double>(time_data.back());
+                                    current_time = std::clamp(estimated_time, min_time, max_time);
+                                } else {
+                                    current_time = estimated_time;
                                 }
                             }
 
