@@ -50,7 +50,7 @@ std::optional<json> readAttrsAny(const ts::kvstore::KvStore& store,
         } catch (const json::parse_error& e) {
             std::cerr << "Failed to parse JSON at " << json_key << ": " << e.what() << std::endl;
         } catch (...) {
-            // Ignore and fall back to v2 attrs.
+            // Ignore malformed attribute blobs.
         }
     } else {
         if (!json_result.ok()) {
@@ -60,30 +60,7 @@ std::optional<json> readAttrsAny(const ts::kvstore::KvStore& store,
             std::cout << "  [AttrProbe] No value at " << json_key << std::endl;
         }
     }
-
-    auto zattrs_key = appendPath(path, ".zattrs");
-    auto attrs_result = ts::kvstore::Read(store, zattrs_key).result();
-    if (!attrs_result.ok()) {
-        std::cout << "  [AttrProbe] Read error for " << zattrs_key << ": "
-                  << attrs_result.status() << std::endl;
-        return std::nullopt;
-    }
-    const auto& read_result = attrs_result.value();
-    if (!read_result.has_value()) {
-        std::cout << "  [AttrProbe] No value at " << zattrs_key << std::endl;
-        return std::nullopt;
-    }
-    std::string payload;
-    absl::CopyCordToString(read_result.value, &payload);
-    if (payload.empty()) {
-        return json::object();
-    }
-    try {
-        return json::parse(payload);
-    } catch (const json::parse_error& e) {
-        std::cerr << "Failed to parse JSON at " << zattrs_key << ": " << e.what() << std::endl;
-        return std::nullopt;
-    }
+    return std::nullopt;
 }
 
 template <typename T, int Rank>
@@ -372,6 +349,7 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
     try {
         // Clear any previous data
         data_ = ZarrDetectionData();
+        active_dataset_ = DetectionDataset::RawDetect;
         
         std::cout << "Opening Zarr store: " << filepath << std::endl;
 
@@ -442,28 +420,31 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
             }
         }
 
-        bool loaded_layout = false;
+        bool loaded_palette_layout = false;
 
         try {
-            loaded_layout = loadDetectionRuns(store);
+            loaded_palette_layout = loadDetectionRuns(store);
         } catch (const std::exception& palette_error) {
-            error_message = std::string("Failed to load Palette detection_runs layout: ") +
+            error_message = std::string("Failed to load detect_runs layout: ") +
                             palette_error.what();
             return false;
         }
 
-        if (!loaded_layout) {
-            if (!loadStandardFormat(store)) {
-                error_message = "Failed to load supported zarr layouts (palette or legacy)";
-                return false;
-            }
+        if (!loaded_palette_layout) {
+            error_message = "detect_runs layout not found; legacy dense bboxes are no longer supported";
+            return false;
+        }
+
+        if (!loadRefinedDetectionsAsPrimary(store)) {
+            std::cout << "  Refined detect runs not found or could not be loaded; "
+                      << "using base detect_runs data" << std::endl;
+        }
+
+        if (loadKeypointHeadingData(store)) {
+            std::cout << "  Loaded keypoint headings from '"
+                      << data_.keypoints_run_name << "'" << std::endl;
         } else {
-            if (loadKeypointHeadingData(store)) {
-                std::cout << "  Loaded keypoint headings from '"
-                          << data_.keypoints_run_name << "'" << std::endl;
-            } else {
-                std::cout << "  No keypoint heading data available" << std::endl;
-            }
+            std::cout << "  No keypoint heading data available" << std::endl;
         }
 
         // Populate metadata; continue even if it fails (legacy files may not have it)
@@ -507,6 +488,7 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
                     }
                 }
             }
+            computeActiveDatasetInterpolationFlags();
         } else {
             std::cout << "  No interpolation data available in 'interpolation_runs'" << std::endl;
         }
@@ -558,6 +540,7 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
         error_message = std::string("Exception loading zarr: ") + e.what();
         // Clear any partially loaded data
         data_ = ZarrDetectionData();
+        active_dataset_ = DetectionDataset::RawDetect;
         return false;
     }
 }
@@ -1181,17 +1164,12 @@ bool ZarrDetectionLoader::loadPaletteInterpolationRun(const ts::kvstore::KvStore
 }
 
 bool ZarrDetectionLoader::loadDetectionRuns(const ts::kvstore::KvStore& store) {
-    static const std::vector<std::string> kGroups = {
-        "detection_runs",
-        "detect_runs"
-    };
+    const std::string kPaletteGroup = "detect_runs";
 
-    for (const auto& group : kGroups) {
-        if (loadDetectionRunFromGroup(store, group)) {
-            data_.layout = ZarrLayoutType::kPaletteRuns;
-            data_.coordinates_normalized = true;
-            return true;
-        }
+    if (loadDetectionRunFromGroup(store, kPaletteGroup)) {
+        data_.layout = ZarrLayoutType::kPaletteRuns;
+        data_.coordinates_normalized = true;
+        return true;
     }
     return false;
 }
@@ -1266,8 +1244,25 @@ bool ZarrDetectionLoader::loadDetectionRunFromGroup(
     data_.n_detections = std::move(n_detections);
     data_.has_scores = has_scores;
     data_.has_class_ids = has_class_ids;
-    data_.total_frames = resolved_frames;
+    data_.coordinates_normalized = true;
+    data_.detection_source_flags.clear();
+
+    if (data_.n_detections.empty()) {
+        computeDetectionsFromOffsets(data_.frame_offsets, data_.n_detections);
+    }
+
+    data_.total_frames = data_.n_detections.size();
+    if (data_.total_frames == 0 && data_.frame_offsets.size() > 1) {
+        data_.total_frames = data_.frame_offsets.size() - 1;
+    }
+
     data_.max_detections = 0;
+    if (!data_.frame_offsets.empty()) {
+        for (size_t frame = 0; frame + 1 < data_.frame_offsets.size(); ++frame) {
+            size_t count = data_.frame_offsets[frame + 1] - data_.frame_offsets[frame];
+            data_.max_detections = std::max(data_.max_detections, count);
+        }
+    }
     for (const auto count : data_.n_detections) {
         if (count >= 0) {
             data_.max_detections = std::max(
@@ -1279,9 +1274,30 @@ bool ZarrDetectionLoader::loadDetectionRunFromGroup(
 
     data_.detect_run_name = latest_run;
 
-    if (auto run_attrs = readAttrsAny(store, base_path)) {
-        populateDetectionMetadata(*run_attrs, data_);
+    if (auto attrs = readAttrsAny(store, base_path)) {
+        populateDetectionMetadata(*attrs, data_);
     }
+
+    InterpolationRunData raw_stage;
+    raw_stage.run_name = latest_run;
+    raw_stage.stage_label.clear();
+    raw_stage.method = data_.detect_run_method.empty() ? "detect_runs" : data_.detect_run_method;
+    raw_stage.created_at = data_.detect_run_created_at;
+    raw_stage.source_detection_run = data_.detect_run_source;
+    raw_stage.provenance_json = data_.detect_run_provenance_json;
+    raw_stage.uses_palette_layout = true;
+    raw_stage.has_flat_detections = true;
+    raw_stage.frame_indices = data_.frame_indices;
+    raw_stage.bbox_norm_coords = data_.bbox_norm_coords;
+    raw_stage.flat_scores = data_.flat_scores;
+    raw_stage.flat_class_ids = data_.flat_class_ids;
+    raw_stage.frame_offsets = data_.frame_offsets;
+    raw_stage.n_detections = data_.n_detections;
+    raw_stage.has_scores = data_.has_scores;
+    raw_stage.has_class_ids = data_.has_class_ids;
+    cacheDetectionStage(std::move(raw_stage), DetectionDataset::RawDetect);
+    computeActiveDatasetInterpolationFlags();
+    active_dataset_ = DetectionDataset::RawDetect;
 
     std::cout << "  Detection run '" << data_.detect_run_name << "' loaded with "
               << data_.bbox_norm_coords.size() << " detections over "
@@ -1506,6 +1522,187 @@ bool ZarrDetectionLoader::loadFlattenedRun(
     frame_offsets_out = std::move(frame_offsets_local);
 
     return true;
+}
+
+bool ZarrDetectionLoader::loadRefinedDetectionsAsPrimary(const ts::kvstore::KvStore& store) {
+    data_.has_refined_filtered_dataset = false;
+    data_.has_refined_interpolated_dataset = false;
+    data_.has_refined_root_dataset = false;
+
+    auto group_attrs = readAttrsAny(store, "refined_detect_runs");
+
+    std::string latest_run;
+    if (group_attrs.has_value()) {
+        latest_run = extractLatestRunName(*group_attrs);
+    }
+
+    if (latest_run.empty()) {
+        if (root_path_.empty()) {
+            return false;
+        }
+        auto filtered_candidates = collect_runs_fs(
+            root_path_,
+            "refined_detect_runs",
+            {"filtered/frame_indices", "filtered/bbox_norm_coords"});
+        auto refined_candidates = collect_runs_fs(
+            root_path_,
+            "refined_detect_runs",
+            {"refined/frame_indices", "refined/bbox_norm_coords"});
+        auto root_candidates = collect_runs_fs(
+            root_path_,
+            "refined_detect_runs",
+            {"frame_indices", "bbox_norm_coords"});
+
+        std::vector<std::string> candidates;
+        candidates.insert(candidates.end(),
+                          filtered_candidates.begin(), filtered_candidates.end());
+        candidates.insert(candidates.end(),
+                          refined_candidates.begin(), refined_candidates.end());
+        candidates.insert(candidates.end(),
+                          root_candidates.begin(), root_candidates.end());
+
+        candidates.erase(
+            std::remove_if(
+                candidates.begin(),
+                candidates.end(),
+                [](const std::string& name) {
+                    return name.rfind("refined_detect_", 0) != 0;
+                }),
+            candidates.end());
+
+        if (candidates.empty()) {
+            return false;
+        }
+        std::sort(candidates.begin(), candidates.end());
+        latest_run = candidates.back();
+    }
+
+    if (latest_run.empty()) {
+        return false;
+    }
+
+    struct StageOption {
+        const char* subdir;
+        const char* label;
+        DetectionDataset dataset_type;
+    };
+    const StageOption kStageOptions[] = {
+        {"interpolated/", "interpolated", DetectionDataset::RefinedInterpolated},
+        {"filtered/", "filtered", DetectionDataset::RefinedFiltered},
+        {"refined/", "refined", DetectionDataset::RefinedRoot},
+        {"", "root", DetectionDataset::RefinedRoot}
+    };
+
+    std::string run_base = "refined_detect_runs/" + latest_run + "/";
+    std::optional<json> run_attrs = readAttrsAny(store, run_base);
+
+    InterpolationRunData stage_template;
+    stage_template.run_name = latest_run;
+    stage_template.uses_palette_layout = true;
+    stage_template.has_flat_detections = true;
+    if (run_attrs) {
+        if ((*run_attrs).contains("method") && (*run_attrs)["method"].is_string()) {
+            stage_template.method = (*run_attrs)["method"].get<std::string>();
+        }
+        if ((*run_attrs).contains("created_at") && (*run_attrs)["created_at"].is_string()) {
+            stage_template.created_at = (*run_attrs)["created_at"].get<std::string>();
+        } else if ((*run_attrs).contains("created_at_utc") && (*run_attrs)["created_at_utc"].is_string()) {
+            stage_template.created_at = (*run_attrs)["created_at_utc"].get<std::string>();
+        }
+        if ((*run_attrs).contains("source_detection_run") && (*run_attrs)["source_detection_run"].is_string()) {
+            stage_template.source_detection_run = (*run_attrs)["source_detection_run"].get<std::string>();
+        }
+        if ((*run_attrs).contains("provenance_json") && (*run_attrs)["provenance_json"].is_string()) {
+            stage_template.provenance_json = (*run_attrs)["provenance_json"].get<std::string>();
+        }
+    }
+
+    bool loaded_any = false;
+
+    for (const auto& stage : kStageOptions) {
+        std::string base_path = run_base + stage.subdir;
+        size_t resolved_frames = data_.total_frames;
+        std::vector<int32_t> frame_indices;
+        std::vector<std::array<float, 4>> boxes;
+        std::vector<float> scores;
+        std::vector<int32_t> class_ids;
+        std::vector<int32_t> n_detections;
+        std::vector<size_t> frame_offsets;
+        std::vector<uint8_t> detection_source;
+        bool has_scores = false;
+        bool has_class_ids = false;
+
+        if (!loadFlattenedRun(store,
+                              base_path,
+                              &frame_indices,
+                              boxes,
+                              scores,
+                              class_ids,
+                              n_detections,
+                              frame_offsets,
+                              &detection_source,
+                              has_scores,
+                              has_class_ids,
+                              resolved_frames)) {
+            continue;
+        }
+
+        InterpolationRunData stage_data = stage_template;
+        stage_data.stage_label = stage.label;
+        if (stage_data.method.empty()) {
+            stage_data.method = stage.label;
+        }
+        stage_data.frame_indices = std::move(frame_indices);
+        stage_data.bbox_norm_coords = std::move(boxes);
+        stage_data.flat_scores = std::move(scores);
+        stage_data.flat_class_ids = std::move(class_ids);
+        stage_data.frame_offsets = std::move(frame_offsets);
+        stage_data.n_detections = std::move(n_detections);
+        stage_data.detection_source = std::move(detection_source);
+        stage_data.has_scores = has_scores;
+        stage_data.has_class_ids = has_class_ids;
+        cacheDetectionStage(std::move(stage_data), stage.dataset_type);
+        loaded_any = true;
+
+        const auto& stored = (stage.dataset_type == DetectionDataset::RefinedInterpolated)
+                                 ? data_.refined_interpolated_dataset
+                                 : (stage.dataset_type == DetectionDataset::RefinedFiltered)
+                                       ? data_.refined_filtered_dataset
+                                       : data_.refined_root_dataset;
+        std::cout << "  Refined detect run '" << latest_run << "' stage '"
+                  << stage.label << "' loaded (" << stored.bbox_norm_coords.size()
+                  << " detections)" << std::endl;
+    }
+
+    if (!loaded_any) {
+        return false;
+    }
+
+    if (data_.has_refined_interpolated_dataset &&
+        applyDetectionDataset(data_.refined_interpolated_dataset,
+                              DetectionDataset::RefinedInterpolated)) {
+        std::cout << "  Using refined detect run '" << data_.detect_run_name
+                  << "' as primary detections (interpolated)" << std::endl;
+        return true;
+    }
+
+    if (data_.has_refined_filtered_dataset &&
+        applyDetectionDataset(data_.refined_filtered_dataset,
+                              DetectionDataset::RefinedFiltered)) {
+        std::cout << "  Using refined detect run '" << data_.detect_run_name
+                  << "' as primary detections (filtered)" << std::endl;
+        return true;
+    }
+
+    if (data_.has_refined_root_dataset &&
+        applyDetectionDataset(data_.refined_root_dataset,
+                              DetectionDataset::RefinedRoot)) {
+        std::cout << "  Using refined detect run '" << data_.detect_run_name
+                  << "' as primary detections (refined)" << std::endl;
+        return true;
+    }
+
+    return false;
 }
 
 bool ZarrDetectionLoader::loadRefinedDetectRuns(const ts::kvstore::KvStore& store) {
@@ -3457,10 +3654,8 @@ bool ZarrDetectionLoader::loadChaserBoundingBoxes(
         record.y_px = y_vals[i];
         record.width_px = width_vals[i];
         record.height_px = height_vals[i];
-        float computed_cx = x_vals[i] + width_vals[i] * 0.5f;
-        float computed_cy = y_vals[i] + height_vals[i] * 0.5f;
-        record.centroid_x = std::isfinite(centroid_x_vals[i]) ? centroid_x_vals[i] : computed_cx;
-        record.centroid_y = std::isfinite(centroid_y_vals[i]) ? centroid_y_vals[i] : computed_cy;
+        record.centroid_x = centroid_x_vals[i];
+        record.centroid_y = centroid_y_vals[i];
         record.confidence = confidence_vals[i];
         bool target_flag = has_target_mask ? (target_mask_raw[i] != 0) : false;
         if (!target_flag && has_labels) {
@@ -4500,6 +4695,250 @@ bool ZarrDetectionLoader::loadMovementTrack(
     return true;
 }
 
+void ZarrDetectionLoader::cacheDetectionStage(InterpolationRunData stage,
+                                              DetectionDataset dataset_type) {
+    switch (dataset_type) {
+        case DetectionDataset::RawDetect:
+            data_.raw_detection_dataset = std::move(stage);
+            data_.has_raw_detection_dataset = true;
+            break;
+        case DetectionDataset::RefinedFiltered:
+            data_.refined_filtered_dataset = std::move(stage);
+            data_.has_refined_filtered_dataset = true;
+            break;
+        case DetectionDataset::RefinedInterpolated:
+            data_.refined_interpolated_dataset = std::move(stage);
+            data_.has_refined_interpolated_dataset = true;
+            break;
+        case DetectionDataset::RefinedRoot:
+            data_.refined_root_dataset = std::move(stage);
+            data_.has_refined_root_dataset = true;
+            break;
+    }
+}
+
+void ZarrDetectionLoader::computeDetectionsFromOffsets(
+    const std::vector<size_t>& offsets,
+    std::vector<int32_t>& n_detections_out) const {
+    size_t frame_count = offsets.size() > 0 ? offsets.size() - 1 : 0;
+    n_detections_out.assign(frame_count, 0);
+    for (size_t frame = 0; frame < frame_count; ++frame) {
+        size_t start = offsets[frame];
+        size_t end = offsets[frame + 1];
+        size_t count = (end >= start) ? (end - start) : 0;
+        n_detections_out[frame] = static_cast<int32_t>(count);
+    }
+}
+
+void ZarrDetectionLoader::computeActiveDatasetInterpolationFlags() {
+    size_t frame_count = 0;
+    if (!data_.frame_offsets.empty()) {
+        frame_count = data_.frame_offsets.size() > 0 ? data_.frame_offsets.size() - 1 : 0;
+    }
+    if (frame_count == 0 && !data_.n_detections.empty()) {
+        frame_count = data_.n_detections.size();
+    }
+
+    size_t total_detections = 0;
+    if (!data_.frame_offsets.empty()) {
+        total_detections = data_.frame_offsets.back();
+    } else if (!data_.frame_indices.empty()) {
+        total_detections = data_.frame_indices.size();
+    }
+
+    data_.frame_interpolated_flags.clear();
+
+    if (!data_.detection_source_flags.empty() &&
+        total_detections == data_.detection_source_flags.size() &&
+        !data_.frame_offsets.empty()) {
+        data_.frame_interpolated_flags.assign(frame_count, 0);
+        for (size_t frame = 0; frame < frame_count; ++frame) {
+            size_t start = data_.frame_offsets[frame];
+            size_t end = data_.frame_offsets[frame + 1];
+            bool any_interp = false;
+            for (size_t idx = start; idx < end && idx < data_.detection_source_flags.size(); ++idx) {
+                if (data_.detection_source_flags[idx] != 0) {
+                    any_interp = true;
+                    break;
+                }
+            }
+            data_.frame_interpolated_flags[frame] = any_interp ? 1 : 0;
+        }
+    } else {
+        data_.frame_interpolated_flags.clear();
+    }
+}
+
+bool ZarrDetectionLoader::applyDetectionDataset(const InterpolationRunData& stage,
+                                                DetectionDataset dataset_type) {
+    if (stage.frame_indices.empty() && stage.n_detections.empty() &&
+        stage.frame_offsets.empty()) {
+        return false;
+    }
+
+    data_.frame_indices = stage.frame_indices;
+    data_.bbox_norm_coords = stage.bbox_norm_coords;
+    data_.flat_scores = stage.flat_scores;
+    data_.flat_class_ids = stage.flat_class_ids;
+    data_.frame_offsets = stage.frame_offsets;
+    data_.detection_source_flags = stage.detection_source;
+    data_.has_scores = stage.has_scores;
+    data_.has_class_ids = stage.has_class_ids;
+    data_.coordinates_normalized = stage.uses_palette_layout;
+    data_.layout = ZarrLayoutType::kPaletteRuns;
+
+    data_.n_detections = stage.n_detections;
+    if (data_.n_detections.empty()) {
+        computeDetectionsFromOffsets(data_.frame_offsets, data_.n_detections);
+    }
+
+    if (data_.frame_offsets.empty() && !data_.n_detections.empty()) {
+        data_.frame_offsets.assign(data_.n_detections.size() + 1, 0);
+        size_t running = 0;
+        for (size_t frame = 0; frame < data_.n_detections.size(); ++frame) {
+            running += static_cast<size_t>(std::max(data_.n_detections[frame], 0));
+            data_.frame_offsets[frame + 1] = running;
+        }
+    }
+
+    if (data_.frame_offsets.empty() && !data_.frame_indices.empty()) {
+        int32_t max_index = -1;
+        for (int32_t idx : data_.frame_indices) {
+            max_index = std::max(max_index, idx);
+        }
+        size_t count = max_index >= 0 ? static_cast<size_t>(max_index + 1) : 0;
+        data_.frame_offsets.assign(count + 1, 0);
+        std::vector<int32_t> counts(count, 0);
+        for (int32_t idx : data_.frame_indices) {
+            if (idx >= 0 && static_cast<size_t>(idx) < counts.size()) {
+                counts[idx]++;
+            }
+        }
+        size_t running = 0;
+        for (size_t i = 0; i < counts.size(); ++i) {
+            running += static_cast<size_t>(counts[i]);
+            data_.frame_offsets[i + 1] = running;
+        }
+        if (data_.n_detections.empty()) {
+            data_.n_detections = counts;
+        }
+    }
+
+    if (data_.n_detections.empty()) {
+        computeDetectionsFromOffsets(data_.frame_offsets, data_.n_detections);
+    }
+
+    data_.total_frames = data_.n_detections.size();
+    if (data_.total_frames == 0 && data_.frame_offsets.size() > 1) {
+        data_.total_frames = data_.frame_offsets.size() - 1;
+    }
+
+    data_.max_detections = 0;
+    if (!data_.frame_offsets.empty()) {
+        for (size_t frame = 0; frame + 1 < data_.frame_offsets.size(); ++frame) {
+            size_t count = data_.frame_offsets[frame + 1] - data_.frame_offsets[frame];
+            data_.max_detections = std::max(data_.max_detections, count);
+        }
+    }
+    for (const auto count : data_.n_detections) {
+        if (count >= 0) {
+            data_.max_detections = std::max(
+                data_.max_detections,
+                static_cast<size_t>(count));
+        }
+    }
+
+    data_.detect_run_name = stage.run_name;
+    if (!stage.stage_label.empty()) {
+        if (!data_.detect_run_name.empty()) {
+            data_.detect_run_name += "/";
+        }
+        data_.detect_run_name += stage.stage_label;
+    }
+    data_.detect_run_method = stage.method.empty() ? stage.stage_label : stage.method;
+    data_.detect_run_created_at = stage.created_at;
+    data_.detect_run_source = stage.source_detection_run;
+    data_.detect_run_provenance_json = stage.provenance_json;
+
+    computeActiveDatasetInterpolationFlags();
+    active_dataset_ = dataset_type;
+    return true;
+}
+
+std::vector<std::pair<ZarrDetectionLoader::DetectionDataset, std::string>>
+ZarrDetectionLoader::getAvailableDetectionDatasets() const {
+    std::vector<std::pair<DetectionDataset, std::string>> result;
+    auto make_label = [](const InterpolationRunData& stage,
+                         const std::string& fallback) -> std::string {
+        if (!stage.run_name.empty()) {
+            if (!stage.stage_label.empty()) {
+                return stage.run_name + "/" + stage.stage_label;
+            }
+            return stage.run_name;
+        }
+        return fallback;
+    };
+
+    if (data_.has_raw_detection_dataset) {
+        std::string label = make_label(data_.raw_detection_dataset, "Detect run");
+        result.emplace_back(DetectionDataset::RawDetect, std::move(label));
+    }
+    if (data_.has_refined_filtered_dataset) {
+        std::string label = make_label(data_.refined_filtered_dataset, "Refined filtered");
+        result.emplace_back(DetectionDataset::RefinedFiltered, std::move(label));
+    }
+    if (data_.has_refined_interpolated_dataset) {
+        std::string label = make_label(data_.refined_interpolated_dataset, "Refined interpolated");
+        result.emplace_back(DetectionDataset::RefinedInterpolated, std::move(label));
+    }
+    if (data_.has_refined_root_dataset) {
+        std::string label = make_label(data_.refined_root_dataset, "Refined (root)");
+        result.emplace_back(DetectionDataset::RefinedRoot, std::move(label));
+    }
+    return result;
+}
+
+bool ZarrDetectionLoader::isDatasetAvailable(DetectionDataset dataset) const {
+    switch (dataset) {
+        case DetectionDataset::RawDetect:
+            return data_.has_raw_detection_dataset;
+        case DetectionDataset::RefinedFiltered:
+            return data_.has_refined_filtered_dataset;
+        case DetectionDataset::RefinedInterpolated:
+            return data_.has_refined_interpolated_dataset;
+        case DetectionDataset::RefinedRoot:
+            return data_.has_refined_root_dataset;
+    }
+    return false;
+}
+
+bool ZarrDetectionLoader::setActiveDetectionDataset(DetectionDataset dataset) {
+    if (dataset == active_dataset_) {
+        return true;
+    }
+    if (!isDatasetAvailable(dataset)) {
+        return false;
+    }
+
+    switch (dataset) {
+        case DetectionDataset::RawDetect:
+            return applyDetectionDataset(data_.raw_detection_dataset, dataset);
+        case DetectionDataset::RefinedFiltered:
+            return applyDetectionDataset(data_.refined_filtered_dataset, dataset);
+        case DetectionDataset::RefinedInterpolated:
+            return applyDetectionDataset(data_.refined_interpolated_dataset, dataset);
+        case DetectionDataset::RefinedRoot:
+            return applyDetectionDataset(data_.refined_root_dataset, dataset);
+    }
+    return false;
+}
+
+bool ZarrDetectionLoader::activeDatasetHasSyntheticDetections() const {
+    return std::any_of(data_.detection_source_flags.begin(),
+                       data_.detection_source_flags.end(),
+                       [](uint8_t value) { return value != 0; });
+}
+
 void ZarrDetectionLoader::finalizeMovementSelection() {
     if (data_.movement_series.empty()) {
         data_.movement_selected_index = std::numeric_limits<size_t>::max();
@@ -5179,6 +5618,14 @@ bool ZarrDetectionLoader::loadLatestInterpolationRun(const ts::kvstore::KvStore&
 }
 
 bool ZarrDetectionLoader::isFrameInterpolated(size_t frame_id) const {
+    if (frame_id < data_.frame_interpolated_flags.size()) {
+        return data_.frame_interpolated_flags[frame_id] != 0;
+    }
+
+    if (active_dataset_ != DetectionDataset::RefinedInterpolated) {
+        return false;
+    }
+
     if (!data_.has_interpolation) {
         return false;
     }
@@ -5287,6 +5734,9 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
             result.eye_masks.reserve(end - start);
             result.includes_eye_masks = true;
         }
+        if (!data_.detection_source_flags.empty()) {
+            result.detection_source.reserve(end - start);
+        }
 
         for (size_t idx = start; idx < end && idx < boxes_source.size(); ++idx) {
             auto pixel_box = normalizedBoxToPixels(
@@ -5306,6 +5756,14 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                 result.class_ids.push_back(class_source[idx]);
             } else {
                 result.class_ids.push_back(0);
+            }
+
+            if (!data_.detection_source_flags.empty()) {
+                if (idx < data_.detection_source_flags.size()) {
+                    result.detection_source.push_back(data_.detection_source_flags[idx]);
+                } else {
+                    result.detection_source.push_back(0);
+                }
             }
 
             if (can_use_headings) {
@@ -5379,12 +5837,7 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
             }
         }
 
-        bool frame_interp_flag = false;
-        if (frame_id < data_.latest_interpolation.frame_mask.size()) {
-            frame_interp_flag = data_.latest_interpolation.frame_mask[frame_id] != 0;
-        }
-
-        result.is_interpolated = frame_interp_flag;
+        result.is_interpolated = isFrameInterpolated(frame_id);
         return result;
     }
     
@@ -5443,6 +5896,14 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
             
             if (box[0] >= 0) {
                 result.boxes.push_back(box);
+                if (!data_.detection_source_flags.empty()) {
+                    size_t idx = static_cast<size_t>(det_idx);
+                    if (idx < data_.detection_source_flags.size()) {
+                        result.detection_source.push_back(data_.detection_source_flags[idx]);
+                    } else {
+                        result.detection_source.push_back(0);
+                    }
+                }
                 
                 if (!use_interp && data_.has_scores) {
                     auto score_future = ts::Read(
@@ -5589,56 +6050,9 @@ ZarrDetectionLoader::getChaserBoundingBoxesForFrame(size_t frame_id) const {
         return result;
     }
 
-    auto make_key = [](int32_t fish_id, int32_t chaser_index) -> uint64_t {
-        // Shift by +1 so that -1 maps to 0 and we avoid overlap.
-        uint64_t fish_component =
-            static_cast<uint64_t>(static_cast<uint32_t>(fish_id + 1));
-        uint64_t chaser_component =
-            static_cast<uint64_t>(static_cast<uint32_t>(chaser_index + 1));
-        return (fish_component << 32) ^ chaser_component;
-    };
-
-    auto pick_identifier = [](const ZarrDetectionData::ChaserBoundingBoxRecord& rec)
-        -> std::pair<int32_t, int32_t> {
-        int32_t fish = rec.fish_id >= 0 ? rec.fish_id : -1;
-        int32_t chaser = rec.chaser_index >= 0 ? rec.chaser_index : fish;
-        if (chaser < 0) {
-            chaser = static_cast<int32_t>(rec.stimulus_frame_num);
-        }
-        return {fish, chaser};
-    };
-
-    auto prefer_candidate = [](const ZarrDetectionData::ChaserBoundingBoxRecord& candidate,
-                               const ChaserBoundingBox& existing) -> bool {
-        if (candidate.is_target != existing.is_target) {
-            return candidate.is_target;
-        }
-        int32_t cand_frame = candidate.stimulus_frame_num;
-        int32_t exist_frame = existing.stimulus_frame_num;
-        if (cand_frame != exist_frame) {
-            return cand_frame > exist_frame;
-        }
-        float cand_conf = candidate.confidence;
-        float exist_conf = existing.confidence;
-        bool cand_valid = std::isfinite(cand_conf);
-        bool exist_valid = std::isfinite(exist_conf);
-        if (cand_valid != exist_valid) {
-            return cand_valid;
-        }
-        if (cand_valid && exist_valid && cand_conf != exist_conf) {
-            return cand_conf > exist_conf;
-        }
-        // Fall back to larger width/height in case of exact duplicates.
-        float cand_area = candidate.width_px * candidate.height_px;
-        float exist_area = existing.width_px * existing.height_px;
-        if (std::isfinite(cand_area) && std::isfinite(exist_area) &&
-            cand_area != exist_area) {
-            return cand_area > exist_area;
-        }
-        return false;
-    };
-
-    std::unordered_map<uint64_t, size_t> latest_by_key;
+    // Use a map to keep only the latest bbox for each chaser_index
+    // Key: chaser_index, Value: index in result vector
+    std::unordered_map<int32_t, size_t> latest_by_chaser_index;
 
     for (size_t idx : data_.chaser_bboxes_by_camera_frame[frame_id]) {
         if (idx >= data_.chaser_bounding_boxes.size()) {
@@ -5651,26 +6065,46 @@ ZarrDetectionLoader::getChaserBoundingBoxesForFrame(size_t frame_id) const {
         box.y_px = src.y_px;
         box.width_px = src.width_px;
         box.height_px = src.height_px;
-        box.centroid_x = std::isfinite(src.centroid_x)
-                             ? src.centroid_x
-                             : src.x_px + src.width_px * 0.5f;
-        box.centroid_y = std::isfinite(src.centroid_y)
-                             ? src.centroid_y
-                             : src.y_px + src.height_px * 0.5f;
+        box.centroid_x = src.centroid_x;
+        box.centroid_y = src.centroid_y;
         box.confidence = src.confidence;
         box.camera_frame_id = src.camera_frame_id;
         box.stimulus_frame_num = src.stimulus_frame_num;
         box.chaser_index = src.chaser_index;
         box.is_target = src.is_target;
-        auto [fish, chaser] = pick_identifier(src);
-        uint64_t key = make_key(fish, chaser);
-        auto it = latest_by_key.find(key);
-        if (it == latest_by_key.end()) {
-            latest_by_key.emplace(key, result.size());
+
+        // Deduplicate: keep only the latest stimulus frame for each chaser_index
+        int32_t key = src.chaser_index;
+        auto it = latest_by_chaser_index.find(key);
+        if (it == latest_by_chaser_index.end()) {
+            // First bbox with this chaser_index
+            latest_by_chaser_index[key] = result.size();
             result.push_back(box);
         } else {
+            // Already have a bbox with this chaser_index, check if this one is newer
             ChaserBoundingBox& existing = result[it->second];
-            if (prefer_candidate(src, existing)) {
+            // Prefer the one with higher stimulus_frame_num (more recent)
+            // If tied, prefer is_target=true, then higher confidence
+            bool should_replace = false;
+            if (box.stimulus_frame_num > existing.stimulus_frame_num) {
+                should_replace = true;
+            } else if (box.stimulus_frame_num == existing.stimulus_frame_num) {
+                // Same stimulus frame, use other criteria
+                if (box.is_target && !existing.is_target) {
+                    should_replace = true;
+                } else if (box.is_target == existing.is_target) {
+                    // Both target or both not target, prefer higher confidence
+                    if (std::isfinite(box.confidence) && std::isfinite(existing.confidence)) {
+                        if (box.confidence > existing.confidence) {
+                            should_replace = true;
+                        }
+                    } else if (std::isfinite(box.confidence) && !std::isfinite(existing.confidence)) {
+                        should_replace = true;
+                    }
+                }
+            }
+
+            if (should_replace) {
                 existing = box;
             }
         }

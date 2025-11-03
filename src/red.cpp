@@ -47,9 +47,25 @@ std::unordered_map<std::string, std::atomic<bool>> window_need_decoding;
 std::unordered_map<std::string, std::atomic<int>> latest_decoded_frame;
 
 // Global variables
-ZarrDetectionLoader* zarr_loader = nullptr;
 bool show_interpolation_debug = false;
-bool use_interpolated_detections = true;  // Toggle for using interpolated vs original
+std::vector<ZarrDetectionLoader::DetectionDataset> detection_dataset_ids;
+std::vector<std::string> detection_dataset_labels;
+int detection_dataset_choice = 0;
+
+void refreshDetectionDatasetOptions(ZarrDetectionLoader& loader) {
+    detection_dataset_ids.clear();
+    detection_dataset_labels.clear();
+    detection_dataset_choice = 0;
+    auto options = loader.getAvailableDetectionDatasets();
+    auto active = loader.getActiveDetectionDataset();
+    for (size_t i = 0; i < options.size(); ++i) {
+        detection_dataset_ids.push_back(options[i].first);
+        detection_dataset_labels.push_back(options[i].second);
+        if (options[i].first == active) {
+            detection_dataset_choice = static_cast<int>(i);
+        }
+    }
+}
 
 struct PlaybackState {
     int pause_selected = 0;
@@ -522,34 +538,61 @@ int main(int, char **) {
             }
 
             if (zarr_loaded) {
+                if (!detection_dataset_labels.empty()) {
+                    ImGui::Text("Detection dataset:");
+                    const char* current_label =
+                        detection_dataset_labels[std::min<int>(detection_dataset_choice,
+                                                               static_cast<int>(detection_dataset_labels.size()) - 1)].c_str();
+                    bool dataset_changed = false;
+                    if (ImGui::BeginCombo("##detection_dataset_combo", current_label)) {
+                        for (int i = 0; i < static_cast<int>(detection_dataset_labels.size()); ++i) {
+                            bool selected = (i == detection_dataset_choice);
+                            if (ImGui::Selectable(detection_dataset_labels[i].c_str(), selected)) {
+                                if (zarr_loader.setActiveDetectionDataset(detection_dataset_ids[i])) {
+                                    detection_dataset_choice = i;
+                                    dataset_changed = true;
+                                }
+                            }
+                            if (selected) {
+                                ImGui::SetItemDefaultFocus();
+                            }
+                        }
+                        ImGui::EndCombo();
+                        if (dataset_changed) {
+                            refreshDetectionDatasetOptions(zarr_loader);
+                            if (zarr_loader.getTotalFrames() > 0 &&
+                                current_frame_num >= static_cast<int>(zarr_loader.getTotalFrames())) {
+                                current_frame_num = static_cast<int>(zarr_loader.getTotalFrames()) - 1;
+                            }
+                        }
+                    }
+                }
+
+                const bool dataset_is_interpolated = zarr_loader.activeDatasetHasSyntheticDetections();
                 std::vector<LoggedBoundingBox> zarr_boxes;
                 bool frame_is_interpolated = false;
 
                 if (zarr_loader.hasInterpolation()) {
                     frame_is_interpolated = zarr_loader.isFrameInterpolated(current_frame_num);
-                    if (use_interpolated_detections) {
-                        zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num, true);
-                    } else {
-                        zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num, false);
-                    }
-                } else {
-                    zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num);
                 }
 
+                zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num);
+
                 const bool need_details =
-                    zarr_loader.hasScores() || zarr_loader.hasHeadingData();
+                    zarr_loader.hasScores() ||
+                    zarr_loader.hasHeadingData() ||
+                    dataset_is_interpolated;
                 ZarrDetectionLoader::FrameDetections detection_details;
                 if (need_details) {
-                    detection_details = zarr_loader.getRawDetections(
-                        current_frame_num, use_interpolated_detections);
+                    detection_details = zarr_loader.getRawDetections(current_frame_num, false);
                 }
 
                 if (!zarr_boxes.empty()) {
-                    if (frame_is_interpolated && use_interpolated_detections) {
+                    if (frame_is_interpolated && dataset_is_interpolated) {
                         ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f),
                                            "[Zarr] Detections:    Found %zu (INTERPOLATED)",
                                            zarr_boxes.size());
-                    } else if (frame_is_interpolated && !use_interpolated_detections) {
+                    } else if (frame_is_interpolated && !dataset_is_interpolated) {
                         ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f),
                                            "[Zarr] Detections:    Found %zu (original, interp available)",
                                            zarr_boxes.size());
@@ -569,7 +612,7 @@ int main(int, char **) {
                     }
 
                     if (zarr_loader.hasHeadingData()) {
-                        if (!use_interpolated_detections &&
+                        if (!dataset_is_interpolated &&
                             !detection_details.heading_valid.empty()) {
                             size_t valid_headings =
                                 std::count(detection_details.heading_valid.begin(),
@@ -585,7 +628,7 @@ int main(int, char **) {
                         ImGui::Text("  Current frame interpolated: %s",
                                     frame_is_interpolated ? "Yes" : "No");
                         ImGui::Text("  Using interpolation: %s",
-                                    use_interpolated_detections ? "Yes" : "No");
+                                    dataset_is_interpolated ? "Yes" : "No");
                         ImGui::Text("  Method: %s",
                                     zarr_loader.getInterpolationMethod().c_str());
                     }
@@ -605,24 +648,19 @@ int main(int, char **) {
 
             if (zarr_loaded && zarr_loader.hasInterpolation()) {
                 ImGui::Separator();
-                ImGui::Text("Interpolation Settings:");
-                ImGui::Checkbox("Use Interpolated Zarr Detections", &use_interpolated_detections);
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("When checked, displays interpolated detections (orange) instead of original detections (green)");
-                }
-                
-                // Show current status
+                ImGui::Text("Interpolation Status:");
+                const bool dataset_is_interpolated = zarr_loader.activeDatasetHasSyntheticDetections();
                 bool current_interpolated = zarr_loader.isFrameInterpolated(current_frame_num);
-                if (current_interpolated) {
-                    ImGui::SameLine();
-                    ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f), "(Current frame is interpolated)");
-                }
+                ImGui::Text("  Current frame interpolated: %s", current_interpolated ? "Yes" : "No");
+                ImGui::Text("  Dataset uses interpolation: %s", dataset_is_interpolated ? "Yes" : "No");
+                ImGui::Text("  Method: %s", zarr_loader.getInterpolationMethod().c_str());
             }
 
             if (zarr_loaded && zarr_loader.hasHeadingData()) {
                 ImGui::Separator();
                 ImGui::Text("Heading Overlay:");
-                if (use_interpolated_detections) {
+                const bool dataset_is_interpolated = zarr_loader.activeDatasetHasSyntheticDetections();
+                if (dataset_is_interpolated) {
                     ImGui::TextWrapped("Heading arrows are unavailable while interpolated detections are displayed.");
                 } else {
                     ImGui::Checkbox("Show heading arrows", &show_heading_arrows);
@@ -639,7 +677,8 @@ int main(int, char **) {
             if (zarr_loaded && zarr_loader.hasEyeMasks()) {
                 ImGui::Separator();
                 ImGui::Text("Eye Mask Overlay:");
-                if (use_interpolated_detections) {
+                const bool dataset_is_interpolated = zarr_loader.activeDatasetHasSyntheticDetections();
+                if (dataset_is_interpolated) {
                     if (kEyeMaskDebugLoggingEnabled && !eye_mask_debug_logged_toggle_disabled) {
                         eyeMaskDebugLog("Eye mask overlay suppressed because interpolated detections are enabled.");
                         eye_mask_debug_logged_toggle_disabled = true;
@@ -684,9 +723,13 @@ int main(int, char **) {
                         std::cout << "  Interpolation data available!" << std::endl;
                         std::cout << "  Method: " << zarr_loader.getInterpolationMethod() << std::endl;
                     }
+                    refreshDetectionDatasetOptions(zarr_loader);
                 } else {
                     zarr_loaded = false;
                     std::cout << "No Zarr detection file found (optional): " << zarr_error << std::endl;
+                    detection_dataset_ids.clear();
+                    detection_dataset_labels.clear();
+                    detection_dataset_choice = 0;
                 }
 
                 // check if it is mp4, if it is mp4 files
@@ -1094,18 +1137,15 @@ int main(int, char **) {
                         // === ZARR BOUNDING BOX RENDERING === //
                         if (zarr_loaded) {
                             // Check interpolation status for this frame
-                            bool is_zarr_interpolated = zarr_loader.hasInterpolation() && 
+                            bool is_zarr_interpolated = zarr_loader.hasInterpolation() &&
                                                         zarr_loader.isFrameInterpolated(current_frame_num);
+                            const bool dataset_is_interpolated = zarr_loader.activeDatasetHasSyntheticDetections();
                             
-                            // Get bounding boxes - use interpolated if available and enabled
-                            std::vector<LoggedBoundingBox> zarr_boxes;
-                            if (zarr_loader.hasInterpolation() && use_interpolated_detections) {
-                                // Request interpolated boxes (will return interpolated if available for this frame)
-                                zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num, true);
-                            } else {
-                                // Request original boxes only
-                                zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num, false);
-                            }
+                            // Get bounding boxes from the active dataset
+                            std::vector<LoggedBoundingBox> zarr_boxes =
+                                zarr_loader.getBoundingBoxesForFrame(current_frame_num);
+                            ZarrDetectionLoader::FrameDetections detection_details =
+                                zarr_loader.getRawDetections(current_frame_num, false);
                             
                             // DEBUG: Add this to see what's happening
                             if (!zarr_boxes.empty()) {
@@ -1122,7 +1162,8 @@ int main(int, char **) {
                             
                             // Draw the boxes
                             if (!zarr_boxes.empty()) {
-                                for (const auto& box : zarr_boxes) {
+                                for (size_t box_idx = 0; box_idx < zarr_boxes.size(); ++box_idx) {
+                                    const auto& box = zarr_boxes[box_idx];
                                     double x_coords[5] = {
                                         box.x_min, 
                                         box.x_min + box.width, 
@@ -1139,9 +1180,22 @@ int main(int, char **) {
                                         (double)scene->image_height[j] - box.y_min
                                     };
                                     
-                                    ImVec4 box_color = ImVec4(0.2f, 1.0f, 0.2f, 1.0f);
-                                    float line_width = 2.0f;
-                                    if (is_zarr_interpolated && use_interpolated_detections) {
+                                    bool detection_is_interp = dataset_is_interpolated;
+                                    if (!detection_details.detection_source.empty()) {
+                                        if (box_idx < detection_details.detection_source.size()) {
+                                            detection_is_interp = detection_details.detection_source[box_idx] != 0;
+                                        } else {
+                                            detection_is_interp = false;
+                                        }
+                                    }
+
+                                    ImVec4 box_color = detection_is_interp
+                                                           ? ImVec4(1.0f, 0.7f, 0.0f, 0.9f)
+                                                           : ImVec4(0.2f, 0.6f, 1.0f, 1.0f);
+                                    float line_width = detection_is_interp ? 2.5f : 2.0f;
+
+                                    if (is_zarr_interpolated && dataset_is_interpolated &&
+                                        detection_details.detection_source.empty()) {
                                         box_color = ImVec4(1.0f, 0.7f, 0.0f, 0.9f);
                                         line_width = 2.5f;
                                     }
@@ -1149,7 +1203,7 @@ int main(int, char **) {
                                     ImPlot::SetNextLineStyle(box_color, line_width);
                                     
                                     std::string label = "Zarr_" + std::to_string(box.class_id);
-                                    if (is_zarr_interpolated && use_interpolated_detections) {
+                                    if (detection_is_interp) {
                                         label += " [I]";  // Mark as interpolated
                                     }
                                     
@@ -1362,8 +1416,8 @@ int main(int, char **) {
                                         (idx < target_bbox_usage.size() && target_bbox_usage[idx] != 0);
 
                                     ImVec4 box_color = highlight_target
-                                                           ? ImVec4(1.0f, 0.2f, 0.2f, 1.0f)
-                                                           : ImVec4(0.0f, 1.0f, 1.0f, 1.0f);
+                                                           ? ImVec4(0.0f, 1.0f, 0.0f, 1.0f)
+                                                           : ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
                                     float line_width = highlight_target ? 2.75f : 2.0f;
 
                                     double x0 = static_cast<double>(bbox.x_px);
@@ -1404,10 +1458,12 @@ int main(int, char **) {
                                                 static_cast<double>(scene->image_height[j]) - static_cast<double>(bbox.centroid_y);
                                             ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle,
                                                                        5.0f,
-                                                                       ImVec4(0.0f, 1.0f, 1.0f, 1.0f),
+                                                                       ImVec4(1.0f, 0.0f, 0.0f, 1.0f),
                                                                        IMPLOT_AUTO,
-                                                                       ImVec4(0.0f, 1.0f, 1.0f, 1.0f));
-                                            std::string centroid_label = label + "_centroid";
+                                                                       ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
+                                            std::string centroid_label = highlight_target
+                                                                            ? "Target BBox " + std::to_string(label_id) + " Centroid##target_centroid_" + std::to_string(idx)
+                                                                            : "Chaser BBox " + std::to_string(label_id) + " Centroid##chaser_centroid_" + std::to_string(idx);
                                             ImPlot::PlotScatter(centroid_label.c_str(), &centroid_x, &centroid_y, 1);
                                         }
                                     }
@@ -1417,12 +1473,14 @@ int main(int, char **) {
                                     if (overlay.has_target) {
                                         double plot_x = overlay.target_plot_x;
                                         double plot_y = overlay.target_plot_y;
-                                        ImVec4 target_color = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+                                        ImVec4 target_color = ImVec4(0.0f, 1.0f, 0.0f, 1.0f);
                                         float outline = overlay.target_bbox_index != kInvalidBBoxIndex ? 2.5f : 2.0f;
+                                        float target_marker_size = 3.0f;
+                                        float target_outline = outline * 0.25f;
                                         ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle,
-                                                                   12.0f,
+                                                                   target_marker_size,
                                                                    target_color,
-                                                                   outline,
+                                                                   target_outline,
                                                                    target_color);
                                         std::string target_label = "Target_" + std::to_string(overlay.chaser_index);
                                         ImPlot::PlotScatter(target_label.c_str(), &plot_x, &plot_y, 1);
@@ -1433,9 +1491,9 @@ int main(int, char **) {
                                         double plot_y = overlay.chaser_plot_y;
                                         ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle,
                                                                    8.0f,
-                                                                   ImVec4(1.0f, 1.0f, 0.0f, 1.0f),
+                                                                   ImVec4(1.0f, 0.0f, 0.0f, 1.0f),
                                                                    2.0f,
-                                                                   ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+                                                                   ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
                                         std::string chaser_label = "Chaser_state_" + std::to_string(overlay.chaser_index);
                                         ImPlot::PlotScatter(chaser_label.c_str(), &plot_x, &plot_y, 1);
                                     }
@@ -1445,7 +1503,9 @@ int main(int, char **) {
 
                                 const bool heading_overlay_enabled = show_heading_arrows;
                             const bool heading_data_available = zarr_loader.hasHeadingData();
-                            const bool using_interpolated_for_boxes = use_interpolated_detections;
+                            const bool using_interpolated_for_boxes =
+                                (zarr_loader.getActiveDetectionDataset() ==
+                                 ZarrDetectionLoader::DetectionDataset::RefinedInterpolated);
                             const bool eye_mask_overlay_enabled = show_eye_masks;
                             const bool eye_mask_data_available = zarr_loader.hasEyeMasks();
                             const bool can_draw_headings =
@@ -1990,13 +2050,14 @@ int main(int, char **) {
 
                         // === ADD INTERPOLATION STATUS OVERLAY === //
                         if (zarr_loaded && zarr_loader.hasInterpolation()) {
+                            const bool dataset_is_interpolated = zarr_loader.activeDatasetHasSyntheticDetections();
 
                             // Determine interpolation status
                             bool any_interpolated = false;
                             std::string source = "";
 
                             if (zarr_loader.hasInterpolation() &&
-                                zarr_loader.isFrameInterpolated(current_frame_num) && use_interpolated_detections) {
+                                zarr_loader.isFrameInterpolated(current_frame_num) && dataset_is_interpolated) {
                                 any_interpolated = true;
                                 source = "Zarr";
                             }

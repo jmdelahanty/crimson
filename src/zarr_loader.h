@@ -35,6 +35,7 @@ struct InterpolationRunData {
     std::string method;
     std::string source_detection_run;
     std::string provenance_json;
+    std::string stage_label;
 
     bool uses_palette_layout = false;
     bool has_flat_detections = false;
@@ -46,6 +47,9 @@ struct InterpolationRunData {
     std::vector<int32_t> flat_class_ids;
     std::vector<size_t> frame_offsets;
     std::vector<uint8_t> detection_source;              // 0 = source, 1 = interpolated
+    std::vector<int32_t> n_detections;
+    bool has_scores = false;
+    bool has_class_ids = false;
 
     // Stimulus alignment (analysis/stimulus_runs)
     bool has_stimulus_alignment = false;
@@ -101,6 +105,8 @@ struct ZarrDetectionData {
     std::vector<float> flat_scores;                     // optional, same length as frame_indices
     std::vector<int32_t> flat_class_ids;                // optional, same length as frame_indices
     std::vector<size_t> frame_offsets;                  // size total_frames + 1
+    std::vector<uint8_t> detection_source_flags;        // optional, same length as frame_indices
+    std::vector<uint8_t> frame_interpolated_flags;      // per-frame flag derived from active dataset
 
     // Optional heading / keypoint data aligned with detections
     std::vector<float> flat_headings_deg;               // heading angle per detection
@@ -234,6 +240,16 @@ struct ZarrDetectionData {
         double offset_y_px = 0.0;
         bool valid = false;
     } chaser_transform;
+
+    // Cached detection datasets
+    InterpolationRunData raw_detection_dataset;
+    bool has_raw_detection_dataset = false;
+    InterpolationRunData refined_filtered_dataset;
+    bool has_refined_filtered_dataset = false;
+    InterpolationRunData refined_interpolated_dataset;
+    bool has_refined_interpolated_dataset = false;
+    InterpolationRunData refined_root_dataset;
+    bool has_refined_root_dataset = false;
 };
 
 class ZarrDetectionLoader {
@@ -241,6 +257,13 @@ public:
     ZarrDetectionLoader();
     ~ZarrDetectionLoader();
     static constexpr size_t kEyeMaskChunkCacheCapacity = 3;
+
+    enum class DetectionDataset {
+        RawDetect = 0,
+        RefinedFiltered = 1,
+        RefinedInterpolated = 2,
+        RefinedRoot = 3
+    };
     
     // Main loading function
     bool loadZarrFile(const std::string& filepath, std::string& error_message);
@@ -266,6 +289,12 @@ public:
     const std::string& getDetectRunCreatedAt() const { return data_.detect_run_created_at; }
     bool hasScores() const { return data_.has_scores; }
     bool hasClassIDs() const { return data_.has_class_ids; }
+    bool coordinatesAreNormalized() const { return data_.coordinates_normalized; }
+    std::vector<std::pair<DetectionDataset, std::string>> getAvailableDetectionDatasets() const;
+    DetectionDataset getActiveDetectionDataset() const { return active_dataset_; }
+    bool setActiveDetectionDataset(DetectionDataset dataset);
+    bool isDatasetAvailable(DetectionDataset dataset) const;
+    bool activeDatasetHasSyntheticDetections() const;
     bool hasInterpolation() const { return data_.has_interpolation; }
     const std::string& getKeypointsRunName() const { return data_.keypoints_run_name; }
     bool hasEyeMasks() const { return data_.has_eye_masks; }
@@ -411,6 +440,7 @@ public:
         std::vector<float> headings_deg;
         std::vector<std::array<float, 2>> swim_bladder_pixels;
         std::vector<uint8_t> heading_valid;
+        std::vector<uint8_t> detection_source;
         struct EyeMask {
             bool valid = false;
             int rows = 0;
@@ -453,6 +483,7 @@ private:
     ZarrDetectionData data_;
     ts::Context context_;
     std::string root_path_;
+    DetectionDataset active_dataset_ = DetectionDataset::RawDetect;
     
     // Loading functions
     bool loadStandardFormat(const ts::kvstore::KvStore& store);
@@ -489,6 +520,7 @@ private:
     // New: Load interpolation data
     bool loadInterpolationRuns(const ts::kvstore::KvStore& store);
     bool loadRefinedDetectRuns(const ts::kvstore::KvStore& store);
+    bool loadRefinedDetectionsAsPrimary(const ts::kvstore::KvStore& store);
     bool loadStimulusAlignment(const ts::kvstore::KvStore& store);
     bool loadEyeAngleData(const ts::kvstore::KvStore& store, size_t roi_count);
     bool loadStimulusEventsForRun(const ts::kvstore::KvStore& store, const std::string& run_base);
@@ -524,18 +556,25 @@ private:
                            const std::vector<std::string>& instant_mm_names,
                            const std::vector<std::string>& instant_px_names,
                            float pixels_per_mm,
-                           double run_fps,
-                           const std::string& category,
-                           const std::string& detection_variant,
-                           const std::string& source_detect_run,
-                           double smoothing_seconds,
-                           int video_width,
-                           int video_height,
-                           bool from_speed_runs);
+                          double run_fps,
+                          const std::string& category,
+                          const std::string& detection_variant,
+                          const std::string& source_detect_run,
+                          double smoothing_seconds,
+                          int video_width,
+                          int video_height,
+                          bool from_speed_runs);
     void finalizeMovementSelection();
     void rebuildChaserStateIndices();
     void rebuildChaserBoundingBoxIndices();
     void updateChaserCameraFramesFromAlignment();
+    void cacheDetectionStage(InterpolationRunData stage,
+                             DetectionDataset dataset_type);
+    bool applyDetectionDataset(const InterpolationRunData& stage,
+                               DetectionDataset dataset_type);
+    void computeDetectionsFromOffsets(const std::vector<size_t>& offsets,
+                                      std::vector<int32_t>& n_detections_out) const;
+    void computeActiveDatasetInterpolationFlags();
     
     // Helper conversion function
     LoggedBoundingBox convertToLoggedBox(
