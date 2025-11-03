@@ -2,6 +2,7 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <filesystem>
+#include <fstream>
 #include <absl/strings/cord.h>
 #include <algorithm>
 #include <cctype>
@@ -22,6 +23,14 @@
 using json = nlohmann::json;
 
 namespace {
+constexpr bool kChaserDebugLoggingEnabled =
+#if defined(CRIMSON_CHASER_DEBUG_LOGS)
+    true;
+#else
+    false;
+#endif
+;
+
 std::string appendPath(const std::string& base, const std::string& suffix) {
     if (base.empty()) {
         return suffix;
@@ -385,12 +394,34 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
         {
             auto probe = ts::kvstore::Read(store, "detect_runs/zarr.json").result();
             if (probe.ok()) {
-                bool has_value = probe.value().has_value();
-                std::cout << "  probe detect_runs/zarr.json: "
-                          << (has_value ? "FOUND" : "MISSING") << std::endl;
-                if (has_value) {
-                    std::string payload;
+                const bool kv_has_value = probe.value().has_value();
+                std::string payload;
+                bool have_payload = false;
+
+                if (kv_has_value) {
+                    std::cout << "  probe detect_runs/zarr.json: FOUND" << std::endl;
                     absl::CopyCordToString(probe.value().value, &payload);
+                    have_payload = true;
+                } else {
+                    std::filesystem::path fs_path =
+                        std::filesystem::path(filepath) / "detect_runs" / "zarr.json";
+                    if (std::filesystem::exists(fs_path)) {
+                        std::cout << "  probe detect_runs/zarr.json: FOUND via filesystem fallback" << std::endl;
+                        std::ifstream file(fs_path);
+                        if (file) {
+                            payload.assign((std::istreambuf_iterator<char>(file)),
+                                           std::istreambuf_iterator<char>());
+                            have_payload = !payload.empty();
+                        }
+                        if (!have_payload) {
+                            std::cout << "    fallback read: empty payload" << std::endl;
+                        }
+                    } else {
+                        std::cout << "  probe detect_runs/zarr.json: MISSING" << std::endl;
+                    }
+                }
+
+                if (have_payload) {
                     try {
                         auto json_meta = json::parse(payload);
                         std::string latest_run = "<unset>";
@@ -447,9 +478,9 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
             std::cout << "  No keypoint heading data available" << std::endl;
         }
 
-        // Populate metadata; continue even if it fails (legacy files may not have it)
+        // Populate metadata; continue even if it fails (broken archives may lack it)
         if (!loadMetadata(store)) {
-            std::cout << "  Warning: Could not read root metadata (zarr.json/.zattrs)" << std::endl;
+            std::cout << "  Warning: Could not read raw_video metadata" << std::endl;
         }
         
         // Validate we have essential data
@@ -583,11 +614,13 @@ bool ZarrDetectionLoader::readInt32Array(const ts::kvstore::KvStore& store,
             for (size_t i = 0; i < length; ++i) {
                 out[i] = convertToInt32WithClamp<Source>(data[i], overflow);
             }
+        if (kChaserDebugLoggingEnabled) {
             std::cout << "  [ReadInt32Array] '" << path << "' read as " << label
                       << " (" << length << " rows"
                       << (overflow ? ", overflow clamp applied" : "") << ")"
                       << std::endl;
-            return true;
+        }
+        return true;
         };
 
         if (attempt(int32_t{}, "int32_t") ||
@@ -601,10 +634,12 @@ bool ZarrDetectionLoader::readInt32Array(const ts::kvstore::KvStore& store,
             return true;
         }
 
-        std::cout << "  [ReadInt32Array] '" << path << "' failed after dtype attempts:"
-                  << std::endl;
-        for (const auto& msg : failure_messages) {
-            std::cout << "    - " << msg << std::endl;
+        if (kChaserDebugLoggingEnabled) {
+            std::cout << "  [ReadInt32Array] '" << path << "' failed after dtype attempts:"
+                      << std::endl;
+            for (const auto& msg : failure_messages) {
+                std::cout << "    - " << msg << std::endl;
+            }
         }
         return false;
     } catch (const std::exception& e) {
@@ -651,10 +686,12 @@ bool ZarrDetectionLoader::readInt64Array(const ts::kvstore::KvStore& store,
             for (size_t i = 0; i < length; ++i) {
                 out[i] = convertToInt64WithClamp<Source>(data[i], overflow);
             }
+        if (kChaserDebugLoggingEnabled) {
             std::cout << "  [ReadInt64Array] '" << path << "' read as " << label
                       << " (" << length << " rows"
                       << (overflow ? ", overflow clamp applied" : "") << ")"
                       << std::endl;
+        }
             return true;
         };
 
@@ -669,10 +706,12 @@ bool ZarrDetectionLoader::readInt64Array(const ts::kvstore::KvStore& store,
             return true;
         }
 
-        std::cout << "  [ReadInt64Array] '" << path << "' failed after dtype attempts:"
-                  << std::endl;
-        for (const auto& msg : failure_messages) {
-            std::cout << "    - " << msg << std::endl;
+        if (kChaserDebugLoggingEnabled) {
+            std::cout << "  [ReadInt64Array] '" << path << "' failed after dtype attempts:"
+                      << std::endl;
+            for (const auto& msg : failure_messages) {
+                std::cout << "    - " << msg << std::endl;
+            }
         }
         return false;
     } catch (const std::exception& e) {
@@ -1854,6 +1893,10 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     data_.has_heading_data = false;
     data_.keypoints_run_name.clear();
     data_.keypoints_source_crop_run.clear();
+    data_.flat_keypoints_px.clear();
+    data_.keypoint_labels.clear();
+    data_.keypoints_per_detection = 0;
+    data_.has_keypoints = false;
     data_.mask_roi_indices.clear();
     data_.roi_offset_x.clear();
     data_.roi_offset_y.clear();
@@ -2007,23 +2050,68 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
 
     auto run_attrs = readAttrsAny(store, run_base);
     size_t swim_index = 0;
+    bool swim_label_found = false;
+    std::vector<std::string> keypoint_labels_loaded;
     if (run_attrs.has_value() &&
         run_attrs->contains("keypoint_labels") &&
         (*run_attrs)["keypoint_labels"].is_array()) {
         const auto& labels = (*run_attrs)["keypoint_labels"];
+        keypoint_labels_loaded.reserve(labels.size());
         for (size_t i = 0; i < labels.size(); ++i) {
-            if (labels[i].is_string()) {
-                std::string label = labels[i].get<std::string>();
+            if (!labels[i].is_string()) {
+                continue;
+            }
+            std::string label = labels[i].get<std::string>();
+            keypoint_labels_loaded.push_back(label);
+            if (!swim_label_found) {
                 std::string lowered = label;
                 std::transform(lowered.begin(), lowered.end(), lowered.begin(),
-                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                               [](unsigned char c) {
+                                   return static_cast<char>(std::tolower(c));
+                               });
                 if (lowered.find("bladder") != std::string::npos ||
                     lowered.find("swim") != std::string::npos) {
-                    swim_index = i;
-                    break;
+                    swim_index = keypoint_labels_loaded.size() - 1;
+                    swim_label_found = true;
                 }
             }
         }
+    }
+
+    if (num_keypoints > 0) {
+        data_.keypoint_labels.clear();
+        if (!keypoint_labels_loaded.empty()) {
+            if (keypoint_labels_loaded.size() == num_keypoints) {
+                data_.keypoint_labels = keypoint_labels_loaded;
+            } else {
+                data_.keypoint_labels.reserve(num_keypoints);
+                for (size_t i = 0; i < num_keypoints; ++i) {
+                    if (i < keypoint_labels_loaded.size()) {
+                        data_.keypoint_labels.push_back(keypoint_labels_loaded[i]);
+                    } else {
+                        data_.keypoint_labels.push_back("kp" + std::to_string(i));
+                    }
+                }
+            }
+        }
+        if (data_.keypoint_labels.empty()) {
+            data_.keypoint_labels.reserve(num_keypoints);
+            static const std::array<std::string, 3> kDefaultLabels = {
+                "swim_bladder", "left_eye", "right_eye"};
+            for (size_t i = 0; i < num_keypoints; ++i) {
+                if (i < kDefaultLabels.size()) {
+                    data_.keypoint_labels.push_back(kDefaultLabels[i]);
+                } else {
+                    data_.keypoint_labels.push_back("kp" + std::to_string(i));
+                }
+            }
+        }
+        if (swim_index >= num_keypoints) {
+            swim_index = 0;
+        }
+    } else {
+        data_.keypoint_labels.clear();
+        swim_index = 0;
     }
 
     auto normalizeCropName = [](const std::string& name) -> std::string {
@@ -2194,10 +2282,20 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     data_.roi_offset_y.assign(total_detections, nan_value);
     data_.roi_width_px.assign(total_detections, 0.0f);
     data_.roi_height_px.assign(total_detections, 0.0f);
+    if (num_keypoints > 0) {
+        data_.keypoints_per_detection = num_keypoints;
+        data_.flat_keypoints_px.assign(total_detections * num_keypoints * 2, nan_value);
+        data_.has_keypoints = true;
+    } else {
+        data_.keypoints_per_detection = 0;
+        data_.flat_keypoints_px.clear();
+        data_.has_keypoints = false;
+    }
 
     std::vector<size_t> frame_cursor(
         data_.frame_offsets.size() > 0 ? data_.frame_offsets.size() - 1 : 0, 0);
     size_t filled = 0;
+    size_t finite_keypoint_count = 0;
 
     for (size_t roi_index = 0; roi_index < roi_count; ++roi_index) {
         int32_t frame = kp_frame_indices[roi_index];
@@ -2239,12 +2337,10 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
             have_pixel_box = true;
         }
 
-        float roi_width_for_det = roi_size_available
-                                      ? roi_width_px
-                                      : (have_pixel_box ? std::max(0.0f, pixel_box[2] - pixel_box[0]) : 0.0f);
-        float roi_height_for_det = roi_size_available
-                                       ? roi_height_px
-                                       : (have_pixel_box ? std::max(0.0f, pixel_box[3] - pixel_box[1]) : 0.0f);
+        float pixel_box_width = have_pixel_box ? std::max(0.0f, pixel_box[2] - pixel_box[0]) : 0.0f;
+        float pixel_box_height = have_pixel_box ? std::max(0.0f, pixel_box[3] - pixel_box[1]) : 0.0f;
+        float roi_width_for_det = roi_size_available ? roi_width_px : pixel_box_width;
+        float roi_height_for_det = roi_size_available ? roi_height_px : pixel_box_height;
 
         bool success = detection_success[roi_index] != 0;
         data_.flat_heading_valid[det_index] = success ? 1 : 0;
@@ -2265,51 +2361,103 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
         bool assigned_anchor = false;
         float assigned_x = nan_value;
         float assigned_y = nan_value;
+        float raw_anchor_x = nan_value;
+        float raw_anchor_y = nan_value;
 
-        if (!kp_values.empty() && swim_index < num_keypoints) {
+        if (!kp_values.empty() && num_keypoints > 0 && coord_dim >= 2) {
             size_t stride = num_keypoints * coord_dim;
-            size_t kp_base = roi_index * stride + swim_index * coord_dim;
-            if (kp_base + 1 < kp_values.size()) {
-                float kp_x = kp_values[kp_base + 0];
-                float kp_y = kp_values[kp_base + 1];
+            size_t flat_stride = num_keypoints * 2;
+            size_t flat_base = det_index * flat_stride;
+            bool can_store_flat =
+                data_.has_keypoints &&
+                (flat_base + flat_stride) <= data_.flat_keypoints_px.size();
+
+            auto convertRawToImage = [&](float raw_x, float raw_y) -> std::array<float, 2> {
+                std::array<float, 2> result = {nan_value, nan_value};
+                if (!std::isfinite(raw_x) || !std::isfinite(raw_y)) {
+                    return result;
+                }
 
                 if (keypoint_space == KeypointSpace::kImage) {
-                    if (std::isfinite(kp_x) && std::isfinite(kp_y)) {
-                        assigned_x = kp_x;
-                        assigned_y = kp_y;
+                    result[0] = raw_x;
+                    result[1] = raw_y;
+                    return result;
+                }
+
+                float local_x = raw_x;
+                float local_y = raw_y;
+
+                if (keypoint_space == KeypointSpace::kNormalized) {
+                    float scale_x = roi_width_for_det;
+                    float scale_y = roi_height_for_det;
+                    bool used_fallback_scale = false;
+                    if (scale_x <= 0.0f || scale_y <= 0.0f) {
+                        scale_x = pixel_box_width;
+                        scale_y = pixel_box_height;
+                        used_fallback_scale = true;
+                    }
+                    if (scale_x <= 0.0f || scale_y <= 0.0f) {
+                        return result;
+                    }
+                    local_x = raw_x * scale_x;
+                    local_y = raw_y * scale_y;
+                    if (used_fallback_scale) {
+                        roi_width_for_det = scale_x;
+                        roi_height_for_det = scale_y;
+                    }
+                }
+
+                float offset_x = offset_x_det;
+                float offset_y = offset_y_det;
+                bool has_offset = std::isfinite(offset_x) && std::isfinite(offset_y);
+                if (!has_offset) {
+                    if (std::isfinite(pixel_box[0]) && std::isfinite(pixel_box[1])) {
+                        offset_x = pixel_box[0];
+                        offset_y = pixel_box[1];
+                        has_offset = true;
+                    }
+                }
+
+                if (keypoint_space == KeypointSpace::kRoi ||
+                    keypoint_space == KeypointSpace::kNormalized) {
+                    if (!has_offset) {
+                        return result;
+                    }
+                    result[0] = offset_x + local_x;
+                    result[1] = offset_y + local_y;
+                    return result;
+                }
+
+                result[0] = local_x;
+                result[1] = local_y;
+                return result;
+            };
+
+            for (size_t kp_idx = 0; kp_idx < num_keypoints; ++kp_idx) {
+                size_t kp_base = roi_index * stride + kp_idx * coord_dim;
+                float raw_x = nan_value;
+                float raw_y = nan_value;
+                if (kp_base + 1 < kp_values.size()) {
+                    raw_x = kp_values[kp_base + 0];
+                    raw_y = kp_values[kp_base + 1];
+                }
+
+                std::array<float, 2> converted = convertRawToImage(raw_x, raw_y);
+                if (can_store_flat) {
+                    data_.flat_keypoints_px[flat_base + kp_idx * 2 + 0] = converted[0];
+                    data_.flat_keypoints_px[flat_base + kp_idx * 2 + 1] = converted[1];
+                }
+                if (kp_idx == swim_index) {
+                    raw_anchor_x = raw_x;
+                    raw_anchor_y = raw_y;
+                    if (std::isfinite(converted[0]) && std::isfinite(converted[1])) {
+                        assigned_x = converted[0];
+                        assigned_y = converted[1];
                         assigned_anchor = true;
                     }
-                } else if (std::isfinite(offset_x_det) && std::isfinite(offset_y_det)) {
-                    float local_x = kp_x;
-                    float local_y = kp_y;
-
-                    if (keypoint_space == KeypointSpace::kNormalized) {
-                        float scale_x = roi_width_for_det;
-                        float scale_y = roi_height_for_det;
-
-                        if (scale_x <= 0.0f || scale_y <= 0.0f) {
-                            if (have_pixel_box) {
-                                scale_x = std::max(0.0f, pixel_box[2] - pixel_box[0]);
-                                scale_y = std::max(0.0f, pixel_box[3] - pixel_box[1]);
-                                roi_width_for_det = scale_x;
-                                roi_height_for_det = scale_y;
-                            }
-                        }
-
-                        if (scale_x > 0.0f && scale_y > 0.0f) {
-                            local_x = kp_x * scale_x;
-                            local_y = kp_y * scale_y;
-                        } else {
-                            local_x = nan_value;
-                            local_y = nan_value;
-                        }
-                    }
-
-                    if (std::isfinite(local_x) && std::isfinite(local_y)) {
-                        assigned_x = offset_x_det + local_x;
-                        assigned_y = offset_y_det + local_y;
-                        assigned_anchor = true;
-                    }
+                }
+                if (can_store_flat && std::isfinite(converted[0]) && std::isfinite(converted[1])) {
+                    finite_keypoint_count++;
                 }
             }
         }
@@ -2343,24 +2491,22 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
 
         constexpr int kMaxDetailLogs = 12;
         static int detail_log_count = 0;
-        if (detail_log_count < kMaxDetailLogs) {
+        if (detail_log_count < kMaxDetailLogs && kChaserDebugLoggingEnabled) {
             std::cout << "[HEADING_LOAD_DETAIL] roi=" << roi_index
                       << " frame=" << frame
                       << " det_index=" << det_index
                       << " success=" << static_cast<int>(success)
-                      << " kp=(";
-            if (!kp_values.empty()) {
-                size_t stride = num_keypoints * coord_dim;
-                size_t kp_base = roi_index * stride + swim_index * coord_dim;
-                if (kp_base + 1 < kp_values.size()) {
-                    float kp_x = kp_values[kp_base + 0];
-                    float kp_y = kp_values[kp_base + 1];
-                    std::cout << kp_x << ", " << kp_y << ")";
-                } else {
-                    std::cout << "out_of_range, out_of_range)";
-                }
+                      << " raw_kp=(";
+            if (std::isfinite(raw_anchor_x) && std::isfinite(raw_anchor_y)) {
+                std::cout << raw_anchor_x << ", " << raw_anchor_y << ")";
             } else {
-                std::cout << "n/a, n/a)";
+                std::cout << "nan, nan)";
+            }
+            std::cout << " converted=(";
+            if (std::isfinite(assigned_x) && std::isfinite(assigned_y)) {
+                std::cout << assigned_x << ", " << assigned_y << ")";
+            } else {
+                std::cout << "nan, nan)";
             }
             std::cout << " space=";
             switch (keypoint_space) {
@@ -2393,21 +2539,32 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     }
 
     data_.has_heading_data = filled > 0;
+    if (data_.keypoints_per_detection > 0) {
+        data_.has_keypoints = finite_keypoint_count > 0;
+        if (!data_.has_keypoints) {
+            data_.flat_keypoints_px.clear();
+            data_.keypoints_per_detection = 0;
+        }
+    } else {
+        data_.has_keypoints = false;
+    }
     if (data_.has_heading_data) {
         data_.keypoints_run_name = latest_run;
         data_.keypoints_source_crop_run = crop_run;
 
         constexpr size_t kMaxLogEntries = 8;
-        for (size_t i = 0; i < std::min(kMaxLogEntries, data_.flat_swim_bladder_px.size()); ++i) {
-            const auto& anchor = data_.flat_swim_bladder_px[i];
-            const float heading = i < data_.flat_headings_deg.size() ? data_.flat_headings_deg[i] : 0.0f;
-            const uint8_t valid = i < data_.flat_heading_valid.size() ? data_.flat_heading_valid[i] : 0;
-            std::cout << "[HEADING_LOAD_DEBUG] idx " << i
-                      << " anchor=(" << anchor[0] << ", " << anchor[1]
-                      << ") heading=" << heading
-                      << " valid=" << static_cast<int>(valid)
-                      << " finite=" << (std::isfinite(anchor[0]) && std::isfinite(anchor[1]))
-                      << std::endl;
+        if (kChaserDebugLoggingEnabled) {
+            for (size_t i = 0; i < std::min(kMaxLogEntries, data_.flat_swim_bladder_px.size()); ++i) {
+                const auto& anchor = data_.flat_swim_bladder_px[i];
+                const float heading = i < data_.flat_headings_deg.size() ? data_.flat_headings_deg[i] : 0.0f;
+                const uint8_t valid = i < data_.flat_heading_valid.size() ? data_.flat_heading_valid[i] : 0;
+                std::cout << "[HEADING_LOAD_DEBUG] idx " << i
+                          << " anchor=(" << anchor[0] << ", " << anchor[1]
+                          << ") heading=" << heading
+                          << " valid=" << static_cast<int>(valid)
+                          << " finite=" << (std::isfinite(anchor[0]) && std::isfinite(anchor[1]))
+                          << std::endl;
+            }
         }
     }
 
@@ -3628,21 +3785,6 @@ bool ZarrDetectionLoader::loadChaserBoundingBoxes(
         target_mask_raw.assign(count, 0);
     }
 
-    std::vector<std::string> roi_labels;
-    bool has_labels = false;
-    for (const auto& name : {"roi_label", "label", "role"}) {
-        if (readStringArray(store, base + name, roi_labels) && !roi_labels.empty()) {
-            has_labels = true;
-            if (roi_labels.size() != count) {
-                roi_labels.resize(count);
-            }
-            break;
-        }
-    }
-    if (!has_labels) {
-        roi_labels.assign(count, std::string());
-    }
-
     data_.chaser_bounding_boxes.reserve(count);
     for (size_t i = 0; i < count; ++i) {
         ZarrDetectionData::ChaserBoundingBoxRecord record;
@@ -3658,14 +3800,6 @@ bool ZarrDetectionLoader::loadChaserBoundingBoxes(
         record.centroid_y = centroid_y_vals[i];
         record.confidence = confidence_vals[i];
         bool target_flag = has_target_mask ? (target_mask_raw[i] != 0) : false;
-        if (!target_flag && has_labels) {
-            std::string lowered = roi_labels[i];
-            std::transform(lowered.begin(), lowered.end(), lowered.begin(),
-                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-            if (lowered.find("target") != std::string::npos) {
-                target_flag = true;
-            }
-        }
         if (!target_flag && record.fish_id < 0) {
             target_flag = true;
         }
@@ -4191,12 +4325,7 @@ bool ZarrDetectionLoader::loadMovementData(const ts::kvstore::KvStore& store) {
     data_.movement_series.clear();
     data_.movement_selected_index = std::numeric_limits<size_t>::max();
 
-    bool loaded = loadSpeedRunMovement(store);
-    if (!loaded) {
-        std::cout << "  [SpeedRuns] No speed run data available; trying legacy movement_runs"
-                  << std::endl;
-        loaded = loadLegacyMovementData(store);
-    }
+    bool loaded = loadLegacyMovementData(store);
 
     if (!loaded) {
         return false;
@@ -4205,205 +4334,6 @@ bool ZarrDetectionLoader::loadMovementData(const ts::kvstore::KvStore& store) {
     finalizeMovementSelection();
     return data_.has_movement_data;
 }
-
-bool ZarrDetectionLoader::loadSpeedRunMovement(const ts::kvstore::KvStore& store) {
-    const std::string speed_root = "analysis/speed_runs";
-    std::vector<std::string> run_candidates;
-
-    auto append_candidate = [&](const std::string& name) {
-        if (!name.empty()) {
-            run_candidates.push_back(name);
-        }
-    };
-
-    if (auto group_attrs = readAttrsAny(store, speed_root)) {
-        append_candidate(extractLatestRunName(*group_attrs));
-        const std::vector<std::string> possible_keys = {
-            "latest_refined", "latest_online", "latest_offline", "latest_manual"
-        };
-        for (const auto& key : possible_keys) {
-            if (group_attrs->contains(key) && (*group_attrs)[key].is_string()) {
-                append_candidate((*group_attrs)[key].get<std::string>());
-            }
-        }
-        if (group_attrs->contains("available_runs") && (*group_attrs)["available_runs"].is_array()) {
-            for (const auto& entry : (*group_attrs)["available_runs"]) {
-                if (entry.is_string()) {
-                    append_candidate(entry.get<std::string>());
-                }
-            }
-        }
-        for (const auto& item : *group_attrs) {
-            if (item.is_string()) {
-                append_candidate(item.get<std::string>());
-            }
-        }
-    }
-
-    if (!root_path_.empty()) {
-        auto runs = collect_runs_fs(root_path_, speed_root, {});
-        run_candidates.insert(run_candidates.end(), runs.begin(), runs.end());
-    }
-
-    if (run_candidates.empty()) {
-        std::cout << "  [SpeedRuns] No entries found under '" << speed_root
-                  << "' (attrs missing and filesystem probe at root '" << root_path_
-                  << "')" << std::endl;
-        return false;
-    }
-
-    std::sort(run_candidates.begin(), run_candidates.end());
-    run_candidates.erase(std::unique(run_candidates.begin(), run_candidates.end()), run_candidates.end());
-
-    bool loaded_any = false;
-    for (const auto& run_name : run_candidates) {
-        std::string run_base = speed_root + "/" + run_name + "/";
-        auto run_attrs = readAttrsAny(store, run_base);
-
-        std::string detection_variant;
-        std::string source_detect_run;
-        double run_fps = 0.0;
-        double smoothing_seconds = 0.0;
-        int video_width = 0;
-        int video_height = 0;
-        float pixels_per_mm = 0.0f;
-
-        if (run_attrs) {
-            if (run_attrs->contains("detection_variant") && (*run_attrs)["detection_variant"].is_string()) {
-                detection_variant = (*run_attrs)["detection_variant"].get<std::string>();
-            }
-            if (run_attrs->contains("source_detect_run") && (*run_attrs)["source_detect_run"].is_string()) {
-                source_detect_run = (*run_attrs)["source_detect_run"].get<std::string>();
-            }
-            if (run_attrs->contains("fps") && (*run_attrs)["fps"].is_number()) {
-                run_fps = (*run_attrs)["fps"].get<double>();
-            }
-            if (run_attrs->contains("smoothing_seconds") && (*run_attrs)["smoothing_seconds"].is_number()) {
-                smoothing_seconds = (*run_attrs)["smoothing_seconds"].get<double>();
-            }
-            if (run_attrs->contains("video_width") && (*run_attrs)["video_width"].is_number_integer()) {
-                video_width = (*run_attrs)["video_width"].get<int>();
-            }
-            if (run_attrs->contains("video_height") && (*run_attrs)["video_height"].is_number_integer()) {
-                video_height = (*run_attrs)["video_height"].get<int>();
-            }
-            auto readPixelsPerMm = [&](const char* key) {
-                if (run_attrs->contains(key) && (*run_attrs)[key].is_number()) {
-                    pixels_per_mm = static_cast<float>((*run_attrs)[key].get<double>());
-                }
-            };
-            readPixelsPerMm("pixels_per_mm");
-            readPixelsPerMm("pixels_per_mm_camera");
-            readPixelsPerMm("pixel_to_mm");
-            readPixelsPerMm("camera_pixels_per_mm");
-        }
-
-        std::vector<std::string> track_ids;
-        auto append_track = [&](const std::string& track) {
-            if (!track.empty()) {
-                track_ids.push_back(track);
-            }
-        };
-
-        if (run_attrs) {
-            if (run_attrs->contains("track_ids") && (*run_attrs)["track_ids"].is_array()) {
-                for (const auto& entry : (*run_attrs)["track_ids"]) {
-                    if (entry.is_string()) {
-                        append_track(entry.get<std::string>());
-                    } else if (entry.is_number_integer()) {
-                        append_track("id_" + std::to_string(entry.get<int>()));
-                    }
-                }
-            }
-            const std::vector<std::string> track_keys = {"primary_track", "default_track", "track_id"};
-            for (const auto& key : track_keys) {
-                if (run_attrs->contains(key)) {
-                    const auto& value = (*run_attrs)[key];
-                    if (value.is_string()) {
-                        append_track(value.get<std::string>());
-                    } else if (value.is_number_integer()) {
-                        append_track("id_" + std::to_string(value.get<int>()));
-                    }
-                }
-            }
-        }
-
-        std::vector<std::string> summary_track_ids;
-        if (readStringArray(store, run_base + "summary/track_ids", summary_track_ids)) {
-            for (const auto& track : summary_track_ids) {
-                append_track(track);
-            }
-        }
-
-        if (!root_path_.empty()) {
-            namespace fs = std::filesystem;
-            fs::path track_root = fs::path(root_path_) / run_base / "tracks";
-            if (fs::exists(track_root) && fs::is_directory(track_root)) {
-                for (const auto& entry : fs::directory_iterator(track_root)) {
-                    if (entry.is_directory()) {
-                        append_track(entry.path().filename().string());
-                    }
-                }
-            }
-        }
-
-        std::sort(track_ids.begin(), track_ids.end());
-        track_ids.erase(std::unique(track_ids.begin(), track_ids.end()), track_ids.end());
-        if (track_ids.empty()) {
-            append_track("id_0");
-        }
-
-        const std::vector<std::string> frame_names = {"frames", "frame_indices", "camera_frame_id"};
-        const std::vector<std::string> time_float_names = {"time_seconds", "timestamps_seconds", "timestamp_seconds", "time_sec"};
-        const std::vector<std::string> timestamp_ns_names = {"timestamps_ns", "timestamp_ns", "timestamp_ns_session", "time_ns"};
-        const std::vector<std::string> smoothed_mm_names = {
-            "smoothed_speed_mm_per_s", "smoothed_speed_mm", "smoothed_speed_mmps", "smoothed_speed",
-            "speed_smoothed_mm_per_s", "speed_smoothed_mm"
-        };
-        const std::vector<std::string> smoothed_px_names = {
-            "smoothed_speed_px_per_s", "smoothed_speed_px", "smoothed_speed_pxps",
-            "speed_smoothed_px_per_s", "speed_smoothed_px"
-        };
-        const std::vector<std::string> instant_mm_names = {
-            "instantaneous_speed_mm_per_s", "instantaneous_speed_mm", "instantaneous_speed_mmps", "instantaneous_speed",
-            "speed_instantaneous_mm_per_s", "speed_instantaneous_mm"
-        };
-        const std::vector<std::string> instant_px_names = {
-            "instantaneous_speed_px_per_s", "instantaneous_speed_px", "instantaneous_speed_pxps",
-            "speed_instantaneous_px_per_s", "speed_instantaneous_px"
-        };
-
-        for (const auto& track_id : track_ids) {
-            std::string track_base = run_base + "tracks/" + track_id + "/";
-            bool loaded_track = loadMovementTrack(
-                store,
-                "[SpeedRuns]",
-                run_name,
-                track_id,
-                track_base,
-                frame_names,
-                time_float_names,
-                timestamp_ns_names,
-                smoothed_mm_names,
-                smoothed_px_names,
-                instant_mm_names,
-                instant_px_names,
-                pixels_per_mm,
-                run_fps,
-                detection_variant.empty() ? "speed_run" : detection_variant,
-                detection_variant,
-                source_detect_run,
-                smoothing_seconds,
-                video_width,
-                video_height,
-                true);
-            loaded_any = loaded_any || loaded_track;
-        }
-    }
-
-    return loaded_any;
-}
-
 bool ZarrDetectionLoader::loadLegacyMovementData(const ts::kvstore::KvStore& store) {
     const std::vector<std::pair<std::string, std::string>> categories = {
         {"analysis/movement_runs/offline", "offline"},
@@ -5196,33 +5126,81 @@ bool ZarrDetectionLoader::loadMetadata(const ts::kvstore::KvStore& store) {
     try {
         bool metadata_found = false;
 
-        if (auto attrs = readAttrsAny(store, "")) {
+        bool fps_from_metadata = false;
+        double duration_seconds = 0.0;
+        double root_fps = 0.0;
+
+        if (auto root_attrs = readAttrsAny(store, "")) {
+            if (root_attrs->contains("fps") && (*root_attrs)["fps"].is_number()) {
+                root_fps = (*root_attrs)["fps"].get<double>();
+            }
+        }
+
+        if (auto attrs = readAttrsAny(store, "raw_video")) {
             metadata_found = true;
 
-            if (attrs->contains("video_path") && (*attrs)["video_path"].is_string()) {
-                data_.video_path = (*attrs)["video_path"].get<std::string>();
+            auto assignIfString = [&](const char* key, std::string& dest) {
+                if (attrs->contains(key) && (*attrs)[key].is_string()) {
+                    dest = (*attrs)[key].get<std::string>();
+                    return true;
+                }
+                return false;
+            };
+
+            if (!assignIfString("source_path", data_.video_path)) {
+                assignIfString("source_video", data_.video_path);
             }
-            if (attrs->contains("fps") && (*attrs)["fps"].is_number()) {
-                data_.fps = (*attrs)["fps"].get<double>();
-            }
-            if (attrs->contains("model_path") && (*attrs)["model_path"].is_string()) {
-                data_.model_path = (*attrs)["model_path"].get<std::string>();
-            }
+
             if (attrs->contains("total_frames") && (*attrs)["total_frames"].is_number()) {
                 data_.total_frames = static_cast<size_t>((*attrs)["total_frames"].get<double>());
             }
-            if (attrs->contains("width") && (*attrs)["width"].is_number()) {
-                data_.image_width = static_cast<int>((*attrs)["width"].get<double>());
+            if (attrs->contains("fps") && (*attrs)["fps"].is_number()) {
+                data_.fps = (*attrs)["fps"].get<double>();
+                fps_from_metadata = true;
+            } else if (attrs->contains("frame_rate") && (*attrs)["frame_rate"].is_number()) {
+                data_.fps = (*attrs)["frame_rate"].get<double>();
+                fps_from_metadata = true;
             }
-            if (attrs->contains("height") && (*attrs)["height"].is_number()) {
-                data_.image_height = static_cast<int>((*attrs)["height"].get<double>());
+            if (attrs->contains("video_width") && (*attrs)["video_width"].is_number()) {
+                data_.image_width = static_cast<int>((*attrs)["video_width"].get<double>());
             }
-            if (attrs->contains("frame_width") && (*attrs)["frame_width"].is_number()) {
-                data_.image_width = static_cast<int>((*attrs)["frame_width"].get<double>());
+            if (attrs->contains("video_height") && (*attrs)["video_height"].is_number()) {
+                data_.image_height = static_cast<int>((*attrs)["video_height"].get<double>());
             }
-            if (attrs->contains("frame_height") && (*attrs)["frame_height"].is_number()) {
-                data_.image_height = static_cast<int>((*attrs)["frame_height"].get<double>());
+            if ((data_.image_width <= 0 || data_.image_height <= 0) &&
+                attrs->contains("original_resolution") &&
+                (*attrs)["original_resolution"].is_array() &&
+                (*attrs)["original_resolution"].size() >= 2) {
+                const auto& res = (*attrs)["original_resolution"];
+                int dim0 = res[0].is_number() ? static_cast<int>(res[0].get<double>()) : 0;
+                int dim1 = res[1].is_number() ? static_cast<int>(res[1].get<double>()) : 0;
+                if (data_.image_height <= 0 && dim0 > 0) {
+                    data_.image_height = dim0;
+                }
+                if (data_.image_width <= 0 && dim1 > 0) {
+                    data_.image_width = dim1;
+                }
             }
+            if (attrs->contains("video_duration_seconds") && (*attrs)["video_duration_seconds"].is_number()) {
+                duration_seconds = (*attrs)["video_duration_seconds"].get<double>();
+            }
+        }
+
+        if (!fps_from_metadata && root_fps > 0.0) {
+            data_.fps = root_fps;
+            fps_from_metadata = true;
+        }
+
+        if (!fps_from_metadata && duration_seconds > 0.0 && data_.total_frames > 0) {
+            double computed_fps = static_cast<double>(data_.total_frames) / duration_seconds;
+            if (computed_fps > 0.0) {
+                data_.fps = computed_fps;
+                fps_from_metadata = true;
+            }
+        }
+
+        if (!fps_from_metadata && data_.fps <= 0.0) {
+            data_.fps = 30.0;
         }
 
         if (data_.image_width <= 0 || data_.image_height <= 0 || data_.total_frames == 0) {
@@ -5717,6 +5695,10 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
         const bool can_use_eye_masks =
             include_eye_masks && data_.has_eye_masks &&
             data_.eye_masks_loaded && !want_interpolated;
+        const bool can_use_keypoints =
+            data_.has_keypoints && !want_interpolated &&
+            data_.keypoints_per_detection > 0 &&
+            !data_.flat_keypoints_px.empty();
 
         if (offsets.empty() || frame_id + 1 >= offsets.size()) {
             return result;
@@ -5733,6 +5715,12 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
         if (can_use_eye_masks) {
             result.eye_masks.reserve(end - start);
             result.includes_eye_masks = true;
+        }
+        if (can_use_keypoints) {
+            result.keypoints_pixels.reserve(end - start);
+            result.keypoint_labels = data_.keypoint_labels;
+            result.keypoints_per_detection = data_.keypoints_per_detection;
+            result.has_keypoints = false;
         }
         if (!data_.detection_source_flags.empty()) {
             result.detection_source.reserve(end - start);
@@ -5764,6 +5752,30 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                 } else {
                     result.detection_source.push_back(0);
                 }
+            }
+
+            if (can_use_keypoints) {
+                std::vector<std::array<float, 2>> kp_set(
+                    data_.keypoints_per_detection,
+                    std::array<float, 2>{nan_value, nan_value});
+                size_t stride = data_.keypoints_per_detection * 2;
+                size_t base = idx * stride;
+                if (base + stride <= data_.flat_keypoints_px.size()) {
+                    bool detection_has_points = false;
+                    for (size_t kp_idx = 0; kp_idx < data_.keypoints_per_detection; ++kp_idx) {
+                        float px = data_.flat_keypoints_px[base + kp_idx * 2 + 0];
+                        float py = data_.flat_keypoints_px[base + kp_idx * 2 + 1];
+                        kp_set[kp_idx][0] = px;
+                        kp_set[kp_idx][1] = py;
+                        if (std::isfinite(px) && std::isfinite(py)) {
+                            detection_has_points = true;
+                        }
+                    }
+                    if (detection_has_points) {
+                        result.has_keypoints = true;
+                    }
+                }
+                result.keypoints_pixels.push_back(std::move(kp_set));
             }
 
             if (can_use_headings) {
@@ -6118,10 +6130,12 @@ ZarrDetectionLoader::getChaserStatesForFrame(size_t frame_id) const {
     std::vector<ChaserState> result;
     if (!data_.has_chaser_states ||
         frame_id >= data_.chaser_states_by_camera_frame.size()) {
-        std::cout << "  [ChaserDebug] Frame " << frame_id
-                  << ": 0 chaser state(s)" << std::endl;
-        if (!data_.has_chaser_states) {
-            std::cout << "    (Chaser data not loaded)" << std::endl;
+        if (kChaserDebugLoggingEnabled) {
+            std::cout << "  [ChaserDebug] Frame " << frame_id
+                      << ": 0 chaser state(s)" << std::endl;
+            if (!data_.has_chaser_states) {
+                std::cout << "    (Chaser data not loaded)" << std::endl;
+            }
         }
         return result;
     }
@@ -6172,25 +6186,27 @@ ZarrDetectionLoader::getChaserStatesForFrame(size_t frame_id) const {
         }
     }
 
-    std::cout << "  [ChaserDebug] Frame " << frame_id << ": "
-              << result.size() << " chaser state(s)" << std::endl;
-    for (const auto& state : result) {
-        std::cout << "    idx=" << state.chaser_index
-                  << " camera_frame=" << state.camera_frame_id
-                  << " stim_frame=" << state.stimulus_frame_num
-                  << " chaser=(" << state.chaser_pos_x << "," << state.chaser_pos_y << ")"
-                  << " target=(" << state.target_pos_x << "," << state.target_pos_y << ")"
-                  << " radius_px=" << state.chaser_radius_px
-                  << " distance_px=" << state.distance_to_target_px
-                  << " target_speed=" << state.target_speed_px_per_s
-                  << " is_chasing=" << (state.is_chasing ? "true" : "false")
-                  << " timestamp_ns=" << state.timestamp_ns_session
-                  << " space=" << (state.texture_space ? "texture" : "camera")
-                  << std::endl;
-        if (state.has_camera_coords) {
-            std::cout << "      camera_chaser=(" << state.chaser_camera_x << "," << state.chaser_camera_y << ")"
-                      << " camera_target=(" << state.target_camera_x << "," << state.target_camera_y << ")"
+    if (kChaserDebugLoggingEnabled) {
+        std::cout << "  [ChaserDebug] Frame " << frame_id << ": "
+                  << result.size() << " chaser state(s)" << std::endl;
+        for (const auto& state : result) {
+            std::cout << "    idx=" << state.chaser_index
+                      << " camera_frame=" << state.camera_frame_id
+                      << " stim_frame=" << state.stimulus_frame_num
+                      << " chaser=(" << state.chaser_pos_x << "," << state.chaser_pos_y << ")"
+                      << " target=(" << state.target_pos_x << "," << state.target_pos_y << ")"
+                      << " radius_px=" << state.chaser_radius_px
+                      << " distance_px=" << state.distance_to_target_px
+                      << " target_speed=" << state.target_speed_px_per_s
+                      << " is_chasing=" << (state.is_chasing ? "true" : "false")
+                      << " timestamp_ns=" << state.timestamp_ns_session
+                      << " space=" << (state.texture_space ? "texture" : "camera")
                       << std::endl;
+            if (state.has_camera_coords) {
+                std::cout << "      camera_chaser=(" << state.chaser_camera_x << "," << state.chaser_camera_y << ")"
+                          << " camera_target=(" << state.target_camera_x << "," << state.target_camera_y << ")"
+                          << std::endl;
+            }
         }
     }
 

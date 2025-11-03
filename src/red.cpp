@@ -14,6 +14,7 @@
 #include "yolo_detection.h"
 #include <ImGuiFileDialog.h>
 #include <algorithm>
+#include <cctype>
 #include <deque>
 #include <cmath>
 #include <chrono>
@@ -226,6 +227,7 @@ int main(int, char **) {
     bool video_loaded = false;
     bool cpu_buffer_toggle = true;
     bool plot_keypoints_flag = false;
+    bool show_keypoint_markers = true;
     bool show_heading_arrows = true;
     bool show_eye_masks = false;
     int current_frame_num = 0;
@@ -412,6 +414,7 @@ int main(int, char **) {
                                     }
                                 }
                             }
+
                         }
                         ImGui::EndMenu();
                     }
@@ -581,6 +584,7 @@ int main(int, char **) {
                 const bool need_details =
                     zarr_loader.hasScores() ||
                     zarr_loader.hasHeadingData() ||
+                    zarr_loader.hasKeypointData() ||
                     dataset_has_synthetic_boxes;
                 ZarrDetectionLoader::FrameDetections detection_details;
                 if (need_details) {
@@ -641,6 +645,60 @@ int main(int, char **) {
                                            "[Zarr] Detections:    None");
                     }
                 }
+
+                if (zarr_loader.hasKeypointData() || zarr_loader.hasHeadingData()) {
+                    ImGui::Separator();
+                    if (zarr_loader.hasKeypointData()) {
+                        ImGui::Text("Keypoint Overlay:");
+                        ImGui::Checkbox("Show keypoint markers", &show_keypoint_markers);
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Overlay swim bladder and eye keypoints on the video frame.");
+                        }
+                        if (!zarr_loader.getKeypointsRunName().empty()) {
+                            ImGui::Text("  Keypoints run: %s",
+                                        zarr_loader.getKeypointsRunName().c_str());
+                        }
+                        if (detection_details.keypoints_per_detection > 0 &&
+                            !detection_details.keypoint_labels.empty()) {
+                            std::string label_list;
+                            for (size_t i = 0; i < detection_details.keypoint_labels.size(); ++i) {
+                                if (i > 0) {
+                                    label_list += ", ";
+                                }
+                                label_list += detection_details.keypoint_labels[i];
+                                if (label_list.size() > 72 &&
+                                    i + 1 < detection_details.keypoint_labels.size()) {
+                                    label_list += "...";
+                                    break;
+                                }
+                            }
+                            if (!label_list.empty()) {
+                                ImGui::TextWrapped("  Labels: %s", label_list.c_str());
+                            }
+                        }
+                        if (zarr_loader.activeDatasetHasSyntheticDetections()) {
+                            ImGui::TextWrapped("Synthetic detections are present; interpolated boxes draw with hollow keypoint markers.");
+                        }
+                    }
+                    if (zarr_loader.hasHeadingData()) {
+                        if (zarr_loader.hasKeypointData()) {
+                            ImGui::Spacing();
+                        }
+                        ImGui::Text("Heading Overlay:");
+                        ImGui::Checkbox("Show heading arrows", &show_heading_arrows);
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Visualize swim bladder headings from the keypoints run.");
+                        }
+                        if (!zarr_loader.getKeypointsRunName().empty() &&
+                            !zarr_loader.hasKeypointData()) {
+                            ImGui::Text("  Keypoints run: %s",
+                                        zarr_loader.getKeypointsRunName().c_str());
+                        }
+                        if (zarr_loader.activeDatasetHasSyntheticDetections()) {
+                            ImGui::TextWrapped("Synthetic detections are present; arrows render only for real boxes.");
+                        }
+                    }
+                }
             } else {
                 ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
                                    "[Zarr] Detections:    Not loaded");
@@ -654,22 +712,6 @@ int main(int, char **) {
                 ImGui::Text("  Dataset uses interpolation: %s",
                             zarr_loader.activeDatasetHasSyntheticDetections() ? "Yes" : "No");
                 ImGui::Text("  Method: %s", zarr_loader.getInterpolationMethod().c_str());
-            }
-
-            if (zarr_loaded && zarr_loader.hasHeadingData()) {
-                ImGui::Separator();
-                ImGui::Text("Heading Overlay:");
-                ImGui::Checkbox("Show heading arrows", &show_heading_arrows);
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Visualize swim bladder headings from the keypoints run.");
-                }
-                if (!zarr_loader.getKeypointsRunName().empty()) {
-                    ImGui::Text("  Keypoints run: %s",
-                                zarr_loader.getKeypointsRunName().c_str());
-                }
-                if (zarr_loader.activeDatasetHasSyntheticDetections()) {
-                    ImGui::TextWrapped("Synthetic detections are present; arrows render only for real boxes.");
-                }
             }
 
             if (zarr_loaded && zarr_loader.hasEyeMasks()) {
@@ -707,14 +749,6 @@ int main(int, char **) {
                 std::string zarr_error;
                 if (loadZarrDetectionFromDirectory(root_dir, zarr_loader, zarr_error)) {
                     zarr_loaded = true;
-                    std::cout << "Successfully loaded Zarr detection file" << std::endl;
-                    std::cout << "  Total frames: " << zarr_loader.getTotalFrames() << std::endl;
-                    std::cout << "  FPS: " << zarr_loader.getFPS() << std::endl;
-                    
-                    if (zarr_loader.hasInterpolation()) {
-                        std::cout << "  Interpolation data available!" << std::endl;
-                        std::cout << "  Method: " << zarr_loader.getInterpolationMethod() << std::endl;
-                    }
                     refreshDetectionDatasetOptions(zarr_loader);
                 } else {
                     zarr_loaded = false;
@@ -1137,6 +1171,145 @@ int main(int, char **) {
                                 zarr_loader.getBoundingBoxesForFrame(current_frame_num);
                             ZarrDetectionLoader::FrameDetections detection_details =
                                 zarr_loader.getRawDetections(current_frame_num, false);
+                            auto draw_keypoint_markers = [&]() {
+                                if (!(show_keypoint_markers &&
+                                      detection_details.has_keypoints &&
+                                      !detection_details.keypoints_pixels.empty() &&
+                                      detection_details.keypoints_per_detection > 0)) {
+                                    return;
+                                }
+
+                                const size_t kp_per_det = detection_details.keypoints_per_detection;
+                                std::vector<std::string> lowered_labels(kp_per_det);
+                                for (size_t kp_idx = 0; kp_idx < kp_per_det; ++kp_idx) {
+                                    if (kp_idx < detection_details.keypoint_labels.size()) {
+                                        lowered_labels[kp_idx] = detection_details.keypoint_labels[kp_idx];
+                                        std::transform(lowered_labels[kp_idx].begin(),
+                                                       lowered_labels[kp_idx].end(),
+                                                       lowered_labels[kp_idx].begin(),
+                                                       [](unsigned char c) {
+                                                           return static_cast<char>(std::tolower(c));
+                                                       });
+                                    } else {
+                                        lowered_labels[kp_idx].clear();
+                                    }
+                                }
+
+                                auto chooseColor = [&](size_t kp_idx) -> ImVec4 {
+                                    const std::string& label = lowered_labels[kp_idx];
+                                    if (label.find("swim") != std::string::npos ||
+                                        label.find("bladder") != std::string::npos) {
+                                        return ImVec4(1.0f, 0.85f, 0.15f, 1.0f);
+                                    }
+                                    if (label.find("left") != std::string::npos) {
+                                        return ImVec4(0.3f, 0.95f, 0.4f, 1.0f);
+                                    }
+                                    if (label.find("right") != std::string::npos) {
+                                        return ImVec4(0.75f, 0.4f, 0.95f, 1.0f);
+                                    }
+                                    static const ImVec4 fallback_colors[] = {
+                                        ImVec4(0.95f, 0.6f, 0.2f, 1.0f),
+                                        ImVec4(0.35f, 0.85f, 0.55f, 1.0f),
+                                        ImVec4(0.6f, 0.5f, 0.95f, 1.0f),
+                                        ImVec4(0.95f, 0.4f, 0.4f, 1.0f),
+                                        ImVec4(0.4f, 0.75f, 0.95f, 1.0f)
+                                    };
+                                    return fallback_colors[kp_idx % (sizeof(fallback_colors) / sizeof(fallback_colors[0]))];
+                                };
+
+                                auto chooseMarker = [&](size_t kp_idx) -> ImPlotMarker {
+                                    const std::string& label = lowered_labels[kp_idx];
+                                    if (label.find("swim") != std::string::npos ||
+                                        label.find("bladder") != std::string::npos) {
+                                        return ImPlotMarker_Circle;
+                                    }
+                                    if (label.find("left") != std::string::npos) {
+                                        return ImPlotMarker_Square;
+                                    }
+                                    if (label.find("right") != std::string::npos) {
+                                        return ImPlotMarker_Diamond;
+                                    }
+                                    static const ImPlotMarker fallback_markers[] = {
+                                        ImPlotMarker_Circle,
+                                        ImPlotMarker_Square,
+                                        ImPlotMarker_Diamond,
+                                        ImPlotMarker_Cross,
+                                        ImPlotMarker_Plus,
+                                        ImPlotMarker_Up,
+                                        ImPlotMarker_Down
+                                    };
+                                    return fallback_markers[kp_idx % (sizeof(fallback_markers) / sizeof(fallback_markers[0]))];
+                                };
+
+                                auto chooseSize = [&](size_t kp_idx) -> float {
+                                    const std::string& label = lowered_labels[kp_idx];
+                                    if (label.find("swim") != std::string::npos ||
+                                        label.find("bladder") != std::string::npos) {
+                                        return 4.5f;
+                                    }
+                                    if (label.find("left") != std::string::npos ||
+                                        label.find("right") != std::string::npos) {
+                                        return 4.5f;
+                                    }
+                                    return 7.0f;
+                                };
+
+                                size_t detection_count = std::min(detection_details.keypoints_pixels.size(),
+                                                                  detection_details.boxes.size());
+                                for (size_t det_idx = 0; det_idx < detection_count; ++det_idx) {
+                                    const auto& keypoints = detection_details.keypoints_pixels[det_idx];
+                                    if (keypoints.size() != kp_per_det) {
+                                        continue;
+                                    }
+                                    bool detection_is_interp = false;
+                                    if (!detection_details.detection_source.empty() &&
+                                        det_idx < detection_details.detection_source.size()) {
+                                        detection_is_interp = detection_details.detection_source[det_idx] != 0;
+                                    }
+                                    uint8_t heading_valid_flag = 1;
+                                    if (!detection_details.heading_valid.empty() &&
+                                        det_idx < detection_details.heading_valid.size()) {
+                                        heading_valid_flag = detection_details.heading_valid[det_idx];
+                                    }
+
+                                    for (size_t kp_idx = 0; kp_idx < kp_per_det; ++kp_idx) {
+                                        const auto& kp = keypoints[kp_idx];
+                                        float kp_x = kp[0];
+                                        float kp_y = kp[1];
+                                        if (!std::isfinite(kp_x) || !std::isfinite(kp_y)) {
+                                            continue;
+                                        }
+
+                                        double plot_x = static_cast<double>(kp_x);
+                                        double plot_y = static_cast<double>(scene->image_height[j]) -
+                                                        static_cast<double>(kp_y);
+
+                                        ImVec4 base_color = chooseColor(kp_idx);
+                                        float alpha_scale = 1.0f;
+                                        if (heading_valid_flag == 0) {
+                                            alpha_scale *= 0.4f;
+                                        }
+                                        if (detection_is_interp) {
+                                            alpha_scale *= 0.65f;
+                                        }
+                                        alpha_scale = std::clamp(alpha_scale, 0.25f, 1.0f);
+
+                                        ImVec4 fill_color = base_color;
+                                        fill_color.w *= alpha_scale;
+                                        ImVec4 outline_color = base_color;
+                                        outline_color.w = std::max(alpha_scale, 0.6f);
+
+                                        ImPlot::SetNextMarkerStyle(chooseMarker(kp_idx),
+                                                                   chooseSize(kp_idx),
+                                                                   fill_color,
+                                                                   2.0f,
+                                                                   outline_color);
+                                        std::string label = "##kp_" + std::to_string(det_idx) + "_" +
+                                                            std::to_string(kp_idx);
+                                        ImPlot::PlotScatter(label.c_str(), &plot_x, &plot_y, 1);
+                                    }
+                                }
+                            };
                             
                             // DEBUG: Add this to see what's happening
                             if (!zarr_boxes.empty()) {
@@ -1207,6 +1380,7 @@ int main(int, char **) {
                                 auto chaser_bboxes = zarr_loader.getChaserBoundingBoxesForFrame(current_frame_num);
                                 auto chaser_states = zarr_loader.getChaserStatesForFrame(current_frame_num);
 
+                                #if defined(CRIMSON_CHASER_DEBUG_LOGS)
                                 // Debug: Print what we found
                                 static bool debug_printed = false;
                                 static int frames_with_data = 0;
@@ -1244,6 +1418,7 @@ int main(int, char **) {
                                     frames_with_data = 0;
                                     last_frame_checked = current_frame_num;
                                 }
+                                #endif
 
                                 struct StateOverlay {
                                     int chaser_index = -1;
@@ -2028,6 +2203,7 @@ int main(int, char **) {
                                                     ": eye mask data unavailable in detection results.");
                                 }
                             }
+                            draw_keypoint_markers();
                         }
 
                         if (zarr_loaded && zarr_loader.hasStimulusEvents()) {

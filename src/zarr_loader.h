@@ -113,8 +113,12 @@ struct ZarrDetectionData {
     std::vector<std::array<float, 2>> flat_swim_bladder_px;  // swim bladder anchor in pixel coords
     std::vector<uint8_t> flat_heading_valid;            // 1 if heading data valid
     bool has_heading_data = false;
+    bool has_keypoints = false;
     std::string keypoints_run_name;
     std::string keypoints_source_crop_run;
+    std::vector<float> flat_keypoints_px;               // flattened [det, kp, coord]
+    size_t keypoints_per_detection = 0;
+    std::vector<std::string> keypoint_labels;
     std::vector<int32_t> mask_roi_indices;
     std::vector<float> roi_offset_x;
     std::vector<float> roi_offset_y;
@@ -441,6 +445,10 @@ public:
         std::vector<std::array<float, 2>> swim_bladder_pixels;
         std::vector<uint8_t> heading_valid;
         std::vector<uint8_t> detection_source;
+        std::vector<std::vector<std::array<float, 2>>> keypoints_pixels;
+        std::vector<std::string> keypoint_labels;
+        size_t keypoints_per_detection = 0;
+        bool has_keypoints = false;
         struct EyeMask {
             bool valid = false;
             int rows = 0;
@@ -475,6 +483,7 @@ public:
                                      bool include_eye_masks = false) const;
 
     bool hasHeadingData() const { return data_.has_heading_data; }
+    bool hasKeypointData() const { return data_.has_keypoints; }
     
     // Static helper to find zarr files in a directory
     static std::optional<std::string> findZarrDetectionFile(const std::string& directory);
