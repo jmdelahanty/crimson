@@ -5589,6 +5589,57 @@ ZarrDetectionLoader::getChaserBoundingBoxesForFrame(size_t frame_id) const {
         return result;
     }
 
+    auto make_key = [](int32_t fish_id, int32_t chaser_index) -> uint64_t {
+        // Shift by +1 so that -1 maps to 0 and we avoid overlap.
+        uint64_t fish_component =
+            static_cast<uint64_t>(static_cast<uint32_t>(fish_id + 1));
+        uint64_t chaser_component =
+            static_cast<uint64_t>(static_cast<uint32_t>(chaser_index + 1));
+        return (fish_component << 32) ^ chaser_component;
+    };
+
+    auto pick_identifier = [](const ZarrDetectionData::ChaserBoundingBoxRecord& rec)
+        -> std::pair<int32_t, int32_t> {
+        int32_t fish = rec.fish_id >= 0 ? rec.fish_id : -1;
+        int32_t chaser = rec.chaser_index >= 0 ? rec.chaser_index : fish;
+        if (chaser < 0) {
+            chaser = static_cast<int32_t>(rec.stimulus_frame_num);
+        }
+        return {fish, chaser};
+    };
+
+    auto prefer_candidate = [](const ZarrDetectionData::ChaserBoundingBoxRecord& candidate,
+                               const ChaserBoundingBox& existing) -> bool {
+        if (candidate.is_target != existing.is_target) {
+            return candidate.is_target;
+        }
+        int32_t cand_frame = candidate.stimulus_frame_num;
+        int32_t exist_frame = existing.stimulus_frame_num;
+        if (cand_frame != exist_frame) {
+            return cand_frame > exist_frame;
+        }
+        float cand_conf = candidate.confidence;
+        float exist_conf = existing.confidence;
+        bool cand_valid = std::isfinite(cand_conf);
+        bool exist_valid = std::isfinite(exist_conf);
+        if (cand_valid != exist_valid) {
+            return cand_valid;
+        }
+        if (cand_valid && exist_valid && cand_conf != exist_conf) {
+            return cand_conf > exist_conf;
+        }
+        // Fall back to larger width/height in case of exact duplicates.
+        float cand_area = candidate.width_px * candidate.height_px;
+        float exist_area = existing.width_px * existing.height_px;
+        if (std::isfinite(cand_area) && std::isfinite(exist_area) &&
+            cand_area != exist_area) {
+            return cand_area > exist_area;
+        }
+        return false;
+    };
+
+    std::unordered_map<uint64_t, size_t> latest_by_key;
+
     for (size_t idx : data_.chaser_bboxes_by_camera_frame[frame_id]) {
         if (idx >= data_.chaser_bounding_boxes.size()) {
             continue;
@@ -5611,7 +5662,18 @@ ZarrDetectionLoader::getChaserBoundingBoxesForFrame(size_t frame_id) const {
         box.stimulus_frame_num = src.stimulus_frame_num;
         box.chaser_index = src.chaser_index;
         box.is_target = src.is_target;
-        result.push_back(box);
+        auto [fish, chaser] = pick_identifier(src);
+        uint64_t key = make_key(fish, chaser);
+        auto it = latest_by_key.find(key);
+        if (it == latest_by_key.end()) {
+            latest_by_key.emplace(key, result.size());
+            result.push_back(box);
+        } else {
+            ChaserBoundingBox& existing = result[it->second];
+            if (prefer_candidate(src, existing)) {
+                existing = box;
+            }
+        }
     }
 
     return result;

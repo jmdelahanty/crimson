@@ -1317,12 +1317,16 @@ int main(int, char **) {
                                                                   ? kInvalidBBoxIndex
                                                                   : selectBoundingBoxForTarget(target_cam_x, target_cam_y);
                                             if (bbox_idx != kInvalidBBoxIndex) {
-                                                const auto& bbox = chaser_bboxes[bbox_idx];
+                                                auto& bbox = chaser_bboxes[bbox_idx];
                                                 overlay.target_plot_x = static_cast<double>(bbox.centroid_x);
                                                 overlay.target_plot_y =
                                                     static_cast<double>(scene->image_height[j]) - static_cast<double>(bbox.centroid_y);
                                                 overlay.target_bbox_index = bbox_idx;
                                                 target_bbox_usage[bbox_idx] = 1;
+                                                bbox.is_target = true;
+                                                if (bbox.chaser_index < 0 && state.chaser_index >= 0) {
+                                                    bbox.chaser_index = state.chaser_index;
+                                                }
                                             } else {
                                                 overlay.target_plot_x = target_plot_x;
                                                 overlay.target_plot_y = target_plot_y;
@@ -1376,9 +1380,20 @@ int main(int, char **) {
                                         static_cast<double>(scene->image_height[j]) - y0};
 
                                     ImPlot::SetNextLineStyle(box_color, line_width);
+                                    auto format_label_id = [&](int32_t candidate, size_t fallback) -> int32_t {
+                                        if (candidate >= 0) {
+                                            return candidate;
+                                        }
+                                        if (bbox.fish_id >= 0) {
+                                            return bbox.fish_id;
+                                        }
+                                        return static_cast<int32_t>(fallback);
+                                    };
+                                    int32_t label_id = format_label_id(bbox.chaser_index, idx);
                                     std::string label = highlight_target
-                                                            ? "Target BBox##target_bbox_" + std::to_string(idx)
-                                                            : "Chaser BBox " + std::to_string(bbox.fish_id) +
+                                                            ? "Target BBox " + std::to_string(label_id) +
+                                                                  "##target_bbox_" + std::to_string(idx)
+                                                            : "Chaser BBox " + std::to_string(label_id) +
                                                                   "##chaser_bbox_" + std::to_string(idx);
                                     ImPlot::PlotLine(label.c_str(), x_coords, y_coords, 5);
 
