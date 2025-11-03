@@ -538,6 +538,7 @@ int main(int, char **) {
             }
 
             if (zarr_loaded) {
+                const bool dataset_has_synthetic_boxes = zarr_loader.activeDatasetHasSyntheticDetections();
                 if (!detection_dataset_labels.empty()) {
                     ImGui::Text("Detection dataset:");
                     const char* current_label =
@@ -568,7 +569,6 @@ int main(int, char **) {
                     }
                 }
 
-                const bool dataset_is_interpolated = zarr_loader.activeDatasetHasSyntheticDetections();
                 std::vector<LoggedBoundingBox> zarr_boxes;
                 bool frame_is_interpolated = false;
 
@@ -581,18 +581,18 @@ int main(int, char **) {
                 const bool need_details =
                     zarr_loader.hasScores() ||
                     zarr_loader.hasHeadingData() ||
-                    dataset_is_interpolated;
+                    dataset_has_synthetic_boxes;
                 ZarrDetectionLoader::FrameDetections detection_details;
                 if (need_details) {
                     detection_details = zarr_loader.getRawDetections(current_frame_num, false);
                 }
 
                 if (!zarr_boxes.empty()) {
-                    if (frame_is_interpolated && dataset_is_interpolated) {
+                    if (frame_is_interpolated && dataset_has_synthetic_boxes) {
                         ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f),
                                            "[Zarr] Detections:    Found %zu (INTERPOLATED)",
                                            zarr_boxes.size());
-                    } else if (frame_is_interpolated && !dataset_is_interpolated) {
+                    } else if (frame_is_interpolated && !dataset_has_synthetic_boxes) {
                         ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f),
                                            "[Zarr] Detections:    Found %zu (original, interp available)",
                                            zarr_boxes.size());
@@ -612,7 +612,7 @@ int main(int, char **) {
                     }
 
                     if (zarr_loader.hasHeadingData()) {
-                        if (!dataset_is_interpolated &&
+                        if (!dataset_has_synthetic_boxes &&
                             !detection_details.heading_valid.empty()) {
                             size_t valid_headings =
                                 std::count(detection_details.heading_valid.begin(),
@@ -628,7 +628,7 @@ int main(int, char **) {
                         ImGui::Text("  Current frame interpolated: %s",
                                     frame_is_interpolated ? "Yes" : "No");
                         ImGui::Text("  Using interpolation: %s",
-                                    dataset_is_interpolated ? "Yes" : "No");
+                                    dataset_has_synthetic_boxes ? "Yes" : "No");
                         ImGui::Text("  Method: %s",
                                     zarr_loader.getInterpolationMethod().c_str());
                     }
@@ -649,54 +649,46 @@ int main(int, char **) {
             if (zarr_loaded && zarr_loader.hasInterpolation()) {
                 ImGui::Separator();
                 ImGui::Text("Interpolation Status:");
-                const bool dataset_is_interpolated = zarr_loader.activeDatasetHasSyntheticDetections();
                 bool current_interpolated = zarr_loader.isFrameInterpolated(current_frame_num);
                 ImGui::Text("  Current frame interpolated: %s", current_interpolated ? "Yes" : "No");
-                ImGui::Text("  Dataset uses interpolation: %s", dataset_is_interpolated ? "Yes" : "No");
+                ImGui::Text("  Dataset uses interpolation: %s",
+                            zarr_loader.activeDatasetHasSyntheticDetections() ? "Yes" : "No");
                 ImGui::Text("  Method: %s", zarr_loader.getInterpolationMethod().c_str());
             }
 
             if (zarr_loaded && zarr_loader.hasHeadingData()) {
                 ImGui::Separator();
                 ImGui::Text("Heading Overlay:");
-                const bool dataset_is_interpolated = zarr_loader.activeDatasetHasSyntheticDetections();
-                if (dataset_is_interpolated) {
-                    ImGui::TextWrapped("Heading arrows are unavailable while interpolated detections are displayed.");
-                } else {
-                    ImGui::Checkbox("Show heading arrows", &show_heading_arrows);
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Visualize swim bladder headings from the keypoints run.");
-                    }
-                    if (!zarr_loader.getKeypointsRunName().empty()) {
-                        ImGui::Text("  Keypoints run: %s",
-                                    zarr_loader.getKeypointsRunName().c_str());
-                    }
+                ImGui::Checkbox("Show heading arrows", &show_heading_arrows);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Visualize swim bladder headings from the keypoints run.");
+                }
+                if (!zarr_loader.getKeypointsRunName().empty()) {
+                    ImGui::Text("  Keypoints run: %s",
+                                zarr_loader.getKeypointsRunName().c_str());
+                }
+                if (zarr_loader.activeDatasetHasSyntheticDetections()) {
+                    ImGui::TextWrapped("Synthetic detections are present; arrows render only for real boxes.");
                 }
             }
 
             if (zarr_loaded && zarr_loader.hasEyeMasks()) {
                 ImGui::Separator();
                 ImGui::Text("Eye Mask Overlay:");
-                const bool dataset_is_interpolated = zarr_loader.activeDatasetHasSyntheticDetections();
-                if (dataset_is_interpolated) {
-                    if (kEyeMaskDebugLoggingEnabled && !eye_mask_debug_logged_toggle_disabled) {
-                        eyeMaskDebugLog("Eye mask overlay suppressed because interpolated detections are enabled.");
-                        eye_mask_debug_logged_toggle_disabled = true;
-                    }
-                    ImGui::TextWrapped("Eye masks are unavailable while interpolated detections are displayed.");
-                } else {
-                    if (kEyeMaskDebugLoggingEnabled && eye_mask_debug_logged_toggle_disabled) {
-                        eyeMaskDebugLog("Eye mask overlay toggle re-enabled; attempting to draw masks.");
-                        eye_mask_debug_logged_toggle_disabled = false;
-                    }
-                    ImGui::Checkbox("Show refined eye masks", &show_eye_masks);
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Visualize refined eye masks as semi-transparent overlays.");
-                    }
-                    if (!zarr_loader.getEyeMaskRunName().empty()) {
-                        ImGui::Text("  Eye mask run: %s",
-                                    zarr_loader.getEyeMaskRunName().c_str());
-                    }
+                if (kEyeMaskDebugLoggingEnabled && eye_mask_debug_logged_toggle_disabled) {
+                    eyeMaskDebugLog("Eye mask overlay toggle re-enabled; attempting to draw masks.");
+                    eye_mask_debug_logged_toggle_disabled = false;
+                }
+                ImGui::Checkbox("Show refined eye masks", &show_eye_masks);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Visualize refined eye masks as semi-transparent overlays.");
+                }
+                if (!zarr_loader.getEyeMaskRunName().empty()) {
+                    ImGui::Text("  Eye mask run: %s",
+                                zarr_loader.getEyeMaskRunName().c_str());
+                }
+                if (zarr_loader.activeDatasetHasSyntheticDetections()) {
+                    ImGui::TextWrapped("Synthetic detections are present; masks are skipped for interpolated boxes.");
                 }
             }
 
@@ -1139,7 +1131,6 @@ int main(int, char **) {
                             // Check interpolation status for this frame
                             bool is_zarr_interpolated = zarr_loader.hasInterpolation() &&
                                                         zarr_loader.isFrameInterpolated(current_frame_num);
-                            const bool dataset_is_interpolated = zarr_loader.activeDatasetHasSyntheticDetections();
                             
                             // Get bounding boxes from the active dataset
                             std::vector<LoggedBoundingBox> zarr_boxes =
@@ -1180,7 +1171,7 @@ int main(int, char **) {
                                         (double)scene->image_height[j] - box.y_min
                                     };
                                     
-                                    bool detection_is_interp = dataset_is_interpolated;
+                                    bool detection_is_interp = zarr_loader.activeDatasetHasSyntheticDetections();
                                     if (!detection_details.detection_source.empty()) {
                                         if (box_idx < detection_details.detection_source.size()) {
                                             detection_is_interp = detection_details.detection_source[box_idx] != 0;
@@ -1194,7 +1185,7 @@ int main(int, char **) {
                                                            : ImVec4(0.2f, 0.6f, 1.0f, 1.0f);
                                     float line_width = detection_is_interp ? 2.5f : 2.0f;
 
-                                    if (is_zarr_interpolated && dataset_is_interpolated &&
+                                    if (is_zarr_interpolated && zarr_loader.activeDatasetHasSyntheticDetections() &&
                                         detection_details.detection_source.empty()) {
                                         box_color = ImVec4(1.0f, 0.7f, 0.0f, 0.9f);
                                         line_width = 2.5f;
@@ -1501,17 +1492,14 @@ int main(int, char **) {
 
                                 }
 
-                                const bool heading_overlay_enabled = show_heading_arrows;
+                            const bool heading_overlay_enabled = show_heading_arrows;
                             const bool heading_data_available = zarr_loader.hasHeadingData();
-                            const bool using_interpolated_for_boxes =
-                                (zarr_loader.getActiveDetectionDataset() ==
-                                 ZarrDetectionLoader::DetectionDataset::RefinedInterpolated);
                             const bool eye_mask_overlay_enabled = show_eye_masks;
                             const bool eye_mask_data_available = zarr_loader.hasEyeMasks();
                             const bool can_draw_headings =
-                                heading_overlay_enabled && heading_data_available && !using_interpolated_for_boxes;
+                                heading_overlay_enabled && heading_data_available;
                             const bool can_draw_eye_masks =
-                                eye_mask_overlay_enabled && eye_mask_data_available && !using_interpolated_for_boxes;
+                                eye_mask_overlay_enabled && eye_mask_data_available;
                             const float scene_height_f =
                                 static_cast<float>(scene->image_height[j]);
 
@@ -1537,13 +1525,13 @@ int main(int, char **) {
                                         heading_debug_logged_no_data = false;
                                     }
 
-                                    if (using_interpolated_for_boxes) {
+                                    if (zarr_loader.activeDatasetHasSyntheticDetections()) {
                                         if (!heading_debug_logged_interpolated) {
-                                            headingDebugLog("Interpolated detections enabled; heading arrows require original detections.");
+                                            headingDebugLog("Dataset contains synthetic detections; headings render only for real boxes.");
                                             heading_debug_logged_interpolated = true;
                                         }
                                     } else if (heading_debug_logged_interpolated) {
-                                        headingDebugLog("Using original detections again; heading arrows may render.");
+                                        headingDebugLog("Dataset now fully real; headings may render for all boxes.");
                                         heading_debug_logged_interpolated = false;
                                     }
                                 }
@@ -1580,8 +1568,8 @@ int main(int, char **) {
                                                     (heading_overlay_enabled ? "1" : "0") +
                                                     ", heading_data=" +
                                                     (heading_data_available ? "1" : "0") +
-                                                    ", using_interpolated=" +
-                                                    (using_interpolated_for_boxes ? "1" : "0") + ").");
+                                                    ", dataset_interp=" +
+                                                    (zarr_loader.activeDatasetHasSyntheticDetections() ? "1" : "0") + ").");
                                     heading_debug_last_frame_logged = current_frame_num;
                                     heading_debug_entry_log_count++;
                                 }
@@ -1619,6 +1607,18 @@ int main(int, char **) {
                                                 headingDebugLog("Frame " + std::to_string(current_frame_num) +
                                                                 ": detection " + std::to_string(det_idx) +
                                                                 " skipped (heading_valid == 0).");
+                                                heading_debug_draw_log_count++;
+                                            }
+                                            continue;
+                                        }
+
+                                        if (!heading_details.detection_source.empty() &&
+                                            det_idx < heading_details.detection_source.size() &&
+                                            heading_details.detection_source[det_idx] != 0) {
+                                            if (kHeadingDebugLoggingEnabled && heading_debug_draw_log_count < 80) {
+                                                headingDebugLog("Frame " + std::to_string(current_frame_num) +
+                                                                ": detection " + std::to_string(det_idx) +
+                                                                " skipped (synthetic detection). ");
                                                 heading_debug_draw_log_count++;
                                             }
                                             continue;
@@ -1753,6 +1753,17 @@ int main(int, char **) {
                                         }
                                         for (size_t det_idx = 0; det_idx < mask_count; ++det_idx) {
                                             const auto& mask_info = mask_details.eye_masks[det_idx];
+                                            if (!mask_details.detection_source.empty() &&
+                                                det_idx < mask_details.detection_source.size() &&
+                                                mask_details.detection_source[det_idx] != 0) {
+                                                if (kEyeMaskDebugLoggingEnabled && eye_mask_debug_draw_log_count < 80) {
+                                                    eyeMaskDebugLog("Frame " + std::to_string(current_frame_num) +
+                                                                    ": mask entry " + std::to_string(det_idx) +
+                                                                    " marked synthetic; skipping.");
+                                                    eye_mask_debug_draw_log_count++;
+                                                }
+                                                continue;
+                                            }
                                             if (!mask_info.valid) {
                                                 if (kEyeMaskDebugLoggingEnabled && eye_mask_debug_draw_log_count < 80) {
                                                     eyeMaskDebugLog("Frame " + std::to_string(current_frame_num) +
@@ -2050,14 +2061,14 @@ int main(int, char **) {
 
                         // === ADD INTERPOLATION STATUS OVERLAY === //
                         if (zarr_loaded && zarr_loader.hasInterpolation()) {
-                            const bool dataset_is_interpolated = zarr_loader.activeDatasetHasSyntheticDetections();
 
                             // Determine interpolation status
                             bool any_interpolated = false;
                             std::string source = "";
 
                             if (zarr_loader.hasInterpolation() &&
-                                zarr_loader.isFrameInterpolated(current_frame_num) && dataset_is_interpolated) {
+                                zarr_loader.isFrameInterpolated(current_frame_num) &&
+                                zarr_loader.activeDatasetHasSyntheticDetections()) {
                                 any_interpolated = true;
                                 source = "Zarr";
                             }
