@@ -26,6 +26,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <thread>
+#include <cstdint>
+#include <cstring>
 #include "zarr_loader.h"
 #include "gui_interpolation.h"
 
@@ -36,6 +38,14 @@
 
 simplelogger::Logger *logger =
     simplelogger::LoggerFactory::CreateConsoleLogger();
+
+namespace {
+inline bool IsFiniteFloat(float value) {
+    uint32_t bits;
+    std::memcpy(&bits, &value, sizeof(bits));
+    return (bits & 0x7f800000u) != 0x7f800000u;
+}
+} // namespace
 
 std::vector<std::mutex> g_mutexes(MAX_VIEWS);
 std::vector<std::condition_variable> g_cvs(MAX_VIEWS);
@@ -3367,7 +3377,7 @@ int main(int, char **) {
 
                     for (size_t i = 0; i < sample_count; ++i) {
                         float raw_distance = distance_mm[i];
-                        if (!std::isfinite(static_cast<double>(raw_distance))) {
+                        if (!IsFiniteFloat(raw_distance)) {
                             continue;
                         }
                         double t = static_cast<double>(time_data[i]);
