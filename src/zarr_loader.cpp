@@ -4418,31 +4418,63 @@ bool ZarrDetectionLoader::loadLegacyMovementData(const ts::kvstore::KvStore& sto
         std::vector<int64_t> run_camera_frame_ids;
         readInt64Array(store, run_base + "camera_frame_ids", run_camera_frame_ids);
 
-        std::vector<float> run_distance_to_target_mm;
-        bool run_distance_loaded = readFloatArray(
-                                       store,
-                                       run_base + "distance_to_target_mm",
-                                       run_distance_to_target_mm) &&
-                                   !run_distance_to_target_mm.empty();
-        if (!run_distance_loaded) {
-            std::vector<float> run_distance_to_target_px;
-            if (readFloatArray(store,
-                               run_base + "distance_to_target_px",
-                               run_distance_to_target_px) &&
-                !run_distance_to_target_px.empty()) {
-                if (pixels_per_mm > 1e-6f) {
-                    run_distance_to_target_mm.resize(run_distance_to_target_px.size());
-                    for (size_t i = 0; i < run_distance_to_target_px.size(); ++i) {
-                        run_distance_to_target_mm[i] =
-                            run_distance_to_target_px[i] / pixels_per_mm;
+        auto readDistanceArray = [&](const std::vector<std::string>& names,
+                                     std::vector<float>& dest) -> bool {
+            for (const auto& name : names) {
+                if (readFloatArray(store, run_base + name, dest) && !dest.empty()) {
+                    return true;
+                }
+            }
+            dest.clear();
+            return false;
+        };
+
+        auto loadDistanceValues = [&](const std::vector<std::string>& mm_names,
+                                      const std::vector<std::string>& px_names,
+                                      std::vector<float>& dest,
+                                      const char* label) -> bool {
+            if (readDistanceArray(mm_names, dest)) {
+                return true;
+            }
+            if (!px_names.empty()) {
+                std::vector<float> px;
+                if (readDistanceArray(px_names, px) && !px.empty()) {
+                    if (pixels_per_mm > 1e-6f) {
+                        dest.resize(px.size());
+                        for (size_t i = 0; i < px.size(); ++i) {
+                            dest[i] = px[i] / pixels_per_mm;
+                        }
+                        return true;
                     }
-                    run_distance_loaded = true;
-                } else {
-                    std::cout << "  [LegacyMovement] Unable to convert distance_to_target_px for run '"
+                    std::cout << "  [LegacyMovement] Unable to convert " << label << " for run '"
                               << run_name << "' (pixels_per_mm missing)" << std::endl;
                 }
             }
+            return false;
+        };
+
+        const std::vector<std::string> smoothed_distance_mm_names = {"distance_to_target_smoothed_mm"};
+        const std::vector<std::string> smoothed_distance_px_names = {"distance_to_target_smoothed_px"};
+        const std::vector<std::string> raw_distance_mm_names = {"distance_to_target_mm"};
+        const std::vector<std::string> raw_distance_px_names = {"distance_to_target_px"};
+
+        std::vector<float> run_distance_to_target_mm;
+        bool using_smoothed_distance = loadDistanceValues(
+                                       smoothed_distance_mm_names,
+                                       smoothed_distance_px_names,
+                                       run_distance_to_target_mm,
+                                       "distance_to_target_smoothed_px");
+        bool run_distance_loaded = using_smoothed_distance;
+        if (!run_distance_loaded) {
+            run_distance_loaded = loadDistanceValues(
+                raw_distance_mm_names,
+                raw_distance_px_names,
+                run_distance_to_target_mm,
+                "distance_to_target_px");
+            using_smoothed_distance = false;
         }
+        const char* distance_label = using_smoothed_distance ? "distance_to_target_smoothed_mm"
+                                                             : "distance_to_target_mm";
 
         std::vector<uint8_t> run_has_offline_flags;
         readBoolArray(store, run_base + "has_offline", run_has_offline_flags);
@@ -4468,10 +4500,10 @@ bool ZarrDetectionLoader::loadLegacyMovementData(const ts::kvstore::KvStore& sto
             if (run_distance_to_target_mm.size() == run_camera_frame_ids.size()) {
                 run_distance_ptr = &run_distance_to_target_mm;
             } else {
-                std::cout << "  [LegacyMovement] Ignoring distance_to_target_mm for run '"
+                std::cout << "  [LegacyMovement] Ignoring " << distance_label << " for run '"
                           << run_name << "' due to size mismatch (camera_frame_ids="
                           << run_camera_frame_ids.size()
-                          << ", distance_to_target_mm=" << run_distance_to_target_mm.size()
+                          << ", " << distance_label << "=" << run_distance_to_target_mm.size()
                           << ")" << std::endl;
             }
         }
@@ -4481,7 +4513,7 @@ bool ZarrDetectionLoader::loadLegacyMovementData(const ts::kvstore::KvStore& sto
                 run_offline_ptr = &run_has_offline_flags;
             } else {
                 std::cout << "  [LegacyMovement] Ignoring has_offline mask for run '"
-                          << run_name << "' due to size mismatch (distance_to_target_mm="
+                          << run_name << "' due to size mismatch (" << distance_label << "="
                           << run_distance_to_target_mm.size()
                           << ", has_offline=" << run_has_offline_flags.size() << ")"
                           << std::endl;
