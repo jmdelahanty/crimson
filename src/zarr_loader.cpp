@@ -16,6 +16,7 @@
 #include <sstream>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <tensorstore/cast.h>
 #include <tensorstore/driver/zarr/dtype.h>
 #include <tensorstore/kvstore/operations.h>
@@ -70,6 +71,62 @@ std::optional<json> readAttrsAny(const ts::kvstore::KvStore& store,
         }
     }
     return std::nullopt;
+}
+
+std::string NormalizeCropRunName(const std::string& name) {
+    constexpr std::string_view prefix = "crop_runs/";
+    if (name.rfind(prefix.data(), 0) == 0) {
+        return name.substr(prefix.size());
+    }
+    return name;
+}
+
+std::string ExtractCropRunFromObject(const json& obj) {
+    const char* keys[] = {"crop_run", "source_crop_run", "base_crop_run"};
+    for (const char* key : keys) {
+        if (obj.contains(key) && obj[key].is_string()) {
+            return NormalizeCropRunName(obj[key].get<std::string>());
+        }
+    }
+    return "";
+}
+
+std::string ResolveCropRunFromKeypointRun(const ts::kvstore::KvStore& store,
+                                          const std::string& run_name) {
+    if (run_name.empty()) {
+        return "";
+    }
+    std::string current = NormalizeCropRunName(run_name);
+    std::unordered_set<std::string> visited;
+    while (!current.empty() && visited.insert(current).second) {
+        auto kp_attrs = readAttrsAny(store, "analysis/keypoints_runs/" + current + "/");
+        if (!kp_attrs.has_value()) {
+            break;
+        }
+        std::string crop = ExtractCropRunFromObject(*kp_attrs);
+        if (crop.empty() && kp_attrs->contains("inputs") && (*kp_attrs)["inputs"].is_object()) {
+            crop = ExtractCropRunFromObject((*kp_attrs)["inputs"]);
+        }
+        if (!crop.empty()) {
+            return crop;
+        }
+        std::string next;
+        if (kp_attrs->contains("inputs") && (*kp_attrs)["inputs"].is_object()) {
+            const auto& inputs = (*kp_attrs)["inputs"];
+            if (inputs.contains("base_keypoint_run") && inputs["base_keypoint_run"].is_string()) {
+                next = NormalizeCropRunName(inputs["base_keypoint_run"].get<std::string>());
+            }
+        }
+        if (next.empty() && kp_attrs->contains("base_keypoint_run") &&
+            (*kp_attrs)["base_keypoint_run"].is_string()) {
+            next = NormalizeCropRunName((*kp_attrs)["base_keypoint_run"].get<std::string>());
+        }
+        if (next.empty()) {
+            break;
+        }
+        current = next;
+    }
+    return "";
 }
 
 template <typename T, int Rank>
@@ -2114,20 +2171,12 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
         swim_index = 0;
     }
 
-    auto normalizeCropName = [](const std::string& name) -> std::string {
-        constexpr std::string_view prefix = "crop_runs/";
-        if (name.rfind(prefix.data(), 0) == 0) {
-            return name.substr(prefix.size());
-        }
-        return name;
-    };
-
     std::vector<std::string> crop_candidates;
     auto addCandidate = [&](const std::string& candidate) {
         if (candidate.empty()) {
             return;
         }
-        std::string normalized = normalizeCropName(candidate);
+        std::string normalized = NormalizeCropRunName(candidate);
         if (std::find(crop_candidates.begin(), crop_candidates.end(), normalized) == crop_candidates.end()) {
             crop_candidates.push_back(normalized);
         }
@@ -4350,6 +4399,8 @@ bool ZarrDetectionLoader::loadMovementData(const ts::kvstore::KvStore& store) {
     data_.has_movement_data = false;
     data_.movement_series.clear();
     data_.movement_selected_index = std::numeric_limits<size_t>::max();
+    data_.movement_crop_run_name.clear();
+    data_.crop_data = {};
 
     bool loaded = loadLegacyMovementData(store);
 
@@ -4358,6 +4409,15 @@ bool ZarrDetectionLoader::loadMovementData(const ts::kvstore::KvStore& store) {
     }
 
     finalizeMovementSelection();
+    if (data_.has_movement_data) {
+        std::string crop_candidate = data_.movement_crop_run_name;
+        if (crop_candidate.empty() && !data_.keypoints_source_crop_run.empty()) {
+            crop_candidate = NormalizeCropRunName(data_.keypoints_source_crop_run);
+        }
+        if (!crop_candidate.empty()) {
+            loadMovementCropRun(store, crop_candidate);
+        }
+    }
     return data_.has_movement_data;
 }
 bool ZarrDetectionLoader::loadLegacyMovementData(const ts::kvstore::KvStore& store) {
@@ -4408,6 +4468,33 @@ bool ZarrDetectionLoader::loadLegacyMovementData(const ts::kvstore::KvStore& sto
             readPixelsPerMm("pixels_per_mm");
             readPixelsPerMm("pixels_per_mm_camera");
             readPixelsPerMm("pixel_to_mm");
+
+            std::string crop_candidate;
+            crop_candidate = ExtractCropRunFromObject(*run_attrs);
+            if (run_attrs->contains("inputs") && (*run_attrs)["inputs"].is_object()) {
+                const auto& inputs = (*run_attrs)["inputs"];
+                std::string from_inputs = ExtractCropRunFromObject(inputs);
+                if (!from_inputs.empty()) {
+                    crop_candidate = from_inputs;
+                }
+                if (crop_candidate.empty()) {
+                    std::string keypoint_run;
+                    if (inputs.contains("keypoint_run") && inputs["keypoint_run"].is_string()) {
+                        keypoint_run = inputs["keypoint_run"].get<std::string>();
+                    } else if (inputs.contains("base_keypoint_run") && inputs["base_keypoint_run"].is_string()) {
+                        keypoint_run = inputs["base_keypoint_run"].get<std::string>();
+                    }
+                    if (!keypoint_run.empty()) {
+                        std::string resolved = ResolveCropRunFromKeypointRun(store, keypoint_run);
+                        if (!resolved.empty()) {
+                            crop_candidate = resolved;
+                        }
+                    }
+                }
+            }
+            if (!crop_candidate.empty()) {
+                data_.movement_crop_run_name = crop_candidate;
+            }
 
             const std::vector<std::string> track_keys = {"primary_track", "default_track", "track_id"};
             for (const auto& key : track_keys) {
@@ -4586,6 +4673,10 @@ bool ZarrDetectionLoader::loadLegacyMovementData(const ts::kvstore::KvStore& sto
         }
     }
 
+    if (loaded_any && !data_.movement_crop_run_name.empty()) {
+        loadMovementCropRun(store, data_.movement_crop_run_name);
+    }
+
     return loaded_any;
 }
 
@@ -4637,6 +4728,9 @@ bool ZarrDetectionLoader::loadMovementTrack(
 
     std::vector<int32_t> frame_indices;
     readInt32Or64List(frame_names, frame_indices);
+
+    std::vector<int32_t> detection_indices;
+    readInt32Or64List({"detection_indices", "roi_indices", "detection_index"}, detection_indices);
 
     std::vector<float> time_seconds;
     bool time_loaded = false;
@@ -4779,6 +4873,7 @@ bool ZarrDetectionLoader::loadMovementTrack(
     trim_to(smoothed_heading_degrees);
     trim_to(keypoint_success);
     trim_to(frame_indices);
+    trim_to(detection_indices);
 
     std::vector<float> distance_series;
     if (run_camera_frame_ids && run_camera_lookup && run_distance_to_target_mm &&
@@ -4838,6 +4933,7 @@ bool ZarrDetectionLoader::loadMovementTrack(
     series.smoothed_heading_degrees = std::move(smoothed_heading_degrees);
     series.keypoint_success = std::move(keypoint_success);
     series.frame_indices = std::move(frame_indices);
+    series.detection_indices = std::move(detection_indices);
     if (!distance_series.empty()) {
         series.distance_to_target_mm = std::move(distance_series);
     }
@@ -4855,6 +4951,84 @@ bool ZarrDetectionLoader::loadMovementTrack(
     std::cout << "  " << log_tag << " Loaded run '" << run_name << "' track '" << track_id
               << "' (" << category << ", samples " << sample_count << ")"
               << std::endl;
+    return true;
+}
+
+bool ZarrDetectionLoader::loadMovementCropRun(const ts::kvstore::KvStore& store,
+                                              const std::string& crop_run_name) {
+    std::string normalized = NormalizeCropRunName(crop_run_name);
+    if (normalized.empty()) {
+        return false;
+    }
+    if (data_.crop_data.loaded && data_.crop_data.run_name == normalized) {
+        return true;
+    }
+
+    data_.crop_data = {};
+    data_.crop_data.run_name = normalized;
+
+    const std::string crop_base = "crop_runs/" + normalized + "/";
+
+    std::vector<int32_t> crop_frame_indices;
+    readInt32Array(store, crop_base + "frame_indices", crop_frame_indices);
+
+    auto assignFrameIndices = [&](size_t roi_count) {
+        if (crop_frame_indices.size() < roi_count) {
+            crop_frame_indices.resize(roi_count, -1);
+        }
+        data_.crop_data.frame_indices = std::move(crop_frame_indices);
+    };
+
+    auto load_from_array = [&](auto& store_handle, int rank) -> bool {
+        using StoreType = std::decay_t<decltype(store_handle)>;
+        if (!store_handle.ok()) {
+            return false;
+        }
+        auto array_result = ts::Read(store_handle.value()).result();
+        if (!array_result.ok()) {
+            return false;
+        }
+        auto array = array_result.value();
+        if (array.rank() != rank) {
+            return false;
+        }
+        size_t roi_count = static_cast<size_t>(array.shape()[0]);
+        size_t height = static_cast<size_t>(array.shape()[1]);
+        size_t width = static_cast<size_t>(array.shape()[2]);
+        size_t channels = (rank == 4) ? static_cast<size_t>(array.shape()[3]) : 1;
+        if (roi_count == 0 || height == 0 || width == 0 || channels == 0) {
+            return false;
+        }
+        size_t total = roi_count * height * width * channels;
+        data_.crop_data.images.resize(total);
+        const uint8_t* src = static_cast<const uint8_t*>(array.data());
+        std::copy(src, src + total, data_.crop_data.images.begin());
+        data_.crop_data.roi_count = roi_count;
+        data_.crop_data.height = height;
+        data_.crop_data.width = width;
+        data_.crop_data.channels = channels;
+        assignFrameIndices(roi_count);
+        data_.crop_data.loaded = true;
+        return true;
+    };
+
+    auto store4 = openArrayAny<uint8_t, 4>(store, crop_base + "roi_images", context_);
+    if (!load_from_array(store4, 4)) {
+        auto store3 = openArrayAny<uint8_t, 3>(store, crop_base + "roi_images", context_);
+        load_from_array(store3, 3);
+    }
+
+    if (!data_.crop_data.loaded) {
+        data_.crop_data = {};
+        return false;
+    }
+
+    if (kChaserDebugLoggingEnabled) {
+        std::cout << "  [CropRun] Loaded '" << normalized << "' (roi_count="
+                  << data_.crop_data.roi_count << ", size="
+                  << data_.crop_data.height << "x" << data_.crop_data.width
+                  << ", channels=" << data_.crop_data.channels << ")" << std::endl;
+    }
     return true;
 }
 
@@ -6202,6 +6376,30 @@ std::vector<LoggedBoundingBox> ZarrDetectionLoader::convertDetectionsToLoggedBox
     }
     
     return result;
+}
+
+bool ZarrDetectionLoader::getCropImageForIndex(int32_t roi_index,
+                                               CropImageView& out_view) const {
+    if (!data_.crop_data.loaded || roi_index < 0) {
+        return false;
+    }
+    size_t index = static_cast<size_t>(roi_index);
+    if (index >= data_.crop_data.roi_count) {
+        return false;
+    }
+    size_t stride = data_.crop_data.width * data_.crop_data.channels;
+    size_t plane = data_.crop_data.height * stride;
+    size_t offset = index * plane;
+    if (offset + plane > data_.crop_data.images.size()) {
+        return false;
+    }
+    out_view.roi_index = roi_index;
+    out_view.data = data_.crop_data.images.data() + offset;
+    out_view.width = data_.crop_data.width;
+    out_view.height = data_.crop_data.height;
+    out_view.channels = data_.crop_data.channels;
+    out_view.stride = stride;
+    return true;
 }
 
 std::string ZarrDetectionLoader::formatStimulusEvent(

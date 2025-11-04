@@ -2259,6 +2259,110 @@ int main(int, char **) {
                             }
                         }
 
+                        if (j == 0 && zarr_loader.hasMovementData()) {
+                            ImGui::SetNextWindowSizeConstraints(ImVec2(120.0f, 120.0f),
+                                                                ImVec2(420.0f, 420.0f));
+                            bool crop_window_open = ImGui::Begin("Crop Preview");
+                            if (crop_window_open) {
+                                if (zarr_loader.hasCropImages()) {
+                                    const auto& movement_frames = zarr_loader.getMovementFrameIndices();
+                                    const auto& detection_indices = zarr_loader.getMovementDetectionIndices();
+                                    int32_t crop_roi_index = -1;
+                                    if (!movement_frames.empty() &&
+                                        movement_frames.size() == detection_indices.size()) {
+                                        auto it = std::lower_bound(movement_frames.begin(),
+                                                                   movement_frames.end(),
+                                                                   current_frame_num);
+                                        if (it != movement_frames.end() && *it == current_frame_num) {
+                                            size_t idx = static_cast<size_t>(std::distance(movement_frames.begin(), it));
+                                            if (idx < detection_indices.size()) {
+                                                crop_roi_index = detection_indices[idx];
+                                            }
+                                        }
+                                    }
+
+                                    static GLuint crop_texture = 0;
+                                    static std::vector<uint8_t> crop_rgba_buffer;
+                                    static int last_roi_index = -1;
+                                    static size_t last_width = 0;
+                                    static size_t last_height = 0;
+                                    static size_t last_channels = 0;
+
+                                    if (crop_roi_index >= 0) {
+                                        ZarrDetectionLoader::CropImageView crop_view;
+                                        if (zarr_loader.getCropImageForIndex(crop_roi_index, crop_view)) {
+                                            bool needs_upload =
+                                                crop_roi_index != last_roi_index ||
+                                                crop_view.width != last_width ||
+                                                crop_view.height != last_height ||
+                                                crop_view.channels != last_channels;
+
+                                            if (crop_texture == 0) {
+                                                create_texture(&crop_texture);
+                                                needs_upload = true;
+                                            }
+
+                                            if (needs_upload) {
+                                                size_t pixel_count = crop_view.width * crop_view.height;
+                                                crop_rgba_buffer.resize(pixel_count * 4);
+                                                const uint8_t* src = crop_view.data;
+                                                uint8_t* dst = crop_rgba_buffer.data();
+                                                if (crop_view.channels == 4) {
+                                                    std::memcpy(dst, src, pixel_count * 4);
+                                                } else if (crop_view.channels == 3) {
+                                                    for (size_t p = 0; p < pixel_count; ++p) {
+                                                        dst[4 * p + 0] = src[3 * p + 0];
+                                                        dst[4 * p + 1] = src[3 * p + 1];
+                                                        dst[4 * p + 2] = src[3 * p + 2];
+                                                        dst[4 * p + 3] = 255;
+                                                    }
+                                                } else {
+                                                    for (size_t p = 0; p < pixel_count; ++p) {
+                                                        uint8_t v = src[p];
+                                                        dst[4 * p + 0] = v;
+                                                        dst[4 * p + 1] = v;
+                                                        dst[4 * p + 2] = v;
+                                                        dst[4 * p + 3] = 255;
+                                                    }
+                                                }
+                                                upload_texture(&crop_texture,
+                                                               crop_rgba_buffer.data(),
+                                                               static_cast<unsigned int>(crop_view.width),
+                                                               static_cast<unsigned int>(crop_view.height));
+                                                last_roi_index = crop_roi_index;
+                                                last_width = crop_view.width;
+                                                last_height = crop_view.height;
+                                                last_channels = crop_view.channels;
+                                            }
+
+                                            if (crop_texture != 0) {
+                                                ImVec2 img_size(static_cast<float>(crop_view.width),
+                                                                static_cast<float>(crop_view.height));
+                                                float max_dim = std::max(img_size.x, img_size.y);
+                                                const float preview_max = 260.0f;
+                                                if (max_dim > preview_max && max_dim > 0.0f) {
+                                                    float scale = preview_max / max_dim;
+                                                    img_size.x *= scale;
+                                                    img_size.y *= scale;
+                                                }
+                                                ImGui::Image((ImTextureID)(intptr_t)crop_texture, img_size);
+                                                ImGui::Text("ROI #%d", crop_roi_index);
+                                            }
+                                        } else {
+                                            ImGui::TextUnformatted("No crop available for current frame.");
+                                            last_roi_index = -1;
+                                        }
+                                    } else {
+                                        ImGui::TextUnformatted("No crop available for current frame.");
+                                            last_roi_index = -1;
+                                    }
+                                } else {
+                                    ImGui::TextUnformatted("Crop images not loaded.");
+                                }
+                            }
+                            ImGui::End();
+                        }
+
                         if (plot_keypoints_flag) {
                             // plot arena for testing camera parameters
                             // gui_plot_perimeter(&camera_params[j],

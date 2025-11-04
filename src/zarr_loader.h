@@ -151,6 +151,19 @@ struct ZarrDetectionData {
     std::vector<float> eye_angle_right_deg;
     std::vector<std::vector<size_t>> eye_angle_indices_by_frame;
 
+    struct CropImageData {
+        bool loaded = false;
+        std::string run_name;
+        size_t roi_count = 0;
+        size_t height = 0;
+        size_t width = 0;
+        size_t channels = 0;
+        std::vector<uint8_t> images;
+        std::vector<int32_t> frame_indices;
+    };
+    CropImageData crop_data;
+    std::string movement_crop_run_name;
+
     // Interpolation data
     InterpolationRunData latest_interpolation;
     bool has_interpolation = false;
@@ -195,6 +208,7 @@ struct ZarrDetectionData {
         std::vector<float> heading_per_second_resultant;
         std::vector<float> heading_per_second_time_seconds;
         std::vector<int32_t> frame_indices;
+        std::vector<int32_t> detection_indices;
     };
     std::vector<MovementSeries> movement_series;
     size_t movement_selected_index = std::numeric_limits<size_t>::max();
@@ -418,6 +432,11 @@ public:
         const auto* series = getSelectedMovementSeries();
         return series ? series->frame_indices : kEmpty;
     }
+    const std::vector<int32_t>& getMovementDetectionIndices() const {
+        static const std::vector<int32_t> kEmpty;
+        const auto* series = getSelectedMovementSeries();
+        return series ? series->detection_indices : kEmpty;
+    }
     const std::string& getMovementRunName() const {
         static const std::string kEmpty;
         const auto* series = getSelectedMovementSeries();
@@ -428,6 +447,20 @@ public:
         const auto* series = getSelectedMovementSeries();
         return series ? series->track_id : kEmpty;
     }
+    const std::vector<int32_t>& getCropFrameIndices() const {
+        static const std::vector<int32_t> kEmpty;
+        return data_.crop_data.loaded ? data_.crop_data.frame_indices : kEmpty;
+    }
+    bool hasCropImages() const { return data_.crop_data.loaded; }
+    struct CropImageView {
+        const uint8_t* data = nullptr;
+        size_t width = 0;
+        size_t height = 0;
+        size_t channels = 0;
+        size_t stride = 0;
+        int32_t roi_index = -1;
+    };
+    bool getCropImageForIndex(int32_t roi_index, CropImageView& out_view) const;
     const std::string& getMovementCategory() const {
         static const std::string kEmpty;
         const auto* series = getSelectedMovementSeries();
@@ -613,13 +646,15 @@ private:
                           const std::string& detection_variant,
                           const std::string& source_detect_run,
                           double smoothing_seconds,
-                          int video_width,
-                          int video_height,
-                          bool from_speed_runs,
-                          const std::vector<int64_t>* run_camera_frame_ids,
-                          const std::unordered_map<int64_t, size_t>* run_camera_lookup,
-                          const std::vector<float>* run_distance_to_target_mm,
-                          const std::vector<uint8_t>* run_has_offline_flags);
+                           int video_width,
+                           int video_height,
+                           bool from_speed_runs,
+                           const std::vector<int64_t>* run_camera_frame_ids,
+                           const std::unordered_map<int64_t, size_t>* run_camera_lookup,
+                           const std::vector<float>* run_distance_to_target_mm,
+                           const std::vector<uint8_t>* run_has_offline_flags);
+    bool loadMovementCropRun(const ts::kvstore::KvStore& store,
+                             const std::string& crop_run_name);
     void finalizeMovementSelection();
     void rebuildChaserStateIndices();
     void rebuildChaserBoundingBoxIndices();
