@@ -186,6 +186,7 @@ struct ZarrDetectionData {
         std::vector<float> time_seconds;
         std::vector<float> smoothed_speed_mm;
         std::vector<float> instant_speed_mm;
+        std::vector<float> distance_to_target_mm;
         std::vector<int32_t> frame_indices;
     };
     std::vector<MovementSeries> movement_series;
@@ -369,6 +370,11 @@ public:
         static const std::vector<float> kEmpty;
         const auto* series = getSelectedMovementSeries();
         return series ? series->instant_speed_mm : kEmpty;
+    }
+    const std::vector<float>& getMovementDistanceToTargetMm() const {
+        static const std::vector<float> kEmpty;
+        const auto* series = getSelectedMovementSeries();
+        return series ? series->distance_to_target_mm : kEmpty;
     }
     const std::vector<int32_t>& getMovementFrameIndices() const {
         static const std::vector<int32_t> kEmpty;
@@ -564,7 +570,7 @@ private:
                            const std::vector<std::string>& smoothed_px_names,
                            const std::vector<std::string>& instant_mm_names,
                            const std::vector<std::string>& instant_px_names,
-                           float pixels_per_mm,
+                          float pixels_per_mm,
                           double run_fps,
                           const std::string& category,
                           const std::string& detection_variant,
@@ -572,7 +578,11 @@ private:
                           double smoothing_seconds,
                           int video_width,
                           int video_height,
-                          bool from_speed_runs);
+                          bool from_speed_runs,
+                          const std::vector<int64_t>* run_camera_frame_ids,
+                          const std::unordered_map<int64_t, size_t>* run_camera_lookup,
+                          const std::vector<float>* run_distance_to_target_mm,
+                          const std::vector<uint8_t>* run_has_offline_flags);
     void finalizeMovementSelection();
     void rebuildChaserStateIndices();
     void rebuildChaserBoundingBoxIndices();

@@ -3108,9 +3108,9 @@ int main(int, char **) {
             ImGui::End();
         }
 
-        // Speed Timeline Window
+        // Movement timeline windows
         if (zarr_loaded && zarr_loader.hasMovementData()) {
-            if (ImGui::Begin("Speed Timeline")) {
+            auto renderMovementDatasetUI = [&](const char* combo_label) -> const ZarrDetectionData::MovementSeries* {
                 size_t series_count = zarr_loader.getMovementSeriesCount();
                 size_t selected_index = zarr_loader.getSelectedMovementSeriesIndex();
                 const auto* selected_series = zarr_loader.getMovementSeries(selected_index);
@@ -3123,7 +3123,7 @@ int main(int, char **) {
                     } else {
                         summary << "Select dataset";
                     }
-                    if (ImGui::BeginCombo("Dataset", summary.str().c_str())) {
+                    if (ImGui::BeginCombo(combo_label, summary.str().c_str())) {
                         for (size_t i = 0; i < series_count; ++i) {
                             const auto* series = zarr_loader.getMovementSeries(i);
                             if (!series) {
@@ -3186,6 +3186,12 @@ int main(int, char **) {
                     }
                 }
 
+                return selected_series;
+            };
+
+            if (ImGui::Begin("Speed Timeline")) {
+                const auto* selected_series = renderMovementDatasetUI("Dataset");
+
                 const auto& time_data = zarr_loader.getMovementTimeSeconds();
                 const auto& smoothed_speed = zarr_loader.getMovementSmoothedSpeedMm();
                 const auto& instant_speed = zarr_loader.getMovementInstantaneousSpeedMm();
@@ -3195,7 +3201,7 @@ int main(int, char **) {
 
                 bool smoothed_available = !smoothed_speed.empty();
                 bool instant_available = !instant_speed.empty();
-                if (time_data.empty() || (!smoothed_available && !instant_available)) {
+                if (!selected_series || time_data.empty() || (!smoothed_available && !instant_available)) {
                     ImGui::TextUnformatted("No speed data available.");
                 } else {
                     if (!smoothed_available && show_smoothed) {
@@ -3207,13 +3213,13 @@ int main(int, char **) {
 
                     if (!zarr_loader.getMovementCategory().empty()) {
                         ImGui::Text("Movement Run: %s/%s | Track: %s",
-                                   zarr_loader.getMovementCategory().c_str(),
-                                   zarr_loader.getMovementRunName().c_str(),
-                                   zarr_loader.getMovementTrackId().c_str());
+                                    zarr_loader.getMovementCategory().c_str(),
+                                    zarr_loader.getMovementRunName().c_str(),
+                                    zarr_loader.getMovementTrackId().c_str());
                     } else {
                         ImGui::Text("Movement Run: %s | Track: %s",
-                                  zarr_loader.getMovementRunName().c_str(),
-                               zarr_loader.getMovementTrackId().c_str());
+                                    zarr_loader.getMovementRunName().c_str(),
+                                    zarr_loader.getMovementTrackId().c_str());
                     }
                     ImGui::Text("Data points: %zu", time_data.size());
 
@@ -3221,7 +3227,6 @@ int main(int, char **) {
                     ImGui::SameLine();
                     ImGui::Checkbox("Show Instantaneous Speed", &show_instantaneous);
 
-                    // Prepare data for plotting
                     std::vector<double> time_plot;
                     std::vector<double> smoothed_plot;
                     std::vector<double> instant_plot;
@@ -3243,11 +3248,10 @@ int main(int, char **) {
                     }
 
                     ImVec2 plot_size = ImVec2(-1, 300);
-                    if (ImPlot::BeginPlot("##speed_plot", plot_size)) {
+                    if (!time_plot.empty() && ImPlot::BeginPlot("##speed_plot", plot_size)) {
                         ImPlot::SetupAxes("Time (s)", "Speed (mm/s)");
                         ImPlot::SetupAxisLimits(ImAxis_X1, time_plot.front(), time_plot.back(), ImGuiCond_Once);
 
-                        // Find max speed for Y axis
                         double max_speed = 0.0;
                         if (show_smoothed && !smoothed_plot.empty()) {
                             max_speed = std::max(max_speed, *std::max_element(smoothed_plot.begin(), smoothed_plot.end()));
@@ -3255,26 +3259,25 @@ int main(int, char **) {
                         if (show_instantaneous && !instant_plot.empty()) {
                             max_speed = std::max(max_speed, *std::max_element(instant_plot.begin(), instant_plot.end()));
                         }
-                        ImPlot::SetupAxisLimits(ImAxis_Y1, 0, max_speed * 1.1, ImGuiCond_Once);
+                        double y_max = (max_speed > 0.0) ? max_speed * 1.1 : 1.0;
+                        ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, y_max, ImGuiCond_Once);
 
                         if (show_smoothed && !smoothed_plot.empty()) {
                             ImPlot::SetNextLineStyle(ImVec4(0.2f, 0.7f, 1.0f, 1.0f), 2.0f);
                             ImPlot::PlotLine("Smoothed Speed", time_plot.data(), smoothed_plot.data(),
-                                           static_cast<int>(time_plot.size()));
+                                             static_cast<int>(time_plot.size()));
                         }
 
                         if (show_instantaneous && !instant_plot.empty()) {
                             ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.5f, 0.2f, 0.6f), 1.0f);
                             ImPlot::PlotLine("Instantaneous Speed", time_plot.data(), instant_plot.data(),
-                                           static_cast<int>(instant_plot.size()));
+                                             static_cast<int>(instant_plot.size()));
                         }
 
-                        // Draw current time marker by mapping current frame to time
                         if (current_frame_num >= 0) {
                             double current_time = -1.0;
 
                             if (!frame_indices.empty()) {
-                                // First try exact match
                                 auto it = std::find(frame_indices.begin(), frame_indices.end(), current_frame_num);
                                 if (it != frame_indices.end()) {
                                     size_t idx = std::distance(frame_indices.begin(), it);
@@ -3282,7 +3285,6 @@ int main(int, char **) {
                                         current_time = static_cast<double>(time_data[idx]);
                                     }
                                 } else {
-                                    // No exact match - interpolate between surrounding indices
                                     auto upper = std::lower_bound(frame_indices.begin(), frame_indices.end(), current_frame_num);
                                     if (upper != frame_indices.end() && upper != frame_indices.begin()) {
                                         auto lower = upper - 1;
@@ -3308,7 +3310,6 @@ int main(int, char **) {
                                 }
                             }
 
-                            // If movement data isn't indexed by frame, fall back to wall-clock estimate
                             if (current_time < 0.0 && video_fps > 0.0) {
                                 double estimated_time = static_cast<double>(current_frame_num) / video_fps;
                                 if (!time_data.empty()) {
@@ -3321,7 +3322,6 @@ int main(int, char **) {
                             }
 
                             if (current_time >= 0.0) {
-                                // Get current plot limits for proper vertical line
                                 ImPlotRect limits = ImPlot::GetPlotLimits();
                                 double current_line_x[2] = {current_time, current_time};
                                 double current_line_y[2] = {limits.Y.Min, limits.Y.Max};
@@ -3333,13 +3333,139 @@ int main(int, char **) {
                         ImPlot::EndPlot();
                     }
 
-                    // Statistics
                     ImGui::SeparatorText("Statistics");
                     if (!smoothed_speed.empty()) {
                         float avg_speed = std::accumulate(smoothed_speed.begin(), smoothed_speed.end(), 0.0f) / smoothed_speed.size();
                         float max_spd = *std::max_element(smoothed_speed.begin(), smoothed_speed.end());
                         ImGui::BulletText("Average Speed (smoothed): %.2f mm/s", avg_speed);
                         ImGui::BulletText("Max Speed (smoothed): %.2f mm/s", max_spd);
+                    }
+                }
+            }
+            ImGui::End();
+
+            if (ImGui::Begin("Distance Timeline")) {
+                const auto* selected_series = renderMovementDatasetUI("Dataset##distance");
+
+                const auto& time_data = zarr_loader.getMovementTimeSeconds();
+                const auto& distance_mm = zarr_loader.getMovementDistanceToTargetMm();
+                const auto& frame_indices = zarr_loader.getMovementFrameIndices();
+
+                size_t sample_count = std::min(time_data.size(), distance_mm.size());
+                if (!selected_series || sample_count == 0) {
+                    ImGui::TextUnformatted("No distance data available.");
+                } else {
+                    std::vector<double> time_plot;
+                    std::vector<double> distance_plot;
+                    time_plot.reserve(sample_count);
+                    distance_plot.reserve(sample_count);
+
+                    double sum_distance = 0.0;
+                    double max_distance = 0.0;
+                    double min_distance = std::numeric_limits<double>::infinity();
+                    size_t valid_count = 0;
+
+                    for (size_t i = 0; i < sample_count; ++i) {
+                        float raw_distance = distance_mm[i];
+                        if (!std::isfinite(static_cast<double>(raw_distance))) {
+                            continue;
+                        }
+                        double t = static_cast<double>(time_data[i]);
+                        double value = static_cast<double>(raw_distance);
+                        time_plot.push_back(t);
+                        distance_plot.push_back(value);
+                        sum_distance += value;
+                        max_distance = std::max(max_distance, value);
+                        min_distance = std::min(min_distance, value);
+                        ++valid_count;
+                    }
+
+                    if (valid_count == 0) {
+                        ImGui::TextUnformatted("No valid distance samples available.");
+                    } else {
+                        ImGui::Text("Valid points: %zu / %zu", valid_count, sample_count);
+
+                        ImVec2 plot_size = ImVec2(-1, 300);
+                        if (!time_plot.empty() && ImPlot::BeginPlot("##distance_plot", plot_size)) {
+                            ImPlot::SetupAxes("Time (s)", "Distance (mm)");
+                            ImPlot::SetupAxisLimits(ImAxis_X1, time_plot.front(), time_plot.back(), ImGuiCond_Once);
+                            double y_max = (max_distance > 0.0) ? max_distance * 1.1 : 1.0;
+                            if (y_max <= 0.0) {
+                                y_max = 1.0;
+                            }
+                            ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, y_max, ImGuiCond_Once);
+                            ImPlot::SetNextLineStyle(ImVec4(0.3f, 0.85f, 0.4f, 1.0f), 2.0f);
+                            ImPlot::PlotLine("Distance to Target",
+                                             time_plot.data(),
+                                             distance_plot.data(),
+                                             static_cast<int>(time_plot.size()));
+
+                            if (current_frame_num >= 0) {
+                                double current_time = -1.0;
+
+                                if (!frame_indices.empty()) {
+                                    auto it = std::find(frame_indices.begin(), frame_indices.end(), current_frame_num);
+                                    if (it != frame_indices.end()) {
+                                        size_t idx = std::distance(frame_indices.begin(), it);
+                                        if (idx < time_data.size()) {
+                                            current_time = static_cast<double>(time_data[idx]);
+                                        }
+                                    } else {
+                                        auto upper = std::lower_bound(frame_indices.begin(), frame_indices.end(), current_frame_num);
+                                        if (upper != frame_indices.end() && upper != frame_indices.begin()) {
+                                            auto lower = upper - 1;
+                                            size_t lower_idx = std::distance(frame_indices.begin(), lower);
+                                            size_t upper_idx = std::distance(frame_indices.begin(), upper);
+
+                                            if (upper_idx < time_data.size() && lower_idx < time_data.size()) {
+                                                int32_t f0 = *lower;
+                                                int32_t f1 = *upper;
+                                                float t0 = time_data[lower_idx];
+                                                float t1 = time_data[upper_idx];
+                                                float delta_f = static_cast<float>(f1 - f0);
+                                                if (delta_f != 0.0f) {
+                                                    float alpha = static_cast<float>(current_frame_num - f0) / delta_f;
+                                                    current_time = static_cast<double>(t0 + alpha * (t1 - t0));
+                                                }
+                                            }
+                                        } else if (upper == frame_indices.begin() && !time_data.empty()) {
+                                            current_time = static_cast<double>(time_data.front());
+                                        } else if (upper == frame_indices.end() && !time_data.empty()) {
+                                            current_time = static_cast<double>(time_data.back());
+                                        }
+                                    }
+                                }
+
+                                if (current_time < 0.0 && video_fps > 0.0) {
+                                    double estimated_time = static_cast<double>(current_frame_num) / video_fps;
+                                    if (!time_data.empty()) {
+                                        double min_time = static_cast<double>(time_data.front());
+                                        double max_time = static_cast<double>(time_data.back());
+                                        current_time = std::clamp(estimated_time, min_time, max_time);
+                                    } else {
+                                        current_time = estimated_time;
+                                    }
+                                }
+
+                                if (current_time >= 0.0) {
+                                    ImPlotRect limits = ImPlot::GetPlotLimits();
+                                    double current_line_x[2] = {current_time, current_time};
+                                    double current_line_y[2] = {limits.Y.Min, limits.Y.Max};
+                                    ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), 3.0f);
+                                    ImPlot::PlotLine("##current_time", current_line_x, current_line_y, 2);
+                                }
+                            }
+
+                            ImPlot::EndPlot();
+                        }
+
+                        ImGui::SeparatorText("Statistics");
+                        double avg_distance = sum_distance / static_cast<double>(valid_count);
+                        ImGui::BulletText("Average Distance: %.2f mm", avg_distance);
+                        ImGui::BulletText("Max Distance: %.2f mm", max_distance);
+                        if (std::isfinite(min_distance)) {
+                            ImGui::BulletText("Min Distance: %.2f mm", min_distance);
+                        }
                     }
                 }
             }

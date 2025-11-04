@@ -4415,6 +4415,79 @@ bool ZarrDetectionLoader::loadLegacyMovementData(const ts::kvstore::KvStore& sto
         std::sort(track_ids.begin(), track_ids.end());
         track_ids.erase(std::unique(track_ids.begin(), track_ids.end()), track_ids.end());
 
+        std::vector<int64_t> run_camera_frame_ids;
+        readInt64Array(store, run_base + "camera_frame_ids", run_camera_frame_ids);
+
+        std::vector<float> run_distance_to_target_mm;
+        bool run_distance_loaded = readFloatArray(
+                                       store,
+                                       run_base + "distance_to_target_mm",
+                                       run_distance_to_target_mm) &&
+                                   !run_distance_to_target_mm.empty();
+        if (!run_distance_loaded) {
+            std::vector<float> run_distance_to_target_px;
+            if (readFloatArray(store,
+                               run_base + "distance_to_target_px",
+                               run_distance_to_target_px) &&
+                !run_distance_to_target_px.empty()) {
+                if (pixels_per_mm > 1e-6f) {
+                    run_distance_to_target_mm.resize(run_distance_to_target_px.size());
+                    for (size_t i = 0; i < run_distance_to_target_px.size(); ++i) {
+                        run_distance_to_target_mm[i] =
+                            run_distance_to_target_px[i] / pixels_per_mm;
+                    }
+                    run_distance_loaded = true;
+                } else {
+                    std::cout << "  [LegacyMovement] Unable to convert distance_to_target_px for run '"
+                              << run_name << "' (pixels_per_mm missing)" << std::endl;
+                }
+            }
+        }
+
+        std::vector<uint8_t> run_has_offline_flags;
+        readBoolArray(store, run_base + "has_offline", run_has_offline_flags);
+
+        std::unordered_map<int64_t, size_t> run_camera_lookup;
+        const std::vector<int64_t>* run_camera_ptr = nullptr;
+        const std::unordered_map<int64_t, size_t>* run_lookup_ptr = nullptr;
+        const std::vector<float>* run_distance_ptr = nullptr;
+        const std::vector<uint8_t>* run_offline_ptr = nullptr;
+
+        if (!run_camera_frame_ids.empty()) {
+            run_camera_ptr = &run_camera_frame_ids;
+            run_camera_lookup.reserve(run_camera_frame_ids.size());
+            for (size_t i = 0; i < run_camera_frame_ids.size(); ++i) {
+                run_camera_lookup.emplace(run_camera_frame_ids[i], i);
+            }
+            if (!run_camera_lookup.empty()) {
+                run_lookup_ptr = &run_camera_lookup;
+            }
+        }
+
+        if (run_camera_ptr && !run_distance_to_target_mm.empty()) {
+            if (run_distance_to_target_mm.size() == run_camera_frame_ids.size()) {
+                run_distance_ptr = &run_distance_to_target_mm;
+            } else {
+                std::cout << "  [LegacyMovement] Ignoring distance_to_target_mm for run '"
+                          << run_name << "' due to size mismatch (camera_frame_ids="
+                          << run_camera_frame_ids.size()
+                          << ", distance_to_target_mm=" << run_distance_to_target_mm.size()
+                          << ")" << std::endl;
+            }
+        }
+
+        if (run_distance_ptr && !run_has_offline_flags.empty()) {
+            if (run_has_offline_flags.size() == run_distance_to_target_mm.size()) {
+                run_offline_ptr = &run_has_offline_flags;
+            } else {
+                std::cout << "  [LegacyMovement] Ignoring has_offline mask for run '"
+                          << run_name << "' due to size mismatch (distance_to_target_mm="
+                          << run_distance_to_target_mm.size()
+                          << ", has_offline=" << run_has_offline_flags.size() << ")"
+                          << std::endl;
+            }
+        }
+
         const std::vector<std::string> frame_names = {"frames", "frame_indices"};
         const std::vector<std::string> time_float_names = {"time_seconds"};
         const std::vector<std::string> timestamp_ns_names = {"timestamp_ns_session"};
@@ -4446,7 +4519,11 @@ bool ZarrDetectionLoader::loadLegacyMovementData(const ts::kvstore::KvStore& sto
                 0.0,
                 0,
                 0,
-                false);
+                false,
+                run_camera_ptr,
+                run_lookup_ptr,
+                run_distance_ptr,
+                run_offline_ptr);
             loaded_any = loaded_any || loaded_track;
         }
     }
@@ -4475,7 +4552,11 @@ bool ZarrDetectionLoader::loadMovementTrack(
     double smoothing_seconds,
     int video_width,
     int video_height,
-    bool from_speed_runs) {
+    bool from_speed_runs,
+    const std::vector<int64_t>* run_camera_frame_ids,
+    const std::unordered_map<int64_t, size_t>* run_camera_lookup,
+    const std::vector<float>* run_distance_to_target_mm,
+    const std::vector<uint8_t>* run_has_offline_flags) {
 
     auto readInt32Or64List = [&](const std::vector<std::string>& candidates,
                                  std::vector<int32_t>& dest) {
@@ -4602,6 +4683,46 @@ bool ZarrDetectionLoader::loadMovementTrack(
     trim_to(instant_mm);
     trim_to(frame_indices);
 
+    std::vector<float> distance_series;
+    if (run_camera_frame_ids && run_camera_lookup && run_distance_to_target_mm &&
+        !run_camera_frame_ids->empty() && !run_distance_to_target_mm->empty()) {
+        const auto& camera_ids = *run_camera_frame_ids;
+        const auto& distance_mm = *run_distance_to_target_mm;
+        const std::vector<uint8_t>* has_offline = nullptr;
+        if (run_has_offline_flags &&
+            run_has_offline_flags->size() == distance_mm.size()) {
+            has_offline = run_has_offline_flags;
+        }
+
+        distance_series.assign(time_seconds.size(), std::numeric_limits<float>::quiet_NaN());
+        bool any_valid = false;
+
+        for (size_t i = 0; i < frame_indices.size() && i < distance_series.size(); ++i) {
+            int32_t frame = frame_indices[i];
+            auto lookup_it = run_camera_lookup->find(static_cast<int64_t>(frame));
+            if (lookup_it == run_camera_lookup->end()) {
+                continue;
+            }
+            size_t run_idx = lookup_it->second;
+            if (run_idx >= distance_mm.size()) {
+                continue;
+            }
+            if (has_offline && (run_idx >= has_offline->size() || (*has_offline)[run_idx] == 0)) {
+                continue;
+            }
+            float value = distance_mm[run_idx];
+            if (!std::isfinite(static_cast<double>(value))) {
+                continue;
+            }
+            distance_series[i] = value;
+            any_valid = true;
+        }
+
+        if (!any_valid) {
+            distance_series.clear();
+        }
+    }
+
     ZarrDetectionData::MovementSeries series;
     series.category = category;
     series.run_name = run_name;
@@ -4617,6 +4738,9 @@ bool ZarrDetectionLoader::loadMovementTrack(
     series.smoothed_speed_mm = std::move(smoothed_mm);
     series.instant_speed_mm = std::move(instant_mm);
     series.frame_indices = std::move(frame_indices);
+    if (!distance_series.empty()) {
+        series.distance_to_target_mm = std::move(distance_series);
+    }
 
     data_.movement_series.push_back(std::move(series));
     std::cout << "  " << log_tag << " Loaded run '" << run_name << "' track '" << track_id
