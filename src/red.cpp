@@ -1433,16 +1433,20 @@ int main(int, char **) {
                                 }
                                 #endif
 
-                                struct StateOverlay {
-                                    int chaser_index = -1;
-                                    double target_plot_x = 0.0;
-                                    double target_plot_y = 0.0;
-                                    double chaser_plot_x = 0.0;
-                                    double chaser_plot_y = 0.0;
-                                    size_t target_bbox_index = std::numeric_limits<size_t>::max();
-                                    bool has_target = false;
-                                    bool has_chaser = false;
-                                };
+struct StateOverlay {
+                                   int chaser_index = -1;
+                                   double target_plot_x = 0.0;
+                                   double target_plot_y = 0.0;
+                                   double target_world_x = std::numeric_limits<double>::quiet_NaN();
+                                   double target_world_y = std::numeric_limits<double>::quiet_NaN();
+                                   double chaser_plot_x = 0.0;
+                                   double chaser_plot_y = 0.0;
+                                   double chaser_world_x = std::numeric_limits<double>::quiet_NaN();
+                                   double chaser_world_y = std::numeric_limits<double>::quiet_NaN();
+                                   size_t target_bbox_index = std::numeric_limits<size_t>::max();
+                                   bool has_target = false;
+                                   bool has_chaser = false;
+                               };
 
                                 std::vector<uint8_t> target_bbox_usage(chaser_bboxes.size(), 0);
                                 std::vector<StateOverlay> state_overlays;
@@ -1547,8 +1551,8 @@ int main(int, char **) {
                                             double target_cam_x = target_plot_x;
                                             double target_cam_y = static_cast<double>(scene->image_height[j]) - target_plot_y;
                                             size_t bbox_idx = chaser_bboxes.empty()
-                                                                  ? kInvalidBBoxIndex
-                                                                  : selectBoundingBoxForTarget(target_cam_x, target_cam_y);
+                                                                 ? kInvalidBBoxIndex
+                                                                 : selectBoundingBoxForTarget(target_cam_x, target_cam_y);
                                             if (bbox_idx != kInvalidBBoxIndex) {
                                                 auto& bbox = chaser_bboxes[bbox_idx];
                                                 overlay.target_plot_x = static_cast<double>(bbox.centroid_x);
@@ -1560,9 +1564,13 @@ int main(int, char **) {
                                                 if (bbox.chaser_index < 0 && state.chaser_index >= 0) {
                                                     bbox.chaser_index = state.chaser_index;
                                                 }
+                                                overlay.target_world_x = bbox.centroid_x;
+                                                overlay.target_world_y = static_cast<double>(scene->image_height[j]) - bbox.centroid_y;
                                             } else {
                                                 overlay.target_plot_x = target_plot_x;
                                                 overlay.target_plot_y = target_plot_y;
+                                                overlay.target_world_x = target_plot_x;
+                                                overlay.target_world_y = target_plot_y;
                                             }
                                         }
 
@@ -1577,6 +1585,8 @@ int main(int, char **) {
                                             overlay.has_chaser = true;
                                             overlay.chaser_plot_x = chaser_plot_x;
                                             overlay.chaser_plot_y = chaser_plot_y;
+                                            overlay.chaser_world_x = chaser_plot_x;
+                                            overlay.chaser_world_y = chaser_plot_y;
                                         }
 
                                         state_overlays.push_back(overlay);
@@ -1663,6 +1673,28 @@ int main(int, char **) {
                                                                    target_color);
                                         std::string target_label = "Target_" + std::to_string(overlay.chaser_index);
                                         ImPlot::PlotScatter(target_label.c_str(), &plot_x, &plot_y, 1);
+                                    }
+
+                                    if (overlay.has_chaser && overlay.has_target) {
+                                        double line_x[2] = {overlay.chaser_plot_x, overlay.target_plot_x};
+                                        double line_y[2] = {overlay.chaser_plot_y, overlay.target_plot_y};
+                                        double dx = overlay.target_plot_x - overlay.chaser_plot_x;
+                                        double dy = overlay.target_plot_y - overlay.chaser_plot_y;
+                                        double dist = std::sqrt(dx * dx + dy * dy);
+                                        double max_dim = static_cast<double>(std::max(scene->image_width[j], scene->image_height[j]));
+                                        double max_dist = (max_dim > 0.0) ? (max_dim * (2.0 / 3.0)) : 200.0;
+                                        double t = std::clamp(dist / max_dist, 0.0, 1.0);
+                                        ImVec4 close_color(1.0f, 0.15f, 0.1f, 1.0f);
+                                        ImVec4 far_color(0.15f, 0.9f, 0.2f, 1.0f);
+                                        ImVec4 line_color(
+                                            close_color.x * static_cast<float>(1.0 - t) + far_color.x * static_cast<float>(t),
+                                            close_color.y * static_cast<float>(1.0 - t) + far_color.y * static_cast<float>(t),
+                                            close_color.z * static_cast<float>(1.0 - t) + far_color.z * static_cast<float>(t),
+                                            1.0f);
+                                        ImPlot::SetNextLineStyle(line_color, 2.5f);
+                                        std::string line_label = "ChaserTargetLine##" +
+                                                                 std::to_string(reinterpret_cast<uintptr_t>(&overlay));
+                                        ImPlot::PlotLine(line_label.c_str(), line_x, line_y, 2);
                                     }
 
                                     if (overlay.has_chaser) {
@@ -2945,7 +2977,11 @@ int main(int, char **) {
                                                                  : evt.stimulus_frame_num;
                         display_frames[i] = frame;
                         int32_t clamped = frame >= 0 ? frame : 0;
-                        x_values[i] = static_cast<double>(clamped);
+                        if (video_fps > 0.0) {
+                            x_values[i] = static_cast<double>(clamped) / video_fps;
+                        } else {
+                            x_values[i] = static_cast<double>(clamped);
+                        }
                         y_values[i] = 0.0;  // All events on same line
                     }
 
@@ -2961,25 +2997,29 @@ int main(int, char **) {
                     }
                     static size_t cached_timeline_signature = 0;
 
-                    double default_max_frame =
-                        static_cast<double>(std::max<size_t>(1, zarr_loader.getTotalFrames()));
+                    double default_max_time =
+                        (video_fps > 0.0)
+                            ? static_cast<double>(std::max<size_t>(1, zarr_loader.getTotalFrames())) / video_fps
+                            : static_cast<double>(std::max<size_t>(1, zarr_loader.getTotalFrames()));
                     for (int32_t frame : display_frames) {
                         if (frame >= 0) {
-                            default_max_frame =
-                                std::max(default_max_frame, static_cast<double>(frame + 1));
+                            double candidate = (video_fps > 0.0)
+                                                   ? static_cast<double>(frame + 1) / video_fps
+                                                   : static_cast<double>(frame + 1);
+                            default_max_time = std::max(default_max_time, candidate);
                         }
                     }
 
                     ImVec2 plot_size = ImVec2(ImGui::GetContentRegionAvail().x, 170.0f);
                     if (ImPlot::BeginPlot("##stimulus_timeline_plot", plot_size,
                                           ImPlotFlags_NoLegend | ImPlotFlags_NoMouseText)) {
-                        ImPlot::SetupAxes("Frame", nullptr, ImPlotAxisFlags_NoHighlight,
+                        ImPlot::SetupAxes("Time (s)", nullptr, ImPlotAxisFlags_NoHighlight,
                                           ImPlotAxisFlags_NoDecorations);
                         ImPlot::SetupAxis(ImAxis_Y1, nullptr,
                                           ImPlotAxisFlags_NoDecorations | ImPlotAxisFlags_Lock);
                         ImPlot::SetupAxisLimits(ImAxis_Y1, -0.5, 0.5, ImGuiCond_Always);
                         if (timeline_signature != cached_timeline_signature) {
-                            ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, default_max_frame, ImGuiCond_Always);
+                            ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, default_max_time, ImGuiCond_Always);
                             cached_timeline_signature = timeline_signature;
                         }
 
@@ -3010,8 +3050,10 @@ int main(int, char **) {
                             }
                         }
 
-                        double current_line_x[2] = {static_cast<double>(current_frame_num),
-                                                    static_cast<double>(current_frame_num)};
+                        double current_time = (video_fps > 0.0)
+                                                  ? static_cast<double>(current_frame_num) / video_fps
+                                                  : static_cast<double>(current_frame_num);
+                        double current_line_x[2] = {current_time, current_time};
                         double current_line_y[2] = {-1.0, 1.0};
                         ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), 2.0f);
                         ImPlot::PlotLine("Current Frame", current_line_x, current_line_y, 2);
@@ -3049,20 +3091,24 @@ int main(int, char **) {
                             const int32_t camera_frame = hovered_evt.camera_frame_id;
                             const int32_t stim_frame = hovered_evt.stimulus_frame_num;
                             if (camera_frame >= 0) {
+                                double event_time = x_values[hovered_event_idx];
                                 if (stim_frame >= 0 && stim_frame != camera_frame) {
-                                    ImGui::SetTooltip("Camera Frame %d\nStimulus Frame %d\n%s",
+                                    ImGui::SetTooltip("Camera Frame %d\nStimulus Frame %d\nTime %.3f s\n%s",
                                                       camera_frame,
                                                       stim_frame,
+                                                      event_time,
                                                       hovered_evt.label.c_str());
                                 } else {
-                                    ImGui::SetTooltip("Camera Frame %d\n%s",
+                                    ImGui::SetTooltip("Camera Frame %d\nTime %.3f s\n%s",
                                                       camera_frame,
+                                                      event_time,
                                                       hovered_evt.label.c_str());
                                 }
                             } else {
-                            ImGui::SetTooltip("Frame %d\n%s",
-                                              std::max(stim_frame, 0),
-                                              hovered_evt.label.c_str());
+                            ImGui::SetTooltip("Frame %d\nTime %.3f s\n%s",
+                                             std::max(stim_frame, 0),
+                                             x_values[hovered_event_idx],
+                                             hovered_evt.label.c_str());
                             }
                         }
 
