@@ -3326,6 +3326,7 @@ struct StateOverlay {
                 const auto& frame_indices = zarr_loader.getMovementFrameIndices();
                 static bool show_smoothed = true;
                 static bool show_instantaneous = false;
+                static bool show_vergence = true;
                 static bool show_heading_raw = false;
                 static bool show_heading_smoothed = true;
                 static bool show_heading_per_second = false;
@@ -3382,6 +3383,10 @@ struct StateOverlay {
                     ImGui::SameLine();
                     ImGui::BeginDisabled(!heading_per_second_available);
                     ImGui::Checkbox("Show Heading (per-second)", &show_heading_per_second);
+                    ImGui::EndDisabled();
+                    ImGui::SameLine();
+                    ImGui::BeginDisabled(!zarr_loader.hasEyeVergenceFrame());
+                    ImGui::Checkbox("Show Vergence", &show_vergence);
                     ImGui::EndDisabled();
 
                     std::vector<double> time_plot;
@@ -3522,7 +3527,37 @@ struct StateOverlay {
                         }
                     }
 
-                    auto compute_heading_axis = [&](double& min_out, double& max_out) {
+                                        std::vector<double> vergence_time_plot;
+                    std::vector<double> vergence_value_plot;
+                    size_t vergence_valid_count = 0;
+                    double vergence_sum = 0.0;
+                    double vergence_min = std::numeric_limits<double>::infinity();
+                    double vergence_max = -std::numeric_limits<double>::infinity();
+                    if (zarr_loader.hasEyeVergenceFrame()) {
+                        const auto& verg_time = zarr_loader.getEyeVergenceFrameTimeSeconds();
+                        const auto& verg_values = zarr_loader.getEyeVergenceFrameSignedDeg();
+                        const auto& verg_valid = zarr_loader.getEyeVergenceFrameValidMask();
+                        size_t count = std::min(verg_time.size(), verg_values.size());
+                        vergence_time_plot.reserve(count);
+                        vergence_value_plot.reserve(count);
+                        for (size_t i = 0; i < count; ++i) {
+                            double t = static_cast<double>(verg_time[i]);
+                            double value = static_cast<double>(verg_values[i]);
+                            bool valid = verg_valid.empty() || (i < verg_valid.size() && verg_valid[i] != 0);
+                            vergence_time_plot.push_back(t);
+                            if (valid && std::isfinite(value)) {
+                                vergence_value_plot.push_back(value);
+                                vergence_min = std::min(vergence_min, value);
+                                vergence_max = std::max(vergence_max, value);
+                                vergence_sum += value;
+                                ++vergence_valid_count;
+                            } else {
+                                vergence_value_plot.push_back(std::numeric_limits<double>::quiet_NaN());
+                            }
+                        }
+                    }
+
+auto compute_heading_axis = [&](double& min_out, double& max_out) {
                         if (heading_y_min == std::numeric_limits<double>::infinity() ||
                             heading_y_max == -std::numeric_limits<double>::infinity()) {
                             min_out = -180.0;
@@ -3540,6 +3575,26 @@ struct StateOverlay {
                             }
                         }
                     };
+                    double vergence_axis_min = -60.0;
+                    double vergence_axis_max = 60.0;
+                    if (!vergence_time_plot.empty()) {
+                        if (vergence_min == std::numeric_limits<double>::infinity() ||
+                            vergence_max == -std::numeric_limits<double>::infinity()) {
+                            vergence_axis_min = -60.0;
+                            vergence_axis_max = 60.0;
+                        } else {
+                            double span = std::max(5.0, vergence_max - vergence_min);
+                            double padding = span * 0.1;
+                            vergence_axis_min = vergence_min - padding;
+                            vergence_axis_max = vergence_max + padding;
+                            if (vergence_axis_min >= vergence_axis_max) {
+                                vergence_axis_min -= 1.0;
+                                vergence_axis_max += 1.0;
+                            }
+                        }
+                    }
+
+
 
                     auto computeCurrentTime = [&]() -> double {
                         if (current_frame_num < 0) {
@@ -3596,9 +3651,9 @@ struct StateOverlay {
 
                     double current_time_line = computeCurrentTime();
 
-                    ImVec2 subplot_size = ImVec2(-1, 720);
+                    ImVec2 subplot_size = ImVec2(-1, 920);
                     if (!time_plot.empty() &&
-                        ImPlot::BeginSubplots("##movement_plots", 3, 1, subplot_size,
+                        ImPlot::BeginSubplots("##movement_plots", 4, 1, subplot_size,
                                               ImPlotSubplotFlags_LinkAllX | ImPlotSubplotFlags_NoTitle)) {
                         if (ImPlot::BeginPlot("##speed_plot")) {
                             ImPlot::SetupAxes(nullptr, "Speed (mm/s)");
@@ -3700,6 +3755,24 @@ struct StateOverlay {
                             }
 
                             ImPlot::EndPlot();
+                        if (ImPlot::BeginPlot("##vergence_plot")) {
+                            ImPlot::SetupAxes(nullptr, "Vergence (deg)");
+                            if (!vergence_time_plot.empty()) {
+                                ImPlot::SetupAxisLimits(ImAxis_Y1, vergence_axis_min, vergence_axis_max, ImGuiCond_Once);
+                                if (show_vergence) {
+                                    ImVec4 vergence_color = ImVec4(0.85f, 0.2f, 0.7f, 1.0f);
+                                    ImPlot::SetNextLineStyle(vergence_color, 2.0f);
+                                    ImPlot::PlotLine("Vergence",
+                                                     vergence_time_plot.data(),
+                                                     vergence_value_plot.data(),
+                                                     static_cast<int>(vergence_time_plot.size()));
+                                }
+                            } else {
+                                ImGui::TextUnformatted("No vergence data available.");
+                            }
+                            ImPlot::EndPlot();
+                        }
+
                         }
 
                         if (ImPlot::BeginPlot("##distance_plot")) {
@@ -3759,6 +3832,22 @@ struct StateOverlay {
                         if (min_distance_mm < std::numeric_limits<double>::infinity()) {
                             ImGui::BulletText("Min Distance: %.2f mm", min_distance_mm);
                         }
+                    }
+
+                    ImGui::SeparatorText("Vergence Statistics");
+                    if (vergence_time_plot.empty()) {
+                        ImGui::TextUnformatted("No vergence data available.");
+                    } else if (vergence_valid_count == 0) {
+                        ImGui::TextUnformatted("No valid vergence samples.");
+                    } else {
+                        double avg_vergence = vergence_sum / static_cast<double>(vergence_valid_count);
+                        ImGui::BulletText("Valid samples: %zu", vergence_valid_count);
+                        ImGui::BulletText("Average Vergence: %.2f deg", avg_vergence);
+                        if (vergence_min != std::numeric_limits<double>::infinity() &&
+                            vergence_max != -std::numeric_limits<double>::infinity()) {
+                            ImGui::BulletText("Range: %.2f .. %.2f deg", vergence_min, vergence_max);
+                        }
+                    }
                     }
 
                     ImGui::SeparatorText("Heading Statistics");

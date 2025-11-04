@@ -150,6 +150,10 @@ struct ZarrDetectionData {
     std::vector<float> eye_angle_left_deg;
     std::vector<float> eye_angle_right_deg;
     std::vector<std::vector<size_t>> eye_angle_indices_by_frame;
+    std::vector<float> eye_vergence_signed_frame_deg;
+    std::vector<float> eye_vergence_frame_time_seconds;
+    std::vector<uint8_t> eye_vergence_frame_valid;
+    bool has_eye_vergence_frame = false;
 
     struct CropImageData {
         bool loaded = false;
@@ -327,6 +331,19 @@ public:
     const std::string& getEyeMaskRunName() const { return data_.eye_masks_run_name; }
     bool hasEyeAngleData() const { return data_.has_eye_angles; }
     const std::string& getEyeAngleRunName() const { return data_.eye_angle_run_name; }
+    bool hasEyeVergenceFrame() const { return data_.has_eye_vergence_frame; }
+    const std::vector<float>& getEyeVergenceFrameSignedDeg() const {
+        static const std::vector<float> kEmpty;
+        return data_.has_eye_vergence_frame ? data_.eye_vergence_signed_frame_deg : kEmpty;
+    }
+    const std::vector<float>& getEyeVergenceFrameTimeSeconds() const {
+        static const std::vector<float> kEmpty;
+        return data_.has_eye_vergence_frame ? data_.eye_vergence_frame_time_seconds : kEmpty;
+    }
+    const std::vector<uint8_t>& getEyeVergenceFrameValidMask() const {
+        static const std::vector<uint8_t> kEmpty;
+        return data_.has_eye_vergence_frame ? data_.eye_vergence_frame_valid : kEmpty;
+    }
     bool hasStimulusAlignment() const { return data_.has_stimulus_alignment_data; }
     bool hasStimulusEvents() const { return data_.has_stimulus_events; }
     std::vector<std::string> getStimulusEventsForFrame(size_t frame_id) const;

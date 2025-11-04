@@ -1970,6 +1970,10 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     data_.eye_angle_right_deg.clear();
     data_.eye_angle_indices_by_frame.clear();
     data_.has_eye_angles = false;
+    data_.eye_vergence_signed_frame_deg.clear();
+    data_.eye_vergence_frame_time_seconds.clear();
+    data_.eye_vergence_frame_valid.clear();
+    data_.has_eye_vergence_frame = false;
     data_.eye_masks_loaded = false;
     data_.eye_masks_run_name.clear();
     data_.eye_masks_store = ts::TensorStore<uint8_t, 4>();
@@ -2931,6 +2935,52 @@ bool ZarrDetectionLoader::loadEyeAngleData(const ts::kvstore::KvStore& store,
         std::cout << "    [EYE_ANGLE_WARNING] ROI count mismatch: angles="
                   << data_.eye_angle_left_deg.size()
                   << ", expected " << roi_count << std::endl;
+    }
+
+    std::string frame_base = "analysis/eye_angle_runs/" + latest_run + "/angles/frame/";
+    std::vector<float> vergence_signed;
+    if (!readFloatArray(store, frame_base + "vergence_signed_deg_smoothed", vergence_signed) ||
+        vergence_signed.empty()) {
+        readFloatArray(store, frame_base + "vergence_signed_deg", vergence_signed);
+    }
+    if (!vergence_signed.empty()) {
+        std::vector<uint8_t> frame_valid;
+        readBoolArray(store,
+                      "analysis/eye_angle_runs/" + latest_run + "/qa/frame/valid_frame",
+                      frame_valid);
+        std::vector<float> frame_time_seconds;
+        readFloatArray(store,
+                       "analysis/eye_angle_runs/" + latest_run + "/support/frame_time_seconds",
+                       frame_time_seconds);
+
+        size_t frame_count = vergence_signed.size();
+        if (!frame_valid.empty()) {
+            frame_count = std::min(frame_count, frame_valid.size());
+        }
+        if (!frame_time_seconds.empty()) {
+            frame_count = std::min(frame_count, frame_time_seconds.size());
+        }
+        vergence_signed.resize(frame_count);
+        if (frame_valid.empty()) {
+            frame_valid.assign(frame_count, 1);
+        } else {
+            frame_valid.resize(frame_count, 1);
+        }
+        if (frame_time_seconds.empty()) {
+            frame_time_seconds.resize(frame_count);
+            double fps = data_.fps > 0.0 ? data_.fps : 30.0;
+            double inv_fps = fps > 0.0 ? (1.0 / fps) : 0.033333333;
+            for (size_t i = 0; i < frame_count; ++i) {
+                frame_time_seconds[i] = static_cast<float>(static_cast<double>(i) * inv_fps);
+            }
+        } else {
+            frame_time_seconds.resize(frame_count);
+        }
+
+        data_.eye_vergence_signed_frame_deg = std::move(vergence_signed);
+        data_.eye_vergence_frame_time_seconds = std::move(frame_time_seconds);
+        data_.eye_vergence_frame_valid = std::move(frame_valid);
+        data_.has_eye_vergence_frame = !data_.eye_vergence_signed_frame_deg.empty();
     }
     return true;
 }
