@@ -166,6 +166,7 @@ struct ZarrDetectionData {
     std::vector<EventLogEntry> stimulus_events;
     std::unordered_map<int32_t, std::string> event_type_names;
     std::vector<std::vector<size_t>> stimulus_events_by_frame;
+    std::vector<std::vector<size_t>> stimulus_events_by_camera_frame;
     bool has_stimulus_events = false;
     bool has_stimulus_alignment_data = false;
     int64_t stimulus_camera_frame_offset = 0;

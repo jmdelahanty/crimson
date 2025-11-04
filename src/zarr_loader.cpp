@@ -3427,6 +3427,11 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
         std::cout << "  [Stimulus] Events stored as column arrays." << std::endl;
     }
 
+    std::vector<int32_t> stimulus_to_camera_map;
+    bool has_frame_mapping =
+        loadStimulusFrameMetadataMapping(store, run_base, stimulus_to_camera_map) &&
+        !stimulus_to_camera_map.empty();
+
     auto finalize_events = [&](size_t max_frame) {
         std::cout << "  [StimulusEvents] Finalizing events (max_frame=" << max_frame << ")"
                   << std::endl;
@@ -3438,6 +3443,12 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
         for (auto& vec : data_.stimulus_events_by_frame) {
             vec.clear();
         }
+        if (data_.stimulus_events_by_camera_frame.size() < data_.total_frames) {
+            data_.stimulus_events_by_camera_frame.resize(data_.total_frames);
+        }
+        for (auto& vec : data_.stimulus_events_by_camera_frame) {
+            vec.clear();
+        }
         for (size_t idx = 0; idx < data_.stimulus_events.size(); ++idx) {
             int32_t frame = data_.stimulus_events[idx].stimulus_frame_num;
             if (frame < 0) continue;
@@ -3446,6 +3457,19 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
                 data_.stimulus_events_by_frame.resize(frame_index + 1);
             }
             data_.stimulus_events_by_frame[frame_index].push_back(idx);
+
+            int32_t camera_frame = data_.stimulus_events[idx].camera_frame_id;
+            if (camera_frame < 0 && has_frame_mapping &&
+                frame_index < stimulus_to_camera_map.size()) {
+                camera_frame = stimulus_to_camera_map[frame_index];
+            }
+            if (camera_frame >= 0) {
+                size_t camera_index = static_cast<size_t>(camera_frame);
+                if (camera_index >= data_.stimulus_events_by_camera_frame.size()) {
+                    data_.stimulus_events_by_camera_frame.resize(camera_index + 1);
+                }
+                data_.stimulus_events_by_camera_frame[camera_index].push_back(idx);
+            }
         }
 
         data_.has_stimulus_events = !data_.stimulus_events.empty();
@@ -3514,6 +3538,7 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
             std::cout << "  [StimulusEvents] Column layout contained zero rows" << std::endl;
             data_.stimulus_events.clear();
             data_.stimulus_events_by_frame.clear();
+            data_.stimulus_events_by_camera_frame.clear();
             data_.has_stimulus_events = false;
             return true;
         }
@@ -3592,6 +3617,7 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
     if (!has_structured_layout) {
         data_.stimulus_events.clear();
         data_.stimulus_events_by_frame.clear();
+        data_.stimulus_events_by_camera_frame.clear();
         data_.has_stimulus_events = false;
         std::cout << "  [StimulusEvents] Structured layout absent and column layout failed"
                   << std::endl;
@@ -6206,11 +6232,25 @@ std::string ZarrDetectionLoader::formatStimulusEvent(
 
     std::string details = trim(entry.details_json);
     if (!details.empty() && details != "{}" && details != "null") {
-        if (details.size() > 96) {
-            details.resize(93);
-            details += "...";
+        bool suppress_details = false;
+        if ((details.front() == '[' && details.back() == ']') ||
+            (details.front() == '{' && details.back() == '}')) {
+            try {
+                auto parsed = json::parse(details);
+                if (parsed.is_structured()) {
+                    suppress_details = true;
+                }
+            } catch (const json::parse_error&) {
+                // leave suppress_details false
+            }
         }
-        label += " [" + details + "]";
+        if (!suppress_details) {
+            if (details.size() > 96) {
+                details.resize(93);
+                details += "...";
+            }
+            label += " [" + details + "]";
+        }
     }
     return label;
 }
@@ -6221,14 +6261,24 @@ std::vector<std::string> ZarrDetectionLoader::getStimulusEventsForFrame(
     if (!data_.has_stimulus_events) {
         return result;
     }
-    if (frame_id >= data_.stimulus_events_by_frame.size()) {
+    if (frame_id < data_.stimulus_events_by_camera_frame.size()) {
+        for (size_t idx : data_.stimulus_events_by_camera_frame[frame_id]) {
+            if (idx >= data_.stimulus_events.size()) {
+                continue;
+            }
+            result.push_back(formatStimulusEvent(data_.stimulus_events[idx]));
+        }
+    }
+    if (!result.empty()) {
         return result;
     }
-    for (size_t idx : data_.stimulus_events_by_frame[frame_id]) {
-        if (idx >= data_.stimulus_events.size()) {
-            continue;
+    if (frame_id < data_.stimulus_events_by_frame.size()) {
+        for (size_t idx : data_.stimulus_events_by_frame[frame_id]) {
+            if (idx >= data_.stimulus_events.size()) {
+                continue;
+            }
+            result.push_back(formatStimulusEvent(data_.stimulus_events[idx]));
         }
-        result.push_back(formatStimulusEvent(data_.stimulus_events[idx]));
     }
     return result;
 }

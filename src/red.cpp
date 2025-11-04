@@ -2222,7 +2222,7 @@ int main(int, char **) {
                         if (zarr_loaded && zarr_loader.hasStimulusEvents()) {
                             struct StimulusOverlayState {
                                 std::string text;
-                                int last_frame = std::numeric_limits<int>::min();
+                                int last_event_frame = std::numeric_limits<int>::min();
                             };
                             static std::array<StimulusOverlayState, MAX_VIEWS> s_overlay_cache;
 
@@ -2236,14 +2236,11 @@ int main(int, char **) {
                                     events_text += frame_events[i];
                                 }
                                 s_overlay_cache[j].text = std::move(events_text);
-                                s_overlay_cache[j].last_frame = current_frame_num;
-                            } else if (std::abs(current_frame_num - s_overlay_cache[j].last_frame) > 5) {
-                                // Clear cache on large jumps or seek operations.
-                                s_overlay_cache[j].text.clear();
-                                s_overlay_cache[j].last_frame = std::numeric_limits<int>::min();
+                                s_overlay_cache[j].last_event_frame = current_frame_num;
                             }
 
-                            if (!s_overlay_cache[j].text.empty()) {
+                            if (!s_overlay_cache[j].text.empty() &&
+                                current_frame_num >= s_overlay_cache[j].last_event_frame) {
                                 ImVec2 plot_pos = ImPlot::GetPlotPos();
                                 ImDrawList* draw_list = ImPlot::GetPlotDrawList();
                                 ImVec2 overlay_origin = ImVec2(plot_pos.x + 12.0f, plot_pos.y + 12.0f);
@@ -2259,60 +2256,6 @@ int main(int, char **) {
                                 draw_list->AddText(ImVec2(box_min.x + 6.0f, box_min.y + 4.0f),
                                                    IM_COL32(200, 220, 255, 255),
                                                    s_overlay_cache[j].text.c_str());
-                            }
-                        }
-
-                        // === ADD INTERPOLATION STATUS OVERLAY === //
-                        if (zarr_loaded && zarr_loader.hasInterpolation()) {
-
-                            // Determine interpolation status
-                            bool any_interpolated = false;
-                            std::string source = "";
-
-                            if (zarr_loader.hasInterpolation() &&
-                                zarr_loader.isFrameInterpolated(current_frame_num) &&
-                                zarr_loader.activeDatasetHasSyntheticDetections()) {
-                                any_interpolated = true;
-                                source = "Zarr";
-                            }
-
-                            if (any_interpolated || zarr_loader.hasInterpolation()) {
-                                // Get the plot limits
-                                ImPlotRect limits = ImPlot::GetPlotLimits();
-                                
-                                // Calculate text size first to position from the right
-                                std::string status_text;
-                                ImVec4 status_color;
-                                if (any_interpolated) {
-                                    status_text = source + " OFFLINE-DETECTION: INTERPOLATED";
-                                    status_color = ImVec4(1.0f, 0.7f, 0.0f, 0.9f);  // Orange
-                                } else {
-                                    status_text = "OFFLINE-DETECTION: ORIGINAL";
-                                    status_color = ImVec4(0.2f, 1.0f, 0.2f, 0.9f);  // Green
-                                }
-                                
-                                ImVec2 text_size = ImGui::CalcTextSize(status_text.c_str());
-                                
-                                // Position in top-right: use Max for both x (right) and y (top)
-                                ImVec2 overlay_pos = ImPlot::PlotToPixels(
-                                    limits.Max().x - (text_size.x + 150),  // Right side minus text width and padding
-                                    limits.Max().y - 100                    // Top with small offset
-                                );
-                                
-                                // Draw background box and text (rest of code stays the same)
-                                ImDrawList* draw_list = ImPlot::GetPlotDrawList();
-                                ImVec2 box_min = overlay_pos;
-                                ImVec2 box_max = ImVec2(box_min.x + text_size.x + 10, 
-                                                        box_min.y + text_size.y + 6);
-                                
-                                draw_list->AddRectFilled(box_min, box_max, 
-                                                        IM_COL32(0, 0, 0, 200), 3.0f);
-                                draw_list->AddRect(box_min, box_max, 
-                                                ImGui::ColorConvertFloat4ToU32(status_color), 3.0f);
-                                
-                                draw_list->AddText(ImVec2(box_min.x + 5, box_min.y + 3), 
-                                                ImGui::ColorConvertFloat4ToU32(status_color), 
-                                                status_text.c_str());
                             }
                         }
 
