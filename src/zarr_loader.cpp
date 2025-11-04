@@ -4687,6 +4687,33 @@ bool ZarrDetectionLoader::loadMovementTrack(
     bool has_smoothed = readSpeedValues(smoothed_mm_names, smoothed_px_names, smoothed_mm, "smoothed speed");
     bool has_instant = readSpeedValues(instant_mm_names, instant_px_names, instant_mm, "instantaneous speed");
 
+    std::vector<float> heading_degrees;
+    readFloatArray(store, track_base + "heading_degrees", heading_degrees);
+
+    std::vector<float> smoothed_heading_degrees;
+    readFloatArray(store, track_base + "smoothed_heading_degrees", smoothed_heading_degrees);
+
+    std::vector<uint8_t> keypoint_success;
+    readBoolArray(store, track_base + "keypoint_success", keypoint_success);
+
+    std::vector<float> heading_per_second_degrees;
+    readFloatArray(store, track_base + "heading_per_second_degrees", heading_per_second_degrees);
+
+    std::vector<float> heading_per_second_resultant;
+    readFloatArray(store, track_base + "heading_per_second_resultant", heading_per_second_resultant);
+
+    std::vector<float> heading_per_second_time_seconds;
+    const std::vector<std::string> heading_per_second_time_names = {
+        "heading_per_second_time_seconds",
+        "heading_per_second_seconds"
+    };
+    for (const auto& name : heading_per_second_time_names) {
+        if (readFloatArray(store, track_base + name, heading_per_second_time_seconds) &&
+            !heading_per_second_time_seconds.empty()) {
+            break;
+        }
+    }
+
     if (!has_smoothed && !has_instant) {
         return false;
     }
@@ -4697,6 +4724,15 @@ bool ZarrDetectionLoader::loadMovementTrack(
     }
     if (has_instant) {
         sample_count = std::min(sample_count, instant_mm.size());
+    }
+    if (!heading_degrees.empty()) {
+        sample_count = std::min(sample_count, heading_degrees.size());
+    }
+    if (!smoothed_heading_degrees.empty()) {
+        sample_count = std::min(sample_count, smoothed_heading_degrees.size());
+    }
+    if (!keypoint_success.empty()) {
+        sample_count = std::min(sample_count, keypoint_success.size());
     }
     if (!frame_indices.empty()) {
         sample_count = std::min(sample_count, frame_indices.size());
@@ -4713,6 +4749,9 @@ bool ZarrDetectionLoader::loadMovementTrack(
     trim_to(time_seconds);
     trim_to(smoothed_mm);
     trim_to(instant_mm);
+    trim_to(heading_degrees);
+    trim_to(smoothed_heading_degrees);
+    trim_to(keypoint_success);
     trim_to(frame_indices);
 
     std::vector<float> distance_series;
@@ -4769,9 +4808,21 @@ bool ZarrDetectionLoader::loadMovementTrack(
     series.time_seconds = std::move(time_seconds);
     series.smoothed_speed_mm = std::move(smoothed_mm);
     series.instant_speed_mm = std::move(instant_mm);
+    series.heading_degrees = std::move(heading_degrees);
+    series.smoothed_heading_degrees = std::move(smoothed_heading_degrees);
+    series.keypoint_success = std::move(keypoint_success);
     series.frame_indices = std::move(frame_indices);
     if (!distance_series.empty()) {
         series.distance_to_target_mm = std::move(distance_series);
+    }
+    if (!heading_per_second_degrees.empty()) {
+        series.heading_per_second_degrees = std::move(heading_per_second_degrees);
+    }
+    if (!heading_per_second_resultant.empty()) {
+        series.heading_per_second_resultant = std::move(heading_per_second_resultant);
+    }
+    if (!heading_per_second_time_seconds.empty()) {
+        series.heading_per_second_time_seconds = std::move(heading_per_second_time_seconds);
     }
 
     data_.movement_series.push_back(std::move(series));

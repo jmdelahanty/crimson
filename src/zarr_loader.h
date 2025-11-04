@@ -187,6 +187,12 @@ struct ZarrDetectionData {
         std::vector<float> smoothed_speed_mm;
         std::vector<float> instant_speed_mm;
         std::vector<float> distance_to_target_mm;
+        std::vector<float> heading_degrees;
+        std::vector<float> smoothed_heading_degrees;
+        std::vector<uint8_t> keypoint_success;
+        std::vector<float> heading_per_second_degrees;
+        std::vector<float> heading_per_second_resultant;
+        std::vector<float> heading_per_second_time_seconds;
         std::vector<int32_t> frame_indices;
     };
     std::vector<MovementSeries> movement_series;
@@ -375,6 +381,36 @@ public:
         static const std::vector<float> kEmpty;
         const auto* series = getSelectedMovementSeries();
         return series ? series->distance_to_target_mm : kEmpty;
+    }
+    const std::vector<float>& getMovementHeadingDegrees() const {
+        static const std::vector<float> kEmpty;
+        const auto* series = getSelectedMovementSeries();
+        return series ? series->heading_degrees : kEmpty;
+    }
+    const std::vector<float>& getMovementSmoothedHeadingDegrees() const {
+        static const std::vector<float> kEmpty;
+        const auto* series = getSelectedMovementSeries();
+        return series ? series->smoothed_heading_degrees : kEmpty;
+    }
+    const std::vector<uint8_t>& getMovementHeadingKeypointSuccess() const {
+        static const std::vector<uint8_t> kEmpty;
+        const auto* series = getSelectedMovementSeries();
+        return series ? series->keypoint_success : kEmpty;
+    }
+    const std::vector<float>& getMovementHeadingPerSecondDegrees() const {
+        static const std::vector<float> kEmpty;
+        const auto* series = getSelectedMovementSeries();
+        return series ? series->heading_per_second_degrees : kEmpty;
+    }
+    const std::vector<float>& getMovementHeadingPerSecondResultant() const {
+        static const std::vector<float> kEmpty;
+        const auto* series = getSelectedMovementSeries();
+        return series ? series->heading_per_second_resultant : kEmpty;
+    }
+    const std::vector<float>& getMovementHeadingPerSecondTimeSeconds() const {
+        static const std::vector<float> kEmpty;
+        const auto* series = getSelectedMovementSeries();
+        return series ? series->heading_per_second_time_seconds : kEmpty;
     }
     const std::vector<int32_t>& getMovementFrameIndices() const {
         static const std::vector<int32_t> kEmpty;
