@@ -2,6 +2,8 @@
 #define RED_RENDER
 #include "gx_helper.h"
 #include "decoder.h"
+#include <cuda_runtime_api.h>
+#include <cstdlib>
 
 
 struct PBO_CUDA {
@@ -24,10 +26,19 @@ struct render_scene
     bool use_cpu_buffer;
 };
 
-void render_initialize_target(gx_context *context)
+inline void checkCudaStatus(cudaError_t status, const char* message) {
+    if (status != cudaSuccess) {
+        fprintf(stderr, "%s: %s\n", message, cudaGetErrorString(status));
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+void render_initialize_target(gx_context *context, int cuda_device_index)
 {
     GLFWwindow *render_target = gx_glfw_init_render_target(3, 3, context->width, context->height, "Red", context->glsl_version);
     gx_init(context, render_target);
+    checkCudaStatus(cudaGLSetGLDevice(cuda_device_index), "cudaGLSetGLDevice failed");
+    checkCudaStatus(cudaSetDevice(cuda_device_index), "cudaSetDevice failed");
     gx_imgui_init(context);
 }
 

@@ -59,6 +59,11 @@ struct InterpolationRunData {
     std::vector<int32_t> camera_to_metadata_index;
     std::vector<uint8_t> stimulus_interpolation_mask;   // 1 = original, 0 = interpolated
     std::vector<uint8_t> frame_mask;                    // 1 = interpolated frame
+    std::vector<int32_t> frame_metadata_stimulus_frames;
+    bool frame_metadata_loaded = false;
+    int32_t first_camera_frame_with_stimulus = -1;
+    int32_t first_metadata_index_with_stimulus = -1;
+    int32_t first_stimulus_frame = -1;
 
     // Legacy dense layout fallback
     ts::TensorStore<float, 3> bboxes_store;      // [frames, max_dets, 4]
@@ -389,6 +394,12 @@ public:
     std::string getStimulusRunName() const {
         return data_.has_interpolation ? data_.latest_interpolation.stimulus_run_name : "";
     }
+    bool hasStimulusFrameMapping() const;
+    int64_t getStimulusCameraFrameOffset() const;
+    std::optional<int32_t> getStimulusMetadataIndexForCameraFrame(int32_t camera_frame) const;
+    std::optional<int32_t> getStimulusFrameForCameraFrame(int32_t camera_frame) const;
+    std::optional<int32_t> getFirstCameraFrameWithStimulus() const;
+    std::optional<int32_t> getFirstStimulusFrameNumber() const;
     
     // Movement analysis accessors
     bool hasMovementData() const {

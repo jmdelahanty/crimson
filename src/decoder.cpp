@@ -175,7 +175,9 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
             // std::cout << "seek thread done " << temp_nFrameReturned <<
             // std::endl;
         } else {
+            static thread_local bool logged_idle = false;
             if (window_need_decoding[cam_name].load()) {
+                logged_idle = false;
                 if (!skip_first_decode_after_seek) {
                     demux_success =
                         demuxer->Demux(pVideo, nVideoBytes, pktinfo);
@@ -270,7 +272,21 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         std::cout << "total_num_frame: "
                                   << dc_context->total_num_frame << std::endl;
                     }
+                    if (cam_name == "Stimulus" &&
+                        ((nFrame % 30) == 0 || buffer_head == 0)) {
+                        std::cout << "[Stimulus Decoder] produced frame " << nFrame
+                                  << " buffer_head=" << buffer_head
+                                  << " available_to_write=" << display_buffer[buffer_head].available_to_write
+                                  << std::endl;
+                    }
                 }
+            } else {
+                if (!logged_idle) {
+                    std::cout << "[Decoder] " << cam_name
+                              << " idle (window_need_decoding=false)" << std::endl;
+                    logged_idle = true;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
         }
     } while (!(dc_context->stop_flag));

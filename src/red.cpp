@@ -22,6 +22,7 @@
 #include <limits>
 #include <sstream>
 #include <numeric>
+#include <optional>
 #include <unordered_map>
 #include <iostream>
 #include <stdio.h>
@@ -94,7 +95,30 @@ struct PlaybackState {
     int last_frame_num_playspeed = 0;
     std::chrono::steady_clock::time_point last_wall_time_playspeed =
         std::chrono::steady_clock::now();
+    int current_stimulus_frame = -1;
 };
+
+struct StimulusPlayback {
+    bool loaded = false;
+    std::string window_name = "Stimulus";
+    std::string video_path;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    double fps = 0.0;
+    int buffer_size = 32;
+    bool use_cpu_buffer = false;
+    PictureBuffer *display_buffer = nullptr;
+    PBO_CUDA pbo = {};
+    GLuint texture = 0;
+    FFmpegDemuxer *demuxer = nullptr;
+    DecoderContext *decoder_context = nullptr;
+    SeekInfo seek = {false, false, 0, false};
+    std::thread decoder_thread;
+    bool resources_initialized = false;
+    int last_displayed_frame = -1;
+};
+
+static StimulusPlayback stimulus_player;
 
 struct EyeOrientationSmoother {
     struct History {
@@ -167,8 +191,342 @@ private:
 
 static EyeOrientationSmoother g_eye_orientation_smoother;
 
+static void destroyStimulusPlayback(StimulusPlayback &stim) {
+    if (stim.decoder_context) {
+        stim.decoder_context->stop_flag = true;
+    }
+    if (stim.decoder_thread.joinable()) {
+        stim.decoder_thread.join();
+    }
+    if (stim.decoder_context) {
+        delete stim.decoder_context;
+        stim.decoder_context = nullptr;
+    }
+    if (stim.demuxer) {
+        delete stim.demuxer;
+        stim.demuxer = nullptr;
+    }
+    if (stim.display_buffer) {
+        for (int i = 0; i < stim.buffer_size; ++i) {
+            if (stim.display_buffer[i].frame) {
+                if (stim.use_cpu_buffer) {
+                    free(stim.display_buffer[i].frame);
+                } else {
+                    cudaFree(stim.display_buffer[i].frame);
+                }
+                stim.display_buffer[i].frame = nullptr;
+            }
+        }
+        free(stim.display_buffer);
+        stim.display_buffer = nullptr;
+    }
+    if (stim.resources_initialized && stim.pbo.cuda_resource) {
+        unmap_cuda_resource(&stim.pbo.cuda_resource);
+        cudaGraphicsUnregisterResource(stim.pbo.cuda_resource);
+        glDeleteBuffers(1, &stim.pbo.pbo);
+    }
+    if (stim.texture != 0) {
+        glDeleteTextures(1, &stim.texture);
+    }
+    stim.pbo = {};
+    stim.texture = 0;
+    stim.resources_initialized = false;
+    stim.loaded = false;
+    stim.width = stim.height = 0;
+    stim.fps = 0.0;
+    stim.video_path.clear();
+    stim.last_displayed_frame = -1;
+    auto need_it = window_need_decoding.find(stim.window_name);
+    if (need_it != window_need_decoding.end()) {
+        need_it->second.store(false);
+    }
+    auto latest_it = latest_decoded_frame.find(stim.window_name);
+    if (latest_it != latest_decoded_frame.end()) {
+        latest_it->second.store(-1);
+    }
+}
+
+static bool allocateStimulusBuffers(StimulusPlayback &stim) {
+    size_t frame_bytes = static_cast<size_t>(stim.width) * static_cast<size_t>(stim.height) * 4;
+    stim.display_buffer =
+        static_cast<PictureBuffer *>(malloc(sizeof(PictureBuffer) * stim.buffer_size));
+    if (!stim.display_buffer) {
+        return false;
+    }
+    for (int i = 0; i < stim.buffer_size; ++i) {
+        stim.display_buffer[i].frame = nullptr;
+        stim.display_buffer[i].frame_number = -1;
+        stim.display_buffer[i].available_to_write = true;
+        if (stim.use_cpu_buffer) {
+            stim.display_buffer[i].frame =
+                static_cast<unsigned char *>(malloc(frame_bytes));
+            if (!stim.display_buffer[i].frame) {
+                for (int j = 0; j < i; ++j) {
+                    if (stim.display_buffer[j].frame) {
+                        free(stim.display_buffer[j].frame);
+                        stim.display_buffer[j].frame = nullptr;
+                    }
+                }
+                free(stim.display_buffer);
+                stim.display_buffer = nullptr;
+                return false;
+            }
+            decoder_clear_buffer_with_constant_image(stim.display_buffer[i].frame,
+                                                     stim.width, stim.height);
+        } else {
+            cudaError_t err =
+                cudaMalloc(reinterpret_cast<void **>(&stim.display_buffer[i].frame),
+                           frame_bytes);
+            if (err != cudaSuccess) {
+                for (int j = 0; j <= i; ++j) {
+                    if (stim.display_buffer[j].frame) {
+                        cudaFree(stim.display_buffer[j].frame);
+                        stim.display_buffer[j].frame = nullptr;
+                    }
+                }
+                free(stim.display_buffer);
+                stim.display_buffer = nullptr;
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static bool initializeStimulusPlayback(StimulusPlayback &stim,
+                                       const std::string &video_path,
+                                       int buffer_size,
+                                       int cuda_device_index) {
+    destroyStimulusPlayback(stim);
+
+    stim.video_path = video_path;
+    stim.buffer_size = buffer_size;
+    stim.use_cpu_buffer = false;
+
+    std::map<std::string, std::string> ffmpeg_options;
+    try {
+        stim.demuxer = new FFmpegDemuxer(video_path.c_str(), ffmpeg_options);
+    } catch (const std::exception &e) {
+        std::cout << "Failed to open stimulus video: " << e.what() << std::endl;
+        stim.demuxer = nullptr;
+        return false;
+    }
+
+    stim.width = stim.demuxer->GetWidth();
+    stim.height = stim.demuxer->GetHeight();
+    if (stim.width == 0 || stim.height == 0) {
+        std::cout << "Stimulus video reports zero dimension; aborting load." << std::endl;
+        destroyStimulusPlayback(stim);
+        return false;
+    }
+    stim.fps = stim.demuxer->GetFramerate();
+    if (stim.fps <= 0.0) {
+        stim.fps = stim.demuxer->GetAvgFramerate();
+    }
+
+    if (!allocateStimulusBuffers(stim)) {
+        std::cout << "Failed to allocate stimulus buffers." << std::endl;
+        destroyStimulusPlayback(stim);
+        return false;
+    }
+
+    create_pbo(&stim.pbo.pbo, stim.width, stim.height);
+    register_pbo_to_cuda(&stim.pbo.pbo, &stim.pbo.cuda_resource);
+    map_cuda_resource(&stim.pbo.cuda_resource);
+    cuda_pointer_from_resource(&stim.pbo.cuda_buffer, &stim.pbo.cuda_pbo_storage_buffer_size,
+                               &stim.pbo.cuda_resource);
+
+    glGenTextures(1, &stim.texture);
+    glBindTexture(GL_TEXTURE_2D, stim.texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, stim.width, stim.height, 0, GL_RGBA,
+                 GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    stim.resources_initialized = true;
+
+    stim.decoder_context = new DecoderContext{.decoding_flag = false,
+                                              .stop_flag = false,
+                                              .total_num_frame = int(INT_MAX),
+                                              .estimated_num_frames = 0,
+                                              .gpu_index = cuda_device_index,
+                                              .seek_interval = 250};
+
+    stim.seek.use_seek = false;
+    stim.seek.seek_done = false;
+    stim.seek.seek_frame = 0;
+    stim.seek.seek_accurate = false;
+
+    window_need_decoding[stim.window_name].store(false);
+    latest_decoded_frame[stim.window_name].store(-1);
+
+    stim.decoder_thread = std::thread(&decoder_process, stim.decoder_context,
+                                      stim.demuxer, stim.window_name,
+                                      stim.display_buffer, stim.buffer_size,
+                                      &stim.seek, stim.use_cpu_buffer);
+    stim.loaded = true;
+    stim.last_displayed_frame = -1;
+    std::cout << "[Stimulus] decoder initialized: " << video_path
+              << " size=" << stim.width << "x" << stim.height
+              << " fps=" << stim.fps << " buffer=" << stim.buffer_size
+              << std::endl;
+    return true;
+}
+
+static int findStimulusBuffer(const StimulusPlayback &stim,
+                              int target_frame) {
+    if (!stim.display_buffer) {
+        return -1;
+    }
+    int exact_index = -1;
+    int best_lower_index = -1;
+    int best_lower_value = std::numeric_limits<int>::min();
+    for (int i = 0; i < stim.buffer_size; ++i) {
+        const PictureBuffer &buf = stim.display_buffer[i];
+        if (buf.available_to_write || buf.frame_number < 0) {
+            continue;
+        }
+        if (buf.frame_number == target_frame) {
+            exact_index = i;
+            break;
+        }
+        if (buf.frame_number < target_frame && buf.frame_number > best_lower_value) {
+            best_lower_value = buf.frame_number;
+            best_lower_index = i;
+        }
+    }
+    if (exact_index != -1) {
+        return exact_index;
+    }
+    if (best_lower_index != -1) {
+        return best_lower_index;
+    }
+    return -1;
+}
+
+static void releaseStimulusBufferSlot(StimulusPlayback &stim, int index) {
+    if (!stim.display_buffer || index < 0 || index >= stim.buffer_size) {
+        return;
+    }
+    stim.display_buffer[index].available_to_write = true;
+    stim.display_buffer[index].frame_number = -1;
+}
+
+static void uploadStimulusFrameToTexture(StimulusPlayback &stim, int buffer_index) {
+    if (!stim.display_buffer || buffer_index < 0 ||
+        buffer_index >= stim.buffer_size || !stim.resources_initialized) {
+        return;
+    }
+
+    PictureBuffer &buffer = stim.display_buffer[buffer_index];
+    if (buffer.available_to_write || !buffer.frame) {
+        return;
+    }
+
+    size_t frame_bytes =
+        static_cast<size_t>(stim.width) * static_cast<size_t>(stim.height) * 4;
+    cudaMemcpyKind kind =
+        stim.use_cpu_buffer ? cudaMemcpyHostToDevice : cudaMemcpyDeviceToDevice;
+    checkCudaStatus(cudaMemcpy(stim.pbo.cuda_buffer, buffer.frame, frame_bytes, kind),
+                    "Stimulus cudaMemcpy failed");
+
+    bind_pbo(&stim.pbo.pbo);
+    bind_texture(&stim.texture);
+    upload_image_pbo_to_texture(stim.width, stim.height);
+    unbind_pbo();
+    unbind_texture();
+
+    releaseStimulusBufferSlot(stim, buffer_index);
+}
+
+static void discardStimulusFramesOlderThan(StimulusPlayback &stim, int keep_threshold) {
+    if (!stim.display_buffer) {
+        return;
+    }
+    int released = 0;
+    for (int i = 0; i < stim.buffer_size; ++i) {
+        auto &buf = stim.display_buffer[i];
+        if (!buf.available_to_write && buf.frame_number >= 0 &&
+            buf.frame_number < keep_threshold) {
+            buf.available_to_write = true;
+            buf.frame_number = -1;
+            ++released;
+        }
+    }
+    if (released > 0) {
+        std::cout << "[Stimulus] discarded " << released
+                  << " frames older than " << keep_threshold << std::endl;
+    }
+}
+
+static int getOldestStimulusFrame(const StimulusPlayback &stim) {
+    if (!stim.display_buffer) {
+        return std::numeric_limits<int>::max();
+    }
+    int oldest = std::numeric_limits<int>::max();
+    for (int i = 0; i < stim.buffer_size; ++i) {
+        const auto &buf = stim.display_buffer[i];
+        if (!buf.available_to_write && buf.frame_number >= 0) {
+            oldest = std::min(oldest, buf.frame_number);
+        }
+    }
+    return oldest;
+}
+
+static int getNewestStimulusFrame(const StimulusPlayback &stim) {
+    if (!stim.display_buffer) {
+        return -1;
+    }
+    int newest = -1;
+    for (int i = 0; i < stim.buffer_size; ++i) {
+        const auto &buf = stim.display_buffer[i];
+        if (!buf.available_to_write && buf.frame_number >= 0) {
+            newest = std::max(newest, buf.frame_number);
+        }
+    }
+    return newest;
+}
+
+static void scheduleStimulusSeek(StimulusPlayback &stim,
+                                 ZarrDetectionLoader *loader,
+                                 int camera_frame,
+                                 bool wait_for_completion) {
+    if (!stim.loaded || !loader || !loader->hasStimulusAlignment()) {
+        return;
+    }
+    auto stim_frame = loader->getStimulusFrameForCameraFrame(camera_frame);
+    if (!stim_frame || *stim_frame < 0) {
+        return;
+    }
+
+    std::cout << "[Stimulus] schedule seek: camera_frame=" << camera_frame
+              << " -> stimulus_frame=" << *stim_frame
+              << " wait=" << (wait_for_completion ? "true" : "false")
+              << std::endl;
+
+    stim.seek.seek_frame = static_cast<uint64_t>(*stim_frame);
+    stim.seek.use_seek = true;
+    stim.seek.seek_done = false;
+    stim.seek.seek_accurate = wait_for_completion;
+    stim.last_displayed_frame = -1;
+    window_need_decoding[stim.window_name].store(true);
+
+    if (wait_for_completion && stim.decoder_context) {
+        while (!stim.seek.seek_done && !stim.decoder_context->stop_flag) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        stim.seek.seek_done = false;
+        std::cout << "[Stimulus] seek complete for camera_frame=" << camera_frame
+                  << std::endl;
+    }
+}
 void seek_all_cameras(render_scene *scene, int frame_number, double video_fps,
-                      PlaybackState &state, bool seek_accurate) {
+                      PlaybackState &state, bool seek_accurate,
+                      ZarrDetectionLoader *zarr_loader,
+                      StimulusPlayback *stimulus) {
     // Trigger seek request
     for (int i = 0; i < scene->num_cams; i++) {
         scene->seek_context[i].seek_frame = (uint64_t)frame_number;
@@ -198,6 +556,10 @@ void seek_all_cameras(render_scene *scene, int frame_number, double video_fps,
     state.last_play_time_start = std::chrono::steady_clock::now();
     state.last_frame_num_playspeed = frame_number;
     state.last_wall_time_playspeed = std::chrono::steady_clock::now();
+
+    if (stimulus && stimulus->loaded) {
+        scheduleStimulusSeek(*stimulus, zarr_loader, frame_number, seek_accurate);
+    }
 }
 
 int main(int, char **) {
@@ -209,7 +571,8 @@ int main(int, char **) {
                      .render_target_title = (char *)malloc(100), // window title
                      .glsl_version = (char *)malloc(100)};
 
-    render_initialize_target(window);
+    constexpr int kCudaDeviceIndex = 0;
+    render_initialize_target(window, kCudaDeviceIndex);
 
     render_scene *scene = (render_scene *)malloc(sizeof(render_scene));
 
@@ -230,7 +593,7 @@ int main(int, char **) {
                                    .stop_flag = false,
                                    .total_num_frame = int(INT_MAX),
                                    .estimated_num_frames = 0,
-                                   .gpu_index = 0,
+                                   .gpu_index = kCudaDeviceIndex,
                                    .seek_interval = 250};
 
     // gui states, todo: bundle this later
@@ -329,6 +692,10 @@ int main(int, char **) {
     float set_playback_speed = 1.0f;
     PlaybackState ps;
 
+    window_need_decoding[stimulus_player.window_name].store(false);
+    latest_decoded_frame[stimulus_player.window_name].store(-1);
+    window_was_decoding[stimulus_player.window_name] = false;
+
     while (!glfwWindowShouldClose(window->render_target)) {
         // Poll and handle events (inputs, window resize, etc.)
         glfwPollEvents();
@@ -362,6 +729,17 @@ int main(int, char **) {
                             "ChooseMedia", "Choose Media",
                             ".mp4,.tiff,.jpeg,.jpg,.png", config);
                     };
+                    if (video_loaded) {
+                        if (ImGui::MenuItem("Load Stimulus Video")) {
+                            IGFD::FileDialogConfig config;
+                            config.countSelectionMax = 1;
+                            config.path = root_dir;
+                            config.flags = ImGuiFileDialogFlags_Modal;
+                            ImGuiFileDialog::Instance()->OpenDialog(
+                                "ChooseStimulus", "Choose Stimulus Video",
+                                ".mp4", config);
+                        }
+                    }
                     ImGui::EndMenu();
                 }
 
@@ -505,7 +883,7 @@ int main(int, char **) {
                                 100);
                 if (ImGui::IsItemDeactivatedAfterEdit()) {
                     seek_all_cameras(scene, seek_accurate_frame_num, video_fps,
-                                     ps, true);
+                                     ps, true, &zarr_loader, &stimulus_player);
                 }
 
                 auto now_wall = std::chrono::steady_clock::now();
@@ -580,6 +958,33 @@ int main(int, char **) {
                                 current_frame_num = static_cast<int>(zarr_loader.getTotalFrames()) - 1;
                             }
                         }
+                    }
+                }
+
+                if (zarr_loader.hasStimulusAlignment()) {
+                    ImGui::Separator();
+                    ImGui::Text("Stimulus Alignment:");
+                    if (zarr_loader.hasStimulusFrameMapping()) {
+                        if (ps.current_stimulus_frame >= 0) {
+                            ImGui::Text("  Current stimulus frame: %d", ps.current_stimulus_frame);
+                        } else {
+                            ImGui::Text("  Current stimulus frame: (not mapped)");
+                        }
+                        if (auto metadata_index = zarr_loader.getStimulusMetadataIndexForCameraFrame(current_frame_num)) {
+                            ImGui::Text("  Frame metadata index: %d", *metadata_index);
+                        }
+                        if (auto first_cam = zarr_loader.getFirstCameraFrameWithStimulus()) {
+                            if (auto first_stim = zarr_loader.getFirstStimulusFrameNumber()) {
+                                ImGui::Text("  First mapped camera frame: %d -> Stim %d",
+                                            *first_cam, *first_stim);
+                            } else {
+                                ImGui::Text("  First mapped camera frame: %d", *first_cam);
+                            }
+                        }
+                        ImGui::Text("  Camera frame offset: %lld",
+                                    static_cast<long long>(zarr_loader.getStimulusCameraFrameOffset()));
+                    } else {
+                        ImGui::Text("  Mapping data not available");
                     }
                 }
 
@@ -756,6 +1161,11 @@ int main(int, char **) {
                 root_dir = ImGuiFileDialog::Instance()->GetCurrentPath();
                 skeleton_dir = root_dir;
 
+                // Reset any previously loaded stimulus video
+                destroyStimulusPlayback(stimulus_player);
+                window_need_decoding[stimulus_player.window_name].store(false);
+                window_was_decoding[stimulus_player.window_name] = false;
+
                 // Try to load Zarr detection file
                 std::string zarr_error;
                 if (loadZarrDetectionFromDirectory(root_dir, zarr_loader, zarr_error)) {
@@ -897,6 +1307,33 @@ int main(int, char **) {
             ImGuiFileDialog::Instance()->Close();
         }
 
+        if (ImGuiFileDialog::Instance()->Display("ChooseStimulus")) {
+            if (ImGuiFileDialog::Instance()->IsOk()) {
+                auto selection = ImGuiFileDialog::Instance()->GetSelection();
+                if (!selection.empty()) {
+                    std::string stimulus_path = selection.begin()->second;
+                    int stimulus_buffer_size = scene->size_of_buffer > 0
+                                                   ? scene->size_of_buffer
+                                                   : label_buffer_size;
+                    if (!initializeStimulusPlayback(stimulus_player, stimulus_path,
+                                                    stimulus_buffer_size,
+                                                    kCudaDeviceIndex)) {
+                        show_error = true;
+                        error_message = "Failed to load stimulus video: " + stimulus_path;
+                    } else {
+                        window_was_decoding[stimulus_player.window_name] = false;
+                        window_need_decoding[stimulus_player.window_name].store(false);
+                        if (zarr_loaded) {
+                            scheduleStimulusSeek(stimulus_player, &zarr_loader,
+                                                 ps.to_display_frame_number,
+                                                 !ps.play_video);
+                        }
+                    }
+                }
+            }
+            ImGuiFileDialog::Instance()->Close();
+        }
+
         if (ImGuiFileDialog::Instance()->Display("ChooseSkeleton")) {
             if (ImGuiFileDialog::Instance()->IsOk()) { // action if OK
                 auto skeleton_file =
@@ -996,6 +1433,15 @@ int main(int, char **) {
 
         // Render a video frame
         if (video_loaded) {
+            if (zarr_loaded && zarr_loader.hasStimulusAlignment()) {
+                if (auto stim_frame = zarr_loader.getStimulusFrameForCameraFrame(current_frame_num)) {
+                    ps.current_stimulus_frame = *stim_frame;
+                } else {
+                    ps.current_stimulus_frame = -1;
+                }
+            } else {
+                ps.current_stimulus_frame = -1;
+            }
             for (int j = 0; j < scene->num_cams; j++) {
                 const std::string &win_name = camera_names[j];
 
@@ -1039,14 +1485,14 @@ int main(int, char **) {
                     ps.play_video) {
                     // seek if visibility has changed
                     seek_all_cameras(scene, current_frame_num, video_fps, ps,
-                                     true);
+                                     true, &zarr_loader, &stimulus_player);
                 }
 
                 if (!window_was_decoding[win_name] && is_visible &&
                     !ps.play_video && !ps.pause_seeked) {
                     // seek if visibility has changed
                     seek_all_cameras(scene, current_frame_num, video_fps, ps,
-                                     true);
+                                     true, &zarr_loader, &stimulus_player);
                     for (auto &[key, value] : window_need_decoding) {
                         value.store(true);
                     }
@@ -2512,14 +2958,14 @@ struct StateOverlay {
                             std::max(0, current_frame_num -
                                             10 * dc_context->seek_interval);
                         seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                         false);
+                                         false, &zarr_loader, &stimulus_player);
                     }
                     ImGui::SameLine(0.0f, spacing);
                     if (ImGui::Button(ICON_FK_STEP_BACKWARD)) {
                         int clamped_frame = std::max(
                             0, current_frame_num - dc_context->seek_interval);
                         seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                         false);
+                                         false, &zarr_loader, &stimulus_player);
                     }
                     ImGui::SameLine(0.0f, spacing);
 
@@ -2536,7 +2982,8 @@ struct StateOverlay {
 
                         if (ImGui::Button(ICON_FK_REPEAT)) {
                             // seek to zero
-                            seek_all_cameras(scene, 0, video_fps, ps, false);
+                            seek_all_cameras(scene, 0, video_fps, ps, false,
+                                             &zarr_loader, &stimulus_player);
                         }
                         ImGui::PopStyleColor(3);
                     } else {
@@ -2574,7 +3021,7 @@ struct StateOverlay {
                             dc_context->total_num_frame,
                             current_frame_num + dc_context->seek_interval);
                         seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                         false);
+                                         false, &zarr_loader, &stimulus_player);
                     }
                     ImGui::SameLine(0.0f, spacing);
                     if (ImGui::Button(ICON_FK_FAST_FORWARD)) {
@@ -2582,7 +3029,7 @@ struct StateOverlay {
                             dc_context->total_num_frame,
                             current_frame_num + 10 * dc_context->seek_interval);
                         seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                         false);
+                                         false, &zarr_loader, &stimulus_player);
                     }
                     ImGui::SameLine();
                     ps.slider_just_changed = ImGui::SliderInt(
@@ -2603,7 +3050,8 @@ struct StateOverlay {
                         // ps.slider_frame_number
                         //           << std::endl;
                         seek_all_cameras(scene, ps.slider_frame_number,
-                                         video_fps, ps, false);
+                                         video_fps, ps, false, &zarr_loader,
+                                         &stimulus_player);
                     }
 
                     ImGui::EndGroup();
@@ -2626,12 +3074,12 @@ struct StateOverlay {
                     int clamped_frame = std::max(
                         0, current_frame_num - 10 * dc_context->seek_interval);
                     seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                     false);
+                                     false, &zarr_loader, &stimulus_player);
                 } else {
                     int clamped_frame = std::max(
                         0, current_frame_num - dc_context->seek_interval);
                     seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                     false);
+                                     false, &zarr_loader, &stimulus_player);
                 }
             }
 
@@ -2641,19 +3089,134 @@ struct StateOverlay {
                         dc_context->total_num_frame,
                         current_frame_num + 10 * dc_context->seek_interval);
                     seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                     false);
+                                     false, &zarr_loader, &stimulus_player);
                 } else {
                     int clamped_frame =
                         std::min(dc_context->total_num_frame,
                                  current_frame_num + dc_context->seek_interval);
                     seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                     false);
+                                     false, &zarr_loader, &stimulus_player);
                 }
             }
 
             for (const auto &[name, flag] : window_need_decoding) {
                 window_was_decoding[name] = flag.load();
             }
+        }
+
+        if (stimulus_player.loaded) {
+            ImGui::SetNextWindowSize(ImVec2(480.0f, 360.0f), ImGuiCond_FirstUseEver);
+            bool stimulus_visible = ImGui::Begin(stimulus_player.window_name.c_str());
+
+            bool decoder_requested = ps.play_video || !ps.pause_seeked;
+            static bool last_decoder_logged = false;
+
+            int target_stimulus_frame = ps.current_stimulus_frame;
+            int effective_target_frame = target_stimulus_frame;
+            if (effective_target_frame < 0) {
+                std::optional<int32_t> first_stim;
+                if (zarr_loaded && zarr_loader.hasStimulusAlignment()) {
+                    auto opt_first = zarr_loader.getFirstStimulusFrameNumber();
+                    if (opt_first) {
+                        first_stim = *opt_first;
+                    }
+                }
+                effective_target_frame = first_stim.value_or(0);
+            }
+            discardStimulusFramesOlderThan(stimulus_player, effective_target_frame);
+
+            bool decoder_active_now = window_need_decoding[stimulus_player.window_name].load();
+
+            if (decoder_requested) {
+                double fps_ratio = (video_fps > 0.0) ? (stimulus_player.fps / video_fps) : 1.0;
+                double frames_ahead = fps_ratio * 3.0 + stimulus_player.fps * 0.10;
+                int stim_threshold = effective_target_frame + static_cast<int>(frames_ahead);
+                int newest_frame = getNewestStimulusFrame(stimulus_player);
+                if (newest_frame >= 0 &&
+                    newest_frame > stim_threshold && decoder_active_now) {
+                    std::cout << "[Stimulus] throttling decode: newest=" << newest_frame
+                              << " threshold=" << stim_threshold << std::endl;
+                    decoder_requested = false;
+                } else if (newest_frame <= stim_threshold && !decoder_active_now) {
+                    decoder_requested = true;
+                }
+            }
+
+            if (decoder_requested != last_decoder_logged) {
+                std::cout << "[Stimulus] decoder_should_run="
+                          << (decoder_requested ? "true" : "false")
+                          << " (play=" << (ps.play_video ? "true" : "false")
+                          << " pause_seeked=" << (ps.pause_seeked ? "true" : "false")
+                          << ")" << std::endl;
+                last_decoder_logged = decoder_requested;
+            }
+            window_need_decoding[stimulus_player.window_name].store(decoder_requested);
+
+            if (stimulus_visible) {
+                bool mapping_available =
+                    zarr_loaded && zarr_loader.hasStimulusAlignment();
+
+                if (mapping_available && target_stimulus_frame >= 0 &&
+                    target_stimulus_frame != stimulus_player.last_displayed_frame) {
+                    int buffer_index =
+                        findStimulusBuffer(stimulus_player, target_stimulus_frame);
+                    if (buffer_index != -1) {
+                        uploadStimulusFrameToTexture(stimulus_player, buffer_index);
+                        stimulus_player.last_displayed_frame = target_stimulus_frame;
+                        std::cout << "[Stimulus] uploaded frame "
+                                  << target_stimulus_frame
+                                  << " (buffer " << buffer_index << ")"
+                                  << std::endl;
+                    } else {
+                        std::cout << "[Stimulus] no buffer available for target "
+                                  << target_stimulus_frame << std::endl;
+                    }
+                }
+
+                ImVec2 avail = ImGui::GetContentRegionAvail();
+                float aspect = (stimulus_player.width > 0 && stimulus_player.height > 0)
+                                   ? static_cast<float>(stimulus_player.height) /
+                                         static_cast<float>(stimulus_player.width)
+                                   : 1.0f;
+                float display_width = avail.x;
+                float display_height = display_width * aspect;
+                if (display_height > avail.y && avail.y > 0.0f) {
+                    display_height = avail.y;
+                    display_width = display_height / std::max(aspect, 1e-3f);
+                }
+                if (display_width <= 0.0f || display_height <= 0.0f) {
+                    display_width = static_cast<float>(stimulus_player.width);
+                    display_height = static_cast<float>(stimulus_player.height);
+                }
+
+                if (stimulus_player.last_displayed_frame >= 0) {
+                    ImGui::Image((ImTextureID)(intptr_t)stimulus_player.texture,
+                                 ImVec2(display_width, display_height));
+                } else {
+                    ImGui::Dummy(ImVec2(display_width, display_height));
+                    ImGui::TextUnformatted("Waiting for stimulus frame...");
+                }
+
+                ImGui::Separator();
+                if (mapping_available && target_stimulus_frame >= 0 &&
+                    stimulus_player.last_displayed_frame != target_stimulus_frame) {
+                    ImGui::TextUnformatted("Awaiting stimulus frame decode...");
+                }
+                if (!mapping_available) {
+                    ImGui::TextUnformatted("Stimulus alignment not available.");
+                } else if (target_stimulus_frame < 0) {
+                    ImGui::Text("Stimulus inactive for camera frame %d", current_frame_num);
+                } else {
+                    ImGui::Text("Camera frame %d -> Stimulus frame %d",
+                                current_frame_num, target_stimulus_frame);
+                }
+                ImGui::Text("Latest decoded stimulus frame: %d",
+                            latest_decoded_frame[stimulus_player.window_name].load());
+                ImGui::Text("Stimulus video: %s", stimulus_player.video_path.c_str());
+                ImGui::Text("Resolution: %u x %u  |  %.2f fps",
+                            stimulus_player.width, stimulus_player.height, stimulus_player.fps);
+            }
+            ImGui::End();
         }
 
         if (plot_keypoints_flag) {
@@ -2886,7 +3449,7 @@ struct StateOverlay {
                 ImGui::Text("Next labeled frame : %d", (*upper_it).first);
                 if (ImGui::Button("Jump to Next Labeled Frame")) {
                     seek_all_cameras(scene, (*upper_it).first, video_fps, ps,
-                                     true);
+                                     true, &zarr_loader, &stimulus_player);
                 }
                 ImGui::Text("Total labeled frames : %zu", keypoints_map.size());
             }
@@ -3081,7 +3644,8 @@ struct StateOverlay {
                                 const int target_frame = display_frames[hovered_event_idx];
                                 if (target_frame >= 0) {
                                     ps.slider_frame_number = target_frame;
-                                    seek_all_cameras(scene, target_frame, video_fps, ps, false);
+                                    seek_all_cameras(scene, target_frame, video_fps, ps, false,
+                                                     &zarr_loader, &stimulus_player);
                                 }
                             }
                         }
@@ -3203,7 +3767,8 @@ struct StateOverlay {
                                                    : evt.stimulus_frame_num;
                             if (target_frame >= 0) {
                                 ps.slider_frame_number = target_frame;
-                                seek_all_cameras(scene, target_frame, video_fps, ps, false);
+                                seek_all_cameras(scene, target_frame, video_fps, ps, false,
+                                                 &zarr_loader, &stimulus_player);
                             }
                         }
                         ImGui::PopID();
@@ -4011,6 +4576,17 @@ struct StateOverlay {
                     }
                 }
                 frame_to_show = std::min(frame_to_show, min_decoded_frame);
+                static int last_logged_display = -1;
+                if (frame_to_show != last_logged_display) {
+                    int stim_latest = latest_decoded_frame[stimulus_player.window_name].load();
+                    bool stim_decode = window_need_decoding[stimulus_player.window_name].load();
+                    std::cout << "[Playback] request frame=" << frame_to_show
+                              << " min_decoded=" << min_decoded_frame
+                              << " stim_latest=" << stim_latest
+                              << " stim_decoder_active=" << (stim_decode ? "true" : "false")
+                              << std::endl;
+                    last_logged_display = frame_to_show;
+                }
 
                 int frame_delta = frame_to_show - ps.to_display_frame_number;
                 if (frame_delta > 0) {
@@ -4039,6 +4615,7 @@ struct StateOverlay {
     }
 
     // Cleanup
+    destroyStimulusPlayback(stimulus_player);
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

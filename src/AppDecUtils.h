@@ -141,7 +141,15 @@ static void createCudaContext(CUcontext* cuContext, int iGpu, unsigned int flags
     char szDeviceName[80];
     ck(cuDeviceGetName(szDeviceName, sizeof(szDeviceName), cuDevice));
     std::cout << "GPU in use: " << szDeviceName << std::endl;
-    ck(cuCtxCreate(cuContext, flags, cuDevice));
+    unsigned int current_flags = 0;
+    int is_active = 0;
+    ck(cuDevicePrimaryCtxGetState(cuDevice, &current_flags, &is_active));
+    if (!is_active) {
+        unsigned int requested_flags = flags ? flags : CU_CTX_SCHED_AUTO;
+        ck(cuDevicePrimaryCtxSetFlags(cuDevice, requested_flags));
+    }
+    ck(cuDevicePrimaryCtxRetain(cuContext, cuDevice));
+    ck(cuCtxSetCurrent(*cuContext));
 }
 
 /**
@@ -168,6 +176,8 @@ static void ShowDecoderCapability()
 
     for (int iGpu = 0; iGpu < nGpu; iGpu++) {
 
+        CUdevice cuDevice = 0;
+        ck(cuDeviceGet(&cuDevice, iGpu));
         CUcontext cuContext = NULL;
         createCudaContext(&cuContext, iGpu, 0);
 
@@ -198,6 +208,7 @@ static void ShowDecoderCapability()
 
         std::cout << std::endl;
 
-        ck(cuCtxDestroy(cuContext));
+        ck(cuCtxSetCurrent(nullptr));
+        ck(cuDevicePrimaryCtxRelease(cuDevice));
     }
 }
