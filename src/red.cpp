@@ -3527,7 +3527,7 @@ struct StateOverlay {
                         }
                     }
 
-                                        std::vector<double> vergence_time_plot;
+                    std::vector<double> vergence_time_plot;
                     std::vector<double> vergence_value_plot;
                     size_t vergence_valid_count = 0;
                     double vergence_sum = 0.0;
@@ -3557,7 +3557,7 @@ struct StateOverlay {
                         }
                     }
 
-auto compute_heading_axis = [&](double& min_out, double& max_out) {
+                    auto compute_heading_axis = [&](double& min_out, double& max_out) {
                         if (heading_y_min == std::numeric_limits<double>::infinity() ||
                             heading_y_max == -std::numeric_limits<double>::infinity()) {
                             min_out = -180.0;
@@ -3755,24 +3755,6 @@ auto compute_heading_axis = [&](double& min_out, double& max_out) {
                             }
 
                             ImPlot::EndPlot();
-                        if (ImPlot::BeginPlot("##vergence_plot")) {
-                            ImPlot::SetupAxes(nullptr, "Vergence (deg)");
-                            if (!vergence_time_plot.empty()) {
-                                ImPlot::SetupAxisLimits(ImAxis_Y1, vergence_axis_min, vergence_axis_max, ImGuiCond_Once);
-                                if (show_vergence) {
-                                    ImVec4 vergence_color = ImVec4(0.85f, 0.2f, 0.7f, 1.0f);
-                                    ImPlot::SetNextLineStyle(vergence_color, 2.0f);
-                                    ImPlot::PlotLine("Vergence",
-                                                     vergence_time_plot.data(),
-                                                     vergence_value_plot.data(),
-                                                     static_cast<int>(vergence_time_plot.size()));
-                                }
-                            } else {
-                                ImGui::TextUnformatted("No vergence data available.");
-                            }
-                            ImPlot::EndPlot();
-                        }
-
                         }
 
                         if (ImPlot::BeginPlot("##distance_plot")) {
@@ -3804,6 +3786,24 @@ auto compute_heading_axis = [&](double& min_out, double& max_out) {
                                 ImPlot::PlotLine("##current_time_distance", current_line_x, current_line_y, 2);
                             }
 
+                            ImPlot::EndPlot();
+                        }
+
+                        if (ImPlot::BeginPlot("##vergence_plot")) {
+                            ImPlot::SetupAxes(nullptr, "Vergence (deg)");
+                            if (!vergence_time_plot.empty()) {
+                                ImPlot::SetupAxisLimits(ImAxis_Y1, vergence_axis_min, vergence_axis_max, ImGuiCond_Once);
+                                if (show_vergence) {
+                                    ImVec4 vergence_color = ImVec4(0.85f, 0.2f, 0.7f, 1.0f);
+                                    ImPlot::SetNextLineStyle(vergence_color, 2.0f);
+                                    ImPlot::PlotLine("Vergence",
+                                                     vergence_time_plot.data(),
+                                                     vergence_value_plot.data(),
+                                                     static_cast<int>(vergence_time_plot.size()));
+                                }
+                            } else {
+                                ImGui::TextUnformatted("No vergence data available.");
+                            }
                             ImPlot::EndPlot();
                         }
 
@@ -3847,7 +3847,6 @@ auto compute_heading_axis = [&](double& min_out, double& max_out) {
                             vergence_max != -std::numeric_limits<double>::infinity()) {
                             ImGui::BulletText("Range: %.2f .. %.2f deg", vergence_min, vergence_max);
                         }
-                    }
                     }
 
                     ImGui::SeparatorText("Heading Statistics");
