@@ -18,9 +18,11 @@
 #include <filesystem>
 #include <limits>
 #include <unordered_map>
+#include <nlohmann/json.hpp>
 #include "h5_loader.h"  // For LoggedBoundingBox structure compatibility
 
 namespace ts = tensorstore;
+using json = nlohmann::json;
 
 enum class ZarrLayoutType {
     kUnknown = 0,
@@ -683,6 +685,9 @@ private:
                            const std::vector<uint8_t>* run_has_offline_flags);
     bool loadMovementCropRun(const ts::kvstore::KvStore& store,
                              const std::string& crop_run_name);
+
+    std::optional<json> readGroupAttrs(const ts::kvstore::KvStore& store,
+                                       const std::string& path) const;
     void finalizeMovementSelection();
     void rebuildChaserStateIndices();
     void rebuildChaserBoundingBoxIndices();

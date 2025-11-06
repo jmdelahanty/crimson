@@ -116,6 +116,8 @@ struct StimulusPlayback {
     std::thread decoder_thread;
     bool resources_initialized = false;
     int last_displayed_frame = -1;
+    bool throttled = false;
+    int throttle_resume_frame = -1;
 };
 
 static StimulusPlayback stimulus_player;
@@ -236,6 +238,8 @@ static void destroyStimulusPlayback(StimulusPlayback &stim) {
     stim.fps = 0.0;
     stim.video_path.clear();
     stim.last_displayed_frame = -1;
+    stim.throttled = false;
+    stim.throttle_resume_frame = -1;
     auto need_it = window_need_decoding.find(stim.window_name);
     if (need_it != window_need_decoding.end()) {
         need_it->second.store(false);
@@ -369,6 +373,8 @@ static bool initializeStimulusPlayback(StimulusPlayback &stim,
                                       &stim.seek, stim.use_cpu_buffer);
     stim.loaded = true;
     stim.last_displayed_frame = -1;
+    stim.throttled = false;
+    stim.throttle_resume_frame = -1;
     std::cout << "[Stimulus] decoder initialized: " << video_path
               << " size=" << stim.width << "x" << stim.height
               << " fps=" << stim.fps << " buffer=" << stim.buffer_size
@@ -3108,7 +3114,8 @@ struct StateOverlay {
             ImGui::SetNextWindowSize(ImVec2(480.0f, 360.0f), ImGuiCond_FirstUseEver);
             bool stimulus_visible = ImGui::Begin(stimulus_player.window_name.c_str());
 
-            bool decoder_requested = ps.play_video || !ps.pause_seeked;
+            bool base_decode_request = ps.play_video || !ps.pause_seeked;
+            bool decoder_requested = base_decode_request;
             static bool last_decoder_logged = false;
 
             int target_stimulus_frame = ps.current_stimulus_frame;
@@ -3127,19 +3134,37 @@ struct StateOverlay {
 
             bool decoder_active_now = window_need_decoding[stimulus_player.window_name].load();
 
-            if (decoder_requested) {
+            if (base_decode_request) {
                 double fps_ratio = (video_fps > 0.0) ? (stimulus_player.fps / video_fps) : 1.0;
-                double frames_ahead = fps_ratio * 3.0 + stimulus_player.fps * 0.10;
-                int stim_threshold = effective_target_frame + static_cast<int>(frames_ahead);
+                double high_headroom = fps_ratio * 6.0 + stimulus_player.fps * 0.20;
+                double low_headroom = fps_ratio * 2.0 + stimulus_player.fps * 0.05;
+                int high_threshold = effective_target_frame + static_cast<int>(high_headroom);
+                int low_threshold = effective_target_frame + static_cast<int>(low_headroom);
                 int newest_frame = getNewestStimulusFrame(stimulus_player);
-                if (newest_frame >= 0 &&
-                    newest_frame > stim_threshold && decoder_active_now) {
+
+                if (decoder_active_now && newest_frame >= 0 &&
+                    newest_frame > high_threshold) {
                     std::cout << "[Stimulus] throttling decode: newest=" << newest_frame
-                              << " threshold=" << stim_threshold << std::endl;
+                              << " high_threshold=" << high_threshold << std::endl;
                     decoder_requested = false;
-                } else if (newest_frame <= stim_threshold && !decoder_active_now) {
-                    decoder_requested = true;
+                    stimulus_player.throttled = true;
+                    stimulus_player.throttle_resume_frame = low_threshold;
+                } else if (!decoder_active_now && stimulus_player.throttled) {
+                    int resume_target = std::max(low_threshold, stimulus_player.throttle_resume_frame);
+                    if (newest_frame <= resume_target) {
+                        std::cout << "[Stimulus] resuming decode: newest=" << newest_frame
+                                  << " resume_target=" << resume_target << std::endl;
+                        decoder_requested = true;
+                        stimulus_player.throttled = false;
+                        stimulus_player.throttle_resume_frame = -1;
+                    } else {
+                        decoder_requested = false;
+                    }
                 }
+            } else {
+                stimulus_player.throttled = false;
+                stimulus_player.throttle_resume_frame = -1;
+                decoder_requested = false;
             }
 
             if (decoder_requested != last_decoder_logged) {

@@ -145,38 +145,22 @@ ts::Result<ts::TensorStore<T, Rank>> openArrayAny(
         return kv_json_or.status();
     }
 
-    auto try_open = [&](const char* driver) {
-        json spec = {
-            {"driver", driver},
-            {"kvstore", kv_json_or.value()},
-            {"path", path}
-        };
-        return ts::Open<T, Rank>(
-                   spec,
-                   ts::OpenMode::open,
-                   ts::ReadWriteMode::read,
-                   context)
-            .result();
+    json spec = {
+        {"driver", "zarr3"},
+        {"kvstore", kv_json_or.value()},
+        {"path", path}
     };
-
-    auto v3_result = try_open("zarr3");
-    if (v3_result.ok()) {
-        return v3_result;
-    }
-    auto v2_result = try_open("zarr");
-    if (v2_result.ok()) {
-        return v2_result;
-    }
-    return v2_result;
+    return ts::Open<T, Rank>(
+               spec,
+               ts::OpenMode::open,
+               ts::ReadWriteMode::read,
+               context)
+        .result();
 }
 
 bool arrayExists(const ts::kvstore::KvStore& store, const std::string& path) {
     auto v3 = ts::kvstore::Read(store, appendPath(path, "zarr.json")).result();
-    if (v3.ok() && v3.value().has_value()) {
-        return true;
-    }
-    auto result = ts::kvstore::Read(store, appendPath(path, ".zarray")).result();
-    return result.ok() && result.value().has_value();
+    return v3.ok() && v3.value().has_value();
 }
 
 #pragma pack(push, 1)
@@ -4520,7 +4504,7 @@ bool ZarrDetectionLoader::loadLegacyMovementData(const ts::kvstore::KvStore& sto
 
     for (const auto& [group_path, category_name] : categories) {
         std::vector<std::string> run_candidates;
-        if (auto group_attrs = readAttrsAny(store, group_path)) {
+        if (auto group_attrs = readGroupAttrs(store, group_path)) {
             const std::string latest = extractLatestRunName(*group_attrs);
             if (!latest.empty()) {
                 run_candidates.push_back(latest);
@@ -4548,10 +4532,11 @@ bool ZarrDetectionLoader::loadLegacyMovementData(const ts::kvstore::KvStore& sto
             }
         };
 
-        if (auto run_attrs = readAttrsAny(store, run_base)) {
+        if (auto run_attrs_opt = readGroupAttrs(store, run_base)) {
+            const json& run_attrs = *run_attrs_opt;
             auto readPixelsPerMm = [&](const char* key) {
-                if (run_attrs->contains(key) && (*run_attrs)[key].is_number()) {
-                    pixels_per_mm = static_cast<float>((*run_attrs)[key].get<double>());
+                if (run_attrs.contains(key) && run_attrs[key].is_number()) {
+                    pixels_per_mm = static_cast<float>(run_attrs[key].get<double>());
                 }
             };
             readPixelsPerMm("pixels_per_mm");
@@ -4559,9 +4544,9 @@ bool ZarrDetectionLoader::loadLegacyMovementData(const ts::kvstore::KvStore& sto
             readPixelsPerMm("pixel_to_mm");
 
             std::string crop_candidate;
-            crop_candidate = ExtractCropRunFromObject(*run_attrs);
-            if (run_attrs->contains("inputs") && (*run_attrs)["inputs"].is_object()) {
-                const auto& inputs = (*run_attrs)["inputs"];
+            crop_candidate = ExtractCropRunFromObject(run_attrs);
+            if (run_attrs.contains("inputs") && run_attrs["inputs"].is_object()) {
+                const auto& inputs = run_attrs["inputs"];
                 std::string from_inputs = ExtractCropRunFromObject(inputs);
                 if (!from_inputs.empty()) {
                     crop_candidate = from_inputs;
@@ -4587,8 +4572,8 @@ bool ZarrDetectionLoader::loadLegacyMovementData(const ts::kvstore::KvStore& sto
 
             const std::vector<std::string> track_keys = {"primary_track", "default_track", "track_id"};
             for (const auto& key : track_keys) {
-                if (run_attrs->contains(key)) {
-                    const auto& value = (*run_attrs)[key];
+                if (run_attrs.contains(key)) {
+                    const auto& value = run_attrs[key];
                     if (value.is_string()) {
                         append_track(value.get<std::string>());
                     } else if (value.is_number_integer()) {
@@ -4725,10 +4710,36 @@ bool ZarrDetectionLoader::loadLegacyMovementData(const ts::kvstore::KvStore& sto
         const std::vector<std::string> frame_names = {"frames", "frame_indices"};
         const std::vector<std::string> time_float_names = {"time_seconds"};
         const std::vector<std::string> timestamp_ns_names = {"timestamp_ns_session"};
-        const std::vector<std::string> smoothed_mm_names = {"smoothed_speed_mm", "smoothed_speed_mm_per_s", "smoothed_speed_mmps"};
-        const std::vector<std::string> smoothed_px_names = {"smoothed_speed_px", "smoothed_speed_px_per_s", "smoothed_speed_pxps"};
-        const std::vector<std::string> instant_mm_names = {"instantaneous_speed_mm", "instantaneous_speed_mm_per_s", "instantaneous_speed_mmps"};
-        const std::vector<std::string> instant_px_names = {"instantaneous_speed_px", "instantaneous_speed_px_per_s", "instantaneous_speed_pxps"};
+        const std::vector<std::string> smoothed_mm_names = {
+            "speed_smoothed_mm",
+            "smoothed_speed_mm",
+            "speed_smoothed_mm_per_s",
+            "smoothed_speed_mm_per_s",
+            "speed_smoothed_mmps",
+            "smoothed_speed_mmps"
+        };
+        const std::vector<std::string> smoothed_px_names = {
+            "speed_smoothed_px",
+            "smoothed_speed_px",
+            "speed_smoothed_px_per_s",
+            "smoothed_speed_px_per_s",
+            "speed_smoothed_pxps",
+            "smoothed_speed_pxps"
+        };
+        const std::vector<std::string> instant_mm_names = {
+            "speed_raw_mm",
+            "speed_filtered_mm",
+            "instantaneous_speed_mm",
+            "instantaneous_speed_mm_per_s",
+            "instantaneous_speed_mmps"
+        };
+        const std::vector<std::string> instant_px_names = {
+            "speed_raw_px",
+            "speed_filtered_px",
+            "instantaneous_speed_px",
+            "instantaneous_speed_px_per_s",
+            "instantaneous_speed_pxps"
+        };
 
         for (const auto& track_id : track_ids) {
             std::string track_base = run_base + "tracks/" + track_id + "/";
@@ -5057,6 +5068,7 @@ bool ZarrDetectionLoader::loadMovementCropRun(const ts::kvstore::KvStore& store,
     data_.crop_data.run_name = normalized;
 
     const std::string crop_base = "crop_runs/" + normalized + "/";
+    std::cout << "  [CropRun] Resolving movement crop run at '" << crop_base << "'" << std::endl;
 
     std::vector<int32_t> crop_frame_indices;
     readInt32Array(store, crop_base + "frame_indices", crop_frame_indices);
@@ -5119,6 +5131,50 @@ bool ZarrDetectionLoader::loadMovementCropRun(const ts::kvstore::KvStore& store,
                   << ", channels=" << data_.crop_data.channels << ")" << std::endl;
     }
     return true;
+}
+
+std::optional<json> ZarrDetectionLoader::readGroupAttrs(
+    const ts::kvstore::KvStore& store,
+    const std::string& path) const {
+    if (auto attrs = readAttrsAny(store, path)) {
+        return attrs;
+    }
+    if (root_path_.empty()) {
+        return std::nullopt;
+    }
+
+    namespace fs = std::filesystem;
+    fs::path json_path = fs::path(root_path_);
+    if (!path.empty()) {
+        fs::path sub(path);
+        json_path /= sub;
+    }
+    if (fs::is_directory(json_path)) {
+        json_path /= "zarr.json";
+    } else if (json_path.filename() != "zarr.json") {
+        json_path /= "zarr.json";
+    }
+
+    if (!fs::exists(json_path)) {
+        return std::nullopt;
+    }
+
+    try {
+        std::ifstream in(json_path);
+        if (!in) {
+            return std::nullopt;
+        }
+        json meta;
+        in >> meta;
+        if (meta.contains("attributes") && meta["attributes"].is_object()) {
+            return meta["attributes"];
+        }
+        return meta;
+    } catch (const std::exception& e) {
+        std::cout << "  [AttrProbe] Failed to parse " << json_path << ": "
+                  << e.what() << std::endl;
+        return std::nullopt;
+    }
 }
 
 void ZarrDetectionLoader::cacheDetectionStage(InterpolationRunData stage,
