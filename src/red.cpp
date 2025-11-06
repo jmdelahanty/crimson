@@ -3481,6 +3481,10 @@ struct StateOverlay {
             ImGui::End();
         }
 
+        static bool s_timeline_scrolling_enabled = false;
+        static float s_timeline_window_half_span_s = 5.0f;
+        static bool s_timeline_scrolling_prev = false;
+
         // Stimulus Event Timeline Window
         if (zarr_loaded) {
             if (ImGui::Begin("Stimulus Event Timeline")) {
@@ -3597,17 +3601,95 @@ struct StateOverlay {
                             default_max_time = std::max(default_max_time, candidate);
                         }
                     }
+                    ImGui::Spacing();
+                    ImGui::Checkbox("Scrolling Window (±s)##stimulus", &s_timeline_scrolling_enabled);
+                    if (s_timeline_scrolling_enabled) {
+                        ImGui::SameLine();
+                        ImGui::SetNextItemWidth(120.0f);
+                        if (ImGui::DragFloat("Half-span##stimulus_window_span",
+                                             &s_timeline_window_half_span_s,
+                                             0.1f,
+                                             0.5f,
+                                             60.0f,
+                                             "%.1f s")) {
+                            s_timeline_window_half_span_s = std::max(0.1f, s_timeline_window_half_span_s);
+                        } else {
+                            s_timeline_window_half_span_s = std::max(0.1f, s_timeline_window_half_span_s);
+                        }
+                    }
 
                     ImVec2 plot_size = ImVec2(ImGui::GetContentRegionAvail().x, 170.0f);
                     if (ImPlot::BeginPlot("##stimulus_timeline_plot", plot_size,
                                           ImPlotFlags_NoLegend | ImPlotFlags_NoMouseText)) {
-                        ImPlot::SetupAxes("Time (s)", nullptr, ImPlotAxisFlags_NoHighlight,
+                        ImPlot::SetupAxes("Time (s)", nullptr,
+                                          ImPlotAxisFlags_NoHighlight,
                                           ImPlotAxisFlags_NoDecorations);
                         ImPlot::SetupAxis(ImAxis_Y1, nullptr,
-                                          ImPlotAxisFlags_NoDecorations | ImPlotAxisFlags_Lock);
-                        ImPlot::SetupAxisLimits(ImAxis_Y1, -0.5, 0.5, ImGuiCond_Always);
-                        if (timeline_signature != cached_timeline_signature) {
-                            ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, default_max_time, ImGuiCond_Always);
+                                          ImPlotAxisFlags_NoDecorations |
+                                              ImPlotAxisFlags_Lock);
+                        ImPlot::SetupAxisLimits(ImAxis_Y1, -0.5, 0.5,
+                                                ImGuiCond_Always);
+
+                        double current_time =
+                            (video_fps > 0.0)
+                                ? static_cast<double>(current_frame_num) / video_fps
+                                : static_cast<double>(current_frame_num);
+
+                        double timeline_min_time = 0.0;
+                        double timeline_max_time = default_max_time;
+                        if (!x_values.empty()) {
+                            auto minmax =
+                                std::minmax_element(x_values.begin(), x_values.end());
+                            timeline_min_time = *minmax.first;
+                            timeline_max_time =
+                                std::max(default_max_time, *minmax.second);
+                        }
+                        if (timeline_max_time <= timeline_min_time) {
+                            timeline_max_time = timeline_min_time + 0.5;
+                        }
+
+                        bool reset_limits =
+                            (!s_timeline_scrolling_enabled &&
+                             s_timeline_scrolling_prev) ||
+                            (timeline_signature != cached_timeline_signature);
+
+                        if (s_timeline_scrolling_enabled && current_time >= 0.0 &&
+                            timeline_max_time > timeline_min_time) {
+                            double half_span =
+                                static_cast<double>(std::max(
+                                    0.1f, s_timeline_window_half_span_s));
+                            double window_min = current_time - half_span;
+                            double window_max = current_time + half_span;
+                            if (!x_values.empty()) {
+                                window_min =
+                                    std::max(window_min, timeline_min_time);
+                                window_max =
+                                    std::min(window_max, timeline_max_time);
+                            } else {
+                                window_min = std::max(window_min, 0.0);
+                                window_max =
+                                    std::min(window_max, timeline_max_time);
+                            }
+                            if (window_max - window_min < 0.1) {
+                                double pad = std::max(0.1, half_span);
+                                window_min = std::max(
+                                    timeline_min_time, current_time - pad);
+                                window_max = std::min(
+                                    timeline_max_time, current_time + pad);
+                                if (window_max <= window_min) {
+                                    window_min = std::max(
+                                        timeline_min_time,
+                                        timeline_max_time - pad);
+                                    window_max = timeline_max_time;
+                                }
+                            }
+                            ImPlot::SetupAxisLimits(ImAxis_X1, window_min,
+                                                    window_max, ImGuiCond_Always);
+                            cached_timeline_signature = timeline_signature;
+                        } else if (reset_limits) {
+                            ImPlot::SetupAxisLimits(ImAxis_X1, timeline_min_time,
+                                                    timeline_max_time,
+                                                    ImGuiCond_Always);
                             cached_timeline_signature = timeline_signature;
                         }
 
@@ -3638,9 +3720,6 @@ struct StateOverlay {
                             }
                         }
 
-                        double current_time = (video_fps > 0.0)
-                                                  ? static_cast<double>(current_frame_num) / video_fps
-                                                  : static_cast<double>(current_frame_num);
                         double current_line_x[2] = {current_time, current_time};
                         double current_line_y[2] = {-1.0, 1.0};
                         ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), 2.0f);
@@ -3960,6 +4039,25 @@ struct StateOverlay {
                     }
                     ImGui::Text("Data points: %zu", time_data.size());
 
+                    ImGui::Checkbox("Scrolling Window (±s)##movement",
+                                    &s_timeline_scrolling_enabled);
+                    if (s_timeline_scrolling_enabled) {
+                        ImGui::SameLine();
+                        ImGui::SetNextItemWidth(140.0f);
+                        if (ImGui::DragFloat("Half-span##movement_window_span",
+                                             &s_timeline_window_half_span_s,
+                                             0.1f,
+                                             0.5f,
+                                             60.0f,
+                                             "%.1f s")) {
+                            s_timeline_window_half_span_s =
+                                std::max(0.1f, s_timeline_window_half_span_s);
+                        } else {
+                            s_timeline_window_half_span_s =
+                                std::max(0.1f, s_timeline_window_half_span_s);
+                        }
+                    }
+
                     ImGui::Checkbox("Show Smoothed Speed", &show_smoothed);
                     ImGui::SameLine();
                     ImGui::Checkbox("Show Instantaneous Speed", &show_instantaneous);
@@ -4241,13 +4339,59 @@ struct StateOverlay {
 
                     double current_time_line = computeCurrentTime();
 
+                    double time_axis_min = time_plot.front();
+                    double time_axis_max = time_plot.back();
+                    if (time_axis_max <= time_axis_min) {
+                        time_axis_max = time_axis_min + 0.5;
+                    }
+                    bool has_time_span = time_axis_max > time_axis_min;
+                    double half_span_seconds = static_cast<double>(
+                        std::max(0.1f, s_timeline_window_half_span_s));
+                    bool use_time_window =
+                        s_timeline_scrolling_enabled && current_time_line >= 0.0 &&
+                        has_time_span;
+                    double window_min = time_axis_min;
+                    double window_max = time_axis_max;
+                    if (use_time_window) {
+                        window_min =
+                            std::max(time_axis_min, current_time_line - half_span_seconds);
+                        window_max =
+                            std::min(time_axis_max, current_time_line + half_span_seconds);
+                        if (window_max - window_min < 0.1) {
+                            double pad = std::max(0.1, half_span_seconds);
+                            window_min =
+                                std::max(time_axis_min, current_time_line - pad);
+                            window_max =
+                                std::min(time_axis_max, current_time_line + pad);
+                            if (window_max <= window_min) {
+                                window_min = std::max(time_axis_min, time_axis_max - pad);
+                                window_max = time_axis_max;
+                            }
+                        }
+                    }
+                    bool reset_time_axis =
+                        (!s_timeline_scrolling_enabled && s_timeline_scrolling_prev);
+
+                    auto apply_time_axis_limits = [&](ImGuiCond fallback_cond) {
+                        if (use_time_window) {
+                            ImPlot::SetupAxisLimits(ImAxis_X1, window_min, window_max,
+                                                    ImGuiCond_Always);
+                        } else if (reset_time_axis) {
+                            ImPlot::SetupAxisLimits(ImAxis_X1, time_axis_min,
+                                                    time_axis_max, ImGuiCond_Always);
+                        } else {
+                            ImPlot::SetupAxisLimits(ImAxis_X1, time_axis_min,
+                                                    time_axis_max, fallback_cond);
+                        }
+                    };
+
                     ImVec2 subplot_size = ImVec2(-1, 920);
                     if (!time_plot.empty() &&
                         ImPlot::BeginSubplots("##movement_plots", 4, 1, subplot_size,
                                               ImPlotSubplotFlags_LinkAllX | ImPlotSubplotFlags_NoTitle)) {
                         if (ImPlot::BeginPlot("##speed_plot")) {
                             ImPlot::SetupAxes(nullptr, "Speed (mm/s)");
-                            ImPlot::SetupAxisLimits(ImAxis_X1, time_plot.front(), time_plot.back(), ImGuiCond_Once);
+                            apply_time_axis_limits(ImGuiCond_Once);
 
                             double max_speed = 0.0;
                             if (show_smoothed && !smoothed_plot.empty()) {
@@ -4289,7 +4433,7 @@ struct StateOverlay {
                         if (ImPlot::BeginPlot("##heading_plot")) {
                             ImPlot::SetupAxes(nullptr, "Heading (deg)");
                             if (!time_plot.empty()) {
-                                ImPlot::SetupAxisLimits(ImAxis_X1, time_plot.front(), time_plot.back(), ImGuiCond_Once);
+                                apply_time_axis_limits(ImGuiCond_Once);
                             }
                             double heading_axis_min;
                             double heading_axis_max;
@@ -4349,9 +4493,7 @@ struct StateOverlay {
 
                         if (ImPlot::BeginPlot("##distance_plot")) {
                             ImPlot::SetupAxes("Time (s)", "Distance (10 mm)");
-                            if (!time_plot.empty()) {
-                                ImPlot::SetupAxisLimits(ImAxis_X1, time_plot.front(), time_plot.back(), ImGuiCond_Once);
-                            }
+                            apply_time_axis_limits(ImGuiCond_Once);
                             double y_max_units = (max_distance_mm > 0.0)
                                                      ? (max_distance_mm * 1.1) / kMmPerPlotUnit
                                                      : 1.0;
@@ -4483,6 +4625,8 @@ struct StateOverlay {
             }
             ImGui::End();
         }
+
+        s_timeline_scrolling_prev = s_timeline_scrolling_enabled;
 
         if (ImGuiFileDialog::Instance()->Display("ChooseKeypointsFolder")) {
             if (ImGuiFileDialog::Instance()->IsOk()) {
