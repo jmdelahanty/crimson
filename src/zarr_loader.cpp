@@ -6872,6 +6872,23 @@ ZarrDetectionLoader::getChaserStatesForFrame(size_t frame_id) const {
         }
     }
 
+#if defined(CRIMSON_CHASER_DEBUG_LOGS)
+    if (frame_id < 360 || frame_id % 3000 == 0) {
+        std::cout << "  [ChaserDebug] Frame " << frame_id << " returning "
+                  << result.size() << " states" << std::endl;
+        for (const auto& state : result) {
+            std::cout << "    idx=" << state.chaser_index
+                      << " cam_frame=" << state.camera_frame_id
+                      << " stim=" << state.stimulus_frame_num
+                      << " chaser=(" << state.chaser_pos_x << "," << state.chaser_pos_y << ")"
+                      << " target=(" << state.target_pos_x << "," << state.target_pos_y << ")"
+                      << " cam=(" << state.chaser_camera_x << "," << state.chaser_camera_y << ")"
+                      << " has_cam=" << (state.has_camera_coords ? "Y" : "N")
+                      << std::endl;
+        }
+    }
+#endif
+
     if (kChaserDebugLoggingEnabled) {
         std::cout << "  [ChaserDebug] Frame " << frame_id << ": "
                   << result.size() << " chaser state(s)" << std::endl;
