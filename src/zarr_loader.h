@@ -59,13 +59,19 @@ struct InterpolationRunData {
     std::string stimulus_created_at;
     int64_t camera_frame_offset = 0;
     std::vector<int32_t> camera_to_metadata_index;
+    std::vector<int32_t> camera_to_metadata_index_corrected;
     std::vector<uint8_t> stimulus_interpolation_mask;   // 1 = original, 0 = interpolated
     std::vector<uint8_t> frame_mask;                    // 1 = interpolated frame
     std::vector<int32_t> frame_metadata_stimulus_frames;
+    std::vector<int32_t> frame_metadata_stimulus_frames_corrected;
     bool frame_metadata_loaded = false;
+    bool frame_metadata_corrected_loaded = false;
     int32_t first_camera_frame_with_stimulus = -1;
     int32_t first_metadata_index_with_stimulus = -1;
     int32_t first_stimulus_frame = -1;
+    int32_t first_camera_frame_with_stimulus_corrected = -1;
+    int32_t first_metadata_index_with_stimulus_corrected = -1;
+    int32_t first_stimulus_frame_corrected = -1;
 
     // Legacy dense layout fallback
     ts::TensorStore<float, 3> bboxes_store;      // [frames, max_dets, 4]
@@ -397,11 +403,18 @@ public:
         return data_.has_interpolation ? data_.latest_interpolation.stimulus_run_name : "";
     }
     bool hasStimulusFrameMapping() const;
+    bool hasCorrectedStimulusFrameMapping() const;
     int64_t getStimulusCameraFrameOffset() const;
-    std::optional<int32_t> getStimulusMetadataIndexForCameraFrame(int32_t camera_frame) const;
-    std::optional<int32_t> getStimulusFrameForCameraFrame(int32_t camera_frame) const;
-    std::optional<int32_t> getFirstCameraFrameWithStimulus() const;
-    std::optional<int32_t> getFirstStimulusFrameNumber() const;
+    std::optional<int32_t> getStimulusMetadataIndexForCameraFrame(
+        int32_t camera_frame,
+        bool prefer_corrected = true) const;
+    std::optional<int32_t> getStimulusFrameForCameraFrame(
+        int32_t camera_frame,
+        bool prefer_corrected = true) const;
+    std::optional<int32_t> getFirstCameraFrameWithStimulus(
+        bool prefer_corrected = true) const;
+    std::optional<int32_t> getFirstStimulusFrameNumber(
+        bool prefer_corrected = true) const;
     
     // Movement analysis accessors
     bool hasMovementData() const {
@@ -716,6 +729,14 @@ private:
         size_t frame_id
     ) const;
     std::string formatStimulusEvent(const ZarrDetectionData::EventLogEntry& entry) const;
+
+    std::optional<int32_t> resolveStimulusMetadataIndex(
+        const std::vector<int32_t>& mapping,
+        int32_t camera_frame) const;
+    std::optional<int32_t> resolveStimulusFrame(
+        const std::vector<int32_t>& mapping,
+        const std::vector<int32_t>& frame_numbers,
+        int32_t camera_frame) const;
 };
 
 // Standalone helper function

@@ -2,9 +2,11 @@
 """
 Inspect the camera->stimulus alignment inside a Palette Zarr archive.
 
-Reports how the `analysis/stimulus_runs/<run>/frame_alignment/camera_to_metadata_index`
-mapping translates into stimulus frames so we can verify the effective playback
-ratio (stimulus frame delta per camera frame delta).
+Reports how either the legacy mapping
+(`analysis/stimulus_runs/<run>/frame_alignment/camera_to_metadata_index`) or the
+corrected mapping (`.../camera_to_metadata_index_corrected`) translates into
+stimulus frames so we can verify the effective playback ratio (stimulus frame
+delta per camera frame delta).
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Iterable, Tuple
+from typing import Tuple
 
 import numpy as np
 import zarr
@@ -50,7 +52,20 @@ def _format_pairs(camera_frames: np.ndarray, stimulus_frames: np.ndarray, limit:
     return "\n".join(lines)
 
 
-def analyze_alignment(store_path: Path, run_name: str | None, sample: int) -> int:
+def _load_mapping_arrays(
+    run_group: zarr.hierarchy.Group, camera_path: str, stim_path: str
+) -> tuple[np.ndarray, np.ndarray]:
+    camera = _load_array(run_group, camera_path)
+    stim = _load_array(run_group, stim_path)
+    return camera, stim
+
+
+def analyze_alignment(
+    store_path: Path,
+    run_name: str | None,
+    sample: int,
+    mapping_mode: str,
+) -> int:
     if not store_path.exists():
         print(f"ERROR: {store_path} does not exist", file=sys.stderr)
         return 2
@@ -94,12 +109,45 @@ def analyze_alignment(store_path: Path, run_name: str | None, sample: int) -> in
     if chosen_attr:
         print(f"  (selected via {chosen_attr} attribute)")
 
-    try:
-        camera_to_metadata = _load_array(run_group, "frame_alignment/camera_to_metadata_index")
-        stimulus_frame_nums = _load_array(run_group, "video_metadata/frame_metadata/stimulus_frame_num")
-    except (KeyError, TypeError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 7
+    mapping_used = "legacy"
+    camera_to_metadata = stimulus_frame_nums = None
+
+    def try_corrected() -> bool:
+        nonlocal camera_to_metadata, stimulus_frame_nums, mapping_used
+        try:
+            camera_to_metadata, stimulus_frame_nums = _load_mapping_arrays(
+                run_group,
+                "frame_alignment/camera_to_metadata_index_corrected",
+                "video_metadata/frame_metadata/stimulus_frame_num_corrected",
+            )
+        except (KeyError, TypeError):
+            return False
+        else:
+            mapping_used = "corrected"
+            return True
+
+    if mapping_mode in {"auto", "corrected"}:
+        if not try_corrected():
+            if mapping_mode == "corrected":
+                print(
+                    "ERROR: corrected mapping arrays are missing from this run.",
+                    file=sys.stderr,
+                )
+                return 7
+
+    if camera_to_metadata is None or stimulus_frame_nums is None:
+        try:
+            camera_to_metadata, stimulus_frame_nums = _load_mapping_arrays(
+                run_group,
+                "frame_alignment/camera_to_metadata_index",
+                "video_metadata/frame_metadata/stimulus_frame_num",
+            )
+        except (KeyError, TypeError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 7
+        mapping_used = "legacy"
+
+    print(f"Mapping variant: {mapping_used}")
 
     if camera_to_metadata.ndim != 1:
         print("ERROR: camera_to_metadata_index is not 1D", file=sys.stderr)
@@ -170,9 +218,15 @@ def main() -> int:
         default=20,
         help="How many camera/stimulus pairs to print (default: 20).",
     )
+    parser.add_argument(
+        "--mapping",
+        choices=("auto", "legacy", "corrected"),
+        default="auto",
+        help="Which mapping to inspect (default: auto, prefer corrected when available).",
+    )
 
     args = parser.parse_args()
-    return analyze_alignment(args.zarr_path, args.run_name, args.sample)
+    return analyze_alignment(args.zarr_path, args.run_name, args.sample, args.mapping)
 
 
 if __name__ == "__main__":

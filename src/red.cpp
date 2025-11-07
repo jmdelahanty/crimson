@@ -967,32 +967,37 @@ int main(int, char **) {
                     }
                 }
 
-                if (zarr_loader.hasStimulusAlignment()) {
-                    ImGui::Separator();
-                    ImGui::Text("Stimulus Alignment:");
-                    if (zarr_loader.hasStimulusFrameMapping()) {
-                        if (ps.current_stimulus_frame >= 0) {
-                            ImGui::Text("  Current stimulus frame: %d", ps.current_stimulus_frame);
-                        } else {
-                            ImGui::Text("  Current stimulus frame: (not mapped)");
-                        }
-                        if (auto metadata_index = zarr_loader.getStimulusMetadataIndexForCameraFrame(current_frame_num)) {
-                            ImGui::Text("  Frame metadata index: %d", *metadata_index);
-                        }
-                        if (auto first_cam = zarr_loader.getFirstCameraFrameWithStimulus()) {
-                            if (auto first_stim = zarr_loader.getFirstStimulusFrameNumber()) {
-                                ImGui::Text("  First mapped camera frame: %d -> Stim %d",
-                                            *first_cam, *first_stim);
+                    if (zarr_loader.hasStimulusAlignment()) {
+                        ImGui::Separator();
+                        ImGui::Text("Stimulus Alignment:");
+                        if (zarr_loader.hasStimulusFrameMapping()) {
+                            ImGui::Text("  Mapping variant: %s",
+                                        zarr_loader.hasCorrectedStimulusFrameMapping()
+                                            ? "corrected"
+                                            : "legacy");
+                            if (ps.current_stimulus_frame >= 0) {
+                                ImGui::Text("  Current stimulus frame: %d", ps.current_stimulus_frame);
                             } else {
-                                ImGui::Text("  First mapped camera frame: %d", *first_cam);
+                                ImGui::Text("  Current stimulus frame: (not mapped)");
                             }
+                            if (auto metadata_index =
+                                    zarr_loader.getStimulusMetadataIndexForCameraFrame(current_frame_num)) {
+                                ImGui::Text("  Frame metadata index: %d", *metadata_index);
+                            }
+                            if (auto first_cam = zarr_loader.getFirstCameraFrameWithStimulus()) {
+                                if (auto first_stim = zarr_loader.getFirstStimulusFrameNumber()) {
+                                    ImGui::Text("  First mapped camera frame: %d -> Stim %d",
+                                                *first_cam, *first_stim);
+                                } else {
+                                    ImGui::Text("  First mapped camera frame: %d", *first_cam);
+                                }
+                            }
+                            ImGui::Text("  Camera frame offset: %lld",
+                                        static_cast<long long>(zarr_loader.getStimulusCameraFrameOffset()));
+                        } else {
+                            ImGui::Text("  Mapping data not available");
                         }
-                        ImGui::Text("  Camera frame offset: %lld",
-                                    static_cast<long long>(zarr_loader.getStimulusCameraFrameOffset()));
-                    } else {
-                        ImGui::Text("  Mapping data not available");
                     }
-                }
 
                 std::vector<LoggedBoundingBox> zarr_boxes;
                 bool frame_is_interpolated = false;
