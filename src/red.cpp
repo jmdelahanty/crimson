@@ -1848,7 +1848,18 @@ int main(int, char **) {
                             // Draw chaser bounding boxes and target positions
                             if (zarr_loaded) {
                                 auto chaser_bboxes = zarr_loader.getChaserBoundingBoxesForFrame(current_frame_num);
-                                auto chaser_states = zarr_loader.getChaserStatesForFrame(current_frame_num);
+                                auto chaser_states =
+                                    zarr_loader.getChaserInterpolatedStatesForCameraFrame(current_frame_num);
+                                if (chaser_states.empty()) {
+                                    if (ps.current_stimulus_frame >= 0 &&
+                                        zarr_loader.hasStimulusFrameMapping()) {
+                                        chaser_states =
+                                            zarr_loader.getChaserStatesForStimulusFrame(ps.current_stimulus_frame);
+                                    }
+                                }
+                                if (chaser_states.empty()) {
+                                    chaser_states = zarr_loader.getChaserStatesForFrame(current_frame_num);
+                                }
 
                                 #if defined(CRIMSON_CHASER_DEBUG_LOGS)
                                 // Debug: Print what we found

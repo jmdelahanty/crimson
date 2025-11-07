@@ -60,12 +60,15 @@ struct InterpolationRunData {
     int64_t camera_frame_offset = 0;
     std::vector<int32_t> camera_to_metadata_index;
     std::vector<int32_t> camera_to_metadata_index_corrected;
+    std::vector<int32_t> camera_to_stimulus_frame_corrected;
+    std::vector<uint8_t> camera_stimulus_frame_interpolated;
     std::vector<uint8_t> stimulus_interpolation_mask;   // 1 = original, 0 = interpolated
     std::vector<uint8_t> frame_mask;                    // 1 = interpolated frame
     std::vector<int32_t> frame_metadata_stimulus_frames;
     std::vector<int32_t> frame_metadata_stimulus_frames_corrected;
     bool frame_metadata_loaded = false;
     bool frame_metadata_corrected_loaded = false;
+    bool has_direct_stimulus_lookup = false;
     int32_t first_camera_frame_with_stimulus = -1;
     int32_t first_metadata_index_with_stimulus = -1;
     int32_t first_stimulus_frame = -1;
@@ -272,6 +275,9 @@ struct ZarrDetectionData {
     std::vector<std::vector<size_t>> chaser_states_by_camera_frame;
     std::vector<std::vector<size_t>> chaser_states_by_stimulus_frame;
     bool has_chaser_states = false;
+    std::vector<ChaserStateRecord> chaser_states_interpolated;
+    std::vector<std::vector<size_t>> chaser_states_interpolated_by_stimulus_frame;
+    bool has_chaser_states_interpolated = false;
 
     struct ChaserCoordinateTransform {
         double texture_width = 0.0;
@@ -552,6 +558,9 @@ public:
     };
     std::vector<ChaserBoundingBox> getChaserBoundingBoxesForFrame(size_t frame_id) const;
     std::vector<ChaserState> getChaserStatesForFrame(size_t frame_id) const;
+    std::vector<ChaserState> getChaserStatesForStimulusFrame(int32_t stimulus_frame) const;
+    std::vector<ChaserState> getChaserInterpolatedStatesForCameraFrame(int32_t camera_frame) const;
+    std::vector<ChaserState> getChaserInterpolatedStatesForStimulusFrame(int32_t stimulus_frame) const;
     
     // Get raw detection data for a frame (for advanced use)
     struct FrameDetections {
@@ -655,6 +664,8 @@ private:
     void loadStimulusEventEnums(const ts::kvstore::KvStore& store);
     bool loadChaserStates(const ts::kvstore::KvStore& store, const std::string& run_base);
     bool loadChaserBoundingBoxes(const ts::kvstore::KvStore& store, const std::string& run_base);
+    bool loadChaserStatesInterpolated(const ts::kvstore::KvStore& store,
+                                      const std::string& run_base);
     bool loadStimulusFrameMetadataMapping(const ts::kvstore::KvStore& store,
                                           const std::string& run_base,
                                           std::vector<int32_t>& stimulus_to_camera);
@@ -704,6 +715,7 @@ private:
     void finalizeMovementSelection();
     void rebuildChaserStateIndices();
     void rebuildChaserBoundingBoxIndices();
+    void rebuildInterpolatedChaserStateIndices();
     void updateChaserCameraFramesFromAlignment();
     void cacheDetectionStage(InterpolationRunData stage,
                              DetectionDataset dataset_type);
@@ -737,6 +749,7 @@ private:
         const std::vector<int32_t>& mapping,
         const std::vector<int32_t>& frame_numbers,
         int32_t camera_frame) const;
+    std::optional<int32_t> resolveDirectStimulusFrame(int32_t camera_frame) const;
 };
 
 // Standalone helper function

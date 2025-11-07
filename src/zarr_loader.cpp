@@ -3244,11 +3244,16 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
     if (!loadChaserBoundingBoxes(store, run_base)) {
         std::cout << "  [ChaserBBox] No tracking bounding boxes for run '" << latest_run << "'" << std::endl;
     }
+    if (!loadChaserStatesInterpolated(store, run_base)) {
+        std::cout << "  [ChaserInterp] No interpolated chaser data for run '" << latest_run << "'" << std::endl;
+    }
 
     std::string stimulus_created_at;
     int64_t camera_frame_offset = 0;
     std::vector<int32_t> camera_to_metadata_index;
     std::vector<uint8_t> metadata_mask;
+    std::vector<int64_t> camera_to_stimulus_frame_corrected64;
+    std::vector<uint8_t> camera_stimulus_frame_interpolated;
 
     if (auto run_attrs = readAttrsAny(store, run_base)) {
         if (run_attrs->contains("created_at_utc") && (*run_attrs)["created_at_utc"].is_string()) {
@@ -3356,6 +3361,17 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
         store,
         run_base + "interpolation_mask",
         metadata_mask
+    );
+
+    bool has_direct_stimulus_lookup = readInt64Array(
+        store,
+        run_base + "frame_alignment/camera_to_stimulus_frame_corrected",
+        camera_to_stimulus_frame_corrected64
+    );
+    bool has_camera_stimulus_interp_mask = readBoolArray(
+        store,
+        run_base + "frame_alignment/camera_stimulus_frame_interpolated",
+        camera_stimulus_frame_interpolated
     );
 
     if (!has_camera_mask || camera_mask.empty()) {
@@ -3515,6 +3531,48 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
     }
     if (has_metadata_mask) {
         stored_mask = metadata_mask;
+    }
+    if (has_direct_stimulus_lookup && !camera_to_stimulus_frame_corrected64.empty()) {
+        interp.camera_to_stimulus_frame_corrected.resize(camera_to_stimulus_frame_corrected64.size());
+        for (size_t i = 0; i < camera_to_stimulus_frame_corrected64.size(); ++i) {
+            interp.camera_to_stimulus_frame_corrected[i] =
+                clampToInt32(camera_to_stimulus_frame_corrected64[i]);
+        }
+        interp.has_direct_stimulus_lookup = true;
+        if (!camera_stimulus_frame_interpolated.empty()) {
+            if (camera_stimulus_frame_interpolated.size() < interp.camera_to_stimulus_frame_corrected.size()) {
+                camera_stimulus_frame_interpolated.resize(interp.camera_to_stimulus_frame_corrected.size(), 0);
+            }
+            interp.camera_stimulus_frame_interpolated = std::move(camera_stimulus_frame_interpolated);
+        } else {
+            interp.camera_stimulus_frame_interpolated.clear();
+        }
+        if (interp.first_camera_frame_with_stimulus_corrected < 0 &&
+            !interp.camera_to_stimulus_frame_corrected.empty()) {
+            for (size_t i = 0; i < interp.camera_to_stimulus_frame_corrected.size(); ++i) {
+                if (interp.camera_to_stimulus_frame_corrected[i] >= 0) {
+                    interp.first_camera_frame_with_stimulus_corrected = static_cast<int32_t>(i);
+                    interp.first_stimulus_frame_corrected = interp.camera_to_stimulus_frame_corrected[i];
+                    break;
+                }
+            }
+        }
+        std::cout << "  Stimulus alignment '" << latest_run
+                  << "' provides direct camera_to_stimulus_frame_corrected array (" 
+                  << interp.camera_to_stimulus_frame_corrected.size() << " entries)"
+                  << std::endl;
+    } else {
+        interp.camera_to_stimulus_frame_corrected.clear();
+        interp.camera_stimulus_frame_interpolated.clear();
+        interp.has_direct_stimulus_lookup = false;
+        if (!has_direct_stimulus_lookup) {
+            std::cout << "  Stimulus run '" << latest_run
+                      << "' missing camera_to_stimulus_frame_corrected array (falling back to metadata mapping)"
+                      << std::endl;
+        } else {
+            std::cout << "  Stimulus run '" << latest_run
+                      << "' camera_to_stimulus_frame_corrected array empty" << std::endl;
+        }
     }
     interp.stimulus_interpolation_mask = std::move(stored_mask);
    interp.has_stimulus_alignment = true;
@@ -4331,6 +4389,182 @@ bool ZarrDetectionLoader::loadChaserStates(const ts::kvstore::KvStore& store,
     return true;
 }
 
+bool ZarrDetectionLoader::loadChaserStatesInterpolated(
+    const ts::kvstore::KvStore& store,
+    const std::string& run_base) {
+
+    const std::string base = run_base + "tracking_data/chaser_states_interpolated/";
+    data_.chaser_states_interpolated.clear();
+    data_.chaser_states_interpolated_by_stimulus_frame.clear();
+    data_.has_chaser_states_interpolated = false;
+
+    auto column_exists = [&](const std::string& name) {
+        if (arrayExists(store, base + name)) {
+            return true;
+        }
+        if (root_path_.empty()) {
+            return false;
+        }
+        namespace fs = std::filesystem;
+        fs::path probe = fs::path(root_path_) / base / name / "zarr.json";
+        return fs::exists(probe);
+    };
+
+    if (!column_exists("stimulus_frame_num")) {
+        return false;
+    }
+
+    auto readInt32Or64Column = [&](const std::vector<std::string>& names,
+                                   std::vector<int32_t>& dest) -> bool {
+        for (const auto& name : names) {
+            if (readInt32Array(store, base + name, dest) && !dest.empty()) {
+                return true;
+            }
+            std::vector<int64_t> tmp64;
+            if (readInt64Array(store, base + name, tmp64) && !tmp64.empty()) {
+                dest.resize(tmp64.size());
+                for (size_t i = 0; i < tmp64.size(); ++i) {
+                    dest[i] = clampToInt32(tmp64[i]);
+                }
+                return true;
+            }
+        }
+        return false;
+    };
+
+    auto resize_or_fill = [](std::vector<int32_t>& vec, size_t count, int32_t fill) {
+        if (vec.empty()) {
+            vec.assign(count, fill);
+        } else if (vec.size() != count) {
+            vec.resize(count, fill);
+        }
+    };
+
+    std::vector<int32_t> stimulus_frames;
+    if (!readInt32Or64Column({"stimulus_frame_num"}, stimulus_frames) ||
+        stimulus_frames.empty()) {
+        return false;
+    }
+    size_t count = stimulus_frames.size();
+
+    std::vector<float> chaser_pos_x;
+    std::vector<float> chaser_pos_y;
+    if (!readFloatArray(store, base + "chaser_pos_x", chaser_pos_x) || chaser_pos_x.size() != count) {
+        return false;
+    }
+    if (!readFloatArray(store, base + "chaser_pos_y", chaser_pos_y) || chaser_pos_y.size() != count) {
+        return false;
+    }
+
+    auto readOptionalFloatColumn = [&](const std::string& name,
+                                       std::vector<float>& out) {
+        if (!readFloatArray(store, base + name, out) || out.size() != count) {
+            out.assign(count, std::numeric_limits<float>::quiet_NaN());
+            return false;
+        }
+        return true;
+    };
+
+    std::vector<float> target_pos_x;
+    std::vector<float> target_pos_y;
+    std::vector<float> chaser_radius_px;
+    std::vector<float> distance_to_target_px;
+    std::vector<float> target_speed_px_per_s;
+
+    readOptionalFloatColumn("target_pos_x", target_pos_x);
+    readOptionalFloatColumn("target_pos_y", target_pos_y);
+    readOptionalFloatColumn("chaser_radius_px", chaser_radius_px);
+    readOptionalFloatColumn("distance_to_target_px", distance_to_target_px);
+    readOptionalFloatColumn("target_speed_px_per_s", target_speed_px_per_s);
+
+    std::vector<int32_t> chaser_indices;
+    std::vector<int32_t> camera_frame_ids;
+    std::vector<int32_t> is_chasing;
+    std::vector<int64_t> timestamp_ns_session;
+
+    readInt32Or64Column({"chaser_index"}, chaser_indices);
+    resize_or_fill(chaser_indices, count, -1);
+
+    readInt32Or64Column({"camera_frame_id", "payload_frame_id"}, camera_frame_ids);
+    resize_or_fill(camera_frame_ids, count, -1);
+
+    readInt32Or64Column({"is_chasing"}, is_chasing);
+    resize_or_fill(is_chasing, count, 0);
+
+    std::vector<int64_t> timestamps64;
+    if (!readInt64Array(store, base + "timestamp_ns_session", timestamps64) ||
+        timestamps64.size() != count) {
+        timestamps64.assign(count, 0);
+    }
+
+    std::vector<uint8_t> texture_space;
+    if (!readBoolArray(store, base + "texture_space", texture_space) ||
+        texture_space.size() != count) {
+        texture_space.assign(count, 1);
+    }
+
+    std::vector<double> chaser_camera_x;
+    std::vector<double> chaser_camera_y;
+    std::vector<double> target_camera_x;
+    std::vector<double> target_camera_y;
+    std::vector<uint8_t> has_camera_coords;
+
+    auto readFloat64Column = [&](const std::string& name,
+                                 std::vector<double>& out) {
+        std::vector<float> tmp;
+        if (readFloatArray(store, base + name, tmp) && tmp.size() == count) {
+            out.assign(tmp.begin(), tmp.end());
+            return true;
+        }
+        out.assign(count, std::numeric_limits<double>::quiet_NaN());
+        return false;
+    };
+
+    readFloat64Column("chaser_camera_x", chaser_camera_x);
+    readFloat64Column("chaser_camera_y", chaser_camera_y);
+    readFloat64Column("target_camera_x", target_camera_x);
+    readFloat64Column("target_camera_y", target_camera_y);
+
+    if (!readBoolArray(store, base + "has_camera_coords", has_camera_coords) ||
+        has_camera_coords.size() != count) {
+        has_camera_coords.assign(count, 0);
+    }
+
+    data_.chaser_states_interpolated.reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+        ZarrDetectionData::ChaserStateRecord record;
+        record.stimulus_frame_num = stimulus_frames[i];
+        record.camera_frame_id = camera_frame_ids[i];
+        record.chaser_index = chaser_indices[i];
+        record.chaser_pos_x = chaser_pos_x[i];
+        record.chaser_pos_y = chaser_pos_y[i];
+        record.target_pos_x = target_pos_x[i];
+        record.target_pos_y = target_pos_y[i];
+        record.chaser_radius_px = chaser_radius_px[i];
+        record.distance_to_target_px = distance_to_target_px[i];
+        record.target_speed_px_per_s = target_speed_px_per_s[i];
+        record.timestamp_ns_session = timestamps64[i];
+        record.is_chasing = static_cast<uint8_t>(is_chasing[i] != 0);
+        record.texture_space = texture_space[i] != 0;
+        record.chaser_camera_x = chaser_camera_x[i];
+        record.chaser_camera_y = chaser_camera_y[i];
+        record.target_camera_x = target_camera_x[i];
+        record.target_camera_y = target_camera_y[i];
+        record.has_camera_coords = has_camera_coords[i] != 0;
+        data_.chaser_states_interpolated.push_back(record);
+    }
+
+    rebuildInterpolatedChaserStateIndices();
+    data_.has_chaser_states_interpolated = !data_.chaser_states_interpolated.empty();
+
+    if (data_.has_chaser_states_interpolated) {
+        std::cout << "  [ChaserInterp] Loaded " << data_.chaser_states_interpolated.size()
+                  << " interpolated chaser records" << std::endl;
+    }
+
+    return data_.has_chaser_states_interpolated;
+}
+
 void ZarrDetectionLoader::rebuildChaserStateIndices() {
     data_.chaser_states_by_camera_frame.clear();
     data_.chaser_states_by_stimulus_frame.clear();
@@ -4376,6 +4610,36 @@ void ZarrDetectionLoader::rebuildChaserStateIndices() {
             }
             data_.chaser_states_by_stimulus_frame[stim_index].push_back(idx);
         }
+    }
+}
+
+void ZarrDetectionLoader::rebuildInterpolatedChaserStateIndices() {
+    data_.chaser_states_interpolated_by_stimulus_frame.clear();
+    if (data_.chaser_states_interpolated.empty()) {
+        return;
+    }
+
+    int32_t max_stimulus_frame = -1;
+    for (const auto& record : data_.chaser_states_interpolated) {
+        if (record.stimulus_frame_num >= 0) {
+            max_stimulus_frame = std::max(max_stimulus_frame, record.stimulus_frame_num);
+        }
+    }
+
+    if (max_stimulus_frame >= 0) {
+        data_.chaser_states_interpolated_by_stimulus_frame.resize(static_cast<size_t>(max_stimulus_frame) + 1);
+    }
+
+    for (size_t idx = 0; idx < data_.chaser_states_interpolated.size(); ++idx) {
+        const auto& record = data_.chaser_states_interpolated[idx];
+        if (record.stimulus_frame_num < 0) {
+            continue;
+        }
+        size_t stim_index = static_cast<size_t>(record.stimulus_frame_num);
+        if (stim_index >= data_.chaser_states_interpolated_by_stimulus_frame.size()) {
+            data_.chaser_states_interpolated_by_stimulus_frame.resize(stim_index + 1);
+        }
+        data_.chaser_states_interpolated_by_stimulus_frame[stim_index].push_back(idx);
     }
 }
 
@@ -6735,7 +6999,8 @@ bool ZarrDetectionLoader::hasStimulusFrameMapping() const {
         return false;
     }
     const auto& interp = data_.latest_interpolation;
-    return !interp.camera_to_metadata_index_corrected.empty() ||
+    return interp.has_direct_stimulus_lookup ||
+           !interp.camera_to_metadata_index_corrected.empty() ||
            !interp.camera_to_metadata_index.empty();
 }
 
@@ -6744,6 +7009,10 @@ bool ZarrDetectionLoader::hasCorrectedStimulusFrameMapping() const {
         return false;
     }
     const auto& interp = data_.latest_interpolation;
+    if (interp.has_direct_stimulus_lookup &&
+        !interp.camera_to_stimulus_frame_corrected.empty()) {
+        return true;
+    }
     return interp.frame_metadata_corrected_loaded &&
            !interp.camera_to_metadata_index_corrected.empty() &&
            !interp.frame_metadata_stimulus_frames_corrected.empty();
@@ -6792,6 +7061,24 @@ std::optional<int32_t> ZarrDetectionLoader::resolveStimulusFrame(
     return stimulus_frame;
 }
 
+std::optional<int32_t> ZarrDetectionLoader::resolveDirectStimulusFrame(
+    int32_t camera_frame) const {
+    const auto& interp = data_.latest_interpolation;
+    if (!interp.has_direct_stimulus_lookup || camera_frame < 0) {
+        return std::nullopt;
+    }
+    const auto& direct = interp.camera_to_stimulus_frame_corrected;
+    size_t index = static_cast<size_t>(camera_frame);
+    if (index >= direct.size()) {
+        return std::nullopt;
+    }
+    int32_t stimulus_frame = direct[index];
+    if (stimulus_frame < 0) {
+        return std::nullopt;
+    }
+    return stimulus_frame;
+}
+
 std::optional<int32_t>
 ZarrDetectionLoader::getStimulusMetadataIndexForCameraFrame(int32_t camera_frame,
                                                             bool prefer_corrected) const {
@@ -6813,6 +7100,11 @@ std::optional<int32_t>
 ZarrDetectionLoader::getStimulusFrameForCameraFrame(int32_t camera_frame,
                                                     bool prefer_corrected) const {
     const auto& interp = data_.latest_interpolation;
+    if (prefer_corrected) {
+        if (auto direct = resolveDirectStimulusFrame(camera_frame)) {
+            return direct;
+        }
+    }
     if (prefer_corrected) {
         if (interp.frame_metadata_corrected_loaded) {
             if (auto corrected =
@@ -6837,6 +7129,17 @@ std::optional<int32_t> ZarrDetectionLoader::getFirstCameraFrameWithStimulus(
         return std::nullopt;
     }
     const auto& interp = data_.latest_interpolation;
+    if (prefer_corrected && interp.has_direct_stimulus_lookup) {
+        if (interp.first_camera_frame_with_stimulus_corrected >= 0) {
+            return interp.first_camera_frame_with_stimulus_corrected;
+        }
+        const auto& direct = interp.camera_to_stimulus_frame_corrected;
+        for (size_t i = 0; i < direct.size(); ++i) {
+            if (direct[i] >= 0) {
+                return static_cast<int32_t>(i);
+            }
+        }
+    }
     auto find_first = [](const std::vector<int32_t>& mapping,
                          int32_t cached) -> std::optional<int32_t> {
         if (mapping.empty()) {
@@ -6866,6 +7169,17 @@ std::optional<int32_t> ZarrDetectionLoader::getFirstCameraFrameWithStimulus(
 std::optional<int32_t> ZarrDetectionLoader::getFirstStimulusFrameNumber(
     bool prefer_corrected) const {
     const auto& interp = data_.latest_interpolation;
+    if (prefer_corrected && interp.has_direct_stimulus_lookup) {
+        if (interp.first_stimulus_frame_corrected >= 0) {
+            return interp.first_stimulus_frame_corrected;
+        }
+        const auto& direct = interp.camera_to_stimulus_frame_corrected;
+        for (int32_t value : direct) {
+            if (value >= 0) {
+                return value;
+            }
+        }
+    }
     auto resolve_first = [](const std::vector<int32_t>& frame_numbers,
                             int32_t cached_frame,
                             int32_t cached_meta,
@@ -7084,6 +7398,140 @@ ZarrDetectionLoader::getChaserStatesForFrame(size_t frame_id) const {
         }
     }
 
+    return result;
+}
+
+std::vector<ZarrDetectionLoader::ChaserState>
+ZarrDetectionLoader::getChaserStatesForStimulusFrame(int32_t stimulus_frame) const {
+    std::vector<ChaserState> result;
+    if (!data_.has_chaser_states || stimulus_frame < 0) {
+        return result;
+    }
+    size_t stim_index = static_cast<size_t>(stimulus_frame);
+    if (stim_index >= data_.chaser_states_by_stimulus_frame.size()) {
+        return result;
+    }
+
+    std::unordered_map<int32_t, size_t> latest_by_index;
+    for (size_t idx : data_.chaser_states_by_stimulus_frame[stim_index]) {
+        if (idx >= data_.chaser_states.size()) {
+            continue;
+        }
+        const auto& src = data_.chaser_states[idx];
+        ChaserState candidate;
+        candidate.stimulus_frame_num = src.stimulus_frame_num;
+        candidate.camera_frame_id = src.camera_frame_id;
+        candidate.chaser_index = src.chaser_index;
+        candidate.chaser_pos_x = src.chaser_pos_x;
+        candidate.chaser_pos_y = src.chaser_pos_y;
+        candidate.target_pos_x = src.target_pos_x;
+        candidate.target_pos_y = src.target_pos_y;
+        candidate.chaser_radius_px = src.chaser_radius_px;
+        candidate.distance_to_target_px = src.distance_to_target_px;
+        candidate.target_speed_px_per_s = src.target_speed_px_per_s;
+        candidate.is_chasing = src.is_chasing != 0;
+        candidate.timestamp_ns_session = src.timestamp_ns_session;
+        candidate.texture_space = src.texture_space;
+        candidate.chaser_camera_x = src.chaser_camera_x;
+        candidate.chaser_camera_y = src.chaser_camera_y;
+        candidate.target_camera_x = src.target_camera_x;
+        candidate.target_camera_y = src.target_camera_y;
+        candidate.has_camera_coords = src.has_camera_coords;
+
+        int32_t key = candidate.chaser_index;
+        auto it = latest_by_index.find(key);
+        bool keep = true;
+        if (it != latest_by_index.end()) {
+            auto& existing = result[it->second];
+            if (candidate.stimulus_frame_num < existing.stimulus_frame_num) {
+                keep = false;
+            } else if (candidate.stimulus_frame_num == existing.stimulus_frame_num &&
+                       candidate.timestamp_ns_session <= existing.timestamp_ns_session) {
+                keep = false;
+            }
+            if (keep) {
+                existing = candidate;
+            }
+        } else if (keep) {
+            latest_by_index[key] = result.size();
+            result.push_back(candidate);
+        }
+    }
+    return result;
+}
+
+std::vector<ZarrDetectionLoader::ChaserState>
+ZarrDetectionLoader::getChaserInterpolatedStatesForCameraFrame(int32_t camera_frame) const {
+    if (!data_.has_chaser_states_interpolated) {
+        return {};
+    }
+    auto stim = resolveDirectStimulusFrame(camera_frame);
+    if (!stim) {
+        return {};
+    }
+    return getChaserInterpolatedStatesForStimulusFrame(*stim);
+}
+
+std::vector<ZarrDetectionLoader::ChaserState>
+ZarrDetectionLoader::getChaserInterpolatedStatesForStimulusFrame(int32_t stimulus_frame) const {
+    std::vector<ChaserState> result;
+    if (!data_.has_chaser_states_interpolated || stimulus_frame < 0) {
+        return result;
+    }
+    size_t stim_index = static_cast<size_t>(stimulus_frame);
+    if (stim_index >= data_.chaser_states_interpolated_by_stimulus_frame.size()) {
+        return result;
+    }
+    const auto& entries = data_.chaser_states_interpolated_by_stimulus_frame[stim_index];
+    if (entries.empty()) {
+        return result;
+    }
+
+    std::unordered_map<int32_t, size_t> latest_by_index;
+    for (size_t idx : entries) {
+        if (idx >= data_.chaser_states_interpolated.size()) {
+            continue;
+        }
+        const auto& src = data_.chaser_states_interpolated[idx];
+        ChaserState candidate;
+        candidate.stimulus_frame_num = src.stimulus_frame_num;
+        candidate.camera_frame_id = src.camera_frame_id;
+        candidate.chaser_index = src.chaser_index;
+        candidate.chaser_pos_x = src.chaser_pos_x;
+        candidate.chaser_pos_y = src.chaser_pos_y;
+        candidate.target_pos_x = src.target_pos_x;
+        candidate.target_pos_y = src.target_pos_y;
+        candidate.chaser_radius_px = src.chaser_radius_px;
+        candidate.distance_to_target_px = src.distance_to_target_px;
+        candidate.target_speed_px_per_s = src.target_speed_px_per_s;
+        candidate.is_chasing = src.is_chasing != 0;
+        candidate.timestamp_ns_session = src.timestamp_ns_session;
+        candidate.texture_space = src.texture_space;
+        candidate.chaser_camera_x = src.chaser_camera_x;
+        candidate.chaser_camera_y = src.chaser_camera_y;
+        candidate.target_camera_x = src.target_camera_x;
+        candidate.target_camera_y = src.target_camera_y;
+        candidate.has_camera_coords = src.has_camera_coords;
+
+        int32_t key = candidate.chaser_index;
+        auto it = latest_by_index.find(key);
+        bool keep = true;
+        if (it != latest_by_index.end()) {
+            auto& existing = result[it->second];
+            if (candidate.timestamp_ns_session < existing.timestamp_ns_session) {
+                keep = false;
+            } else if (candidate.timestamp_ns_session == existing.timestamp_ns_session &&
+                       candidate.camera_frame_id <= existing.camera_frame_id) {
+                keep = false;
+            }
+            if (keep) {
+                existing = candidate;
+            }
+        } else if (keep) {
+            latest_by_index[key] = result.size();
+            result.push_back(candidate);
+        }
+    }
     return result;
 }
 
