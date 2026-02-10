@@ -630,6 +630,19 @@ public:
                !data_.bbox_norm_coords.empty() ||
                data_.bboxes_store.valid();
     }
+
+    bool writeManualRefinedDetections(
+        const std::vector<int32_t>& frame_indices,
+        const std::vector<std::array<double, 4>>& bbox_norm_coords,
+        const std::vector<float>& scores,
+        const std::vector<int32_t>& class_ids,
+        const std::vector<int32_t>& frame_counts,
+        const std::vector<int8_t>& detection_source,
+        const std::vector<std::string>& reason_labels,
+        const std::string& manual_group,
+        const std::string& source_variant,
+        std::string& error_message,
+        std::string* resolved_refined_run = nullptr);
     
     // Static helper to find zarr files in a directory
     static std::optional<std::string> findZarrDetectionFile(const std::string& directory);

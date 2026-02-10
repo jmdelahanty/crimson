@@ -301,6 +301,10 @@ struct ZarrBBoxEditState {
     bool allow_edit_while_playing = false;
     std::unordered_map<int, std::vector<LoggedBoundingBox>> frame_overrides;
     std::unordered_map<int, std::vector<uint8_t>> frame_added_flags;
+    std::unordered_map<int, std::vector<uint8_t>> frame_manual_flags;
+    std::unordered_map<int, std::vector<int32_t>> frame_source_indices;
+    std::unordered_map<int, std::vector<uint8_t>> frame_source_detection_source;
+    std::unordered_map<int, std::vector<std::string>> frame_source_reason;
     std::unordered_set<int> dirty_frames;
     int selected_frame = -1;
     int selected_box = -1;
@@ -337,6 +341,10 @@ struct ZarrBBoxEditState {
     void clearFrameEdits(int frame) {
         frame_overrides.erase(frame);
         frame_added_flags.erase(frame);
+        frame_manual_flags.erase(frame);
+        frame_source_indices.erase(frame);
+        frame_source_detection_source.erase(frame);
+        frame_source_reason.erase(frame);
         dirty_frames.erase(frame);
         if (selected_frame == frame) {
             clearSelection();
@@ -349,6 +357,10 @@ struct ZarrBBoxEditState {
     void clearAll() {
         frame_overrides.clear();
         frame_added_flags.clear();
+        frame_manual_flags.clear();
+        frame_source_indices.clear();
+        frame_source_detection_source.clear();
+        frame_source_reason.clear();
         dirty_frames.clear();
         clearSelection();
         cancelDraw();
@@ -379,19 +391,35 @@ struct ZarrBBoxEditState {
 
     std::vector<LoggedBoundingBox>& ensureFrameOverride(
         int frame,
-        const std::vector<LoggedBoundingBox>& loaded_boxes) {
+        const std::vector<LoggedBoundingBox>& loaded_boxes,
+        const ZarrDetectionLoader::FrameDetections* loaded_details = nullptr) {
         auto [it, inserted] = frame_overrides.emplace(frame, std::vector<LoggedBoundingBox>{});
         if (inserted) {
             it->second = loaded_boxes;
             frame_added_flags[frame] = std::vector<uint8_t>(loaded_boxes.size(), 0);
-        } else {
-            auto& flags = frame_added_flags[frame];
-            if (flags.size() < it->second.size()) {
-                flags.resize(it->second.size(), 0);
-            } else if (flags.size() > it->second.size()) {
-                flags.resize(it->second.size());
+            frame_manual_flags[frame] = std::vector<uint8_t>(loaded_boxes.size(), 0);
+            auto& source_indices = frame_source_indices[frame];
+            auto& source_detection_source = frame_source_detection_source[frame];
+            auto& source_reason = frame_source_reason[frame];
+            source_indices.assign(loaded_boxes.size(), -1);
+            source_detection_source.assign(loaded_boxes.size(), 0);
+            source_reason.assign(loaded_boxes.size(), std::string{});
+            for (size_t i = 0; i < loaded_boxes.size(); ++i) {
+                source_indices[i] = static_cast<int32_t>(i);
+                if (loaded_details) {
+                    if (i < loaded_details->detection_source.size()) {
+                        source_detection_source[i] =
+                            loaded_details->detection_source[i];
+                    }
+                    if (i < loaded_details->detection_reason.size()) {
+                        source_reason[i] = loaded_details->detection_reason[i];
+                    }
+                }
             }
         }
+        ensureAddedFlags(frame, it->second.size());
+        ensureManualFlags(frame, it->second.size());
+        ensureSourceMetadata(frame, it->second.size());
         return it->second;
     }
 
@@ -405,12 +433,57 @@ struct ZarrBBoxEditState {
         return flags;
     }
 
+    std::vector<uint8_t>& ensureManualFlags(int frame, size_t box_count) {
+        auto& flags = frame_manual_flags[frame];
+        if (flags.size() < box_count) {
+            flags.resize(box_count, 0);
+        } else if (flags.size() > box_count) {
+            flags.resize(box_count);
+        }
+        return flags;
+    }
+
+    void ensureSourceMetadata(int frame, size_t box_count) {
+        auto& source_indices = frame_source_indices[frame];
+        auto& source_detection_source = frame_source_detection_source[frame];
+        auto& source_reason = frame_source_reason[frame];
+        if (source_indices.size() < box_count) {
+            source_indices.resize(box_count, -1);
+        } else if (source_indices.size() > box_count) {
+            source_indices.resize(box_count);
+        }
+        if (source_detection_source.size() < box_count) {
+            source_detection_source.resize(box_count, 0);
+        } else if (source_detection_source.size() > box_count) {
+            source_detection_source.resize(box_count);
+        }
+        if (source_reason.size() < box_count) {
+            source_reason.resize(box_count);
+        } else if (source_reason.size() > box_count) {
+            source_reason.resize(box_count);
+        }
+    }
+
     bool isAddedBox(int frame, int box_index) const {
         if (box_index < 0) {
             return false;
         }
         auto it = frame_added_flags.find(frame);
         if (it == frame_added_flags.end()) {
+            return false;
+        }
+        if (static_cast<size_t>(box_index) >= it->second.size()) {
+            return false;
+        }
+        return it->second[static_cast<size_t>(box_index)] != 0;
+    }
+
+    bool isManualBox(int frame, int box_index) const {
+        if (box_index < 0) {
+            return false;
+        }
+        auto it = frame_manual_flags.find(frame);
+        if (it == frame_manual_flags.end()) {
             return false;
         }
         if (static_cast<size_t>(box_index) >= it->second.size()) {
@@ -1476,9 +1549,30 @@ int main(int argc, char **argv) {
     ReviewFrameCache review_frame_cache;
     std::string review_frame_status;
     std::string decode_debug_status;
+    std::string bbox_payload_status;
     std::mt19937 debug_rng(
         static_cast<uint32_t>(
             std::chrono::high_resolution_clock::now().time_since_epoch().count()));
+
+    struct ManualDetectPayloadPreview {
+        size_t total_frames = 0;
+        size_t total_detections = 0;
+        size_t clean_rows = 0;
+        size_t interpolated_rows = 0;
+        size_t manual_rows = 0;
+        bool valid = false;
+        std::string error;
+        std::vector<int32_t> frame_indices;
+        std::vector<std::array<double, 4>> bbox_norm_coords;
+        std::vector<float> scores;
+        std::vector<int32_t> class_ids;
+        std::vector<int32_t> frame_counts;
+        std::vector<int32_t> n_detections;
+        std::vector<int32_t> frame_mapping;
+        std::vector<int8_t> detection_source;
+        std::vector<std::string> reason;
+    };
+    std::optional<ManualDetectPayloadPreview> manual_payload_preview;
 
     auto sanitizePathComponent = [](std::string value) -> std::string {
         if (value.empty()) {
@@ -1495,6 +1589,232 @@ int main(int argc, char **argv) {
             }
         }
         return value;
+    };
+
+    auto buildManualDetectPayloadPreview = [&]() -> ManualDetectPayloadPreview {
+        ManualDetectPayloadPreview preview;
+        if (!zarr_loaded || !zarr_loader.hasDetectionData()) {
+            preview.error = "No active Zarr detection dataset.";
+            return preview;
+        }
+        preview.total_frames = zarr_loader.getTotalFrames();
+        if (preview.total_frames == 0) {
+            preview.error = "Active dataset has zero frames.";
+            return preview;
+        }
+
+        int image_width = zarr_loader.getImageWidth();
+        int image_height = zarr_loader.getImageHeight();
+        if (image_width <= 0 || image_height <= 0) {
+            if (scene->num_cams > 0) {
+                image_width = static_cast<int>(scene->image_width[0]);
+                image_height = static_cast<int>(scene->image_height[0]);
+            }
+        }
+        if (image_width <= 0 || image_height <= 0) {
+            preview.error = "Could not resolve image dimensions for bbox normalization.";
+            return preview;
+        }
+
+        auto toNormalizedCxCyWh = [&](float x_min,
+                                      float y_min,
+                                      float width,
+                                      float height) -> std::array<double, 4> {
+            const double max_w = static_cast<double>(image_width);
+            const double max_h = static_cast<double>(image_height);
+            const double clamped_x_min =
+                std::clamp(static_cast<double>(x_min), 0.0, max_w);
+            const double clamped_y_min =
+                std::clamp(static_cast<double>(y_min), 0.0, max_h);
+            const double clamped_width = std::clamp(
+                static_cast<double>(width), 0.0, std::max(0.0, max_w - clamped_x_min));
+            const double clamped_height = std::clamp(
+                static_cast<double>(height), 0.0, std::max(0.0, max_h - clamped_y_min));
+            const double cx = (clamped_x_min + 0.5 * clamped_width) / max_w;
+            const double cy = (clamped_y_min + 0.5 * clamped_height) / max_h;
+            const double w = clamped_width / max_w;
+            const double h = clamped_height / max_h;
+            return {
+                std::clamp(cx, 0.0, 1.0),
+                std::clamp(cy, 0.0, 1.0),
+                std::clamp(w, 0.0, 1.0),
+                std::clamp(h, 0.0, 1.0)};
+        };
+
+        auto resolveReasonAndSource = [&](bool force_manual,
+                                          uint8_t source_flag,
+                                          const std::string& source_reason)
+            -> std::pair<int8_t, std::string> {
+            if (force_manual) {
+                return {0, "manual"};
+            }
+            const std::string lowered = ToLowerCopy(source_reason);
+            if (!lowered.empty()) {
+                if (lowered == "manual" ||
+                    lowered.find("manual") != std::string::npos) {
+                    return {0, "manual"};
+                }
+                if (lowered == "interpolated" ||
+                    lowered.find("interp") != std::string::npos) {
+                    return {1, "interpolated"};
+                }
+                if (lowered == "clean") {
+                    return {0, "clean"};
+                }
+            }
+            return {source_flag != 0 ? 1 : 0, source_flag != 0 ? "interpolated" : "clean"};
+        };
+
+        auto countReason = [&](const std::string& reason) {
+            if (reason == "manual") {
+                ++preview.manual_rows;
+            } else if (reason == "interpolated") {
+                ++preview.interpolated_rows;
+            } else {
+                ++preview.clean_rows;
+            }
+        };
+
+        preview.frame_counts.reserve(preview.total_frames);
+        for (size_t frame_id = 0; frame_id < preview.total_frames; ++frame_id) {
+            int32_t frame_count = 0;
+            const bool has_override =
+                g_zarr_bbox_edit_state.hasFrameOverride(static_cast<int>(frame_id));
+            auto base_detections = zarr_loader.getRawDetections(frame_id, false, false);
+
+            if (!has_override) {
+                for (size_t det_idx = 0; det_idx < base_detections.boxes.size(); ++det_idx) {
+                    const auto& box = base_detections.boxes[det_idx];
+                    const float x_min = box[0];
+                    const float y_min = box[1];
+                    const float width = std::max(0.0f, box[2] - box[0]);
+                    const float height = std::max(0.0f, box[3] - box[1]);
+
+                    preview.frame_indices.push_back(static_cast<int32_t>(frame_id));
+                    preview.bbox_norm_coords.push_back(
+                        toNormalizedCxCyWh(x_min, y_min, width, height));
+                    preview.scores.push_back(
+                        det_idx < base_detections.scores.size()
+                            ? base_detections.scores[det_idx]
+                            : 1.0f);
+                    preview.class_ids.push_back(
+                        det_idx < base_detections.class_ids.size()
+                            ? base_detections.class_ids[det_idx]
+                            : 0);
+                    const uint8_t source_flag =
+                        det_idx < base_detections.detection_source.size()
+                            ? base_detections.detection_source[det_idx]
+                            : 0;
+                    const std::string source_reason =
+                        det_idx < base_detections.detection_reason.size()
+                            ? base_detections.detection_reason[det_idx]
+                            : std::string{};
+                    auto [resolved_source, resolved_reason] =
+                        resolveReasonAndSource(false, source_flag, source_reason);
+                    preview.detection_source.push_back(resolved_source);
+                    preview.reason.push_back(resolved_reason);
+                    countReason(resolved_reason);
+                    ++frame_count;
+                }
+            } else {
+                auto override_it =
+                    g_zarr_bbox_edit_state.frame_overrides.find(static_cast<int>(frame_id));
+                if (override_it == g_zarr_bbox_edit_state.frame_overrides.end()) {
+                    preview.error = "Dirty frame override state is inconsistent.";
+                    return preview;
+                }
+                const auto& boxes = override_it->second;
+                const auto* added_flags = [&]() -> const std::vector<uint8_t>* {
+                    auto it = g_zarr_bbox_edit_state.frame_added_flags.find(
+                        static_cast<int>(frame_id));
+                    return (it != g_zarr_bbox_edit_state.frame_added_flags.end())
+                               ? &it->second
+                               : nullptr;
+                }();
+                const auto* manual_flags = [&]() -> const std::vector<uint8_t>* {
+                    auto it = g_zarr_bbox_edit_state.frame_manual_flags.find(
+                        static_cast<int>(frame_id));
+                    return (it != g_zarr_bbox_edit_state.frame_manual_flags.end())
+                               ? &it->second
+                               : nullptr;
+                }();
+                const auto* source_detection = [&]() -> const std::vector<uint8_t>* {
+                    auto it = g_zarr_bbox_edit_state.frame_source_detection_source.find(
+                        static_cast<int>(frame_id));
+                    return (it != g_zarr_bbox_edit_state.frame_source_detection_source.end())
+                               ? &it->second
+                               : nullptr;
+                }();
+                const auto* source_reason = [&]() -> const std::vector<std::string>* {
+                    auto it = g_zarr_bbox_edit_state.frame_source_reason.find(
+                        static_cast<int>(frame_id));
+                    return (it != g_zarr_bbox_edit_state.frame_source_reason.end())
+                               ? &it->second
+                               : nullptr;
+                }();
+
+                for (size_t box_idx = 0; box_idx < boxes.size(); ++box_idx) {
+                    const auto& box = boxes[box_idx];
+                    preview.frame_indices.push_back(static_cast<int32_t>(frame_id));
+                    preview.bbox_norm_coords.push_back(toNormalizedCxCyWh(
+                        box.x_min, box.y_min, box.width, box.height));
+                    preview.scores.push_back(
+                        std::isfinite(box.confidence) ? box.confidence : 1.0f);
+                    preview.class_ids.push_back(static_cast<int32_t>(box.class_id));
+
+                    const bool is_added = added_flags && box_idx < added_flags->size() &&
+                                          (*added_flags)[box_idx] != 0;
+                    const bool is_manual = manual_flags && box_idx < manual_flags->size() &&
+                                           (*manual_flags)[box_idx] != 0;
+                    const uint8_t src_flag =
+                        (source_detection && box_idx < source_detection->size())
+                            ? (*source_detection)[box_idx]
+                            : 0;
+                    const std::string src_reason =
+                        (source_reason && box_idx < source_reason->size())
+                            ? (*source_reason)[box_idx]
+                            : std::string{};
+
+                    auto [resolved_source, resolved_reason] =
+                        resolveReasonAndSource(is_added || is_manual,
+                                               src_flag,
+                                               src_reason);
+                    preview.detection_source.push_back(resolved_source);
+                    preview.reason.push_back(resolved_reason);
+                    countReason(resolved_reason);
+                    ++frame_count;
+                }
+            }
+
+            preview.frame_counts.push_back(frame_count);
+        }
+
+        preview.n_detections = preview.frame_counts;
+        preview.frame_mapping = preview.frame_indices;
+        preview.total_detections = preview.frame_indices.size();
+
+        const size_t total_rows = preview.total_detections;
+        const bool lengths_match =
+            preview.bbox_norm_coords.size() == total_rows &&
+            preview.scores.size() == total_rows &&
+            preview.class_ids.size() == total_rows &&
+            preview.frame_mapping.size() == total_rows &&
+            preview.detection_source.size() == total_rows &&
+            preview.reason.size() == total_rows;
+        if (!lengths_match) {
+            preview.error = "Payload arrays have inconsistent detection-level lengths.";
+            return preview;
+        }
+
+        const int64_t frame_sum = std::accumulate(
+            preview.frame_counts.begin(), preview.frame_counts.end(), int64_t{0});
+        if (frame_sum != static_cast<int64_t>(total_rows)) {
+            preview.error = "sum(frame_counts) does not equal detection row count.";
+            return preview;
+        }
+
+        preview.valid = true;
+        return preview;
     };
 
     auto dumpDecodeBuffersToVideos = [&](const std::string& tag) -> std::optional<std::filesystem::path> {
@@ -2485,7 +2805,105 @@ int main(int argc, char **argv) {
                 if (ImGui::Button("Clear BBox Selection (Esc)")) {
                     g_zarr_bbox_edit_state.clearSelection();
                 }
+                if (ImGui::Button("Build Manual Payload Preview")) {
+                    manual_payload_preview = buildManualDetectPayloadPreview();
+                    if (!manual_payload_preview->valid) {
+                        bbox_payload_status = "Manual payload preview failed: " +
+                                              manual_payload_preview->error;
+                    } else {
+                        std::ostringstream payload_msg;
+                        payload_msg << "Manual payload preview: frames="
+                                    << manual_payload_preview->total_frames
+                                    << " detections="
+                                    << manual_payload_preview->total_detections
+                                    << " clean=" << manual_payload_preview->clean_rows
+                                    << " interpolated="
+                                    << manual_payload_preview->interpolated_rows
+                                    << " manual=" << manual_payload_preview->manual_rows
+                                    << " dirty_frames="
+                                    << g_zarr_bbox_edit_state.dirtyFrameCount();
+                        bbox_payload_status = payload_msg.str();
+                    }
+                }
+                if (ImGui::Button("Write Manual Payload to Zarr")) {
+                    manual_payload_preview = buildManualDetectPayloadPreview();
+
+                    if (!manual_payload_preview->valid) {
+                        bbox_payload_status = "Manual write failed: payload preview invalid: " +
+                                              manual_payload_preview->error;
+                    } else {
+                        std::string source_variant = "interpolated";
+                        if (zarr_loader.getActiveDetectionDataset() ==
+                            ZarrDetectionLoader::DetectionDataset::RefinedFiltered) {
+                            source_variant = "filtered";
+                        }
+
+                        std::string write_error;
+                        std::string resolved_refined_run;
+                        const bool write_ok =
+                            zarr_loader.writeManualRefinedDetections(
+                                manual_payload_preview->frame_indices,
+                                manual_payload_preview->bbox_norm_coords,
+                                manual_payload_preview->scores,
+                                manual_payload_preview->class_ids,
+                                manual_payload_preview->frame_counts,
+                                manual_payload_preview->detection_source,
+                                manual_payload_preview->reason,
+                                "manual",
+                                source_variant,
+                                write_error,
+                                &resolved_refined_run);
+                        if (!write_ok) {
+                            bbox_payload_status =
+                                "Manual write failed: " + write_error;
+                        } else {
+                            const size_t written_detections =
+                                manual_payload_preview->total_detections;
+                            std::string reload_error;
+                            const std::string archive_path = zarr_loader.getArchivePath();
+                            if (!archive_path.empty() &&
+                                zarr_loader.loadZarrFile(archive_path, reload_error)) {
+                                zarr_loaded = true;
+                                if (zarr_loader.isDatasetAvailable(
+                                        ZarrDetectionLoader::DetectionDataset::RefinedManual)) {
+                                    (void)zarr_loader.setActiveDetectionDataset(
+                                        ZarrDetectionLoader::DetectionDataset::RefinedManual);
+                                }
+                                refreshDetectionDatasetOptions(zarr_loader);
+                                g_zarr_bbox_edit_state.clearAll();
+                                manual_payload_preview.reset();
+                                invalidateReviewFrameCache();
+                                review_frame_status.clear();
+                                if (zarr_loader.getTotalFrames() > 0 &&
+                                    current_frame_num >= static_cast<int>(zarr_loader.getTotalFrames())) {
+                                    current_frame_num =
+                                        static_cast<int>(zarr_loader.getTotalFrames()) - 1;
+                                }
+                                std::ostringstream payload_msg;
+                                payload_msg
+                                    << "Manual write complete: run="
+                                    << (resolved_refined_run.empty() ? "<latest>" : resolved_refined_run)
+                                    << " group=manual"
+                                    << " detections=" << written_detections;
+                                bbox_payload_status = payload_msg.str();
+                            } else {
+                                zarr_loaded = false;
+                                g_zarr_bbox_edit_state.clearAll();
+                                bbox_payload_status =
+                                    "Manual write succeeded but reload failed: " +
+                                    reload_error;
+                            }
+                        }
+                    }
+                }
+                ImGui::TextWrapped(
+                    "  Writes refined_detect_runs/<latest>/manual and updates manual pointers/status.");
                 ImGui::EndDisabled();
+                if (!bbox_payload_status.empty()) {
+                    ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f),
+                                       "%s",
+                                       bbox_payload_status.c_str());
+                }
 
                 if (zarr_loader.hasKeypointData() || zarr_loader.hasHeadingData()) {
                     ImGui::Separator();
@@ -3426,11 +3844,28 @@ int main(int argc, char **argv) {
                                 auto& editable_boxes =
                                     g_zarr_bbox_edit_state.ensureFrameOverride(
                                         current_frame_num,
-                                        loaded_zarr_boxes);
+                                        loaded_zarr_boxes,
+                                        &detection_details);
                                 auto& added_flags =
                                     g_zarr_bbox_edit_state.ensureAddedFlags(
                                         current_frame_num,
                                         editable_boxes.size());
+                                auto& manual_flags =
+                                    g_zarr_bbox_edit_state.ensureManualFlags(
+                                        current_frame_num,
+                                        editable_boxes.size());
+                                g_zarr_bbox_edit_state.ensureSourceMetadata(
+                                    current_frame_num,
+                                    editable_boxes.size());
+                                auto& source_indices =
+                                    g_zarr_bbox_edit_state
+                                        .frame_source_indices[current_frame_num];
+                                auto& source_detection_source =
+                                    g_zarr_bbox_edit_state
+                                        .frame_source_detection_source[current_frame_num];
+                                auto& source_reason =
+                                    g_zarr_bbox_edit_state
+                                        .frame_source_reason[current_frame_num];
                                 const int selected_idx = g_zarr_bbox_edit_state.selected_box;
                                 if (selected_idx < 0 ||
                                     selected_idx >= static_cast<int>(editable_boxes.size())) {
@@ -3443,6 +3878,28 @@ int main(int argc, char **argv) {
                                     added_flags.erase(added_flags.begin() + selected_idx);
                                 } else {
                                     added_flags.assign(editable_boxes.size(), 0);
+                                }
+                                if (selected_idx < static_cast<int>(manual_flags.size())) {
+                                    manual_flags.erase(manual_flags.begin() + selected_idx);
+                                } else {
+                                    manual_flags.assign(editable_boxes.size(), 0);
+                                }
+                                if (selected_idx < static_cast<int>(source_indices.size())) {
+                                    source_indices.erase(source_indices.begin() + selected_idx);
+                                } else {
+                                    source_indices.assign(editable_boxes.size(), -1);
+                                }
+                                if (selected_idx < static_cast<int>(source_detection_source.size())) {
+                                    source_detection_source.erase(
+                                        source_detection_source.begin() + selected_idx);
+                                } else {
+                                    source_detection_source.assign(
+                                        editable_boxes.size(), 0);
+                                }
+                                if (selected_idx < static_cast<int>(source_reason.size())) {
+                                    source_reason.erase(source_reason.begin() + selected_idx);
+                                } else {
+                                    source_reason.assign(editable_boxes.size(), std::string{});
                                 }
                                 g_zarr_bbox_edit_state.dirty_frames.insert(current_frame_num);
                                 g_zarr_bbox_edit_state.drag_active = false;
@@ -3551,11 +4008,28 @@ int main(int argc, char **argv) {
                                             auto& editable_boxes =
                                                 g_zarr_bbox_edit_state.ensureFrameOverride(
                                                     current_frame_num,
-                                                    loaded_zarr_boxes);
+                                                    loaded_zarr_boxes,
+                                                    &detection_details);
                                             auto& added_flags =
                                                 g_zarr_bbox_edit_state.ensureAddedFlags(
                                                     current_frame_num,
                                                     editable_boxes.size());
+                                            auto& manual_flags =
+                                                g_zarr_bbox_edit_state.ensureManualFlags(
+                                                    current_frame_num,
+                                                    editable_boxes.size());
+                                            g_zarr_bbox_edit_state.ensureSourceMetadata(
+                                                current_frame_num,
+                                                editable_boxes.size());
+                                            auto& source_indices =
+                                                g_zarr_bbox_edit_state
+                                                    .frame_source_indices[current_frame_num];
+                                            auto& source_detection_source =
+                                                g_zarr_bbox_edit_state
+                                                    .frame_source_detection_source[current_frame_num];
+                                            auto& source_reason =
+                                                g_zarr_bbox_edit_state
+                                                    .frame_source_reason[current_frame_num];
 
                                             uint16_t new_class_id = 0;
                                             float new_confidence = 1.0f;
@@ -3594,6 +4068,10 @@ int main(int argc, char **argv) {
 
                                             editable_boxes.push_back(new_box);
                                             added_flags.push_back(1);
+                                            manual_flags.push_back(1);
+                                            source_indices.push_back(-1);
+                                            source_detection_source.push_back(0);
+                                            source_reason.emplace_back("manual");
                                             g_zarr_bbox_edit_state.dirty_frames.insert(
                                                 current_frame_num);
                                             g_zarr_bbox_edit_state.selected_frame =
@@ -3653,7 +4131,12 @@ int main(int argc, char **argv) {
                                     auto& editable_boxes =
                                         g_zarr_bbox_edit_state.ensureFrameOverride(
                                             current_frame_num,
-                                            loaded_zarr_boxes);
+                                            loaded_zarr_boxes,
+                                            &detection_details);
+                                    auto& manual_flags =
+                                        g_zarr_bbox_edit_state.ensureManualFlags(
+                                            current_frame_num,
+                                            editable_boxes.size());
                                     const int selected_idx =
                                         g_zarr_bbox_edit_state.selected_box;
                                     if (selected_idx >= 0 &&
@@ -3680,6 +4163,10 @@ int main(int argc, char **argv) {
                                             std::clamp(target_x, 0.0f, max_x);
                                         moving_box.y_min =
                                             std::clamp(target_y, 0.0f, max_y);
+                                        if (selected_idx >= 0 &&
+                                            selected_idx < static_cast<int>(manual_flags.size())) {
+                                            manual_flags[selected_idx] = 1;
+                                        }
                                         g_zarr_bbox_edit_state.dirty_frames.insert(
                                             current_frame_num);
                                         zarr_boxes = editable_boxes;
@@ -3888,6 +4375,13 @@ int main(int argc, char **argv) {
                                         g_zarr_bbox_edit_state.isAddedBox(
                                             current_frame_num,
                                             static_cast<int>(box_idx));
+                                    const bool box_is_manual =
+                                        g_zarr_bbox_edit_state.isManualBox(
+                                            current_frame_num,
+                                            static_cast<int>(box_idx));
+                                    if (box_is_manual) {
+                                        box_provenance = BoxProvenance::Manual;
+                                    }
                                     if (box_selected) {
                                         box_color = ImVec4(1.0f, 0.25f, 0.95f, 1.0f);
                                         line_width = 3.5f;
