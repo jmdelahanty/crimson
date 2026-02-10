@@ -49,6 +49,7 @@ struct InterpolationRunData {
     std::vector<int32_t> flat_class_ids;
     std::vector<size_t> frame_offsets;
     std::vector<uint8_t> detection_source;              // 0 = source, 1 = interpolated
+    std::vector<std::string> detection_reason;          // optional per-detection reason label
     std::vector<int32_t> n_detections;
     bool has_scores = false;
     bool has_class_ids = false;
@@ -92,7 +93,7 @@ struct ZarrDetectionData {
     size_t total_frames = 0;
     size_t max_detections = 0;
     
-    // Metadata from .zattrs
+    // Metadata from Zarr attrs (v3 zarr.json; .zattrs compatibility fallback)
     std::string video_path;
     std::string model_path;
     double fps = 30.0;
@@ -122,6 +123,7 @@ struct ZarrDetectionData {
     std::vector<int32_t> flat_class_ids;                // optional, same length as frame_indices
     std::vector<size_t> frame_offsets;                  // size total_frames + 1
     std::vector<uint8_t> detection_source_flags;        // optional, same length as frame_indices
+    std::vector<std::string> detection_reason_flags;    // optional, same length as frame_indices
     std::vector<uint8_t> frame_interpolated_flags;      // per-frame flag derived from active dataset
 
     // Optional heading / keypoint data aligned with detections
@@ -297,6 +299,8 @@ struct ZarrDetectionData {
     bool has_refined_filtered_dataset = false;
     InterpolationRunData refined_interpolated_dataset;
     bool has_refined_interpolated_dataset = false;
+    InterpolationRunData refined_manual_dataset;
+    bool has_refined_manual_dataset = false;
     InterpolationRunData refined_root_dataset;
     bool has_refined_root_dataset = false;
 };
@@ -311,7 +315,8 @@ public:
         RawDetect = 0,
         RefinedFiltered = 1,
         RefinedInterpolated = 2,
-        RefinedRoot = 3
+        RefinedManual = 3,
+        RefinedRoot = 4
     };
     
     // Main loading function
@@ -333,6 +338,8 @@ public:
     double getFPS() const { return data_.fps; }
     int getImageWidth() const { return data_.image_width; }
     int getImageHeight() const { return data_.image_height; }
+    const std::string& getSourceVideoPath() const { return data_.video_path; }
+    const std::string& getArchivePath() const { return root_path_; }
     const std::string& getDetectRunName() const { return data_.detect_run_name; }
     const std::string& getDetectRunMethod() const { return data_.detect_run_method; }
     const std::string& getDetectRunCreatedAt() const { return data_.detect_run_created_at; }
@@ -416,6 +423,9 @@ public:
         bool prefer_corrected = true) const;
     std::optional<int32_t> getStimulusFrameForCameraFrame(
         int32_t camera_frame,
+        bool prefer_corrected = true) const;
+    std::optional<int32_t> getCameraFrameForStimulusFrame(
+        int32_t stimulus_frame,
         bool prefer_corrected = true) const;
     std::optional<int32_t> getFirstCameraFrameWithStimulus(
         bool prefer_corrected = true) const;
@@ -573,6 +583,7 @@ public:
         std::vector<std::array<float, 2>> swim_bladder_pixels;
         std::vector<uint8_t> heading_valid;
         std::vector<uint8_t> detection_source;
+        std::vector<std::string> detection_reason;
         std::vector<std::vector<std::array<float, 2>>> keypoints_pixels;
         std::vector<std::string> keypoint_labels;
         size_t keypoints_per_detection = 0;
@@ -612,6 +623,13 @@ public:
 
     bool hasHeadingData() const { return data_.has_heading_data; }
     bool hasKeypointData() const { return data_.has_keypoints; }
+    bool hasDetectionData() const {
+        return data_.has_raw_detection_dataset ||
+               !data_.frame_offsets.empty() ||
+               !data_.n_detections.empty() ||
+               !data_.bbox_norm_coords.empty() ||
+               data_.bboxes_store.valid();
+    }
     
     // Static helper to find zarr files in a directory
     static std::optional<std::string> findZarrDetectionFile(const std::string& directory);
@@ -643,6 +661,7 @@ private:
                           std::vector<int32_t>& n_detections_out,
                           std::vector<size_t>& frame_offsets_out,
                           std::vector<uint8_t>* detection_source_out,
+                          std::vector<std::string>* detection_reason_out,
                           bool& has_scores_out,
                           bool& has_class_ids_out,
                           size_t& resolved_frames_out);
@@ -753,6 +772,12 @@ private:
 };
 
 // Standalone helper function
+bool loadZarrDetectionFromPath(
+    const std::string& zarr_path,
+    ZarrDetectionLoader& loader,
+    std::string& error_message
+);
+
 bool loadZarrDetectionFromDirectory(
     const std::string& dir_path,
     ZarrDetectionLoader& loader,

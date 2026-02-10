@@ -1,6 +1,8 @@
 #include "decoder.h"
 #include "AppDecUtils.h"
 #include "global.h"
+#include <cstring>
+#include <memory>
 
 void decoder_get_image_from_gpu(CUdeviceptr dpSrc, uint8_t *pDst, int nWidth,
                                 int nHeight) {
@@ -65,7 +67,11 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
     size_t nVideoBytes = 0;
     PacketData pktinfo;
 
-    NvDecoder dec(cuContext, true, FFmpeg2NvCodecId(demuxer->GetVideoCodec()));
+    const cudaVideoCodec codec_id = FFmpeg2NvCodecId(demuxer->GetVideoCodec());
+    auto make_decoder = [&]() {
+        return std::make_unique<NvDecoder>(cuContext, true, codec_id);
+    };
+    std::unique_ptr<NvDecoder> dec = make_decoder();
     int nWidth = 0, nHeight = 0;
 
     int nFrameReturned = 0, nFrame = 0, iMatrix = 0;
@@ -92,88 +98,167 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
               << std::endl;
     int size_in_bytes;
     bool skip_first_decode_after_seek = false;
+    int seek_debug_frames_to_log = 0;
+    auto mapTimestampToFrameNumber = [&](int64_t timestamp,
+                                         int64_t fallback_frame) -> int64_t {
+        if (timestamp >= 0) {
+            const int64_t frame_from_ts = demuxer->FrameNumberFromTs(timestamp);
+            if (frame_from_ts >= 0) {
+                return frame_from_ts;
+            }
+        }
+        return fallback_frame;
+    };
+    auto discard_decoded_frames_until =
+        [&](uint64_t &decode_frame_cursor, uint64_t target_frame) -> bool {
+        while (nFrameReturned > 0) {
+            if (decode_frame_cursor == target_frame) {
+                // Keep target frame in decoder output queue for normal write path.
+                skip_first_decode_after_seek = true;
+                return true;
+            }
+            int64_t discarded_timestamp = 0;
+            dec->GetFrame(&discarded_timestamp);
+            nFrameReturned--;
+            const int64_t fallback_frame =
+                static_cast<int64_t>(decode_frame_cursor);
+            const int64_t mapped_frame =
+                mapTimestampToFrameNumber(discarded_timestamp, fallback_frame);
+            const int64_t next_frame = std::max(mapped_frame + 1, fallback_frame + 1);
+            decode_frame_cursor = static_cast<uint64_t>(std::max<int64_t>(0, next_frame));
+        }
+        return false;
+    };
     do {
         if (seek_info->use_seek) {
-            // demuxer.Flush();
+            if (pTmpImage) {
+                ck(cuMemFree(pTmpImage));
+                pTmpImage = 0;
+            }
+            nWidth = 0;
+            nHeight = 0;
+            size_in_bytes = 0;
+            dec = make_decoder();
+
+            demuxer->Flush();
             // std::cout << "target_frame_number:" << seek_info->seek_frame
             //           << std::endl;
+            skip_first_decode_after_seek = false;
+            const uint64_t requested_frame = seek_info->seek_frame;
 
-            // assume every 10s is a keyframe, double check if your video is
-            // like that
-            uint64_t key_frame_num = demuxer->FindClosestKeyFrameFNI(
-                seek_info->seek_frame, dc_context->seek_interval);
-            // std::cout << "seeking to: " << key_frame_num << std::endl;
-            SeekContext s = SeekContext(key_frame_num);
+            SeekContext s = SeekContext(requested_frame);
 
             seek_success_flag = demuxer->Seek(s, pVideo, nVideoBytes, pktinfo);
             // std::cout << "seek_success_flag: " << seek_success_flag <<
             // std::endl;
+            if (!seek_success_flag) {
+                seek_info->use_seek = false;
+                seek_info->seek_done = true;
+                continue;
+            }
 
             // reset the display buffer after seeking
+            size_t clear_bytes = 0;
+            int clear_w = static_cast<int>(demuxer->GetWidth());
+            int clear_h = static_cast<int>(demuxer->GetHeight());
+            if (clear_w > 0 && clear_h > 0) {
+                clear_bytes = static_cast<size_t>(clear_w) *
+                              static_cast<size_t>(clear_h) * 4;
+            }
             for (int i = 0; i < size_of_buffer; i++) {
                 // if (use_cpu_buffer) {
                 //     decoder_clear_buffer_with_constant_image(display_buffer[i].frame,
                 //     3208, 2200);
                 // }
                 display_buffer[i].available_to_write = true;
-            }
-            // nFrameReturned = dec.Decode(pVideo, nVideoBytes,
-            // CUVID_PKT_DISCONTINUITY, pktinfo.pts);
-            nFrameReturned = dec.Decode(NULL, 0, CUVID_PKT_DISCONTINUITY);
-            // std::cout << "nFrameReturned right after seeking: " <<
-            // nFrameReturned << std::endl;
-
-            for (int i = 0; i < nFrameReturned; i++) {
-                // decode frame and conversion
-                pFrame = dec.GetFrame();
-            }
-
-            auto temp_nFrameReturned = dec.Decode(pVideo, nVideoBytes);
-            // std::cout << "not sure about this: " << temp_nFrameReturned <<
-            // std::endl;
-
-            if (seek_info->seek_accurate) {
-                // seek acurate implementation
-                uint64_t curr_frame = key_frame_num - 1;
-                // keep decoding till the target frame
-                while (curr_frame != seek_info->seek_frame) {
-                    demux_success =
-                        demuxer->Demux(pVideo, nVideoBytes, pktinfo);
-                    if (!demux_success) {
-                        // end of stream
-                        std::cout << "Demux error..." << std::endl;
-                        nFrameReturned =
-                            dec.Decode(NULL, 0, CUVID_PKT_DISCONTINUITY);
-                        dc_context->total_num_frame = nFrame + nFrameReturned;
+                display_buffer[i].frame_number = -1;
+                if (clear_bytes > 0 && display_buffer[i].frame) {
+                    if (use_cpu_buffer) {
+                        std::memset(display_buffer[i].frame, 0, clear_bytes);
                     } else {
-                        nFrameReturned = dec.Decode(pVideo, nVideoBytes);
-                    }
-                    while (nFrameReturned != 0) {
-                        curr_frame++;
-                        if (curr_frame == seek_info->seek_frame) {
-                            // reach the decoded frame
-                            skip_first_decode_after_seek = true;
-                            goto jump;
-                        } else {
-                            dec.GetFrame();
-                        }
-                        nFrameReturned--;
+                        ck(cudaMemset(display_buffer[i].frame, 0, clear_bytes));
                     }
                 }
-            jump:; // break out of loop
+            }
+            nFrameReturned = dec->Decode(NULL, 0, CUVID_PKT_DISCONTINUITY);
+            while (nFrameReturned > 0) {
+                dec->GetFrame();
+                nFrameReturned--;
+            }
+            // Mark the first post-seek packet as discontinuous. This resets
+            // parser/decode state against prior timeline data.
+            nFrameReturned = dec->Decode(
+                pVideo, nVideoBytes, CUVID_PKT_DISCONTINUITY, pktinfo.pts);
+
+            uint64_t decode_frame_cursor = requested_frame;
+            int64_t demux_frame = -1;
+            if (pktinfo.pts >= 0) {
+                demux_frame = demuxer->FrameNumberFromTs(pktinfo.pts);
+            }
+            if (demux_frame < 0 && pktinfo.dts >= 0) {
+                demux_frame = demuxer->FrameNumberFromTs(pktinfo.dts);
+            }
+            if (demux_frame >= 0) {
+                decode_frame_cursor = static_cast<uint64_t>(demux_frame);
+            }
+
+            if (seek_info->seek_accurate) {
+                // seek accurate implementation
+                // keep decoding till the target frame
+                bool reached_target = (decode_frame_cursor >= requested_frame);
+                if (!reached_target) {
+                    reached_target =
+                        discard_decoded_frames_until(decode_frame_cursor, requested_frame);
+                    while (!reached_target) {
+                        demux_success =
+                            demuxer->Demux(pVideo, nVideoBytes, pktinfo);
+                        if (!demux_success) {
+                            // end of stream
+                            std::cout << "Demux error..." << std::endl;
+                            nFrameReturned = dec->Decode(NULL, 0);
+                            dc_context->total_num_frame = nFrame + nFrameReturned;
+                        } else {
+                            nFrameReturned =
+                                dec->Decode(pVideo, nVideoBytes, 0, pktinfo.pts);
+                        }
+                        if (!demux_success && nFrameReturned == 0) {
+                            break;
+                        }
+                        reached_target =
+                            discard_decoded_frames_until(decode_frame_cursor, requested_frame);
+                    }
+                } else {
+                    skip_first_decode_after_seek = (nFrameReturned > 0);
+                    if (!skip_first_decode_after_seek) {
+                        while (nFrameReturned == 0) {
+                            demux_success =
+                                demuxer->Demux(pVideo, nVideoBytes, pktinfo);
+                            if (!demux_success) {
+                                break;
+                            }
+                            nFrameReturned =
+                                dec->Decode(pVideo, nVideoBytes, 0, pktinfo.pts);
+                        }
+                        skip_first_decode_after_seek = (nFrameReturned > 0);
+                    }
+                }
+                if (!reached_target) {
+                    seek_info->seek_frame = decode_frame_cursor;
+                    skip_first_decode_after_seek = (nFrameReturned > 0);
+                }
             } else {
-                seek_info->seek_frame = key_frame_num;
+                seek_info->seek_frame = decode_frame_cursor;
+                skip_first_decode_after_seek = (nFrameReturned > 0);
             }
 
             // dec.setReconfigParams(NULL, NULL);
             buffer_head = 0;
             nFrame = seek_info->seek_frame;
-            latest_decoded_frame[cam_name].store(seek_info->seek_frame);
+            latest_decoded_frame[cam_name].store(static_cast<int>(seek_info->seek_frame));
             display_buffer[0].frame_number = -1;
             seek_info->use_seek = false;
             seek_info->seek_done = true;
-            // std::cout << "seek thread done " << temp_nFrameReturned <<
-            // std::endl;
+            seek_debug_frames_to_log = 10;
         } else {
             static thread_local bool logged_idle = false;
             if (window_need_decoding[cam_name].load()) {
@@ -185,50 +270,59 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         // end of stream
                         // std::cout << "Demux error..." << std::endl;
                         nFrameReturned =
-                            dec.Decode(NULL, 0, CUVID_PKT_DISCONTINUITY);
+                            dec->Decode(NULL, 0, CUVID_PKT_DISCONTINUITY);
                         dc_context->total_num_frame = nFrame + nFrameReturned;
                     } else {
-                        nFrameReturned = dec.Decode(pVideo, nVideoBytes);
+                        nFrameReturned =
+                            dec->Decode(pVideo, nVideoBytes, 0, pktinfo.pts);
                     }
                 } else {
                     skip_first_decode_after_seek = false;
                 }
 
-                if (!nFrame && nFrameReturned) {
-                    LOG(INFO) << dec.GetVideoInfo();
+                if (!pTmpImage && nFrameReturned) {
+                    LOG(INFO) << dec->GetVideoInfo();
                     // Get output frame size from decoder
-                    nWidth = dec.GetWidth();
-                    nHeight = dec.GetHeight();
+                    nWidth = dec->GetWidth();
+                    nHeight = dec->GetHeight();
                     size_in_bytes = nWidth * nHeight * 4;
                     cuMemAlloc(&pTmpImage, size_in_bytes);
                 }
 
                 for (int i = 0; i < nFrameReturned; i++) {
                     // decode frame and conversion
-                    pFrame = dec.GetFrame();
-                    iMatrix = dec.GetVideoFormatInfo()
+                    int64_t frame_timestamp = 0;
+                    pFrame = dec->GetFrame(&frame_timestamp);
+                    iMatrix = dec->GetVideoFormatInfo()
                                   .video_signal_description.matrix_coefficients;
+                    int64_t mapped_frame_num =
+                        mapTimestampToFrameNumber(frame_timestamp, nFrame);
+                    if (mapped_frame_num < 0) {
+                        mapped_frame_num = nFrame;
+                    }
+                    const int assigned_frame_num = static_cast<int>(mapped_frame_num);
                     if (nFrame == 0) {
                         if (use_cpu_buffer) {
                             Nv12ToColor32<RGBA32>(
-                                pFrame, dec.GetWidth(), (uint8_t *)pTmpImage,
-                                4 * dec.GetWidth(), dec.GetWidth(),
-                                dec.GetHeight(), iMatrix);
+                                pFrame, dec->GetWidth(), (uint8_t *)pTmpImage,
+                                4 * dec->GetWidth(), dec->GetWidth(),
+                                dec->GetHeight(), iMatrix);
                             decoder_get_image_from_gpu(
                                 pTmpImage, display_buffer[buffer_head].frame,
-                                4 * dec.GetWidth(), dec.GetHeight());
+                                4 * dec->GetWidth(), dec->GetHeight());
                         } else {
                             Nv12ToColor32<RGBA32>(
-                                pFrame, dec.GetWidth(), (uint8_t *)pTmpImage,
-                                4 * dec.GetWidth(), dec.GetWidth(),
-                                dec.GetHeight(), iMatrix);
+                                pFrame, dec->GetWidth(), (uint8_t *)pTmpImage,
+                                4 * dec->GetWidth(), dec->GetWidth(),
+                                dec->GetHeight(), iMatrix);
                             cudaMemcpy(display_buffer[buffer_head].frame,
                                        (uint8_t *)pTmpImage, size_in_bytes,
                                        cudaMemcpyDeviceToDevice);
                         }
                         display_buffer[buffer_head].available_to_write = false;
                         dc_context->decoding_flag = true;
-                        display_buffer[buffer_head].frame_number = nFrame;
+                        display_buffer[buffer_head].frame_number = assigned_frame_num;
+                        latest_decoded_frame[cam_name].store(assigned_frame_num);
                     } else {
                         while (
                             !display_buffer[buffer_head].available_to_write &&
@@ -245,27 +339,40 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         }
                         if (use_cpu_buffer) {
                             Nv12ToColor32<RGBA32>(
-                                pFrame, dec.GetWidth(), (uint8_t *)pTmpImage,
-                                4 * dec.GetWidth(), dec.GetWidth(),
-                                dec.GetHeight(), iMatrix);
+                                pFrame, dec->GetWidth(), (uint8_t *)pTmpImage,
+                                4 * dec->GetWidth(), dec->GetWidth(),
+                                dec->GetHeight(), iMatrix);
                             decoder_get_image_from_gpu(
                                 pTmpImage, display_buffer[buffer_head].frame,
-                                4 * dec.GetWidth(), dec.GetHeight());
+                                4 * dec->GetWidth(), dec->GetHeight());
                         } else {
                             Nv12ToColor32<RGBA32>(
-                                pFrame, dec.GetWidth(), (uint8_t *)pTmpImage,
-                                4 * dec.GetWidth(), dec.GetWidth(),
-                                dec.GetHeight(), iMatrix);
+                                pFrame, dec->GetWidth(), (uint8_t *)pTmpImage,
+                                4 * dec->GetWidth(), dec->GetWidth(),
+                                dec->GetHeight(), iMatrix);
                             cudaMemcpy(display_buffer[buffer_head].frame,
                                        (uint8_t *)pTmpImage, size_in_bytes,
                                        cudaMemcpyDeviceToDevice);
                         }
 
                         display_buffer[buffer_head].available_to_write = false;
-                        display_buffer[buffer_head].frame_number = nFrame;
-                        latest_decoded_frame[cam_name].store(nFrame);
+                        display_buffer[buffer_head].frame_number = assigned_frame_num;
+                        latest_decoded_frame[cam_name].store(assigned_frame_num);
                     }
-                    nFrame = nFrame + 1;
+                    if (seek_debug_frames_to_log > 0) {
+                        const int64_t pts_frame =
+                            (frame_timestamp >= 0)
+                                ? demuxer->FrameNumberFromTs(frame_timestamp)
+                                : -1;
+                        std::cout << "[SeekDebug] cam=" << cam_name
+                                  << " assigned=" << assigned_frame_num
+                                  << " pts_frame=" << pts_frame
+                                  << " fallback_counter=" << nFrame
+                                  << " pts=" << frame_timestamp
+                                  << " buffer_head=" << buffer_head << std::endl;
+                        --seek_debug_frames_to_log;
+                    }
+                    nFrame = assigned_frame_num + 1;
                     buffer_head = (buffer_head + 1) % size_of_buffer;
                     // for debugging purpose
                     if (!demux_success) {
@@ -290,6 +397,9 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
             }
         }
     } while (!(dc_context->stop_flag));
+    if (pTmpImage) {
+        ck(cuMemFree(pTmpImage));
+    }
 }
 
 void image_loader(DecoderContext *dc_context,
@@ -310,6 +420,7 @@ void image_loader(DecoderContext *dc_context,
                 //     3208, 2200);
                 // }
                 display_buffer[i].available_to_write = true;
+                display_buffer[i].frame_number = -1;
             }
             buffer_head = 0;
             frame_number = seek_info->seek_frame;

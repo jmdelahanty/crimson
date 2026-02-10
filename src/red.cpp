@@ -22,16 +22,22 @@
 #include <limits>
 #include <sstream>
 #include <numeric>
+#include <memory>
 #include <optional>
+#include <random>
 #include <unordered_map>
+#include <unordered_set>
 #include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <thread>
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
+#include <fstream>
 #include "zarr_loader.h"
 #include "gui_interpolation.h"
+#include <nlohmann/json.hpp>
 
 #if defined(_MSC_VER) && (_MSC_VER >= 1900) &&                                 \
     !defined(IMGUI_DISABLE_WIN32_FUNCTIONS)
@@ -42,12 +48,428 @@ simplelogger::Logger *logger =
     simplelogger::LoggerFactory::CreateConsoleLogger();
 
 namespace {
+using json = nlohmann::json;
+
+struct UiPathConfig {
+    std::string default_start_path = "/nvme1";
+    std::vector<std::string> preferred_roots = {"/nvme1"};
+    std::string loaded_from;
+};
+
 inline bool IsFiniteFloat(float value) {
     uint32_t bits;
     std::memcpy(&bits, &value, sizeof(bits));
     return (bits & 0x7f800000u) != 0x7f800000u;
 }
+
+std::string ToLowerCopy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+bool IsRegularFileNoThrow(const std::filesystem::path& path) {
+    std::error_code ec;
+    return std::filesystem::is_regular_file(path, ec);
+}
+
+bool IsDirectoryNoThrow(const std::filesystem::path& path) {
+    std::error_code ec;
+    return std::filesystem::is_directory(path, ec);
+}
+
+std::string ExpandUserPath(const std::string& path) {
+    if (path.empty() || path[0] != '~') {
+        return path;
+    }
+
+    const char* home_env = std::getenv("HOME");
+    if (!home_env || std::string(home_env).empty()) {
+        return path;
+    }
+    const std::string home(home_env);
+
+    if (path.size() == 1) {
+        return home;
+    }
+    if (path[1] == '/') {
+        return home + path.substr(1);
+    }
+
+    // Unsupported "~user" expansion; leave unchanged.
+    return path;
+}
+
+std::optional<UiPathConfig> LoadUiPathConfigFile(const std::filesystem::path& config_path) {
+    if (!IsRegularFileNoThrow(config_path)) {
+        return std::nullopt;
+    }
+
+    UiPathConfig config;
+    std::ifstream in(config_path);
+    if (!in) {
+        return std::nullopt;
+    }
+
+    json payload;
+    try {
+        in >> payload;
+    } catch (const std::exception& e) {
+        std::cerr << "[UIPathConfig] Failed to parse " << config_path << ": "
+                  << e.what() << std::endl;
+        return std::nullopt;
+    }
+
+    if (payload.contains("default_start_path") &&
+        payload["default_start_path"].is_string()) {
+        config.default_start_path = ExpandUserPath(
+            payload["default_start_path"].get<std::string>());
+    }
+
+    if (payload.contains("preferred_roots") && payload["preferred_roots"].is_array()) {
+        config.preferred_roots.clear();
+        for (const auto& item : payload["preferred_roots"]) {
+            if (!item.is_string()) {
+                continue;
+            }
+            config.preferred_roots.push_back(ExpandUserPath(item.get<std::string>()));
+        }
+    }
+
+    std::vector<std::string> filtered_roots;
+    filtered_roots.reserve(config.preferred_roots.size());
+    for (const auto& root : config.preferred_roots) {
+        if (root.empty()) {
+            continue;
+        }
+        if (IsDirectoryNoThrow(root)) {
+            filtered_roots.push_back(root);
+        }
+    }
+    config.preferred_roots = std::move(filtered_roots);
+
+    if ((!config.default_start_path.empty()) &&
+        !IsDirectoryNoThrow(config.default_start_path)) {
+        config.default_start_path.clear();
+    }
+    if (config.default_start_path.empty() && !config.preferred_roots.empty()) {
+        config.default_start_path = config.preferred_roots.front();
+    }
+    if (config.default_start_path.empty()) {
+        config.default_start_path = "/nvme1";
+    }
+    if (config.preferred_roots.empty()) {
+        config.preferred_roots.push_back(config.default_start_path);
+    }
+
+    config.loaded_from = config_path.string();
+    return config;
+}
+
+UiPathConfig LoadUiPathConfig(const std::filesystem::path& current_working_dir,
+                              const std::filesystem::path& argv0_path) {
+    std::vector<std::filesystem::path> candidates;
+
+    if (const char* env_config = std::getenv("CRIMSON_UI_PATHS_CONFIG")) {
+        if (*env_config != '\0') {
+            candidates.push_back(std::filesystem::path(ExpandUserPath(env_config)));
+        }
+    }
+
+    candidates.push_back(current_working_dir / "config" / "ui_paths.json");
+    candidates.push_back(current_working_dir / "ui_paths.json");
+
+    std::error_code ec;
+    auto exe_abs = std::filesystem::absolute(argv0_path, ec);
+    if (!ec && !exe_abs.empty()) {
+        auto exe_dir = exe_abs.parent_path();
+        if (!exe_dir.empty()) {
+            auto repo_like_root = exe_dir.parent_path();
+            if (!repo_like_root.empty()) {
+                candidates.push_back(repo_like_root / "config" / "ui_paths.json");
+            }
+        }
+    }
+
+    if (const char* home = std::getenv("HOME")) {
+        if (*home != '\0') {
+            candidates.push_back(
+                std::filesystem::path(home) / ".config" / "crimson" / "ui_paths.json");
+        }
+    }
+
+    for (const auto& candidate : candidates) {
+        if (auto config = LoadUiPathConfigFile(candidate)) {
+            return *config;
+        }
+    }
+
+    UiPathConfig fallback;
+    if (!IsDirectoryNoThrow(fallback.default_start_path)) {
+        fallback.default_start_path = current_working_dir.string();
+        fallback.preferred_roots = {fallback.default_start_path};
+    }
+    return fallback;
+}
+
+bool IsSupportedVideoPath(const std::filesystem::path& path) {
+    std::string ext = ToLowerCopy(path.extension().string());
+    return ext == ".mp4" || ext == ".mov" || ext == ".mkv" || ext == ".avi";
+}
+
+std::optional<std::filesystem::path> ResolveAffiliatedVideoPath(
+    const std::string& source_path_hint,
+    const std::string& archive_path) {
+    namespace fs = std::filesystem;
+
+    if (source_path_hint.empty()) {
+        return std::nullopt;
+    }
+
+    fs::path hint(source_path_hint);
+    std::vector<fs::path> candidates;
+
+    if (hint.is_absolute()) {
+        candidates.push_back(hint);
+    }
+
+    if (!archive_path.empty()) {
+        fs::path archive_root(archive_path);
+        fs::path archive_parent = archive_root.parent_path();
+        fs::path recording_root = archive_parent;
+        if (!archive_parent.empty() && archive_parent.filename() == "zarr") {
+            recording_root = archive_parent.parent_path();
+        }
+
+        if (!hint.is_absolute()) {
+            candidates.push_back(archive_root / hint);
+            candidates.push_back(archive_parent / hint);
+            if (!recording_root.empty()) {
+                candidates.push_back(recording_root / hint);
+                candidates.push_back(recording_root / "cams" / hint.filename());
+                candidates.push_back(recording_root / hint.filename());
+            }
+        }
+    }
+
+    if (!hint.is_absolute()) {
+        candidates.push_back(hint);
+    }
+
+    for (const auto& candidate : candidates) {
+        if (IsRegularFileNoThrow(candidate) && IsSupportedVideoPath(candidate)) {
+            return candidate;
+        }
+    }
+    for (const auto& candidate : candidates) {
+        if (IsRegularFileNoThrow(candidate)) {
+            return candidate;
+        }
+    }
+    return std::nullopt;
+}
+
+std::filesystem::path InferRecordingRootPath(
+    const std::filesystem::path& video_path,
+    const std::string& archive_path) {
+    namespace fs = std::filesystem;
+
+    if (!archive_path.empty()) {
+        fs::path archive_root(archive_path);
+        fs::path archive_parent = archive_root.parent_path();
+        if (!archive_parent.empty() && archive_parent.filename() == "zarr") {
+            fs::path candidate = archive_parent.parent_path();
+            if (!candidate.empty()) {
+                return candidate;
+            }
+        }
+    }
+
+    fs::path parent = video_path.parent_path();
+    if (!parent.empty() && parent.filename() == "cams") {
+        fs::path candidate = parent.parent_path();
+        if (!candidate.empty()) {
+            return candidate;
+        }
+    }
+    return parent;
+}
 } // namespace
+
+struct ZarrBBoxEditState {
+    bool enabled = true;
+    bool allow_edit_while_playing = false;
+    std::unordered_map<int, std::vector<LoggedBoundingBox>> frame_overrides;
+    std::unordered_map<int, std::vector<uint8_t>> frame_added_flags;
+    std::unordered_set<int> dirty_frames;
+    int selected_frame = -1;
+    int selected_box = -1;
+    bool drag_active = false;
+    int drag_mouse_button = -1;
+    float drag_offset_x = 0.0f;
+    float drag_offset_y = 0.0f;
+    bool draw_mode = false;
+    bool draw_active = false;
+    int draw_frame = -1;
+    float draw_anchor_x = 0.0f;
+    float draw_anchor_y = 0.0f;
+    float draw_current_x = 0.0f;
+    float draw_current_y = 0.0f;
+
+    void cancelDraw() {
+        draw_active = false;
+        draw_frame = -1;
+        draw_anchor_x = 0.0f;
+        draw_anchor_y = 0.0f;
+        draw_current_x = 0.0f;
+        draw_current_y = 0.0f;
+    }
+
+    void clearSelection() {
+        selected_frame = -1;
+        selected_box = -1;
+        drag_active = false;
+        drag_mouse_button = -1;
+        drag_offset_x = 0.0f;
+        drag_offset_y = 0.0f;
+    }
+
+    void clearFrameEdits(int frame) {
+        frame_overrides.erase(frame);
+        frame_added_flags.erase(frame);
+        dirty_frames.erase(frame);
+        if (selected_frame == frame) {
+            clearSelection();
+        }
+        if (draw_frame == frame) {
+            cancelDraw();
+        }
+    }
+
+    void clearAll() {
+        frame_overrides.clear();
+        frame_added_flags.clear();
+        dirty_frames.clear();
+        clearSelection();
+        cancelDraw();
+        draw_mode = false;
+    }
+
+    bool hasFrameOverride(int frame) const {
+        return frame_overrides.find(frame) != frame_overrides.end();
+    }
+
+    bool isFrameDirty(int frame) const {
+        return dirty_frames.find(frame) != dirty_frames.end();
+    }
+
+    size_t dirtyFrameCount() const {
+        return dirty_frames.size();
+    }
+
+    std::vector<LoggedBoundingBox> resolveFrameBoxes(
+        int frame,
+        const std::vector<LoggedBoundingBox>& loaded_boxes) const {
+        auto it = frame_overrides.find(frame);
+        if (it == frame_overrides.end()) {
+            return loaded_boxes;
+        }
+        return it->second;
+    }
+
+    std::vector<LoggedBoundingBox>& ensureFrameOverride(
+        int frame,
+        const std::vector<LoggedBoundingBox>& loaded_boxes) {
+        auto [it, inserted] = frame_overrides.emplace(frame, std::vector<LoggedBoundingBox>{});
+        if (inserted) {
+            it->second = loaded_boxes;
+            frame_added_flags[frame] = std::vector<uint8_t>(loaded_boxes.size(), 0);
+        } else {
+            auto& flags = frame_added_flags[frame];
+            if (flags.size() < it->second.size()) {
+                flags.resize(it->second.size(), 0);
+            } else if (flags.size() > it->second.size()) {
+                flags.resize(it->second.size());
+            }
+        }
+        return it->second;
+    }
+
+    std::vector<uint8_t>& ensureAddedFlags(int frame, size_t box_count) {
+        auto& flags = frame_added_flags[frame];
+        if (flags.size() < box_count) {
+            flags.resize(box_count, 0);
+        } else if (flags.size() > box_count) {
+            flags.resize(box_count);
+        }
+        return flags;
+    }
+
+    bool isAddedBox(int frame, int box_index) const {
+        if (box_index < 0) {
+            return false;
+        }
+        auto it = frame_added_flags.find(frame);
+        if (it == frame_added_flags.end()) {
+            return false;
+        }
+        if (static_cast<size_t>(box_index) >= it->second.size()) {
+            return false;
+        }
+        return it->second[static_cast<size_t>(box_index)] != 0;
+    }
+};
+
+int HitTestZarrBoxAtPlotPoint(const std::vector<LoggedBoundingBox>& boxes,
+                              double plot_x,
+                              double plot_y,
+                              float image_height,
+                              float tolerance_px) {
+    int best_index = -1;
+    double best_area = std::numeric_limits<double>::infinity();
+    for (size_t i = 0; i < boxes.size(); ++i) {
+        const auto& box = boxes[i];
+        const double x0 = static_cast<double>(box.x_min);
+        const double x1 = static_cast<double>(box.x_min + box.width);
+        const double y_top = static_cast<double>(image_height) - static_cast<double>(box.y_min);
+        const double y_bottom =
+            static_cast<double>(image_height) -
+            static_cast<double>(box.y_min + box.height);
+        const double y0 = std::min(y_top, y_bottom);
+        const double y1 = std::max(y_top, y_bottom);
+
+        if (plot_x < x0 - tolerance_px || plot_x > x1 + tolerance_px ||
+            plot_y < y0 - tolerance_px || plot_y > y1 + tolerance_px) {
+            continue;
+        }
+
+        const double area = std::max(
+            1.0,
+            static_cast<double>(std::fabs(box.width * box.height)));
+        if (area < best_area) {
+            best_area = area;
+            best_index = static_cast<int>(i);
+        }
+    }
+    return best_index;
+}
+
+bool IsPlotPointInsideZarrBox(const LoggedBoundingBox& box,
+                              double plot_x,
+                              double plot_y,
+                              float image_height,
+                              float tolerance_px) {
+    const double x0 = static_cast<double>(box.x_min);
+    const double x1 = static_cast<double>(box.x_min + box.width);
+    const double y_top = static_cast<double>(image_height) - static_cast<double>(box.y_min);
+    const double y_bottom =
+        static_cast<double>(image_height) -
+        static_cast<double>(box.y_min + box.height);
+    const double y0 = std::min(y_top, y_bottom);
+    const double y1 = std::max(y_top, y_bottom);
+    return !(plot_x < x0 - tolerance_px || plot_x > x1 + tolerance_px ||
+             plot_y < y0 - tolerance_px || plot_y > y1 + tolerance_px);
+}
 
 std::vector<std::mutex> g_mutexes(MAX_VIEWS);
 std::vector<std::condition_variable> g_cvs(MAX_VIEWS);
@@ -64,6 +486,23 @@ bool show_interpolation_debug = false;
 std::vector<ZarrDetectionLoader::DetectionDataset> detection_dataset_ids;
 std::vector<std::string> detection_dataset_labels;
 int detection_dataset_choice = 0;
+ZarrBBoxEditState g_zarr_bbox_edit_state;
+
+struct ReviewFrameFilters {
+    bool include_interpolated = true;
+    bool include_non_clean = true;
+    bool include_empty = true;
+};
+
+struct ReviewFrameCache {
+    bool valid = false;
+    std::string archive_path;
+    ZarrDetectionLoader::DetectionDataset dataset =
+        ZarrDetectionLoader::DetectionDataset::RawDetect;
+    size_t total_frames = 0;
+    ReviewFrameFilters filters;
+    std::vector<int> frames;
+};
 
 void refreshDetectionDatasetOptions(ZarrDetectionLoader& loader) {
     detection_dataset_ids.clear();
@@ -110,8 +549,8 @@ struct StimulusPlayback {
     PictureBuffer *display_buffer = nullptr;
     PBO_CUDA pbo = {};
     GLuint texture = 0;
-    FFmpegDemuxer *demuxer = nullptr;
-    DecoderContext *decoder_context = nullptr;
+    std::unique_ptr<FFmpegDemuxer> demuxer;
+    std::unique_ptr<DecoderContext> decoder_context;
     SeekInfo seek = {false, false, 0, false};
     std::thread decoder_thread;
     bool resources_initialized = false;
@@ -200,14 +639,9 @@ static void destroyStimulusPlayback(StimulusPlayback &stim) {
     if (stim.decoder_thread.joinable()) {
         stim.decoder_thread.join();
     }
-    if (stim.decoder_context) {
-        delete stim.decoder_context;
-        stim.decoder_context = nullptr;
-    }
-    if (stim.demuxer) {
-        delete stim.demuxer;
-        stim.demuxer = nullptr;
-    }
+    // unique_ptr automatically deletes when reset() is called
+    stim.decoder_context.reset();
+    stim.demuxer.reset();
     if (stim.display_buffer) {
         for (int i = 0; i < stim.buffer_size; ++i) {
             if (stim.display_buffer[i].frame) {
@@ -309,10 +743,10 @@ static bool initializeStimulusPlayback(StimulusPlayback &stim,
 
     std::map<std::string, std::string> ffmpeg_options;
     try {
-        stim.demuxer = new FFmpegDemuxer(video_path.c_str(), ffmpeg_options);
+        stim.demuxer = std::make_unique<FFmpegDemuxer>(video_path.c_str(), ffmpeg_options);
     } catch (const std::exception &e) {
         std::cout << "Failed to open stimulus video: " << e.what() << std::endl;
-        stim.demuxer = nullptr;
+        stim.demuxer.reset();  // Clear to nullptr (already null, but explicit)
         return false;
     }
 
@@ -352,12 +786,13 @@ static bool initializeStimulusPlayback(StimulusPlayback &stim,
 
     stim.resources_initialized = true;
 
-    stim.decoder_context = new DecoderContext{.decoding_flag = false,
-                                              .stop_flag = false,
-                                              .total_num_frame = int(INT_MAX),
-                                              .estimated_num_frames = 0,
-                                              .gpu_index = cuda_device_index,
-                                              .seek_interval = 250};
+    stim.decoder_context = std::make_unique<DecoderContext>(DecoderContext{
+        .decoding_flag = false,
+        .stop_flag = false,
+        .total_num_frame = int(INT_MAX),
+        .estimated_num_frames = 0,
+        .gpu_index = cuda_device_index,
+        .seek_interval = 250});
 
     stim.seek.use_seek = false;
     stim.seek.seek_done = false;
@@ -367,8 +802,8 @@ static bool initializeStimulusPlayback(StimulusPlayback &stim,
     window_need_decoding[stim.window_name].store(false);
     latest_decoded_frame[stim.window_name].store(-1);
 
-    stim.decoder_thread = std::thread(&decoder_process, stim.decoder_context,
-                                      stim.demuxer, stim.window_name,
+    stim.decoder_thread = std::thread(&decoder_process, stim.decoder_context.get(),
+                                      stim.demuxer.get(), stim.window_name,
                                       stim.display_buffer, stim.buffer_size,
                                       &stim.seek, stim.use_cpu_buffer);
     stim.loaded = true;
@@ -542,7 +977,16 @@ void seek_all_cameras(render_scene *scene, int frame_number, double video_fps,
 
     // Wait for seek to complete
     for (int i = 0; i < scene->num_cams; i++) {
+        const auto seek_deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(5);
         while (!scene->seek_context[i].seek_done) {
+            if (std::chrono::steady_clock::now() >= seek_deadline) {
+                std::cerr << "[Seek] Timeout waiting for camera index " << i
+                          << " to complete seek to frame " << frame_number
+                          << std::endl;
+                scene->seek_context[i].use_seek = false;
+                break;
+            }
             std::this_thread::sleep_for(std::chrono::microseconds(10));
         }
     }
@@ -568,7 +1012,21 @@ void seek_all_cameras(render_scene *scene, int frame_number, double video_fps,
     }
 }
 
-int main(int, char **) {
+int main(int argc, char **argv) {
+    std::string cli_zarr_override_path;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--zarr") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value for --zarr" << std::endl;
+                return 1;
+            }
+            cli_zarr_override_path = argv[++i];
+            continue;
+        }
+        std::cerr << "Ignoring unknown argument: " << arg << std::endl;
+    }
+
     gx_context *window = (gx_context *)malloc(sizeof(gx_context));
     *window =
         (gx_context){.swap_interval = 1, // use vsync
@@ -587,7 +1045,7 @@ int main(int, char **) {
     std::vector<std::string> camera_names;
     std::vector<CameraParams> camera_params;
     std::vector<std::thread> decoder_threads;
-    std::vector<FFmpegDemuxer *> demuxers;
+    std::vector<std::unique_ptr<FFmpegDemuxer>> demuxers;
 
     // Zarr loading
     ZarrDetectionLoader zarr_loader;
@@ -616,6 +1074,7 @@ int main(int, char **) {
 
     constexpr bool kHeadingDebugLoggingEnabled = false;
     constexpr int kHeadingDebugMaxMessages = 400;
+    constexpr bool kPlaybackDebugLoggingEnabled = false;
     int heading_debug_message_count = 0;
     int heading_debug_draw_log_count = 0;
     int heading_debug_entry_log_count = 0;
@@ -664,17 +1123,25 @@ int main(int, char **) {
     };
 
     // for labeling
-    SkeletonContext *skeleton;
+    std::unique_ptr<SkeletonContext> skeleton;
     std::map<u32, KeyPoints *> keypoints_map;
     bool keypoints_find = false;
     std::map<std::string, SkeletonPrimitive> skeleton_map;
 
     // others
     std::filesystem::path cwd = std::filesystem::current_path();
-    std::string delimiter = "/";
-    std::vector<std::string> tokenized_path = string_split(cwd, delimiter);
-    std::string start_folder_name = "/home/" + tokenized_path[2] + "/data";
-    start_folder_name = "/nfs/exports/ratlv";
+    UiPathConfig ui_path_config = LoadUiPathConfig(cwd, argv[0]);
+    std::string start_folder_name = ui_path_config.default_start_path;
+    if (start_folder_name.empty() || !IsDirectoryNoThrow(start_folder_name)) {
+        start_folder_name = cwd.string();
+    }
+    if (!ui_path_config.loaded_from.empty()) {
+        std::cout << "[UIPathConfig] Loaded: " << ui_path_config.loaded_from
+                  << std::endl;
+    } else {
+        std::cout << "[UIPathConfig] Using default start path: "
+                  << start_folder_name << std::endl;
+    }
     ImVec4 clear_color = ImVec4(0.0f, 0.0f, 0.0f, 1.00f);
     ImGuiIO &io = ImGui::GetIO();
 
@@ -697,10 +1164,800 @@ int main(int, char **) {
     double video_fps = 60.0f;
     float set_playback_speed = 1.0f;
     PlaybackState ps;
+    std::string frame_sync_debug_line;
 
     window_need_decoding[stimulus_player.window_name].store(false);
     latest_decoded_frame[stimulus_player.window_name].store(-1);
     window_was_decoding[stimulus_player.window_name] = false;
+
+    auto loadCameraCalibrationsForCurrentMedia = [&]() {
+        if (!video_loaded) {
+            return;
+        }
+        camera_params.resize(scene->num_cams);
+        std::cout << "\n=== Loading Camera Calibrations from YAML ===" << std::endl;
+        for (size_t i = 0; i < camera_names.size(); ++i) {
+            std::cout << "\nProcessing camera " << i << ": " << camera_names[i] << std::endl;
+            std::string yaml_file = root_dir + "/calibration/" + camera_names[i] + ".yaml";
+            if (std::filesystem::exists(yaml_file)) {
+                std::cout << "Loading homography from YAML for camera: " << camera_names[i]
+                          << std::endl;
+                if (!camera_load_params_from_yaml(yaml_file, camera_params[i], error_message)) {
+                    std::cerr << "Error: Failed to load calibration from YAML: "
+                              << error_message << std::endl;
+                    show_error = true;
+                    break;
+                }
+                camera_print_calibration_details(camera_params[i], camera_names[i]);
+            } else {
+                std::cerr << "Warning: No calibration YAML file found at: "
+                          << yaml_file << std::endl;
+            }
+        }
+    };
+
+    auto tryAutoLoadAffiliatedVideoFromZarr = [&](const char* trigger_label) {
+        if (!zarr_loaded) {
+            return;
+        }
+        if (video_loaded || !decoder_threads.empty()) {
+            std::cout << "[Zarr] Skipping affiliated video auto-load (" << trigger_label
+                      << "): media already loaded" << std::endl;
+            return;
+        }
+
+        const std::string source_hint = zarr_loader.getSourceVideoPath();
+        if (source_hint.empty()) {
+            std::cout << "[Zarr] Archive did not provide source video metadata; "
+                      << "skipping affiliated video auto-load" << std::endl;
+            return;
+        }
+
+        auto resolved_video_opt =
+            ResolveAffiliatedVideoPath(source_hint, zarr_loader.getArchivePath());
+        if (!resolved_video_opt.has_value()) {
+            std::cout << "[Zarr] Could not resolve affiliated source video path from metadata: "
+                      << source_hint << std::endl;
+            return;
+        }
+
+        const std::filesystem::path resolved_video = *resolved_video_opt;
+        std::string camera_name = resolved_video.stem().string();
+        if (camera_name.empty()) {
+            camera_name = resolved_video.filename().string();
+        }
+
+        try {
+            input_is_imgs = false;
+            camera_names.clear();
+            demuxers.clear();
+            is_view_focused.clear();
+
+            camera_names.push_back(camera_name);
+            window_need_decoding[camera_name].store(true);
+            window_was_decoding[camera_name] = true;
+
+            std::map<std::string, std::string> ffmpeg_options;
+            demuxers.push_back(
+                std::make_unique<FFmpegDemuxer>(resolved_video.string().c_str(), ffmpeg_options));
+
+            dc_context->seek_interval =
+                static_cast<int>(demuxers[0]->FindKeyFrameInterval());
+            video_fps = demuxers[0]->GetFramerate();
+            scene->num_cams = 1;
+            scene->image_width = static_cast<u32*>(malloc(sizeof(u32) * scene->num_cams));
+            scene->image_height = static_cast<u32*>(malloc(sizeof(u32) * scene->num_cams));
+            scene->image_width[0] = demuxers[0]->GetWidth();
+            scene->image_height[0] = demuxers[0]->GetHeight();
+            render_allocate_scene_memory(scene, label_buffer_size);
+
+            decoder_threads.push_back(std::thread(
+                &decoder_process, dc_context, demuxers[0].get(), camera_names[0],
+                scene->display_buffer[0], scene->size_of_buffer, &scene->seek_context[0],
+                scene->use_cpu_buffer));
+            is_view_focused.push_back(false);
+            video_loaded = true;
+
+            int initial_frame = std::max(0, ps.to_display_frame_number);
+            double seek_fps = (video_fps > 0.0) ? video_fps : 30.0;
+            seek_all_cameras(scene, initial_frame, seek_fps, ps, true,
+                             &zarr_loader, &stimulus_player);
+
+            std::filesystem::path inferred_root =
+                InferRecordingRootPath(resolved_video, zarr_loader.getArchivePath());
+            if (!inferred_root.empty()) {
+                root_dir = inferred_root.string();
+                skeleton_dir = root_dir;
+            }
+
+            std::cout << "[Zarr] Auto-loaded affiliated video (" << trigger_label
+                      << "): " << resolved_video.string() << std::endl;
+            loadCameraCalibrationsForCurrentMedia();
+        } catch (const std::exception& e) {
+            std::cerr << "[Zarr] Failed to auto-load affiliated video (" << trigger_label
+                      << "): " << e.what() << std::endl;
+        }
+    };
+
+    if (!cli_zarr_override_path.empty()) {
+        std::string zarr_error;
+        if (loadZarrDetectionFromPath(cli_zarr_override_path, zarr_loader, zarr_error)) {
+            zarr_loaded = true;
+            refreshDetectionDatasetOptions(zarr_loader);
+            g_zarr_bbox_edit_state.clearAll();
+            std::cout << "Loaded Zarr archive from --zarr: "
+                      << zarr_loader.getArchivePath() << std::endl;
+            tryAutoLoadAffiliatedVideoFromZarr("--zarr");
+        } else {
+            g_zarr_bbox_edit_state.clearAll();
+            std::cerr << "Failed to load --zarr archive: " << zarr_error << std::endl;
+        }
+    }
+
+    auto getVisibleCameraIndex = [&]() -> int {
+        if (scene->num_cams <= 0 || scene->size_of_buffer <= 0) {
+            return -1;
+        }
+        for (int i = 0; i < scene->num_cams && i < static_cast<int>(camera_names.size()); ++i) {
+            auto it = window_was_decoding.find(camera_names[i]);
+            if (it != window_was_decoding.end() && it->second) {
+                return i;
+            }
+        }
+        return 0;
+    };
+
+    auto setCameraDecodeRequests = [&](bool enabled) {
+        for (const auto& camera_name : camera_names) {
+            auto it = window_need_decoding.find(camera_name);
+            if (it != window_need_decoding.end()) {
+                it->second.store(enabled);
+            }
+        }
+    };
+
+    auto stepPausedFrameFromBuffer = [&](int target_frame) -> bool {
+        if (ps.play_video || scene->num_cams <= 0 || scene->size_of_buffer <= 0) {
+            return false;
+        }
+        const int visible_idx = getVisibleCameraIndex();
+        if (visible_idx < 0) {
+            return false;
+        }
+
+        int matched_slot = -1;
+        for (int i = 0; i < scene->size_of_buffer; ++i) {
+            const auto& slot = scene->display_buffer[visible_idx][i];
+            if (!slot.available_to_write && slot.frame_number == target_frame) {
+                matched_slot = i;
+                break;
+            }
+        }
+
+        if (matched_slot < 0) {
+            return false;
+        }
+
+        ps.read_head = matched_slot;
+        ps.pause_selected = 0;
+        ps.to_display_frame_number = target_frame;
+        ps.slider_frame_number = target_frame;
+        current_frame_num = target_frame;
+        ps.pause_seeked = true;
+        return true;
+    };
+
+    auto findNearestPausedBufferSlot = [&](int visible_idx,
+                                           int target_frame) -> int {
+        if (ps.play_video || scene->num_cams <= 0 || scene->size_of_buffer <= 0 ||
+            visible_idx < 0) {
+            return -1;
+        }
+
+        int best_slot = -1;
+        int best_distance = std::numeric_limits<int>::max();
+        int best_frame = -1;
+        for (int i = 0; i < scene->size_of_buffer; ++i) {
+            const auto& slot = scene->display_buffer[visible_idx][i];
+            if (slot.available_to_write || slot.frame_number < 0) {
+                continue;
+            }
+            const int distance = std::abs(slot.frame_number - target_frame);
+            if (distance < best_distance ||
+                (distance == best_distance && slot.frame_number > best_frame)) {
+                best_distance = distance;
+                best_frame = slot.frame_number;
+                best_slot = i;
+            }
+        }
+        return best_slot;
+    };
+
+    auto stabilizePausedSeekFrame = [&](int target_frame) {
+        if (ps.play_video || scene->num_cams <= 0 || scene->size_of_buffer <= 0) {
+            return;
+        }
+        const auto timeout =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+        while (std::chrono::steady_clock::now() < timeout) {
+            if (stepPausedFrameFromBuffer(target_frame)) {
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        ps.pause_seeked = false;
+    };
+
+    auto findDisplaySlotForFrame = [&](int cam_idx,
+                                       int target_frame,
+                                       int preferred_slot) -> int {
+        if (scene->num_cams <= 0 || scene->size_of_buffer <= 0 ||
+            cam_idx < 0 || cam_idx >= scene->num_cams) {
+            return -1;
+        }
+
+        auto slot_is_valid = [&](int slot_idx) -> bool {
+            return slot_idx >= 0 &&
+                   slot_idx < scene->size_of_buffer &&
+                   !scene->display_buffer[cam_idx][slot_idx].available_to_write &&
+                   scene->display_buffer[cam_idx][slot_idx].frame_number >= 0;
+        };
+
+        if (slot_is_valid(preferred_slot)) {
+            const int preferred_frame =
+                scene->display_buffer[cam_idx][preferred_slot].frame_number;
+            if (target_frame < 0 || preferred_frame == target_frame) {
+                return preferred_slot;
+            }
+        }
+
+        int exact_slot = -1;
+        int best_lower_slot = -1;
+        int best_lower_frame = std::numeric_limits<int>::min();
+        int best_abs_slot = -1;
+        int best_abs_distance = std::numeric_limits<int>::max();
+
+        for (int i = 0; i < scene->size_of_buffer; ++i) {
+            if (!slot_is_valid(i)) {
+                continue;
+            }
+            const int frame_num = scene->display_buffer[cam_idx][i].frame_number;
+            if (frame_num == target_frame) {
+                exact_slot = i;
+                break;
+            }
+            if (frame_num <= target_frame && frame_num > best_lower_frame) {
+                best_lower_frame = frame_num;
+                best_lower_slot = i;
+            }
+            const int distance = std::abs(frame_num - target_frame);
+            if (distance < best_abs_distance) {
+                best_abs_distance = distance;
+                best_abs_slot = i;
+            }
+        }
+
+        if (exact_slot >= 0) {
+            return exact_slot;
+        }
+        if (best_lower_slot >= 0) {
+            return best_lower_slot;
+        }
+        return best_abs_slot;
+    };
+
+    auto seekToFrame = [&](int target_frame, bool prefer_buffer_when_paused) {
+        if (scene->num_cams <= 0) {
+            return;
+        }
+
+        const int max_frame = std::max(0, dc_context->total_num_frame - 1);
+        const int clamped_frame = std::clamp(target_frame, 0, max_frame);
+
+        if (prefer_buffer_when_paused && stepPausedFrameFromBuffer(clamped_frame)) {
+            return;
+        }
+
+        const bool seek_accurate = !ps.play_video;
+        if (!ps.play_video) {
+            ps.pause_seeked = false;
+            setCameraDecodeRequests(true);
+        }
+        seek_all_cameras(scene, clamped_frame, video_fps, ps,
+                         seek_accurate, &zarr_loader, &stimulus_player);
+        stabilizePausedSeekFrame(clamped_frame);
+    };
+
+    auto stepFrames = [&](int delta_frames) {
+        seekToFrame(current_frame_num + delta_frames, true);
+    };
+
+    ReviewFrameFilters review_frame_filters;
+    ReviewFrameCache review_frame_cache;
+    std::string review_frame_status;
+    std::string decode_debug_status;
+    std::mt19937 debug_rng(
+        static_cast<uint32_t>(
+            std::chrono::high_resolution_clock::now().time_since_epoch().count()));
+
+    auto sanitizePathComponent = [](std::string value) -> std::string {
+        if (value.empty()) {
+            return "unnamed";
+        }
+        for (char& ch : value) {
+            const bool ok =
+                (ch >= 'a' && ch <= 'z') ||
+                (ch >= 'A' && ch <= 'Z') ||
+                (ch >= '0' && ch <= '9') ||
+                ch == '_' || ch == '-' || ch == '.';
+            if (!ok) {
+                ch = '_';
+            }
+        }
+        return value;
+    };
+
+    auto dumpDecodeBuffersToVideos = [&](const std::string& tag) -> std::optional<std::filesystem::path> {
+        if (!video_loaded || scene->num_cams <= 0 || scene->size_of_buffer <= 0) {
+            decode_debug_status = "Decode dump skipped: no decoded video buffers are available.";
+            return std::nullopt;
+        }
+
+        const bool was_playing = ps.play_video;
+        if (was_playing) {
+            ps.play_video = false;
+            ps.pause_selected = 0;
+        }
+
+        std::filesystem::path dump_root = "/tmp/crimson_buffer_dumps";
+        if (const char* env_dump_root = std::getenv("CRIMSON_BUFFER_DUMP_DIR")) {
+            if (*env_dump_root != '\0') {
+                dump_root = env_dump_root;
+            }
+        }
+
+        const auto epoch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::system_clock::now().time_since_epoch())
+                                  .count();
+        const std::filesystem::path dump_dir =
+            dump_root / (sanitizePathComponent(tag) + "_" + std::to_string(epoch_ms));
+
+        std::error_code mkdir_ec;
+        std::filesystem::create_directories(dump_dir, mkdir_ec);
+        if (mkdir_ec) {
+            decode_debug_status =
+                "Decode dump failed to create directory: " + dump_dir.string();
+            return std::nullopt;
+        }
+
+        std::unordered_map<std::string, bool> prior_decode_requests;
+        prior_decode_requests.reserve(camera_names.size());
+        for (const auto& camera_name : camera_names) {
+            auto it = window_need_decoding.find(camera_name);
+            if (it == window_need_decoding.end()) {
+                continue;
+            }
+            prior_decode_requests[camera_name] = it->second.load();
+            it->second.store(false);
+        }
+
+        // Give decoder threads a short window to finish any in-flight writes.
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+
+        bool wrote_any_frames = false;
+        size_t total_frames_written = 0;
+        size_t total_candidate_frames = 0;
+
+        for (int cam_idx = 0; cam_idx < scene->num_cams; ++cam_idx) {
+            if (cam_idx >= static_cast<int>(camera_names.size())) {
+                continue;
+            }
+            const int width = scene->image_width[cam_idx];
+            const int height = scene->image_height[cam_idx];
+            if (width <= 0 || height <= 0) {
+                continue;
+            }
+
+            struct BufferSample {
+                int slot = -1;
+                int frame_number = -1;
+                bool available = true;
+                bool has_frame_ptr = false;
+            };
+            std::vector<BufferSample> all_slots;
+            all_slots.reserve(scene->size_of_buffer);
+            std::vector<BufferSample> samples;
+            samples.reserve(scene->size_of_buffer);
+            for (int slot_idx = 0; slot_idx < scene->size_of_buffer; ++slot_idx) {
+                const auto& slot = scene->display_buffer[cam_idx][slot_idx];
+                BufferSample sample;
+                sample.slot = slot_idx;
+                sample.frame_number = slot.frame_number;
+                sample.available = slot.available_to_write;
+                sample.has_frame_ptr = slot.frame != nullptr;
+                all_slots.push_back(sample);
+
+                if (sample.available || sample.frame_number < 0 || !sample.has_frame_ptr) {
+                    continue;
+                }
+                samples.push_back(sample);
+            }
+
+            const std::string camera_stem =
+                sanitizePathComponent(camera_names[cam_idx]);
+            std::ofstream slot_file(
+                (dump_dir / (camera_stem + "_slots.txt")).string());
+            slot_file << "# slot_index,frame_number,available_to_write,has_frame_ptr\n";
+            for (const auto& sample : all_slots) {
+                slot_file << sample.slot << ","
+                          << sample.frame_number << ","
+                          << (sample.available ? 1 : 0) << ","
+                          << (sample.has_frame_ptr ? 1 : 0) << "\n";
+            }
+
+            if (samples.empty()) {
+                continue;
+            }
+
+            total_candidate_frames += samples.size();
+            std::sort(samples.begin(), samples.end(),
+                      [](const BufferSample& a, const BufferSample& b) {
+                          if (a.frame_number == b.frame_number) {
+                              return a.slot < b.slot;
+                          }
+                          return a.frame_number < b.frame_number;
+                      });
+
+            std::filesystem::path video_path = dump_dir / (camera_stem + ".avi");
+            cv::VideoWriter writer;
+            const double fps_for_dump = (video_fps > 0.0) ? video_fps : 30.0;
+            writer.open(video_path.string(),
+                        cv::VideoWriter::fourcc('M', 'J', 'P', 'G'),
+                        fps_for_dump,
+                        cv::Size(width, height),
+                        true);
+            if (!writer.isOpened()) {
+                video_path = dump_dir / (camera_stem + ".mp4");
+                writer.open(video_path.string(),
+                            cv::VideoWriter::fourcc('m', 'p', '4', 'v'),
+                            fps_for_dump,
+                            cv::Size(width, height),
+                            true);
+            }
+            const bool video_writer_enabled = writer.isOpened();
+            if (!video_writer_enabled) {
+                std::cerr << "[DecodeDebug] VideoWriter unavailable for camera "
+                          << camera_names[cam_idx]
+                          << "; dumping PNG frames only." << std::endl;
+            }
+
+            std::ofstream mapping_file(
+                (dump_dir / (camera_stem + "_frames.txt")).string());
+            mapping_file << "# dump_frame_index,source_frame_number,slot_index,png_path\n";
+
+            const size_t bytes =
+                static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
+            std::vector<uint8_t> rgba_bytes(bytes);
+
+            size_t local_written = 0;
+            for (const auto& sample : samples) {
+                if (sample.slot < 0 || sample.slot >= scene->size_of_buffer) {
+                    continue;
+                }
+                const auto& slot = scene->display_buffer[cam_idx][sample.slot];
+                const int frame_before = slot.frame_number;
+                const bool available_before = slot.available_to_write;
+                if (available_before || frame_before < 0 || !slot.frame) {
+                    continue;
+                }
+
+                if (scene->use_cpu_buffer) {
+                    std::memcpy(rgba_bytes.data(), slot.frame, bytes);
+                } else {
+                    cudaError_t copy_status = cudaMemcpy(
+                        rgba_bytes.data(),
+                        slot.frame,
+                        bytes,
+                        cudaMemcpyDeviceToHost);
+                    if (copy_status != cudaSuccess) {
+                        std::cerr << "[DecodeDebug] cudaMemcpy failed while dumping slot "
+                                  << sample.slot << " for camera "
+                                  << camera_names[cam_idx] << std::endl;
+                        continue;
+                    }
+                }
+
+                const int frame_after = slot.frame_number;
+                const bool available_after = slot.available_to_write;
+                if (available_after || frame_after != frame_before) {
+                    continue;
+                }
+
+                cv::Mat rgba_view(height, width, CV_8UC4, rgba_bytes.data(),
+                                  static_cast<size_t>(width) * 4);
+                cv::Mat bgr_view;
+                cv::cvtColor(rgba_view, bgr_view, cv::COLOR_RGBA2BGR);
+
+                std::ostringstream png_name;
+                png_name << camera_stem << "_f" << frame_after
+                         << "_slot" << sample.slot << ".png";
+                const std::filesystem::path png_path = dump_dir / png_name.str();
+                bool png_ok = false;
+                try {
+                    png_ok = cv::imwrite(png_path.string(), bgr_view);
+                } catch (const std::exception& e) {
+                    std::cerr << "[DecodeDebug] Failed to write " << png_path
+                              << ": " << e.what() << std::endl;
+                    png_ok = false;
+                }
+
+                bool wrote_sample = png_ok;
+                if (video_writer_enabled) {
+                    writer.write(bgr_view);
+                    wrote_sample = true;
+                }
+
+                if (!wrote_sample) {
+                    continue;
+                }
+                mapping_file << local_written << ","
+                             << frame_after << ","
+                             << sample.slot << ","
+                             << (png_ok ? png_name.str() : "") << "\n";
+                ++local_written;
+            }
+
+            if (video_writer_enabled) {
+                writer.release();
+            }
+            if (local_written > 0) {
+                wrote_any_frames = true;
+                total_frames_written += local_written;
+            }
+        }
+
+        for (const auto& [camera_name, was_enabled] : prior_decode_requests) {
+            auto it = window_need_decoding.find(camera_name);
+            if (it != window_need_decoding.end()) {
+                it->second.store(was_enabled);
+            }
+        }
+
+        if (was_playing) {
+            ps.play_video = true;
+            ps.pause_seeked = false;
+            ps.last_play_time_start = std::chrono::steady_clock::now();
+        }
+
+        if (!wrote_any_frames) {
+            decode_debug_status =
+                "Decode dump completed but no valid frames were captured: " +
+                dump_dir.string();
+        } else {
+            decode_debug_status =
+                "Decode dump wrote " + std::to_string(total_frames_written) +
+                " frames (" + std::to_string(total_candidate_frames) +
+                " candidates) to " + dump_dir.string();
+        }
+        return dump_dir;
+    };
+
+    auto randomSeekAndDumpBuffers = [&]() {
+        const int max_frame = std::max(0, dc_context->total_num_frame - 1);
+        if (!video_loaded || max_frame <= 0) {
+            decode_debug_status = "Random seek + dump skipped: no loaded video timeline.";
+            return;
+        }
+        std::uniform_int_distribution<int> frame_dist(0, max_frame);
+        const int target_frame = frame_dist(debug_rng);
+
+        const bool was_playing = ps.play_video;
+        if (was_playing) {
+            ps.play_video = false;
+            ps.pause_selected = 0;
+        }
+
+        seekToFrame(target_frame, false);
+        std::unordered_map<std::string, bool> prior_decode_requests;
+        prior_decode_requests.reserve(window_need_decoding.size());
+        for (auto& [camera_name, enabled] : window_need_decoding) {
+            prior_decode_requests[camera_name] = enabled.load();
+            enabled.store(true);
+        }
+        auto countCandidateSlots = [&]() -> size_t {
+            if (!video_loaded || scene->num_cams <= 0 || scene->size_of_buffer <= 0) {
+                return 0;
+            }
+            size_t count = 0;
+            for (int cam_idx = 0; cam_idx < scene->num_cams; ++cam_idx) {
+                for (int slot_idx = 0; slot_idx < scene->size_of_buffer; ++slot_idx) {
+                    const auto& slot = scene->display_buffer[cam_idx][slot_idx];
+                    if (!slot.available_to_write && slot.frame_number >= 0 &&
+                        slot.frame != nullptr) {
+                        ++count;
+                    }
+                }
+            }
+            return count;
+        };
+        const size_t target_slots_per_camera =
+            static_cast<size_t>(std::clamp(scene->size_of_buffer, 4u, 8u));
+        const size_t target_total_slots =
+            target_slots_per_camera * static_cast<size_t>(std::max(1u, scene->num_cams));
+        const auto fill_deadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(900);
+        while (std::chrono::steady_clock::now() < fill_deadline) {
+            if (countCandidateSlots() >= target_total_slots) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        dumpDecodeBuffersToVideos("random_seek_" + std::to_string(target_frame));
+        if (was_playing) {
+            setCameraDecodeRequests(true);
+            if (stimulus_player.loaded) {
+                window_need_decoding[stimulus_player.window_name].store(true);
+            }
+        } else {
+            for (const auto& [camera_name, was_enabled] : prior_decode_requests) {
+                auto it = window_need_decoding.find(camera_name);
+                if (it != window_need_decoding.end()) {
+                    it->second.store(was_enabled);
+                }
+            }
+        }
+        decode_debug_status =
+            "Random seek target frame " + std::to_string(target_frame) + ". " +
+            decode_debug_status;
+
+        if (was_playing) {
+            ps.play_video = true;
+            ps.pause_seeked = false;
+            ps.last_play_time_start = std::chrono::steady_clock::now();
+        }
+    };
+
+    auto invalidateReviewFrameCache = [&]() {
+        review_frame_cache.valid = false;
+        review_frame_cache.frames.clear();
+    };
+
+    auto frameHasNonCleanDetections = [&](int frame_id) -> bool {
+        if (frame_id < 0) {
+            return false;
+        }
+        if (zarr_loader.getDetectionsForFrame(static_cast<size_t>(frame_id)) <= 0) {
+            return false;
+        }
+
+        auto detections =
+            zarr_loader.getRawDetections(static_cast<size_t>(frame_id), false);
+        const size_t detection_count = detections.boxes.size();
+        for (size_t det_idx = 0; det_idx < detection_count; ++det_idx) {
+            bool is_interp_source = false;
+            if (det_idx < detections.detection_source.size()) {
+                is_interp_source = detections.detection_source[det_idx] != 0;
+            }
+
+            if (det_idx < detections.detection_reason.size()) {
+                std::string reason =
+                    ToLowerCopy(detections.detection_reason[det_idx]);
+                if (!reason.empty() && reason != "clean") {
+                    return true;
+                }
+                if (!reason.empty()) {
+                    if (is_interp_source) {
+                        return true;
+                    }
+                    continue;
+                }
+            }
+
+            if (is_interp_source) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    auto ensureReviewFrameIndex = [&]() {
+        const bool has_filters =
+            review_frame_filters.include_interpolated ||
+            review_frame_filters.include_non_clean ||
+            review_frame_filters.include_empty;
+        if (!zarr_loaded || !zarr_loader.hasDetectionData() || !has_filters) {
+            review_frame_cache.valid = true;
+            review_frame_cache.archive_path = zarr_loader.getArchivePath();
+            review_frame_cache.dataset = zarr_loader.getActiveDetectionDataset();
+            review_frame_cache.total_frames = zarr_loader.getTotalFrames();
+            review_frame_cache.filters = review_frame_filters;
+            review_frame_cache.frames.clear();
+            return;
+        }
+
+        const auto current_dataset = zarr_loader.getActiveDetectionDataset();
+        const size_t total_frames = zarr_loader.getTotalFrames();
+        const std::string current_archive_path = zarr_loader.getArchivePath();
+
+        if (review_frame_cache.valid &&
+            review_frame_cache.archive_path == current_archive_path &&
+            review_frame_cache.dataset == current_dataset &&
+            review_frame_cache.total_frames == total_frames &&
+            review_frame_cache.filters.include_interpolated ==
+                review_frame_filters.include_interpolated &&
+            review_frame_cache.filters.include_non_clean ==
+                review_frame_filters.include_non_clean &&
+            review_frame_cache.filters.include_empty ==
+                review_frame_filters.include_empty) {
+            return;
+        }
+
+        review_frame_cache.valid = true;
+        review_frame_cache.archive_path = current_archive_path;
+        review_frame_cache.dataset = current_dataset;
+        review_frame_cache.total_frames = total_frames;
+        review_frame_cache.filters = review_frame_filters;
+        review_frame_cache.frames.clear();
+        const bool non_clean_possible =
+            current_dataset != ZarrDetectionLoader::DetectionDataset::RawDetect;
+
+        for (size_t frame_idx = 0; frame_idx < total_frames; ++frame_idx) {
+            bool matches = false;
+            const int32_t det_count = zarr_loader.getDetectionsForFrame(frame_idx);
+
+            if (review_frame_filters.include_empty && det_count <= 0) {
+                matches = true;
+            }
+            if (!matches && review_frame_filters.include_interpolated &&
+                zarr_loader.isFrameInterpolated(frame_idx)) {
+                matches = true;
+            }
+            if (!matches && review_frame_filters.include_non_clean &&
+                non_clean_possible && det_count > 0 &&
+                frameHasNonCleanDetections(static_cast<int>(frame_idx))) {
+                matches = true;
+            }
+
+            if (matches) {
+                review_frame_cache.frames.push_back(static_cast<int>(frame_idx));
+            }
+        }
+    };
+
+    auto jumpToReviewFrame = [&](bool forward) -> bool {
+        ensureReviewFrameIndex();
+        if (review_frame_cache.frames.empty()) {
+            review_frame_status =
+                "No frames match the selected review filters.";
+            return false;
+        }
+
+        const auto& review_frames = review_frame_cache.frames;
+        int target_frame = current_frame_num;
+        if (forward) {
+            auto it = std::upper_bound(review_frames.begin(),
+                                       review_frames.end(),
+                                       current_frame_num);
+            if (it == review_frames.end()) {
+                it = review_frames.begin();
+            }
+            target_frame = *it;
+        } else {
+            auto it = std::lower_bound(review_frames.begin(),
+                                       review_frames.end(),
+                                       current_frame_num);
+            if (it == review_frames.begin()) {
+                target_frame = review_frames.back();
+            } else {
+                --it;
+                target_frame = *it;
+            }
+        }
+
+        review_frame_status.clear();
+        seekToFrame(target_frame, true);
+        return true;
+    };
 
     while (!glfwWindowShouldClose(window->render_target)) {
         // Poll and handle events (inputs, window resize, etc.)
@@ -735,6 +1992,15 @@ int main(int, char **) {
                             "ChooseMedia", "Choose Media",
                             ".mp4,.tiff,.jpeg,.jpg,.png", config);
                     };
+                    if (ImGui::MenuItem("Load Zarr Archive")) {
+                        IGFD::FileDialogConfig config;
+                        config.countSelectionMax = 1;
+                        config.path = root_dir.empty() ? start_folder_name : root_dir;
+                        config.flags = ImGuiFileDialogFlags_Modal;
+                        ImGuiFileDialog::Instance()->OpenDialog(
+                            "ChooseZarrArchive", "Choose Zarr Archive Directory",
+                            nullptr, config);
+                    }
                     if (video_loaded) {
                         if (ImGui::MenuItem("Load Stimulus Video")) {
                             IGFD::FileDialogConfig config;
@@ -746,13 +2012,25 @@ int main(int, char **) {
                                 ".mp4", config);
                         }
                     }
+                    if (!ui_path_config.preferred_roots.empty() &&
+                        ImGui::BeginMenu("Path Preset")) {
+                        for (const auto& preset_path : ui_path_config.preferred_roots) {
+                            bool selected = (preset_path == start_folder_name);
+                            if (ImGui::MenuItem(preset_path.c_str(), nullptr, selected)) {
+                                start_folder_name = preset_path;
+                                std::cout << "[UIPathConfig] Start path set to: "
+                                          << start_folder_name << std::endl;
+                            }
+                        }
+                        ImGui::EndMenu();
+                    }
                     ImGui::EndMenu();
                 }
 
                 if (video_loaded) {
                     if (ImGui::BeginMenu("Skeleton")) {
                         if (!skeleton_chosen) {
-                            skeleton = new SkeletonContext;
+                            skeleton = std::make_unique<SkeletonContext>();
                             skeleton_map = skeleton_get_all();
                         }
 
@@ -797,7 +2075,7 @@ int main(int, char **) {
 
                                     if (load_calibration) {
                                         skeleton_initialize(element.first,
-                                                            root_dir, skeleton,
+                                                            root_dir, skeleton.get(),
                                                             element.second);
                                         plot_keypoints_flag = true;
                                         keypoints_root_folder =
@@ -924,6 +2202,11 @@ int main(int, char **) {
         if (video_loaded) {
             ImGui::Begin("Frame Debug");
             ImGui::Text("Inspecting Frame: %d", current_frame_num);
+            ImGui::Text("Display target frame: %d", ps.to_display_frame_number);
+            ImGui::Text("Slider frame: %d", ps.slider_frame_number);
+            if (!frame_sync_debug_line.empty()) {
+                ImGui::TextWrapped("Frame sync: %s", frame_sync_debug_line.c_str());
+            }
             ImGui::Separator();
 
             // Check for Labeled Keypoints
@@ -959,12 +2242,19 @@ int main(int, char **) {
                         ImGui::EndCombo();
                         if (dataset_changed) {
                             refreshDetectionDatasetOptions(zarr_loader);
+                            g_zarr_bbox_edit_state.clearAll();
+                            invalidateReviewFrameCache();
+                            review_frame_status.clear();
                             if (zarr_loader.getTotalFrames() > 0 &&
                                 current_frame_num >= static_cast<int>(zarr_loader.getTotalFrames())) {
                                 current_frame_num = static_cast<int>(zarr_loader.getTotalFrames()) - 1;
                             }
                         }
                     }
+                }
+                if (!zarr_loader.hasDetectionData()) {
+                    ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.25f, 1.0f),
+                                       "[Zarr] Detection runs: unavailable (metadata/stimulus-only mode)");
                 }
 
                     if (zarr_loader.hasStimulusAlignment()) {
@@ -1001,12 +2291,28 @@ int main(int, char **) {
 
                 std::vector<LoggedBoundingBox> zarr_boxes;
                 bool frame_is_interpolated = false;
+                const bool frame_has_bbox_edits =
+                    g_zarr_bbox_edit_state.isFrameDirty(current_frame_num);
 
                 if (zarr_loader.hasInterpolation()) {
                     frame_is_interpolated = zarr_loader.isFrameInterpolated(current_frame_num);
                 }
 
-                zarr_boxes = zarr_loader.getBoundingBoxesForFrame(current_frame_num);
+                std::vector<LoggedBoundingBox> loaded_zarr_boxes =
+                    zarr_loader.getBoundingBoxesForFrame(current_frame_num);
+                zarr_boxes = g_zarr_bbox_edit_state.resolveFrameBoxes(current_frame_num,
+                                                                      loaded_zarr_boxes);
+                const bool active_dataset_is_raw_detect =
+                    zarr_loader.hasDetectionData() &&
+                    (zarr_loader.getActiveDetectionDataset() ==
+                     ZarrDetectionLoader::DetectionDataset::RawDetect);
+                const bool dataset_allows_bbox_edit =
+                    zarr_loader.hasDetectionData() && !active_dataset_is_raw_detect;
+                if (!dataset_allows_bbox_edit) {
+                    g_zarr_bbox_edit_state.draw_mode = false;
+                    g_zarr_bbox_edit_state.cancelDraw();
+                    g_zarr_bbox_edit_state.clearSelection();
+                }
 
                 const bool need_details =
                     zarr_loader.hasScores() ||
@@ -1071,7 +2377,115 @@ int main(int, char **) {
                         ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f),
                                            "[Zarr] Detections:    None");
                     }
+	                }
+
+                ImGui::Separator();
+                ImGui::Text("Review Navigation:");
+                bool review_filter_changed = false;
+                review_filter_changed |=
+                    ImGui::Checkbox("Interpolated##review_filter_interpolated",
+                                    &review_frame_filters.include_interpolated);
+                ImGui::SameLine();
+                review_filter_changed |=
+                    ImGui::Checkbox("Non-clean##review_filter_non_clean",
+                                    &review_frame_filters.include_non_clean);
+                ImGui::SameLine();
+                review_filter_changed |=
+                    ImGui::Checkbox("Empty##review_filter_empty",
+                                    &review_frame_filters.include_empty);
+                if (review_filter_changed) {
+                    invalidateReviewFrameCache();
+                    review_frame_status.clear();
                 }
+
+                const bool review_filter_enabled =
+                    review_frame_filters.include_interpolated ||
+                    review_frame_filters.include_non_clean ||
+                    review_frame_filters.include_empty;
+                ImGui::BeginDisabled(!review_filter_enabled);
+                if (ImGui::Button("Prev Review Frame")) {
+                    jumpToReviewFrame(false);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Next Review Frame")) {
+                    jumpToReviewFrame(true);
+                }
+                ImGui::EndDisabled();
+                if (!review_filter_enabled) {
+                    ImGui::TextColored(
+                        ImVec4(1.0f, 0.75f, 0.2f, 1.0f),
+                        "Enable at least one review filter to jump frames.");
+                } else if (review_frame_cache.valid) {
+                    ImGui::Text("  Indexed review frames: %zu",
+                                review_frame_cache.frames.size());
+                }
+                if (!review_frame_status.empty()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
+                                       "%s",
+                                       review_frame_status.c_str());
+                }
+
+                ImGui::Separator();
+                ImGui::Text("Decode Debug:");
+                if (ImGui::Button("Dump Decode Buffers")) {
+                    dumpDecodeBuffersToVideos("manual_dump");
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Random Seek + Dump")) {
+                    randomSeekAndDumpBuffers();
+                }
+                ImGui::TextWrapped(
+                    "  Output dir: CRIMSON_BUFFER_DUMP_DIR (default /tmp/crimson_buffer_dumps)");
+                if (!decode_debug_status.empty()) {
+                    ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f),
+                                       "%s",
+                                       decode_debug_status.c_str());
+                }
+
+                ImGui::TextWrapped(
+                    "  Box colors: clean=blue, interpolated=orange, manual=teal");
+
+	                ImGui::Separator();
+	                ImGui::Text("BBox Edit (in-memory):");
+                if (!dataset_allows_bbox_edit) {
+                    ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.25f, 1.0f),
+                                       "Read-only: Zarr Raw Detect (read-only) cannot be edited.");
+                }
+                ImGui::BeginDisabled(!dataset_allows_bbox_edit);
+                ImGui::Checkbox("Enable bbox drag editing", &g_zarr_bbox_edit_state.enabled);
+                bool draw_mode_enabled = g_zarr_bbox_edit_state.draw_mode;
+                if (ImGui::Checkbox("Draw new boxes (N)", &draw_mode_enabled)) {
+                    g_zarr_bbox_edit_state.draw_mode = draw_mode_enabled;
+                    if (!draw_mode_enabled) {
+                        g_zarr_bbox_edit_state.cancelDraw();
+                    } else {
+                        g_zarr_bbox_edit_state.clearSelection();
+                    }
+                }
+                if (ps.play_video && g_zarr_bbox_edit_state.enabled &&
+                    !g_zarr_bbox_edit_state.allow_edit_while_playing) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f),
+                                       "Pause playback to drag boxes.");
+                }
+                if (g_zarr_bbox_edit_state.draw_mode) {
+                    ImGui::Text("  Draw mode active: Ctrl + left-drag to place; Esc cancels.");
+                }
+                ImGui::Text("  Cycle/select bbox: B (Shift+B reverse)");
+                ImGui::Text("  Move selected bbox: Ctrl + left-drag");
+                ImGui::Text("  Pan while editing: Shift + drag");
+                ImGui::Text("  Delete selected bbox: Del");
+                ImGui::Text("  Current frame: %s",
+                            frame_has_bbox_edits ? "edited (unsaved)" : "unchanged");
+                ImGui::Text("  Pending edited frames: %zu",
+                            g_zarr_bbox_edit_state.dirtyFrameCount());
+                if (ImGui::Button("Reset Frame BBox Edits (Shift+R)")) {
+                    g_zarr_bbox_edit_state.clearFrameEdits(current_frame_num);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Clear BBox Selection (Esc)")) {
+                    g_zarr_bbox_edit_state.clearSelection();
+                }
+                ImGui::EndDisabled();
 
                 if (zarr_loader.hasKeypointData() || zarr_loader.hasHeadingData()) {
                     ImGui::Separator();
@@ -1182,8 +2596,10 @@ int main(int, char **) {
                 if (loadZarrDetectionFromDirectory(root_dir, zarr_loader, zarr_error)) {
                     zarr_loaded = true;
                     refreshDetectionDatasetOptions(zarr_loader);
+                    g_zarr_bbox_edit_state.clearAll();
                 } else {
                     zarr_loaded = false;
+                    g_zarr_bbox_edit_state.clearAll();
                     std::cout << "No Zarr detection file found (optional): " << zarr_error << std::endl;
                     detection_dataset_ids.clear();
                     detection_dataset_labels.clear();
@@ -1210,9 +2626,8 @@ int main(int, char **) {
                         window_need_decoding[cam_string].store(true);
                         window_was_decoding[cam_string] = true;
                         std::map<std::string, std::string> m;
-                        FFmpegDemuxer *demuxer =
-                            new FFmpegDemuxer(elem.second.c_str(), m);
-                        demuxers.push_back(demuxer);
+                        demuxers.push_back(
+                            std::make_unique<FFmpegDemuxer>(elem.second.c_str(), m));
                     }
                     std::map<std::string, std::string> m;
                     FFmpegDemuxer dummy_dmuxer(
@@ -1234,7 +2649,7 @@ int main(int, char **) {
                     // multiple threads for decoding for selected videos
                     for (int i = 0; i < scene->num_cams; i++) {
                         decoder_threads.push_back(std::thread(
-                            &decoder_process, dc_context, demuxers[i],
+                            &decoder_process, dc_context, demuxers[i].get(),
                             camera_names[i], scene->display_buffer[i],
                             scene->size_of_buffer, &scene->seek_context[i],
                             scene->use_cpu_buffer));
@@ -1290,31 +2705,49 @@ int main(int, char **) {
                     video_loaded = true;
                 }
 
-                // After loading video, load camera calibration
-                if (video_loaded) {
-                    camera_params.resize(scene->num_cams);
-                    std::cout << "\n=== Loading Camera Calibrations from YAML ===" << std::endl;
-                    for (size_t i = 0; i < camera_names.size(); ++i) {
-                        std::cout << "\nProcessing camera " << i << ": " << camera_names[i] << std::endl;
-
-                        // Load calibration from YAML file
-                        std::string yaml_file = root_dir + "/calibration/" + camera_names[i] + ".yaml";
-                        if (std::filesystem::exists(yaml_file)) {
-                            std::cout << "Loading homography from YAML for camera: " << camera_names[i] << std::endl;
-                            if (!camera_load_params_from_yaml(yaml_file, camera_params[i], error_message)) {
-                                std::cerr << "Error: Failed to load calibration from YAML: " << error_message << std::endl;
-                                show_error = true;
-                                break;
-                            } else {
-                                camera_print_calibration_details(camera_params[i], camera_names[i]);
-                            }
-                        } else {
-                            std::cerr << "Warning: No calibration YAML file found at: " << yaml_file << std::endl;
-                        }
-                    }
+                loadCameraCalibrationsForCurrentMedia();
+                if (video_loaded && !input_is_imgs) {
+                    int initial_frame = std::max(0, ps.to_display_frame_number);
+                    double seek_fps = (video_fps > 0.0) ? video_fps : 30.0;
+                    seek_all_cameras(scene, initial_frame, seek_fps, ps, true,
+                                     &zarr_loader, &stimulus_player);
                 }
             }
             // close
+            ImGuiFileDialog::Instance()->Close();
+        }
+
+        if (ImGuiFileDialog::Instance()->Display("ChooseZarrArchive")) {
+            if (ImGuiFileDialog::Instance()->IsOk()) {
+                auto selection = ImGuiFileDialog::Instance()->GetSelection();
+                std::string selected_zarr_path;
+                if (!selection.empty()) {
+                    selected_zarr_path = selection.begin()->second;
+                } else {
+                    selected_zarr_path = ImGuiFileDialog::Instance()->GetCurrentPath();
+                }
+
+                std::string zarr_error;
+                if (loadZarrDetectionFromPath(selected_zarr_path, zarr_loader, zarr_error)) {
+                    zarr_loaded = true;
+                    refreshDetectionDatasetOptions(zarr_loader);
+                    g_zarr_bbox_edit_state.clearAll();
+                    invalidateReviewFrameCache();
+                    review_frame_status.clear();
+                    std::cout << "Loaded Zarr archive override: "
+                              << zarr_loader.getArchivePath() << std::endl;
+                    tryAutoLoadAffiliatedVideoFromZarr("Load Zarr Archive");
+                } else {
+                    zarr_loaded = false;
+                    g_zarr_bbox_edit_state.clearAll();
+                    invalidateReviewFrameCache();
+                    review_frame_status.clear();
+                    std::cout << "Failed to load Zarr archive override: " << zarr_error << std::endl;
+                    detection_dataset_ids.clear();
+                    detection_dataset_labels.clear();
+                    detection_dataset_choice = 0;
+                }
+            }
             ImGuiFileDialog::Instance()->Close();
         }
 
@@ -1371,7 +2804,7 @@ int main(int, char **) {
                         skeleton_dir =
                             ImGuiFileDialog::Instance()->GetCurrentPath();
                         skeleton_initialize("", skeleton_file.begin()->second,
-                                            skeleton, SP_LOAD);
+                                            skeleton.get(), SP_LOAD);
                         plot_keypoints_flag = true;
                         keypoints_root_folder = root_dir + "/labeled_data/";
                         skeleton_chosen = true;
@@ -1394,6 +2827,35 @@ int main(int, char **) {
                 }
             }
 
+                auto getPreferredPausedSlot = [&]() -> int {
+                    int exact_slot = -1;
+                    for (int i = 0; i < scene->size_of_buffer; ++i) {
+                        const auto& slot = scene->display_buffer[visible_idx][i];
+                        if (!slot.available_to_write &&
+                        slot.frame_number == ps.to_display_frame_number) {
+                        exact_slot = i;
+                        break;
+                    }
+                    }
+                    if (exact_slot >= 0) {
+                        return exact_slot;
+                    }
+                    if (!ps.pause_seeked) {
+                        return findNearestPausedBufferSlot(
+                            visible_idx, std::max(0, ps.to_display_frame_number));
+                    }
+
+                    int preferred_slot =
+                        (ps.pause_selected + ps.read_head) % scene->size_of_buffer;
+                const auto& preferred =
+                    scene->display_buffer[visible_idx][preferred_slot];
+                if (!preferred.available_to_write && preferred.frame_number >= 0) {
+                    return preferred_slot;
+                }
+                return findNearestPausedBufferSlot(
+                    visible_idx, std::max(0, ps.to_display_frame_number));
+            };
+
             ImGui::SetNextWindowSize(ImVec2(500, 440), ImGuiCond_FirstUseEver);
             if (ImGui::Begin("Frames in the buffer")) {
                 {
@@ -1415,10 +2877,12 @@ int main(int, char **) {
                                                         [seletable_frame_id]
                                         .frame_number);
                         }
+                        ImGui::PushID(static_cast<int>(i));
                         if (ImGui::Selectable(label, ps.pause_selected == i)) {
                             // start from the lowest frame
                             ps.pause_selected = i;
                         }
+                        ImGui::PopID();
                     }
                 }
 
@@ -1435,15 +2899,29 @@ int main(int, char **) {
                 };
             }
             ImGui::End();
-            select_corr_head =
-                (ps.pause_selected + ps.read_head) % scene->size_of_buffer;
-            current_frame_num =
-                scene->display_buffer[visible_idx][select_corr_head]
-                    .frame_number;
+            select_corr_head = getPreferredPausedSlot();
+            if (select_corr_head >= 0) {
+                ps.read_head = select_corr_head;
+                ps.pause_selected = 0;
+                current_frame_num =
+                    scene->display_buffer[visible_idx][select_corr_head]
+                        .frame_number;
+            } else {
+                current_frame_num = std::max(0, ps.to_display_frame_number);
+            }
         }
 
         // Render a video frame
         if (video_loaded) {
+            if (ps.play_video && scene->num_cams > 0 && scene->size_of_buffer > 0) {
+                int live_frame =
+                    scene->display_buffer[0][ps.read_head % scene->size_of_buffer].frame_number;
+                if (live_frame >= 0) {
+                    current_frame_num = live_frame;
+                } else {
+                    current_frame_num = ps.to_display_frame_number;
+                }
+            }
             if (zarr_loaded && zarr_loader.hasStimulusAlignment()) {
                 if (auto stim_frame = zarr_loader.getStimulusFrameForCameraFrame(current_frame_num)) {
                     ps.current_stimulus_frame = *stim_frame;
@@ -1514,6 +2992,17 @@ int main(int, char **) {
                 };
 
                 if (is_visible) {
+                    auto clearCameraDisplayBuffer = [&]() {
+                        const size_t bytes =
+                            static_cast<size_t>(scene->image_width[j]) *
+                            static_cast<size_t>(scene->image_height[j]) * 4;
+                        if (bytes == 0) {
+                            return;
+                        }
+                        ck(cudaMemset(scene->pbo_cuda[j].cuda_buffer, 0, bytes));
+                    };
+                    int presented_slot = -1;
+                    int presented_frame = -1;
                     if (ps.play_video) {
                         // if the current frame is ready, upload for display,
                         // otherwise wait for the frame to get ready
@@ -1532,46 +3021,87 @@ int main(int, char **) {
                         //         std::chrono::milliseconds(1));
                         // }
 
-                        current_frame_num = ps.to_display_frame_number;
-                        if (scene->use_cpu_buffer) {
-                            // upload_texture(&scene->image_texture[j],
-                            // scene->display_buffer[j][read_head].frame,
-                            // scene->image_width[j], scene->image_height[j]);
-                            // // 2x slower than pbo copy frame to cuda buffer
-                            ck(cudaMemcpy(
-                                scene->pbo_cuda[j].cuda_buffer,
-                                scene->display_buffer[j][ps.read_head].frame,
-                                scene->image_width[j] * scene->image_height[j] *
-                                    4,
-                                cudaMemcpyHostToDevice));
+                        const int preferred_slot =
+                            ps.read_head % scene->size_of_buffer;
+                        const int display_slot =
+                            findDisplaySlotForFrame(
+                                j, ps.to_display_frame_number, preferred_slot);
+
+                        int displayed_frame_num = -1;
+                        if (display_slot >= 0) {
+                            displayed_frame_num =
+                                scene->display_buffer[j][display_slot].frame_number;
+                        }
+                        if (displayed_frame_num >= 0) {
+                            current_frame_num = displayed_frame_num;
                         } else {
-                            ck(cudaMemcpy(
-                                scene->pbo_cuda[j].cuda_buffer,
-                                scene->display_buffer[j][ps.read_head].frame,
-                                scene->image_width[j] * scene->image_height[j] *
-                                    4,
-                                cudaMemcpyDeviceToDevice));
+                            current_frame_num = ps.to_display_frame_number;
+                        }
+                        presented_slot = display_slot;
+                        presented_frame = displayed_frame_num;
+                        if (display_slot >= 0) {
+                            if (scene->use_cpu_buffer) {
+                                // upload_texture(&scene->image_texture[j],
+                                // scene->display_buffer[j][read_head].frame,
+                                // scene->image_width[j], scene->image_height[j]);
+                                // // 2x slower than pbo copy frame to cuda buffer
+                                ck(cudaMemcpy(
+                                    scene->pbo_cuda[j].cuda_buffer,
+                                    scene->display_buffer[j][display_slot].frame,
+                                    scene->image_width[j] * scene->image_height[j] *
+                                        4,
+                                    cudaMemcpyHostToDevice));
+                            } else {
+                                ck(cudaMemcpy(
+                                    scene->pbo_cuda[j].cuda_buffer,
+                                    scene->display_buffer[j][display_slot].frame,
+                                    scene->image_width[j] * scene->image_height[j] *
+                                        4,
+                                    cudaMemcpyDeviceToDevice));
+                            }
+                        } else {
+                            clearCameraDisplayBuffer();
                         }
                     } else {
-                        if (scene->use_cpu_buffer) {
-                            // upload_texture(&scene->image_texture[j],
-                            // scene->display_buffer[j][select_corr_head].frame,
-                            // scene->image_width[j], scene->image_height[j]);
-                            ck(cudaMemcpy(
-                                scene->pbo_cuda[j].cuda_buffer,
-                                scene->display_buffer[j][select_corr_head]
-                                    .frame,
-                                scene->image_width[j] * scene->image_height[j] *
-                                    4,
-                                cudaMemcpyHostToDevice));
+                        if (ps.pause_seeked || select_corr_head >= 0) {
+                            int paused_slot = select_corr_head;
+                            if (paused_slot < 0) {
+                                paused_slot = ps.read_head % scene->size_of_buffer;
+                            }
+                            paused_slot = findDisplaySlotForFrame(
+                                j,
+                                std::max(0, ps.to_display_frame_number),
+                                paused_slot);
+
+                            if (paused_slot >= 0) {
+                                presented_slot = paused_slot;
+                                presented_frame =
+                                    scene->display_buffer[j][paused_slot].frame_number;
+                                if (scene->use_cpu_buffer) {
+                                    // upload_texture(&scene->image_texture[j],
+                                    // scene->display_buffer[j][select_corr_head].frame,
+                                    // scene->image_width[j], scene->image_height[j]);
+                                    ck(cudaMemcpy(
+                                        scene->pbo_cuda[j].cuda_buffer,
+                                        scene->display_buffer[j][paused_slot]
+                                            .frame,
+                                        scene->image_width[j] * scene->image_height[j] *
+                                            4,
+                                        cudaMemcpyHostToDevice));
+                                } else {
+                                    ck(cudaMemcpy(
+                                        scene->pbo_cuda[j].cuda_buffer,
+                                        scene->display_buffer[j][paused_slot]
+                                            .frame,
+                                        scene->image_width[j] * scene->image_height[j] *
+                                            4,
+                                        cudaMemcpyDeviceToDevice));
+                                }
+                            } else {
+                                clearCameraDisplayBuffer();
+                            }
                         } else {
-                            ck(cudaMemcpy(
-                                scene->pbo_cuda[j].cuda_buffer,
-                                scene->display_buffer[j][select_corr_head]
-                                    .frame,
-                                scene->image_width[j] * scene->image_height[j] *
-                                    4,
-                                cudaMemcpyDeviceToDevice));
+                            clearCameraDisplayBuffer();
                         }
                     }
                     bind_pbo(&scene->pbo_cuda[j].pbo);
@@ -1611,11 +3141,40 @@ int main(int, char **) {
                         }
                     }
 
+                    ImPlotInputMap& plot_input_map = ImPlot::GetInputMap();
+                    const int previous_plot_pan_mod = plot_input_map.PanMod;
+                    bool restore_plot_pan_mod = false;
+                    bool suppress_crosshairs = false;
+                    if (zarr_loaded) {
+                        const bool active_dataset_is_raw_detect_for_input =
+                            zarr_loader.hasDetectionData() &&
+                            (zarr_loader.getActiveDetectionDataset() ==
+                             ZarrDetectionLoader::DetectionDataset::RawDetect);
+                        const bool dataset_allows_bbox_edit_for_input =
+                            zarr_loader.hasDetectionData() && !active_dataset_is_raw_detect_for_input;
+                        const bool draw_mode_active_for_current_frame =
+                            g_zarr_bbox_edit_state.draw_mode;
+                        const bool has_bbox_selection_for_current_frame =
+                            (g_zarr_bbox_edit_state.selected_frame == current_frame_num) &&
+                            (g_zarr_bbox_edit_state.selected_box >= 0);
+                        if (dataset_allows_bbox_edit_for_input &&
+                            g_zarr_bbox_edit_state.enabled &&
+                            (draw_mode_active_for_current_frame ||
+                             has_bbox_selection_for_current_frame)) {
+                            // While editing (move or draw), require Shift+drag to pan so
+                            // Ctrl+left-drag can be used for bbox manipulation.
+                            plot_input_map.PanMod = ImGuiMod_Shift;
+                            restore_plot_pan_mod = true;
+                            suppress_crosshairs = true;
+                        }
+                    }
+
+                    const ImPlotFlags scene_plot_flags =
+                        ImPlotFlags_Equal |
+                        ImPlotAxisFlags_AutoFit |
+                        (suppress_crosshairs ? ImPlotFlags_None : ImPlotFlags_Crosshairs);
                     ImPlot::PushStyleVar(ImPlotStyleVar_LegendPadding, ImVec2(12.0f, 12.0f));
-                    if (ImPlot::BeginPlot("##no_plot_name", avail_size,
-                                          ImPlotFlags_Equal |
-                                          ImPlotAxisFlags_AutoFit |
-                                          ImPlotFlags_Crosshairs)) {
+                    if (ImPlot::BeginPlot("##no_plot_name", avail_size, scene_plot_flags)) {
                         ImPlot::SetupLegend(ImPlotLocation_SouthWest, ImPlotLegendFlags_None);
                         ImPlot::PlotImage(
                             "##no_image_name",
@@ -1632,15 +3191,33 @@ int main(int, char **) {
 
                         // === ZARR BOUNDING BOX RENDERING === //
                         if (zarr_loaded) {
+                            const int zarr_bbox_query_frame = current_frame_num;
                             // Check interpolation status for this frame
                             bool is_zarr_interpolated = zarr_loader.hasInterpolation() &&
-                                                        zarr_loader.isFrameInterpolated(current_frame_num);
+                                                        zarr_loader.isFrameInterpolated(zarr_bbox_query_frame);
                             
                             // Get bounding boxes from the active dataset
+                            std::vector<LoggedBoundingBox> loaded_zarr_boxes =
+                                zarr_loader.getBoundingBoxesForFrame(zarr_bbox_query_frame);
                             std::vector<LoggedBoundingBox> zarr_boxes =
-                                zarr_loader.getBoundingBoxesForFrame(current_frame_num);
+                                g_zarr_bbox_edit_state.resolveFrameBoxes(zarr_bbox_query_frame,
+                                                                         loaded_zarr_boxes);
                             ZarrDetectionLoader::FrameDetections detection_details =
-                                zarr_loader.getRawDetections(current_frame_num, false);
+                                zarr_loader.getRawDetections(zarr_bbox_query_frame, false);
+                            {
+                                std::ostringstream sync_debug;
+                                sync_debug << "cam=" << win_name
+                                           << " mode=" << (ps.play_video ? "play" : "pause")
+                                           << " slot=" << presented_slot
+                                           << " displayed=" << presented_frame
+                                           << " current=" << current_frame_num
+                                           << " target=" << ps.to_display_frame_number
+                                           << " slider=" << ps.slider_frame_number
+                                           << " bbox_query=" << zarr_bbox_query_frame
+                                           << " latest_decoded="
+                                           << latest_decoded_frame[win_name].load();
+                                frame_sync_debug_line = sync_debug.str();
+                            }
                             auto draw_keypoint_markers = [&]() {
                                 if (!(show_keypoint_markers &&
                                       detection_details.has_keypoints &&
@@ -1781,21 +3358,479 @@ int main(int, char **) {
                                 }
                             };
                             
-                            // DEBUG: Add this to see what's happening
-                            if (!zarr_boxes.empty()) {
-                                // std::cout << "Drawing " << zarr_boxes.size() << " zarr boxes for frame " 
-                                //         << current_frame_num << " (interpolated=" << is_zarr_interpolated << ")" << std::endl;
-                                // for (const auto& box : zarr_boxes) {
-                                //     std::cout << "  Box: x_min=" << box.x_min << ", y_min=" << box.y_min 
-                                //             << ", width=" << box.width << ", height=" << box.height 
-                                //             << ", class_id=" << box.class_id << std::endl;
-                                // }
-                            } else {
-                                // std::cout << "No zarr boxes to draw for frame " << current_frame_num << std::endl;
+                            const float image_width_px =
+                                static_cast<float>(scene->image_width[j]);
+                            const float image_height_px =
+                                static_cast<float>(scene->image_height[j]);
+                            const bool plot_hovered = ImPlot::IsPlotHovered();
+                            const bool active_dataset_is_raw_detect =
+                                zarr_loader.hasDetectionData() &&
+                                (zarr_loader.getActiveDetectionDataset() ==
+                                 ZarrDetectionLoader::DetectionDataset::RawDetect);
+                            const bool dataset_allows_bbox_edit =
+                                zarr_loader.hasDetectionData() && !active_dataset_is_raw_detect;
+                            if (!dataset_allows_bbox_edit) {
+                                g_zarr_bbox_edit_state.draw_mode = false;
+                                g_zarr_bbox_edit_state.cancelDraw();
+                                g_zarr_bbox_edit_state.clearSelection();
                             }
-                            
+                            const bool can_modify_boxes =
+                                dataset_allows_bbox_edit &&
+                                g_zarr_bbox_edit_state.enabled &&
+                                (g_zarr_bbox_edit_state.allow_edit_while_playing ||
+                                 !ps.play_video);
+
+                            if (g_zarr_bbox_edit_state.selected_frame == current_frame_num &&
+                                (g_zarr_bbox_edit_state.selected_box < 0 ||
+                                 g_zarr_bbox_edit_state.selected_box >=
+                                     static_cast<int>(zarr_boxes.size()))) {
+                                g_zarr_bbox_edit_state.clearSelection();
+                            }
+
+                            auto clampPlotPointToImage = [&](ImPlotPoint plot_point) -> ImVec2 {
+                                const float clamped_x = std::clamp(
+                                    static_cast<float>(plot_point.x), 0.0f, image_width_px);
+                                const float clamped_y = std::clamp(
+                                    image_height_px - static_cast<float>(plot_point.y),
+                                    0.0f,
+                                    image_height_px);
+                                return ImVec2(clamped_x, clamped_y);
+                            };
+
+                            auto deleteSelectedBoxOnCurrentFrame = [&]() -> bool {
+                                if (!can_modify_boxes) {
+                                    return false;
+                                }
+                                if (g_zarr_bbox_edit_state.selected_frame != current_frame_num ||
+                                    g_zarr_bbox_edit_state.selected_box < 0) {
+                                    return false;
+                                }
+                                auto& editable_boxes =
+                                    g_zarr_bbox_edit_state.ensureFrameOverride(
+                                        current_frame_num,
+                                        loaded_zarr_boxes);
+                                auto& added_flags =
+                                    g_zarr_bbox_edit_state.ensureAddedFlags(
+                                        current_frame_num,
+                                        editable_boxes.size());
+                                const int selected_idx = g_zarr_bbox_edit_state.selected_box;
+                                if (selected_idx < 0 ||
+                                    selected_idx >= static_cast<int>(editable_boxes.size())) {
+                                    g_zarr_bbox_edit_state.clearSelection();
+                                    return false;
+                                }
+                                editable_boxes.erase(
+                                    editable_boxes.begin() + selected_idx);
+                                if (selected_idx < static_cast<int>(added_flags.size())) {
+                                    added_flags.erase(added_flags.begin() + selected_idx);
+                                } else {
+                                    added_flags.assign(editable_boxes.size(), 0);
+                                }
+                                g_zarr_bbox_edit_state.dirty_frames.insert(current_frame_num);
+                                g_zarr_bbox_edit_state.drag_active = false;
+                                g_zarr_bbox_edit_state.drag_mouse_button = -1;
+                                if (editable_boxes.empty()) {
+                                    g_zarr_bbox_edit_state.clearSelection();
+                                } else {
+                                    g_zarr_bbox_edit_state.selected_frame = current_frame_num;
+                                    g_zarr_bbox_edit_state.selected_box =
+                                        std::min(selected_idx,
+                                                 static_cast<int>(editable_boxes.size() - 1));
+                                }
+                                zarr_boxes = editable_boxes;
+                                return true;
+                            };
+
+                            if (plot_hovered) {
+                                if (dataset_allows_bbox_edit &&
+                                    ImGui::IsKeyPressed(ImGuiKey_N, false)) {
+                                    g_zarr_bbox_edit_state.draw_mode =
+                                        !g_zarr_bbox_edit_state.draw_mode;
+                                    g_zarr_bbox_edit_state.cancelDraw();
+                                    if (g_zarr_bbox_edit_state.draw_mode) {
+                                        g_zarr_bbox_edit_state.clearSelection();
+                                    }
+                                }
+                                if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                                    if (g_zarr_bbox_edit_state.draw_active) {
+                                        g_zarr_bbox_edit_state.cancelDraw();
+                                    } else if (g_zarr_bbox_edit_state.draw_mode) {
+                                        g_zarr_bbox_edit_state.draw_mode = false;
+                                    } else {
+                                        g_zarr_bbox_edit_state.clearSelection();
+                                    }
+                                }
+                                if (ImGui::IsKeyPressed(ImGuiKey_R, false) &&
+                                    ImGui::GetIO().KeyShift) {
+                                    g_zarr_bbox_edit_state.clearFrameEdits(current_frame_num);
+                                    zarr_boxes = loaded_zarr_boxes;
+                                }
+                                if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
+                                    deleteSelectedBoxOnCurrentFrame();
+                                }
+                                if (ImGui::IsKeyPressed(ImGuiKey_B, false)) {
+                                    if (zarr_boxes.empty()) {
+                                        g_zarr_bbox_edit_state.clearSelection();
+                                    } else {
+                                        if (g_zarr_bbox_edit_state.draw_mode) {
+                                            g_zarr_bbox_edit_state.draw_mode = false;
+                                            g_zarr_bbox_edit_state.cancelDraw();
+                                        }
+                                        int next_idx = 0;
+                                        const bool reverse_cycle = ImGui::GetIO().KeyShift;
+                                        if (g_zarr_bbox_edit_state.selected_frame == current_frame_num &&
+                                            g_zarr_bbox_edit_state.selected_box >= 0 &&
+                                            g_zarr_bbox_edit_state.selected_box <
+                                                static_cast<int>(zarr_boxes.size())) {
+                                            const int box_count =
+                                                static_cast<int>(zarr_boxes.size());
+                                            const int current_idx =
+                                                g_zarr_bbox_edit_state.selected_box;
+                                            if (reverse_cycle) {
+                                                next_idx = (current_idx - 1 + box_count) % box_count;
+                                            } else {
+                                                next_idx = (current_idx + 1) % box_count;
+                                            }
+                                        }
+                                        g_zarr_bbox_edit_state.selected_frame = current_frame_num;
+                                        g_zarr_bbox_edit_state.selected_box = next_idx;
+                                        g_zarr_bbox_edit_state.drag_active = false;
+                                        g_zarr_bbox_edit_state.drag_mouse_button = -1;
+                                    }
+                                }
+                            }
+
+                            if (g_zarr_bbox_edit_state.draw_mode &&
+                                g_zarr_bbox_edit_state.drag_active) {
+                                g_zarr_bbox_edit_state.drag_active = false;
+                                g_zarr_bbox_edit_state.drag_mouse_button = -1;
+                            }
+
+                            if (g_zarr_bbox_edit_state.draw_active) {
+                                if (!g_zarr_bbox_edit_state.draw_mode ||
+                                    !can_modify_boxes ||
+                                    g_zarr_bbox_edit_state.draw_frame != current_frame_num) {
+                                    g_zarr_bbox_edit_state.cancelDraw();
+                                } else {
+                                    ImVec2 current_img = clampPlotPointToImage(
+                                        ImPlot::GetPlotMousePos());
+                                    g_zarr_bbox_edit_state.draw_current_x = current_img.x;
+                                    g_zarr_bbox_edit_state.draw_current_y = current_img.y;
+                                    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                                        const float x_min = std::min(
+                                            g_zarr_bbox_edit_state.draw_anchor_x,
+                                            g_zarr_bbox_edit_state.draw_current_x);
+                                        const float y_min = std::min(
+                                            g_zarr_bbox_edit_state.draw_anchor_y,
+                                            g_zarr_bbox_edit_state.draw_current_y);
+                                        const float width = std::fabs(
+                                            g_zarr_bbox_edit_state.draw_current_x -
+                                            g_zarr_bbox_edit_state.draw_anchor_x);
+                                        const float height = std::fabs(
+                                            g_zarr_bbox_edit_state.draw_current_y -
+                                            g_zarr_bbox_edit_state.draw_anchor_y);
+                                        if (width >= 2.0f && height >= 2.0f) {
+                                            auto& editable_boxes =
+                                                g_zarr_bbox_edit_state.ensureFrameOverride(
+                                                    current_frame_num,
+                                                    loaded_zarr_boxes);
+                                            auto& added_flags =
+                                                g_zarr_bbox_edit_state.ensureAddedFlags(
+                                                    current_frame_num,
+                                                    editable_boxes.size());
+
+                                            uint16_t new_class_id = 0;
+                                            float new_confidence = 1.0f;
+                                            if (g_zarr_bbox_edit_state.selected_frame ==
+                                                    current_frame_num &&
+                                                g_zarr_bbox_edit_state.selected_box >= 0 &&
+                                                g_zarr_bbox_edit_state.selected_box <
+                                                    static_cast<int>(zarr_boxes.size())) {
+                                                const auto& selected_box =
+                                                    zarr_boxes[g_zarr_bbox_edit_state.selected_box];
+                                                new_class_id = selected_box.class_id;
+                                                new_confidence = selected_box.confidence;
+                                            } else if (!zarr_boxes.empty()) {
+                                                new_class_id = zarr_boxes.front().class_id;
+                                                new_confidence = zarr_boxes.front().confidence;
+                                            }
+
+                                            LoggedBoundingBox new_box{};
+                                            new_box.payload_timestamp_ns_epoch = 0;
+                                            new_box.received_timestamp_ns_epoch = 0;
+                                            new_box.payload_frame_id =
+                                                static_cast<uint64_t>(
+                                                    std::max(0, current_frame_num));
+                                            new_box.payload_camera_id = 0;
+                                            new_box.box_index_in_payload =
+                                                static_cast<uint8_t>(editable_boxes.size());
+                                            new_box.x_min = x_min;
+                                            new_box.y_min = y_min;
+                                            new_box.width = width;
+                                            new_box.height = height;
+                                            new_box.class_id = new_class_id;
+                                            new_box.confidence =
+                                                std::isfinite(new_confidence)
+                                                    ? new_confidence
+                                                    : 1.0f;
+
+                                            editable_boxes.push_back(new_box);
+                                            added_flags.push_back(1);
+                                            g_zarr_bbox_edit_state.dirty_frames.insert(
+                                                current_frame_num);
+                                            g_zarr_bbox_edit_state.selected_frame =
+                                                current_frame_num;
+                                            g_zarr_bbox_edit_state.selected_box =
+                                                static_cast<int>(editable_boxes.size() - 1);
+                                            zarr_boxes = editable_boxes;
+                                        }
+                                        g_zarr_bbox_edit_state.cancelDraw();
+                                    }
+                                }
+                            }
+
+                            if (!g_zarr_bbox_edit_state.draw_mode &&
+                                !g_zarr_bbox_edit_state.drag_active &&
+                                plot_hovered &&
+                                can_modify_boxes &&
+                                ImGui::GetIO().KeyCtrl &&
+                                ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+                                g_zarr_bbox_edit_state.selected_frame == current_frame_num &&
+                                g_zarr_bbox_edit_state.selected_box >= 0 &&
+                                g_zarr_bbox_edit_state.selected_box <
+                                    static_cast<int>(zarr_boxes.size())) {
+                                const int selected_idx =
+                                    g_zarr_bbox_edit_state.selected_box;
+                                const LoggedBoundingBox& selected_box =
+                                    zarr_boxes[selected_idx];
+                                ImPlotPoint mouse_plot = ImPlot::GetPlotMousePos();
+                                if (IsPlotPointInsideZarrBox(selected_box,
+                                                             mouse_plot.x,
+                                                             mouse_plot.y,
+                                                             image_height_px,
+                                                             6.0f)) {
+                                    g_zarr_bbox_edit_state.drag_active = true;
+                                    g_zarr_bbox_edit_state.drag_mouse_button =
+                                        ImGuiMouseButton_Left;
+                                    g_zarr_bbox_edit_state.drag_offset_x =
+                                        static_cast<float>(mouse_plot.x) -
+                                        selected_box.x_min;
+                                    const float mouse_y_img =
+                                        image_height_px -
+                                        static_cast<float>(mouse_plot.y);
+                                    g_zarr_bbox_edit_state.drag_offset_y =
+                                        mouse_y_img - selected_box.y_min;
+                                }
+                            }
+
+                            if (g_zarr_bbox_edit_state.drag_active) {
+                                const int held_button = g_zarr_bbox_edit_state.drag_mouse_button;
+                                if (held_button < 0 ||
+                                    !ImGui::IsMouseDown(static_cast<ImGuiMouseButton>(held_button)) ||
+                                    g_zarr_bbox_edit_state.selected_frame != current_frame_num ||
+                                    g_zarr_bbox_edit_state.selected_box < 0) {
+                                    g_zarr_bbox_edit_state.drag_active = false;
+                                    g_zarr_bbox_edit_state.drag_mouse_button = -1;
+                                } else if (can_modify_boxes) {
+                                    auto& editable_boxes =
+                                        g_zarr_bbox_edit_state.ensureFrameOverride(
+                                            current_frame_num,
+                                            loaded_zarr_boxes);
+                                    const int selected_idx =
+                                        g_zarr_bbox_edit_state.selected_box;
+                                    if (selected_idx >= 0 &&
+                                        selected_idx <
+                                            static_cast<int>(editable_boxes.size())) {
+                                        ImPlotPoint mouse_plot =
+                                            ImPlot::GetPlotMousePos();
+                                        LoggedBoundingBox& moving_box =
+                                            editable_boxes[selected_idx];
+                                        const float mouse_y_img =
+                                            image_height_px -
+                                            static_cast<float>(mouse_plot.y);
+                                        const float target_x =
+                                            static_cast<float>(mouse_plot.x) -
+                                            g_zarr_bbox_edit_state.drag_offset_x;
+                                        const float target_y =
+                                            mouse_y_img -
+                                            g_zarr_bbox_edit_state.drag_offset_y;
+                                        const float max_x = std::max(
+                                            0.0f, image_width_px - moving_box.width);
+                                        const float max_y = std::max(
+                                            0.0f, image_height_px - moving_box.height);
+                                        moving_box.x_min =
+                                            std::clamp(target_x, 0.0f, max_x);
+                                        moving_box.y_min =
+                                            std::clamp(target_y, 0.0f, max_y);
+                                        g_zarr_bbox_edit_state.dirty_frames.insert(
+                                            current_frame_num);
+                                        zarr_boxes = editable_boxes;
+                                    } else {
+                                        g_zarr_bbox_edit_state.clearSelection();
+                                    }
+                                } else {
+                                    g_zarr_bbox_edit_state.drag_active = false;
+                                    g_zarr_bbox_edit_state.drag_mouse_button = -1;
+                                }
+                            }
+
+                            int click_button = -1;
+                            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left, false)) {
+                                click_button = ImGuiMouseButton_Left;
+                            }
+                            if (plot_hovered && click_button >= 0) {
+                                if (g_zarr_bbox_edit_state.draw_mode) {
+                                    if (click_button == ImGuiMouseButton_Left &&
+                                        can_modify_boxes &&
+                                        ImGui::GetIO().KeyCtrl) {
+                                        ImVec2 start_img = clampPlotPointToImage(
+                                            ImPlot::GetPlotMousePos());
+                                        g_zarr_bbox_edit_state.draw_active = true;
+                                        g_zarr_bbox_edit_state.draw_frame =
+                                            current_frame_num;
+                                        g_zarr_bbox_edit_state.draw_anchor_x = start_img.x;
+                                        g_zarr_bbox_edit_state.draw_anchor_y = start_img.y;
+                                        g_zarr_bbox_edit_state.draw_current_x = start_img.x;
+                                        g_zarr_bbox_edit_state.draw_current_y = start_img.y;
+                                        g_zarr_bbox_edit_state.drag_active = false;
+                                        g_zarr_bbox_edit_state.drag_mouse_button = -1;
+                                    } else if (!can_modify_boxes) {
+                                        g_zarr_bbox_edit_state.cancelDraw();
+                                    }
+                                } else {
+                                    ImPlotPoint mouse_plot = ImPlot::GetPlotMousePos();
+                                    bool started_selected_drag = false;
+                                    if (can_modify_boxes &&
+                                        g_zarr_bbox_edit_state.selected_frame ==
+                                            current_frame_num &&
+                                        g_zarr_bbox_edit_state.selected_box >= 0 &&
+                                        g_zarr_bbox_edit_state.selected_box <
+                                            static_cast<int>(zarr_boxes.size())) {
+                                        const int selected_idx =
+                                            g_zarr_bbox_edit_state.selected_box;
+                                        const LoggedBoundingBox& selected_box =
+                                            zarr_boxes[selected_idx];
+                                        if (IsPlotPointInsideZarrBox(selected_box,
+                                                                     mouse_plot.x,
+                                                                     mouse_plot.y,
+                                                                     image_height_px,
+                                                                     6.0f)) {
+                                            g_zarr_bbox_edit_state.selected_frame =
+                                                current_frame_num;
+                                            g_zarr_bbox_edit_state.selected_box =
+                                                selected_idx;
+                                            g_zarr_bbox_edit_state.drag_active = true;
+                                            g_zarr_bbox_edit_state.drag_mouse_button =
+                                                click_button;
+                                            g_zarr_bbox_edit_state.drag_offset_x =
+                                                static_cast<float>(mouse_plot.x) -
+                                                selected_box.x_min;
+                                            const float mouse_y_img =
+                                                image_height_px -
+                                                static_cast<float>(mouse_plot.y);
+                                            g_zarr_bbox_edit_state.drag_offset_y =
+                                                mouse_y_img - selected_box.y_min;
+                                            started_selected_drag = true;
+                                        }
+                                    }
+
+                                    if (!started_selected_drag) {
+                                        int hit_idx = HitTestZarrBoxAtPlotPoint(
+                                            zarr_boxes,
+                                            mouse_plot.x,
+                                            mouse_plot.y,
+                                            image_height_px,
+                                            6.0f);
+                                        if (hit_idx >= 0 &&
+                                            hit_idx <
+                                                static_cast<int>(zarr_boxes.size())) {
+                                            g_zarr_bbox_edit_state.selected_frame =
+                                                current_frame_num;
+                                            g_zarr_bbox_edit_state.selected_box =
+                                                hit_idx;
+                                            if (can_modify_boxes) {
+                                                g_zarr_bbox_edit_state.drag_active =
+                                                    true;
+                                                g_zarr_bbox_edit_state
+                                                    .drag_mouse_button =
+                                                    click_button;
+                                                const LoggedBoundingBox&
+                                                    selected_box =
+                                                        zarr_boxes[hit_idx];
+                                                g_zarr_bbox_edit_state
+                                                    .drag_offset_x =
+                                                    static_cast<float>(mouse_plot.x) -
+                                                    selected_box.x_min;
+                                                const float mouse_y_img =
+                                                    image_height_px -
+                                                    static_cast<float>(
+                                                        mouse_plot.y);
+                                                g_zarr_bbox_edit_state
+                                                    .drag_offset_y =
+                                                    mouse_y_img -
+                                                    selected_box.y_min;
+                                            } else {
+                                                g_zarr_bbox_edit_state
+                                                    .drag_active = false;
+                                                g_zarr_bbox_edit_state
+                                                    .drag_mouse_button = -1;
+                                            }
+                                        } else {
+                                            g_zarr_bbox_edit_state
+                                                .clearSelection();
+                                        }
+                                    }
+                                }
+                            }
+
+                            const bool frame_has_bbox_edits =
+                                g_zarr_bbox_edit_state.isFrameDirty(current_frame_num);
+
                             // Draw the boxes
                             if (!zarr_boxes.empty()) {
+                                enum class BoxProvenance {
+                                    Clean = 0,
+                                    Interpolated = 1,
+                                    Manual = 2
+                                };
+                                auto classify_box_provenance =
+                                    [&](size_t box_idx) -> BoxProvenance {
+                                    if (!detection_details.detection_reason.empty() &&
+                                        box_idx < detection_details.detection_reason.size()) {
+                                        std::string reason = ToLowerCopy(
+                                            detection_details.detection_reason[box_idx]);
+                                        if (reason == "manual" ||
+                                            reason.find("manual") != std::string::npos) {
+                                            return BoxProvenance::Manual;
+                                        }
+                                        if (reason == "interpolated" ||
+                                            reason.find("interp") != std::string::npos) {
+                                            return BoxProvenance::Interpolated;
+                                        }
+                                        if (reason == "clean") {
+                                            return BoxProvenance::Clean;
+                                        }
+                                    }
+
+                                    bool detection_is_interp =
+                                        zarr_loader.activeDatasetHasSyntheticDetections();
+                                    if (!detection_details.detection_source.empty()) {
+                                        if (box_idx < detection_details.detection_source.size()) {
+                                            detection_is_interp =
+                                                detection_details.detection_source[box_idx] != 0;
+                                        } else {
+                                            detection_is_interp = false;
+                                        }
+                                    }
+                                    if (is_zarr_interpolated &&
+                                        zarr_loader.activeDatasetHasSyntheticDetections() &&
+                                        detection_details.detection_source.empty()) {
+                                        detection_is_interp = true;
+                                    }
+                                    return detection_is_interp ? BoxProvenance::Interpolated
+                                                               : BoxProvenance::Clean;
+                                };
+
                                 for (size_t box_idx = 0; box_idx < zarr_boxes.size(); ++box_idx) {
                                     const auto& box = zarr_boxes[box_idx];
                                     double x_coords[5] = {
@@ -1813,35 +3848,95 @@ int main(int, char **) {
                                         (double)scene->image_height[j] - (box.y_min + box.height),
                                         (double)scene->image_height[j] - box.y_min
                                     };
-                                    
-                                    bool detection_is_interp = zarr_loader.activeDatasetHasSyntheticDetections();
-                                    if (!detection_details.detection_source.empty()) {
-                                        if (box_idx < detection_details.detection_source.size()) {
-                                            detection_is_interp = detection_details.detection_source[box_idx] != 0;
-                                        } else {
-                                            detection_is_interp = false;
-                                        }
-                                    }
 
-                                    ImVec4 box_color = detection_is_interp
-                                                           ? ImVec4(1.0f, 0.7f, 0.0f, 0.9f)
-                                                           : ImVec4(0.2f, 0.6f, 1.0f, 1.0f);
-                                    float line_width = detection_is_interp ? 2.5f : 2.0f;
-
-                                    if (is_zarr_interpolated && zarr_loader.activeDatasetHasSyntheticDetections() &&
-                                        detection_details.detection_source.empty()) {
+                                    BoxProvenance box_provenance =
+                                        classify_box_provenance(box_idx);
+                                    ImVec4 box_color = ImVec4(0.2f, 0.6f, 1.0f, 1.0f);  // clean
+                                    float line_width = 2.0f;
+                                    if (box_provenance == BoxProvenance::Interpolated) {
                                         box_color = ImVec4(1.0f, 0.7f, 0.0f, 0.9f);
                                         line_width = 2.5f;
+                                    } else if (box_provenance == BoxProvenance::Manual) {
+                                        box_color = ImVec4(0.0f, 0.85f, 0.65f, 1.0f);
+                                        line_width = 2.75f;
+                                    }
+
+                                    const bool box_selected =
+                                        (g_zarr_bbox_edit_state.selected_frame ==
+                                             current_frame_num) &&
+                                        (g_zarr_bbox_edit_state.selected_box ==
+                                         static_cast<int>(box_idx));
+                                    const bool box_is_added =
+                                        g_zarr_bbox_edit_state.isAddedBox(
+                                            current_frame_num,
+                                            static_cast<int>(box_idx));
+                                    if (box_selected) {
+                                        box_color = ImVec4(1.0f, 0.25f, 0.95f, 1.0f);
+                                        line_width = 3.5f;
+                                    } else if (box_is_added) {
+                                        box_color = ImVec4(0.95f, 0.35f, 0.15f, 1.0f);
+                                        line_width = std::max(line_width, 3.0f);
+                                    } else if (frame_has_bbox_edits) {
+                                        line_width = std::max(line_width, 2.5f);
                                     }
                                     
                                     ImPlot::SetNextLineStyle(box_color, line_width);
                                     
                                     std::string label = "Zarr_" + std::to_string(box.class_id);
-                                    if (detection_is_interp) {
-                                        label += " [I]";  // Mark as interpolated
+                                    if (box_provenance == BoxProvenance::Interpolated) {
+                                        label += " [I]";
+                                    } else if (box_provenance == BoxProvenance::Manual) {
+                                        label += " [MAN]";
+                                    }
+                                    if (box_is_added) {
+                                        label += " [A]";
+                                    }
+                                    if (box_selected) {
+                                        label += " [S]";
+                                    } else if (frame_has_bbox_edits) {
+                                        label += " [M]";
                                     }
                                     
                                     ImPlot::PlotLine(label.c_str(), x_coords, y_coords, 5);
+                                }
+                            }
+
+                            if (g_zarr_bbox_edit_state.draw_active &&
+                                g_zarr_bbox_edit_state.draw_frame == current_frame_num) {
+                                const double draft_x0 = std::min(
+                                    g_zarr_bbox_edit_state.draw_anchor_x,
+                                    g_zarr_bbox_edit_state.draw_current_x);
+                                const double draft_x1 = std::max(
+                                    g_zarr_bbox_edit_state.draw_anchor_x,
+                                    g_zarr_bbox_edit_state.draw_current_x);
+                                const double draft_y0 = std::min(
+                                    g_zarr_bbox_edit_state.draw_anchor_y,
+                                    g_zarr_bbox_edit_state.draw_current_y);
+                                const double draft_y1 = std::max(
+                                    g_zarr_bbox_edit_state.draw_anchor_y,
+                                    g_zarr_bbox_edit_state.draw_current_y);
+                                if ((draft_x1 - draft_x0) >= 1.0 &&
+                                    (draft_y1 - draft_y0) >= 1.0) {
+                                    double x_coords[5] = {
+                                        draft_x0,
+                                        draft_x1,
+                                        draft_x1,
+                                        draft_x0,
+                                        draft_x0
+                                    };
+                                    double y_coords[5] = {
+                                        static_cast<double>(scene->image_height[j]) - draft_y0,
+                                        static_cast<double>(scene->image_height[j]) - draft_y0,
+                                        static_cast<double>(scene->image_height[j]) - draft_y1,
+                                        static_cast<double>(scene->image_height[j]) - draft_y1,
+                                        static_cast<double>(scene->image_height[j]) - draft_y0
+                                    };
+                                    ImPlot::SetNextLineStyle(
+                                        ImVec4(1.0f, 1.0f, 0.2f, 0.95f), 2.0f);
+                                    std::string draft_label =
+                                        "ZarrDrawDraft##" + std::to_string(j);
+                                    ImPlot::PlotLine(
+                                        draft_label.c_str(), x_coords, y_coords, 5);
                                 }
                             }
 
@@ -2884,7 +4979,7 @@ struct StateOverlay {
                                             (KeyPoints *)malloc(
                                                 sizeof(KeyPoints));
                                         allocate_keypoints(keypoints, scene,
-                                                           skeleton);
+                                                           skeleton.get());
                                         keypoints_map[current_frame_num] =
                                             keypoints;
                                     }
@@ -2957,18 +5052,21 @@ struct StateOverlay {
                             if (keypoints_find) {
                                 gui_plot_keypoints(
                                     keypoints_map.at(current_frame_num),
-                                    skeleton, j, scene->num_cams);
+                                    skeleton.get(), j, scene->num_cams);
                                 // think more general solution of multiple sets
                                 // of keypoints
                                 if (skeleton->name == "Rat4Box" ||
                                     skeleton->name == "Rat4Box3Ball") {
                                     gui_plot_bbox_from_keypoints(
                                         keypoints_map.at(current_frame_num),
-                                        skeleton, j, 4, 5);
+                                        skeleton.get(), j, 4, 5);
                                 }
                             }
                         }     
                         ImPlot::EndPlot();
+                    }
+                    if (restore_plot_pan_mod) {
+                        plot_input_map.PanMod = previous_plot_pan_mod;
                     }
                     ImPlot::PopStyleVar();
 
@@ -2976,18 +5074,11 @@ struct StateOverlay {
 
                     float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
                     if (ImGui::Button(ICON_FK_FAST_BACKWARD)) {
-                        int clamped_frame =
-                            std::max(0, current_frame_num -
-                                            10 * dc_context->seek_interval);
-                        seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                         false, &zarr_loader, &stimulus_player);
+                        stepFrames(-10);
                     }
                     ImGui::SameLine(0.0f, spacing);
                     if (ImGui::Button(ICON_FK_STEP_BACKWARD)) {
-                        int clamped_frame = std::max(
-                            0, current_frame_num - dc_context->seek_interval);
-                        seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                         false, &zarr_loader, &stimulus_player);
+                        stepFrames(-1);
                     }
                     ImGui::SameLine(0.0f, spacing);
 
@@ -3004,8 +5095,7 @@ struct StateOverlay {
 
                         if (ImGui::Button(ICON_FK_REPEAT)) {
                             // seek to zero
-                            seek_all_cameras(scene, 0, video_fps, ps, false,
-                                             &zarr_loader, &stimulus_player);
+                            seekToFrame(0, true);
                         }
                         ImGui::PopStyleColor(3);
                     } else {
@@ -3028,6 +5118,10 @@ struct StateOverlay {
                             ps.play_video = !ps.play_video;
                             if (ps.play_video) {
                                 ps.pause_seeked = false;
+                                setCameraDecodeRequests(true);
+                                if (stimulus_player.loaded) {
+                                    window_need_decoding[stimulus_player.window_name].store(true);
+                                }
                                 ps.last_play_time_start =
                                     std::chrono::steady_clock::now();
                             } else {
@@ -3039,19 +5133,11 @@ struct StateOverlay {
 
                     ImGui::SameLine(0.0f, spacing);
                     if (ImGui::Button(ICON_FK_STEP_FORWARD)) {
-                        int clamped_frame = std::min(
-                            dc_context->total_num_frame,
-                            current_frame_num + dc_context->seek_interval);
-                        seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                         false, &zarr_loader, &stimulus_player);
+                        stepFrames(1);
                     }
                     ImGui::SameLine(0.0f, spacing);
                     if (ImGui::Button(ICON_FK_FAST_FORWARD)) {
-                        int clamped_frame = std::min(
-                            dc_context->total_num_frame,
-                            current_frame_num + 10 * dc_context->seek_interval);
-                        seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                         false, &zarr_loader, &stimulus_player);
+                        stepFrames(10);
                     }
                     ImGui::SameLine();
                     ps.slider_just_changed = ImGui::SliderInt(
@@ -3071,9 +5157,7 @@ struct StateOverlay {
                         // std::cout << "main, seeking: " <<
                         // ps.slider_frame_number
                         //           << std::endl;
-                        seek_all_cameras(scene, ps.slider_frame_number,
-                                         video_fps, ps, false, &zarr_loader,
-                                         &stimulus_player);
+                        seekToFrame(ps.slider_frame_number, true);
                     }
 
                     ImGui::EndGroup();
@@ -3085,6 +5169,10 @@ struct StateOverlay {
                 ps.play_video = !ps.play_video;
                 if (ps.play_video) {
                     ps.pause_seeked = false;
+                    setCameraDecodeRequests(true);
+                    if (stimulus_player.loaded) {
+                        window_need_decoding[stimulus_player.window_name].store(true);
+                    }
                     ps.last_play_time_start = std::chrono::steady_clock::now();
                 } else {
                     ps.pause_selected = 0;
@@ -3093,31 +5181,17 @@ struct StateOverlay {
 
             if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false)) {
                 if (ImGui::GetIO().KeyShift) {
-                    int clamped_frame = std::max(
-                        0, current_frame_num - 10 * dc_context->seek_interval);
-                    seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                     false, &zarr_loader, &stimulus_player);
+                    stepFrames(-10);
                 } else {
-                    int clamped_frame = std::max(
-                        0, current_frame_num - dc_context->seek_interval);
-                    seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                     false, &zarr_loader, &stimulus_player);
+                    stepFrames(-1);
                 }
             }
 
             if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)) {
                 if (ImGui::GetIO().KeyShift) {
-                    int clamped_frame = std::min(
-                        dc_context->total_num_frame,
-                        current_frame_num + 10 * dc_context->seek_interval);
-                    seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                     false, &zarr_loader, &stimulus_player);
+                    stepFrames(10);
                 } else {
-                    int clamped_frame =
-                        std::min(dc_context->total_num_frame,
-                                 current_frame_num + dc_context->seek_interval);
-                    seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                                     false, &zarr_loader, &stimulus_player);
+                    stepFrames(1);
                 }
             }
 
@@ -3398,7 +5472,7 @@ struct StateOverlay {
                     ImGui::BeginDisabled(!enabled);
                     if (ImGui::Button("Triangulate")) {
                         reprojection(keypoints_map.at(current_frame_num),
-                                     skeleton, camera_params, scene);
+                                     skeleton.get(), camera_params, scene);
                     }
                     ImGui::EndDisabled();
 
@@ -3411,7 +5485,7 @@ struct StateOverlay {
                                                 false)) // triangulate
                         {
                             reprojection(keypoints_map.at(current_frame_num),
-                                         skeleton, camera_params, scene);
+                                         skeleton.get(), camera_params, scene);
                         }
                     }
                 }
@@ -3431,7 +5505,7 @@ struct StateOverlay {
                 if (ImGui::Button("Save Labeled Data") ||
                     (ImGui::GetIO().KeyCtrl &&
                      ImGui::IsKeyPressed(ImGuiKey_S, false))) {
-                    save_keypoints(keypoints_map, skeleton,
+                    save_keypoints(keypoints_map, skeleton.get(),
                                    keypoints_root_folder, scene->num_cams,
                                    camera_names, &input_is_imgs, imgs_names);
                     last_saved = time(NULL);
@@ -3446,7 +5520,7 @@ struct StateOverlay {
                     free_all_keypoints(keypoints_map, scene);
                     if (load_old_format) {
                         if (load_keypoints_depreciated(
-                                keypoints_map, skeleton, keypoints_root_folder,
+                                keypoints_map, skeleton.get(), keypoints_root_folder,
                                 scene, camera_names, error_message)) {
                             free_all_keypoints(keypoints_map, scene);
                             show_error = true;
@@ -3460,7 +5534,7 @@ struct StateOverlay {
                             show_error = true;
                         } else {
                             if (load_keypoints(most_recent_folder,
-                                               keypoints_map, skeleton, scene,
+                                               keypoints_map, skeleton.get(), scene,
                                                camera_names, error_message)) {
                                 free_all_keypoints(keypoints_map, scene);
                                 show_error = true;
@@ -3576,13 +5650,26 @@ struct StateOverlay {
                         selected_event_idx = -1;
                     }
 
+                    auto resolveTimelineTargetFrame =
+                        [&](const auto& evt) -> int32_t {
+                        if (evt.stimulus_frame_num >= 0) {
+                            if (auto mapped = zarr_loader.getCameraFrameForStimulusFrame(
+                                    evt.stimulus_frame_num, true)) {
+                                return *mapped;
+                            }
+                        }
+                        if (evt.camera_frame_id >= 0) {
+                            return evt.camera_frame_id;
+                        }
+                        return evt.stimulus_frame_num;
+                    };
+
                     std::vector<double> x_values(timeline.size());
                     std::vector<double> y_values(timeline.size());
                     std::vector<int32_t> display_frames(timeline.size());
                     for (size_t i = 0; i < timeline.size(); ++i) {
                         const auto& evt = timeline[i];
-                        int32_t frame = evt.camera_frame_id >= 0 ? evt.camera_frame_id
-                                                                 : evt.stimulus_frame_num;
+                        int32_t frame = resolveTimelineTargetFrame(evt);
                         display_frames[i] = frame;
                         int32_t clamped = frame >= 0 ? frame : 0;
                         if (video_fps > 0.0) {
@@ -3763,28 +5850,37 @@ struct StateOverlay {
                                 selected_event_idx = hovered_event_idx;
                                 const int target_frame = display_frames[hovered_event_idx];
                                 if (target_frame >= 0) {
-                                    ps.slider_frame_number = target_frame;
-                                    seek_all_cameras(scene, target_frame, video_fps, ps, false,
-                                                     &zarr_loader, &stimulus_player);
+                                    seekToFrame(target_frame, true);
                                 }
                             }
                         }
 
                         if (hovered_event_idx != -1) {
                             const auto& hovered_evt = timeline[hovered_event_idx];
+                            const int32_t resolved_frame =
+                                display_frames[hovered_event_idx];
                             const int32_t camera_frame = hovered_evt.camera_frame_id;
                             const int32_t stim_frame = hovered_evt.stimulus_frame_num;
-                            if (camera_frame >= 0) {
+                            if (resolved_frame >= 0) {
                                 double event_time = x_values[hovered_event_idx];
-                                if (stim_frame >= 0 && stim_frame != camera_frame) {
-                                    ImGui::SetTooltip("Camera Frame %d\nStimulus Frame %d\nTime %.3f s\n%s",
+                                if (camera_frame >= 0 &&
+                                    camera_frame != resolved_frame) {
+                                    ImGui::SetTooltip("Camera Frame %d (resolved)\nEvent Camera Frame %d\nStimulus Frame %d\nTime %.3f s\n%s",
+                                                      resolved_frame,
                                                       camera_frame,
+                                                      std::max(stim_frame, 0),
+                                                      event_time,
+                                                      hovered_evt.label.c_str());
+                                } else if (stim_frame >= 0 &&
+                                           stim_frame != resolved_frame) {
+                                    ImGui::SetTooltip("Camera Frame %d\nStimulus Frame %d\nTime %.3f s\n%s",
+                                                      resolved_frame,
                                                       stim_frame,
                                                       event_time,
                                                       hovered_evt.label.c_str());
                                 } else {
                                     ImGui::SetTooltip("Camera Frame %d\nTime %.3f s\n%s",
-                                                      camera_frame,
+                                                      resolved_frame,
                                                       event_time,
                                                       hovered_evt.label.c_str());
                                 }
@@ -3867,11 +5963,16 @@ struct StateOverlay {
                     ImGui::BeginChild("##stimulus_event_list", ImVec2(0, 200), true);
                     for (size_t i = 0; i < timeline.size(); ++i) {
                         const auto& evt = timeline[i];
+                        int32_t resolved_frame = display_frames[i];
                         std::ostringstream row_label;
-                        if (evt.camera_frame_id >= 0) {
-                            row_label << "Cam " << evt.camera_frame_id;
+                        if (resolved_frame >= 0) {
+                            row_label << "Cam " << resolved_frame;
+                            if (evt.camera_frame_id >= 0 &&
+                                evt.camera_frame_id != resolved_frame) {
+                                row_label << " (Event Cam " << evt.camera_frame_id << ")";
+                            }
                             if (evt.stimulus_frame_num >= 0 &&
-                                evt.stimulus_frame_num != evt.camera_frame_id) {
+                                evt.stimulus_frame_num != resolved_frame) {
                                 row_label << " (Stim " << evt.stimulus_frame_num << ")";
                             }
                         } else {
@@ -3882,13 +5983,9 @@ struct StateOverlay {
                         bool is_selected = (selected_event_idx == static_cast<int>(i));
                         if (ImGui::Selectable(row_label.str().c_str(), is_selected)) {
                             selected_event_idx = static_cast<int>(i);
-                            int target_frame = evt.camera_frame_id >= 0
-                                                   ? evt.camera_frame_id
-                                                   : evt.stimulus_frame_num;
+                            int target_frame = display_frames[i];
                             if (target_frame >= 0) {
-                                ps.slider_frame_number = target_frame;
-                                seek_all_cameras(scene, target_frame, video_fps, ps, false,
-                                                 &zarr_loader, &stimulus_player);
+                                seekToFrame(target_frame, true);
                             }
                         }
                         ImGui::PopID();
@@ -3898,10 +5995,16 @@ struct StateOverlay {
                     if (selected_event_idx >= 0 &&
                         selected_event_idx < static_cast<int>(timeline.size())) {
                         const auto& evt = timeline[selected_event_idx];
+                        const int32_t resolved_frame = display_frames[selected_event_idx];
                         ImGui::Separator();
                         ImGui::Text("Selected Event:");
-                        if (evt.camera_frame_id >= 0) {
-                            ImGui::BulletText("Camera Frame: %d", evt.camera_frame_id);
+                        if (resolved_frame >= 0) {
+                            ImGui::BulletText("Camera Frame: %d", resolved_frame);
+                        }
+                        if (evt.camera_frame_id >= 0 &&
+                            evt.camera_frame_id != resolved_frame) {
+                            ImGui::BulletText("Event Camera Frame: %d",
+                                              evt.camera_frame_id);
                         }
                         if (evt.stimulus_frame_num >= 0) {
                             ImGui::BulletText("Stimulus Frame: %d", evt.stimulus_frame_num);
@@ -4658,7 +6761,7 @@ struct StateOverlay {
                 auto selected_folder =
                     ImGuiFileDialog::Instance()->GetCurrentPath();
                 free_all_keypoints(keypoints_map, scene);
-                if (load_keypoints(selected_folder, keypoints_map, skeleton,
+                if (load_keypoints(selected_folder, keypoints_map, skeleton.get(),
                                    scene, camera_names, error_message)) {
                     free_all_keypoints(keypoints_map, scene);
                     show_error = true;
@@ -4694,6 +6797,12 @@ struct StateOverlay {
                 ImGui::Text("<t> -> triangulate");
                 ImGui::Text("<Backspace>: delete all keypoints");
                 ImGui::Text("<Ctrl+s>         : Save labels");
+                ImGui::Text("<Click+Drag>: move selected Zarr bbox (paused)");
+                ImGui::Text("<N>: toggle draw-new-bbox mode");
+                ImGui::Text("<Del>: delete selected Zarr bbox");
+                ImGui::Text("<Esc>: cancel draw mode or clear selected Zarr bbox");
+                ImGui::Text("<Shift+R>: reset current-frame Zarr bbox edits");
+                ImGui::Text("Zarr Raw Detect is read-only");
 
                 ImGui::SeparatorText("While hovering keypoints");
                 ImGui::Text("<r>: delete active keypoint");
@@ -4753,24 +6862,50 @@ struct StateOverlay {
                     static_cast<int>(std::ceil(playback_time_now * video_fps));
 
                 int min_decoded_frame = INT_MAX;
-                for (const auto &[cam_name, visible] : window_need_decoding) {
-                    if (visible.load()) {
-                        int decoded = latest_decoded_frame[cam_name].load();
-                        min_decoded_frame =
-                            std::min(min_decoded_frame, decoded);
+                bool have_decode_bound = false;
+                auto considerDecodeBound = [&](const std::string &stream_name) {
+                    auto need_it = window_need_decoding.find(stream_name);
+                    if (need_it == window_need_decoding.end() ||
+                        !need_it->second.load()) {
+                        return;
                     }
+                    auto latest_it = latest_decoded_frame.find(stream_name);
+                    if (latest_it == latest_decoded_frame.end()) {
+                        return;
+                    }
+                    int decoded = latest_it->second.load();
+                    if (decoded < 0) {
+                        return;
+                    }
+                    min_decoded_frame = std::min(min_decoded_frame, decoded);
+                    have_decode_bound = true;
+                };
+                for (const auto &cam_name : camera_names) {
+                    considerDecodeBound(cam_name);
                 }
-                frame_to_show = std::min(frame_to_show, min_decoded_frame);
-                static int last_logged_display = -1;
-                if (frame_to_show != last_logged_display) {
-                    int stim_latest = latest_decoded_frame[stimulus_player.window_name].load();
-                    bool stim_decode = window_need_decoding[stimulus_player.window_name].load();
-                    std::cout << "[Playback] request frame=" << frame_to_show
-                              << " min_decoded=" << min_decoded_frame
-                              << " stim_latest=" << stim_latest
-                              << " stim_decoder_active=" << (stim_decode ? "true" : "false")
-                              << std::endl;
-                    last_logged_display = frame_to_show;
+                if (stimulus_player.loaded) {
+                    considerDecodeBound(stimulus_player.window_name);
+                }
+                if (have_decode_bound) {
+                    frame_to_show = std::min(frame_to_show, min_decoded_frame);
+                } else {
+                    frame_to_show = ps.to_display_frame_number;
+                }
+                if (kPlaybackDebugLoggingEnabled) {
+                    static int last_logged_display = -1;
+                    if (frame_to_show != last_logged_display) {
+                        int stim_latest =
+                            latest_decoded_frame[stimulus_player.window_name].load();
+                        bool stim_decode =
+                            window_need_decoding[stimulus_player.window_name].load();
+                        std::cout << "[Playback] request frame=" << frame_to_show
+                                  << " min_decoded=" << min_decoded_frame
+                                  << " stim_latest=" << stim_latest
+                                  << " stim_decoder_active="
+                                  << (stim_decode ? "true" : "false")
+                                  << std::endl;
+                        last_logged_display = frame_to_show;
+                    }
                 }
 
                 int frame_delta = frame_to_show - ps.to_display_frame_number;

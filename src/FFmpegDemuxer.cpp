@@ -217,25 +217,59 @@ int64_t FFmpegDemuxer::TsFromTime(double ts_sec) {
     AVRational factor;
     factor.num = 1;
     factor.den = AV_TIME_BASE;
-    return av_rescale_q(ts_tbu, factor, fmtc->streams[videoStream]->time_base);
+    int64_t rel_ts =
+        av_rescale_q(ts_tbu, factor, fmtc->streams[videoStream]->time_base);
+    int64_t start_ts = fmtc->streams[videoStream]->start_time;
+    if (start_ts == AV_NOPTS_VALUE) {
+        start_ts = 0;
+    }
+    return start_ts + rel_ts;
 }
 
 int64_t FFmpegDemuxer::TsFromFrameNumber(int64_t frame_num) {
-    auto const ts_sec = (double)frame_num / GetFramerate();
-    return TsFromTime(ts_sec);
+    AVRational fps = fmtc->streams[videoStream]->r_frame_rate;
+    if (fps.num <= 0 || fps.den <= 0) {
+        auto const ts_sec = (double)frame_num / GetFramerate();
+        return TsFromTime(ts_sec);
+    }
+
+    const AVRational frame_timebase = {fps.den, fps.num};
+    int64_t rel_ts =
+        av_rescale_q(frame_num, frame_timebase, fmtc->streams[videoStream]->time_base);
+    int64_t start_ts = fmtc->streams[videoStream]->start_time;
+    if (start_ts == AV_NOPTS_VALUE) {
+        start_ts = 0;
+    }
+    return start_ts + rel_ts;
 }
 
 int64_t FFmpegDemuxer::FrameNumberFromTs(int64_t ts) {
-    // Rescale the timestamp to value represented in stream base units;
-    AVRational factor;
-    factor.num = 1;
-    factor.den = AV_TIME_BASE;
+    int64_t start_ts = fmtc->streams[videoStream]->start_time;
+    if (start_ts != AV_NOPTS_VALUE) {
+        ts -= start_ts;
+    }
+    if (ts < 0) {
+        ts = 0;
+    }
 
-    auto const ts_tbu =
-        av_rescale_q(ts, fmtc->streams[videoStream]->time_base, factor);
-    double ts_sec = (double)ts_tbu / (double)AV_TIME_BASE;
-    int64_t frame_num = (int64_t)(ts_sec * GetFramerate());
-    return frame_num;
+    AVRational fps = fmtc->streams[videoStream]->r_frame_rate;
+    if (fps.num <= 0 || fps.den <= 0) {
+        // Fallback to previous double-based behavior if stream metadata is incomplete.
+        AVRational factor;
+        factor.num = 1;
+        factor.den = AV_TIME_BASE;
+        auto const ts_tbu =
+            av_rescale_q(ts, fmtc->streams[videoStream]->time_base, factor);
+        double ts_sec = (double)ts_tbu / (double)AV_TIME_BASE;
+        return static_cast<int64_t>(std::llround(ts_sec * GetFramerate()));
+    }
+
+    const AVRational frame_timebase = {fps.den, fps.num};
+    return av_rescale_q_rnd(
+        ts,
+        fmtc->streams[videoStream]->time_base,
+        frame_timebase,
+        static_cast<AVRounding>(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
 }
 
 int64_t FFmpegDemuxer::FindClosestKeyFrame(int64_t frame_num,

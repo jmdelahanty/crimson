@@ -32,6 +32,14 @@ constexpr bool kChaserDebugLoggingEnabled =
 #endif
 ;
 
+constexpr bool kAttrProbeMissLoggingEnabled =
+#if defined(CRIMSON_ATTR_PROBE_DEBUG_LOGS)
+    true;
+#else
+    false;
+#endif
+;
+
 std::string appendPath(const std::string& base, const std::string& suffix) {
     if (base.empty()) {
         return suffix;
@@ -44,32 +52,331 @@ std::string appendPath(const std::string& base, const std::string& suffix) {
 
 std::optional<json> readAttrsAny(const ts::kvstore::KvStore& store,
                                  const std::string& path) {
-    auto json_key = appendPath(path, "zarr.json");
-    auto json_result = ts::kvstore::Read(store, json_key).result();
-    if (json_result.ok() && json_result.value().has_value()) {
+    constexpr const char* kZarrJsonKey = "zarr.json";
+    constexpr size_t kZarrJsonKeyLen = 9;
+    const std::array<std::string, 2> keys = {
+        appendPath(path, "zarr.json"),
+        appendPath(path, ".zattrs")
+    };
+
+    std::string first_read_error;
+
+    for (const std::string& key : keys) {
+        auto read_result = ts::kvstore::Read(store, key).result();
+        if (!read_result.ok()) {
+            if (first_read_error.empty()) {
+                first_read_error = read_result.status().ToString();
+            }
+            continue;
+        }
+        if (!read_result.value().has_value()) {
+            continue;
+        }
+
         try {
             std::string payload;
-            absl::CopyCordToString(json_result.value().value, &payload);
-            if (!payload.empty()) {
-                json meta = json::parse(payload);
+            absl::CopyCordToString(read_result.value().value, &payload);
+            if (payload.empty()) {
+                continue;
+            }
+
+            json meta = json::parse(payload);
+            const bool is_zarr_json_key =
+                key.size() >= kZarrJsonKeyLen &&
+                key.compare(key.size() - kZarrJsonKeyLen, kZarrJsonKeyLen, kZarrJsonKey) == 0;
+            if (is_zarr_json_key) {
                 if (meta.contains("attributes") && meta["attributes"].is_object()) {
                     return meta["attributes"];
                 }
+                if (meta.is_object()) {
+                    return meta;
+                }
+            } else if (meta.is_object()) {
                 return meta;
             }
         } catch (const json::parse_error& e) {
-            std::cerr << "Failed to parse JSON at " << json_key << ": " << e.what() << std::endl;
+            std::cerr << "Failed to parse JSON at " << key << ": "
+                      << e.what() << std::endl;
         } catch (...) {
             // Ignore malformed attribute blobs.
         }
-    } else {
-        if (!json_result.ok()) {
-            std::cout << "  [AttrProbe] Read error for " << json_key << ": "
-                      << json_result.status() << std::endl;
-        } else {
-            std::cout << "  [AttrProbe] No value at " << json_key << std::endl;
+    }
+
+    if (!first_read_error.empty()) {
+        std::cout << "  [AttrProbe] Read error for " << keys.front()
+                  << ": " << first_read_error << std::endl;
+    } else if (kAttrProbeMissLoggingEnabled) {
+        std::cout << "  [AttrProbe] No value at " << keys.front() << std::endl;
+    }
+    return std::nullopt;
+}
+
+std::optional<json> readNodeMetaV3(const ts::kvstore::KvStore& store,
+                                   const std::string& path) {
+    auto read_result =
+        ts::kvstore::Read(store, appendPath(path, "zarr.json")).result();
+    if (!read_result.ok() || !read_result.value().has_value()) {
+        return std::nullopt;
+    }
+
+    try {
+        std::string payload;
+        absl::CopyCordToString(read_result.value().value, &payload);
+        if (payload.empty()) {
+            return std::nullopt;
+        }
+        json meta = json::parse(payload);
+        if (meta.is_object()) {
+            return meta;
+        }
+    } catch (...) {
+        // Ignore malformed metadata for optional probing.
+    }
+    return std::nullopt;
+}
+
+std::string normalizeKvstoreFileRootPath(std::filesystem::path path) {
+    path = path.lexically_normal();
+    std::string normalized = path.generic_string();
+    if (!normalized.empty() && normalized.back() != '/') {
+        normalized.push_back('/');
+    }
+    return normalized;
+}
+
+std::string toLowerCopy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+bool hasZarrArchiveExtension(const std::filesystem::path& path) {
+    const std::string ext = toLowerCopy(path.extension().string());
+    return ext == ".zarr" || ext == ".zr3";
+}
+
+bool usesZarrV3StringDataType(const json& node_meta) {
+    if (!node_meta.is_object() || !node_meta.contains("data_type")) {
+        return false;
+    }
+
+    const auto& dtype = node_meta["data_type"];
+    if (dtype.is_string()) {
+        const std::string kind = toLowerCopy(dtype.get<std::string>());
+        return kind == "string" || kind == "str" || kind == "utf8" || kind == "utf-8";
+    }
+    if (!dtype.is_object()) {
+        return false;
+    }
+
+    if (dtype.contains("name") && dtype["name"].is_string()) {
+        const std::string name = toLowerCopy(dtype["name"].get<std::string>());
+        if (name == "string" || name == "utf8" || name == "utf-8") {
+            return true;
         }
     }
+    if (dtype.contains("kind") && dtype["kind"].is_string()) {
+        const std::string kind = toLowerCopy(dtype["kind"].get<std::string>());
+        if (kind == "string" || kind == "str" || kind == "utf8" || kind == "utf-8") {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::optional<json> readAttrsFromZarrJsonFile(const std::filesystem::path& zarr_json_path) {
+    try {
+        std::ifstream file(zarr_json_path);
+        if (!file) {
+            return std::nullopt;
+        }
+        json meta;
+        file >> meta;
+        if (meta.contains("attributes") && meta["attributes"].is_object()) {
+            return meta["attributes"];
+        }
+        if (meta.is_object()) {
+            return meta;
+        }
+    } catch (...) {
+        // Ignore malformed JSON during discovery probes.
+    }
+    return std::nullopt;
+}
+
+bool isAnalysisArchiveByAttrs(const std::filesystem::path& archive_root) {
+    const auto attrs = readAttrsFromZarrJsonFile(archive_root / "zarr.json");
+    if (!attrs.has_value() || !attrs->is_object()) {
+        return false;
+    }
+    if (!attrs->contains("zarr_purpose") || !(*attrs)["zarr_purpose"].is_string()) {
+        return false;
+    }
+    const std::string purpose = toLowerCopy((*attrs)["zarr_purpose"].get<std::string>());
+    return purpose == "analysis";
+}
+
+struct ZarrDiscoveryCandidate {
+    std::filesystem::path path;
+    std::string name;
+    bool has_detect_runs = false;
+    bool is_analysis_archive = false;
+    bool name_suggests_analysis = false;
+    bool name_suggests_training = false;
+    int rank = 0;
+};
+
+int scoreDiscoveryCandidate(const ZarrDiscoveryCandidate& candidate) {
+    int score = 0;
+    if (candidate.has_detect_runs) {
+        score += 200;
+    }
+    if (candidate.is_analysis_archive) {
+        score += 100;
+    }
+    if (candidate.name_suggests_analysis) {
+        score += 25;
+    }
+    if (candidate.name_suggests_training) {
+        score -= 25;
+    }
+    return score;
+}
+
+struct ZarrDiscoveryResult {
+    std::optional<std::filesystem::path> selected_archive;
+    std::string error_message;
+};
+
+void appendDiscoveryCandidatesInDirectory(
+    const std::filesystem::path& directory_path,
+    std::vector<ZarrDiscoveryCandidate>& candidates) {
+    namespace fs = std::filesystem;
+
+    for (const auto& entry : fs::directory_iterator(directory_path)) {
+        if (!entry.is_directory()) {
+            continue;
+        }
+
+        const fs::path archive_path = entry.path();
+        if (!hasZarrArchiveExtension(archive_path)) {
+            continue;
+        }
+
+        if (!fs::exists(archive_path / "zarr.json")) {
+            continue;
+        }
+
+        ZarrDiscoveryCandidate candidate;
+        candidate.path = archive_path;
+        candidate.name = archive_path.filename().string();
+        const std::string lowered_name = toLowerCopy(candidate.name);
+        candidate.name_suggests_analysis =
+            lowered_name.find("analysis") != std::string::npos;
+        candidate.name_suggests_training =
+            lowered_name.find("training") != std::string::npos;
+        candidate.has_detect_runs = fs::exists(archive_path / "detect_runs" / "zarr.json");
+        candidate.is_analysis_archive = isAnalysisArchiveByAttrs(archive_path);
+        candidate.rank = scoreDiscoveryCandidate(candidate);
+
+        if (candidate.rank > 0) {
+            candidates.push_back(std::move(candidate));
+        }
+    }
+}
+
+ZarrDiscoveryResult discoverZarrArchiveInDirectory(const std::string& directory) {
+    namespace fs = std::filesystem;
+
+    ZarrDiscoveryResult result;
+    fs::path directory_path(directory);
+    if (!fs::exists(directory_path) || !fs::is_directory(directory_path)) {
+        result.error_message = "Directory does not exist or is not readable: " + directory;
+        return result;
+    }
+
+    std::vector<ZarrDiscoveryCandidate> candidates;
+    try {
+        appendDiscoveryCandidatesInDirectory(directory_path, candidates);
+
+        if (candidates.empty()) {
+            const fs::path nested_zarr_dir = directory_path / "zarr";
+            if (fs::exists(nested_zarr_dir) && fs::is_directory(nested_zarr_dir)) {
+                appendDiscoveryCandidatesInDirectory(nested_zarr_dir, candidates);
+            }
+        }
+    } catch (const std::exception& e) {
+        result.error_message = std::string("Error searching for zarr archives: ") + e.what();
+        return result;
+    }
+
+    if (candidates.empty()) {
+        result.error_message =
+            "No compatible .zarr/.zr3 archives found (expected detect_runs or zarr_purpose=analysis)";
+        return result;
+    }
+
+    std::sort(candidates.begin(), candidates.end(),
+              [](const ZarrDiscoveryCandidate& a, const ZarrDiscoveryCandidate& b) {
+                  if (a.rank != b.rank) {
+                      return a.rank > b.rank;
+                  }
+                  return a.name < b.name;
+              });
+
+    const int top_rank = candidates.front().rank;
+    std::vector<std::string> top_candidates;
+    for (const auto& candidate : candidates) {
+        if (candidate.rank == top_rank) {
+            top_candidates.push_back(candidate.path.string());
+        }
+    }
+
+    if (top_candidates.size() > 1) {
+        std::ostringstream oss;
+        oss << "Ambiguous zarr archive selection. Multiple equally ranked candidates found:";
+        for (const auto& path : top_candidates) {
+            oss << "\n  - " << path;
+        }
+        oss << "\nUse an explicit archive path override.";
+        result.error_message = oss.str();
+        return result;
+    }
+
+    result.selected_archive = candidates.front().path;
+    return result;
+}
+
+std::optional<std::filesystem::path> resolveExplicitZarrArchivePath(
+    const std::string& candidate_path) {
+    namespace fs = std::filesystem;
+
+    if (candidate_path.empty()) {
+        return std::nullopt;
+    }
+
+    fs::path input(candidate_path);
+    fs::path current = input;
+    if (!fs::exists(current) || fs::is_regular_file(current)) {
+        current = current.parent_path();
+    }
+
+    while (!current.empty()) {
+        if (fs::is_directory(current) &&
+            hasZarrArchiveExtension(current) &&
+            fs::exists(current / "zarr.json")) {
+            return current;
+        }
+        if (current == current.root_path()) {
+            break;
+        }
+        current = current.parent_path();
+    }
+
+    if (fs::is_directory(input) && fs::exists(input / "zarr.json")) {
+        return input;
+    }
+
     return std::nullopt;
 }
 
@@ -412,9 +719,10 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
         root_path_ = filepath;
 
         // Open the kvstore
+        const std::string kvstore_path = normalizeKvstoreFileRootPath(filepath);
         auto spec_result = ts::kvstore::Spec::FromJson({
             {"driver", "file"},
-            {"path", filepath}
+            {"path", kvstore_path}
         });
         
         if (!spec_result.ok()) {
@@ -502,21 +810,21 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
             return false;
         }
 
-        if (!loaded_palette_layout) {
-            error_message = "detect_runs layout not found; legacy dense bboxes are no longer supported";
-            return false;
-        }
+        if (loaded_palette_layout) {
+            if (!loadRefinedDetectionsAsPrimary(store)) {
+                std::cout << "  Refined detect runs not found or could not be loaded; "
+                          << "using base detect_runs data" << std::endl;
+            }
 
-        if (!loadRefinedDetectionsAsPrimary(store)) {
-            std::cout << "  Refined detect runs not found or could not be loaded; "
-                      << "using base detect_runs data" << std::endl;
-        }
-
-        if (loadKeypointHeadingData(store)) {
-            std::cout << "  Loaded keypoint headings from '"
-                      << data_.keypoints_run_name << "'" << std::endl;
+            if (loadKeypointHeadingData(store)) {
+                std::cout << "  Loaded keypoint headings from '"
+                          << data_.keypoints_run_name << "'" << std::endl;
+            } else {
+                std::cout << "  No keypoint heading data available" << std::endl;
+            }
         } else {
-            std::cout << "  No keypoint heading data available" << std::endl;
+            std::cout << "  detect_runs layout not found; opening in metadata/stimulus-only mode"
+                      << std::endl;
         }
 
         // Populate metadata; continue even if it fails (broken archives may lack it)
@@ -585,11 +893,13 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
         std::cout << "  Total frames: " << data_.total_frames << std::endl;
         std::cout << "  Max detections per frame: " << data_.max_detections << std::endl;
         std::cout << "  FPS: " << data_.fps << std::endl;
-        std::cout << "  Layout: "
-                  << (data_.layout == ZarrLayoutType::kPaletteRuns
-                          ? "Palette detection_runs"
-                          : "Legacy dense arrays")
-                  << std::endl;
+        std::string layout_name = "Metadata/stimulus-only (no detect_runs)";
+        if (data_.layout == ZarrLayoutType::kPaletteRuns) {
+            layout_name = "Palette detection_runs";
+        } else if (data_.layout == ZarrLayoutType::kLegacyGrid) {
+            layout_name = "Legacy dense arrays";
+        }
+        std::cout << "  Layout: " << layout_name << std::endl;
         if (!data_.detect_run_name.empty()) {
             std::cout << "  Detect run: " << data_.detect_run_name << std::endl;
         }
@@ -914,6 +1224,19 @@ bool ZarrDetectionLoader::readStringArray(const ts::kvstore::KvStore& store,
                                          const std::string& path,
                                          std::vector<std::string>& out) {
     try {
+        static std::unordered_set<std::string> unsupported_string_dtype_paths;
+        if (auto node_meta = readNodeMetaV3(store, path);
+            node_meta.has_value() && usesZarrV3StringDataType(*node_meta)) {
+            if (unsupported_string_dtype_paths.insert(path).second) {
+                std::cout
+                    << "  [ReadStringArray] '" << path
+                    << "' uses Zarr v3 string dtype unsupported by current TensorStore build;"
+                    << " skipping decode and using fallback provenance."
+                    << std::endl;
+            }
+            return false;
+        }
+
         std::vector<std::string> failure_messages;
 
         auto read_as_strings = [&]() -> bool {
@@ -1310,6 +1633,7 @@ bool ZarrDetectionLoader::loadDetectionRunFromGroup(
                           n_detections,
                           frame_offsets,
                           nullptr,
+                          nullptr,
                           has_scores,
                           has_class_ids,
                           resolved_frames)) {
@@ -1326,6 +1650,7 @@ bool ZarrDetectionLoader::loadDetectionRunFromGroup(
     data_.has_class_ids = has_class_ids;
     data_.coordinates_normalized = true;
     data_.detection_source_flags.clear();
+    data_.detection_reason_flags.clear();
 
     if (data_.n_detections.empty()) {
         computeDetectionsFromOffsets(data_.frame_offsets, data_.n_detections);
@@ -1395,6 +1720,7 @@ bool ZarrDetectionLoader::loadFlattenedRun(
     std::vector<int32_t>& n_detections_out,
     std::vector<size_t>& frame_offsets_out,
     std::vector<uint8_t>* detection_source_out,
+    std::vector<std::string>* detection_reason_out,
     bool& has_scores_out,
     bool& has_class_ids_out,
     size_t& resolved_frames_out) {
@@ -1462,6 +1788,34 @@ bool ZarrDetectionLoader::loadFlattenedRun(
         }
     }
 
+    if (detection_reason_out) {
+        detection_reason_out->clear();
+        auto try_load_reason = [&](const std::string& field_name) -> bool {
+            const std::string field_path = base_path + field_name;
+            if (!arrayExists(store, field_path)) {
+                return false;
+            }
+            std::vector<std::string> reason_raw;
+            if (!readStringArray(store, field_path, reason_raw)) {
+                return false;
+            }
+            if (reason_raw.size() != total_detections) {
+                std::cout << "  [ReadStringArray] '" << field_path
+                          << "' length mismatch (expected " << total_detections
+                          << ", got " << reason_raw.size()
+                          << "); ignoring field." << std::endl;
+                return false;
+            }
+            *detection_reason_out = std::move(reason_raw);
+            return true;
+        };
+
+        // Palette detect reason precedence: reason_bytes -> reason -> detection_source
+        if (!try_load_reason("reason_bytes")) {
+            (void)try_load_reason("reason");
+        }
+    }
+
     // Determine frame counts and offsets
     std::vector<size_t> frame_offsets_local;
     if (has_frame_indices) {
@@ -1507,6 +1861,15 @@ bool ZarrDetectionLoader::loadFlattenedRun(
         std::vector<std::array<float, 4>> sorted_boxes(total_detections);
         std::vector<float> sorted_scores(has_scores_out ? total_detections : 0);
         std::vector<int32_t> sorted_class_ids(has_class_ids_out ? total_detections : 0);
+        std::vector<uint8_t> sorted_detection_source(
+            (detection_source_out && detection_source_out->size() == total_detections)
+                ? total_detections
+                : 0,
+            0);
+        std::vector<std::string> sorted_detection_reason(
+            (detection_reason_out && detection_reason_out->size() == total_detections)
+                ? total_detections
+                : 0);
         std::vector<size_t> write_cursor(frame_offsets_local.size() > 0
             ? frame_offsets_local.size() - 1
             : 0, 0);
@@ -1534,6 +1897,12 @@ bool ZarrDetectionLoader::loadFlattenedRun(
             if (has_class_ids_out) {
                 sorted_class_ids[dest] = class_ids_out[det];
             }
+            if (!sorted_detection_source.empty()) {
+                sorted_detection_source[dest] = (*detection_source_out)[det];
+            }
+            if (!sorted_detection_reason.empty()) {
+                sorted_detection_reason[dest] = (*detection_reason_out)[det];
+            }
         }
 
         boxes_out = std::move(sorted_boxes);
@@ -1542,6 +1911,12 @@ bool ZarrDetectionLoader::loadFlattenedRun(
         }
         if (has_class_ids_out) {
             class_ids_out = std::move(sorted_class_ids);
+        }
+        if (detection_source_out) {
+            *detection_source_out = std::move(sorted_detection_source);
+        }
+        if (detection_reason_out) {
+            *detection_reason_out = std::move(sorted_detection_reason);
         }
 
         if (frame_indices_out) {
@@ -1605,6 +1980,7 @@ bool ZarrDetectionLoader::loadFlattenedRun(
 }
 
 bool ZarrDetectionLoader::loadRefinedDetectionsAsPrimary(const ts::kvstore::KvStore& store) {
+    data_.has_refined_manual_dataset = false;
     data_.has_refined_filtered_dataset = false;
     data_.has_refined_interpolated_dataset = false;
     data_.has_refined_root_dataset = false;
@@ -1628,6 +2004,10 @@ bool ZarrDetectionLoader::loadRefinedDetectionsAsPrimary(const ts::kvstore::KvSt
             root_path_,
             "refined_detect_runs",
             {"refined/frame_indices", "refined/bbox_norm_coords"});
+        auto manual_candidates = collect_runs_fs(
+            root_path_,
+            "refined_detect_runs",
+            {"manual/frame_indices", "manual/bbox_norm_coords"});
         auto root_candidates = collect_runs_fs(
             root_path_,
             "refined_detect_runs",
@@ -1638,6 +2018,8 @@ bool ZarrDetectionLoader::loadRefinedDetectionsAsPrimary(const ts::kvstore::KvSt
                           filtered_candidates.begin(), filtered_candidates.end());
         candidates.insert(candidates.end(),
                           refined_candidates.begin(), refined_candidates.end());
+        candidates.insert(candidates.end(),
+                          manual_candidates.begin(), manual_candidates.end());
         candidates.insert(candidates.end(),
                           root_candidates.begin(), root_candidates.end());
 
@@ -1661,20 +2043,50 @@ bool ZarrDetectionLoader::loadRefinedDetectionsAsPrimary(const ts::kvstore::KvSt
         return false;
     }
 
-    struct StageOption {
-        const char* subdir;
-        const char* label;
-        DetectionDataset dataset_type;
-    };
-    const StageOption kStageOptions[] = {
-        {"interpolated/", "interpolated", DetectionDataset::RefinedInterpolated},
-        {"filtered/", "filtered", DetectionDataset::RefinedFiltered},
-        {"refined/", "refined", DetectionDataset::RefinedRoot},
-        {"", "root", DetectionDataset::RefinedRoot}
-    };
-
     std::string run_base = "refined_detect_runs/" + latest_run + "/";
     std::optional<json> run_attrs = readAttrsAny(store, run_base);
+
+    std::string manual_review_latest;
+    if (run_attrs.has_value() &&
+        run_attrs->contains("manual_review_latest") &&
+        (*run_attrs)["manual_review_latest"].is_string()) {
+        manual_review_latest = (*run_attrs)["manual_review_latest"].get<std::string>();
+        const std::string run_prefix = run_base;
+        if (manual_review_latest.rfind(run_prefix, 0) == 0) {
+            manual_review_latest = manual_review_latest.substr(run_prefix.size());
+        }
+        while (!manual_review_latest.empty() && manual_review_latest.back() == '/') {
+            manual_review_latest.pop_back();
+        }
+    }
+
+    struct StageOption {
+        std::string subdir;
+        std::string label;
+        DetectionDataset dataset_type;
+    };
+
+    std::vector<StageOption> stage_options;
+    std::unordered_set<std::string> seen_stage_subdirs;
+    auto add_stage = [&](std::string subdir,
+                         std::string label,
+                         DetectionDataset dataset_type) {
+        if (seen_stage_subdirs.insert(subdir).second) {
+            stage_options.push_back(StageOption{std::move(subdir),
+                                                std::move(label),
+                                                dataset_type});
+        }
+    };
+
+    if (!manual_review_latest.empty()) {
+        add_stage(manual_review_latest + "/", manual_review_latest,
+                  DetectionDataset::RefinedManual);
+    }
+    add_stage("manual/", "manual", DetectionDataset::RefinedManual);
+    add_stage("interpolated/", "interpolated", DetectionDataset::RefinedInterpolated);
+    add_stage("filtered/", "filtered", DetectionDataset::RefinedFiltered);
+    add_stage("refined/", "refined", DetectionDataset::RefinedRoot);
+    add_stage("", "root", DetectionDataset::RefinedRoot);
 
     InterpolationRunData stage_template;
     stage_template.run_name = latest_run;
@@ -1699,7 +2111,7 @@ bool ZarrDetectionLoader::loadRefinedDetectionsAsPrimary(const ts::kvstore::KvSt
 
     bool loaded_any = false;
 
-    for (const auto& stage : kStageOptions) {
+    for (const auto& stage : stage_options) {
         std::string base_path = run_base + stage.subdir;
         size_t resolved_frames = data_.total_frames;
         std::vector<int32_t> frame_indices;
@@ -1709,6 +2121,7 @@ bool ZarrDetectionLoader::loadRefinedDetectionsAsPrimary(const ts::kvstore::KvSt
         std::vector<int32_t> n_detections;
         std::vector<size_t> frame_offsets;
         std::vector<uint8_t> detection_source;
+        std::vector<std::string> detection_reason;
         bool has_scores = false;
         bool has_class_ids = false;
 
@@ -1721,6 +2134,7 @@ bool ZarrDetectionLoader::loadRefinedDetectionsAsPrimary(const ts::kvstore::KvSt
                               n_detections,
                               frame_offsets,
                               &detection_source,
+                              &detection_reason,
                               has_scores,
                               has_class_ids,
                               resolved_frames)) {
@@ -1739,23 +2153,52 @@ bool ZarrDetectionLoader::loadRefinedDetectionsAsPrimary(const ts::kvstore::KvSt
         stage_data.frame_offsets = std::move(frame_offsets);
         stage_data.n_detections = std::move(n_detections);
         stage_data.detection_source = std::move(detection_source);
+        stage_data.detection_reason = std::move(detection_reason);
         stage_data.has_scores = has_scores;
         stage_data.has_class_ids = has_class_ids;
         cacheDetectionStage(std::move(stage_data), stage.dataset_type);
         loaded_any = true;
 
-        const auto& stored = (stage.dataset_type == DetectionDataset::RefinedInterpolated)
-                                 ? data_.refined_interpolated_dataset
-                                 : (stage.dataset_type == DetectionDataset::RefinedFiltered)
-                                       ? data_.refined_filtered_dataset
-                                       : data_.refined_root_dataset;
+        const InterpolationRunData* stored = nullptr;
+        switch (stage.dataset_type) {
+            case DetectionDataset::RefinedManual:
+                stored = &data_.refined_manual_dataset;
+                break;
+            case DetectionDataset::RefinedInterpolated:
+                stored = &data_.refined_interpolated_dataset;
+                break;
+            case DetectionDataset::RefinedFiltered:
+                stored = &data_.refined_filtered_dataset;
+                break;
+            case DetectionDataset::RefinedRoot:
+                stored = &data_.refined_root_dataset;
+                break;
+            case DetectionDataset::RawDetect:
+                stored = &data_.raw_detection_dataset;
+                break;
+        }
         std::cout << "  Refined detect run '" << latest_run << "' stage '"
-                  << stage.label << "' loaded (" << stored.bbox_norm_coords.size()
+                  << stage.label << "' loaded ("
+                  << (stored ? stored->bbox_norm_coords.size() : 0)
                   << " detections)" << std::endl;
     }
 
     if (!loaded_any) {
         return false;
+    }
+
+    if (!manual_review_latest.empty() && !data_.has_refined_manual_dataset) {
+        std::cout << "  Refined detect run '" << latest_run
+                  << "' manual_review_latest='" << manual_review_latest
+                  << "' not found; falling back to other refined groups" << std::endl;
+    }
+
+    if (data_.has_refined_manual_dataset &&
+        applyDetectionDataset(data_.refined_manual_dataset,
+                              DetectionDataset::RefinedManual)) {
+        std::cout << "  Using refined detect run '" << data_.detect_run_name
+                  << "' as primary detections (manual)" << std::endl;
+        return true;
     }
 
     if (data_.has_refined_interpolated_dataset &&
@@ -1852,6 +2295,7 @@ bool ZarrDetectionLoader::loadRefinedDetectRuns(const ts::kvstore::KvStore& stor
         std::vector<int32_t> n_detections;
         std::vector<size_t> frame_offsets;
         std::vector<uint8_t> detection_source;
+        std::vector<std::string> detection_reason;
         bool has_scores = false;
         bool has_class_ids = false;
 
@@ -1864,6 +2308,7 @@ bool ZarrDetectionLoader::loadRefinedDetectRuns(const ts::kvstore::KvStore& stor
                               n_detections,
                               frame_offsets,
                               &detection_source,
+                              &detection_reason,
                               has_scores,
                               has_class_ids,
                               resolved_frames)) {
@@ -1877,6 +2322,7 @@ bool ZarrDetectionLoader::loadRefinedDetectRuns(const ts::kvstore::KvStore& stor
         refined.flat_class_ids = std::move(class_ids);
         refined.frame_offsets = std::move(frame_offsets);
         refined.detection_source = std::move(detection_source);
+        refined.detection_reason = std::move(detection_reason);
         refined.has_stimulus_alignment = false;
         refined.has_flat_detections = true;
         refined.is_loaded = true;
@@ -5524,6 +5970,10 @@ void ZarrDetectionLoader::cacheDetectionStage(InterpolationRunData stage,
             data_.raw_detection_dataset = std::move(stage);
             data_.has_raw_detection_dataset = true;
             break;
+        case DetectionDataset::RefinedManual:
+            data_.refined_manual_dataset = std::move(stage);
+            data_.has_refined_manual_dataset = true;
+            break;
         case DetectionDataset::RefinedFiltered:
             data_.refined_filtered_dataset = std::move(stage);
             data_.has_refined_filtered_dataset = true;
@@ -5604,6 +6054,7 @@ bool ZarrDetectionLoader::applyDetectionDataset(const InterpolationRunData& stag
     data_.flat_class_ids = stage.flat_class_ids;
     data_.frame_offsets = stage.frame_offsets;
     data_.detection_source_flags = stage.detection_source;
+    data_.detection_reason_flags = stage.detection_reason;
     data_.has_scores = stage.has_scores;
     data_.has_class_ids = stage.has_class_ids;
     data_.coordinates_normalized = stage.uses_palette_layout;
@@ -5705,6 +6156,10 @@ ZarrDetectionLoader::getAvailableDetectionDatasets() const {
         std::string label = make_label(data_.raw_detection_dataset, "Detect run");
         result.emplace_back(DetectionDataset::RawDetect, std::move(label));
     }
+    if (data_.has_refined_manual_dataset) {
+        std::string label = make_label(data_.refined_manual_dataset, "Refined manual");
+        result.emplace_back(DetectionDataset::RefinedManual, std::move(label));
+    }
     if (data_.has_refined_filtered_dataset) {
         std::string label = make_label(data_.refined_filtered_dataset, "Refined filtered");
         result.emplace_back(DetectionDataset::RefinedFiltered, std::move(label));
@@ -5724,6 +6179,8 @@ bool ZarrDetectionLoader::isDatasetAvailable(DetectionDataset dataset) const {
     switch (dataset) {
         case DetectionDataset::RawDetect:
             return data_.has_raw_detection_dataset;
+        case DetectionDataset::RefinedManual:
+            return data_.has_refined_manual_dataset;
         case DetectionDataset::RefinedFiltered:
             return data_.has_refined_filtered_dataset;
         case DetectionDataset::RefinedInterpolated:
@@ -5745,6 +6202,8 @@ bool ZarrDetectionLoader::setActiveDetectionDataset(DetectionDataset dataset) {
     switch (dataset) {
         case DetectionDataset::RawDetect:
             return applyDetectionDataset(data_.raw_detection_dataset, dataset);
+        case DetectionDataset::RefinedManual:
+            return applyDetectionDataset(data_.refined_manual_dataset, dataset);
         case DetectionDataset::RefinedFiltered:
             return applyDetectionDataset(data_.refined_filtered_dataset, dataset);
         case DetectionDataset::RefinedInterpolated:
@@ -6021,14 +6480,101 @@ bool ZarrDetectionLoader::loadMetadata(const ts::kvstore::KvStore& store) {
         bool fps_from_metadata = false;
         double duration_seconds = 0.0;
         double root_fps = 0.0;
+        std::string root_video_path_hint;
 
-        if (auto root_attrs = readAttrsAny(store, "")) {
+        auto readAttrsWithFsFallback = [&](const std::string& path) -> std::optional<json> {
+            if (auto attrs = readAttrsAny(store, path)) {
+                return attrs;
+            }
+            if (root_path_.empty()) {
+                return std::nullopt;
+            }
+            std::filesystem::path json_path = std::filesystem::path(root_path_);
+            if (!path.empty()) {
+                json_path /= std::filesystem::path(path);
+            }
+            json_path /= "zarr.json";
+            return readAttrsFromZarrJsonFile(json_path);
+        };
+
+        if (auto root_attrs = readAttrsWithFsFallback("")) {
+            auto assignIfString = [&](const json& object, const char* key, std::string& dest) {
+                if (object.contains(key) && object[key].is_string()) {
+                    dest = object[key].get<std::string>();
+                    return true;
+                }
+                return false;
+            };
+
+            auto assignIfNumber = [&](const json& object, const char* key, double& dest) {
+                if (object.contains(key) && object[key].is_number()) {
+                    dest = object[key].get<double>();
+                    return true;
+                }
+                return false;
+            };
+
             if (root_attrs->contains("fps") && (*root_attrs)["fps"].is_number()) {
                 root_fps = (*root_attrs)["fps"].get<double>();
             }
+
+            assignIfString(*root_attrs, "source_path", root_video_path_hint) ||
+                assignIfString(*root_attrs, "source_video_path", root_video_path_hint) ||
+                assignIfString(*root_attrs, "source_video", root_video_path_hint) ||
+                assignIfString(*root_attrs, "path", root_video_path_hint);
+
+            if (root_video_path_hint.empty() &&
+                root_attrs->contains("source_video_metadata") &&
+                (*root_attrs)["source_video_metadata"].is_object()) {
+                const auto& source_video_metadata = (*root_attrs)["source_video_metadata"];
+                assignIfString(source_video_metadata, "source_path", root_video_path_hint) ||
+                    assignIfString(source_video_metadata, "source_video_path", root_video_path_hint) ||
+                    assignIfString(source_video_metadata, "source_video", root_video_path_hint) ||
+                    assignIfString(source_video_metadata, "path", root_video_path_hint);
+            }
+
+            if (data_.total_frames == 0) {
+                double frames = 0.0;
+                if (assignIfNumber(*root_attrs, "total_frames", frames) ||
+                    assignIfNumber(*root_attrs, "n_frames", frames) ||
+                    assignIfNumber(*root_attrs, "source_video_total_frames", frames)) {
+                    if (frames > 0.0) {
+                        data_.total_frames = static_cast<size_t>(frames);
+                        metadata_found = true;
+                    }
+                }
+            }
+
+            if (data_.image_width <= 0) {
+                double width = 0.0;
+                if (assignIfNumber(*root_attrs, "video_width", width) ||
+                    assignIfNumber(*root_attrs, "width", width) ||
+                    assignIfNumber(*root_attrs, "source_video_width", width)) {
+                    if (width > 0.0) {
+                        data_.image_width = static_cast<int>(width);
+                        metadata_found = true;
+                    }
+                }
+            }
+
+            if (data_.image_height <= 0) {
+                double height = 0.0;
+                if (assignIfNumber(*root_attrs, "video_height", height) ||
+                    assignIfNumber(*root_attrs, "height", height) ||
+                    assignIfNumber(*root_attrs, "source_video_height", height)) {
+                    if (height > 0.0) {
+                        data_.image_height = static_cast<int>(height);
+                        metadata_found = true;
+                    }
+                }
+            }
+
+            if (duration_seconds <= 0.0) {
+                assignIfNumber(*root_attrs, "duration_seconds", duration_seconds);
+            }
         }
 
-        if (auto attrs = readAttrsAny(store, "raw_video")) {
+        if (auto attrs = readAttrsWithFsFallback("raw_video")) {
             metadata_found = true;
 
             auto assignIfString = [&](const char* key, std::string& dest) {
@@ -6076,6 +6622,10 @@ bool ZarrDetectionLoader::loadMetadata(const ts::kvstore::KvStore& store) {
             if (attrs->contains("video_duration_seconds") && (*attrs)["video_duration_seconds"].is_number()) {
                 duration_seconds = (*attrs)["video_duration_seconds"].get<double>();
             }
+        }
+
+        if (data_.video_path.empty() && !root_video_path_hint.empty()) {
+            data_.video_path = root_video_path_hint;
         }
 
         if (!fps_from_metadata && root_fps > 0.0) {
@@ -6197,6 +6747,9 @@ int32_t ZarrDetectionLoader::getDetectionsForFrame(size_t frame_id) const {
     if (frame_id >= data_.total_frames) {
         return 0;
     }
+    if (frame_id >= data_.n_detections.size()) {
+        return 0;
+    }
     return data_.n_detections[frame_id];
 }
 
@@ -6230,28 +6783,61 @@ LoggedBoundingBox ZarrDetectionLoader::convertToLoggedBox(
 }
 
 std::optional<std::string> ZarrDetectionLoader::findZarrDetectionFile(const std::string& directory) {
+    auto discovery = discoverZarrArchiveInDirectory(directory);
+    if (!discovery.selected_archive.has_value()) {
+        if (!discovery.error_message.empty()) {
+            std::cerr << "Zarr discovery failed: " << discovery.error_message << std::endl;
+        }
+        return std::nullopt;
+    }
+    return discovery.selected_archive->string();
+}
+
+bool loadZarrDetectionFromPath(
+    const std::string& zarr_path,
+    ZarrDetectionLoader& loader,
+    std::string& error_message
+) {
     namespace fs = std::filesystem;
 
-    try {
-        for (const auto& entry : fs::directory_iterator(directory)) {
-            if (entry.is_directory()) {
-                std::string filename = entry.path().filename().string();
-
-                if (filename.find(".zarr") != std::string::npos ||
-                    filename.find(".zr3") != std::string::npos) {
-
-                    if (filename.find("detection") != std::string::npos ||
-                        filename.find("chaser") != std::string::npos) {
-                        return entry.path().string();
-                    }
-                }
+    auto archive_path = resolveExplicitZarrArchivePath(zarr_path);
+    if (!archive_path.has_value()) {
+        std::error_code ec;
+        if (fs::is_directory(fs::path(zarr_path), ec)) {
+            auto discovery = discoverZarrArchiveInDirectory(zarr_path);
+            if (discovery.selected_archive.has_value()) {
+                archive_path = discovery.selected_archive;
+            } else if (!discovery.error_message.empty()) {
+                error_message = discovery.error_message;
+                return false;
             }
         }
-    } catch (const std::exception& e) {
-        std::cerr << "Error searching for zarr files: " << e.what() << std::endl;
+    }
+    if (!archive_path.has_value()) {
+        fs::path probe_dir(zarr_path);
+        std::error_code ec;
+
+        while (!probe_dir.empty() && !fs::exists(probe_dir, ec)) {
+            probe_dir = probe_dir.parent_path();
+        }
+        if (!probe_dir.empty() && fs::is_regular_file(probe_dir, ec)) {
+            probe_dir = probe_dir.parent_path();
+        }
+
+        if (!probe_dir.empty() && fs::is_directory(probe_dir, ec)) {
+            auto discovery = discoverZarrArchiveInDirectory(probe_dir.string());
+            if (discovery.selected_archive.has_value()) {
+                archive_path = discovery.selected_archive;
+            }
+        }
+    }
+    if (!archive_path.has_value()) {
+        error_message = "Provided path is not a valid .zarr/.zr3 archive: " + zarr_path;
+        return false;
     }
 
-    return std::nullopt;
+    std::cout << "Using zarr archive: " << archive_path->string() << std::endl;
+    return loader.loadZarrFile(archive_path->string(), error_message);
 }
 
 bool loadZarrDetectionFromDirectory(
@@ -6259,15 +6845,16 @@ bool loadZarrDetectionFromDirectory(
     ZarrDetectionLoader& loader,
     std::string& error_message
 ) {
-    auto zarr_file = ZarrDetectionLoader::findZarrDetectionFile(dir_path);
-
-    if (!zarr_file.has_value()) {
-        error_message = "No zarr detection file found in directory";
+    auto discovery = discoverZarrArchiveInDirectory(dir_path);
+    if (!discovery.selected_archive.has_value()) {
+        error_message = discovery.error_message.empty()
+                            ? "No compatible zarr archive found in directory"
+                            : discovery.error_message;
         return false;
     }
 
-    std::cout << "Found zarr file: " << zarr_file.value() << std::endl;
-    return loader.loadZarrFile(zarr_file.value(), error_message);
+    std::cout << "Found zarr file: " << discovery.selected_archive->string() << std::endl;
+    return loader.loadZarrFile(discovery.selected_archive->string(), error_message);
 }
 
 bool ZarrDetectionLoader::loadInterpolationRuns(const ts::kvstore::KvStore& store) {
@@ -6556,6 +7143,9 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
     if (frame_id >= data_.total_frames) {
         return result;
     }
+    if (!hasDetectionData()) {
+        return result;
+    }
 
     if (data_.layout == ZarrLayoutType::kPaletteRuns) {
         const bool has_palette_interp =
@@ -6617,6 +7207,9 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
         if (!data_.detection_source_flags.empty()) {
             result.detection_source.reserve(end - start);
         }
+        if (!data_.detection_reason_flags.empty()) {
+            result.detection_reason.reserve(end - start);
+        }
 
         for (size_t idx = start; idx < end && idx < boxes_source.size(); ++idx) {
             auto pixel_box = normalizedBoxToPixels(
@@ -6643,6 +7236,13 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                     result.detection_source.push_back(data_.detection_source_flags[idx]);
                 } else {
                     result.detection_source.push_back(0);
+                }
+            }
+            if (!data_.detection_reason_flags.empty()) {
+                if (idx < data_.detection_reason_flags.size()) {
+                    result.detection_reason.push_back(data_.detection_reason_flags[idx]);
+                } else {
+                    result.detection_reason.emplace_back();
                 }
             }
 
@@ -6789,7 +7389,11 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
             }
         } else {
             // Use original n_detections for non-interpolated frames
-            valid_detections = data_.n_detections[frame_id];
+            if (frame_id >= data_.n_detections.size()) {
+                valid_detections = 0;
+            } else {
+                valid_detections = std::max(data_.n_detections[frame_id], 0);
+            }
         }
         
         for (int det_idx = 0; det_idx < valid_detections; ++det_idx) {
@@ -6806,6 +7410,14 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                         result.detection_source.push_back(data_.detection_source_flags[idx]);
                     } else {
                         result.detection_source.push_back(0);
+                    }
+                }
+                if (!data_.detection_reason_flags.empty()) {
+                    size_t idx = static_cast<size_t>(det_idx);
+                    if (idx < data_.detection_reason_flags.size()) {
+                        result.detection_reason.push_back(data_.detection_reason_flags[idx]);
+                    } else {
+                        result.detection_reason.emplace_back();
                     }
                 }
                 
@@ -7121,6 +7733,74 @@ ZarrDetectionLoader::getStimulusFrameForCameraFrame(int32_t camera_frame,
     return resolveStimulusFrame(interp.camera_to_metadata_index,
                                 interp.frame_metadata_stimulus_frames,
                                 camera_frame);
+}
+
+std::optional<int32_t>
+ZarrDetectionLoader::getCameraFrameForStimulusFrame(int32_t stimulus_frame,
+                                                    bool prefer_corrected) const {
+    if (!hasStimulusFrameMapping() || stimulus_frame < 0) {
+        return std::nullopt;
+    }
+
+    const auto& interp = data_.latest_interpolation;
+
+    auto resolve_from_direct = [&](const std::vector<int32_t>& direct)
+            -> std::optional<int32_t> {
+        if (direct.empty()) {
+            return std::nullopt;
+        }
+        for (size_t camera_idx = 0; camera_idx < direct.size(); ++camera_idx) {
+            if (direct[camera_idx] == stimulus_frame) {
+                return static_cast<int32_t>(camera_idx);
+            }
+        }
+        return std::nullopt;
+    };
+
+    auto resolve_from_metadata = [&](const std::vector<int32_t>& mapping,
+                                     const std::vector<int32_t>& frame_numbers)
+            -> std::optional<int32_t> {
+        if (mapping.empty() || frame_numbers.empty()) {
+            return std::nullopt;
+        }
+        for (size_t camera_idx = 0; camera_idx < mapping.size(); ++camera_idx) {
+            int32_t metadata_idx = mapping[camera_idx];
+            if (metadata_idx < 0) {
+                continue;
+            }
+            size_t meta_index = static_cast<size_t>(metadata_idx);
+            if (meta_index >= frame_numbers.size()) {
+                continue;
+            }
+            if (frame_numbers[meta_index] == stimulus_frame) {
+                return static_cast<int32_t>(camera_idx);
+            }
+        }
+        return std::nullopt;
+    };
+
+    if (prefer_corrected) {
+        if (interp.has_direct_stimulus_lookup) {
+            if (auto camera = resolve_from_direct(
+                    interp.camera_to_stimulus_frame_corrected)) {
+                return camera;
+            }
+        }
+        if (interp.frame_metadata_corrected_loaded) {
+            if (auto camera = resolve_from_metadata(
+                    interp.camera_to_metadata_index_corrected,
+                    interp.frame_metadata_stimulus_frames_corrected)) {
+                return camera;
+            }
+        }
+    }
+
+    if (auto camera = resolve_from_metadata(interp.camera_to_metadata_index,
+                                            interp.frame_metadata_stimulus_frames)) {
+        return camera;
+    }
+
+    return std::nullopt;
 }
 
 std::optional<int32_t> ZarrDetectionLoader::getFirstCameraFrameWithStimulus(
