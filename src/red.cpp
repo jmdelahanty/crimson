@@ -617,7 +617,7 @@ struct StimulusPlayback {
     uint32_t width = 0;
     uint32_t height = 0;
     double fps = 0.0;
-    int buffer_size = 32;
+    int buffer_size = 100;
     bool use_cpu_buffer = false;
     PictureBuffer *display_buffer = nullptr;
     PBO_CUDA pbo = {};
@@ -1070,7 +1070,7 @@ void seek_all_cameras(render_scene *scene, int frame_number, double video_fps,
     }
 
     // Update playback state
-    state.to_display_frame_number = scene->seek_context[0].seek_frame;
+    state.to_display_frame_number = frame_number;
     state.read_head = 0;
     state.just_seeked = true;
     state.slider_frame_number = state.to_display_frame_number;
@@ -1226,7 +1226,7 @@ int main(int argc, char **argv) {
     std::vector<std::thread> yolo_threads;
     yolo_param yolo_setting = yolo_param();
     std::string keypoints_root_folder;
-    int label_buffer_size = 64;
+    int label_buffer_size = 100;
     bool show_help_window = false;
     std::vector<bool> is_view_focused;
     bool input_is_imgs = false;
@@ -3246,76 +3246,109 @@ int main(int argc, char **argv) {
             }
 
             bool exact_paused_target_available = false;
+            struct PausedBufferListItem {
+                int slot = -1;
+                int frame = -1;
+            };
+            std::vector<PausedBufferListItem> paused_buffer_items;
+            paused_buffer_items.reserve(scene->size_of_buffer);
+            for (int i = 0; i < scene->size_of_buffer; ++i) {
+                const auto& slot = scene->display_buffer[visible_idx][i];
+                if (slot.available_to_write || slot.frame_number < 0) {
+                    continue;
+                }
+                paused_buffer_items.push_back({i, slot.frame_number});
+            }
+            std::sort(paused_buffer_items.begin(), paused_buffer_items.end(),
+                      [](const PausedBufferListItem& a,
+                         const PausedBufferListItem& b) {
+                          if (a.frame == b.frame) {
+                              return a.slot < b.slot;
+                          }
+                          return a.frame < b.frame;
+                      });
+
             auto getPreferredPausedSlot = [&]() -> int {
-                    int exact_slot = -1;
-                    for (int i = 0; i < scene->size_of_buffer; ++i) {
-                        const auto& slot = scene->display_buffer[visible_idx][i];
-                        if (!slot.available_to_write &&
+                int exact_slot = -1;
+                for (int i = 0; i < scene->size_of_buffer; ++i) {
+                    const auto& slot = scene->display_buffer[visible_idx][i];
+                    if (!slot.available_to_write &&
                         slot.frame_number == ps.to_display_frame_number) {
                         exact_slot = i;
                         break;
                     }
-                    }
-                    if (exact_slot >= 0) {
-                        exact_paused_target_available = true;
-                        return exact_slot;
-                    }
-                    exact_paused_target_available = false;
-                    if (!ps.pause_seeked) {
-                        return findNearestPausedBufferSlot(
-                            visible_idx, std::max(0, ps.to_display_frame_number));
-                    }
-
-                    int preferred_slot =
-                        (ps.pause_selected + ps.read_head) % scene->size_of_buffer;
-                const auto& preferred =
-                    scene->display_buffer[visible_idx][preferred_slot];
-                if (!preferred.available_to_write && preferred.frame_number >= 0) {
-                    return preferred_slot;
                 }
+                if (exact_slot >= 0) {
+                    exact_paused_target_available = true;
+                    return exact_slot;
+                }
+                exact_paused_target_available = false;
                 return findNearestPausedBufferSlot(
                     visible_idx, std::max(0, ps.to_display_frame_number));
             };
 
             ImGui::SetNextWindowSize(ImVec2(500, 440), ImGuiCond_FirstUseEver);
             if (ImGui::Begin("Frames in the buffer")) {
-                {
-                    for (u32 i = 0; i < scene->size_of_buffer; i++) {
-                        int seletable_frame_id =
-                            (i + ps.read_head) % scene->size_of_buffer;
-                        char label[32];
-                        if (input_is_imgs) {
-                            snprintf(label, sizeof(label), "%d: %s",
-                                     scene
-                                         ->display_buffer[visible_idx]
-                                                         [seletable_frame_id]
-                                         .frame_number,
-                                     imgs_names[i].c_str());
-                        } else {
-                            sprintf(label, "Frame %d",
-                                    scene
-                                        ->display_buffer[visible_idx]
-                                                        [seletable_frame_id]
-                                        .frame_number);
-                        }
-                        ImGui::PushID(static_cast<int>(i));
-                        if (ImGui::Selectable(label, ps.pause_selected == i)) {
-                            // start from the lowest frame
-                            ps.pause_selected = i;
+                ImGui::Text("Valid frames: %zu / %u",
+                            paused_buffer_items.size(), scene->size_of_buffer);
+                int selected_item = -1;
+                int best_distance = std::numeric_limits<int>::max();
+                int best_frame = std::numeric_limits<int>::min();
+                for (int i = 0; i < static_cast<int>(paused_buffer_items.size()); ++i) {
+                    const auto& item = paused_buffer_items[i];
+                    if (item.frame == ps.to_display_frame_number) {
+                        selected_item = i;
+                        best_distance = 0;
+                        best_frame = item.frame;
+                        break;
+                    }
+                    const int distance = std::abs(item.frame - ps.to_display_frame_number);
+                    if (distance < best_distance ||
+                        (distance == best_distance && item.frame > best_frame)) {
+                        best_distance = distance;
+                        best_frame = item.frame;
+                        selected_item = i;
+                    }
+                }
+                if (paused_buffer_items.empty()) {
+                    ImGui::TextDisabled("No decoded frames currently buffered.");
+                } else {
+                    for (int i = 0; i < static_cast<int>(paused_buffer_items.size()); ++i) {
+                        const auto& item = paused_buffer_items[i];
+                        char label[96];
+                        const int delta = item.frame - ps.to_display_frame_number;
+                        snprintf(label, sizeof(label), "Frame %d (slot %d, delta %+d)",
+                                 item.frame, item.slot, delta);
+                        ImGui::PushID(i);
+                        if (ImGui::Selectable(label, selected_item == i)) {
+                            selected_item = i;
+                            ps.to_display_frame_number = item.frame;
+                            ps.slider_frame_number = item.frame;
+                            ps.pause_seeked = true;
                         }
                         ImGui::PopID();
                     }
                 }
 
                 if (ImGui::IsKeyPressed(ImGuiKey_Comma, true)) {
-                    if (ps.pause_selected > 0) {
-                        ps.pause_selected--;
+                    if (selected_item > 0 &&
+                        selected_item <= static_cast<int>(paused_buffer_items.size()) - 1) {
+                        --selected_item;
+                        ps.to_display_frame_number =
+                            paused_buffer_items[selected_item].frame;
+                        ps.slider_frame_number = ps.to_display_frame_number;
+                        ps.pause_seeked = true;
                     }
                 };
 
                 if (ImGui::IsKeyPressed(ImGuiKey_Period, true)) {
-                    if (ps.pause_selected < (scene->size_of_buffer - 1)) {
-                        ps.pause_selected++;
+                    if (selected_item >= 0 &&
+                        selected_item < static_cast<int>(paused_buffer_items.size()) - 1) {
+                        ++selected_item;
+                        ps.to_display_frame_number =
+                            paused_buffer_items[selected_item].frame;
+                        ps.slider_frame_number = ps.to_display_frame_number;
+                        ps.pause_seeked = true;
                     }
                 };
             }
@@ -3323,13 +3356,12 @@ int main(int argc, char **argv) {
             select_corr_head = getPreferredPausedSlot();
             if (select_corr_head >= 0) {
                 ps.read_head = select_corr_head;
-                ps.pause_selected = 0;
                 current_frame_num =
                     scene->display_buffer[visible_idx][select_corr_head]
                         .frame_number;
                 if (current_frame_num >= 0 &&
-                    (!exact_paused_target_available ||
-                     current_frame_num != ps.to_display_frame_number)) {
+                    exact_paused_target_available &&
+                    current_frame_num != ps.to_display_frame_number) {
                     ps.to_display_frame_number = current_frame_num;
                     ps.slider_frame_number = current_frame_num;
                 }
