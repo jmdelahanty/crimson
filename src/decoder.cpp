@@ -1,6 +1,7 @@
 #include "decoder.h"
 #include "AppDecUtils.h"
 #include "global.h"
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 
@@ -72,6 +73,16 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
         return std::make_unique<NvDecoder>(cuContext, true, codec_id);
     };
     std::unique_ptr<NvDecoder> dec = make_decoder();
+    const bool recreate_decoder_on_seek = []() {
+        const char *env = std::getenv("CRIMSON_RECREATE_DECODER_ON_SEEK");
+        if (!env) {
+            return true;
+        }
+        return std::strcmp(env, "0") != 0;
+    }();
+    std::cout << "[Decoder] " << cam_name
+              << " recreate_decoder_on_seek="
+              << (recreate_decoder_on_seek ? "true" : "false") << std::endl;
     int nWidth = 0, nHeight = 0;
 
     int nFrameReturned = 0, nFrame = 0, iMatrix = 0;
@@ -131,14 +142,16 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
     };
     do {
         if (seek_info->use_seek) {
-            if (pTmpImage) {
-                ck(cuMemFree(pTmpImage));
-                pTmpImage = 0;
+            if (recreate_decoder_on_seek) {
+                if (pTmpImage) {
+                    ck(cuMemFree(pTmpImage));
+                    pTmpImage = 0;
+                }
+                nWidth = 0;
+                nHeight = 0;
+                size_in_bytes = 0;
+                dec = make_decoder();
             }
-            nWidth = 0;
-            nHeight = 0;
-            size_in_bytes = 0;
-            dec = make_decoder();
 
             demuxer->Flush();
             // std::cout << "target_frame_number:" << seek_info->seek_frame

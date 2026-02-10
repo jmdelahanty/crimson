@@ -90,6 +90,29 @@ To improve dump reliability and diagnostics:
 
 Status: **implemented, needs runtime validation on artifact repro case**.
 
+### G. Decoder recreation toggle experiment in `src/decoder.cpp` (2026-02-10)
+
+Experiment:
+
+- Modified seek handling to avoid rebuilding `NvDecoder` on every seek.
+- Kept demux flush + `CUVID_PKT_DISCONTINUITY` decode reset in place.
+
+Observed result:
+
+- stale/fading artifact returned when seeking (regression),
+- consistent with residual decoder-internal state surviving seek when decoder is reused.
+
+Current policy:
+
+- default path is restored to **recreate decoder on seek** (known-good behavior),
+- an experiment toggle remains:
+  - `CRIMSON_RECREATE_DECODER_ON_SEEK=0` disables recreation,
+  - unset (or any value except `0`) keeps recreation enabled.
+
+Implication:
+
+- decoder recreation is currently a required guardrail for artifact-free seeking in this pipeline until we find an equivalent flush/reset sequence that is proven safe.
+
 ## Notable Issue Encountered and Fixed
 
 Encountered assert:
@@ -114,6 +137,9 @@ Fix:
 
 3. Decode reference-state behavior around keyframe seeks
 - even with slot clears, first decoded outputs after seek might require stricter gating before presentation.
+
+4. Decoder-internal surface/reference persistence when reusing `NvDecoder`
+- discontinuity+flush alone may not fully reset internal state for this stream/cadence.
 
 ## Next Investigation Steps (Priority Order)
 
