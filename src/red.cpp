@@ -2611,6 +2611,28 @@ int main(int argc, char **argv) {
                         }
                     }
                 }
+                if (zarr_loader.hasReviewStatus()) {
+                    const auto& rs = zarr_loader.getReviewState();
+                    ImVec4 status_color = (rs == "approved")
+                        ? ImVec4(0.2f, 0.9f, 0.2f, 1.0f)
+                        : (rs == "rejected")
+                            ? ImVec4(1.0f, 0.3f, 0.3f, 1.0f)
+                            : ImVec4(1.0f, 0.85f, 0.3f, 1.0f);
+                    ImGui::TextColored(status_color, "Review: %s", rs.c_str());
+                    ImGui::SameLine();
+                    ImGui::Text("| Use: %s | Method: %s",
+                                zarr_loader.getReviewIntendedUse().c_str(),
+                                zarr_loader.getReviewMethod().c_str());
+                    if (!zarr_loader.getReviewTimestamp().empty()) {
+                        ImGui::Text("  Reviewed: %s", zarr_loader.getReviewTimestamp().c_str());
+                    }
+                    if (!zarr_loader.getReviewReviewer().empty()) {
+                        ImGui::Text("  Reviewer: %s", zarr_loader.getReviewReviewer().c_str());
+                    }
+                    if (!zarr_loader.getReviewNotes().empty()) {
+                        ImGui::Text("  Notes: %s", zarr_loader.getReviewNotes().c_str());
+                    }
+                }
                 if (!zarr_loader.hasDetectionData()) {
                     ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.25f, 1.0f),
                                        "[Zarr] Detection runs: unavailable (metadata/stimulus-only mode)");

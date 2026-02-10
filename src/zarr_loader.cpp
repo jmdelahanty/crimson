@@ -2345,6 +2345,21 @@ bool ZarrDetectionLoader::loadRefinedDetectionsAsPrimary(const ts::kvstore::KvSt
         if ((*run_attrs).contains("provenance_json") && (*run_attrs)["provenance_json"].is_string()) {
             stage_template.provenance_json = (*run_attrs)["provenance_json"].get<std::string>();
         }
+        if ((*run_attrs).contains("detect_review_status") &&
+            (*run_attrs)["detect_review_status"].is_object()) {
+            const auto& rs = (*run_attrs)["detect_review_status"];
+            auto str_field = [&](const char* key) -> std::string {
+                if (rs.contains(key) && rs[key].is_string()) return rs[key].get<std::string>();
+                return "";
+            };
+            data_.review_state        = str_field("state");
+            data_.review_method       = str_field("method");
+            data_.review_intended_use = str_field("intended_use");
+            data_.review_timestamp    = str_field("timestamp");
+            data_.review_reviewer     = str_field("reviewer");
+            data_.review_notes        = str_field("notes");
+            data_.has_review_status   = !data_.review_state.empty();
+        }
     }
 
     bool loaded_any = false;

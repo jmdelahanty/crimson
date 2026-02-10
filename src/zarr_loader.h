@@ -105,7 +105,16 @@ struct ZarrDetectionData {
     std::string detect_run_command;
     std::string detect_run_source;
     std::string detect_run_provenance_json;
-    
+
+    // Review status from refined_detect_runs/<run>/zarr.json detect_review_status
+    std::string review_state;        // e.g. "approved", "needs_review"
+    std::string review_method;       // e.g. "manual", "algorithmic"
+    std::string review_intended_use; // e.g. "full_recording", "training"
+    std::string review_timestamp;
+    std::string review_reviewer;
+    std::string review_notes;
+    bool has_review_status = false;
+
     // TensorStore handles for lazy loading
     ts::TensorStore<float, 3> bboxes_store;      // [frames, max_dets, 4]
     ts::TensorStore<float, 2> scores_store;      // [frames, max_dets]
@@ -420,6 +429,13 @@ public:
     std::string getInterpolationSourceRun() const {
         return data_.has_interpolation ? data_.latest_interpolation.source_detection_run : "";
     }
+    bool hasReviewStatus() const { return data_.has_review_status; }
+    std::string getReviewState() const { return data_.review_state; }
+    std::string getReviewMethod() const { return data_.review_method; }
+    std::string getReviewIntendedUse() const { return data_.review_intended_use; }
+    std::string getReviewTimestamp() const { return data_.review_timestamp; }
+    std::string getReviewReviewer() const { return data_.review_reviewer; }
+    std::string getReviewNotes() const { return data_.review_notes; }
     std::string getStimulusRunName() const {
         return data_.has_interpolation ? data_.latest_interpolation.stimulus_run_name : "";
     }
