@@ -193,13 +193,15 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                     }
                 }
             }
-            nFrameReturned = dec->Decode(NULL, 0, CUVID_PKT_DISCONTINUITY);
+            // Flush parser/display-queue state before seek discontinuity so
+            // stale pre-seek frames cannot leak into post-seek output.
+            nFrameReturned = dec->Decode(NULL, 0, 0);
             while (nFrameReturned > 0) {
                 dec->GetFrame();
                 nFrameReturned--;
             }
-            // Mark the first post-seek packet as discontinuous. This resets
-            // parser/decode state against prior timeline data.
+            // Mark the first post-seek packet as discontinuous so parser state
+            // transitions to the new timeline.
             nFrameReturned = dec->Decode(
                 pVideo, nVideoBytes, CUVID_PKT_DISCONTINUITY, pktinfo.pts);
 
