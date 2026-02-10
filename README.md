@@ -150,6 +150,27 @@ Once built, it will make a folder called `release`. The executable `redgui` is t
 ./run.sh
 ```
 
+## UI Path Presets
+
+`redgui` can load file-browser start paths and quick presets from:
+
+- `config/ui_paths.json` (repo-local, default)
+- `~/.config/crimson/ui_paths.json`
+- `CRIMSON_UI_PATHS_CONFIG` (explicit override)
+
+Example:
+
+```json
+{
+  "default_start_path": "/nvme1",
+  "preferred_roots": [
+    "/nvme1"
+  ]
+}
+```
+
+The configured `preferred_roots` appear in the app under `File -> Path Preset`.
+
 ## Format data for Deep Learning
 Currently we are saving labeled keypoints simply as a plain csv file. We provide python scripts for formating data as [COCO format](https://docs.aws.amazon.com/rekognition/latest/customlabels-dg/md-coco-overview.html), which is used by [JARVIS](https://github.com/JARVIS-MoCap/JARVIS-HybridNet). Please refer to [data_exporter](https://github.com/JohnsonLabJanelia/red/tree/main/data_exporter).
 

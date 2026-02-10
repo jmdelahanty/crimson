@@ -1,0 +1,6 @@
+{
+  "default_start_path": "/nvme1",
+  "preferred_roots": [
+    "/nvme1"
+  ]
+}

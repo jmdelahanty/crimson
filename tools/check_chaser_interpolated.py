@@ -79,45 +79,85 @@ def analyze(path: Path, run_name: str | None) -> int:
 
     run_group = runs_group[chosen_run]
 
+    camera_to_stimulus: np.ndarray | None = None
+    mapping_variant = "corrected"
     try:
-        stim_lookup = _load_array(run_group, "frame_alignment/camera_to_stimulus_frame_corrected")
+        direct = _load_array(run_group, "frame_alignment/camera_to_stimulus_frame_corrected")
+        camera_to_stimulus = direct.astype(np.int64, copy=False)
+    except KeyError:
+        camera_to_stimulus = None
     except Exception as exc:
-        print(f"ERROR: failed to read camera_to_stimulus_frame_corrected: {exc}", file=sys.stderr)
-        return 6
+        print(f"WARNING: failed to read camera_to_stimulus_frame_corrected: {exc}", file=sys.stderr)
+        camera_to_stimulus = None
 
-    camera_count = stim_lookup.shape[0]
-    valid_mask = stim_lookup >= 0
-    valid_cameras = np.nonzero(valid_mask)[0]
-    print(f"Camera frames in corrected timeline: total={camera_count}, mapped={valid_cameras.size}")
+    if camera_to_stimulus is None:
+        mapping_variant = "legacy"
+        try:
+            cam_to_meta = _load_array(run_group, "frame_alignment/camera_to_metadata_index").astype(np.int64, copy=False)
+            stim_frame_meta = _load_array(run_group, "video_metadata/frame_metadata/stimulus_frame_num").astype(np.int64, copy=False)
+        except Exception as exc:
+            print("ERROR: could not load corrected or legacy camera→stimulus mapping:", file=sys.stderr)
+            print(f"  {exc}", file=sys.stderr)
+            return 6
+
+        camera_to_stimulus = np.full(cam_to_meta.shape[0], -1, dtype=np.int64)
+        for cam_idx, meta_idx in enumerate(cam_to_meta):
+            if 0 <= meta_idx < stim_frame_meta.shape[0]:
+                camera_to_stimulus[cam_idx] = int(stim_frame_meta[int(meta_idx)])
+
+    camera_count = camera_to_stimulus.shape[0]
+    valid_mask = camera_to_stimulus >= 0
+    valid_count = int(valid_mask.sum())
+    print(
+        f"Camera frames ({mapping_variant}): total={camera_count}, mapped={valid_count}"
+    )
 
     tracking_base = run_group.get("tracking_data")
-    if tracking_base is None or "chaser_states_interpolated" not in tracking_base:
-        print("ERROR: tracking_data/chaser_states_interpolated group missing", file=sys.stderr)
+    dataset_group = None
+    dataset_label = ""
+    if tracking_base is not None and "chaser_states_interpolated" in tracking_base:
+        dataset_group = tracking_base["chaser_states_interpolated"]
+        dataset_label = "chaser_states_interpolated"
+    elif tracking_base is not None and "chaser_states" in tracking_base:
+        dataset_group = tracking_base["chaser_states"]
+        dataset_label = "chaser_states"
+    else:
+        print("ERROR: no chaser state datasets found under tracking_data/", file=sys.stderr)
         return 7
 
-    interp_group: zarr.hierarchy.Group = tracking_base["chaser_states_interpolated"]
-
     try:
-        camera_frames = _load_column(interp_group, ("camera_frame_id", "payload_frame_id"))
+        stimulus_frames = _load_column(dataset_group, ("stimulus_frame_num",))
     except KeyError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 8
 
-    if camera_frames.ndim != 1:
-        print("ERROR: camera_frame_id column is not 1D", file=sys.stderr)
+    if stimulus_frames.ndim != 1:
+        print("ERROR: stimulus_frame_num column is not 1D", file=sys.stderr)
         return 9
 
-    camera_frames = camera_frames.astype(np.int64)
-    seen_mask = np.zeros(camera_count, dtype=bool)
-    valid_camera_frames = camera_frames[camera_frames >= 0]
-    valid_camera_frames = valid_camera_frames[valid_camera_frames < camera_count]
-    seen_mask[valid_camera_frames] = True
+    stimulus_frames = stimulus_frames.astype(np.int64, copy=False)
+    valid_stimulus = stimulus_frames[stimulus_frames >= 0]
+    if valid_stimulus.size == 0:
+        print("ERROR: dataset contains no valid stimulus_frame_num entries", file=sys.stderr)
+        return 10
 
-    missing_mask = valid_mask & (~seen_mask)
+    max_camera_stim = int(camera_to_stimulus[valid_mask].max()) if valid_count else -1
+    max_needed = int(max(valid_stimulus.max(), max_camera_stim))
+    presence = np.zeros(max_needed + 1, dtype=bool)
+    presence[valid_stimulus] = True
+
+    safe_indices = camera_to_stimulus.copy()
+    safe_indices[~valid_mask] = -1
+    safe_indices[safe_indices > max_needed] = -1
+
+    covered_mask = np.zeros_like(valid_mask)
+    valid_indices = safe_indices >= 0
+    covered_mask[valid_indices] = presence[safe_indices[valid_indices]]
+    missing_mask = valid_mask & (~covered_mask)
     missing_indices = np.nonzero(missing_mask)[0]
 
-    print(f"Interpolated chaser rows: {camera_frames.size}")
-    print(f"Camera frames covered: {seen_mask.sum()} (expected {valid_cameras.size})")
+    print(f"Dataset: {dataset_label} (rows={stimulus_frames.size})")
+    print(f"Camera frames covered: {covered_mask.sum()} / {valid_count}")
 
     if missing_indices.size == 0:
         print("All mapped camera frames have at least one interpolated chaser state.")

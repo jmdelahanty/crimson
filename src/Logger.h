@@ -13,6 +13,7 @@
 
 #include <iostream>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <sstream>
 #include <mutex>
@@ -99,19 +100,20 @@ private:
 
     class FileLogger : public Logger {
     public:
-        FileLogger(std::string strFilePath, LogLevel level, bool bPrintTimeStamp) 
+        FileLogger(std::string strFilePath, LogLevel level, bool bPrintTimeStamp)
         : Logger(level, bPrintTimeStamp) {
-            pFileOut = new std::ofstream();
+            pFileOut = std::make_unique<std::ofstream>();
             pFileOut->open(strFilePath.c_str());
         }
         ~FileLogger() {
             pFileOut->close();
+            // unique_ptr automatically deletes pFileOut when destroyed
         }
         std::ostream& GetStream() {
             return *pFileOut;
         }
     private:
-        std::ofstream *pFileOut;
+        std::unique_ptr<std::ofstream> pFileOut;
     };
 
     class ConsoleLogger : public Logger {
