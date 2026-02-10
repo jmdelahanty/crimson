@@ -305,6 +305,14 @@ struct ZarrDetectionData {
     bool has_refined_root_dataset = false;
 };
 
+struct ManualWriteReviewOptions {
+    std::string intended_use = "full_recording";
+    std::string state = "approved";
+    std::string method = "manual";
+    std::string reviewer;  // empty = omitted from payload
+    std::string notes;     // empty = omitted from payload
+};
+
 class ZarrDetectionLoader {
 public:
     ZarrDetectionLoader();
@@ -642,7 +650,8 @@ public:
         const std::string& manual_group,
         const std::string& source_variant,
         std::string& error_message,
-        std::string* resolved_refined_run = nullptr);
+        std::string* resolved_refined_run = nullptr,
+        const ManualWriteReviewOptions& review_options = ManualWriteReviewOptions{});
     
     // Static helper to find zarr files in a directory
     static std::optional<std::string> findZarrDetectionFile(const std::string& directory);

@@ -1238,6 +1238,11 @@ int main(int argc, char **argv) {
     float set_playback_speed = 1.0f;
     PlaybackState ps;
     std::string frame_sync_debug_line;
+    int frame_sync_valid_slots = -1;
+    int frame_sync_empty_slots = -1;
+    int frame_sync_latest_decoded = -1;
+    int frame_sync_recording_remaining = -1;
+    int frame_sync_recording_total = -1;
 
     window_need_decoding[stimulus_player.window_name].store(false);
     latest_decoded_frame[stimulus_player.window_name].store(-1);
@@ -1451,7 +1456,7 @@ int main(int argc, char **argv) {
             return;
         }
         const auto timeout =
-            std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(50);
         while (std::chrono::steady_clock::now() < timeout) {
             if (stepPausedFrameFromBuffer(target_frame)) {
                 return;
@@ -1541,6 +1546,27 @@ int main(int argc, char **argv) {
         stabilizePausedSeekFrame(clamped_frame);
     };
 
+    auto syncPlaybackStartToCurrentFrame = [&]() {
+        const double fps_for_clock = (video_fps > 0.0) ? video_fps : 30.0;
+        const int clamped_frame = std::max(0, ps.to_display_frame_number);
+        ps.accumulated_play_time =
+            static_cast<double>(clamped_frame) / fps_for_clock;
+        const auto now_tp = std::chrono::steady_clock::now();
+        ps.last_play_time_start = now_tp;
+        ps.last_frame_num_playspeed = clamped_frame;
+        ps.last_wall_time_playspeed = now_tp;
+
+        const int visible_idx = getVisibleCameraIndex();
+        if (visible_idx >= 0 && scene->size_of_buffer > 0) {
+            const int preferred_slot = ps.read_head % scene->size_of_buffer;
+            const int target_slot = findDisplaySlotForFrame(
+                visible_idx, clamped_frame, preferred_slot);
+            if (target_slot >= 0) {
+                ps.read_head = target_slot;
+            }
+        }
+    };
+
     auto stepFrames = [&](int delta_frames) {
         seekToFrame(current_frame_num + delta_frames, true);
     };
@@ -1573,6 +1599,8 @@ int main(int argc, char **argv) {
         std::vector<std::string> reason;
     };
     std::optional<ManualDetectPayloadPreview> manual_payload_preview;
+    static int manual_write_intended_use = 0;  // 0 = full_recording, 1 = training
+    static int manual_write_review_state = 0;  // 0 = approved, 1 = needs_review, 2 = pending, 3 = rejected
 
     auto sanitizePathComponent = [](std::string value) -> std::string {
         if (value.empty()) {
@@ -2524,6 +2552,17 @@ int main(int argc, char **argv) {
             ImGui::Text("Inspecting Frame: %d", current_frame_num);
             ImGui::Text("Display target frame: %d", ps.to_display_frame_number);
             ImGui::Text("Slider frame: %d", ps.slider_frame_number);
+            if (frame_sync_valid_slots >= 0 && frame_sync_empty_slots >= 0) {
+                ImGui::Text("Buffer frames: valid=%d empty_remaining=%d total=%u",
+                            frame_sync_valid_slots, frame_sync_empty_slots,
+                            scene->size_of_buffer);
+            }
+            if (frame_sync_recording_remaining >= 0 && frame_sync_recording_total > 0) {
+                ImGui::Text("Recording decode: latest=%d remaining=%d total=%d",
+                            frame_sync_latest_decoded,
+                            frame_sync_recording_remaining,
+                            frame_sync_recording_total);
+            }
             if (!frame_sync_debug_line.empty()) {
                 ImGui::TextWrapped("Frame sync: %s", frame_sync_debug_line.c_str());
             }
@@ -2825,6 +2864,16 @@ int main(int argc, char **argv) {
                         bbox_payload_status = payload_msg.str();
                     }
                 }
+                const char* intended_use_items[] = {"full_recording", "training"};
+                ImGui::Combo("Intended Use##manual_write",
+                             &manual_write_intended_use,
+                             intended_use_items,
+                             IM_ARRAYSIZE(intended_use_items));
+                const char* review_state_items[] = {"approved", "needs_review", "pending", "rejected"};
+                ImGui::Combo("Review State##manual_write",
+                             &manual_write_review_state,
+                             review_state_items,
+                             IM_ARRAYSIZE(review_state_items));
                 if (ImGui::Button("Write Manual Payload to Zarr")) {
                     manual_payload_preview = buildManualDetectPayloadPreview();
 
@@ -2840,6 +2889,9 @@ int main(int argc, char **argv) {
 
                         std::string write_error;
                         std::string resolved_refined_run;
+                        ManualWriteReviewOptions review_opts;
+                        review_opts.intended_use = intended_use_items[manual_write_intended_use];
+                        review_opts.state = review_state_items[manual_write_review_state];
                         const bool write_ok =
                             zarr_loader.writeManualRefinedDetections(
                                 manual_payload_preview->frame_indices,
@@ -2852,7 +2904,8 @@ int main(int argc, char **argv) {
                                 "manual",
                                 source_variant,
                                 write_error,
-                                &resolved_refined_run);
+                                &resolved_refined_run,
+                                review_opts);
                         if (!write_ok) {
                             bbox_payload_status =
                                 "Manual write failed: " + write_error;
@@ -3673,6 +3726,38 @@ int main(int argc, char **argv) {
                             ZarrDetectionLoader::FrameDetections detection_details =
                                 zarr_loader.getRawDetections(zarr_bbox_query_frame, false);
                             {
+                                int valid_slots = 0;
+                                for (int slot_idx = 0; slot_idx < scene->size_of_buffer; ++slot_idx) {
+                                    const auto& slot = scene->display_buffer[j][slot_idx];
+                                    if (!slot.available_to_write && slot.frame_number >= 0) {
+                                        ++valid_slots;
+                                    }
+                                }
+                                const int total_slots = static_cast<int>(scene->size_of_buffer);
+                                const int empty_slots = std::max(0, total_slots - valid_slots);
+                                frame_sync_valid_slots = valid_slots;
+                                frame_sync_empty_slots = empty_slots;
+                                int latest_decoded = -1;
+                                const auto latest_it = latest_decoded_frame.find(win_name);
+                                if (latest_it != latest_decoded_frame.end()) {
+                                    latest_decoded = latest_it->second.load();
+                                }
+                                const int total_recording_frames =
+                                    std::max(dc_context->total_num_frame,
+                                             dc_context->estimated_num_frames);
+                                int recording_remaining = -1;
+                                if (total_recording_frames > 0) {
+                                    if (latest_decoded < 0) {
+                                        recording_remaining = total_recording_frames;
+                                    } else {
+                                        recording_remaining = std::max(
+                                            0, total_recording_frames - (latest_decoded + 1));
+                                    }
+                                }
+                                frame_sync_latest_decoded = latest_decoded;
+                                frame_sync_recording_remaining = recording_remaining;
+                                frame_sync_recording_total = total_recording_frames;
+
                                 std::ostringstream sync_debug;
                                 sync_debug << "cam=" << win_name
                                            << " mode=" << (ps.play_video ? "play" : "pause")
@@ -3682,8 +3767,10 @@ int main(int argc, char **argv) {
                                            << " target=" << ps.to_display_frame_number
                                            << " slider=" << ps.slider_frame_number
                                            << " bbox_query=" << zarr_bbox_query_frame
+                                           << " empty_remaining=" << empty_slots
+                                           << " recording_remaining=" << recording_remaining
                                            << " latest_decoded="
-                                           << latest_decoded_frame[win_name].load();
+                                           << latest_decoded;
                                 frame_sync_debug_line = sync_debug.str();
                             }
                             auto draw_keypoint_markers = [&]() {
@@ -5666,8 +5753,7 @@ struct StateOverlay {
                                 if (stimulus_player.loaded) {
                                     window_need_decoding[stimulus_player.window_name].store(true);
                                 }
-                                ps.last_play_time_start =
-                                    std::chrono::steady_clock::now();
+                                syncPlaybackStartToCurrentFrame();
                             } else {
                                 ps.pause_selected = 0;
                             }
@@ -5717,7 +5803,7 @@ struct StateOverlay {
                     if (stimulus_player.loaded) {
                         window_need_decoding[stimulus_player.window_name].store(true);
                     }
-                    ps.last_play_time_start = std::chrono::steady_clock::now();
+                    syncPlaybackStartToCurrentFrame();
                 } else {
                     ps.pause_selected = 0;
                 }

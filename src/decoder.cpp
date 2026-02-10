@@ -76,7 +76,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
     const bool recreate_decoder_on_seek = []() {
         const char *env = std::getenv("CRIMSON_RECREATE_DECODER_ON_SEEK");
         if (!env) {
-            return true;
+            return false;
         }
         return std::strcmp(env, "0") != 0;
     }();
@@ -90,6 +90,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
     uint8_t *pFrame;
 
     int buffer_head = 0;
+    bool pending_seek_done = false;
 
     bool seek_success_flag;
     bool demux_success;
@@ -123,8 +124,13 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
     auto discard_decoded_frames_until =
         [&](uint64_t &decode_frame_cursor, uint64_t target_frame) -> bool {
         while (nFrameReturned > 0) {
-            if (decode_frame_cursor == target_frame) {
-                // Keep target frame in decoder output queue for normal write path.
+            if (decode_frame_cursor >= target_frame) {
+                // Keep target frame (or nearest frame past it) in decoder
+                // output queue for the normal write path.  Using >= instead
+                // of == guards against the cursor overshooting the target by
+                // one due to timestamp-to-frame rounding in FrameNumberFromTs
+                // (AV_ROUND_NEAR_INF).  Without this, the loop would never
+                // match the target and decode through the rest of the file.
                 skip_first_decode_after_seek = true;
                 return true;
             }
@@ -154,16 +160,29 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
             }
 
             demuxer->Flush();
-            // std::cout << "target_frame_number:" << seek_info->seek_frame
-            //           << std::endl;
             skip_first_decode_after_seek = false;
             const uint64_t requested_frame = seek_info->seek_frame;
 
             SeekContext s = SeekContext(requested_frame);
-
             seek_success_flag = demuxer->Seek(s, pVideo, nVideoBytes, pktinfo);
-            // std::cout << "seek_success_flag: " << seek_success_flag <<
-            // std::endl;
+
+            // For accurate seeks, go one extra keyframe back so the
+            // decode-forward scan has enough runway to reliably reach
+            // the target frame.  The first seek lands on keyframe N
+            // (closest keyframe at or before the target); we then seek
+            // to keyframe N-1 and decode forward from there.
+            if (seek_success_flag && seek_info->seek_accurate) {
+                int64_t nearest_kf = -1;
+                if (pktinfo.pts >= 0)
+                    nearest_kf = demuxer->FrameNumberFromTs(pktinfo.pts);
+                if (nearest_kf < 0 && pktinfo.dts >= 0)
+                    nearest_kf = demuxer->FrameNumberFromTs(pktinfo.dts);
+                if (nearest_kf > 0) {
+                    SeekContext earlier(
+                        static_cast<uint64_t>(nearest_kf - 1));
+                    demuxer->Seek(earlier, pVideo, nVideoBytes, pktinfo);
+                }
+            }
             if (!seek_success_flag) {
                 seek_info->use_seek = false;
                 seek_info->seek_done = true;
@@ -272,7 +291,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
             latest_decoded_frame[cam_name].store(static_cast<int>(seek_info->seek_frame));
             display_buffer[0].frame_number = -1;
             seek_info->use_seek = false;
-            seek_info->seek_done = true;
+            pending_seek_done = true;
             seek_debug_frames_to_log = 10;
         } else {
             static thread_local bool logged_idle = false;
@@ -338,6 +357,10 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         dc_context->decoding_flag = true;
                         display_buffer[buffer_head].frame_number = assigned_frame_num;
                         latest_decoded_frame[cam_name].store(assigned_frame_num);
+                        if (pending_seek_done) {
+                            seek_info->seek_done = true;
+                            pending_seek_done = false;
+                        }
                     } else {
                         while (
                             !display_buffer[buffer_head].available_to_write &&
@@ -373,6 +396,10 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         display_buffer[buffer_head].available_to_write = false;
                         display_buffer[buffer_head].frame_number = assigned_frame_num;
                         latest_decoded_frame[cam_name].store(assigned_frame_num);
+                        if (pending_seek_done) {
+                            seek_info->seek_done = true;
+                            pending_seek_done = false;
+                        }
                     }
                     if (seek_debug_frames_to_log > 0) {
                         const int64_t pts_frame =

@@ -2040,7 +2040,17 @@ bool ZarrDetectionLoader::loadFlattenedRun(
 
         // Palette detect reason precedence: reason_bytes -> reason -> detection_source
         if (!try_load_reason("reason_bytes")) {
-            (void)try_load_reason("reason");
+            if (!try_load_reason("reason")) {
+                if (detection_source_out &&
+                    detection_source_out->size() == total_detections &&
+                    total_detections > 0) {
+                    detection_reason_out->resize(total_detections);
+                    for (size_t i = 0; i < total_detections; ++i) {
+                        (*detection_reason_out)[i] =
+                            ((*detection_source_out)[i] != 0) ? "interpolated" : "clean";
+                    }
+                }
+            }
         }
     }
 
@@ -7032,7 +7042,8 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
     const std::string& manual_group,
     const std::string& source_variant,
     std::string& error_message,
-    std::string* resolved_refined_run) {
+    std::string* resolved_refined_run,
+    const ManualWriteReviewOptions& review_options) {
     error_message.clear();
 
     if (root_path_.empty()) {
@@ -7058,6 +7069,25 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
     }
     if (!reason_labels.empty() && reason_labels.size() != n_detections) {
         error_message = "reason length mismatch.";
+        return false;
+    }
+
+    if (review_options.intended_use != "training" &&
+        review_options.intended_use != "full_recording") {
+        error_message = "review_options.intended_use must be \"training\" or \"full_recording\", got \"" +
+                        review_options.intended_use + "\".";
+        return false;
+    }
+    if (review_options.state != "approved" && review_options.state != "pending" &&
+        review_options.state != "rejected" && review_options.state != "needs_review") {
+        error_message = "review_options.state must be one of approved|pending|rejected|needs_review, got \"" +
+                        review_options.state + "\".";
+        return false;
+    }
+    if (review_options.method != "manual" && review_options.method != "algorithmic" &&
+        review_options.method != "hybrid" && review_options.method != "spotcheck") {
+        error_message = "review_options.method must be one of manual|algorithmic|hybrid|spotcheck, got \"" +
+                        review_options.method + "\".";
         return false;
     }
 
@@ -7410,14 +7440,21 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
     json run_meta = normalizeGroupMetadataV3(*refined_run_meta);
     auto& run_attrs = run_meta["attributes"];
     run_attrs["manual_review_latest"] = manual_group_name;
-    run_attrs["detect_review_status"] = json{
-        {"state", "needs_review"},
-        {"method", "manual"},
-        {"intended_use", "training"},
+    json review_status = json{
+        {"state", review_options.state},
+        {"method", review_options.method},
+        {"intended_use", review_options.intended_use},
         {"timestamp", timestamp},
         {"resolved_group", manual_group_name},
         {"preference_chain",
          json::array({"manual", "interpolated", "filtered", "raw"})}};
+    if (!review_options.reviewer.empty()) {
+        review_status["reviewer"] = review_options.reviewer;
+    }
+    if (!review_options.notes.empty()) {
+        review_status["notes"] = review_options.notes;
+    }
+    run_attrs["detect_review_status"] = std::move(review_status);
     if (!writeNodeMetaV3(store, refined_run_path, run_meta, &error_message)) {
         return false;
     }
