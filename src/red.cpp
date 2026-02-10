@@ -2827,7 +2827,8 @@ int main(int argc, char **argv) {
                 }
             }
 
-                auto getPreferredPausedSlot = [&]() -> int {
+            bool exact_paused_target_available = false;
+            auto getPreferredPausedSlot = [&]() -> int {
                     int exact_slot = -1;
                     for (int i = 0; i < scene->size_of_buffer; ++i) {
                         const auto& slot = scene->display_buffer[visible_idx][i];
@@ -2838,8 +2839,10 @@ int main(int argc, char **argv) {
                     }
                     }
                     if (exact_slot >= 0) {
+                        exact_paused_target_available = true;
                         return exact_slot;
                     }
+                    exact_paused_target_available = false;
                     if (!ps.pause_seeked) {
                         return findNearestPausedBufferSlot(
                             visible_idx, std::max(0, ps.to_display_frame_number));
@@ -2906,6 +2909,12 @@ int main(int argc, char **argv) {
                 current_frame_num =
                     scene->display_buffer[visible_idx][select_corr_head]
                         .frame_number;
+                if (current_frame_num >= 0 &&
+                    (!exact_paused_target_available ||
+                     current_frame_num != ps.to_display_frame_number)) {
+                    ps.to_display_frame_number = current_frame_num;
+                    ps.slider_frame_number = current_frame_num;
+                }
             } else {
                 current_frame_num = std::max(0, ps.to_display_frame_number);
             }
@@ -2931,6 +2940,7 @@ int main(int argc, char **argv) {
             } else {
                 ps.current_stimulus_frame = -1;
             }
+            const int paused_visible_idx = ps.play_video ? -1 : getVisibleCameraIndex();
             for (int j = 0; j < scene->num_cams; j++) {
                 const std::string &win_name = camera_names[j];
 
@@ -3077,6 +3087,14 @@ int main(int argc, char **argv) {
                                 presented_slot = paused_slot;
                                 presented_frame =
                                     scene->display_buffer[j][paused_slot].frame_number;
+                                if (presented_frame >= 0) {
+                                    current_frame_num = presented_frame;
+                                    if (j == paused_visible_idx &&
+                                        ps.to_display_frame_number != presented_frame) {
+                                        ps.to_display_frame_number = presented_frame;
+                                        ps.slider_frame_number = presented_frame;
+                                    }
+                                }
                                 if (scene->use_cpu_buffer) {
                                     // upload_texture(&scene->image_texture[j],
                                     // scene->display_buffer[j][select_corr_head].frame,
