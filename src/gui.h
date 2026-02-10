@@ -267,7 +267,7 @@ static void reprojection(KeyPoints *keypoints, SkeletonContext *skeleton,
                         (cv::Mat_<double>(2, 1)
                              << keypoints->keypoints2d[view_idx][node]
                                     .position.x,
-                         (double)scene->image_height[view_idx] -
+                         (double)scene->cameras[view_idx].image_height -
                              keypoints->keypoints2d[view_idx][node].position.y);
                     cv::Mat pointUndistort;
                     cv::undistortPoints(
@@ -293,18 +293,18 @@ static void reprojection(KeyPoints *keypoints, SkeletonContext *skeleton,
                 if (is_in_camera_fov(output, camera_params[view_idx].rvec,
                                      camera_params[view_idx].tvec,
                                      camera_params[view_idx].k,
-                                     scene->image_width[view_idx],
-                                     scene->image_height[view_idx])) {
+                                     scene->cameras[view_idx].image_width,
+                                     scene->cameras[view_idx].image_height)) {
                     cv::Mat imagePts;
                     cv::projectPoints(
                         output, camera_params[view_idx].rvec,
                         camera_params[view_idx].tvec, camera_params[view_idx].k,
                         camera_params[view_idx].dist_coeffs, imagePts);
                     double x = imagePts.at<double>(0, 0);
-                    double y = double(scene->image_height[view_idx]) -
+                    double y = double(scene->cameras[view_idx].image_height) -
                                imagePts.at<double>(0, 1);
-                    if (x > 0 && x < scene->image_width[view_idx] && y > 0 &&
-                        y < scene->image_height[view_idx]) {
+                    if (x > 0 && x < scene->cameras[view_idx].image_width && y > 0 &&
+                        y < scene->cameras[view_idx].image_height) {
                         keypoints->keypoints2d[view_idx][node].position.x = x;
                         keypoints->keypoints2d[view_idx][node].position.y = y;
                         keypoints->keypoints2d[view_idx][node].is_labeled =
