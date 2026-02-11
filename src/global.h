@@ -16,4 +16,5 @@ extern std::vector<std::vector<int>> yolo_classid;
 extern std::vector<unsigned char *> yolo_input_frames_rgba;
 extern std::unordered_map<std::string, std::atomic<bool>> window_need_decoding;
 extern std::unordered_map<std::string, std::atomic<int>> latest_decoded_frame;
+extern std::mutex g_seek_info_mutex;
 #endif

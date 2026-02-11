@@ -190,30 +190,40 @@ int findStimulusBuffer(const StimulusPlayback &stim,
     if (!stim.display_buffer) {
         return -1;
     }
-    int exact_index = -1;
-    int best_lower_index = -1;
-    int best_lower_value = std::numeric_limits<int>::min();
+    int best_index = -1;
+    int best_distance = std::numeric_limits<int>::max();
+    int best_frame = std::numeric_limits<int>::min();
     for (int i = 0; i < stim.buffer_size; ++i) {
         const PictureBuffer &buf = stim.display_buffer[i];
         if (buf.available_to_write || buf.frame_number < 0) {
             continue;
         }
         if (buf.frame_number == target_frame) {
-            exact_index = i;
-            break;
+            return i;
         }
-        if (buf.frame_number < target_frame && buf.frame_number > best_lower_value) {
-            best_lower_value = buf.frame_number;
-            best_lower_index = i;
+
+        const int frame_num = buf.frame_number;
+        const int distance = (frame_num > target_frame)
+                                 ? (frame_num - target_frame)
+                                 : (target_frame - frame_num);
+        bool choose_candidate = (best_index < 0) || (distance < best_distance);
+        if (!choose_candidate && distance == best_distance) {
+            const bool candidate_is_past_target = frame_num > target_frame;
+            const bool best_is_past_target = best_frame > target_frame;
+            if (candidate_is_past_target != best_is_past_target) {
+                choose_candidate = !candidate_is_past_target;
+            } else if (frame_num > best_frame) {
+                choose_candidate = true;
+            }
+        }
+
+        if (choose_candidate) {
+            best_index = i;
+            best_distance = distance;
+            best_frame = frame_num;
         }
     }
-    if (exact_index != -1) {
-        return exact_index;
-    }
-    if (best_lower_index != -1) {
-        return best_lower_index;
-    }
-    return -1;
+    return best_index;
 }
 
 void releaseStimulusBufferSlot(StimulusPlayback &stim, int index) {
@@ -316,18 +326,39 @@ void scheduleStimulusSeek(StimulusPlayback &stim,
               << " wait=" << (wait_for_completion ? "true" : "false")
               << std::endl;
 
-    stim.seek.seek_frame = static_cast<uint64_t>(*stim_frame);
-    stim.seek.use_seek = true;
-    stim.seek.seek_done = false;
-    stim.seek.seek_accurate = wait_for_completion;
+    {
+        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+        stim.seek.seek_frame = static_cast<uint64_t>(*stim_frame);
+        stim.seek.use_seek = true;
+        stim.seek.seek_done = false;
+        stim.seek.seek_accurate = wait_for_completion;
+    }
     stim.last_displayed_frame = -1;
     window_need_decoding[stim.window_name].store(true);
 
     if (wait_for_completion && stim.decoder_context) {
-        while (!stim.seek.seek_done && !stim.decoder_context->stop_flag) {
+        const auto seek_deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!stim.decoder_context->stop_flag) {
+            bool done = false;
+            {
+                std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+                done = stim.seek.seek_done;
+                if (done) {
+                    stim.seek.seek_done = false;
+                }
+            }
+            if (done) {
+                break;
+            }
+            if (std::chrono::steady_clock::now() >= seek_deadline) {
+                std::cerr << "[Stimulus] seek wait timeout: camera_frame="
+                          << camera_frame << " stimulus_frame=" << *stim_frame
+                          << std::endl;
+                break;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
-        stim.seek.seek_done = false;
         std::cout << "[Stimulus] seek complete for camera_frame=" << camera_frame
                   << std::endl;
     }
@@ -339,8 +370,10 @@ void seek_all_cameras(render_scene *scene, int frame_number, double video_fps,
                       StimulusPlayback *stimulus) {
     // Trigger seek request
     for (int i = 0; i < scene->num_cams; i++) {
-        scene->cameras[i].seek_context.seek_frame = (uint64_t)frame_number;
+        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+        scene->cameras[i].seek_context.seek_frame = static_cast<uint64_t>(frame_number);
         scene->cameras[i].seek_context.use_seek = true;
+        scene->cameras[i].seek_context.seek_done = false;
         scene->cameras[i].seek_context.seek_accurate = seek_accurate;
     }
 
@@ -348,12 +381,23 @@ void seek_all_cameras(render_scene *scene, int frame_number, double video_fps,
     for (int i = 0; i < scene->num_cams; i++) {
         const auto seek_deadline =
             std::chrono::steady_clock::now() + std::chrono::seconds(5);
-        while (!scene->cameras[i].seek_context.seek_done) {
+        while (true) {
+            bool seek_done = false;
+            {
+                std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+                seek_done = scene->cameras[i].seek_context.seek_done;
+            }
+            if (seek_done) {
+                break;
+            }
             if (std::chrono::steady_clock::now() >= seek_deadline) {
                 std::cerr << "[Seek] Timeout waiting for camera index " << i
                           << " to complete seek to frame " << frame_number
                           << std::endl;
-                scene->cameras[i].seek_context.use_seek = false;
+                {
+                    std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+                    scene->cameras[i].seek_context.use_seek = false;
+                }
                 break;
             }
             std::this_thread::sleep_for(std::chrono::microseconds(10));
@@ -362,6 +406,7 @@ void seek_all_cameras(render_scene *scene, int frame_number, double video_fps,
 
     // Reset seek_done flags
     for (int i = 0; i < scene->num_cams; i++) {
+        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
         scene->cameras[i].seek_context.seek_done = false;
     }
 
@@ -377,6 +422,12 @@ void seek_all_cameras(render_scene *scene, int frame_number, double video_fps,
     state.last_wall_time_playspeed = std::chrono::steady_clock::now();
 
     if (stimulus && stimulus->loaded) {
+        if (zarr_loader && zarr_loader->hasStimulusAlignment()) {
+            auto stim_frame = zarr_loader->getStimulusFrameForCameraFrame(frame_number);
+            if (stim_frame && *stim_frame >= 0) {
+                state.current_stimulus_frame = *stim_frame;
+            }
+        }
         scheduleStimulusSeek(*stimulus, zarr_loader, frame_number, seek_accurate);
     }
 }

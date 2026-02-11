@@ -37,6 +37,7 @@
 #include <fstream>
 #include "zarr_loader.h"
 #include "gui_interpolation.h"
+#include <opencv2/imgproc.hpp>
 
 #if defined(_MSC_VER) && (_MSC_VER >= 1900) &&                                 \
     !defined(IMGUI_DISABLE_WIN32_FUNCTIONS)
@@ -58,6 +59,7 @@ std::vector<std::vector<int>> yolo_classid(MAX_VIEWS);
 std::vector<unsigned char *> yolo_input_frames_rgba(MAX_VIEWS);
 std::unordered_map<std::string, std::atomic<bool>> window_need_decoding;
 std::unordered_map<std::string, std::atomic<int>> latest_decoded_frame;
+std::mutex g_seek_info_mutex;
 
 // Global variables
 bool show_interpolation_debug = false;
@@ -196,7 +198,7 @@ int main(int argc, char **argv) {
         cli_recording_path.clear();
     }
 
-    gx_context *window = (gx_context *)malloc(sizeof(gx_context));
+    gx_context *window = new gx_context();
     *window =
         (gx_context){.swap_interval = 1, // use vsync
                      .width = 1920,
@@ -207,7 +209,7 @@ int main(int argc, char **argv) {
     constexpr int kCudaDeviceIndex = 0;
     render_initialize_target(window, kCudaDeviceIndex);
 
-    render_scene *scene = (render_scene *)malloc(sizeof(render_scene));
+    render_scene *scene = new render_scene();
 
     std::string root_dir;
     std::string skeleton_dir;
@@ -220,8 +222,7 @@ int main(int argc, char **argv) {
     ZarrDetectionLoader zarr_loader;
     bool zarr_loaded = false;
 
-    DecoderContext *dc_context =
-        (DecoderContext *)malloc(sizeof(DecoderContext));
+    DecoderContext *dc_context = new DecoderContext();
     *dc_context = (DecoderContext){.decoding_flag = false,
                                    .stop_flag = false,
                                    .total_num_frame = int(INT_MAX),
@@ -452,6 +453,43 @@ int main(int argc, char **argv) {
         }
     };
 
+    auto tryAutoLoadStimulusVideo = [&](const char* trigger_label) {
+        if (!zarr_loaded) return;
+        if (stimulus_player.loaded) return;
+        if (!zarr_loader.hasStimulusAlignment()) return;
+
+        auto resolved = ResolveStimulusVideoPath(
+            zarr_loader.getStimulusVideoPath(),
+            zarr_loader.getStimulusSourceH5(),
+            zarr_loader.getArchivePath(),
+            root_dir);
+        if (!resolved.has_value()) {
+            std::cout << "[Stimulus] Could not auto-discover stimulus video ("
+                      << trigger_label << ")" << std::endl;
+            return;
+        }
+
+        int stim_buf_size = scene->size_of_buffer > 0
+                                ? scene->size_of_buffer : label_buffer_size;
+        if (!initializeStimulusPlayback(stimulus_player, resolved->string(),
+                                         stim_buf_size, kCudaDeviceIndex)) {
+            std::cerr << "[Stimulus] Failed to auto-load stimulus video: "
+                      << resolved->string() << std::endl;
+            return;
+        }
+
+        window_was_decoding[stimulus_player.window_name] = false;
+        window_need_decoding[stimulus_player.window_name].store(false);
+
+        if (video_loaded) {
+            scheduleStimulusSeek(stimulus_player, &zarr_loader,
+                                 ps.to_display_frame_number, !ps.play_video);
+        }
+
+        std::cout << "[Stimulus] Auto-loaded stimulus video (" << trigger_label
+                  << "): " << resolved->string() << std::endl;
+    };
+
     if (!cli_zarr_override_path.empty()) {
         std::string zarr_error;
         if (loadZarrDetectionFromPath(cli_zarr_override_path, zarr_loader, zarr_error)) {
@@ -461,6 +499,7 @@ int main(int argc, char **argv) {
             std::cout << "Loaded Zarr archive from --zarr: "
                       << zarr_loader.getArchivePath() << std::endl;
             tryAutoLoadAffiliatedVideoFromZarr("--zarr");
+            tryAutoLoadStimulusVideo("--zarr");
         } else {
             g_zarr_bbox_edit_state.clearAll();
             std::cerr << "Failed to load --zarr archive: " << zarr_error << std::endl;
@@ -479,6 +518,7 @@ int main(int argc, char **argv) {
             std::cout << "Loaded Zarr archive from --recording: "
                       << zarr_loader.getArchivePath() << std::endl;
             tryAutoLoadAffiliatedVideoFromZarr("--recording");
+            tryAutoLoadStimulusVideo("--recording");
         } else {
             g_zarr_bbox_edit_state.clearAll();
             std::cout << "[--recording] No zarr archive found (optional): "
@@ -553,6 +593,7 @@ int main(int argc, char **argv) {
                     std::cout << "[--recording] Auto-loaded video: "
                               << found_video << std::endl;
                     loadCameraCalibrationsForCurrentMedia();
+                    tryAutoLoadStimulusVideo("--recording-fallback");
                 } catch (const std::exception& e) {
                     std::cerr << "[--recording] Failed to load video: "
                               << e.what() << std::endl;
@@ -716,7 +757,8 @@ int main(int argc, char **argv) {
         return best_abs_slot;
     };
 
-    auto seekToFrame = [&](int target_frame, bool prefer_buffer_when_paused) {
+    auto seekToFrame = [&](int target_frame, bool prefer_buffer_when_paused,
+                           bool force_inaccurate = false) {
         if (scene->num_cams <= 0) {
             return;
         }
@@ -725,10 +767,15 @@ int main(int argc, char **argv) {
         const int clamped_frame = std::clamp(target_frame, 0, max_frame);
 
         if (prefer_buffer_when_paused && stepPausedFrameFromBuffer(clamped_frame)) {
+            if (stimulus_player.loaded && zarr_loader.hasStimulusAlignment()) {
+                const bool wait_for_stimulus = !force_inaccurate && !ps.play_video;
+                scheduleStimulusSeek(stimulus_player, &zarr_loader,
+                                     clamped_frame, wait_for_stimulus);
+            }
             return;
         }
 
-        const bool seek_accurate = !ps.play_video;
+        const bool seek_accurate = !force_inaccurate && !ps.play_video;
         if (!ps.play_video) {
             ps.pause_seeked = false;
             setCameraDecodeRequests(true);
@@ -1825,6 +1872,28 @@ int main(int argc, char **argv) {
                         ImGui::Text("  Notes: %s", zarr_loader.getReviewNotes().c_str());
                     }
                 }
+                if (zarr_loader.hasKeypointReviewStatus()) {
+                    const auto& krs = zarr_loader.getKeypointReviewState();
+                    ImVec4 kp_status_color = (krs == "approved")
+                        ? ImVec4(0.2f, 0.9f, 0.2f, 1.0f)
+                        : (krs == "rejected")
+                            ? ImVec4(1.0f, 0.3f, 0.3f, 1.0f)
+                            : ImVec4(1.0f, 0.85f, 0.3f, 1.0f);
+                    ImGui::TextColored(kp_status_color, "KP Review: %s", krs.c_str());
+                    ImGui::SameLine();
+                    ImGui::Text("| Use: %s | Method: %s",
+                                zarr_loader.getKeypointReviewIntendedUse().c_str(),
+                                zarr_loader.getKeypointReviewMethod().c_str());
+                    if (!zarr_loader.getKeypointReviewTimestamp().empty()) {
+                        ImGui::Text("  KP Reviewed: %s", zarr_loader.getKeypointReviewTimestamp().c_str());
+                    }
+                    if (!zarr_loader.getKeypointReviewReviewer().empty()) {
+                        ImGui::Text("  KP Reviewer: %s", zarr_loader.getKeypointReviewReviewer().c_str());
+                    }
+                    if (!zarr_loader.getKeypointReviewNotes().empty()) {
+                        ImGui::Text("  KP Notes: %s", zarr_loader.getKeypointReviewNotes().c_str());
+                    }
+                }
                 if (!zarr_loader.hasDetectionData()) {
                     ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.25f, 1.0f),
                                        "[Zarr] Detection runs: unavailable (metadata/stimulus-only mode)");
@@ -2181,8 +2250,27 @@ int main(int argc, char **argv) {
                             ImGui::SetTooltip("Overlay swim bladder and eye keypoints on the video frame.");
                         }
                         if (!zarr_loader.getKeypointsRunName().empty()) {
-                            ImGui::Text("  Keypoints run: %s",
-                                        zarr_loader.getKeypointsRunName().c_str());
+                            ImGui::Text("  Keypoints run: %s (%s)",
+                                        zarr_loader.getKeypointsRunName().c_str(),
+                                        zarr_loader.isRefinedKeypoints() ? "refined" : "raw");
+                        }
+                        if (detection_details.is_refined_keypoints &&
+                            !detection_details.keypoint_usable.empty()) {
+                            size_t usable_count = 0;
+                            size_t flip_count = 0;
+                            size_t det_count = detection_details.keypoint_usable.size();
+                            for (size_t qi = 0; qi < det_count; ++qi) {
+                                if (detection_details.keypoint_usable[qi] != 0) usable_count++;
+                                if (qi < detection_details.keypoint_flip_corrected.size() &&
+                                    detection_details.keypoint_flip_corrected[qi] != 0) flip_count++;
+                            }
+                            ImGui::Text("  Quality: %zu/%zu usable (%zu flip-corrected)",
+                                        usable_count, det_count, flip_count);
+                            if (!detection_details.keypoint_reason.empty() &&
+                                !detection_details.keypoint_reason[0].empty()) {
+                                ImGui::TextWrapped("  Reason: %s",
+                                                   detection_details.keypoint_reason[0].c_str());
+                            }
                         }
                         if (detection_details.keypoints_per_detection > 0 &&
                             !detection_details.keypoint_labels.empty()) {
@@ -2217,8 +2305,9 @@ int main(int argc, char **argv) {
                         }
                         if (!zarr_loader.getKeypointsRunName().empty() &&
                             !zarr_loader.hasKeypointData()) {
-                            ImGui::Text("  Keypoints run: %s",
-                                        zarr_loader.getKeypointsRunName().c_str());
+                            ImGui::Text("  Keypoints run: %s (%s)",
+                                        zarr_loader.getKeypointsRunName().c_str(),
+                                        zarr_loader.isRefinedKeypoints() ? "refined" : "raw");
                         }
                         if (zarr_loader.activeDatasetHasSyntheticDetections()) {
                             ImGui::TextWrapped("Synthetic detections are present; arrows render only for real boxes.");
@@ -2416,6 +2505,7 @@ int main(int argc, char **argv) {
                     std::cout << "Loaded Zarr archive override: "
                               << zarr_loader.getArchivePath() << std::endl;
                     tryAutoLoadAffiliatedVideoFromZarr("Load Zarr Archive");
+                    tryAutoLoadStimulusVideo("file-dialog");
                 } else {
                     zarr_loaded = false;
                     g_zarr_bbox_edit_state.clearAll();
@@ -2506,7 +2596,6 @@ int main(int argc, char **argv) {
                 }
             }
 
-            bool exact_paused_target_available = false;
             struct PausedBufferListItem {
                 int slot = -1;
                 int frame = -1;
@@ -2540,10 +2629,8 @@ int main(int argc, char **argv) {
                     }
                 }
                 if (exact_slot >= 0) {
-                    exact_paused_target_available = true;
                     return exact_slot;
                 }
-                exact_paused_target_available = false;
                 return findNearestPausedBufferSlot(
                     visible_idx, std::max(0, ps.to_display_frame_number));
             };
@@ -2620,12 +2707,8 @@ int main(int argc, char **argv) {
                 current_frame_num =
                     scene->cameras[visible_idx].display_buffer[select_corr_head]
                         .frame_number;
-                if (current_frame_num >= 0 &&
-                    exact_paused_target_available &&
-                    current_frame_num != ps.to_display_frame_number) {
-                    ps.to_display_frame_number = current_frame_num;
-                    ps.slider_frame_number = current_frame_num;
-                }
+                // Keep paused seek target stable unless the user explicitly
+                // selects/seeks a different frame.
             } else {
                 current_frame_num = std::max(0, ps.to_display_frame_number);
             }
@@ -2643,7 +2726,9 @@ int main(int argc, char **argv) {
                 }
             }
             if (zarr_loaded && zarr_loader.hasStimulusAlignment()) {
-                if (auto stim_frame = zarr_loader.getStimulusFrameForCameraFrame(current_frame_num)) {
+                int stim_source_frame = ps.play_video ? current_frame_num
+                                                      : ps.to_display_frame_number;
+                if (auto stim_frame = zarr_loader.getStimulusFrameForCameraFrame(stim_source_frame)) {
                     ps.current_stimulus_frame = *stim_frame;
                 } else {
                     ps.current_stimulus_frame = -1;
@@ -2800,11 +2885,6 @@ int main(int argc, char **argv) {
                                     scene->cameras[j].display_buffer[paused_slot].frame_number;
                                 if (presented_frame >= 0) {
                                     current_frame_num = presented_frame;
-                                    if (j == paused_visible_idx &&
-                                        ps.to_display_frame_number != presented_frame) {
-                                        ps.to_display_frame_number = presented_frame;
-                                        ps.slider_frame_number = presented_frame;
-                                    }
                                 }
                                 if (scene->use_cpu_buffer) {
                                     // upload_texture(&scene->cameras[j].image_texture,
@@ -3066,6 +3146,30 @@ int main(int argc, char **argv) {
 
                                 size_t detection_count = std::min(detection_details.keypoints_pixels.size(),
                                                                   detection_details.boxes.size());
+                                const double img_h = static_cast<double>(scene->cameras[j].image_height);
+                                // Draw skeleton edges before markers so markers render on top
+                                if (!detection_details.skeleton_edges.empty()) {
+                                    ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(1.0f, 1.0f, 1.0f, 0.63f));
+                                    for (size_t det_idx = 0; det_idx < detection_count; ++det_idx) {
+                                        const auto& keypoints = detection_details.keypoints_pixels[det_idx];
+                                        if (keypoints.size() != kp_per_det) continue;
+                                        for (const auto& edge : detection_details.skeleton_edges) {
+                                            size_t a = edge[0], b = edge[1];
+                                            if (a >= kp_per_det || b >= kp_per_det) continue;
+                                            float ax = keypoints[a][0], ay = keypoints[a][1];
+                                            float bx = keypoints[b][0], by = keypoints[b][1];
+                                            if (!std::isfinite(ax) || !std::isfinite(ay) ||
+                                                !std::isfinite(bx) || !std::isfinite(by)) continue;
+                                            double xs[2] = {static_cast<double>(ax), static_cast<double>(bx)};
+                                            double ys[2] = {img_h - static_cast<double>(ay),
+                                                            img_h - static_cast<double>(by)};
+                                            std::string lbl = "##edge_" + std::to_string(det_idx) + "_" +
+                                                              std::to_string(a) + "_" + std::to_string(b);
+                                            ImPlot::PlotLine(lbl.c_str(), xs, ys, 2);
+                                        }
+                                    }
+                                    ImPlot::PopStyleColor();
+                                }
                                 for (size_t det_idx = 0; det_idx < detection_count; ++det_idx) {
                                     const auto& keypoints = detection_details.keypoints_pixels[det_idx];
                                     if (keypoints.size() != kp_per_det) {
@@ -3091,8 +3195,7 @@ int main(int argc, char **argv) {
                                         }
 
                                         double plot_x = static_cast<double>(kp_x);
-                                        double plot_y = static_cast<double>(scene->cameras[j].image_height) -
-                                                        static_cast<double>(kp_y);
+                                        double plot_y = img_h - static_cast<double>(kp_y);
 
                                         ImVec4 base_color = chooseColor(kp_idx);
                                         float alpha_scale = 1.0f;
@@ -3102,12 +3205,42 @@ int main(int argc, char **argv) {
                                         if (detection_is_interp) {
                                             alpha_scale *= 0.65f;
                                         }
+
+                                        // Refined keypoint quality-based dimming
+                                        bool kp_unusable = false;
+                                        bool kp_flip_corrected = false;
+                                        bool kp_det_source_interp = false;
+                                        if (detection_details.is_refined_keypoints) {
+                                            if (det_idx < detection_details.keypoint_usable.size() &&
+                                                detection_details.keypoint_usable[det_idx] == 0) {
+                                                alpha_scale *= 0.35f;
+                                                kp_unusable = true;
+                                            }
+                                            if (det_idx < detection_details.keypoint_detection_source.size() &&
+                                                detection_details.keypoint_detection_source[det_idx] != 0) {
+                                                alpha_scale *= 0.65f;
+                                                kp_det_source_interp = true;
+                                            }
+                                            if (det_idx < detection_details.keypoint_flip_corrected.size() &&
+                                                detection_details.keypoint_flip_corrected[det_idx] != 0) {
+                                                kp_flip_corrected = true;
+                                            }
+                                        }
+
                                         alpha_scale = std::clamp(alpha_scale, 0.25f, 1.0f);
 
                                         ImVec4 fill_color = base_color;
                                         fill_color.w *= alpha_scale;
                                         ImVec4 outline_color = base_color;
                                         outline_color.w = std::max(alpha_scale, 0.6f);
+
+                                        // Quality-based outline color overrides
+                                        if (kp_flip_corrected) {
+                                            outline_color = ImVec4(0.0f, 0.9f, 0.9f, outline_color.w);
+                                        }
+                                        if (kp_unusable) {
+                                            outline_color = ImVec4(0.95f, 0.3f, 0.3f, outline_color.w);
+                                        }
 
                                         ImPlot::SetNextMarkerStyle(chooseMarker(kp_idx),
                                                                    chooseSize(kp_idx),
@@ -4693,110 +4826,6 @@ struct StateOverlay {
                             }
                         }
 
-                        if (j == 0 && zarr_loader.hasMovementData()) {
-                            ImGui::SetNextWindowSizeConstraints(ImVec2(120.0f, 120.0f),
-                                                                ImVec2(420.0f, 420.0f));
-                            bool crop_window_open = ImGui::Begin("Crop Preview");
-                            if (crop_window_open) {
-                                if (zarr_loader.hasCropImages()) {
-                                    const auto& movement_frames = zarr_loader.getMovementFrameIndices();
-                                    const auto& detection_indices = zarr_loader.getMovementDetectionIndices();
-                                    int32_t crop_roi_index = -1;
-                                    if (!movement_frames.empty() &&
-                                        movement_frames.size() == detection_indices.size()) {
-                                        auto it = std::lower_bound(movement_frames.begin(),
-                                                                   movement_frames.end(),
-                                                                   current_frame_num);
-                                        if (it != movement_frames.end() && *it == current_frame_num) {
-                                            size_t idx = static_cast<size_t>(std::distance(movement_frames.begin(), it));
-                                            if (idx < detection_indices.size()) {
-                                                crop_roi_index = detection_indices[idx];
-                                            }
-                                        }
-                                    }
-
-                                    static GLuint crop_texture = 0;
-                                    static std::vector<uint8_t> crop_rgba_buffer;
-                                    static int last_roi_index = -1;
-                                    static size_t last_width = 0;
-                                    static size_t last_height = 0;
-                                    static size_t last_channels = 0;
-
-                                    if (crop_roi_index >= 0) {
-                                        ZarrDetectionLoader::CropImageView crop_view;
-                                        if (zarr_loader.getCropImageForIndex(crop_roi_index, crop_view)) {
-                                            bool needs_upload =
-                                                crop_roi_index != last_roi_index ||
-                                                crop_view.width != last_width ||
-                                                crop_view.height != last_height ||
-                                                crop_view.channels != last_channels;
-
-                                            if (crop_texture == 0) {
-                                                create_texture(&crop_texture);
-                                                needs_upload = true;
-                                            }
-
-                                            if (needs_upload) {
-                                                size_t pixel_count = crop_view.width * crop_view.height;
-                                                crop_rgba_buffer.resize(pixel_count * 4);
-                                                const uint8_t* src = crop_view.data;
-                                                uint8_t* dst = crop_rgba_buffer.data();
-                                                if (crop_view.channels == 4) {
-                                                    std::memcpy(dst, src, pixel_count * 4);
-                                                } else if (crop_view.channels == 3) {
-                                                    for (size_t p = 0; p < pixel_count; ++p) {
-                                                        dst[4 * p + 0] = src[3 * p + 0];
-                                                        dst[4 * p + 1] = src[3 * p + 1];
-                                                        dst[4 * p + 2] = src[3 * p + 2];
-                                                        dst[4 * p + 3] = 255;
-                                                    }
-                                                } else {
-                                                    for (size_t p = 0; p < pixel_count; ++p) {
-                                                        uint8_t v = src[p];
-                                                        dst[4 * p + 0] = v;
-                                                        dst[4 * p + 1] = v;
-                                                        dst[4 * p + 2] = v;
-                                                        dst[4 * p + 3] = 255;
-                                                    }
-                                                }
-                                                upload_texture(&crop_texture,
-                                                               crop_rgba_buffer.data(),
-                                                               static_cast<unsigned int>(crop_view.width),
-                                                               static_cast<unsigned int>(crop_view.height));
-                                                last_roi_index = crop_roi_index;
-                                                last_width = crop_view.width;
-                                                last_height = crop_view.height;
-                                                last_channels = crop_view.channels;
-                                            }
-
-                                            if (crop_texture != 0) {
-                                                ImVec2 img_size(static_cast<float>(crop_view.width),
-                                                                static_cast<float>(crop_view.height));
-                                                float max_dim = std::max(img_size.x, img_size.y);
-                                                const float preview_max = 260.0f;
-                                                if (max_dim > preview_max && max_dim > 0.0f) {
-                                                    float scale = preview_max / max_dim;
-                                                    img_size.x *= scale;
-                                                    img_size.y *= scale;
-                                                }
-                                                ImGui::Image((ImTextureID)(intptr_t)crop_texture, img_size);
-                                                ImGui::Text("ROI #%d", crop_roi_index);
-                                            }
-                                        } else {
-                                            ImGui::TextUnformatted("No crop available for current frame.");
-                                            last_roi_index = -1;
-                                        }
-                                    } else {
-                                        ImGui::TextUnformatted("No crop available for current frame.");
-                                            last_roi_index = -1;
-                                    }
-                                } else {
-                                    ImGui::TextUnformatted("Crop images not loaded.");
-                                }
-                            }
-                            ImGui::End();
-                        }
-
                         if (plot_keypoints_flag) {
                             // plot arena for testing camera parameters
                             // gui_plot_perimeter(&camera_params[j],
@@ -4981,6 +5010,8 @@ struct StateOverlay {
                     ps.slider_just_changed = ImGui::SliderInt(
                         "##frame count", &ps.slider_frame_number, 0,
                         dc_context->estimated_num_frames);
+                    const bool slider_active = ImGui::IsItemActive();
+                    const bool slider_released = ImGui::IsItemDeactivatedAfterEdit();
                     ImGui::SameLine();
                     float current_time_sec = ps.slider_frame_number / video_fps;
                     float total_time_sec =
@@ -4991,11 +5022,13 @@ struct StateOverlay {
                     ImGui::Text("%s / %s", current_str.c_str(),
                                 total_str.c_str());
 
-                    if (ps.slider_just_changed) {
-                        // std::cout << "main, seeking: " <<
-                        // ps.slider_frame_number
-                        //           << std::endl;
-                        seekToFrame(ps.slider_frame_number, true);
+                    if (ps.slider_just_changed && slider_active) {
+                        // Dragging — fast keyframe-only seek
+                        seekToFrame(ps.slider_frame_number, true, /*force_inaccurate=*/true);
+                    }
+                    if (slider_released) {
+                        // Released — one final accurate seek for exact frame
+                        seekToFrame(ps.slider_frame_number, true, /*force_inaccurate=*/false);
                     }
 
                     ImGui::EndGroup();
@@ -5038,6 +5071,434 @@ struct StateOverlay {
             }
         }
 
+        if (zarr_loaded && zarr_loader.hasCropImages()) {
+            ImGui::SetNextWindowSize(ImVec2(300.0f, 300.0f), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSizeConstraints(ImVec2(120.0f, 120.0f),
+                                                ImVec2(420.0f, 700.0f));
+            bool crop_window_open = ImGui::Begin("Crop Preview");
+            if (crop_window_open) {
+                const auto& movement_frames = zarr_loader.getMovementFrameIndices();
+                const auto& detection_indices = zarr_loader.getMovementDetectionIndices();
+                int32_t crop_roi_index = -1;
+                if (!movement_frames.empty() &&
+                    movement_frames.size() == detection_indices.size()) {
+                    auto it = std::lower_bound(movement_frames.begin(),
+                                               movement_frames.end(),
+                                               current_frame_num);
+                    if (it != movement_frames.end() && *it == current_frame_num) {
+                        size_t idx = static_cast<size_t>(std::distance(movement_frames.begin(), it));
+                        if (idx < detection_indices.size()) {
+                            crop_roi_index = detection_indices[idx];
+                        }
+                    }
+                }
+                // Fallback: use crop frame_indices directly when movement
+                // data is absent (frame_indices maps roi_index → frame).
+                if (crop_roi_index < 0) {
+                    const auto& crop_frames = zarr_loader.getCropFrameIndices();
+                    auto it = std::find(crop_frames.begin(),
+                                        crop_frames.end(),
+                                        current_frame_num);
+                    if (it != crop_frames.end()) {
+                        crop_roi_index = static_cast<int32_t>(
+                            std::distance(crop_frames.begin(), it));
+                    }
+                }
+
+                static GLuint crop_texture = 0;
+                static std::vector<uint8_t> crop_rgba_buffer;
+                static int last_roi_index = -1;
+                static size_t last_width = 0;
+                static size_t last_height = 0;
+                static size_t last_channels = 0;
+
+                static GLuint rotated_crop_texture = 0;
+                static std::vector<uint8_t> rotated_rgba_buffer;
+                static unsigned int rotated_width = 0;
+                static unsigned int rotated_height = 0;
+                static bool rotated_valid = false;
+                static std::vector<std::array<float, 2>> rotated_kp_positions;
+                static std::vector<std::string> rotated_kp_labels;
+                static std::vector<std::array<size_t, 2>> rotated_kp_edges;
+                static float stored_heading_deg = 0.0f;
+                static bool stored_heading_valid = false;
+                static std::array<float, 2> arrow_origin_crop = {0, 0};   // in crop-local px
+                static std::array<float, 2> arrow_origin_rotated = {0, 0}; // in rotated-crop-local px
+                static bool arrow_origin_valid = false;
+
+                if (crop_roi_index >= 0) {
+                    ZarrDetectionLoader::CropImageView crop_view;
+                    if (zarr_loader.getCropImageForIndex(crop_roi_index, crop_view)) {
+                        bool needs_upload =
+                            crop_roi_index != last_roi_index ||
+                            crop_view.width != last_width ||
+                            crop_view.height != last_height ||
+                            crop_view.channels != last_channels;
+
+                        if (crop_texture == 0) {
+                            create_texture(&crop_texture);
+                            needs_upload = true;
+                        }
+
+                        if (needs_upload) {
+                            size_t pixel_count = crop_view.width * crop_view.height;
+                            crop_rgba_buffer.resize(pixel_count * 4);
+                            const uint8_t* src = crop_view.data;
+                            uint8_t* dst = crop_rgba_buffer.data();
+                            if (crop_view.channels == 4) {
+                                std::memcpy(dst, src, pixel_count * 4);
+                            } else if (crop_view.channels == 3) {
+                                for (size_t p = 0; p < pixel_count; ++p) {
+                                    dst[4 * p + 0] = src[3 * p + 0];
+                                    dst[4 * p + 1] = src[3 * p + 1];
+                                    dst[4 * p + 2] = src[3 * p + 2];
+                                    dst[4 * p + 3] = 255;
+                                }
+                            } else {
+                                for (size_t p = 0; p < pixel_count; ++p) {
+                                    uint8_t v = src[p];
+                                    dst[4 * p + 0] = v;
+                                    dst[4 * p + 1] = v;
+                                    dst[4 * p + 2] = v;
+                                    dst[4 * p + 3] = 255;
+                                }
+                            }
+                            upload_texture(&crop_texture,
+                                           crop_rgba_buffer.data(),
+                                           static_cast<unsigned int>(crop_view.width),
+                                           static_cast<unsigned int>(crop_view.height));
+                            last_roi_index = crop_roi_index;
+                            last_width = crop_view.width;
+                            last_height = crop_view.height;
+                            last_channels = crop_view.channels;
+
+                            // Compute heading-normalized rotated crop
+                            rotated_valid = false;
+                            stored_heading_valid = false;
+                            if (zarr_loader.hasKeypointData()) {
+                                auto det = zarr_loader.getRawDetections(
+                                    static_cast<size_t>(current_frame_num), false, true);
+                                size_t matched = SIZE_MAX;
+                                for (size_t di = 0; di < det.eye_masks.size(); ++di) {
+                                    if (det.eye_masks[di].roi_index == crop_roi_index) {
+                                        matched = di; break;
+                                    }
+                                }
+                                if (matched != SIZE_MAX && matched < det.headings_deg.size() &&
+                                    matched < det.heading_valid.size() && det.heading_valid[matched]) {
+                                    float heading = det.headings_deg[matched];
+                                    stored_heading_deg = heading;
+                                    stored_heading_valid = true;
+                                    float angle = -heading;
+                                    int w = static_cast<int>(crop_view.width);
+                                    int h = static_cast<int>(crop_view.height);
+                                    cv::Point2f center(w / 2.0f, h / 2.0f);
+                                    cv::Mat rot_mat = cv::getRotationMatrix2D(center, angle, 1.0);
+                                    cv::Rect2f bbox = cv::RotatedRect(center, cv::Size2f(static_cast<float>(w), static_cast<float>(h)), angle)
+                                                          .boundingRect2f();
+                                    rot_mat.at<double>(0, 2) += bbox.width / 2.0 - center.x;
+                                    rot_mat.at<double>(1, 2) += bbox.height / 2.0 - center.y;
+                                    int new_w = static_cast<int>(std::ceil(bbox.width));
+                                    int new_h = static_cast<int>(std::ceil(bbox.height));
+                                    cv::Mat src(h, w, CV_8UC4, crop_rgba_buffer.data());
+                                    cv::Mat dst;
+                                    cv::warpAffine(src, dst, rot_mat, cv::Size(new_w, new_h),
+                                                    cv::INTER_LINEAR, cv::BORDER_CONSTANT,
+                                                    cv::Scalar(0, 0, 0, 0));
+                                    // Apply circular mask: radius = half the smaller original dimension
+                                    float radius = std::min(w, h) / 2.0f;
+                                    cv::Point2f new_center(new_w / 2.0f, new_h / 2.0f);
+                                    for (int row = 0; row < new_h; ++row) {
+                                        uint8_t* ptr = dst.ptr<uint8_t>(row);
+                                        for (int col = 0; col < new_w; ++col) {
+                                            float dx = col + 0.5f - new_center.x;
+                                            float dy = row + 0.5f - new_center.y;
+                                            if (dx * dx + dy * dy > radius * radius) {
+                                                ptr[col * 4 + 0] = 0;
+                                                ptr[col * 4 + 1] = 0;
+                                                ptr[col * 4 + 2] = 0;
+                                                ptr[col * 4 + 3] = 0;
+                                            }
+                                        }
+                                    }
+                                    // Crop to circle's bounding square so canvas size is
+                                    // constant regardless of rotation angle.
+                                    int crop_side = std::min(w, h);
+                                    int cx = new_w / 2 - crop_side / 2;
+                                    int cy = new_h / 2 - crop_side / 2;
+                                    dst = dst(cv::Rect(cx, cy, crop_side, crop_side)).clone();
+                                    new_w = crop_side;
+                                    new_h = crop_side;
+                                    rotated_rgba_buffer.assign(dst.data, dst.data + dst.total() * 4);
+                                    rotated_width = new_w;
+                                    rotated_height = new_h;
+                                    if (rotated_crop_texture == 0) create_texture(&rotated_crop_texture);
+                                    upload_texture(&rotated_crop_texture, rotated_rgba_buffer.data(),
+                                                   rotated_width, rotated_height);
+                                    rotated_valid = true;
+
+                                    // Transform keypoints into rotated-crop-local coords
+                                    rotated_kp_positions.clear();
+                                    rotated_kp_labels.clear();
+                                    rotated_kp_edges = det.skeleton_edges;
+                                    if (det.has_keypoints && matched < det.keypoints_pixels.size() &&
+                                        det.includes_eye_masks) {
+                                        const auto& kps = det.keypoints_pixels[matched];
+                                        const auto& mask = det.eye_masks[matched];
+                                        float off_x = mask.offset_x;
+                                        float off_y = mask.offset_y;
+                                        if (std::isfinite(off_x) && std::isfinite(off_y)) {
+                                            double r0 = rot_mat.at<double>(0, 0);
+                                            double r1 = rot_mat.at<double>(0, 1);
+                                            double r2 = rot_mat.at<double>(0, 2);
+                                            double r3 = rot_mat.at<double>(1, 0);
+                                            double r4 = rot_mat.at<double>(1, 1);
+                                            double r5 = rot_mat.at<double>(1, 2);
+                                            for (size_t ki = 0; ki < kps.size(); ++ki) {
+                                                if (!std::isfinite(kps[ki][0]) ||
+                                                    !std::isfinite(kps[ki][1])) {
+                                                    rotated_kp_positions.push_back({NAN, NAN});
+                                                } else {
+                                                    float px = kps[ki][0] - off_x;
+                                                    float py = kps[ki][1] - off_y;
+                                                    float rx = static_cast<float>(r0 * px + r1 * py + r2) - cx;
+                                                    float ry = static_cast<float>(r3 * px + r4 * py + r5) - cy;
+                                                    rotated_kp_positions.push_back({rx, ry});
+                                                }
+                                                rotated_kp_labels.push_back(
+                                                    ki < det.keypoint_labels.size()
+                                                        ? det.keypoint_labels[ki] : "");
+                                            }
+                                            // Compute arrow origin: midpoint between eye keypoints
+                                            arrow_origin_valid = false;
+                                            float left_x = NAN, left_y = NAN;
+                                            float right_x = NAN, right_y = NAN;
+                                            float left_rx = NAN, left_ry = NAN;
+                                            float right_rx = NAN, right_ry = NAN;
+                                            for (size_t ki = 0; ki < kps.size(); ++ki) {
+                                                const std::string& lbl =
+                                                    ki < det.keypoint_labels.size()
+                                                        ? det.keypoint_labels[ki] : "";
+                                                bool is_left = lbl.find("left") != std::string::npos;
+                                                bool is_right = lbl.find("right") != std::string::npos;
+                                                if ((is_left || is_right) &&
+                                                    std::isfinite(kps[ki][0]) && std::isfinite(kps[ki][1])) {
+                                                    float px = kps[ki][0] - off_x;
+                                                    float py = kps[ki][1] - off_y;
+                                                    if (is_left)  { left_x = px; left_y = py; }
+                                                    if (is_right) { right_x = px; right_y = py; }
+                                                    if (ki < rotated_kp_positions.size()) {
+                                                        if (is_left) { left_rx = rotated_kp_positions[ki][0]; left_ry = rotated_kp_positions[ki][1]; }
+                                                        if (is_right) { right_rx = rotated_kp_positions[ki][0]; right_ry = rotated_kp_positions[ki][1]; }
+                                                    }
+                                                }
+                                            }
+                                            if (std::isfinite(left_x) && std::isfinite(right_x)) {
+                                                arrow_origin_crop = {(left_x + right_x) / 2.0f,
+                                                                     (left_y + right_y) / 2.0f};
+                                                arrow_origin_rotated = {(left_rx + right_rx) / 2.0f,
+                                                                        (left_ry + right_ry) / 2.0f};
+                                                arrow_origin_valid = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (crop_texture != 0) {
+                            static bool show_crop_keypoints = true;
+                            static bool show_rotated_crop = true;
+                            static bool show_heading_arrow = false;
+                            ImGui::Checkbox("Keypoints", &show_crop_keypoints);
+                            ImGui::SameLine();
+                            ImGui::Checkbox("Rotated", &show_rotated_crop);
+                            ImGui::SameLine();
+                            ImGui::Checkbox("Heading", &show_heading_arrow);
+
+                            ImVec2 img_size(static_cast<float>(crop_view.width),
+                                            static_cast<float>(crop_view.height));
+                            float max_dim = std::max(img_size.x, img_size.y);
+                            const float preview_max = 260.0f;
+                            float scale = 1.0f;
+                            if (max_dim > preview_max && max_dim > 0.0f) {
+                                scale = preview_max / max_dim;
+                                img_size.x *= scale;
+                                img_size.y *= scale;
+                            }
+                            ImVec2 image_tl = ImGui::GetCursorScreenPos();
+                            ImGui::Image((ImTextureID)(intptr_t)crop_texture, img_size);
+                            ImGui::Text("ROI #%d", crop_roi_index);
+
+                            if (show_crop_keypoints && zarr_loader.hasKeypointData()) {
+                                auto det = zarr_loader.getRawDetections(
+                                    static_cast<size_t>(current_frame_num), false, true);
+
+                                if (det.has_keypoints && !det.keypoints_pixels.empty() &&
+                                    det.includes_eye_masks) {
+                                    size_t matched_det = SIZE_MAX;
+                                    for (size_t di = 0; di < det.eye_masks.size(); ++di) {
+                                        if (det.eye_masks[di].roi_index == crop_roi_index) {
+                                            matched_det = di;
+                                            break;
+                                        }
+                                    }
+
+                                    if (matched_det != SIZE_MAX &&
+                                        matched_det < det.keypoints_pixels.size()) {
+                                        const auto& kps = det.keypoints_pixels[matched_det];
+                                        const auto& mask = det.eye_masks[matched_det];
+                                        float off_x = mask.offset_x;
+                                        float off_y = mask.offset_y;
+
+                                        if (std::isfinite(off_x) && std::isfinite(off_y)) {
+                                            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+                                            auto kpColor = [&](size_t kp_idx) -> ImU32 {
+                                                const std::string& lbl =
+                                                    kp_idx < det.keypoint_labels.size()
+                                                        ? det.keypoint_labels[kp_idx] : "";
+                                                if (lbl.find("swim") != std::string::npos ||
+                                                    lbl.find("bladder") != std::string::npos)
+                                                    return IM_COL32(255, 217, 38, 220);
+                                                if (lbl.find("left") != std::string::npos)
+                                                    return IM_COL32(77, 242, 102, 220);
+                                                if (lbl.find("right") != std::string::npos)
+                                                    return IM_COL32(191, 102, 242, 220);
+                                                return IM_COL32(242, 153, 51, 220);
+                                            };
+
+                                            for (const auto& edge : det.skeleton_edges) {
+                                                size_t a = edge[0], b = edge[1];
+                                                if (a >= kps.size() || b >= kps.size()) continue;
+                                                if (!std::isfinite(kps[a][0]) || !std::isfinite(kps[a][1]) ||
+                                                    !std::isfinite(kps[b][0]) || !std::isfinite(kps[b][1])) continue;
+                                                ImVec2 pa(image_tl.x + (kps[a][0] - off_x) * scale,
+                                                          image_tl.y + (kps[a][1] - off_y) * scale);
+                                                ImVec2 pb(image_tl.x + (kps[b][0] - off_x) * scale,
+                                                          image_tl.y + (kps[b][1] - off_y) * scale);
+                                                draw_list->AddLine(pa, pb, IM_COL32(255, 255, 255, 160), 1.5f);
+                                            }
+                                            for (size_t ki = 0; ki < kps.size(); ++ki) {
+                                                if (!std::isfinite(kps[ki][0]) ||
+                                                    !std::isfinite(kps[ki][1])) continue;
+                                                float lx = (kps[ki][0] - off_x) * scale;
+                                                float ly = (kps[ki][1] - off_y) * scale;
+                                                ImVec2 center(image_tl.x + lx, image_tl.y + ly);
+                                                draw_list->AddCircleFilled(center, 4.0f * scale,
+                                                                           kpColor(ki));
+                                                draw_list->AddCircle(center, 4.0f * scale,
+                                                                     IM_COL32(255, 255, 255, 180), 0, 1.5f);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (show_heading_arrow && stored_heading_valid && arrow_origin_valid) {
+                                float rad = stored_heading_deg * (3.14159265f / 180.0f);
+                                float arrow_len = std::min(img_size.x, img_size.y) * 0.2f;
+                                ImVec2 center(image_tl.x + arrow_origin_crop[0] * scale,
+                                              image_tl.y + arrow_origin_crop[1] * scale);
+                                // 0° = right (+X), CCW positive, screen Y is flipped
+                                float dx = std::cos(rad) * arrow_len;
+                                float dy = -std::sin(rad) * arrow_len;
+                                ImVec2 tip(center.x + dx, center.y + dy);
+                                ImDrawList* dl = ImGui::GetWindowDrawList();
+                                dl->AddLine(center, tip, IM_COL32(255, 50, 50, 220), 2.5f);
+                                // Arrowhead
+                                float head_len = 8.0f * scale;
+                                float head_angle = 2.6f; // ~150° from shaft
+                                ImVec2 h1(tip.x + head_len * std::cos(rad + head_angle),
+                                          tip.y - head_len * std::sin(rad + head_angle));
+                                ImVec2 h2(tip.x + head_len * std::cos(rad - head_angle),
+                                          tip.y - head_len * std::sin(rad - head_angle));
+                                dl->AddTriangleFilled(tip, h1, h2, IM_COL32(255, 50, 50, 220));
+                            }
+
+                            if (show_rotated_crop && rotated_valid && rotated_crop_texture != 0) {
+                                ImGui::Separator();
+                                ImVec2 rot_size(static_cast<float>(rotated_width),
+                                                static_cast<float>(rotated_height));
+                                float rot_max = std::max(rot_size.x, rot_size.y);
+                                float rot_scale = 1.0f;
+                                if (rot_max > preview_max && rot_max > 0.0f) {
+                                    rot_scale = preview_max / rot_max;
+                                    rot_size.x *= rot_scale;
+                                    rot_size.y *= rot_scale;
+                                }
+                                ImVec2 rot_image_tl = ImGui::GetCursorScreenPos();
+                                ImGui::Image((ImTextureID)(intptr_t)rotated_crop_texture, rot_size);
+
+                                if (show_crop_keypoints && !rotated_kp_positions.empty()) {
+                                    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                                    auto kpColor = [&](size_t kp_idx) -> ImU32 {
+                                        const std::string& lbl =
+                                            kp_idx < rotated_kp_labels.size()
+                                                ? rotated_kp_labels[kp_idx] : "";
+                                        if (lbl.find("swim") != std::string::npos ||
+                                            lbl.find("bladder") != std::string::npos)
+                                            return IM_COL32(255, 217, 38, 220);
+                                        if (lbl.find("left") != std::string::npos)
+                                            return IM_COL32(77, 242, 102, 220);
+                                        if (lbl.find("right") != std::string::npos)
+                                            return IM_COL32(191, 102, 242, 220);
+                                        return IM_COL32(242, 153, 51, 220);
+                                    };
+                                    for (const auto& edge : rotated_kp_edges) {
+                                        size_t a = edge[0], b = edge[1];
+                                        if (a >= rotated_kp_positions.size() || b >= rotated_kp_positions.size()) continue;
+                                        float ax = rotated_kp_positions[a][0], ay = rotated_kp_positions[a][1];
+                                        float bx = rotated_kp_positions[b][0], by = rotated_kp_positions[b][1];
+                                        if (!std::isfinite(ax) || !std::isfinite(ay) ||
+                                            !std::isfinite(bx) || !std::isfinite(by)) continue;
+                                        ImVec2 pa(rot_image_tl.x + ax * rot_scale, rot_image_tl.y + ay * rot_scale);
+                                        ImVec2 pb(rot_image_tl.x + bx * rot_scale, rot_image_tl.y + by * rot_scale);
+                                        draw_list->AddLine(pa, pb, IM_COL32(255, 255, 255, 160), 1.5f);
+                                    }
+                                    for (size_t ki = 0; ki < rotated_kp_positions.size(); ++ki) {
+                                        float rx = rotated_kp_positions[ki][0];
+                                        float ry = rotated_kp_positions[ki][1];
+                                        if (!std::isfinite(rx) || !std::isfinite(ry)) continue;
+                                        float sx = rx * rot_scale;
+                                        float sy = ry * rot_scale;
+                                        ImVec2 pt(rot_image_tl.x + sx, rot_image_tl.y + sy);
+                                        draw_list->AddCircleFilled(pt, 4.0f * rot_scale, kpColor(ki));
+                                        draw_list->AddCircle(pt, 4.0f * rot_scale,
+                                                             IM_COL32(255, 255, 255, 180), 0, 1.5f);
+                                    }
+                                }
+                                if (show_heading_arrow && stored_heading_valid && arrow_origin_valid) {
+                                    // Normalized heading always points right (0°)
+                                    float arrow_len = std::min(rot_size.x, rot_size.y) * 0.2f;
+                                    ImVec2 center(rot_image_tl.x + arrow_origin_rotated[0] * rot_scale,
+                                                  rot_image_tl.y + arrow_origin_rotated[1] * rot_scale);
+                                    ImVec2 tip(center.x + arrow_len, center.y);
+                                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                                    dl->AddLine(center, tip, IM_COL32(255, 50, 50, 220), 2.5f);
+                                    float head_len = 8.0f * rot_scale;
+                                    float head_angle = 2.6f;
+                                    ImVec2 h1(tip.x + head_len * std::cos(head_angle),
+                                              tip.y - head_len * std::sin(head_angle));
+                                    ImVec2 h2(tip.x + head_len * std::cos(-head_angle),
+                                              tip.y - head_len * std::sin(-head_angle));
+                                    dl->AddTriangleFilled(tip, h1, h2, IM_COL32(255, 50, 50, 220));
+                                }
+                                ImGui::Text("Heading-normalized");
+                            }
+                        }
+                    } else {
+                        ImGui::TextUnformatted("No crop available for current frame.");
+                        last_roi_index = -1;
+                    }
+                } else {
+                    ImGui::TextUnformatted("No crop available for current frame.");
+                    last_roi_index = -1;
+                }
+            }
+            ImGui::End();
+        }
+
         if (stimulus_player.loaded) {
             ImGui::SetNextWindowSize(ImVec2(480.0f, 360.0f), ImGuiCond_FirstUseEver);
             bool stimulus_visible = ImGui::Begin(stimulus_player.window_name.c_str());
@@ -5058,7 +5519,22 @@ struct StateOverlay {
                 }
                 effective_target_frame = first_stim.value_or(0);
             }
-            discardStimulusFramesOlderThan(stimulus_player, effective_target_frame);
+            // Keep a one-frame cushion so target-1 fallback frames remain
+            // available when timestamp rounding lands just before target.
+            constexpr int kStimulusDiscardSlackFrames = 1;
+            auto isStimulusFrameClose = [&](int candidate_frame,
+                                            int target_frame) -> bool {
+                if (candidate_frame < 0 || target_frame < 0) {
+                    return false;
+                }
+                return std::abs(candidate_frame - target_frame) <=
+                       kStimulusDiscardSlackFrames;
+            };
+            int discard_threshold = effective_target_frame - kStimulusDiscardSlackFrames;
+            if (discard_threshold < 0) {
+                discard_threshold = 0;
+            }
+            discardStimulusFramesOlderThan(stimulus_player, discard_threshold);
 
             bool decoder_active_now = window_need_decoding[stimulus_player.window_name].load();
 
@@ -5072,8 +5548,9 @@ struct StateOverlay {
 
                 if (decoder_active_now && newest_frame >= 0 &&
                     newest_frame > high_threshold) {
-                    std::cout << "[Stimulus] throttling decode: newest=" << newest_frame
-                              << " high_threshold=" << high_threshold << std::endl;
+                    if (!stimulus_player.throttled)
+                        std::cout << "[Stimulus] throttling decode: newest=" << newest_frame
+                                  << " high_threshold=" << high_threshold << std::endl;
                     decoder_requested = false;
                     stimulus_player.throttled = true;
                     stimulus_player.throttle_resume_frame = low_threshold;
@@ -5095,6 +5572,21 @@ struct StateOverlay {
                 decoder_requested = false;
             }
 
+            if (!decoder_requested && target_stimulus_frame >= 0) {
+                int candidate_index =
+                    findStimulusBuffer(stimulus_player, target_stimulus_frame);
+                int candidate_frame = -1;
+                if (candidate_index >= 0 && stimulus_player.display_buffer) {
+                    candidate_frame =
+                        stimulus_player.display_buffer[candidate_index].frame_number;
+                }
+                const bool candidate_is_close =
+                    isStimulusFrameClose(candidate_frame, target_stimulus_frame);
+                if (!candidate_is_close) {
+                    decoder_requested = true;
+                }
+            }
+
             if (decoder_requested != last_decoder_logged) {
                 std::cout << "[Stimulus] decoder_should_run="
                           << (decoder_requested ? "true" : "false")
@@ -5114,15 +5606,20 @@ struct StateOverlay {
                     int buffer_index =
                         findStimulusBuffer(stimulus_player, target_stimulus_frame);
                     if (buffer_index != -1) {
-                        uploadStimulusFrameToTexture(stimulus_player, buffer_index);
-                        stimulus_player.last_displayed_frame = target_stimulus_frame;
-                        std::cout << "[Stimulus] uploaded frame "
-                                  << target_stimulus_frame
-                                  << " (buffer " << buffer_index << ")"
-                                  << std::endl;
-                    } else {
-                        std::cout << "[Stimulus] no buffer available for target "
-                                  << target_stimulus_frame << std::endl;
+                        const int buffered_frame =
+                            stimulus_player.display_buffer[buffer_index].frame_number;
+                        const bool buffered_frame_is_close =
+                            isStimulusFrameClose(buffered_frame,
+                                                 target_stimulus_frame);
+                        if (buffered_frame_is_close) {
+                            uploadStimulusFrameToTexture(stimulus_player, buffer_index);
+                            stimulus_player.last_displayed_frame = buffered_frame;
+                            std::cout << "[Stimulus] uploaded frame "
+                                      << buffered_frame
+                                      << " for target " << target_stimulus_frame
+                                      << " (buffer " << buffer_index << ")"
+                                      << std::endl;
+                        }
                     }
                 }
 
@@ -5151,8 +5648,11 @@ struct StateOverlay {
                 }
 
                 ImGui::Separator();
+                const bool displayed_frame_is_close =
+                    isStimulusFrameClose(stimulus_player.last_displayed_frame,
+                                         target_stimulus_frame);
                 if (mapping_available && target_stimulus_frame >= 0 &&
-                    stimulus_player.last_displayed_frame != target_stimulus_frame) {
+                    !displayed_frame_is_close) {
                     ImGui::TextUnformatted("Awaiting stimulus frame decode...");
                 }
                 if (!mapping_available) {

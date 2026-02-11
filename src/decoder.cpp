@@ -111,6 +111,21 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
     int size_in_bytes;
     bool skip_first_decode_after_seek = false;
     int seek_debug_frames_to_log = 0;
+    auto seek_requested = [&]() -> bool {
+        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+        return seek_info->use_seek;
+    };
+    auto mark_seek_done = [&](uint64_t settled_frame) -> bool {
+        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+        // If a newer request arrived while we processed this one, do not
+        // overwrite it with stale completion state.
+        if (seek_info->use_seek) {
+            return false;
+        }
+        seek_info->seek_frame = settled_frame;
+        seek_info->seek_done = true;
+        return true;
+    };
     auto mapTimestampToFrameNumber = [&](int64_t timestamp,
                                          int64_t fallback_frame) -> int64_t {
         if (timestamp >= 0) {
@@ -147,7 +162,21 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
         return false;
     };
     do {
-        if (seek_info->use_seek) {
+        bool has_seek_request = false;
+        uint64_t requested_frame = 0;
+        bool seek_accurate = false;
+        {
+            std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+            if (seek_info->use_seek) {
+                has_seek_request = true;
+                requested_frame = seek_info->seek_frame;
+                seek_accurate = seek_info->seek_accurate;
+                seek_info->use_seek = false;   // claim request
+                seek_info->seek_done = false;  // new request in flight
+            }
+        }
+
+        if (has_seek_request) {
             if (recreate_decoder_on_seek) {
                 if (pTmpImage) {
                     ck(cuMemFree(pTmpImage));
@@ -161,7 +190,6 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
 
             demuxer->Flush();
             skip_first_decode_after_seek = false;
-            const uint64_t requested_frame = seek_info->seek_frame;
 
             SeekContext s = SeekContext(requested_frame);
             seek_success_flag = demuxer->Seek(s, pVideo, nVideoBytes, pktinfo);
@@ -171,7 +199,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
             // the target frame.  The first seek lands on keyframe N
             // (closest keyframe at or before the target); we then seek
             // to keyframe N-1 and decode forward from there.
-            if (seek_success_flag && seek_info->seek_accurate) {
+            if (seek_success_flag && seek_accurate) {
                 int64_t nearest_kf = -1;
                 if (pktinfo.pts >= 0)
                     nearest_kf = demuxer->FrameNumberFromTs(pktinfo.pts);
@@ -184,8 +212,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                 }
             }
             if (!seek_success_flag) {
-                seek_info->use_seek = false;
-                seek_info->seek_done = true;
+                (void)mark_seek_done(requested_frame);
                 continue;
             }
 
@@ -236,9 +263,11 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                 decode_frame_cursor = static_cast<uint64_t>(demux_frame);
             }
 
-            if (seek_info->seek_accurate) {
+            uint64_t settled_seek_frame = decode_frame_cursor;
+            if (seek_accurate) {
                 // seek accurate implementation
                 // keep decoding till the target frame
+                constexpr uint64_t kAccurateSeekFallbackSlackFrames = 1;
                 bool reached_target = (decode_frame_cursor >= requested_frame);
                 if (!reached_target) {
                     reached_target =
@@ -247,8 +276,28 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         demux_success =
                             demuxer->Demux(pVideo, nVideoBytes, pktinfo);
                         if (!demux_success) {
-                            // end of stream
-                            std::cout << "Demux error..." << std::endl;
+                            // Some streams intermittently fail to demux the exact
+                            // terminal packet for a seek target. If we are already
+                            // within one frame, keep the nearest frame instead of
+                            // stalling the UI waiting for an exact frame forever.
+                            const uint64_t cursor_plus_slack =
+                                decode_frame_cursor + kAccurateSeekFallbackSlackFrames;
+                            const bool near_target =
+                                (cursor_plus_slack >= requested_frame);
+                            if (near_target) {
+                                std::cout
+                                    << "[Decoder] Demux boundary fallback: cam="
+                                    << cam_name << " target_frame="
+                                    << requested_frame << " cursor="
+                                    << decode_frame_cursor << std::endl;
+                                reached_target = true;
+                                break;
+                            }
+                            // end of stream or demux discontinuity before target
+                            std::cout << "[Decoder] Demux error: cam=" << cam_name
+                                      << " target_frame=" << requested_frame
+                                      << " cursor=" << decode_frame_cursor
+                                      << std::endl;
                             nFrameReturned = dec->Decode(NULL, 0);
                             dc_context->total_num_frame = nFrame + nFrameReturned;
                         } else {
@@ -277,21 +326,28 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                     }
                 }
                 if (!reached_target) {
-                    seek_info->seek_frame = decode_frame_cursor;
+                    settled_seek_frame = decode_frame_cursor;
                     skip_first_decode_after_seek = (nFrameReturned > 0);
                 }
             } else {
-                seek_info->seek_frame = decode_frame_cursor;
+                settled_seek_frame = decode_frame_cursor;
                 skip_first_decode_after_seek = (nFrameReturned > 0);
             }
 
             // dec.setReconfigParams(NULL, NULL);
             buffer_head = 0;
-            nFrame = seek_info->seek_frame;
-            latest_decoded_frame[cam_name].store(static_cast<int>(seek_info->seek_frame));
+            nFrame = static_cast<int>(settled_seek_frame);
+            latest_decoded_frame[cam_name].store(static_cast<int>(settled_seek_frame));
             display_buffer[0].frame_number = -1;
-            seek_info->use_seek = false;
-            pending_seek_done = true;
+            // If no frame is currently queued (or this window is not actively
+            // decoding), acknowledge seek completion now to avoid wait=true
+            // callers blocking forever.
+            if (nFrameReturned == 0 || !window_need_decoding[cam_name].load()) {
+                (void)mark_seek_done(settled_seek_frame);
+                pending_seek_done = false;
+            } else {
+                pending_seek_done = true;
+            }
             seek_debug_frames_to_log = 10;
         } else {
             static thread_local bool logged_idle = false;
@@ -358,14 +414,14 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         display_buffer[buffer_head].frame_number = assigned_frame_num;
                         latest_decoded_frame[cam_name].store(assigned_frame_num);
                         if (pending_seek_done) {
-                            seek_info->seek_done = true;
+                            (void)mark_seek_done(static_cast<uint64_t>(assigned_frame_num));
                             pending_seek_done = false;
                         }
                     } else {
                         while (
                             !display_buffer[buffer_head].available_to_write &&
                             !(dc_context->stop_flag) &&
-                            !(seek_info->use_seek)) {
+                            !seek_requested()) {
                             // if the next frame hasn't been displayed, the
                             // queue is full, sleep std::cout << "thread wait, "
                             // << display_buffer[buffer_head].available_to_write
@@ -397,7 +453,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         display_buffer[buffer_head].frame_number = assigned_frame_num;
                         latest_decoded_frame[cam_name].store(assigned_frame_num);
                         if (pending_seek_done) {
-                            seek_info->seek_done = true;
+                            (void)mark_seek_done(static_cast<uint64_t>(assigned_frame_num));
                             pending_seek_done = false;
                         }
                     }
@@ -453,8 +509,28 @@ void image_loader(DecoderContext *dc_context,
     int frame_number = 0;
     dc_context->total_num_frame = img_list_vector.size();
     dc_context->estimated_num_frames = img_list_vector.size();
+    auto seek_requested = [&]() -> bool {
+        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+        return seek_info->use_seek;
+    };
+    auto mark_seek_done = [&](uint64_t settled_frame) {
+        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+        seek_info->seek_frame = settled_frame;
+        seek_info->seek_done = true;
+    };
     while (!(dc_context->stop_flag)) {
-        if (seek_info->use_seek) {
+        bool has_seek_request = false;
+        uint64_t requested_frame = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+            if (seek_info->use_seek) {
+                has_seek_request = true;
+                requested_frame = seek_info->seek_frame;
+                seek_info->use_seek = false;
+                seek_info->seek_done = false;
+            }
+        }
+        if (has_seek_request) {
             // reset the display buffer after seeking
             for (int i = 0; i < size_of_buffer; i++) {
                 // if (use_cpu_buffer) {
@@ -465,10 +541,9 @@ void image_loader(DecoderContext *dc_context,
                 display_buffer[i].frame_number = -1;
             }
             buffer_head = 0;
-            frame_number = seek_info->seek_frame;
+            frame_number = static_cast<int>(requested_frame);
             display_buffer[0].frame_number = -1;
-            seek_info->use_seek = false;
-            seek_info->seek_done = true;
+            mark_seek_done(requested_frame);
         } else {
             if (frame_number < img_list_vector.size()) {
                 if (frame_number == 0) {
@@ -488,7 +563,7 @@ void image_loader(DecoderContext *dc_context,
                     display_buffer[buffer_head].frame_number = frame_number;
                 } else {
                     while (!display_buffer[buffer_head].available_to_write &&
-                           !(dc_context->stop_flag) && !(seek_info->use_seek)) {
+                           !(dc_context->stop_flag) && !seek_requested()) {
                         std::this_thread::sleep_for(
                             std::chrono::milliseconds(1));
                     }
