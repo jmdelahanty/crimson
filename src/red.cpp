@@ -804,6 +804,14 @@ int main(int argc, char **argv) {
                 ps.read_head = target_slot;
             }
         }
+
+        if (stimulus_player.loaded) {
+            // Clear throttle state when playback resumes so stimulus decode
+            // can restart immediately if the queue had been throttled.
+            stimulus_player.throttled = false;
+            stimulus_player.throttle_resume_frame = -1;
+            window_need_decoding[stimulus_player.window_name].store(true);
+        }
     };
 
     auto stepFrames = [&](int delta_frames) {
@@ -5668,6 +5676,93 @@ struct StateOverlay {
                 ImGui::Text("Stimulus video: %s", stimulus_player.video_path.c_str());
                 ImGui::Text("Resolution: %u x %u  |  %.2f fps",
                             stimulus_player.width, stimulus_player.height, stimulus_player.fps);
+            }
+            ImGui::End();
+
+            ImGui::SetNextWindowSize(ImVec2(500.0f, 440.0f), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("Stimulus Frames in Buffer")) {
+                struct StimulusBufferListItem {
+                    int slot = -1;
+                    int frame = -1;
+                };
+                std::vector<StimulusBufferListItem> stimulus_buffer_items;
+                if (stimulus_player.display_buffer && stimulus_player.buffer_size > 0) {
+                    stimulus_buffer_items.reserve(stimulus_player.buffer_size);
+                    for (int i = 0; i < stimulus_player.buffer_size; ++i) {
+                        const auto& slot = stimulus_player.display_buffer[i];
+                        if (slot.available_to_write || slot.frame_number < 0) {
+                            continue;
+                        }
+                        stimulus_buffer_items.push_back({i, slot.frame_number});
+                    }
+                }
+                std::sort(stimulus_buffer_items.begin(), stimulus_buffer_items.end(),
+                          [](const StimulusBufferListItem& a,
+                             const StimulusBufferListItem& b) {
+                              if (a.frame == b.frame) {
+                                  return a.slot < b.slot;
+                              }
+                              return a.frame < b.frame;
+                          });
+
+                ImGui::Text("Valid frames: %zu / %d", stimulus_buffer_items.size(),
+                            std::max(0, stimulus_player.buffer_size));
+                if (target_stimulus_frame >= 0) {
+                    ImGui::Text("Target stimulus frame: %d", target_stimulus_frame);
+                } else {
+                    ImGui::TextDisabled("Target stimulus frame: (none)");
+                }
+                ImGui::Text("Last displayed frame: %d", stimulus_player.last_displayed_frame);
+                ImGui::Text("Latest decoded frame: %d",
+                            latest_decoded_frame[stimulus_player.window_name].load());
+                ImGui::Separator();
+
+                int selected_item = -1;
+                if (target_stimulus_frame >= 0) {
+                    int best_distance = std::numeric_limits<int>::max();
+                    int best_frame = std::numeric_limits<int>::min();
+                    for (int i = 0; i < static_cast<int>(stimulus_buffer_items.size()); ++i) {
+                        const auto& item = stimulus_buffer_items[i];
+                        if (item.frame == target_stimulus_frame) {
+                            selected_item = i;
+                            break;
+                        }
+                        const int distance =
+                            std::abs(item.frame - target_stimulus_frame);
+                        if (distance < best_distance ||
+                            (distance == best_distance && item.frame > best_frame)) {
+                            best_distance = distance;
+                            best_frame = item.frame;
+                            selected_item = i;
+                        }
+                    }
+                }
+
+                if (stimulus_buffer_items.empty()) {
+                    ImGui::TextDisabled("No decoded stimulus frames currently buffered.");
+                } else {
+                    ImGui::TextDisabled("Click an item to upload that buffered frame.");
+                    for (int i = 0; i < static_cast<int>(stimulus_buffer_items.size()); ++i) {
+                        const auto& item = stimulus_buffer_items[i];
+                        char label[128];
+                        if (target_stimulus_frame >= 0) {
+                            const int delta = item.frame - target_stimulus_frame;
+                            snprintf(label, sizeof(label),
+                                     "Frame %d (slot %d, delta %+d)",
+                                     item.frame, item.slot, delta);
+                        } else {
+                            snprintf(label, sizeof(label), "Frame %d (slot %d)",
+                                     item.frame, item.slot);
+                        }
+                        if (ImGui::Selectable(label, selected_item == i)) {
+                            uploadStimulusFrameToTexture(stimulus_player, item.slot);
+                            stimulus_player.last_displayed_frame = item.frame;
+                            std::cout << "[Stimulus] debug upload frame "
+                                      << item.frame << " (slot " << item.slot
+                                      << ")" << std::endl;
+                        }
+                    }
+                }
             }
             ImGui::End();
         }

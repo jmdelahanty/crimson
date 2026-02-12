@@ -338,7 +338,7 @@ void scheduleStimulusSeek(StimulusPlayback &stim,
 
     if (wait_for_completion && stim.decoder_context) {
         const auto seek_deadline =
-            std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            std::chrono::steady_clock::now() + std::chrono::seconds(5);
         while (!stim.decoder_context->stop_flag) {
             bool done = false;
             {

@@ -80,9 +80,12 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
         }
         return std::strcmp(env, "0") != 0;
     }();
+    const bool allow_boundary_fallback = true;
     std::cout << "[Decoder] " << cam_name
               << " recreate_decoder_on_seek="
-              << (recreate_decoder_on_seek ? "true" : "false") << std::endl;
+              << (recreate_decoder_on_seek ? "true" : "false")
+              << " boundary_fallback="
+              << (allow_boundary_fallback ? "true" : "false") << std::endl;
     int nWidth = 0, nHeight = 0;
 
     int nFrameReturned = 0, nFrame = 0, iMatrix = 0;
@@ -284,7 +287,13 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                                 decode_frame_cursor + kAccurateSeekFallbackSlackFrames;
                             const bool near_target =
                                 (cursor_plus_slack >= requested_frame);
-                            if (near_target) {
+                            if (allow_boundary_fallback && near_target) {
+                                if (nFrameReturned == 0) {
+                                    // Try draining any frame that may already be queued
+                                    // in the decoder before we accept boundary fallback.
+                                    nFrameReturned = dec->Decode(NULL, 0);
+                                }
+                                skip_first_decode_after_seek = (nFrameReturned > 0);
                                 std::cout
                                     << "[Decoder] Demux boundary fallback: cam="
                                     << cam_name << " target_frame="
@@ -337,12 +346,23 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
             // dec.setReconfigParams(NULL, NULL);
             buffer_head = 0;
             nFrame = static_cast<int>(settled_seek_frame);
-            latest_decoded_frame[cam_name].store(static_cast<int>(settled_seek_frame));
+            if (nFrameReturned > 0) {
+                latest_decoded_frame[cam_name].store(
+                    static_cast<int>(settled_seek_frame));
+            } else {
+                // No decoded frame is currently queued for display after this
+                // seek operation, so keep latest_decoded_frame invalid until a
+                // real frame lands in the ring buffer.
+                latest_decoded_frame[cam_name].store(-1);
+            }
             display_buffer[0].frame_number = -1;
             // If no frame is currently queued (or this window is not actively
             // decoding), acknowledge seek completion now to avoid wait=true
             // callers blocking forever.
-            if (nFrameReturned == 0 || !window_need_decoding[cam_name].load()) {
+            const bool window_decoding_enabled =
+                window_need_decoding[cam_name].load();
+            if (!window_decoding_enabled ||
+                (nFrameReturned == 0 && !seek_accurate)) {
                 (void)mark_seek_done(settled_seek_frame);
                 pending_seek_done = false;
             } else {
