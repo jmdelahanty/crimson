@@ -33,6 +33,12 @@ std::optional<std::filesystem::path> ResolveAffiliatedVideoPath(
     const std::string& source_path_hint,
     const std::string& archive_path);
 
+std::optional<std::filesystem::path> ResolveStimulusVideoPath(
+    const std::string& stimulus_video_hint,
+    const std::string& source_h5_hint,
+    const std::string& archive_path,
+    const std::string& recording_root);
+
 std::filesystem::path InferRecordingRootPath(
     const std::filesystem::path& video_path,
     const std::string& archive_path);

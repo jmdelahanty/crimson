@@ -199,7 +199,37 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
         } else {
             std::cout << "  No movement analysis data available" << std::endl;
         }
-        
+
+        // Standalone crop loading fallback: if movement loading didn't
+        // populate crop data, try to discover and load a crop run directly.
+        if (!data_.crop_data.loaded) {
+            std::string crop_candidate;
+            if (!data_.keypoints_source_crop_run.empty()) {
+                crop_candidate = NormalizeCropRunName(data_.keypoints_source_crop_run);
+            }
+            if (crop_candidate.empty()) {
+                if (auto crop_group_attrs = readAttrsAny(store, "crop_runs")) {
+                    crop_candidate = NormalizeCropRunName(
+                        extractLatestRunName(*crop_group_attrs));
+                }
+            }
+            if (crop_candidate.empty() && !root_path_.empty()) {
+                auto fs_runs = collect_runs_fs(root_path_, "crop_runs",
+                                               {"roi_images"});
+                if (!fs_runs.empty()) {
+                    crop_candidate = NormalizeCropRunName(fs_runs.front());
+                }
+            }
+            if (!crop_candidate.empty()) {
+                if (loadMovementCropRun(store, crop_candidate)) {
+                    std::cout << "  Loaded crop run '" << crop_candidate
+                              << "' (" << data_.crop_data.roi_count << " ROIs, "
+                              << data_.crop_data.height << "x"
+                              << data_.crop_data.width << ")" << std::endl;
+                }
+            }
+        }
+
         std::cout << "Successfully loaded zarr file: " << filepath << std::endl;
         std::cout << "  Total frames: " << data_.total_frames << std::endl;
         std::cout << "  Max detections per frame: " << data_.max_detections << std::endl;

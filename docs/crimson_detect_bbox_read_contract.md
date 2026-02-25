@@ -3,7 +3,7 @@
 Purpose: define the read-only contract Crimson should use to load detection
 bounding boxes from Palette Zarr archives.
 
-Date anchored: 2026-02-09.
+Date anchored: 2026-02-11.
 
 ## Scope
 
@@ -167,6 +167,13 @@ Helpful attrs to read when present:
 - root attrs: `source_video_path`, `source_video`, `inference_width`, `inference_height`
 - quality attrs: `quality_reports.attrs["latest"]`,
   `artifact_detection_params`, `detection_quality_summary`
+- analysis stimulus-run attrs (analysis archives only):
+  - `analysis/stimulus_runs/<latest>.attrs["source_h5"]`
+  - `analysis/stimulus_runs/<latest>.attrs["source_stimulus_video_path"]` (optional; rendered stimulus video path when available)
+
+Training archive note:
+- `source_stimulus_video_path` is not expected on training Zarrs.
+- Absence on training archives should not be treated as an error.
 
 ## Expected Failure Modes
 

@@ -11,6 +11,7 @@
 #include "render.h"
 #include "skeleton.h"
 #include "utils.h"
+#include "debug_flags.h"
 #include "yolo_detection.h"
 #include <ImGuiFileDialog.h>
 #include <algorithm>
@@ -334,6 +335,7 @@ int main(int argc, char **argv) {
     double video_fps = 60.0f;
     float set_playback_speed = 1.0f;
     PlaybackState ps;
+    SeekProgress seek_progress;
     std::string frame_sync_debug_line;
     int frame_sync_valid_slots = -1;
     int frame_sync_empty_slots = -1;
@@ -627,6 +629,20 @@ int main(int argc, char **argv) {
         }
     };
 
+    auto countBufferedStimulusFrames = [&](const StimulusPlayback& stim) -> int {
+        if (!stim.display_buffer || stim.buffer_size <= 0) {
+            return 0;
+        }
+        int valid = 0;
+        for (int i = 0; i < stim.buffer_size; ++i) {
+            const auto& slot = stim.display_buffer[i];
+            if (!slot.available_to_write && slot.frame_number >= 0) {
+                ++valid;
+            }
+        }
+        return valid;
+    };
+
     auto stepPausedFrameFromBuffer = [&](int target_frame) -> bool {
         if (ps.play_video || scene->num_cams <= 0 || scene->size_of_buffer <= 0) {
             return false;
@@ -682,21 +698,6 @@ int main(int argc, char **argv) {
             }
         }
         return best_slot;
-    };
-
-    auto stabilizePausedSeekFrame = [&](int target_frame) {
-        if (ps.play_video || scene->num_cams <= 0 || scene->size_of_buffer <= 0) {
-            return;
-        }
-        const auto timeout =
-            std::chrono::steady_clock::now() + std::chrono::milliseconds(50);
-        while (std::chrono::steady_clock::now() < timeout) {
-            if (stepPausedFrameFromBuffer(target_frame)) {
-                return;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-        ps.pause_seeked = false;
     };
 
     auto findDisplaySlotForFrame = [&](int cam_idx,
@@ -765,24 +766,102 @@ int main(int argc, char **argv) {
 
         const int max_frame = std::max(0, dc_context->total_num_frame - 1);
         const int clamped_frame = std::clamp(target_frame, 0, max_frame);
+        const bool seek_accurate = !force_inaccurate && !ps.play_video;
 
+        // Drop duplicate requests while an equivalent seek is still in flight.
+        const bool seek_in_flight =
+            (seek_progress.state == SeekState::WaitingCameras ||
+             seek_progress.state == SeekState::WaitingStimulus);
+        if (seek_in_flight &&
+            seek_progress.requested_camera_frame == clamped_frame &&
+            seek_progress.accurate == seek_accurate) {
+            if (crimson_seek_debug_logs_enabled()) std::cout << "[Seek] dedupe: dropping duplicate request frame="
+                      << clamped_frame
+                      << " accurate=" << (seek_accurate ? "true" : "false")
+                      << " state=" << seekStateName(seek_progress.state)
+                      << std::endl;
+            return;
+        }
+
+        // Fast path: frame already in buffer (paused only)
         if (prefer_buffer_when_paused && stepPausedFrameFromBuffer(clamped_frame)) {
+            // Still need stimulus seek for this frame
             if (stimulus_player.loaded && zarr_loader.hasStimulusAlignment()) {
-                const bool wait_for_stimulus = !force_inaccurate && !ps.play_video;
-                scheduleStimulusSeek(stimulus_player, &zarr_loader,
-                                     clamped_frame, wait_for_stimulus);
+                auto stim_frame = zarr_loader.getStimulusFrameForCameraFrame(clamped_frame);
+                if (stim_frame && *stim_frame >= 0) {
+                    ps.current_stimulus_frame = *stim_frame;
+                    seek_progress.seek_id++;
+                    seek_progress.state = SeekState::WaitingStimulus;
+                    seek_progress.requested_camera_frame = clamped_frame;
+                    seek_progress.target_camera_frame = clamped_frame;
+                    seek_progress.target_stimulus_frame = *stim_frame;
+                    seek_progress.accurate = !force_inaccurate && !ps.play_video;
+                    seek_progress.cameras_settled = scene->num_cams;
+                    seek_progress.cameras_total = scene->num_cams;
+                    seek_progress.deadline =
+                        std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                    {
+                        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+                        stimulus_player.seek.seek_frame = static_cast<uint64_t>(*stim_frame);
+                        stimulus_player.seek.seek_id = seek_progress.seek_id;
+                        stimulus_player.seek.use_seek = true;
+                        stimulus_player.seek.seek_done = false;
+                        stimulus_player.seek.seek_accurate = seek_progress.accurate;
+                    }
+                    stimulus_player.last_displayed_frame = -1;
+                    window_need_decoding[stimulus_player.window_name].store(true);
+                    if (crimson_seek_debug_logs_enabled()) std::cout << "[Seek] id=" << seek_progress.seek_id
+                              << " buffer-hit camera=" << clamped_frame
+                              << " -> stimulus=" << *stim_frame << std::endl;
+                }
             }
             return;
         }
 
-        const bool seek_accurate = !force_inaccurate && !ps.play_video;
+        // Full decoder seek path (non-blocking)
         if (!ps.play_video) {
             ps.pause_seeked = false;
             setCameraDecodeRequests(true);
         }
-        seek_all_cameras(scene, clamped_frame, video_fps, ps,
-                         seek_accurate, &zarr_loader, &stimulus_player);
-        stabilizePausedSeekFrame(clamped_frame);
+
+        seek_progress.seek_id++;
+        seek_progress.state = SeekState::WaitingCameras;
+        seek_progress.requested_camera_frame = clamped_frame;
+        seek_progress.target_camera_frame = clamped_frame;
+        seek_progress.target_stimulus_frame = -1;
+        seek_progress.accurate = seek_accurate;
+        seek_progress.cameras_settled = 0;
+        seek_progress.cameras_total = scene->num_cams;
+        seek_progress.deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(5);
+
+        // Update playback state immediately (same as old seek_all_cameras)
+        ps.to_display_frame_number = clamped_frame;
+        ps.read_head = 0;
+        ps.just_seeked = true;
+        ps.slider_frame_number = clamped_frame;
+        ps.accumulated_play_time = clamped_frame / video_fps;
+        ps.last_play_time_start = std::chrono::steady_clock::now();
+        ps.last_frame_num_playspeed = clamped_frame;
+        ps.last_wall_time_playspeed = std::chrono::steady_clock::now();
+
+        // Resolve stimulus target frame now (for state tracking)
+        if (stimulus_player.loaded && zarr_loader.hasStimulusAlignment()) {
+            auto stim_frame = zarr_loader.getStimulusFrameForCameraFrame(clamped_frame);
+            if (stim_frame && *stim_frame >= 0) {
+                ps.current_stimulus_frame = *stim_frame;
+                seek_progress.target_stimulus_frame = *stim_frame;
+            }
+        }
+
+        // Fire camera seeks (returns immediately)
+        initiate_camera_seeks(scene, clamped_frame, seek_progress.seek_id, seek_accurate);
+
+        if (crimson_seek_debug_logs_enabled()) std::cout << "[Seek] id=" << seek_progress.seek_id
+                  << " initiated cameras=" << scene->num_cams
+                  << " frame=" << clamped_frame
+                  << " accurate=" << (seek_accurate ? "true" : "false")
+                  << std::endl;
     };
 
     auto syncPlaybackStartToCurrentFrame = [&]() {
@@ -1563,6 +1642,146 @@ int main(int argc, char **argv) {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
+        // --- Seek state machine polling ---
+        if (seek_progress.state == SeekState::WaitingCameras) {
+            int settled = poll_camera_seeks(scene, seek_progress.seek_id);
+            seek_progress.cameras_settled = settled;
+            if (settled >= seek_progress.cameras_total) {
+                int settled_camera_frame = seek_progress.target_camera_frame;
+                int settled_camera_index = getVisibleCameraIndex();
+                if (settled_camera_index < 0 || settled_camera_index >= scene->num_cams) {
+                    settled_camera_index = 0;
+                }
+                {
+                    std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+                    if (scene->num_cams > 0) {
+                        const auto& settled_ctx =
+                            scene->cameras[settled_camera_index].seek_context;
+                        if (settled_ctx.seek_done &&
+                            settled_ctx.settled_seek_id == seek_progress.seek_id) {
+                            settled_camera_frame =
+                                static_cast<int>(settled_ctx.seek_frame);
+                        }
+                    }
+                }
+
+                if (settled_camera_frame != seek_progress.target_camera_frame) {
+                    if (crimson_seek_debug_logs_enabled()) std::cout << "[Seek] id=" << seek_progress.seek_id
+                              << " camera settled to " << settled_camera_frame
+                              << " (requested " << seek_progress.target_camera_frame
+                              << ")" << std::endl;
+                }
+                seek_progress.target_camera_frame = settled_camera_frame;
+                ps.to_display_frame_number = settled_camera_frame;
+                ps.slider_frame_number = settled_camera_frame;
+
+                // All cameras settled — try to stabilize display from buffer
+                if (!ps.play_video) {
+                    stepPausedFrameFromBuffer(settled_camera_frame);
+                }
+
+                // Recompute stimulus target from the camera frame we actually settled on.
+                int remapped_stimulus_frame = -1;
+                if (stimulus_player.loaded && zarr_loader.hasStimulusAlignment()) {
+                    auto stim_frame =
+                        zarr_loader.getStimulusFrameForCameraFrame(settled_camera_frame);
+                    if (stim_frame && *stim_frame >= 0) {
+                        remapped_stimulus_frame = *stim_frame;
+                    }
+                }
+                seek_progress.target_stimulus_frame = remapped_stimulus_frame;
+                ps.current_stimulus_frame = remapped_stimulus_frame;
+
+                // Transition to stimulus if needed
+                if (stimulus_player.loaded && remapped_stimulus_frame >= 0) {
+                    seek_progress.state = SeekState::WaitingStimulus;
+                    seek_progress.deadline =
+                        std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                    {
+                        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+                        stimulus_player.seek.seek_frame =
+                            static_cast<uint64_t>(remapped_stimulus_frame);
+                        stimulus_player.seek.seek_id = seek_progress.seek_id;
+                        stimulus_player.seek.use_seek = true;
+                        stimulus_player.seek.seek_done = false;
+                        stimulus_player.seek.seek_accurate = seek_progress.accurate;
+                    }
+                    stimulus_player.last_displayed_frame = -1;
+                    window_need_decoding[stimulus_player.window_name].store(true);
+                    if (crimson_seek_debug_logs_enabled()) std::cout << "[Seek] id=" << seek_progress.seek_id
+                              << " issuing stimulus seek camera="
+                              << settled_camera_frame << " -> stimulus="
+                              << remapped_stimulus_frame
+                              << " buffered_before="
+                              << countBufferedStimulusFrames(stimulus_player)
+                              << " newest_before="
+                              << getNewestStimulusFrame(stimulus_player)
+                              << std::endl;
+                } else {
+                    // No stimulus — seek is complete
+                    seek_progress.state = SeekState::Ready;
+                    if (crimson_seek_debug_logs_enabled()) std::cout << "[Seek] id=" << seek_progress.seek_id
+                              << " complete (no stimulus mapping)" << std::endl;
+                }
+            } else if (std::chrono::steady_clock::now() >= seek_progress.deadline) {
+                std::cerr << "[Seek] id=" << seek_progress.seek_id
+                          << " TIMEOUT in WaitingCameras ("
+                          << settled << "/" << seek_progress.cameras_total
+                          << " settled)" << std::endl;
+                seek_progress.state = SeekState::TimedOut;
+            }
+        }
+        if (seek_progress.state == SeekState::WaitingStimulus) {
+            bool stim_done = false;
+            int settled_stimulus_frame = -1;
+            {
+                std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+                stim_done = stimulus_player.seek.seek_done &&
+                            stimulus_player.seek.settled_seek_id == seek_progress.seek_id;
+                if (stim_done) {
+                    settled_stimulus_frame =
+                        static_cast<int>(stimulus_player.seek.seek_frame);
+                }
+            }
+            if (stim_done) {
+                if (settled_stimulus_frame >= 0 &&
+                    settled_stimulus_frame != seek_progress.target_stimulus_frame) {
+                    if (crimson_seek_debug_logs_enabled()) std::cout << "[Seek] id=" << seek_progress.seek_id
+                              << " stimulus settled to " << settled_stimulus_frame
+                              << " (requested " << seek_progress.target_stimulus_frame
+                              << ")" << std::endl;
+                    seek_progress.target_stimulus_frame = settled_stimulus_frame;
+                    ps.current_stimulus_frame = settled_stimulus_frame;
+                }
+                seek_progress.state = SeekState::Ready;
+                if (crimson_seek_debug_logs_enabled()) std::cout << "[Seek] id=" << seek_progress.seek_id
+                          << " stimulus settled buffered_after="
+                          << countBufferedStimulusFrames(stimulus_player)
+                          << " newest_after=" << getNewestStimulusFrame(stimulus_player)
+                          << std::endl;
+            } else if (std::chrono::steady_clock::now() >= seek_progress.deadline) {
+                std::cerr << "[Seek] id=" << seek_progress.seek_id
+                          << " TIMEOUT in WaitingStimulus"
+                          << " target_stimulus_frame="
+                          << seek_progress.target_stimulus_frame
+                          << " buffered_now="
+                          << countBufferedStimulusFrames(stimulus_player)
+                          << " newest_now=" << getNewestStimulusFrame(stimulus_player)
+                          << std::endl;
+                seek_progress.state = SeekState::TimedOut;
+            }
+            // Keep stimulus decoder alive regardless of pause_seeked
+            window_need_decoding[stimulus_player.window_name].store(true);
+        }
+        if (seek_progress.state == SeekState::Ready ||
+            seek_progress.state == SeekState::TimedOut) {
+            if (!ps.play_video && !ps.pause_seeked) {
+                // Try once more to grab the frame from buffer
+                stepPausedFrameFromBuffer(seek_progress.target_camera_frame);
+            }
+            seek_progress.state = SeekState::Idle;
+        }
+
         // --- Update playback time ---
         auto now = std::chrono::steady_clock::now();
 
@@ -1761,8 +1980,7 @@ int main(int argc, char **argv) {
                 ImGui::InputInt("Seek Accurate", &seek_accurate_frame_num, 1,
                                 100);
                 if (ImGui::IsItemDeactivatedAfterEdit()) {
-                    seek_all_cameras(scene, seek_accurate_frame_num, video_fps,
-                                     ps, true, &zarr_loader, &stimulus_player);
+                    seekToFrame(seek_accurate_frame_num, false);
                 }
 
                 auto now_wall = std::chrono::steady_clock::now();
@@ -2787,15 +3005,13 @@ int main(int argc, char **argv) {
                 if (!window_was_decoding[win_name] && is_visible &&
                     ps.play_video) {
                     // seek if visibility has changed
-                    seek_all_cameras(scene, current_frame_num, video_fps, ps,
-                                     true, &zarr_loader, &stimulus_player);
+                    seekToFrame(current_frame_num, true);
                 }
 
                 if (!window_was_decoding[win_name] && is_visible &&
                     !ps.play_video && !ps.pause_seeked) {
                     // seek if visibility has changed
-                    seek_all_cameras(scene, current_frame_num, video_fps, ps,
-                                     true, &zarr_loader, &stimulus_player);
+                    seekToFrame(current_frame_num, true);
                     for (auto &[key, value] : window_need_decoding) {
                         value.store(true);
                     }
@@ -5511,7 +5727,10 @@ struct StateOverlay {
             ImGui::SetNextWindowSize(ImVec2(480.0f, 360.0f), ImGuiCond_FirstUseEver);
             bool stimulus_visible = ImGui::Begin(stimulus_player.window_name.c_str());
 
-            bool base_decode_request = ps.play_video || !ps.pause_seeked;
+            bool seek_needs_stimulus =
+                (seek_progress.state == SeekState::WaitingStimulus);
+            bool base_decode_request =
+                ps.play_video || !ps.pause_seeked || seek_needs_stimulus;
             bool decoder_requested = base_decode_request;
             static bool last_decoder_logged = false;
 
@@ -5557,7 +5776,7 @@ struct StateOverlay {
                 if (decoder_active_now && newest_frame >= 0 &&
                     newest_frame > high_threshold) {
                     if (!stimulus_player.throttled)
-                        std::cout << "[Stimulus] throttling decode: newest=" << newest_frame
+                        if (crimson_seek_debug_logs_enabled()) std::cout << "[Stimulus] throttling decode: newest=" << newest_frame
                                   << " high_threshold=" << high_threshold << std::endl;
                     decoder_requested = false;
                     stimulus_player.throttled = true;
@@ -5565,7 +5784,7 @@ struct StateOverlay {
                 } else if (!decoder_active_now && stimulus_player.throttled) {
                     int resume_target = std::max(low_threshold, stimulus_player.throttle_resume_frame);
                     if (newest_frame <= resume_target) {
-                        std::cout << "[Stimulus] resuming decode: newest=" << newest_frame
+                        if (crimson_seek_debug_logs_enabled()) std::cout << "[Stimulus] resuming decode: newest=" << newest_frame
                                   << " resume_target=" << resume_target << std::endl;
                         decoder_requested = true;
                         stimulus_player.throttled = false;
@@ -5596,7 +5815,7 @@ struct StateOverlay {
             }
 
             if (decoder_requested != last_decoder_logged) {
-                std::cout << "[Stimulus] decoder_should_run="
+                if (crimson_seek_debug_logs_enabled()) std::cout << "[Stimulus] decoder_should_run="
                           << (decoder_requested ? "true" : "false")
                           << " (play=" << (ps.play_video ? "true" : "false")
                           << " pause_seeked=" << (ps.pause_seeked ? "true" : "false")
@@ -5622,7 +5841,7 @@ struct StateOverlay {
                         if (buffered_frame_is_close) {
                             uploadStimulusFrameToTexture(stimulus_player, buffer_index);
                             stimulus_player.last_displayed_frame = buffered_frame;
-                            std::cout << "[Stimulus] uploaded frame "
+                            if (crimson_seek_debug_logs_enabled()) std::cout << "[Stimulus] uploaded frame "
                                       << buffered_frame
                                       << " for target " << target_stimulus_frame
                                       << " (buffer " << buffer_index << ")"
@@ -5673,6 +5892,20 @@ struct StateOverlay {
                 }
                 ImGui::Text("Latest decoded stimulus frame: %d",
                             latest_decoded_frame[stimulus_player.window_name].load());
+                ImGui::Separator();
+                ImGui::Text("Seek id: %lu  State: %s",
+                            seek_progress.seek_id,
+                            seekStateName(seek_progress.state));
+                if (seek_progress.state == SeekState::WaitingCameras) {
+                    ImGui::Text("Cameras: %d / %d settled",
+                                seek_progress.cameras_settled,
+                                seek_progress.cameras_total);
+                }
+                if (seek_progress.state == SeekState::WaitingStimulus) {
+                    ImGui::Text("Stimulus target: %d",
+                                seek_progress.target_stimulus_frame);
+                }
+                ImGui::Separator();
                 ImGui::Text("Stimulus video: %s", stimulus_player.video_path.c_str());
                 ImGui::Text("Resolution: %u x %u  |  %.2f fps",
                             stimulus_player.width, stimulus_player.height, stimulus_player.fps);
@@ -5757,7 +5990,7 @@ struct StateOverlay {
                         if (ImGui::Selectable(label, selected_item == i)) {
                             uploadStimulusFrameToTexture(stimulus_player, item.slot);
                             stimulus_player.last_displayed_frame = item.frame;
-                            std::cout << "[Stimulus] debug upload frame "
+                            if (crimson_seek_debug_logs_enabled()) std::cout << "[Stimulus] debug upload frame "
                                       << item.frame << " (slot " << item.slot
                                       << ")" << std::endl;
                         }
@@ -5996,8 +6229,7 @@ struct StateOverlay {
                 ImGui::Separator();
                 ImGui::Text("Next labeled frame : %d", (*upper_it).first);
                 if (ImGui::Button("Jump to Next Labeled Frame")) {
-                    seek_all_cameras(scene, (*upper_it).first, video_fps, ps,
-                                     true, &zarr_loader, &stimulus_player);
+                    seekToFrame((*upper_it).first, true);
                 }
                 ImGui::Text("Total labeled frames : %zu", keypoints_map.size());
             }

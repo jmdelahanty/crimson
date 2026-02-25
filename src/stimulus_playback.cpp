@@ -1,4 +1,13 @@
 #include "stimulus_playback.h"
+#include "debug_flags.h"
+#include <atomic>
+
+namespace {
+uint64_t nextSeekGeneration() {
+    static std::atomic<uint64_t> g_seek_generation{1};
+    return g_seek_generation.fetch_add(1, std::memory_order_relaxed);
+}
+}  // namespace
 
 void destroyStimulusPlayback(StimulusPlayback &stim) {
     if (stim.decoder_context) {
@@ -166,6 +175,8 @@ bool initializeStimulusPlayback(StimulusPlayback &stim,
     stim.seek.seek_done = false;
     stim.seek.seek_frame = 0;
     stim.seek.seek_accurate = false;
+    stim.seek.seek_id = 0;
+    stim.seek.settled_seek_id = 0;
 
     window_need_decoding[stim.window_name].store(false);
     latest_decoded_frame[stim.window_name].store(-1);
@@ -276,7 +287,7 @@ void discardStimulusFramesOlderThan(StimulusPlayback &stim, int keep_threshold) 
         }
     }
     if (released > 0) {
-        std::cout << "[Stimulus] discarded " << released
+        if (crimson_seek_debug_logs_enabled()) std::cout << "[Stimulus] discarded " << released
                   << " frames older than " << keep_threshold << std::endl;
     }
 }
@@ -312,7 +323,8 @@ int getNewestStimulusFrame(const StimulusPlayback &stim) {
 void scheduleStimulusSeek(StimulusPlayback &stim,
                           ZarrDetectionLoader *loader,
                           int camera_frame,
-                          bool wait_for_completion) {
+                          bool seek_accurate,
+                          uint64_t seek_id) {
     if (!stim.loaded || !loader || !loader->hasStimulusAlignment()) {
         return;
     }
@@ -321,94 +333,31 @@ void scheduleStimulusSeek(StimulusPlayback &stim,
         return;
     }
 
-    std::cout << "[Stimulus] schedule seek: camera_frame=" << camera_frame
+    if (crimson_seek_debug_logs_enabled()) std::cout << "[Stimulus] schedule seek: camera_frame=" << camera_frame
               << " -> stimulus_frame=" << *stim_frame
-              << " wait=" << (wait_for_completion ? "true" : "false")
+              << " wait=false"
               << std::endl;
 
+    const uint64_t request_seek_id =
+        (seek_id != 0) ? seek_id : nextSeekGeneration();
     {
         std::lock_guard<std::mutex> lock(g_seek_info_mutex);
         stim.seek.seek_frame = static_cast<uint64_t>(*stim_frame);
+        stim.seek.seek_id = request_seek_id;
         stim.seek.use_seek = true;
         stim.seek.seek_done = false;
-        stim.seek.seek_accurate = wait_for_completion;
+        stim.seek.seek_accurate = seek_accurate;
     }
     stim.last_displayed_frame = -1;
     window_need_decoding[stim.window_name].store(true);
-
-    if (wait_for_completion && stim.decoder_context) {
-        const auto seek_deadline =
-            std::chrono::steady_clock::now() + std::chrono::seconds(5);
-        while (!stim.decoder_context->stop_flag) {
-            bool done = false;
-            {
-                std::lock_guard<std::mutex> lock(g_seek_info_mutex);
-                done = stim.seek.seek_done;
-                if (done) {
-                    stim.seek.seek_done = false;
-                }
-            }
-            if (done) {
-                break;
-            }
-            if (std::chrono::steady_clock::now() >= seek_deadline) {
-                std::cerr << "[Stimulus] seek wait timeout: camera_frame="
-                          << camera_frame << " stimulus_frame=" << *stim_frame
-                          << std::endl;
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-        std::cout << "[Stimulus] seek complete for camera_frame=" << camera_frame
-                  << std::endl;
-    }
 }
 
 void seek_all_cameras(render_scene *scene, int frame_number, double video_fps,
                       PlaybackState &state, bool seek_accurate,
                       ZarrDetectionLoader *zarr_loader,
                       StimulusPlayback *stimulus) {
-    // Trigger seek request
-    for (int i = 0; i < scene->num_cams; i++) {
-        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
-        scene->cameras[i].seek_context.seek_frame = static_cast<uint64_t>(frame_number);
-        scene->cameras[i].seek_context.use_seek = true;
-        scene->cameras[i].seek_context.seek_done = false;
-        scene->cameras[i].seek_context.seek_accurate = seek_accurate;
-    }
-
-    // Wait for seek to complete
-    for (int i = 0; i < scene->num_cams; i++) {
-        const auto seek_deadline =
-            std::chrono::steady_clock::now() + std::chrono::seconds(5);
-        while (true) {
-            bool seek_done = false;
-            {
-                std::lock_guard<std::mutex> lock(g_seek_info_mutex);
-                seek_done = scene->cameras[i].seek_context.seek_done;
-            }
-            if (seek_done) {
-                break;
-            }
-            if (std::chrono::steady_clock::now() >= seek_deadline) {
-                std::cerr << "[Seek] Timeout waiting for camera index " << i
-                          << " to complete seek to frame " << frame_number
-                          << std::endl;
-                {
-                    std::lock_guard<std::mutex> lock(g_seek_info_mutex);
-                    scene->cameras[i].seek_context.use_seek = false;
-                }
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::microseconds(10));
-        }
-    }
-
-    // Reset seek_done flags
-    for (int i = 0; i < scene->num_cams; i++) {
-        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
-        scene->cameras[i].seek_context.seek_done = false;
-    }
+    const uint64_t seek_id = nextSeekGeneration();
+    initiate_camera_seeks(scene, frame_number, seek_id, seek_accurate);
 
     // Update playback state
     state.to_display_frame_number = frame_number;
@@ -428,6 +377,31 @@ void seek_all_cameras(render_scene *scene, int frame_number, double video_fps,
                 state.current_stimulus_frame = *stim_frame;
             }
         }
-        scheduleStimulusSeek(*stimulus, zarr_loader, frame_number, seek_accurate);
+        scheduleStimulusSeek(*stimulus, zarr_loader, frame_number, seek_accurate,
+                             seek_id);
     }
+}
+
+void initiate_camera_seeks(render_scene *scene, int frame_number,
+                           uint64_t seek_id, bool seek_accurate) {
+    for (int i = 0; i < scene->num_cams; i++) {
+        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+        scene->cameras[i].seek_context.seek_frame = static_cast<uint64_t>(frame_number);
+        scene->cameras[i].seek_context.seek_id = seek_id;
+        scene->cameras[i].seek_context.use_seek = true;
+        scene->cameras[i].seek_context.seek_done = false;
+        scene->cameras[i].seek_context.seek_accurate = seek_accurate;
+    }
+}
+
+int poll_camera_seeks(render_scene *scene, uint64_t seek_id) {
+    int settled = 0;
+    std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+    for (int i = 0; i < scene->num_cams; i++) {
+        const auto &ctx = scene->cameras[i].seek_context;
+        if (ctx.seek_done && ctx.settled_seek_id == seek_id) {
+            ++settled;
+        }
+    }
+    return settled;
 }

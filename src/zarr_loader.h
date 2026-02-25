@@ -146,6 +146,30 @@ struct ZarrDetectionData {
     std::vector<float> flat_keypoints_px;               // flattened [det, kp, coord]
     size_t keypoints_per_detection = 0;
     std::vector<std::string> keypoint_labels;
+    std::vector<std::array<size_t, 2>> skeleton_edges;  // from pose_schema.edges
+
+    // Refined keypoint quality metadata (detection-aligned, same indexing as flat_keypoints_px)
+    bool is_refined_keypoints = false;
+    std::string refined_keypoints_run_name;
+
+    std::vector<int32_t> flat_keypoint_quality_labels;    // 0=clean, 4=source_failed, 6=flip_corrected
+    std::vector<std::string> flat_keypoint_reason;        // pipe-delimited tags
+    std::vector<uint8_t> flat_keypoint_flip_corrected;
+    std::vector<uint8_t> flat_keypoint_usable;
+    std::vector<uint8_t> flat_keypoint_confidence_valid;
+    std::vector<uint8_t> flat_keypoint_geometry_valid;
+    std::vector<uint8_t> flat_keypoint_refined_success;
+    std::vector<uint8_t> flat_keypoint_detection_source;  // 0=real, 1=interpolated
+
+    // Keypoint review status (from refined_keypoints_runs/<run> attrs)
+    std::string kp_review_state;
+    std::string kp_review_method;
+    std::string kp_review_intended_use;
+    std::string kp_review_timestamp;
+    std::string kp_review_reviewer;
+    std::string kp_review_notes;
+    bool has_kp_review_status = false;
+
     std::vector<int32_t> mask_roi_indices;
     std::vector<float> roi_offset_x;
     std::vector<float> roi_offset_y;
@@ -214,6 +238,8 @@ struct ZarrDetectionData {
     bool has_stimulus_events = false;
     bool has_stimulus_alignment_data = false;
     int64_t stimulus_camera_frame_offset = 0;
+    std::string stimulus_video_path;     // from run attrs "source_stimulus_video_path"
+    std::string stimulus_source_h5;      // from run attrs "source_h5" (derive .mp4 by changing ext)
 
     // Movement analysis (analysis/movement_runs)
     bool has_movement_data = false;
@@ -370,6 +396,14 @@ public:
     bool activeDatasetHasSyntheticDetections() const;
     bool hasInterpolation() const { return data_.has_interpolation; }
     const std::string& getKeypointsRunName() const { return data_.keypoints_run_name; }
+    bool isRefinedKeypoints() const { return data_.is_refined_keypoints; }
+    bool hasKeypointReviewStatus() const { return data_.has_kp_review_status; }
+    const std::string& getKeypointReviewState() const { return data_.kp_review_state; }
+    const std::string& getKeypointReviewMethod() const { return data_.kp_review_method; }
+    const std::string& getKeypointReviewIntendedUse() const { return data_.kp_review_intended_use; }
+    const std::string& getKeypointReviewTimestamp() const { return data_.kp_review_timestamp; }
+    const std::string& getKeypointReviewReviewer() const { return data_.kp_review_reviewer; }
+    const std::string& getKeypointReviewNotes() const { return data_.kp_review_notes; }
     bool hasEyeMasks() const { return data_.has_eye_masks; }
     const std::string& getEyeMaskRunName() const { return data_.eye_masks_run_name; }
     bool hasEyeAngleData() const { return data_.has_eye_angles; }
@@ -388,6 +422,8 @@ public:
         return data_.has_eye_vergence_frame ? data_.eye_vergence_frame_valid : kEmpty;
     }
     bool hasStimulusAlignment() const { return data_.has_stimulus_alignment_data; }
+    const std::string& getStimulusVideoPath() const { return data_.stimulus_video_path; }
+    const std::string& getStimulusSourceH5() const { return data_.stimulus_source_h5; }
     bool hasStimulusEvents() const { return data_.has_stimulus_events; }
     std::vector<std::string> getStimulusEventsForFrame(size_t frame_id) const;
     struct StimulusEventSummary {
@@ -610,8 +646,16 @@ public:
         std::vector<std::string> detection_reason;
         std::vector<std::vector<std::array<float, 2>>> keypoints_pixels;
         std::vector<std::string> keypoint_labels;
+        std::vector<std::array<size_t, 2>> skeleton_edges;
         size_t keypoints_per_detection = 0;
         bool has_keypoints = false;
+        bool is_refined_keypoints = false;
+        std::vector<int32_t> keypoint_quality_labels;
+        std::vector<std::string> keypoint_reason;
+        std::vector<uint8_t> keypoint_flip_corrected;
+        std::vector<uint8_t> keypoint_usable;
+        std::vector<uint8_t> keypoint_refined_success;
+        std::vector<uint8_t> keypoint_detection_source;
         struct EyeMask {
             bool valid = false;
             int rows = 0;

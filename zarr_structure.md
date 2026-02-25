@@ -486,6 +486,7 @@ Stimulus run data imported from Citrus H5 files. Each run contains:
 **Run Attributes**:
 - `created_at_utc`: Import timestamp
 - `source_h5`: Path to source H5 file
+- `source_stimulus_video_path`: Path to rendered stimulus video next to source H5 (when present; analysis stimulus runs only)
 - `import_version`: Import script version
 - `protocol_json`: Protocol definition (JSON string)
 - `arena_config_json`: Arena/calibration configuration (JSON string)

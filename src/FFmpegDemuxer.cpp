@@ -207,6 +207,23 @@ bool FFmpegDemuxer::Demux(uint8_t *&pVideo, size_t &rVideoBytes,
 void FFmpegDemuxer::Flush() {
     avio_flush(fmtc->pb);
     avformat_flush(fmtc);
+    if (bsfc_annexb) {
+        av_bsf_flush(bsfc_annexb);
+    }
+    if (bsfc_sei) {
+        av_bsf_flush(bsfc_sei);
+    }
+    if (pktSrc.data) {
+        av_packet_unref(&pktSrc);
+    }
+    if (pktDst.data) {
+        av_packet_unref(&pktDst);
+    }
+    if (pktSei.data) {
+        av_packet_unref(&pktSei);
+    }
+    annexbBytes.clear();
+    seiBytes.clear();
 }
 
 int64_t FFmpegDemuxer::TsFromTime(double ts_sec) {

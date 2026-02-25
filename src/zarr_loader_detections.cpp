@@ -1224,9 +1224,11 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
             : data_.has_class_ids;
         const bool can_use_headings =
             data_.has_heading_data && !want_interpolated;
+        const bool has_roi_metadata =
+            !data_.roi_offset_x.empty() && !data_.mask_roi_indices.empty();
         const bool can_use_eye_masks =
-            include_eye_masks && data_.has_eye_masks &&
-            data_.eye_masks_loaded && !want_interpolated;
+            include_eye_masks && !want_interpolated &&
+            ((data_.has_eye_masks && data_.eye_masks_loaded) || has_roi_metadata);
         const bool can_use_keypoints =
             data_.has_keypoints && !want_interpolated &&
             data_.keypoints_per_detection > 0 &&
@@ -1251,8 +1253,18 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
         if (can_use_keypoints) {
             result.keypoints_pixels.reserve(end - start);
             result.keypoint_labels = data_.keypoint_labels;
+            result.skeleton_edges = data_.skeleton_edges;
             result.keypoints_per_detection = data_.keypoints_per_detection;
             result.has_keypoints = false;
+            result.is_refined_keypoints = data_.is_refined_keypoints;
+            if (data_.is_refined_keypoints) {
+                result.keypoint_quality_labels.reserve(end - start);
+                result.keypoint_reason.reserve(end - start);
+                result.keypoint_flip_corrected.reserve(end - start);
+                result.keypoint_usable.reserve(end - start);
+                result.keypoint_refined_success.reserve(end - start);
+                result.keypoint_detection_source.reserve(end - start);
+            }
         }
         if (!data_.detection_source_flags.empty()) {
             result.detection_source.reserve(end - start);
@@ -1318,6 +1330,27 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                     }
                 }
                 result.keypoints_pixels.push_back(std::move(kp_set));
+
+                if (data_.is_refined_keypoints) {
+                    result.keypoint_quality_labels.push_back(
+                        idx < data_.flat_keypoint_quality_labels.size()
+                            ? data_.flat_keypoint_quality_labels[idx] : -1);
+                    result.keypoint_reason.push_back(
+                        idx < data_.flat_keypoint_reason.size()
+                            ? data_.flat_keypoint_reason[idx] : std::string());
+                    result.keypoint_flip_corrected.push_back(
+                        idx < data_.flat_keypoint_flip_corrected.size()
+                            ? data_.flat_keypoint_flip_corrected[idx] : 0);
+                    result.keypoint_usable.push_back(
+                        idx < data_.flat_keypoint_usable.size()
+                            ? data_.flat_keypoint_usable[idx] : 0);
+                    result.keypoint_refined_success.push_back(
+                        idx < data_.flat_keypoint_refined_success.size()
+                            ? data_.flat_keypoint_refined_success[idx] : 0);
+                    result.keypoint_detection_source.push_back(
+                        idx < data_.flat_keypoint_detection_source.size()
+                            ? data_.flat_keypoint_detection_source[idx] : 0);
+                }
             }
 
             if (can_use_headings) {
@@ -1360,7 +1393,8 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                 bool offsets_valid = std::isfinite(mask_entry.offset_x) && std::isfinite(mask_entry.offset_y);
                 bool dims_valid = (mask_entry.roi_width > 0.0f && mask_entry.roi_height > 0.0f);
 
-                if (roi_lookup >= 0 &&
+                if (data_.has_eye_masks && data_.eye_masks_loaded &&
+                    roi_lookup >= 0 &&
                     static_cast<size_t>(roi_lookup) < data_.eye_mask_roi_count &&
                     offsets_valid && dims_valid) {
                     populateEyeMaskEntry(static_cast<size_t>(roi_lookup), mask_entry);

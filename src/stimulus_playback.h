@@ -12,6 +12,31 @@
 #include <string>
 #include <thread>
 
+enum class SeekState { Idle, WaitingCameras, WaitingStimulus, Ready, TimedOut };
+
+inline const char *seekStateName(SeekState s) {
+    switch (s) {
+    case SeekState::Idle:             return "Idle";
+    case SeekState::WaitingCameras:   return "WaitingCameras";
+    case SeekState::WaitingStimulus:  return "WaitingStimulus";
+    case SeekState::Ready:            return "Ready";
+    case SeekState::TimedOut:         return "TimedOut";
+    }
+    return "Unknown";
+}
+
+struct SeekProgress {
+    SeekState state = SeekState::Idle;
+    uint64_t  seek_id = 0;           // monotonic generation counter
+    int       requested_camera_frame = -1;
+    int       target_camera_frame = 0;
+    int       target_stimulus_frame = -1;
+    bool      accurate = false;
+    int       cameras_settled = 0;
+    int       cameras_total = 0;
+    std::chrono::steady_clock::time_point deadline;
+};
+
 struct PlaybackState {
     int pause_selected = 0;
     bool slider_just_changed = false;
@@ -44,7 +69,7 @@ struct StimulusPlayback {
     GLuint texture = 0;
     std::unique_ptr<FFmpegDemuxer> demuxer;
     std::unique_ptr<DecoderContext> decoder_context;
-    SeekInfo seek = {false, false, 0, false};
+    SeekInfo seek = {false, false, 0, false, 0, 0};
     std::thread decoder_thread;
     bool resources_initialized = false;
     int last_displayed_frame = -1;
@@ -67,8 +92,14 @@ int getNewestStimulusFrame(const StimulusPlayback &stim);
 void scheduleStimulusSeek(StimulusPlayback &stim,
                           ZarrDetectionLoader *loader,
                           int camera_frame,
-                          bool wait_for_completion);
+                          bool seek_accurate,
+                          uint64_t seek_id = 0);
 void seek_all_cameras(render_scene *scene, int frame_number, double video_fps,
                       PlaybackState &state, bool seek_accurate,
                       ZarrDetectionLoader *zarr_loader,
                       StimulusPlayback *stimulus);
+
+// Non-blocking seek API (Steps 3-4 of seek refactor)
+void initiate_camera_seeks(render_scene *scene, int frame_number,
+                           uint64_t seek_id, bool seek_accurate);
+int poll_camera_seeks(render_scene *scene, uint64_t seek_id);

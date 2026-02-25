@@ -11,6 +11,8 @@ struct SeekInfo {
     bool seek_done;
     uint64_t seek_frame;
     bool seek_accurate;
+    uint64_t seek_id;           // generation set by requester
+    uint64_t settled_seek_id;   // generation echoed back on completion
 };
 
 struct PictureBuffer {

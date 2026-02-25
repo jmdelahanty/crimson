@@ -39,6 +39,25 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     data_.eye_mask_height = 0;
     data_.eye_mask_width = 0;
 
+    // Clear refined keypoint quality fields
+    data_.is_refined_keypoints = false;
+    data_.refined_keypoints_run_name.clear();
+    data_.flat_keypoint_quality_labels.clear();
+    data_.flat_keypoint_reason.clear();
+    data_.flat_keypoint_flip_corrected.clear();
+    data_.flat_keypoint_usable.clear();
+    data_.flat_keypoint_confidence_valid.clear();
+    data_.flat_keypoint_geometry_valid.clear();
+    data_.flat_keypoint_refined_success.clear();
+    data_.flat_keypoint_detection_source.clear();
+    data_.kp_review_state.clear();
+    data_.kp_review_method.clear();
+    data_.kp_review_intended_use.clear();
+    data_.kp_review_timestamp.clear();
+    data_.kp_review_reviewer.clear();
+    data_.kp_review_notes.clear();
+    data_.has_kp_review_status = false;
+
     if (data_.layout != ZarrLayoutType::kPaletteRuns) {
         return false;
     }
@@ -52,11 +71,34 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
         return false;
     }
 
+    // Phase 1: Try refined_keypoints_runs (preferred source)
     std::string latest_run;
-    if (auto group_attrs = readAttrsAny(store, "keypoints_runs")) {
+    bool is_refined_source = false;
+    std::string run_base;
+
+    if (auto group_attrs = readAttrsAny(store, "refined_keypoints_runs")) {
         latest_run = extractLatestRunName(*group_attrs);
+        if (!latest_run.empty()) {
+            is_refined_source = true;
+        }
+    }
+    if (latest_run.empty() && !root_path_.empty()) {
+        auto refined_candidates = collect_runs_fs(
+            root_path_,
+            "refined_keypoints_runs",
+            {"frame_indices", "keypoints_roi", "heading"});
+        if (!refined_candidates.empty()) {
+            latest_run = refined_candidates.back();
+            is_refined_source = true;
+        }
     }
 
+    // Phase 2: Fall back to raw keypoints_runs
+    if (latest_run.empty()) {
+        if (auto group_attrs = readAttrsAny(store, "keypoints_runs")) {
+            latest_run = extractLatestRunName(*group_attrs);
+        }
+    }
     if (latest_run.empty()) {
         if (root_path_.empty()) {
             return false;
@@ -71,7 +113,11 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
         latest_run = candidates.back();
     }
 
-    std::string run_base = "keypoints_runs/" + latest_run + "/";
+    if (is_refined_source) {
+        run_base = "refined_keypoints_runs/" + latest_run + "/";
+    } else {
+        run_base = "keypoints_runs/" + latest_run + "/";
+    }
 
     std::vector<int32_t> kp_frame_indices;
     if (!readInt32Array(store, run_base + "frame_indices", kp_frame_indices)) {
@@ -192,6 +238,24 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
                     lowered.find("swim") != std::string::npos) {
                     swim_index = keypoint_labels_loaded.size() - 1;
                     swim_label_found = true;
+                }
+            }
+        }
+    }
+
+    // Load skeleton edges from pose_schema
+    data_.skeleton_edges.clear();
+    if (run_attrs.has_value() &&
+        run_attrs->contains("pose_schema") &&
+        (*run_attrs)["pose_schema"].is_object()) {
+        const auto& schema = (*run_attrs)["pose_schema"];
+        if (schema.contains("edges") && schema["edges"].is_array()) {
+            for (const auto& edge : schema["edges"]) {
+                if (edge.is_array() && edge.size() == 2 &&
+                    edge[0].is_number_unsigned() && edge[1].is_number_unsigned()) {
+                    size_t a = edge[0].get<size_t>();
+                    size_t b = edge[1].get<size_t>();
+                    data_.skeleton_edges.push_back({a, b});
                 }
             }
         }
@@ -405,6 +469,7 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
 
     std::vector<size_t> frame_cursor(
         data_.frame_offsets.size() > 0 ? data_.frame_offsets.size() - 1 : 0, 0);
+    std::vector<size_t> roi_to_det(roi_count, SIZE_MAX);
     size_t filled = 0;
     size_t finite_keypoint_count = 0;
 
@@ -432,6 +497,7 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
 
         size_t det_index = start + offset;
         frame_cursor[frame]++;
+        roi_to_det[roi_index] = det_index;
 
         data_.mask_roi_indices[det_index] = (roi_ok && roi_offsets.size() >= (roi_index * 2 + 2))
                                                 ? static_cast<int32_t>(roi_index)
@@ -677,6 +743,119 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
                           << std::endl;
             }
         }
+    }
+
+    // Load refined keypoint quality arrays when using refined source
+    if (is_refined_source && data_.has_heading_data) {
+        data_.is_refined_keypoints = true;
+        data_.refined_keypoints_run_name = latest_run;
+
+        // Allocate detection-aligned flat vectors with defaults
+        data_.flat_keypoint_quality_labels.assign(total_detections, -1);
+        data_.flat_keypoint_reason.assign(total_detections, std::string());
+        data_.flat_keypoint_flip_corrected.assign(total_detections, 0);
+        data_.flat_keypoint_usable.assign(total_detections, 0);
+        data_.flat_keypoint_confidence_valid.assign(total_detections, 0);
+        data_.flat_keypoint_geometry_valid.assign(total_detections, 0);
+        data_.flat_keypoint_refined_success.assign(total_detections, 0);
+        data_.flat_keypoint_detection_source.assign(total_detections, 0);
+
+        // Load ROI-aligned quality arrays
+        std::vector<int32_t> roi_quality_labels;
+        readInt32Array(store, run_base + "quality_labels", roi_quality_labels);
+
+        std::vector<std::string> roi_reason;
+        bool reason_loaded = readStringArray(store, run_base + "reason_bytes", roi_reason);
+        if (!reason_loaded) {
+            if (!readStringArray(store, run_base + "reason", roi_reason)) {
+                static bool reason_warned = false;
+                if (!reason_warned) {
+                    std::cout << "[REFINED_KP_WARNING] reason_bytes and reason arrays unavailable for run '"
+                              << latest_run << "'; quality reason display disabled." << std::endl;
+                    reason_warned = true;
+                }
+            }
+        }
+
+        std::vector<uint8_t> roi_flip_corrected;
+        readBoolArray(store, run_base + "flip_corrected", roi_flip_corrected);
+
+        std::vector<uint8_t> roi_usable;
+        readBoolArray(store, run_base + "usable_keypoints", roi_usable);
+
+        std::vector<uint8_t> roi_confidence_valid;
+        readBoolArray(store, run_base + "confidence_valid", roi_confidence_valid);
+
+        std::vector<uint8_t> roi_geometry_valid;
+        readBoolArray(store, run_base + "geometry_valid", roi_geometry_valid);
+
+        std::vector<uint8_t> roi_refined_success;
+        readBoolArray(store, run_base + "refined_success", roi_refined_success);
+
+        std::vector<int32_t> roi_detection_source_i32;
+        std::vector<uint8_t> roi_det_source;
+        if (readInt32Array(store, run_base + "detection_source", roi_detection_source_i32)) {
+            roi_det_source.reserve(roi_detection_source_i32.size());
+            for (int32_t v : roi_detection_source_i32) {
+                roi_det_source.push_back(static_cast<uint8_t>(v));
+            }
+        } else {
+            readBoolArray(store, run_base + "detection_source", roi_det_source);
+        }
+
+        // Scatter ROI arrays → detection-aligned flat vectors using roi_to_det
+        for (size_t roi = 0; roi < roi_count; ++roi) {
+            size_t det = roi_to_det[roi];
+            if (det == SIZE_MAX || det >= total_detections) continue;
+
+            if (roi < roi_quality_labels.size()) {
+                data_.flat_keypoint_quality_labels[det] = roi_quality_labels[roi];
+            }
+            if (roi < roi_reason.size()) {
+                data_.flat_keypoint_reason[det] = roi_reason[roi];
+            }
+            if (roi < roi_flip_corrected.size()) {
+                data_.flat_keypoint_flip_corrected[det] = roi_flip_corrected[roi];
+            }
+            if (roi < roi_usable.size()) {
+                data_.flat_keypoint_usable[det] = roi_usable[roi];
+            }
+            if (roi < roi_confidence_valid.size()) {
+                data_.flat_keypoint_confidence_valid[det] = roi_confidence_valid[roi];
+            }
+            if (roi < roi_geometry_valid.size()) {
+                data_.flat_keypoint_geometry_valid[det] = roi_geometry_valid[roi];
+            }
+            if (roi < roi_refined_success.size()) {
+                data_.flat_keypoint_refined_success[det] = roi_refined_success[roi];
+            }
+            if (roi < roi_det_source.size()) {
+                data_.flat_keypoint_detection_source[det] = roi_det_source[roi];
+            }
+        }
+
+        // Load keypoint_review_status from run attrs (same pattern as detect review)
+        auto run_review_attrs = readAttrsAny(store, run_base);
+        if (run_review_attrs.has_value() &&
+            run_review_attrs->contains("keypoint_review_status") &&
+            (*run_review_attrs)["keypoint_review_status"].is_object()) {
+            const auto& rs = (*run_review_attrs)["keypoint_review_status"];
+            auto str_field = [&](const char* key) -> std::string {
+                if (rs.contains(key) && rs[key].is_string()) return rs[key].get<std::string>();
+                return "";
+            };
+            data_.kp_review_state        = str_field("state");
+            data_.kp_review_method       = str_field("method");
+            data_.kp_review_intended_use = str_field("intended_use");
+            data_.kp_review_timestamp    = str_field("timestamp");
+            data_.kp_review_reviewer     = str_field("reviewer");
+            data_.kp_review_notes        = str_field("notes");
+            data_.has_kp_review_status   = !data_.kp_review_state.empty();
+        }
+
+        std::cout << "  Refined keypoints run '" << latest_run << "' loaded (review: "
+                  << (data_.has_kp_review_status ? data_.kp_review_state : "none") << ")"
+                  << std::endl;
     }
 
     if (!data_.has_eye_masks) {

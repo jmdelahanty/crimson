@@ -216,6 +216,109 @@ std::optional<std::filesystem::path> ResolveAffiliatedVideoPath(
     return std::nullopt;
 }
 
+static std::optional<std::filesystem::path> TryStimulusHintCandidates(
+    const std::filesystem::path& hint,
+    const std::string& archive_path,
+    const std::string& recording_root) {
+    namespace fs = std::filesystem;
+
+    std::vector<fs::path> candidates;
+
+    if (hint.is_absolute()) {
+        candidates.push_back(hint);
+    }
+
+    if (!archive_path.empty()) {
+        fs::path archive_root(archive_path);
+        fs::path archive_parent = archive_root.parent_path();
+        fs::path rec_root = archive_parent;
+        if (!archive_parent.empty() && archive_parent.filename() == "zarr") {
+            rec_root = archive_parent.parent_path();
+        }
+
+        if (!hint.is_absolute()) {
+            candidates.push_back(archive_root / hint);
+            candidates.push_back(archive_parent / hint);
+            if (!rec_root.empty()) {
+                candidates.push_back(rec_root / hint);
+                candidates.push_back(rec_root / "raw" / hint.filename());
+                candidates.push_back(rec_root / hint.filename());
+            }
+        }
+    }
+
+    if (!recording_root.empty()) {
+        fs::path rr(recording_root);
+        if (!hint.is_absolute()) {
+            candidates.push_back(rr / hint);
+            candidates.push_back(rr / "raw" / hint.filename());
+            candidates.push_back(rr / hint.filename());
+        }
+    }
+
+    if (!hint.is_absolute()) {
+        candidates.push_back(hint);
+    }
+
+    for (const auto& candidate : candidates) {
+        if (IsRegularFileNoThrow(candidate) && IsSupportedVideoPath(candidate)) {
+            return candidate;
+        }
+    }
+    for (const auto& candidate : candidates) {
+        if (IsRegularFileNoThrow(candidate)) {
+            return candidate;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::filesystem::path> ResolveStimulusVideoPath(
+    const std::string& stimulus_video_hint,
+    const std::string& source_h5_hint,
+    const std::string& archive_path,
+    const std::string& recording_root) {
+    namespace fs = std::filesystem;
+
+    // Strategy 1: Direct path from source_stimulus_video_path attr
+    if (!stimulus_video_hint.empty()) {
+        auto result = TryStimulusHintCandidates(
+            fs::path(stimulus_video_hint), archive_path, recording_root);
+        if (result.has_value()) {
+            return result;
+        }
+    }
+
+    // Strategy 2: Derive .mp4 from source_h5 attr
+    if (!source_h5_hint.empty()) {
+        fs::path h5_path(source_h5_hint);
+        fs::path mp4_path = h5_path;
+        mp4_path.replace_extension(".mp4");
+        auto result = TryStimulusHintCandidates(mp4_path, archive_path, recording_root);
+        if (result.has_value()) {
+            return result;
+        }
+    }
+
+    // Strategy 3: Filesystem scan of recording_root/raw/ for any .mp4
+    if (!recording_root.empty()) {
+        fs::path raw_dir = fs::path(recording_root) / "raw";
+        if (IsDirectoryNoThrow(raw_dir)) {
+            std::error_code ec;
+            for (auto it = fs::directory_iterator(raw_dir, ec);
+                 it != fs::directory_iterator(); it.increment(ec)) {
+                if (ec) break;
+                if (it->is_regular_file(ec) && !ec &&
+                    IsSupportedVideoPath(it->path())) {
+                    return it->path();
+                }
+            }
+        }
+    }
+
+    return std::nullopt;
+}
+
 std::filesystem::path InferRecordingRootPath(
     const std::filesystem::path& video_path,
     const std::string& archive_path) {

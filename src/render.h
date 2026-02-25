@@ -20,7 +20,7 @@ struct CameraResources {
     GLuint image_texture = 0;
     PBO_CUDA pbo_cuda = {};
     PictureBuffer *display_buffer = nullptr;
-    SeekInfo seek_context = {false, false, 0, false};
+    SeekInfo seek_context = {false, false, 0, false, 0, 0};
 };
 
 struct render_scene
@@ -58,6 +58,9 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
         scene->cameras[j].seek_context.use_seek = false;
         scene->cameras[j].seek_context.seek_frame = 0;
         scene->cameras[j].seek_context.seek_done = false;
+        scene->cameras[j].seek_context.seek_accurate = false;
+        scene->cameras[j].seek_context.seek_id = 0;
+        scene->cameras[j].seek_context.settled_seek_id = 0;
     }
 
     for (u32 j = 0; j < num_cams; j++)

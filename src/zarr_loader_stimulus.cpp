@@ -35,6 +35,8 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
     std::cout << "  Loading stimulus alignment run '" << latest_run << "'" << std::endl;
     data_.has_stimulus_alignment_data = false;
     data_.stimulus_camera_frame_offset = 0;
+    data_.stimulus_video_path.clear();
+    data_.stimulus_source_h5.clear();
     data_.chaser_transform = ZarrDetectionData::ChaserCoordinateTransform();
 
     // Always attempt to load stimulus event metadata, even if frame alignment
@@ -70,6 +72,15 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
             stimulus_created_at = (*run_attrs)["created_at_utc"].get<std::string>();
         } else if (run_attrs->contains("created_at") && (*run_attrs)["created_at"].is_string()) {
             stimulus_created_at = (*run_attrs)["created_at"].get<std::string>();
+        }
+
+        if (run_attrs->contains("source_stimulus_video_path") &&
+            (*run_attrs)["source_stimulus_video_path"].is_string()) {
+            data_.stimulus_video_path = (*run_attrs)["source_stimulus_video_path"].get<std::string>();
+        }
+        if (run_attrs->contains("source_h5") &&
+            (*run_attrs)["source_h5"].is_string()) {
+            data_.stimulus_source_h5 = (*run_attrs)["source_h5"].get<std::string>();
         }
 
         auto parseCoordinateTransform = [&]() {
