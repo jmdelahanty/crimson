@@ -397,6 +397,11 @@ public:
     bool hasInterpolation() const { return data_.has_interpolation; }
     const std::string& getKeypointsRunName() const { return data_.keypoints_run_name; }
     bool isRefinedKeypoints() const { return data_.is_refined_keypoints; }
+    size_t getKeypointsPerDetection() const { return data_.keypoints_per_detection; }
+    const std::vector<std::string>& getKeypointLabels() const { return data_.keypoint_labels; }
+    const std::vector<std::array<size_t, 2>>& getKeypointSkeletonEdges() const {
+        return data_.skeleton_edges;
+    }
     bool hasKeypointReviewStatus() const { return data_.has_kp_review_status; }
     const std::string& getKeypointReviewState() const { return data_.kp_review_state; }
     const std::string& getKeypointReviewMethod() const { return data_.kp_review_method; }

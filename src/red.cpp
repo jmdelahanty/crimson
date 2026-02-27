@@ -348,6 +348,70 @@ int main(int argc, char **argv) {
     latest_decoded_frame[stimulus_player.window_name].store(-1);
     window_was_decoding[stimulus_player.window_name] = false;
 
+    auto tryAdoptZarrKeypointSkeleton = [&]() {
+        if (plot_keypoints_flag || skeleton_chosen) {
+            return;
+        }
+        if (!zarr_loaded || !zarr_loader.hasKeypointData()) {
+            return;
+        }
+
+        const size_t node_count = zarr_loader.getKeypointsPerDetection();
+        if (node_count == 0) {
+            return;
+        }
+
+        if (!skeleton) {
+            skeleton = std::make_unique<SkeletonContext>();
+        }
+
+        const std::string& run_name = zarr_loader.getKeypointsRunName();
+        skeleton->name = run_name.empty() ? "ZarrKeypoints"
+                                          : "Zarr:" + run_name;
+        skeleton->num_nodes = static_cast<int>(node_count);
+
+        skeleton->node_names.clear();
+        skeleton->node_names.reserve(node_count);
+        const auto& labels = zarr_loader.getKeypointLabels();
+        for (size_t i = 0; i < node_count; ++i) {
+            if (i < labels.size() && !labels[i].empty()) {
+                skeleton->node_names.push_back(labels[i]);
+            } else {
+                skeleton->node_names.push_back("kp" + std::to_string(i));
+            }
+        }
+
+        skeleton->node_colors.clear();
+        skeleton->node_colors.reserve(node_count);
+        for (size_t i = 0; i < node_count; ++i) {
+            ImVec4 color = (ImVec4)ImColor::HSV(
+                static_cast<float>(i) / static_cast<float>(node_count),
+                1.0f, 1.0f);
+            skeleton->node_colors.push_back(color);
+        }
+
+        skeleton->edges.clear();
+        const auto& zarr_edges = zarr_loader.getKeypointSkeletonEdges();
+        for (const auto& edge : zarr_edges) {
+            if (edge[0] < node_count && edge[1] < node_count &&
+                edge[0] != edge[1]) {
+                skeleton->edges.push_back(
+                    {static_cast<int>(edge[0]), static_cast<int>(edge[1])});
+            }
+        }
+        skeleton->num_edges = static_cast<int>(skeleton->edges.size());
+
+        plot_keypoints_flag = true;
+        if (keypoints_root_folder.empty() && !root_dir.empty()) {
+            keypoints_root_folder = root_dir + "/labeled_data/";
+            std::filesystem::create_directory(keypoints_root_folder);
+        }
+
+        std::cout << "[KeypointEditor] Adopted Zarr keypoint schema from run '"
+                  << run_name << "' with " << node_count << " keypoints and "
+                  << skeleton->num_edges << " edges." << std::endl;
+    };
+
     auto loadCameraCalibrationsForCurrentMedia = [&]() {
         if (!video_loaded) {
             return;
@@ -1844,8 +1908,10 @@ int main(int argc, char **argv) {
 
                 if (video_loaded) {
                     if (ImGui::BeginMenu("Skeleton")) {
-                        if (!skeleton_chosen) {
+                        if (!skeleton) {
                             skeleton = std::make_unique<SkeletonContext>();
+                        }
+                        if (skeleton_map.empty()) {
                             skeleton_map = skeleton_get_all();
                         }
 
@@ -2033,6 +2099,8 @@ int main(int argc, char **argv) {
                 ImGui::TextWrapped("Frame sync: %s", frame_sync_debug_line.c_str());
             }
             ImGui::Separator();
+
+            tryAdoptZarrKeypointSkeleton();
 
             // Check for Labeled Keypoints
             if (plot_keypoints_flag) {
