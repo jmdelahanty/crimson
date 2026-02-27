@@ -299,6 +299,10 @@ int main(int argc, char **argv) {
     std::map<u32, KeyPoints *> keypoints_map;
     bool keypoints_find = false;
     std::map<std::string, SkeletonPrimitive> skeleton_map;
+    std::vector<u32> zarr_keypoint_labeled_frames;
+    std::unordered_map<u32, bool> zarr_keypoint_frame_has_points_cache;
+    std::string zarr_keypoint_cache_signature;
+    bool zarr_keypoint_index_ready = false;
 
     // others
     std::filesystem::path cwd = std::filesystem::current_path();
@@ -348,16 +352,178 @@ int main(int argc, char **argv) {
     latest_decoded_frame[stimulus_player.window_name].store(-1);
     window_was_decoding[stimulus_player.window_name] = false;
 
-    auto tryAdoptZarrKeypointSkeleton = [&]() {
-        if (plot_keypoints_flag || skeleton_chosen) {
+    auto zarrKeypointCacheSignature = [&]() -> std::string {
+        if (!zarr_loaded || !zarr_loader.hasKeypointData()) {
+            return {};
+        }
+        return zarr_loader.getArchivePath() + "|" +
+               zarr_loader.getKeypointsRunName() + "|" +
+               std::to_string(zarr_loader.getKeypointsPerDetection());
+    };
+
+    auto isFrameZarrKeypointLabeled = [&](u32 frame_num) -> bool {
+        const std::string signature = zarrKeypointCacheSignature();
+        if (signature.empty()) {
+            return false;
+        }
+        if (signature != zarr_keypoint_cache_signature) {
+            zarr_keypoint_labeled_frames.clear();
+            zarr_keypoint_frame_has_points_cache.clear();
+            zarr_keypoint_cache_signature = signature;
+            zarr_keypoint_index_ready = false;
+        }
+        auto it = zarr_keypoint_frame_has_points_cache.find(frame_num);
+        if (it != zarr_keypoint_frame_has_points_cache.end()) {
+            return it->second;
+        }
+        if (frame_num >= zarr_loader.getTotalFrames()) {
+            zarr_keypoint_frame_has_points_cache[frame_num] = false;
+            return false;
+        }
+
+        auto details = zarr_loader.getRawDetections(frame_num, false, false);
+        bool has_points = false;
+        if (details.has_keypoints) {
+            size_t node_limit = 0;
+            if (skeleton && skeleton->num_nodes > 0) {
+                node_limit = static_cast<size_t>(skeleton->num_nodes);
+            }
+            for (const auto& kp_set : details.keypoints_pixels) {
+                size_t check_count = node_limit > 0
+                    ? std::min(node_limit, kp_set.size())
+                    : kp_set.size();
+                for (size_t kp_idx = 0; kp_idx < check_count; ++kp_idx) {
+                    if (std::isfinite(kp_set[kp_idx][0]) &&
+                        std::isfinite(kp_set[kp_idx][1])) {
+                        has_points = true;
+                        break;
+                    }
+                }
+                if (has_points) {
+                    break;
+                }
+            }
+        }
+        zarr_keypoint_frame_has_points_cache[frame_num] = has_points;
+        return has_points;
+    };
+
+    auto rebuildZarrKeypointFrameIndex = [&]() {
+        const std::string signature = zarrKeypointCacheSignature();
+        if (signature.empty()) {
+            zarr_keypoint_labeled_frames.clear();
+            zarr_keypoint_frame_has_points_cache.clear();
+            zarr_keypoint_cache_signature.clear();
+            zarr_keypoint_index_ready = false;
             return;
         }
+        if (zarr_keypoint_index_ready &&
+            signature == zarr_keypoint_cache_signature) {
+            return;
+        }
+        zarr_keypoint_labeled_frames.clear();
+        zarr_keypoint_frame_has_points_cache.clear();
+        zarr_keypoint_cache_signature = signature;
+
+        size_t total_frames = zarr_loader.getTotalFrames();
+        zarr_keypoint_labeled_frames.reserve(total_frames);
+        for (u32 frame_num = 0; frame_num < total_frames; ++frame_num) {
+            if (isFrameZarrKeypointLabeled(frame_num)) {
+                zarr_keypoint_labeled_frames.push_back(frame_num);
+            }
+        }
+        zarr_keypoint_index_ready = true;
+    };
+
+    auto ensureFrameKeypointsFromZarr = [&](u32 frame_num) -> bool {
+        if (!zarr_loaded || !zarr_loader.hasKeypointData() || !skeleton ||
+            !scene || scene->num_cams == 0) {
+            return false;
+        }
+        if (keypoints_map.find(frame_num) != keypoints_map.end()) {
+            return true;
+        }
+        if (!isFrameZarrKeypointLabeled(frame_num)) {
+            return false;
+        }
+
+        auto details = zarr_loader.getRawDetections(frame_num, false, false);
+        if (!details.has_keypoints || details.keypoints_pixels.empty()) {
+            return false;
+        }
+
+        int selected_detection = -1;
+        for (size_t det_idx = 0; det_idx < details.keypoints_pixels.size();
+             ++det_idx) {
+            const auto& kp_set = details.keypoints_pixels[det_idx];
+            size_t check_count =
+                std::min(static_cast<size_t>(skeleton->num_nodes), kp_set.size());
+            bool detection_has_points = false;
+            for (size_t kp_idx = 0; kp_idx < check_count; ++kp_idx) {
+                if (std::isfinite(kp_set[kp_idx][0]) &&
+                    std::isfinite(kp_set[kp_idx][1])) {
+                    detection_has_points = true;
+                    break;
+                }
+            }
+            if (detection_has_points) {
+                selected_detection = static_cast<int>(det_idx);
+                break;
+            }
+        }
+
+        if (selected_detection < 0) {
+            return false;
+        }
+
+        KeyPoints* frame_keypoints = (KeyPoints*)malloc(sizeof(KeyPoints));
+        allocate_keypoints(frame_keypoints, scene, skeleton.get());
+
+        const auto& kp_set = details.keypoints_pixels[selected_detection];
+        const double image_h = static_cast<double>(scene->cameras[0].image_height);
+        size_t copy_count =
+            std::min(static_cast<size_t>(skeleton->num_nodes), kp_set.size());
+        bool any_copied = false;
+        for (size_t kp_idx = 0; kp_idx < copy_count; ++kp_idx) {
+            float px = kp_set[kp_idx][0];
+            float py = kp_set[kp_idx][1];
+            if (!std::isfinite(px) || !std::isfinite(py)) {
+                continue;
+            }
+            frame_keypoints->keypoints2d[0][kp_idx].position = {
+                static_cast<double>(px), image_h - static_cast<double>(py)};
+            frame_keypoints->keypoints2d[0][kp_idx].is_labeled = true;
+            frame_keypoints->keypoints2d[0][kp_idx].is_triangulated = false;
+            any_copied = true;
+        }
+
+        if (!any_copied) {
+            free_keypoints(frame_keypoints, scene);
+            return false;
+        }
+
+        keypoints_map[frame_num] = frame_keypoints;
+        return true;
+    };
+
+    auto tryAdoptZarrKeypointSkeleton = [&]() {
         if (!zarr_loaded || !zarr_loader.hasKeypointData()) {
             return;
         }
 
         const size_t node_count = zarr_loader.getKeypointsPerDetection();
         if (node_count == 0) {
+            return;
+        }
+
+        const std::string signature = zarrKeypointCacheSignature();
+        const bool already_adopted =
+            skeleton &&
+            (skeleton->name == "ZarrKeypoints" ||
+             skeleton->name.rfind("Zarr:", 0) == 0) &&
+            static_cast<size_t>(skeleton->num_nodes) == node_count &&
+            signature == zarr_keypoint_cache_signature;
+        if (already_adopted && plot_keypoints_flag) {
             return;
         }
 
@@ -401,7 +567,15 @@ int main(int argc, char **argv) {
         }
         skeleton->num_edges = static_cast<int>(skeleton->edges.size());
 
+        free_all_keypoints(keypoints_map, scene);
+        keypoints_find = false;
+        zarr_keypoint_labeled_frames.clear();
+        zarr_keypoint_frame_has_points_cache.clear();
+        zarr_keypoint_cache_signature = signature;
+        zarr_keypoint_index_ready = false;
+
         plot_keypoints_flag = true;
+        skeleton_chosen = true;
         if (keypoints_root_folder.empty() && !root_dir.empty()) {
             keypoints_root_folder = root_dir + "/labeled_data/";
             std::filesystem::create_directory(keypoints_root_folder);
@@ -2101,13 +2275,26 @@ int main(int argc, char **argv) {
             ImGui::Separator();
 
             tryAdoptZarrKeypointSkeleton();
+            if (plot_keypoints_flag && zarr_loaded && zarr_loader.hasKeypointData()) {
+                ensureFrameKeypointsFromZarr(current_frame_num);
+            }
 
             // Check for Labeled Keypoints
             if (plot_keypoints_flag) {
+                const bool zarr_backed_keypoints =
+                    zarr_loaded && zarr_loader.hasKeypointData();
                 if (keypoints_map.count(current_frame_num)) {
-                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[Manual] Keypoints:   Found");
+                    ImGui::TextColored(
+                        ImVec4(0.0f, 1.0f, 0.0f, 1.0f),
+                        zarr_backed_keypoints
+                            ? "[Zarr] Keypoints:     Found"
+                            : "[Manual] Keypoints:   Found");
                 } else {
-                    ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "[Manual] Keypoints:   None");
+                    ImGui::TextColored(
+                        ImVec4(1.0f, 0.0f, 0.0f, 1.0f),
+                        zarr_backed_keypoints
+                            ? "[Zarr] Keypoints:     None"
+                            : "[Manual] Keypoints:   None");
                 }
             }
 
@@ -3235,6 +3422,9 @@ int main(int argc, char **argv) {
                     // avail_size);
                     //
                     if (plot_keypoints_flag) {
+                        if (zarr_loaded && zarr_loader.hasKeypointData()) {
+                            ensureFrameKeypointsFromZarr(current_frame_num);
+                        }
                         if (keypoints_map.find(current_frame_num) ==
                             keypoints_map.end()) {
                             keypoints_find = false;
@@ -6250,14 +6440,33 @@ struct StateOverlay {
                 }
 
                 ImGui::Separator();
-                const bool has_labeled_frames = !keypoints_map.empty();
+                const bool zarr_backed_keypoints =
+                    zarr_loaded && zarr_loader.hasKeypointData();
+                if (zarr_backed_keypoints) {
+                    rebuildZarrKeypointFrameIndex();
+                }
+                const size_t total_labeled_frames = zarr_backed_keypoints
+                    ? zarr_keypoint_labeled_frames.size()
+                    : keypoints_map.size();
+                const bool has_labeled_frames = total_labeled_frames > 0;
                 u32 next_labeled_frame = 0;
                 if (has_labeled_frames) {
-                    auto upper_it = keypoints_map.upper_bound(current_frame_num);
-                    if (upper_it == keypoints_map.end()) {
-                        upper_it = keypoints_map.begin();
+                    if (zarr_backed_keypoints) {
+                        auto upper_it = std::upper_bound(
+                            zarr_keypoint_labeled_frames.begin(),
+                            zarr_keypoint_labeled_frames.end(),
+                            static_cast<u32>(current_frame_num));
+                        if (upper_it == zarr_keypoint_labeled_frames.end()) {
+                            upper_it = zarr_keypoint_labeled_frames.begin();
+                        }
+                        next_labeled_frame = *upper_it;
+                    } else {
+                        auto upper_it = keypoints_map.upper_bound(current_frame_num);
+                        if (upper_it == keypoints_map.end()) {
+                            upper_it = keypoints_map.begin();
+                        }
+                        next_labeled_frame = upper_it->first;
                     }
-                    next_labeled_frame = upper_it->first;
                     ImGui::Text("Next labeled frame : %u",
                                 static_cast<unsigned int>(next_labeled_frame));
                 } else {
@@ -6269,7 +6478,7 @@ struct StateOverlay {
                     seekToFrame(next_labeled_frame, true);
                 }
                 ImGui::EndDisabled();
-                ImGui::Text("Total labeled frames : %zu", keypoints_map.size());
+                ImGui::Text("Total labeled frames : %zu", total_labeled_frames);
             }
             ImGui::End();
         }
