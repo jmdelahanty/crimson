@@ -97,11 +97,12 @@ Planned module boundaries:
 ### Phase 0: Lock Behavioral Parity Spec
 
 - [x] P0.1 Create a behavior matrix from existing CSV editor codepaths
-- [ ] P0.2 Resolve and document current help-text mismatch for `A/D` semantics
-- [ ] P0.3 Add parity test checklist (manual + automated smoke hooks)
+- [x] P0.2 Resolve and document current help-text mismatch for `A/D` semantics (`A` decrements, `D` increments)
+- [x] P0.3 Add parity test checklist (manual + automated smoke hooks)
 
 Phase 0 artifact:
 - `docs/crimson_keypoint_editor_parity_matrix.md`
+- `docs/crimson_keypoint_editor_smoke_checklist.md`
 
 Definition of done:
 - A written parity matrix exists and is referenced by implementation/review.

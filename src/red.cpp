@@ -7455,8 +7455,8 @@ struct StateOverlay {
                 ImGui::SeparatorText("While hovering image");
                 ImGui::Text("<c>: create keypoints on frame");
                 ImGui::Text("<w>: drop active keypoint");
-                ImGui::Text("<a>: active keypoint++ ");
-                ImGui::Text("<d>: active keypoint--");
+                ImGui::Text("<a>: active keypoint--");
+                ImGui::Text("<d>: active keypoint++");
                 ImGui::Text("<q>: active keypoint set to first node");
                 ImGui::Text("<e>: active keypoint set to last node");
                 ImGui::Text("<t> -> triangulate");

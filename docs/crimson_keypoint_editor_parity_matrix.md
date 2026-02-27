@@ -50,7 +50,7 @@ The standalone editor must match the existing CSV editor behavior and keybinding
 | ID | Edge Case | Expected Behavior for Parity | Current Behavior | Anchor |
 |---|---|---|---|---|
 | KP-EDGE-001 | `Jump to Next Labeled Frame` when `keypoints_map` empty | No crash; show disabled button or explanatory text | Unsafe dereference of `begin()` when empty | `src/red.cpp:6224-6233` |
-| KP-EDGE-002 | Help text for `A/D` matches actual behavior | Help text must match implementation | Help currently inverted relative to code (`A` decrements, `D` increments) | `src/red.cpp:5102-5114`, `src/red.cpp:7458-7459` |
+| KP-EDGE-002 | Help text for `A/D` matches actual behavior | Help text must match implementation | Resolved in P0.2: help text now matches code (`A` decrements, `D` increments) | `src/red.cpp:5102-5114`, `src/red.cpp:7458-7459` |
 | KP-EDGE-003 | Concurrent CSV load safety | Deterministic loading without shared-map races | Per-camera threads mutate shared `keypoints_map` without synchronization | `src/gui.h:963-980` |
 | KP-EDGE-004 | `find_most_recent_labels` when no dated folders | Return error and preserve existing state | Returns explicit error message (expected) | `src/gui.h:857-863` |
 
@@ -59,4 +59,3 @@ The standalone editor must match the existing CSV editor behavior and keybinding
 1. Every parity row in `KP-PAR-*` is testable and traced to current source lines.
 2. Known deviations/bugs are captured in `KP-EDGE-*` and linked to source lines.
 3. Standalone Zarr editor implementation must explicitly reference this matrix for sign-off.
-
