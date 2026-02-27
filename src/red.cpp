@@ -50,6 +50,7 @@ simplelogger::Logger *logger =
 
 #include "ui_path_config.h"
 #include "zarr_bbox_edit.h"
+#include "keypoint_editor_core.h"
 
 std::vector<std::mutex> g_mutexes(MAX_VIEWS);
 std::vector<std::condition_variable> g_cvs(MAX_VIEWS);
@@ -5063,79 +5064,38 @@ struct StateOverlay {
                             if (ImPlot::IsPlotHovered()) {
                                 is_view_focused[j] = true;
 
-                                if (ImGui::IsKeyPressed(ImGuiKey_C, false)) {
-                                    // create keypoints
-                                    if (!keypoints_find) {
-                                        // not found
-                                        KeyPoints *keypoints =
-                                            (KeyPoints *)malloc(
-                                                sizeof(KeyPoints));
-                                        allocate_keypoints(keypoints, scene,
-                                                           skeleton.get());
-                                        keypoints_map[current_frame_num] =
-                                            keypoints;
-                                    }
-                                }
+                                KeypointEditorPlotHotkeys keypoint_hotkeys;
+                                keypoint_hotkeys.create_frame =
+                                    ImGui::IsKeyPressed(ImGuiKey_C, false);
+                                keypoint_hotkeys.drop_active_keypoint =
+                                    ImGui::IsKeyPressed(ImGuiKey_W, false);
+                                keypoint_hotkeys.active_prev =
+                                    ImGui::IsKeyPressed(ImGuiKey_A, true);
+                                keypoint_hotkeys.active_next =
+                                    ImGui::IsKeyPressed(ImGuiKey_D, true);
+                                keypoint_hotkeys.active_last =
+                                    ImGui::IsKeyPressed(ImGuiKey_E, false);
+                                keypoint_hotkeys.active_first =
+                                    ImGui::IsKeyPressed(ImGuiKey_Q, false);
+                                keypoint_hotkeys.delete_frame =
+                                    ImGui::IsKeyPressed(ImGuiKey_Backspace,
+                                                        false);
 
-                                if (keypoints_find) {
-                                    u32 *kp = &(keypoints_map[current_frame_num]
-                                                    ->active_id[j]);
-                                    if (ImGui::IsKeyPressed(ImGuiKey_W,
-                                                            false)) {
-                                        // labeling sequentially each view
-                                        ImPlotPoint mouse =
-                                            ImPlot::GetPlotMousePos();
-                                        keypoints_map[current_frame_num]
-                                            ->keypoints2d[j][*kp]
-                                            .position = {mouse.x, mouse.y};
-                                        keypoints_map[current_frame_num]
-                                            ->keypoints2d[j][*kp]
-                                            .is_labeled = true;
-                                        keypoints_map[current_frame_num]
-                                            ->keypoints2d[j][*kp]
-                                            .is_triangulated = false;
-                                        if (*kp < (skeleton->num_nodes - 1)) {
-                                            (*kp)++;
-                                        }
-                                    }
+                                ImPlotPoint mouse = ImPlot::GetPlotMousePos();
+                                KeypointEditorPlotInput keypoint_input;
+                                keypoint_input.frame_num = current_frame_num;
+                                keypoint_input.view_idx = j;
+                                keypoint_input.mouse_x = mouse.x;
+                                keypoint_input.mouse_y = mouse.y;
+                                keypoint_input.frame_has_keypoints =
+                                    keypoints_find;
 
-                                    if (ImGui::IsKeyPressed(ImGuiKey_A, true)) {
-                                        if (*kp <= 0) {
-                                            *kp = 0;
-                                        } else
-                                            (*kp)--;
-                                    }
-
-                                    if (ImGui::IsKeyPressed(ImGuiKey_D, true)) {
-                                        if (*kp >= skeleton->num_nodes - 1) {
-                                            *kp = skeleton->num_nodes - 1;
-                                        } else
-                                            (*kp)++;
-                                    }
-
-                                    if (ImGui::IsKeyPressed(
-                                            ImGuiKey_E,
-                                            false)) // skip to the last keypoint
-                                    {
-                                        *kp = skeleton->num_nodes - 1;
-                                    }
-
-                                    if (ImGui::IsKeyPressed(
-                                            ImGuiKey_Q,
-                                            false)) // go to the first keypoint
-                                    {
-                                        *kp = 0;
-                                    }
-
-                                    // delete all keypoint on a frame
-                                    if (ImGui::IsKeyPressed(ImGuiKey_Backspace,
-                                                            false)) {
-                                        free_keypoints(
-                                            keypoints_map[current_frame_num],
-                                            scene);
-                                        keypoints_map.erase(current_frame_num);
-                                        keypoints_find = false;
-                                    }
+                                KeypointEditorPlotResult keypoint_result =
+                                    HandleKeypointEditorPlotHotkeys(
+                                        keypoint_hotkeys, keypoint_input,
+                                        keypoints_map, skeleton.get(), scene);
+                                if (keypoint_result.frame_deleted) {
+                                    keypoints_find = false;
                                 }
                             } else {
                                 is_view_focused[j] = false;

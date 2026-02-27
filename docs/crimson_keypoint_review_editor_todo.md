@@ -109,8 +109,8 @@ Definition of done:
 
 ### Phase 1: Extract Reusable Editor Core
 
-- [ ] P1.1 Introduce `keypoint_editor_core` state/actions API
-- [ ] P1.2 Move CSV keybinding/action logic behind core calls (no behavior change)
+- [x] P1.1 Introduce `keypoint_editor_core` state/actions API
+- [x] P1.2 Move CSV keybinding/action logic behind core calls (no behavior change)
 - [ ] P1.3 Move drag/delete hover state out of function-static locals into explicit editor state
 - [ ] P1.4 Add guardrail fixes discovered during extraction:
   - empty-map safety for "jump to next labeled frame"
