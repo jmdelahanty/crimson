@@ -6249,16 +6249,26 @@ struct StateOverlay {
                         config);
                 }
 
-                auto upper_it = keypoints_map.upper_bound(current_frame_num);
-                if (upper_it == keypoints_map.end()) {
-                    upper_it = keypoints_map.begin();
+                ImGui::Separator();
+                const bool has_labeled_frames = !keypoints_map.empty();
+                u32 next_labeled_frame = 0;
+                if (has_labeled_frames) {
+                    auto upper_it = keypoints_map.upper_bound(current_frame_num);
+                    if (upper_it == keypoints_map.end()) {
+                        upper_it = keypoints_map.begin();
+                    }
+                    next_labeled_frame = upper_it->first;
+                    ImGui::Text("Next labeled frame : %u",
+                                static_cast<unsigned int>(next_labeled_frame));
+                } else {
+                    ImGui::TextUnformatted("Next labeled frame : N/A");
                 }
 
-                ImGui::Separator();
-                ImGui::Text("Next labeled frame : %d", (*upper_it).first);
+                ImGui::BeginDisabled(!has_labeled_frames);
                 if (ImGui::Button("Jump to Next Labeled Frame")) {
-                    seekToFrame((*upper_it).first, true);
+                    seekToFrame(next_labeled_frame, true);
                 }
+                ImGui::EndDisabled();
                 ImGui::Text("Total labeled frames : %zu", keypoints_map.size());
             }
             ImGui::End();
