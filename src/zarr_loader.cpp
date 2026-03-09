@@ -133,6 +133,10 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
             } else {
                 std::cout << "  No keypoint heading data available" << std::endl;
             }
+
+            if (!loadEyeMaskData(store)) {
+                std::cout << "  No eye mask data available" << std::endl;
+            }
         } else {
             std::cout << "  detect_runs layout not found; opening in metadata/stimulus-only mode"
                       << std::endl;
@@ -1738,4 +1742,3 @@ bool ZarrDetectionLoader::loadRefinedDetectRuns(const ts::kvstore::KvStore& stor
               << "' does not contain interpolated outputs" << std::endl;
     return false;
 }
-

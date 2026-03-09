@@ -147,6 +147,9 @@ struct ZarrDetectionData {
     size_t keypoints_per_detection = 0;
     std::vector<std::string> keypoint_labels;
     std::vector<std::array<size_t, 2>> skeleton_edges;  // from pose_schema.edges
+    std::vector<int32_t> keypoint_roi_frame_indices;       // roi row -> frame
+    std::vector<int32_t> keypoint_detection_index_by_roi;  // roi row -> detection index
+    std::vector<int32_t> keypoint_roi_index_by_detection;  // detection index -> roi row
 
     // Refined keypoint quality metadata (detection-aligned, same indexing as flat_keypoints_px)
     bool is_refined_keypoints = false;
@@ -183,16 +186,27 @@ struct ZarrDetectionData {
     size_t eye_mask_height = 0;
     size_t eye_mask_width = 0;
     size_t eye_mask_chunk_rows = 0;
+    std::vector<int32_t> eye_mask_frame_indices;
+    std::vector<int32_t> eye_mask_detection_indices;
+    std::string eye_masks_source_crop_run;
+    std::vector<int32_t> eye_mask_roi_index_by_detection;
+    std::vector<float> eye_mask_offset_x;
+    std::vector<float> eye_mask_offset_y;
+    std::vector<float> eye_mask_roi_width_px;
+    std::vector<float> eye_mask_roi_height_px;
+    std::vector<std::array<std::array<float, 5>, 2>> eye_mask_ellipse_params;
+    std::vector<std::array<uint8_t, 2>> eye_mask_ellipse_success;
     std::vector<std::array<std::array<float, 4>, 2>> eye_mask_feret_axes_major;
     std::vector<std::array<std::array<float, 4>, 2>> eye_mask_feret_axes_minor;
-   bool eye_masks_have_feret_axes = false;
-   struct EyeMaskChunkCacheEntry {
-       size_t chunk_id = std::numeric_limits<size_t>::max();
-       size_t chunk_start = 0;
-       size_t chunk_length = 0;
-       std::vector<std::array<std::vector<uint16_t>, 2>> pixel_indices;
-   };
-   mutable std::vector<EyeMaskChunkCacheEntry> mask_chunk_cache;
+    bool eye_masks_have_ellipse_fits = false;
+    bool eye_masks_have_feret_axes = false;
+    struct EyeMaskChunkCacheEntry {
+        size_t chunk_id = std::numeric_limits<size_t>::max();
+        size_t chunk_start = 0;
+        size_t chunk_length = 0;
+        std::vector<std::array<std::vector<uint32_t>, 2>> pixel_indices;
+    };
+    mutable std::vector<EyeMaskChunkCacheEntry> mask_chunk_cache;
 
     bool has_eye_angles = false;
     std::string eye_angle_run_name;
@@ -348,6 +362,21 @@ struct ManualWriteReviewOptions {
     std::string notes;     // empty = omitted from payload
 };
 
+struct ManualKeypointRoiWrite {
+    int32_t roi_index = -1;
+    std::vector<std::array<double, 2>> keypoints_roi;
+    bool mark_fish_present_no_keypoints = false;
+    bool mark_detection_issue = false;
+};
+
+struct KeypointReviewStatusOptions {
+    std::string intended_use = "full_recording";
+    std::string state = "approved";
+    std::string method = "manual";
+    std::string reviewer;  // empty = omitted
+    std::string notes;     // empty = omitted
+};
+
 class ZarrDetectionLoader {
 public:
     ZarrDetectionLoader();
@@ -402,6 +431,18 @@ public:
     const std::vector<std::array<size_t, 2>>& getKeypointSkeletonEdges() const {
         return data_.skeleton_edges;
     }
+    const std::vector<int32_t>& getKeypointRoiFrameIndices() const {
+        return data_.keypoint_roi_frame_indices;
+    }
+    int32_t getKeypointRoiIndexForDetection(size_t detection_index) const;
+    std::optional<size_t> getDetectionIndexForKeypointRoi(size_t roi_index) const;
+    std::optional<size_t> getGlobalDetectionIndex(size_t frame_id,
+                                                  size_t frame_detection_index,
+                                                  bool use_interpolated = false) const;
+    std::optional<int32_t> getKeypointRoiIndexForFrameDetection(
+        size_t frame_id,
+        size_t frame_detection_index,
+        bool use_interpolated = false) const;
     bool hasKeypointReviewStatus() const { return data_.has_kp_review_status; }
     const std::string& getKeypointReviewState() const { return data_.kp_review_state; }
     const std::string& getKeypointReviewMethod() const { return data_.kp_review_method; }
@@ -661,6 +702,7 @@ public:
         std::vector<uint8_t> keypoint_usable;
         std::vector<uint8_t> keypoint_refined_success;
         std::vector<uint8_t> keypoint_detection_source;
+        std::vector<int32_t> keypoint_roi_indices;
         struct EyeMask {
             bool valid = false;
             int rows = 0;
@@ -670,7 +712,7 @@ public:
             float roi_width = 0.0f;
             float roi_height = 0.0f;
             int32_t roi_index = -1;
-            std::array<std::vector<uint16_t>, 2> pixel_indices;
+            std::array<std::vector<uint32_t>, 2> pixel_indices;
             struct AxisSegment {
                 bool valid = false;
                 float x0 = 0.0f;
@@ -678,6 +720,16 @@ public:
                 float x1 = 0.0f;
                 float y1 = 0.0f;
             };
+            struct FittedEllipse {
+                bool valid = false;
+                float center_x = 0.0f;
+                float center_y = 0.0f;
+                float major_axis = 0.0f;
+                float minor_axis = 0.0f;
+                float angle_deg = 0.0f;
+            };
+            std::array<FittedEllipse, 2> fitted_ellipses;
+            bool has_fitted_ellipses = false;
             std::array<AxisSegment, 2> feret_major;
             std::array<AxisSegment, 2> feret_minor;
             bool has_feret_axes = false;
@@ -692,7 +744,8 @@ public:
     };
     FrameDetections getRawDetections(size_t frame_id,
                                      bool use_interpolated = true,
-                                     bool include_eye_masks = false) const;
+                                     bool include_eye_masks = false,
+                                     bool include_eye_mask_pixels = true) const;
 
     bool hasHeadingData() const { return data_.has_heading_data; }
     bool hasKeypointData() const { return data_.has_keypoints; }
@@ -717,6 +770,14 @@ public:
         std::string& error_message,
         std::string* resolved_refined_run = nullptr,
         const ManualWriteReviewOptions& review_options = ManualWriteReviewOptions{});
+    bool writeManualRefinedKeypoints(
+        const std::vector<ManualKeypointRoiWrite>& roi_writes,
+        std::string& error_message,
+        std::vector<int32_t>* changed_roi_indices = nullptr);
+    bool setKeypointReviewStatus(
+        const KeypointReviewStatusOptions& options,
+        std::string& error_message,
+        std::string* resolved_refined_run = nullptr);
     
     // Static helper to find zarr files in a directory
     static std::optional<std::string> findZarrDetectionFile(const std::string& directory);
@@ -780,11 +841,15 @@ private:
                                      const std::string& run_name,
                                      const std::string& subgroup);
     bool loadKeypointHeadingData(const ts::kvstore::KvStore& store);
-    bool loadRefinedEyeMaskData(const ts::kvstore::KvStore& store, size_t roi_count);
+    void clearEyeMaskData();
+    bool loadEyeMaskData(const ts::kvstore::KvStore& store);
+    bool loadRefinedEyeMaskData(const ts::kvstore::KvStore& store, size_t expected_roi_count);
     const ZarrDetectionData::EyeMaskChunkCacheEntry* findEyeMaskChunk(size_t chunk_id) const;
     bool ensureEyeMaskChunk(size_t chunk_id, bool allow_prefetch = true) const;
     void prefetchAdjacentEyeMaskChunks(size_t chunk_id) const;
-    bool populateEyeMaskEntry(size_t roi_index, FrameDetections::EyeMask& out_mask) const;
+    bool populateEyeMaskEntry(size_t roi_index,
+                              FrameDetections::EyeMask& out_mask,
+                              bool include_mask_pixels = true) const;
     bool loadMovementData(const ts::kvstore::KvStore& store);
     bool loadSpeedRunMovement(const ts::kvstore::KvStore& store);
     bool loadLegacyMovementData(const ts::kvstore::KvStore& store);

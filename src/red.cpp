@@ -239,7 +239,8 @@ int main(int argc, char **argv) {
     bool plot_keypoints_flag = false;
     bool show_keypoint_markers = true;
     bool show_heading_arrows = true;
-    bool show_eye_masks = false;
+    bool show_eye_ellipses = true;
+    bool show_eye_mask_pixels = false;
     int current_frame_num = 0;
     bool skeleton_chosen = false;
     std::vector<std::string> imgs_names;
@@ -2818,9 +2819,13 @@ int main(int argc, char **argv) {
                     eyeMaskDebugLog("Eye mask overlay toggle re-enabled; attempting to draw masks.");
                     eye_mask_debug_logged_toggle_disabled = false;
                 }
-                ImGui::Checkbox("Show refined eye masks", &show_eye_masks);
+                ImGui::Checkbox("Show fitted eye ellipses", &show_eye_ellipses);
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Visualize refined eye masks as semi-transparent overlays.");
+                    ImGui::SetTooltip("Draw fitted ellipse and axis overlays from refined eye masks.");
+                }
+                ImGui::Checkbox("Show eye mask pixels", &show_eye_mask_pixels);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Draw per-pixel eye mask overlays. This is heavier than ellipse-only drawing.");
                 }
                 if (!zarr_loader.getEyeMaskRunName().empty()) {
                     ImGui::Text("  Eye mask run: %s",
@@ -4732,7 +4737,10 @@ struct StateOverlay {
 
                             const bool heading_overlay_enabled = show_heading_arrows;
                             const bool heading_data_available = zarr_loader.hasHeadingData();
-                            const bool eye_mask_overlay_enabled = show_eye_masks;
+                            const bool eye_ellipse_overlay_enabled = show_eye_ellipses;
+                            const bool eye_mask_pixel_overlay_enabled = show_eye_mask_pixels;
+                            const bool eye_mask_overlay_enabled =
+                                eye_ellipse_overlay_enabled || eye_mask_pixel_overlay_enabled;
                             const bool eye_mask_data_available = zarr_loader.hasEyeMasks();
                             const bool can_draw_headings =
                                 heading_overlay_enabled && heading_data_available;
@@ -4776,7 +4784,7 @@ struct StateOverlay {
                             }
 
                             if (kEyeMaskDebugLoggingEnabled) {
-                                if (!show_eye_masks) {
+                                if (!eye_mask_overlay_enabled) {
                                     if (!eye_mask_debug_logged_toggle_disabled) {
                                         eyeMaskDebugLog("Eye mask overlay disabled via UI toggle; skipping mask drawing.");
                                         eye_mask_debug_logged_toggle_disabled = true;
@@ -4974,7 +4982,8 @@ struct StateOverlay {
                                     zarr_loader.getRawDetections(
                                         current_frame_num,
                                         /*use_interpolated=*/false,
-                                        /*include_eye_masks=*/true);
+                                        /*include_eye_masks=*/true,
+                                        /*include_eye_mask_pixels=*/eye_mask_pixel_overlay_enabled);
                                 if (mask_details.includes_eye_masks) {
                                     size_t mask_count =
                                         std::min(mask_details.eye_masks.size(),
@@ -5056,10 +5065,36 @@ struct StateOverlay {
                                             }
                                             double cell_w = mask_info.roi_width / static_cast<double>(mask_info.cols);
                                             double cell_h = mask_info.roi_height / static_cast<double>(mask_info.rows);
+                                            auto roiToWorld =
+                                                [&](float roi_x, float roi_y) -> std::pair<double, double> {
+                                                    double px = mask_info.offset_x +
+                                                                static_cast<double>(roi_x) * cell_w;
+                                                    double py = mask_info.offset_y +
+                                                                static_cast<double>(roi_y) * cell_h;
+                                                    return {px, py};
+                                                };
+                                            auto worldToScene =
+                                                [&](double world_x, double world_y) -> std::pair<double, double> {
+                                                    return {world_x, scene_height_f - world_y};
+                                                };
+                                            auto roiToScene =
+                                                [&](float roi_x, float roi_y) -> std::pair<double, double> {
+                                                    auto world = roiToWorld(roi_x, roi_y);
+                                                    return worldToScene(world.first, world.second);
+                                                };
                                             for (int eye = 0; eye < 2; ++eye) {
                                                 const auto& pixel_indices = mask_info.pixel_indices[eye];
                                                 bool has_pixels = !pixel_indices.empty();
-                                                if (!has_pixels) {
+                                                const bool draw_pixel_overlay =
+                                                    eye_mask_pixel_overlay_enabled && has_pixels;
+                                                const bool draw_shape_overlay =
+                                                    eye_ellipse_overlay_enabled &&
+                                                    (mask_info.has_fitted_ellipses ||
+                                                     mask_info.has_feret_axes);
+                                                if (!draw_pixel_overlay && !draw_shape_overlay) {
+                                                    continue;
+                                                }
+                                                if (eye_mask_pixel_overlay_enabled && !has_pixels) {
                                                     if (kEyeMaskDebugLoggingEnabled && eye_mask_debug_draw_log_count < 80) {
                                                         eyeMaskDebugLog("Frame " + std::to_string(current_frame_num) +
                                                                         ": mask entry " + std::to_string(det_idx) +
@@ -5067,7 +5102,9 @@ struct StateOverlay {
                                                                         " has no non-zero pixels.");
                                                         eye_mask_debug_draw_log_count++;
                                                     }
-                                                } else if (kEyeMaskDebugLoggingEnabled && eye_mask_debug_draw_log_count < 80) {
+                                                } else if (draw_pixel_overlay &&
+                                                           kEyeMaskDebugLoggingEnabled &&
+                                                           eye_mask_debug_draw_log_count < 80) {
                                                     eyeMaskDebugLog("Frame " + std::to_string(current_frame_num) +
                                                                     ": drawing eye mask det " + std::to_string(det_idx) +
                                                                     " eye=" + std::to_string(eye) +
@@ -5087,12 +5124,14 @@ struct StateOverlay {
 
                                                 std::vector<double> xs;
                                                 std::vector<double> ys;
-                                                if (has_pixels) {
+                                                if (draw_pixel_overlay) {
                                                     xs.reserve(pixel_indices.size());
                                                     ys.reserve(pixel_indices.size());
-                                                    for (uint16_t linear : pixel_indices) {
-                                                        uint16_t row = linear / static_cast<uint16_t>(mask_info.cols);
-                                                        uint16_t col = linear % static_cast<uint16_t>(mask_info.cols);
+                                                    for (uint32_t linear : pixel_indices) {
+                                                        uint32_t row =
+                                                            linear / static_cast<uint32_t>(mask_info.cols);
+                                                        uint32_t col =
+                                                            linear % static_cast<uint32_t>(mask_info.cols);
                                                         double px = mask_info.offset_x +
                                                                     (static_cast<double>(col) + 0.5) * cell_w;
                                                         double py = mask_info.offset_y +
@@ -5108,21 +5147,62 @@ struct StateOverlay {
                                                     }
                                                 }
 
-                                                if (mask_info.has_feret_axes && cell_w > 0.0 && cell_h > 0.0) {
-                                                    auto roiToWorld = [&](float roi_x, float roi_y) -> std::pair<double, double> {
-                                                        double px = mask_info.offset_x +
-                                                                    static_cast<double>(roi_x) * cell_w;
-                                                        double py = mask_info.offset_y +
-                                                                    static_cast<double>(roi_y) * cell_h;
-                                                        return {px, py};
-                                                    };
-                                                    auto worldToScene = [&](double world_x, double world_y) -> std::pair<double, double> {
-                                                        return {world_x, scene_height_f - world_y};
-                                                    };
-                                                    auto roiToScene = [&](float roi_x, float roi_y) -> std::pair<double, double> {
-                                                        auto world = roiToWorld(roi_x, roi_y);
-                                                        return worldToScene(world.first, world.second);
-                                                    };
+                                                if (eye_ellipse_overlay_enabled &&
+                                                    mask_info.has_fitted_ellipses &&
+                                                    cell_w > 0.0 && cell_h > 0.0) {
+                                                    const auto& ellipse = mask_info.fitted_ellipses[eye];
+                                                    if (ellipse.valid) {
+                                                        constexpr int kEllipseSamples = 65;
+                                                        constexpr double kPi = 3.14159265358979323846;
+                                                        std::array<double, kEllipseSamples> ellipse_x = {};
+                                                        std::array<double, kEllipseSamples> ellipse_y = {};
+                                                        const double angle_rad =
+                                                            static_cast<double>(ellipse.angle_deg) * kPi / 180.0;
+                                                        const double cos_angle = std::cos(angle_rad);
+                                                        const double sin_angle = std::sin(angle_rad);
+                                                        const double semi_major =
+                                                            0.5 * static_cast<double>(ellipse.major_axis);
+                                                        const double semi_minor =
+                                                            0.5 * static_cast<double>(ellipse.minor_axis);
+                                                        for (int sample_idx = 0; sample_idx < kEllipseSamples;
+                                                             ++sample_idx) {
+                                                            const double t =
+                                                                (2.0 * kPi * sample_idx) /
+                                                                static_cast<double>(kEllipseSamples - 1);
+                                                            const double cos_t = std::cos(t);
+                                                            const double sin_t = std::sin(t);
+                                                            const double roi_x =
+                                                                static_cast<double>(ellipse.center_x) +
+                                                                semi_major * cos_t * cos_angle -
+                                                                semi_minor * sin_t * sin_angle;
+                                                            const double roi_y =
+                                                                static_cast<double>(ellipse.center_y) +
+                                                                semi_major * cos_t * sin_angle +
+                                                                semi_minor * sin_t * cos_angle;
+                                                            auto scene_pt = roiToScene(
+                                                                static_cast<float>(roi_x),
+                                                                static_cast<float>(roi_y));
+                                                            ellipse_x[sample_idx] = scene_pt.first;
+                                                            ellipse_y[sample_idx] = scene_pt.second;
+                                                        }
+
+                                                        ImVec4 ellipse_color = base_color;
+                                                        ellipse_color.x = std::min(1.0f, ellipse_color.x + 0.2f);
+                                                        ellipse_color.y = std::min(1.0f, ellipse_color.y + 0.2f);
+                                                        ellipse_color.z = std::min(1.0f, ellipse_color.z + 0.2f);
+                                                        ellipse_color.w = 0.95f;
+                                                        ImPlot::SetNextLineStyle(ellipse_color, 2.2f);
+                                                        ImPlot::PlotLine(
+                                                            (base_id + "_ellipse").c_str(),
+                                                            ellipse_x.data(),
+                                                            ellipse_y.data(),
+                                                            kEllipseSamples);
+                                                    }
+                                                }
+
+                                                if (eye_ellipse_overlay_enabled &&
+                                                    mask_info.has_feret_axes &&
+                                                    cell_w > 0.0 && cell_h > 0.0) {
                                                     auto draw_axis =
                                                         [&](const ZarrDetectionLoader::FrameDetections::EyeMask::AxisSegment& axis,
                                                             const std::string& label, const ImVec4& color, float thickness) {
@@ -5619,7 +5699,10 @@ struct StateOverlay {
                             stored_heading_valid = false;
                             if (zarr_loader.hasKeypointData()) {
                                 auto det = zarr_loader.getRawDetections(
-                                    static_cast<size_t>(current_frame_num), false, true);
+                                    static_cast<size_t>(current_frame_num),
+                                    false,
+                                    true,
+                                    false);
                                 size_t matched = SIZE_MAX;
                                 for (size_t di = 0; di < det.eye_masks.size(); ++di) {
                                     if (det.eye_masks[di].roi_index == crop_roi_index) {
@@ -5774,7 +5857,10 @@ struct StateOverlay {
 
                             if (show_crop_keypoints && zarr_loader.hasKeypointData()) {
                                 auto det = zarr_loader.getRawDetections(
-                                    static_cast<size_t>(current_frame_num), false, true);
+                                    static_cast<size_t>(current_frame_num),
+                                    false,
+                                    true,
+                                    false);
 
                                 if (det.has_keypoints && !det.keypoints_pixels.empty() &&
                                     det.includes_eye_masks) {

@@ -1182,8 +1182,85 @@ std::vector<LoggedBoundingBox> ZarrDetectionLoader::getBoundingBoxesForFrame(
     }
 }
 
+int32_t ZarrDetectionLoader::getKeypointRoiIndexForDetection(
+    size_t detection_index) const {
+    if (detection_index >= data_.keypoint_roi_index_by_detection.size()) {
+        return -1;
+    }
+    return data_.keypoint_roi_index_by_detection[detection_index];
+}
+
+std::optional<size_t> ZarrDetectionLoader::getDetectionIndexForKeypointRoi(
+    size_t roi_index) const {
+    if (roi_index >= data_.keypoint_detection_index_by_roi.size()) {
+        return std::nullopt;
+    }
+    const int32_t det = data_.keypoint_detection_index_by_roi[roi_index];
+    if (det < 0) {
+        return std::nullopt;
+    }
+    return static_cast<size_t>(det);
+}
+
+std::optional<size_t> ZarrDetectionLoader::getGlobalDetectionIndex(
+    size_t frame_id,
+    size_t frame_detection_index,
+    bool use_interpolated) const {
+    if (frame_id >= data_.total_frames) {
+        return std::nullopt;
+    }
+    if (!hasDetectionData()) {
+        return std::nullopt;
+    }
+    if (data_.layout != ZarrLayoutType::kPaletteRuns) {
+        return std::nullopt;
+    }
+
+    const bool has_palette_interp =
+        data_.latest_interpolation.uses_palette_layout &&
+        data_.latest_interpolation.is_loaded;
+    const bool want_interpolated = use_interpolated && has_palette_interp;
+
+    const auto& offsets = want_interpolated
+        ? data_.latest_interpolation.frame_offsets
+        : data_.frame_offsets;
+    if (offsets.empty() || frame_id + 1 >= offsets.size()) {
+        return std::nullopt;
+    }
+
+    const size_t start = offsets[frame_id];
+    const size_t end = offsets[frame_id + 1];
+    const size_t global_index = start + frame_detection_index;
+    if (global_index >= end) {
+        return std::nullopt;
+    }
+    return global_index;
+}
+
+std::optional<int32_t> ZarrDetectionLoader::getKeypointRoiIndexForFrameDetection(
+    size_t frame_id,
+    size_t frame_detection_index,
+    bool use_interpolated) const {
+    if (use_interpolated) {
+        return std::nullopt;
+    }
+    auto global_index =
+        getGlobalDetectionIndex(frame_id, frame_detection_index, false);
+    if (!global_index.has_value()) {
+        return std::nullopt;
+    }
+    const int32_t roi = getKeypointRoiIndexForDetection(*global_index);
+    if (roi < 0) {
+        return std::nullopt;
+    }
+    return roi;
+}
+
 ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
-    size_t frame_id, bool use_interpolated, bool include_eye_masks) const {
+    size_t frame_id,
+    bool use_interpolated,
+    bool include_eye_masks,
+    bool include_eye_mask_pixels) const {
     
     FrameDetections result;
     result.frame_id = frame_id;
@@ -1224,11 +1301,12 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
             : data_.has_class_ids;
         const bool can_use_headings =
             data_.has_heading_data && !want_interpolated;
-        const bool has_roi_metadata =
-            !data_.roi_offset_x.empty() && !data_.mask_roi_indices.empty();
         const bool can_use_eye_masks =
             include_eye_masks && !want_interpolated &&
-            ((data_.has_eye_masks && data_.eye_masks_loaded) || has_roi_metadata);
+            data_.has_eye_masks && data_.eye_masks_loaded;
+        const bool can_use_keypoint_roi_map =
+            !want_interpolated &&
+            !data_.keypoint_roi_index_by_detection.empty();
         const bool can_use_keypoints =
             data_.has_keypoints && !want_interpolated &&
             data_.keypoints_per_detection > 0 &&
@@ -1265,6 +1343,9 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                 result.keypoint_refined_success.reserve(end - start);
                 result.keypoint_detection_source.reserve(end - start);
             }
+        }
+        if (can_use_keypoint_roi_map) {
+            result.keypoint_roi_indices.reserve(end - start);
         }
         if (!data_.detection_source_flags.empty()) {
             result.detection_source.reserve(end - start);
@@ -1305,6 +1386,14 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                     result.detection_reason.push_back(data_.detection_reason_flags[idx]);
                 } else {
                     result.detection_reason.emplace_back();
+                }
+            }
+            if (can_use_keypoint_roi_map) {
+                if (idx < data_.keypoint_roi_index_by_detection.size()) {
+                    result.keypoint_roi_indices.push_back(
+                        data_.keypoint_roi_index_by_detection[idx]);
+                } else {
+                    result.keypoint_roi_indices.push_back(-1);
                 }
             }
 
@@ -1376,31 +1465,61 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
 
             if (can_use_eye_masks) {
                 FrameDetections::EyeMask mask_entry;
+                int32_t eye_mask_roi_lookup =
+                    (idx < data_.eye_mask_roi_index_by_detection.size())
+                        ? data_.eye_mask_roi_index_by_detection[idx]
+                        : -1;
                 mask_entry.offset_x =
-                    (idx < data_.roi_offset_x.size()) ? data_.roi_offset_x[idx] : nan_value;
+                    (idx < data_.eye_mask_offset_x.size())
+                        ? data_.eye_mask_offset_x[idx]
+                        : nan_value;
                 mask_entry.offset_y =
-                    (idx < data_.roi_offset_y.size()) ? data_.roi_offset_y[idx] : nan_value;
+                    (idx < data_.eye_mask_offset_y.size())
+                        ? data_.eye_mask_offset_y[idx]
+                        : nan_value;
                 mask_entry.roi_width =
-                    (idx < data_.roi_width_px.size()) ? data_.roi_width_px[idx] : 0.0f;
+                    (idx < data_.eye_mask_roi_width_px.size())
+                        ? data_.eye_mask_roi_width_px[idx]
+                        : 0.0f;
                 mask_entry.roi_height =
-                    (idx < data_.roi_height_px.size()) ? data_.roi_height_px[idx] : 0.0f;
+                    (idx < data_.eye_mask_roi_height_px.size())
+                        ? data_.eye_mask_roi_height_px[idx]
+                        : 0.0f;
                 mask_entry.rows = static_cast<int>(data_.eye_mask_height);
                 mask_entry.cols = static_cast<int>(data_.eye_mask_width);
 
-                int32_t roi_lookup =
+                int32_t keypoint_roi_lookup =
                     (idx < data_.mask_roi_indices.size()) ? data_.mask_roi_indices[idx] : -1;
-                mask_entry.roi_index = roi_lookup;
+                if (eye_mask_roi_lookup < 0) {
+                    eye_mask_roi_lookup = keypoint_roi_lookup;
+                    mask_entry.offset_x =
+                        (idx < data_.roi_offset_x.size()) ? data_.roi_offset_x[idx] : nan_value;
+                    mask_entry.offset_y =
+                        (idx < data_.roi_offset_y.size()) ? data_.roi_offset_y[idx] : nan_value;
+                    mask_entry.roi_width =
+                        (idx < data_.roi_width_px.size()) ? data_.roi_width_px[idx] : 0.0f;
+                    mask_entry.roi_height =
+                        (idx < data_.roi_height_px.size()) ? data_.roi_height_px[idx] : 0.0f;
+                }
+
+                mask_entry.roi_index =
+                    (keypoint_roi_lookup >= 0) ? keypoint_roi_lookup : eye_mask_roi_lookup;
                 bool offsets_valid = std::isfinite(mask_entry.offset_x) && std::isfinite(mask_entry.offset_y);
                 bool dims_valid = (mask_entry.roi_width > 0.0f && mask_entry.roi_height > 0.0f);
 
                 if (data_.has_eye_masks && data_.eye_masks_loaded &&
-                    roi_lookup >= 0 &&
-                    static_cast<size_t>(roi_lookup) < data_.eye_mask_roi_count &&
+                    eye_mask_roi_lookup >= 0 &&
+                    static_cast<size_t>(eye_mask_roi_lookup) < data_.eye_mask_roi_count &&
                     offsets_valid && dims_valid) {
-                    populateEyeMaskEntry(static_cast<size_t>(roi_lookup), mask_entry);
+                    populateEyeMaskEntry(
+                        static_cast<size_t>(eye_mask_roi_lookup),
+                        mask_entry,
+                        include_eye_mask_pixels);
                 }
-                if (data_.has_eye_angles && roi_lookup >= 0) {
-                    size_t roi_idx = static_cast<size_t>(roi_lookup);
+                int32_t eye_angle_roi_lookup =
+                    (keypoint_roi_lookup >= 0) ? keypoint_roi_lookup : eye_mask_roi_lookup;
+                if (data_.has_eye_angles && eye_angle_roi_lookup >= 0) {
+                    size_t roi_idx = static_cast<size_t>(eye_angle_roi_lookup);
                     bool roi_valid = data_.eye_angle_valid_mask.empty() ||
                                      (roi_idx < data_.eye_angle_valid_mask.size() &&
                                       data_.eye_angle_valid_mask[roi_idx] != 0);
