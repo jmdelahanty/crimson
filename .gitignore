@@ -30,6 +30,7 @@ Makefile
 .idea/
 *.code-workspace
 *.DS_Store
+imgui.ini
 
 # --- Python cache ---
 __pycache__/
