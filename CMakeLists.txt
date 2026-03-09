@@ -269,7 +269,14 @@ foreach(CUDA_FILE ${POSSIBLE_CUDA_SOURCES})
 endforeach()
 
 # C++ sources
-file(GLOB CPP_SOURCES "src/*.cpp")
+file(GLOB CPP_SOURCES CONFIGURE_DEPENDS "src/*.cpp")
+
+# keypoint write path requires strict IEEE NaN semantics for contract-idempotent
+# NaN-aware comparisons and writes.
+set_source_files_properties(
+    src/zarr_loader_keypoint_write.cpp
+    PROPERTIES COMPILE_OPTIONS "-fno-fast-math"
+)
 
 # --- Create the Executable ---
 add_executable(redgui
