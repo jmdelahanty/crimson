@@ -419,3 +419,57 @@ message(STATUS "========================================")
 
 add_executable(debug_detect_run tools/debug_detect_run.cpp)
 target_link_libraries(debug_detect_run PRIVATE tensorstore::all_drivers)
+
+add_executable(keypoint_fish_present_contract_check
+    tools/keypoint_fish_present_contract_check.cpp
+    src/zarr_loader.cpp
+    src/zarr_loader_detections.cpp
+    src/zarr_loader_eye_masks.cpp
+    src/zarr_loader_eye_keypoint.cpp
+    src/zarr_loader_movement.cpp
+    src/zarr_loader_stimulus.cpp
+    src/zarr_loader_write.cpp
+    src/zarr_loader_keypoint_write.cpp
+    src/zarr_loader_internal.cpp
+)
+target_include_directories(keypoint_fish_present_contract_check PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+    ${HDF5_INCLUDE_DIRS}
+)
+target_link_libraries(keypoint_fish_present_contract_check PRIVATE
+    tensorstore::all_drivers
+    nlohmann_json::nlohmann_json
+    Threads::Threads
+    ${OpenCV_LIBS}
+    ${HDF5_CXX_LIBRARIES}
+    ${HDF5_HL_LIBRARIES}
+)
+target_compile_features(keypoint_fish_present_contract_check PRIVATE cxx_std_17)
+target_compile_options(keypoint_fish_present_contract_check PRIVATE -fno-fast-math)
+
+add_executable(keypoint_plot_debug_dump
+    tools/keypoint_plot_debug_dump.cpp
+    src/zarr_loader.cpp
+    src/zarr_loader_detections.cpp
+    src/zarr_loader_eye_masks.cpp
+    src/zarr_loader_eye_keypoint.cpp
+    src/zarr_loader_movement.cpp
+    src/zarr_loader_stimulus.cpp
+    src/zarr_loader_write.cpp
+    src/zarr_loader_internal.cpp
+)
+target_include_directories(keypoint_plot_debug_dump PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+    ${HDF5_INCLUDE_DIRS}
+)
+target_link_libraries(keypoint_plot_debug_dump PRIVATE
+    tensorstore::all_drivers
+    nlohmann_json::nlohmann_json
+    Threads::Threads
+    ${OpenCV_LIBS}
+    ${HDF5_CXX_LIBRARIES}
+    ${HDF5_HL_LIBRARIES}
+)
+target_compile_features(keypoint_plot_debug_dump PRIVATE cxx_std_17)
