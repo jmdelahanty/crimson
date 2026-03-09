@@ -52,14 +52,18 @@ The new review editor must preserve existing CSV editing behavior:
 
 - CSV/manual keypoint editor exists and works in `src/gui.h` + `src/red.cpp`.
 - Zarr keypoint overlays and review status display are read-oriented in `src/red.cpp` + `src/zarr_loader_eye_keypoint.cpp`.
+- Zarr keypoint schema adoption is wired:
+  - keypoint labels and edges are adopted from refined/raw keypoint run attrs
+  - Labeling Tool frame index and navigation now prefer Zarr keypoint data when loaded
+  - frame-local editable keypoints are materialized from Zarr for current frame
 - Detect editing has a useful architectural precedent (`src/zarr_bbox_edit.h`, detect write flow in `src/zarr_loader_write.cpp`).
 - Keypoint write and acceptance contracts exist:
   - `docs/crimson_keypoint_manual_write_contract.md`
   - `docs/crimson_keypoint_review_acceptance_contract.md`
 - Missing today:
-  - no keypoint write API in loader
+  - no contract-complete keypoint write implementation in loader (API surface only)
   - no keypoint review-acceptance writer
-  - no dedicated keypoint editor core (behavior currently coupled to immediate-mode UI and global state)
+  - no standalone Zarr keypoint review panel yet (current flow still lives inside `red.cpp` immediate-mode path)
 
 ## Architecture Decision
 
@@ -112,9 +116,8 @@ Definition of done:
 - [x] P1.1 Introduce `keypoint_editor_core` state/actions API
 - [x] P1.2 Move CSV keybinding/action logic behind core calls (no behavior change)
 - [ ] P1.3 Move drag/delete hover state out of function-static locals into explicit editor state
-- [ ] P1.4 Add guardrail fixes discovered during extraction:
-  - empty-map safety for "jump to next labeled frame"
-  - synchronize or de-thread unsafe shared-map load path in CSV loader
+- [x] P1.4 Add empty-map safety for "jump to next labeled frame"
+- [ ] P1.5 Synchronize or de-thread unsafe shared-map load path in CSV loader
 
 Definition of done:
 - CSV flow still behaves identically while using shared core interfaces.
@@ -135,21 +138,46 @@ Definition of done:
 Definition of done:
 - Zarr review editor looks and behaves like CSV editor for core edit operations.
 
-### Phase 3: Zarr Keypoint Write Path (Manual Refined)
+### Phase 3: Zarr Keypoint Write Path (Manual Refined, Contract-Exact)
 
-- [ ] P3.1 Add loader API surface for keypoint write operations in `zarr_loader.h`
-- [ ] P3.2 Implement `zarr_loader_keypoint_write.cpp` with contract-aligned targets
-- [ ] P3.3 Add partial row/slice write helper(s) needed for per-ROI keypoint updates
-- [ ] P3.4 Implement reason synchronization writes (`reason_bytes` + `reason` when available)
-- [ ] P3.5 Implement post-edit recompute pipeline:
-  - heading finite/usable
-  - confidence/geometry/usable flags
-  - reason-tag updates and normalization
-  - `summary_statistics.postprocess` refresh
-- [ ] P3.6 Reload and verify round-trip visibility in UI
+- [x] P3.1 Add loader API surface for keypoint write operations in `zarr_loader.h`
+  - `writeManualRefinedKeypoints(...)` (ROI-row edits)
+  - `setKeypointReviewStatus(...)` (metadata-only status action)
+- [x] P3.2 Add stable row identity plumbing:
+  - expose detection-index to keypoint-ROI mapping from loader
+  - carry mapping through editor state so save targets exact ROI row
+- [x] P3.3 Implement `src/zarr_loader_keypoint_write.cpp` with in-place row overwrite semantics:
+  - target `refined_keypoints_runs/<latest>`
+  - never mutate `keypoints_runs/<run>`
+  - never recreate run/group on manual edits
+- [x] P3.4 Implement required per-ROI array writes:
+  - `keypoints_roi`, `keypoints_img`, `keypoints_norm`, `heading`
+  - manual confidence normalization (`keypoint_confidences=[1,1,1]`, `confidence=1`)
+- [x] P3.5 Implement geometry recompute and quality/status writes:
+  - `triangle_area`, `min_angle`, `triangle_angles`
+  - `confidence_valid`, `geometry_valid`, `usable_keypoints`
+  - `refined_success`, `flip_corrected`, `quality_labels`
+  - `heading_finite`, `heading_usable`
+- [x] P3.6 Implement reason synchronization and canonicalization:
+  - read fallback order (`reason_bytes`, then `reason`)
+  - drop transient failure tags, append `manual_correction`, conditional `geometry_issue`
+  - keep `reason` and `reason_bytes` synchronized
+- [x] P3.7 Implement value-based idempotency and no-op behavior:
+  - NaN-aware row equality checks
+  - only write changed rows/attrs
+  - no stale-marker side effects on effective no-op
+- [x] P3.8 Implement post-write summary refresh:
+  - recompute `summary_statistics.postprocess`
+  - update `postprocess_updated_utc` only when payload changes
+- [x] P3.9 Wire Labeling Tool save path to Zarr writer when Zarr keypoint mode is active
+  - CSV export remains available as explicit legacy/manual export action
+- [x] P3.10 Reload and verify round-trip visibility in UI:
+  - full-frame keypoints
+  - crop keypoint overlays
+  - quality/reason badges
 
 Definition of done:
-- Manual keypoint edits persist to the refined keypoint target and reload cleanly.
+- Manual keypoint edits persist in-place to refined keypoint run, are idempotent on no-op saves, and reload with matching overlays/status.
 
 ### Phase 4: Review Acceptance Metadata Path
 
@@ -185,15 +213,21 @@ Definition of done:
 
 ## Missing Pieces Checklist (Repository Gaps to Close)
 
-- [ ] Shared keypoint editor core abstraction (currently coupled to UI/global state)
+- [x] Shared keypoint editor core abstraction
 - [ ] Dedicated standalone keypoint review/editor panel module
-- [ ] Keypoint manual write APIs in `ZarrDetectionLoader`
-- [ ] Keypoint review-acceptance writer path
-- [ ] Slice/partial write primitives for row-level keypoint overwrite
-- [ ] Keypoint quality/reason/signature recompute utilities
-- [ ] Stable editor-facing row identity mapping for Zarr keypoint rows
+- [x] Keypoint manual write APIs in `ZarrDetectionLoader`
+- [x] Keypoint review-acceptance writer path
+- [x] Slice/partial write primitives for row-level keypoint overwrite
+- [x] Keypoint quality/reason/signature recompute utilities
+- [x] Stable editor-facing row identity mapping for Zarr keypoint rows
 - [ ] Keypoint-specific review filter/cache module
 - [ ] Unsaved-change lifecycle guardrails for new editor path
+
+## Contract Gap Snapshot (2026-02-27)
+
+- [ ] Current editor materialization selects one detection per frame (first finite set); multi-detection editing/targeting is not yet explicit.
+- [ ] No dedicated keypoint UI action yet for `fish_present_no_keypoints` / `detection_issue` row states.
+- [ ] Keypoint review-status write path exists in loader, but a first-class UI action is still pending.
 
 ## Verification Plan
 
