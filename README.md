@@ -22,6 +22,121 @@ Please see this [link](https://www.youtube.com/watch?v=9eOJaadE1Nc) for a video 
 4. TensorRT
 5. OpenGL
 
+## CMake Presets
+
+The repo now includes shared CMake presets for named dependency stacks in
+[CMakePresets.json](/home/delahantyj@hhmi.org/gitrepos/crimson/CMakePresets.json).
+
+Current preset stack family:
+
+- `linux-trt10-cuda12.4-release`
+- `linux-trt10-cuda12.4-debug`
+- `windows-trt10-cuda12.4`
+
+Those presets currently mean:
+
+- CUDA `12.4`
+- OpenCV `4.10.0`
+- TensorRT `10.0.1.6`
+
+The preset name describes the expected dependency versions. Configure will now
+fail if the discovered CUDA, OpenCV, or TensorRT version does not match that
+stack. For support status and which stacks are baseline vs planned vs
+experimental, see
+[docs/crimson_supported_dependency_stack_matrix.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_supported_dependency_stack_matrix.md).
+For the promotion process that moves stacks between those labels, see
+[docs/crimson_dependency_stack_promotion_process.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_dependency_stack_promotion_process.md).
+For the first Windows validation record, see
+[docs/crimson_windows_trt10_cuda12.4_validation_record.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_trt10_cuda12.4_validation_record.md).
+For a step-by-step Windows laptop bring-up guide, see
+[docs/crimson_windows_first_validation_guide.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_first_validation_guide.md).
+
+If you are confused by `nvidia-smi` showing a different CUDA version than
+`nvcc` or the preset name, see
+[docs/crimson_cuda_driver_toolkit_and_presets.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_cuda_driver_toolkit_and_presets.md).
+
+### How Dependency Paths Are Supplied
+
+Shared presets in the repo define the supported stack.
+
+Machine-local paths should come from either:
+
+- environment variables
+- a local `CMakeUserPresets.json`
+
+The shared presets read these environment variables:
+
+- `CRIMSON_CUDA_TOOLKIT_ROOT`
+- `CRIMSON_OPENCV_DIR`
+- `CRIMSON_FFMPEG_ROOT`
+- `CRIMSON_TENSORRT_ROOT`
+
+Notes:
+
+- `CRIMSON_OPENCV_DIR` should point to the directory containing
+  `OpenCVConfig.cmake`
+- `CRIMSON_FFMPEG_ROOT` and `CRIMSON_TENSORRT_ROOT` should point to install
+  roots
+
+Linux example:
+
+```bash
+export CRIMSON_CUDA_TOOLKIT_ROOT=/usr/local/cuda-12.4
+export CRIMSON_OPENCV_DIR=/opt/crimson/lib/opencv/lib/cmake/opencv4
+export CRIMSON_FFMPEG_ROOT=/opt/orange/lib/ffmpeg-nvidia
+export CRIMSON_TENSORRT_ROOT=/usr/local/TensorRT-10.0.1.6
+
+cmake --preset linux-trt10-cuda12.4-release
+cmake --build --preset build-linux-trt10-cuda12.4-release
+```
+
+Windows example:
+
+```powershell
+$env:CRIMSON_CUDA_TOOLKIT_ROOT="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4"
+$env:CRIMSON_OPENCV_DIR="C:/third_party/opencv-4.10.0/install/lib/cmake/opencv4"
+$env:CRIMSON_FFMPEG_ROOT="C:/third_party/ffmpeg-nvidia"
+$env:CRIMSON_TENSORRT_ROOT="C:/third_party/TensorRT-10.0.1.6"
+
+cmake --preset windows-trt10-cuda12.4
+cmake --build --preset build-windows-trt10-cuda12.4-release
+```
+
+Run the Windows preset from a Visual Studio developer shell or another shell
+that already has the MSVC toolchain available.
+
+### Local User Presets
+
+If you do not want to export environment variables every time, create a local
+`CMakeUserPresets.json`. This file is ignored by git.
+
+Example:
+
+```json
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "local-linux-trt10",
+      "inherits": "linux-trt10-cuda12.4-release",
+      "cacheVariables": {
+        "CUDA_TOOLKIT_ROOT_DIR": "/usr/local/cuda-12.4",
+        "OpenCV_DIR": "/opt/crimson/lib/opencv/lib/cmake/opencv4",
+        "FFMPEG_ROOT": "/opt/orange/lib/ffmpeg-nvidia",
+        "TENSORRT_ROOT": "/usr/local/TensorRT-10.0.1.6"
+      }
+    }
+  ]
+}
+```
+
+Then run:
+
+```bash
+cmake --preset local-linux-trt10
+cmake --build build/local-linux-trt10
+```
+
 ## Build instructions 
 
 ### Install cuDNN (depends on CUDA installation)

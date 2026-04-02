@@ -6,48 +6,225 @@
 #include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <sstream>
 
 using json = nlohmann::json;
+namespace fs = std::filesystem;
 
-std::string ToLowerCopy(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return value;
+namespace {
+
+std::optional<std::string> GetEnvValue(const char* name) {
+    const char* value = std::getenv(name);
+    if (!value || *value == '\0') {
+        return std::nullopt;
+    }
+    return std::string(value);
 }
 
-bool IsRegularFileNoThrow(const std::filesystem::path& path) {
+std::optional<fs::path> NormalizePath(const fs::path& path) {
+    if (path.empty()) {
+        return std::nullopt;
+    }
+
     std::error_code ec;
-    return std::filesystem::is_regular_file(path, ec);
+    fs::path absolute_path = path;
+    if (!absolute_path.is_absolute()) {
+        absolute_path = fs::absolute(absolute_path, ec);
+        if (ec) {
+            absolute_path = path;
+            ec.clear();
+        }
+    }
+
+    fs::path canonical_path = fs::weakly_canonical(absolute_path, ec);
+    if (!ec) {
+        return canonical_path;
+    }
+    return absolute_path.lexically_normal();
 }
 
-bool IsDirectoryNoThrow(const std::filesystem::path& path) {
+void AppendUniquePath(std::vector<fs::path>& paths, const fs::path& candidate) {
+    auto normalized = NormalizePath(candidate);
+    if (!normalized) {
+        return;
+    }
+    if (std::find(paths.begin(), paths.end(), *normalized) == paths.end()) {
+        paths.push_back(*normalized);
+    }
+}
+
+std::optional<fs::path> GetHomeDirectory() {
+    if (auto home = GetEnvValue("HOME")) {
+        return fs::path(*home);
+    }
+#ifdef _WIN32
+    if (auto userprofile = GetEnvValue("USERPROFILE")) {
+        return fs::path(*userprofile);
+    }
+    auto home_drive = GetEnvValue("HOMEDRIVE");
+    auto home_path = GetEnvValue("HOMEPATH");
+    if (home_drive && home_path) {
+        return fs::path(*home_drive + *home_path);
+    }
+#endif
+    return std::nullopt;
+}
+
+std::optional<fs::path> GetExpandedEnvPath(const char* name) {
+    auto value = GetEnvValue(name);
+    if (!value) {
+        return std::nullopt;
+    }
+    return fs::path(ExpandUserPath(*value));
+}
+
+std::optional<fs::path> GetCrimsonUserConfigDir() {
+    if (auto xdg_config_home = GetExpandedEnvPath("XDG_CONFIG_HOME")) {
+        return *xdg_config_home / "crimson";
+    }
+#ifdef _WIN32
+    if (auto appdata = GetExpandedEnvPath("APPDATA")) {
+        return *appdata / "crimson";
+    }
+#endif
+    if (auto home = GetHomeDirectory()) {
+        return *home / ".config" / "crimson";
+    }
+    return std::nullopt;
+}
+
+std::optional<fs::path> GetCrimsonUserCacheDir() {
+    if (auto xdg_cache_home = GetExpandedEnvPath("XDG_CACHE_HOME")) {
+        return *xdg_cache_home / "crimson";
+    }
+#ifdef _WIN32
+    if (auto localappdata = GetExpandedEnvPath("LOCALAPPDATA")) {
+        return *localappdata / "Crimson" / "Cache";
+    }
+#endif
+    if (auto home = GetHomeDirectory()) {
+        return *home / ".cache" / "crimson";
+    }
+    return std::nullopt;
+}
+
+std::optional<fs::path> ResolveExecutablePathImpl(const fs::path& argv0_path) {
+    if (argv0_path.empty()) {
+        return std::nullopt;
+    }
+
+    auto try_candidate = [](const fs::path& candidate) -> std::optional<fs::path> {
+        auto normalized = NormalizePath(candidate);
+        if (!normalized) {
+            return std::nullopt;
+        }
+        if (IsRegularFileNoThrow(*normalized)) {
+            return normalized;
+        }
+        return std::nullopt;
+    };
+
+    if (argv0_path.is_absolute() || argv0_path.has_parent_path()) {
+        if (auto resolved = try_candidate(argv0_path)) {
+            return resolved;
+        }
+    }
+
+    if (auto path_env = GetEnvValue("PATH"); path_env && !argv0_path.has_parent_path()) {
+#ifdef _WIN32
+        constexpr char kPathSeparator = ';';
+#else
+        constexpr char kPathSeparator = ':';
+#endif
+        std::stringstream path_stream(*path_env);
+        std::string entry;
+        while (std::getline(path_stream, entry, kPathSeparator)) {
+            if (entry.empty()) {
+                continue;
+            }
+            fs::path candidate = fs::path(entry) / argv0_path;
+            if (auto resolved = try_candidate(candidate)) {
+                return resolved;
+            }
+#ifdef _WIN32
+            if (!candidate.has_extension()) {
+                candidate += ".exe";
+                if (auto resolved = try_candidate(candidate)) {
+                    return resolved;
+                }
+            }
+#endif
+        }
+    }
+
+    return try_candidate(argv0_path);
+}
+
+std::optional<fs::path> GetExecutableDir(const fs::path& argv0_path) {
+    auto executable_path = ResolveExecutablePathImpl(argv0_path);
+    if (!executable_path) {
+        return std::nullopt;
+    }
+    fs::path executable_dir = executable_path->parent_path();
+    if (executable_dir.empty()) {
+        return std::nullopt;
+    }
+    return executable_dir;
+}
+
+std::vector<fs::path> CollectCrimsonResourceRoots(const fs::path& current_working_dir,
+                                                  const fs::path& argv0_path) {
+    std::vector<fs::path> roots;
+
+    if (auto data_dir = GetExpandedEnvPath("CRIMSON_DATA_DIR")) {
+        AppendUniquePath(roots, *data_dir);
+    }
+
+    if (auto executable_dir = GetExecutableDir(argv0_path)) {
+        AppendUniquePath(roots, *executable_dir);
+        fs::path install_root = executable_dir->parent_path();
+        if (!install_root.empty()) {
+            AppendUniquePath(roots, install_root);
+            AppendUniquePath(roots, install_root / "share" / "crimson");
+        }
+    }
+
+    if (!current_working_dir.empty()) {
+        AppendUniquePath(roots, current_working_dir);
+        AppendUniquePath(roots, current_working_dir / "share" / "crimson");
+    }
+
+    return roots;
+}
+
+fs::path GetPreferredDefaultStartPath(const fs::path& current_working_dir) {
+    if (auto configured_start_path = GetExpandedEnvPath("CRIMSON_DEFAULT_START_PATH")) {
+        if (IsDirectoryNoThrow(*configured_start_path)) {
+            return *configured_start_path;
+        }
+    }
+
+    if (auto home = GetHomeDirectory()) {
+        if (IsDirectoryNoThrow(*home)) {
+            return *home;
+        }
+    }
+
+    if (!current_working_dir.empty() && IsDirectoryNoThrow(current_working_dir)) {
+        return current_working_dir;
+    }
+
     std::error_code ec;
-    return std::filesystem::is_directory(path, ec);
+    fs::path cwd = fs::current_path(ec);
+    if (!ec && !cwd.empty()) {
+        return cwd;
+    }
+
+    return ".";
 }
 
-std::string ExpandUserPath(const std::string& path) {
-    if (path.empty() || path[0] != '~') {
-        return path;
-    }
-
-    const char* home_env = std::getenv("HOME");
-    if (!home_env || std::string(home_env).empty()) {
-        return path;
-    }
-    const std::string home(home_env);
-
-    if (path.size() == 1) {
-        return home;
-    }
-    if (path[1] == '/') {
-        return home + path.substr(1);
-    }
-
-    // Unsupported "~user" expansion; leave unchanged.
-    return path;
-}
-
-static std::optional<UiPathConfig> LoadUiPathConfigFile(const std::filesystem::path& config_path) {
+std::optional<UiPathConfig> LoadUiPathConfigFile(const fs::path& config_path,
+                                                 const fs::path& fallback_start_path) {
     if (!IsRegularFileNoThrow(config_path)) {
         return std::nullopt;
     }
@@ -95,7 +272,7 @@ static std::optional<UiPathConfig> LoadUiPathConfigFile(const std::filesystem::p
     }
     config.preferred_roots = std::move(filtered_roots);
 
-    if ((!config.default_start_path.empty()) &&
+    if (!config.default_start_path.empty() &&
         !IsDirectoryNoThrow(config.default_start_path)) {
         config.default_start_path.clear();
     }
@@ -103,9 +280,9 @@ static std::optional<UiPathConfig> LoadUiPathConfigFile(const std::filesystem::p
         config.default_start_path = config.preferred_roots.front();
     }
     if (config.default_start_path.empty()) {
-        config.default_start_path = "/nvme1";
+        config.default_start_path = fallback_start_path.string();
     }
-    if (config.preferred_roots.empty()) {
+    if (config.preferred_roots.empty() && !config.default_start_path.empty()) {
         config.preferred_roots.push_back(config.default_start_path);
     }
 
@@ -113,62 +290,142 @@ static std::optional<UiPathConfig> LoadUiPathConfigFile(const std::filesystem::p
     return config;
 }
 
-UiPathConfig LoadUiPathConfig(const std::filesystem::path& current_working_dir,
-                              const std::filesystem::path& argv0_path) {
-    std::vector<std::filesystem::path> candidates;
+}  // namespace
+
+std::string ToLowerCopy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+bool IsRegularFileNoThrow(const fs::path& path) {
+    std::error_code ec;
+    return fs::is_regular_file(path, ec);
+}
+
+bool IsDirectoryNoThrow(const fs::path& path) {
+    std::error_code ec;
+    return fs::is_directory(path, ec);
+}
+
+std::string ExpandUserPath(const std::string& path) {
+    if (path.empty() || path[0] != '~') {
+        return path;
+    }
+
+    auto home_dir = GetHomeDirectory();
+    if (!home_dir) {
+        return path;
+    }
+    const std::string home = home_dir->string();
+
+    if (path.size() == 1) {
+        return home;
+    }
+    if (path[1] == '/') {
+        return home + path.substr(1);
+    }
+
+    // Unsupported "~user" expansion; leave unchanged.
+    return path;
+}
+
+std::optional<fs::path> ResolveExecutablePath(const fs::path& argv0_path) {
+    return ResolveExecutablePathImpl(argv0_path);
+}
+
+std::optional<fs::path> ResolveCrimsonResourcePath(
+    const fs::path& current_working_dir,
+    const fs::path& argv0_path,
+    const fs::path& relative_path) {
+    for (const auto& root : CollectCrimsonResourceRoots(current_working_dir, argv0_path)) {
+        fs::path candidate = root / relative_path;
+        if (IsRegularFileNoThrow(candidate)) {
+            return candidate;
+        }
+    }
+    return std::nullopt;
+}
+
+fs::path GetDefaultCrimsonBufferDumpRoot() {
+    if (auto cache_dir = GetCrimsonUserCacheDir()) {
+        return *cache_dir / "buffer_dumps";
+    }
+
+    std::error_code ec;
+    fs::path temp_dir = fs::temp_directory_path(ec);
+    if (!ec && !temp_dir.empty()) {
+        return temp_dir / "crimson_buffer_dumps";
+    }
+
+    fs::path cwd = fs::current_path(ec);
+    if (!ec && !cwd.empty()) {
+        return cwd / ".crimson" / "buffer_dumps";
+    }
+
+    return ".crimson/buffer_dumps";
+}
+
+UiPathConfig LoadUiPathConfig(const fs::path& current_working_dir,
+                              const fs::path& argv0_path) {
+    const fs::path fallback_start_path = GetPreferredDefaultStartPath(current_working_dir);
+    std::vector<fs::path> candidates;
 
     if (const char* env_config = std::getenv("CRIMSON_UI_PATHS_CONFIG")) {
         if (*env_config != '\0') {
-            candidates.push_back(std::filesystem::path(ExpandUserPath(env_config)));
+            candidates.push_back(fs::path(ExpandUserPath(env_config)));
         }
+    }
+
+    if (auto data_dir = GetExpandedEnvPath("CRIMSON_DATA_DIR")) {
+        candidates.push_back(*data_dir / "config" / "ui_paths.json");
     }
 
     candidates.push_back(current_working_dir / "config" / "ui_paths.json");
     candidates.push_back(current_working_dir / "ui_paths.json");
 
-    std::error_code ec;
-    auto exe_abs = std::filesystem::absolute(argv0_path, ec);
-    if (!ec && !exe_abs.empty()) {
-        auto exe_dir = exe_abs.parent_path();
-        if (!exe_dir.empty()) {
-            auto repo_like_root = exe_dir.parent_path();
-            if (!repo_like_root.empty()) {
-                candidates.push_back(repo_like_root / "config" / "ui_paths.json");
-            }
+    if (auto executable_dir = GetExecutableDir(argv0_path)) {
+        candidates.push_back(*executable_dir / "config" / "ui_paths.json");
+        fs::path repo_like_root = executable_dir->parent_path();
+        if (!repo_like_root.empty()) {
+            candidates.push_back(repo_like_root / "config" / "ui_paths.json");
         }
     }
 
-    if (const char* home = std::getenv("HOME")) {
-        if (*home != '\0') {
-            candidates.push_back(
-                std::filesystem::path(home) / ".config" / "crimson" / "ui_paths.json");
+    if (auto user_config_dir = GetCrimsonUserConfigDir()) {
+        candidates.push_back(*user_config_dir / "ui_paths.json");
+    }
+
+    if (auto executable_dir = GetExecutableDir(argv0_path)) {
+        fs::path install_root = executable_dir->parent_path();
+        if (!install_root.empty()) {
+            candidates.push_back(install_root / "share" / "crimson" / "config" /
+                                 "ui_paths.json");
         }
     }
 
     for (const auto& candidate : candidates) {
-        if (auto config = LoadUiPathConfigFile(candidate)) {
+        if (auto config = LoadUiPathConfigFile(candidate, fallback_start_path)) {
             return *config;
         }
     }
 
     UiPathConfig fallback;
-    if (!IsDirectoryNoThrow(fallback.default_start_path)) {
-        fallback.default_start_path = current_working_dir.string();
+    fallback.default_start_path = fallback_start_path.string();
+    if (!fallback.default_start_path.empty()) {
         fallback.preferred_roots = {fallback.default_start_path};
     }
     return fallback;
 }
 
-bool IsSupportedVideoPath(const std::filesystem::path& path) {
+bool IsSupportedVideoPath(const fs::path& path) {
     std::string ext = ToLowerCopy(path.extension().string());
     return ext == ".mp4" || ext == ".mov" || ext == ".mkv" || ext == ".avi";
 }
 
-std::optional<std::filesystem::path> ResolveAffiliatedVideoPath(
+std::optional<fs::path> ResolveAffiliatedVideoPath(
     const std::string& source_path_hint,
     const std::string& archive_path) {
-    namespace fs = std::filesystem;
-
     if (source_path_hint.empty()) {
         return std::nullopt;
     }
@@ -216,12 +473,10 @@ std::optional<std::filesystem::path> ResolveAffiliatedVideoPath(
     return std::nullopt;
 }
 
-static std::optional<std::filesystem::path> TryStimulusHintCandidates(
-    const std::filesystem::path& hint,
+static std::optional<fs::path> TryStimulusHintCandidates(
+    const fs::path& hint,
     const std::string& archive_path,
     const std::string& recording_root) {
-    namespace fs = std::filesystem;
-
     std::vector<fs::path> candidates;
 
     if (hint.is_absolute()) {
@@ -273,13 +528,11 @@ static std::optional<std::filesystem::path> TryStimulusHintCandidates(
     return std::nullopt;
 }
 
-std::optional<std::filesystem::path> ResolveStimulusVideoPath(
+std::optional<fs::path> ResolveStimulusVideoPath(
     const std::string& stimulus_video_hint,
     const std::string& source_h5_hint,
     const std::string& archive_path,
     const std::string& recording_root) {
-    namespace fs = std::filesystem;
-
     // Strategy 1: Direct path from source_stimulus_video_path attr
     if (!stimulus_video_hint.empty()) {
         auto result = TryStimulusHintCandidates(
@@ -319,11 +572,9 @@ std::optional<std::filesystem::path> ResolveStimulusVideoPath(
     return std::nullopt;
 }
 
-std::filesystem::path InferRecordingRootPath(
-    const std::filesystem::path& video_path,
+fs::path InferRecordingRootPath(
+    const fs::path& video_path,
     const std::string& archive_path) {
-    namespace fs = std::filesystem;
-
     if (!archive_path.empty()) {
         fs::path archive_root(archive_path);
         fs::path archive_parent = archive_root.parent_path();
