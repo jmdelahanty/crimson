@@ -10,6 +10,7 @@ Scope:
 - first Windows validation machine
 - intended stack: CUDA `12.4`, TensorRT `10.0.1.6`, OpenCV `4.10.0`
 - target preset: `windows-trt10-cuda12.4`
+- 2D-only fallback preset: `windows-trt10-cuda12.4-no-sfm`
 
 Related docs:
 
@@ -190,7 +191,10 @@ Important:
 - `CRIMSON_OPENCV_DIR` must point to the directory containing
   `OpenCVConfig.cmake`
 - the OpenCV build should include the modules Crimson actually uses
-- if `opencv_sfm` is required on Windows, your OpenCV build must include it
+- the full `windows-trt10-cuda12.4` preset expects the OpenCV SFM module for
+  triangulation support
+- the `windows-trt10-cuda12.4-no-sfm` preset disables the SFM-backed
+  triangulation path and does not require `opencv_sfm`
 
 ### FFmpeg
 
@@ -272,6 +276,7 @@ nvcc --version
 Confirm:
 
 - the `windows-trt10-cuda12.4` preset exists
+- the `windows-trt10-cuda12.4-no-sfm` preset exists
 - `nvidia-smi` works
 - `nvcc --version` reports CUDA `12.4`
 
@@ -283,10 +288,16 @@ Also record the values in:
 
 ## Step 8: Configure
 
-Run:
+Run one of these:
 
 ```powershell
 cmake --preset windows-trt10-cuda12.4
+```
+
+or, for a first 2D-only Windows bring-up:
+
+```powershell
+cmake --preset windows-trt10-cuda12.4-no-sfm
 ```
 
 Expected:
@@ -319,6 +330,12 @@ Release:
 cmake --build --preset build-windows-trt10-cuda12.4-release
 ```
 
+2D-only fallback:
+
+```powershell
+cmake --build --preset build-windows-trt10-cuda12.4-no-sfm-release
+```
+
 Optional debug:
 
 ```powershell
@@ -338,6 +355,12 @@ For the Windows multi-config build, include `--config Release`.
 
 ```powershell
 cmake --install build/windows-trt10-cuda12.4 --config Release --prefix dist/Crimson
+```
+
+If you used the no-SFM preset, install from:
+
+```powershell
+cmake --install build/windows-trt10-cuda12.4-no-sfm --config Release --prefix dist/Crimson
 ```
 
 Expected:
@@ -361,6 +384,8 @@ Minimum checks:
 - a representative dataset opens
 - decode path is exercised
 - TensorRT inference path is exercised, if available
+- if using the no-SFM preset, confirm the app runs as a 2D-only build and the
+  Triangulate action is disabled
 
 Important Windows observations:
 

@@ -32,6 +32,7 @@ Current preset stack family:
 - `linux-trt10-cuda12.4-release`
 - `linux-trt10-cuda12.4-debug`
 - `windows-trt10-cuda12.4`
+- `windows-trt10-cuda12.4-no-sfm`
 
 Those presets currently mean:
 
@@ -54,6 +55,10 @@ For a step-by-step Windows laptop bring-up guide, see
 If you are confused by `nvidia-smi` showing a different CUDA version than
 `nvcc` or the preset name, see
 [docs/crimson_cuda_driver_toolkit_and_presets.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_cuda_driver_toolkit_and_presets.md).
+
+For a first Windows bring-up where 3D triangulation is not needed, prefer
+`windows-trt10-cuda12.4-no-sfm`. That preset disables the OpenCV SFM-based
+triangulation path and leaves the rest of the pinned stack unchanged.
 
 ### How Dependency Paths Are Supplied
 
@@ -100,6 +105,14 @@ $env:CRIMSON_TENSORRT_ROOT="C:/third_party/TensorRT-10.0.1.6"
 
 cmake --preset windows-trt10-cuda12.4
 cmake --build --preset build-windows-trt10-cuda12.4-release
+```
+
+If you do not need triangulation or other SFM-backed 3D labeling helpers on
+Windows yet, use:
+
+```powershell
+cmake --preset windows-trt10-cuda12.4-no-sfm
+cmake --build --preset build-windows-trt10-cuda12.4-no-sfm-release
 ```
 
 Run the Windows preset from a Visual Studio developer shell or another shell
