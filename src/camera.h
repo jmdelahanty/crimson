@@ -10,9 +10,12 @@
 #include <iostream>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
-#include <opencv2/sfm.hpp>
 #include <string>
 #include <vector>
+
+#ifndef CRIMSON_ENABLE_SFM
+#define CRIMSON_ENABLE_SFM 1
+#endif
 
 using json = nlohmann::json;
 
@@ -212,6 +215,28 @@ void camera_print_parameters(CameraParams *cvp) {
               << std::endl;
 }
 
+static inline void camera_projection_from_krt(const cv::Mat& k,
+                                              const cv::Mat& r,
+                                              const cv::Mat& tvec,
+                                              cv::Mat& projection_mat) {
+    if (k.empty() || r.empty() || tvec.empty()) {
+        projection_mat.release();
+        return;
+    }
+
+    cv::Mat k64;
+    cv::Mat r64;
+    cv::Mat t64;
+    k.convertTo(k64, CV_64F);
+    r.convertTo(r64, CV_64F);
+    tvec.convertTo(t64, CV_64F);
+
+    cv::Mat tcol = t64.reshape(1, static_cast<int>(t64.total()));
+    cv::Mat rt;
+    cv::hconcat(r64, tcol, rt);
+    projection_mat = k64 * rt;
+}
+
 bool camera_load_params_from_yaml(const std::string &calibration_file,
                                   CameraParams &camera_params,
                                   std::string &error_message) {
@@ -241,9 +266,8 @@ bool camera_load_params_from_yaml(const std::string &calibration_file,
     }
 
     cv::Rodrigues(camera_params.r, camera_params.rvec);
-    cv::sfm::projectionFromKRt(camera_params.k, camera_params.r,
-                               camera_params.tvec,
-                               camera_params.projection_mat);
+    camera_projection_from_krt(camera_params.k, camera_params.r,
+                               camera_params.tvec, camera_params.projection_mat);
     return true;
 }
 
@@ -302,7 +326,7 @@ CameraParams camera_load_params_from_csv(std::string csv_filename,
     cvp.r = cv::Mat_<float>(r_m, true).reshape(0, 3);
     cvp.tvec = cv::Mat_<float>(t, true);
     cv::Rodrigues(cvp.r, cvp.rvec);
-    cv::sfm::projectionFromKRt(cvp.k, cvp.r, cvp.tvec, cvp.projection_mat);
+    camera_projection_from_krt(cvp.k, cvp.r, cvp.tvec, cvp.projection_mat);
     return cvp;
 }
 

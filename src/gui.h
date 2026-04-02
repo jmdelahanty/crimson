@@ -13,6 +13,10 @@
 #include <vector>
 #include <iostream>
 
+#ifndef CRIMSON_ENABLE_SFM
+#define CRIMSON_ENABLE_SFM 1
+#endif
+
 struct ProjectContext {
     std::string root_dir;
     std::vector<std::string> input_file_names;
@@ -241,6 +245,7 @@ bool is_in_camera_fov(cv::Mat point_world, const cv::Mat &rvec,
     return false;
 }
 
+#if CRIMSON_ENABLE_SFM
 static void reprojection(KeyPoints *keypoints, SkeletonContext *skeleton,
                          std::vector<CameraParams> camera_params,
                          render_scene *scene) {
@@ -317,6 +322,16 @@ static void reprojection(KeyPoints *keypoints, SkeletonContext *skeleton,
         }
     }
 }
+#else
+static void reprojection(KeyPoints *keypoints, SkeletonContext *skeleton,
+                         std::vector<CameraParams> camera_params,
+                         render_scene *scene) {
+    (void)keypoints;
+    (void)skeleton;
+    (void)camera_params;
+    (void)scene;
+}
+#endif
 
 const std::string current_date_time() {
     time_t now = time(0);

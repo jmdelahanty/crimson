@@ -36,6 +36,13 @@
       }
     },
     {
+      "name": "feature-no-sfm",
+      "hidden": true,
+      "cacheVariables": {
+        "CRIMSON_ENABLE_SFM": "OFF"
+      }
+    },
+    {
       "name": "linux-base",
       "hidden": true,
       "inherits": [
@@ -85,6 +92,16 @@
         "windows-base",
         "stack-trt10-cuda12.4-opencv4.10"
       ]
+    },
+    {
+      "name": "windows-trt10-cuda12.4-no-sfm",
+      "displayName": "Windows TRT10 / CUDA 12.4 No SFM",
+      "description": "Windows MVP stack for CUDA 12.4, OpenCV 4.10.0, and TensorRT 10.0.1.6 with OpenCV SFM triangulation disabled. Use this when 3D triangulation is not needed.",
+      "inherits": [
+        "windows-base",
+        "stack-trt10-cuda12.4-opencv4.10",
+        "feature-no-sfm"
+      ]
     }
   ],
   "buildPresets": [
@@ -102,8 +119,18 @@
       "configuration": "Release"
     },
     {
+      "name": "build-windows-trt10-cuda12.4-no-sfm-release",
+      "configurePreset": "windows-trt10-cuda12.4-no-sfm",
+      "configuration": "Release"
+    },
+    {
       "name": "build-windows-trt10-cuda12.4-debug",
       "configurePreset": "windows-trt10-cuda12.4",
+      "configuration": "Debug"
+    },
+    {
+      "name": "build-windows-trt10-cuda12.4-no-sfm-debug",
+      "configurePreset": "windows-trt10-cuda12.4-no-sfm",
       "configuration": "Debug"
     }
   ]

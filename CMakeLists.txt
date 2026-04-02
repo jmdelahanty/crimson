@@ -6,6 +6,7 @@ include(GNUInstallDirs)
 # ----------------------- Build toggles -----------------------
 option(ENABLE_NVML "Link against NVIDIA Management Library (NVML)" ON)
 option(CRIMSON_INSTALL_DEV_TOOLS "Install diagnostic and developer helper executables" OFF)
+option(CRIMSON_ENABLE_SFM "Enable OpenCV SFM-based triangulation workflows" ON)
 
 # Set output directory for executables
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/release)
@@ -510,6 +511,12 @@ target_compile_definitions(redgui PRIVATE
     GLEW_STATIC
 )
 
+if(CRIMSON_ENABLE_SFM)
+    target_compile_definitions(redgui PRIVATE CRIMSON_ENABLE_SFM=1)
+else()
+    target_compile_definitions(redgui PRIVATE CRIMSON_ENABLE_SFM=0)
+endif()
+
 # --- Post-Build Commands ---
 # Copy font files if they exist
 set(FONT_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/fonts")
@@ -558,6 +565,7 @@ message(STATUS "  CUDA Architecture: ${CMAKE_CUDA_ARCHITECTURES}")
 message(STATUS "  OpenCV Version: ${OpenCV_VERSION}")
 message(STATUS "  OpenCV Dir: ${OpenCV_DIR}")
 message(STATUS "  Expected OpenCV Version: ${CRIMSON_EXPECT_OPENCV_VERSION}")
+message(STATUS "  OpenCV SFM Triangulation: ${CRIMSON_ENABLE_SFM}")
 message(STATUS "  FFmpeg Directory: ${FFMPEG_ROOT}")
 message(STATUS "  Install Prefix: ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "  Install Data Dir: ${CMAKE_INSTALL_FULL_DATADIR}/crimson")
@@ -590,62 +598,74 @@ message(STATUS "========================================")
 add_executable(debug_detect_run tools/debug_detect_run.cpp)
 target_link_libraries(debug_detect_run PRIVATE tensorstore::all_drivers)
 
-add_executable(keypoint_fish_present_contract_check
-    tools/keypoint_fish_present_contract_check.cpp
-    src/zarr_loader.cpp
-    src/zarr_loader_detections.cpp
-    src/zarr_loader_eye_masks.cpp
-    src/zarr_loader_eye_keypoint.cpp
-    src/zarr_loader_movement.cpp
-    src/zarr_loader_stimulus.cpp
-    src/zarr_loader_write.cpp
-    src/zarr_loader_keypoint_write.cpp
-    src/zarr_loader_internal.cpp
-)
-target_include_directories(keypoint_fish_present_contract_check PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${OpenCV_INCLUDE_DIRS}
-    ${HDF5_INCLUDE_DIRS}
-)
-target_link_libraries(keypoint_fish_present_contract_check PRIVATE
-    tensorstore::all_drivers
-    nlohmann_json::nlohmann_json
-    Threads::Threads
-    ${OpenCV_LIBS}
-    ${HDF5_CXX_LIBRARIES}
-    ${HDF5_HL_LIBRARIES}
-)
-target_compile_features(keypoint_fish_present_contract_check PRIVATE cxx_std_17)
-if(CRIMSON_STRICT_NAN_COMPILE_OPTION)
-    target_compile_options(keypoint_fish_present_contract_check PRIVATE
-        ${CRIMSON_STRICT_NAN_COMPILE_OPTION})
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/keypoint_fish_present_contract_check.cpp")
+    add_executable(keypoint_fish_present_contract_check
+        tools/keypoint_fish_present_contract_check.cpp
+        src/zarr_loader.cpp
+        src/zarr_loader_detections.cpp
+        src/zarr_loader_eye_masks.cpp
+        src/zarr_loader_eye_keypoint.cpp
+        src/zarr_loader_movement.cpp
+        src/zarr_loader_stimulus.cpp
+        src/zarr_loader_write.cpp
+        src/zarr_loader_keypoint_write.cpp
+        src/zarr_loader_internal.cpp
+    )
+    target_include_directories(keypoint_fish_present_contract_check PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${OpenCV_INCLUDE_DIRS}
+        ${HDF5_INCLUDE_DIRS}
+    )
+    target_link_libraries(keypoint_fish_present_contract_check PRIVATE
+        tensorstore::all_drivers
+        nlohmann_json::nlohmann_json
+        Threads::Threads
+        ${OpenCV_LIBS}
+        ${HDF5_CXX_LIBRARIES}
+        ${HDF5_HL_LIBRARIES}
+    )
+    target_compile_features(keypoint_fish_present_contract_check PRIVATE cxx_std_17)
+    if(CRIMSON_STRICT_NAN_COMPILE_OPTION)
+        target_compile_options(keypoint_fish_present_contract_check PRIVATE
+            ${CRIMSON_STRICT_NAN_COMPILE_OPTION})
+    endif()
+else()
+    message(STATUS
+        "Skipping keypoint_fish_present_contract_check: "
+        "tools/keypoint_fish_present_contract_check.cpp is not present")
 endif()
 
-add_executable(keypoint_plot_debug_dump
-    tools/keypoint_plot_debug_dump.cpp
-    src/zarr_loader.cpp
-    src/zarr_loader_detections.cpp
-    src/zarr_loader_eye_masks.cpp
-    src/zarr_loader_eye_keypoint.cpp
-    src/zarr_loader_movement.cpp
-    src/zarr_loader_stimulus.cpp
-    src/zarr_loader_write.cpp
-    src/zarr_loader_internal.cpp
-)
-target_include_directories(keypoint_plot_debug_dump PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${OpenCV_INCLUDE_DIRS}
-    ${HDF5_INCLUDE_DIRS}
-)
-target_link_libraries(keypoint_plot_debug_dump PRIVATE
-    tensorstore::all_drivers
-    nlohmann_json::nlohmann_json
-    Threads::Threads
-    ${OpenCV_LIBS}
-    ${HDF5_CXX_LIBRARIES}
-    ${HDF5_HL_LIBRARIES}
-)
-target_compile_features(keypoint_plot_debug_dump PRIVATE cxx_std_17)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/keypoint_plot_debug_dump.cpp")
+    add_executable(keypoint_plot_debug_dump
+        tools/keypoint_plot_debug_dump.cpp
+        src/zarr_loader.cpp
+        src/zarr_loader_detections.cpp
+        src/zarr_loader_eye_masks.cpp
+        src/zarr_loader_eye_keypoint.cpp
+        src/zarr_loader_movement.cpp
+        src/zarr_loader_stimulus.cpp
+        src/zarr_loader_write.cpp
+        src/zarr_loader_internal.cpp
+    )
+    target_include_directories(keypoint_plot_debug_dump PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${OpenCV_INCLUDE_DIRS}
+        ${HDF5_INCLUDE_DIRS}
+    )
+    target_link_libraries(keypoint_plot_debug_dump PRIVATE
+        tensorstore::all_drivers
+        nlohmann_json::nlohmann_json
+        Threads::Threads
+        ${OpenCV_LIBS}
+        ${HDF5_CXX_LIBRARIES}
+        ${HDF5_HL_LIBRARIES}
+    )
+    target_compile_features(keypoint_plot_debug_dump PRIVATE cxx_std_17)
+else()
+    message(STATUS
+        "Skipping keypoint_plot_debug_dump: "
+        "tools/keypoint_plot_debug_dump.cpp is not present")
+endif()
 
 if(CRIMSON_INSTALL_DEV_TOOLS)
     install(TARGETS

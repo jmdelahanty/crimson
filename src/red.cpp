@@ -6112,6 +6112,11 @@ struct StateOverlay {
 
                 if (scene->num_cams > 1) {
                     bool keypoint_triangulated_all = true;
+#if CRIMSON_ENABLE_SFM
+                    constexpr bool triangulation_supported = true;
+#else
+                    constexpr bool triangulation_supported = false;
+#endif
                     if (keypoints_find) {
                         for (int i = 0; i < scene->num_cams; i++) {
                             for (int j = 0; j < skeleton->num_nodes; j++) {
@@ -6126,8 +6131,10 @@ struct StateOverlay {
                         keypoint_triangulated_all = false;
                     }
 
-                    bool enabled = keypoints_find;
-                    bool apply_color = !keypoint_triangulated_all && enabled;
+                    bool enabled = keypoints_find && triangulation_supported;
+                    bool apply_color =
+                        triangulation_supported && !keypoint_triangulated_all &&
+                        enabled;
                     if (apply_color) {
                         ImGui::PushStyleColor(
                             ImGuiCol_Button,
@@ -6151,7 +6158,12 @@ struct StateOverlay {
                         ImGui::PopStyleColor(3);
                     }
 
-                    if (keypoints_find) {
+                    if (!triangulation_supported) {
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("SFM disabled in this build");
+                    }
+
+                    if (enabled) {
                         if (ImGui::IsKeyPressed(ImGuiKey_T,
                                                 false)) // triangulate
                         {

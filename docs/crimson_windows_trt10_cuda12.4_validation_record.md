@@ -83,6 +83,9 @@ Fill this in on the Windows machine when you run the validation:
 | Generator used | |
 | Preset used | `windows-trt10-cuda12.4` |
 
+If you are validating the first 2D-only Windows bring-up, record
+`windows-trt10-cuda12.4-no-sfm` instead.
+
 ---
 
 ## Dependency Roots Used
@@ -107,6 +110,7 @@ Check each item before trying the full build:
 - [ ] `nvidia-smi` runs successfully
 - [ ] `nvcc --version` reports CUDA `12.4`
 - [ ] OpenCV `4.10.0` CMake package path is available
+- [ ] if using the full preset, OpenCV SFM support is available
 - [ ] TensorRT `10.0.1.6` headers and libs are available
 - [ ] FFmpeg root for the intended Windows stack is available
 - [ ] Visual Studio developer shell or equivalent MSVC environment is active
@@ -189,6 +193,7 @@ Important Windows-specific observations:
 - did the app use the NVIDIA GPU
 - were any DLLs missing at launch
 - did resource discovery work from the staged or build layout
+- if using the no-SFM preset, was triangulation correctly disabled
 
 ---
 
