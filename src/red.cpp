@@ -164,6 +164,9 @@ static EyeOrientationSmoother g_eye_orientation_smoother;
 int main(int argc, char **argv) {
     std::string cli_zarr_override_path;
     std::string cli_recording_path;
+    const std::filesystem::path argv0_path = (argc > 0) ? argv[0] : "";
+    std::error_code cwd_error;
+    const std::filesystem::path cwd = std::filesystem::current_path(cwd_error);
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--zarr") {
@@ -208,7 +211,7 @@ int main(int argc, char **argv) {
                      .glsl_version = (char *)malloc(100)};
 
     constexpr int kCudaDeviceIndex = 0;
-    render_initialize_target(window, kCudaDeviceIndex);
+    render_initialize_target(window, kCudaDeviceIndex, argv0_path);
 
     render_scene *scene = new render_scene();
 
@@ -300,12 +303,13 @@ int main(int argc, char **argv) {
     std::map<std::string, SkeletonPrimitive> skeleton_map;
 
     // others
-    std::filesystem::path cwd = std::filesystem::current_path();
-    UiPathConfig ui_path_config = LoadUiPathConfig(cwd, argv[0]);
+    UiPathConfig ui_path_config = LoadUiPathConfig(cwd, argv0_path);
     std::string start_folder_name = ui_path_config.default_start_path;
     if (start_folder_name.empty() || !IsDirectoryNoThrow(start_folder_name)) {
         start_folder_name = cwd.string();
     }
+    const std::filesystem::path default_buffer_dump_root =
+        GetDefaultCrimsonBufferDumpRoot();
     if (!ui_path_config.loaded_from.empty()) {
         std::cout << "[UIPathConfig] Loaded: " << ui_path_config.loaded_from
                   << std::endl;
@@ -1183,7 +1187,7 @@ int main(int argc, char **argv) {
             ps.pause_selected = 0;
         }
 
-        std::filesystem::path dump_root = "/tmp/crimson_buffer_dumps";
+        std::filesystem::path dump_root = default_buffer_dump_root;
         if (const char* env_dump_root = std::getenv("CRIMSON_BUFFER_DUMP_DIR")) {
             if (*env_dump_root != '\0') {
                 dump_root = env_dump_root;
@@ -2303,7 +2307,8 @@ int main(int argc, char **argv) {
                     randomSeekAndDumpBuffers();
                 }
                 ImGui::TextWrapped(
-                    "  Output dir: CRIMSON_BUFFER_DUMP_DIR (default /tmp/crimson_buffer_dumps)");
+                    "  Output dir: CRIMSON_BUFFER_DUMP_DIR (default %s)",
+                    default_buffer_dump_root.string().c_str());
                 if (!decode_debug_status.empty()) {
                     ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f),
                                        "%s",

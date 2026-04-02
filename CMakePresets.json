@@ -1,0 +1,110 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "ENABLE_TENSORSTORE_ZARR3_CHECK": "OFF",
+        "CRIMSON_INSTALL_DEV_TOOLS": "OFF"
+      }
+    },
+    {
+      "name": "dep-roots-from-env",
+      "hidden": true,
+      "cacheVariables": {
+        "CUDA_TOOLKIT_ROOT_DIR": "$env{CRIMSON_CUDA_TOOLKIT_ROOT}",
+        "OpenCV_DIR": "$env{CRIMSON_OPENCV_DIR}",
+        "FFMPEG_ROOT": "$env{CRIMSON_FFMPEG_ROOT}",
+        "TENSORRT_ROOT": "$env{CRIMSON_TENSORRT_ROOT}"
+      }
+    },
+    {
+      "name": "stack-trt10-cuda12.4-opencv4.10",
+      "hidden": true,
+      "cacheVariables": {
+        "CRIMSON_EXPECT_CUDA_VERSION": "12.4",
+        "CRIMSON_EXPECT_OPENCV_VERSION": "4.10.0",
+        "CRIMSON_EXPECT_TENSORRT_VERSION": "10.0.1.6"
+      }
+    },
+    {
+      "name": "linux-base",
+      "hidden": true,
+      "inherits": [
+        "base",
+        "dep-roots-from-env"
+      ],
+      "generator": "Ninja"
+    },
+    {
+      "name": "linux-trt10-cuda12.4-release",
+      "displayName": "Linux TRT10 / CUDA 12.4 Release",
+      "description": "Linux release stack for CUDA 12.4, OpenCV 4.10.0, and TensorRT 10.0.1.6. Supply dependency paths via CRIMSON_* env vars or CMakeUserPresets.json.",
+      "inherits": [
+        "linux-base",
+        "stack-trt10-cuda12.4-opencv4.10"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-trt10-cuda12.4-debug",
+      "displayName": "Linux TRT10 / CUDA 12.4 Debug",
+      "description": "Linux debug stack for CUDA 12.4, OpenCV 4.10.0, and TensorRT 10.0.1.6. Supply dependency paths via CRIMSON_* env vars or CMakeUserPresets.json.",
+      "inherits": [
+        "linux-base",
+        "stack-trt10-cuda12.4-opencv4.10"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "windows-base",
+      "hidden": true,
+      "inherits": [
+        "base",
+        "dep-roots-from-env"
+      ],
+      "generator": "Ninja Multi-Config"
+    },
+    {
+      "name": "windows-trt10-cuda12.4",
+      "displayName": "Windows TRT10 / CUDA 12.4",
+      "description": "Windows stack for CUDA 12.4, OpenCV 4.10.0, and TensorRT 10.0.1.6. Run from a Visual Studio developer shell and supply dependency paths via CRIMSON_* env vars or CMakeUserPresets.json.",
+      "inherits": [
+        "windows-base",
+        "stack-trt10-cuda12.4-opencv4.10"
+      ]
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "build-linux-trt10-cuda12.4-release",
+      "configurePreset": "linux-trt10-cuda12.4-release"
+    },
+    {
+      "name": "build-linux-trt10-cuda12.4-debug",
+      "configurePreset": "linux-trt10-cuda12.4-debug"
+    },
+    {
+      "name": "build-windows-trt10-cuda12.4-release",
+      "configurePreset": "windows-trt10-cuda12.4",
+      "configuration": "Release"
+    },
+    {
+      "name": "build-windows-trt10-cuda12.4-debug",
+      "configurePreset": "windows-trt10-cuda12.4",
+      "configuration": "Debug"
+    }
+  ]
+}

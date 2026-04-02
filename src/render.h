@@ -44,7 +44,18 @@ inline void render_initialize_target(gx_context *context, int cuda_device_index)
     gx_init(context, render_target);
     checkCudaStatus(cudaGLSetGLDevice(cuda_device_index), "cudaGLSetGLDevice failed");
     checkCudaStatus(cudaSetDevice(cuda_device_index), "cudaSetDevice failed");
-    gx_imgui_init(context);
+    gx_imgui_init(context, std::filesystem::path());
+}
+
+inline void render_initialize_target(gx_context *context,
+                                     int cuda_device_index,
+                                     const std::filesystem::path& argv0_path)
+{
+    GLFWwindow *render_target = gx_glfw_init_render_target(3, 3, context->width, context->height, "Red", context->glsl_version);
+    gx_init(context, render_target);
+    checkCudaStatus(cudaGLSetGLDevice(cuda_device_index), "cudaGLSetGLDevice failed");
+    checkCudaStatus(cudaSetDevice(cuda_device_index), "cudaSetDevice failed");
+    gx_imgui_init(context, argv0_path);
 }
 
 static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer)
