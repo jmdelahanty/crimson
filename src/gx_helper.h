@@ -6,11 +6,14 @@
 #include "imgui_impl_opengl3.h"
 #include "implot.h"
 #include "types.h"
+#include "ui_path_config.h"
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <cstdio>
 #include <cuda_gl_interop.h>
+#include <filesystem>
 #include <stdio.h>
+#include <string>
 #include <stdlib.h>
 
 typedef struct gx_context {
@@ -64,7 +67,8 @@ inline GLFWwindow *gx_glfw_init_render_target(u32 marjor_version, u32 minor_vers
     return window;
 }
 
-inline void gx_imgui_init(gx_context *context) {
+inline void gx_imgui_init(gx_context *context,
+                          const std::filesystem::path& argv0_path) {
     // ************* Dear Imgui ********************//
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -94,15 +98,40 @@ inline void gx_imgui_init(gx_context *context) {
     ImGui_ImplGlfw_InitForOpenGL(context->render_target, true);
     ImGui_ImplOpenGL3_Init(context->glsl_version);
 
-    // Load a nice font
-    io.Fonts->AddFontFromFileTTF("fonts/Roboto-Regular.ttf", 15.0f);
+    std::error_code ec;
+    const std::filesystem::path current_working_dir =
+        std::filesystem::current_path(ec);
+    const auto body_font_path = ResolveCrimsonResourcePath(
+        current_working_dir, argv0_path,
+        std::filesystem::path("fonts") / "Roboto-Regular.ttf");
+    const auto icon_font_path = ResolveCrimsonResourcePath(
+        current_working_dir, argv0_path,
+        std::filesystem::path("fonts") / "forkawesome-webfont.ttf");
+
+    if (body_font_path) {
+        const std::string body_font_string = body_font_path->string();
+        io.Fonts->AddFontFromFileTTF(body_font_string.c_str(), 15.0f);
+    } else {
+        std::fprintf(stderr,
+                     "[CrimsonResources] Failed to locate Roboto-Regular.ttf; "
+                     "using ImGui default font.\n");
+        io.Fonts->AddFontDefault();
+    }
+
     // merge in icons from Font Awesome
     static const ImWchar icons_ranges[] = {ICON_MIN_FK, ICON_MAX_16_FK, 0};
     ImFontConfig icons_config;
     icons_config.MergeMode = true;
     icons_config.PixelSnapH = true;
-    io.Fonts->AddFontFromFileTTF("fonts/forkawesome-webfont.ttf", 15.0f,
-                                 &icons_config, icons_ranges);
+    if (icon_font_path) {
+        const std::string icon_font_string = icon_font_path->string();
+        io.Fonts->AddFontFromFileTTF(icon_font_string.c_str(), 15.0f,
+                                     &icons_config, icons_ranges);
+    } else {
+        std::fprintf(stderr,
+                     "[CrimsonResources] Failed to locate "
+                     "forkawesome-webfont.ttf; icons may not render.\n");
+    }
     // use FONT_ICON_FILE_NAME_FAR if you want regular instead of solid
 }
 

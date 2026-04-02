@@ -8,8 +8,8 @@
 #include <vector>
 
 struct UiPathConfig {
-    std::string default_start_path = "/nvme1";
-    std::vector<std::string> preferred_roots = {"/nvme1"};
+    std::string default_start_path;
+    std::vector<std::string> preferred_roots;
     std::string loaded_from;
 };
 
@@ -23,6 +23,13 @@ std::string ToLowerCopy(std::string value);
 bool IsRegularFileNoThrow(const std::filesystem::path& path);
 bool IsDirectoryNoThrow(const std::filesystem::path& path);
 std::string ExpandUserPath(const std::string& path);
+std::optional<std::filesystem::path> ResolveExecutablePath(
+    const std::filesystem::path& argv0_path);
+std::optional<std::filesystem::path> ResolveCrimsonResourcePath(
+    const std::filesystem::path& current_working_dir,
+    const std::filesystem::path& argv0_path,
+    const std::filesystem::path& relative_path);
+std::filesystem::path GetDefaultCrimsonBufferDumpRoot();
 
 UiPathConfig LoadUiPathConfig(const std::filesystem::path& current_working_dir,
                               const std::filesystem::path& argv0_path);

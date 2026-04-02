@@ -1,8 +1,11 @@
 cmake_minimum_required(VERSION 3.18)
 project(redgui LANGUAGES CXX CUDA)
 
+include(GNUInstallDirs)
+
 # ----------------------- Build toggles -----------------------
 option(ENABLE_NVML "Link against NVIDIA Management Library (NVML)" ON)
+option(CRIMSON_INSTALL_DEV_TOOLS "Install diagnostic and developer helper executables" OFF)
 
 # Set output directory for executables
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/release)
@@ -11,7 +14,17 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/release)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Ofast -mssse3 -ffast-math")
+set(CRIMSON_STRICT_NAN_COMPILE_OPTION "")
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    set(CRIMSON_CXX_FAST_FLAGS -Ofast -ffast-math)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|X86_64|AMD64|amd64|i[3-6]86)$")
+        list(APPEND CRIMSON_CXX_FAST_FLAGS -mssse3)
+    endif()
+    foreach(CRIMSON_CXX_FAST_FLAG IN LISTS CRIMSON_CXX_FAST_FLAGS)
+        add_compile_options($<$<COMPILE_LANGUAGE:CXX>:${CRIMSON_CXX_FAST_FLAG}>)
+    endforeach()
+    set(CRIMSON_STRICT_NAN_COMPILE_OPTION "-fno-fast-math")
+endif()
 
 # Set CUDA standard and options
 set(CMAKE_CUDA_STANDARD 17)
@@ -22,15 +35,129 @@ set(CMAKE_CUDA_ARCHITECTURES "80;86")  # Support both sm_80 and sm_86
 # Suppress deprecated FindCUDA warning
 cmake_policy(SET CMP0146 OLD)
 
-# --- Set Crimson installation paths ---
-set(CRIMSON_ROOT /opt/crimson)
-set(OpenCV_DIR ${CRIMSON_ROOT}/lib/opencv/lib/cmake/opencv4)
-set(TENSORRT_ROOT /usr/local/TensorRT-10.0.1.6)
-set(FFMPEG_ROOT /opt/orange/lib/ffmpeg-nvidia)
+function(crimson_require_exact_version package_name actual_version expected_version)
+    if(NOT expected_version)
+        return()
+    endif()
 
-# --- Set RPATH for runtime library loading ---
-set(CMAKE_INSTALL_RPATH "${CRIMSON_ROOT}/lib/opencv/lib;${TENSORRT_ROOT}/lib;${FFMPEG_ROOT}/lib")
-set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
+    if(NOT actual_version)
+        message(FATAL_ERROR
+            "${package_name} version check failed.\n"
+            "  Expected: ${expected_version}\n"
+            "  Found:    <not detected>")
+    endif()
+
+    if(NOT "${actual_version}" STREQUAL "${expected_version}")
+        message(FATAL_ERROR
+            "${package_name} version mismatch.\n"
+            "  Expected: ${expected_version}\n"
+            "  Found:    ${actual_version}")
+    endif()
+
+    message(STATUS "${package_name} version matches expected ${expected_version}")
+endfunction()
+
+function(crimson_read_tensorrt_version include_dir out_var)
+    set(tensorrt_version "")
+
+    if(NOT include_dir)
+        set(${out_var} "${tensorrt_version}" PARENT_SCOPE)
+        return()
+    endif()
+
+    set(version_header "${include_dir}/NvInferVersion.h")
+    if(NOT EXISTS "${version_header}")
+        set(${out_var} "${tensorrt_version}" PARENT_SCOPE)
+        return()
+    endif()
+
+    file(STRINGS "${version_header}" tensorrt_major_line
+        REGEX "^#define NV_TENSORRT_MAJOR [0-9]+")
+    file(STRINGS "${version_header}" tensorrt_minor_line
+        REGEX "^#define NV_TENSORRT_MINOR [0-9]+")
+    file(STRINGS "${version_header}" tensorrt_patch_line
+        REGEX "^#define NV_TENSORRT_PATCH [0-9]+")
+    file(STRINGS "${version_header}" tensorrt_build_line
+        REGEX "^#define NV_TENSORRT_BUILD [0-9]+")
+
+    if(tensorrt_major_line AND tensorrt_minor_line AND tensorrt_patch_line
+       AND tensorrt_build_line)
+        string(REGEX MATCH "[0-9]+" tensorrt_major "${tensorrt_major_line}")
+        string(REGEX MATCH "[0-9]+" tensorrt_minor "${tensorrt_minor_line}")
+        string(REGEX MATCH "[0-9]+" tensorrt_patch "${tensorrt_patch_line}")
+        string(REGEX MATCH "[0-9]+" tensorrt_build "${tensorrt_build_line}")
+        set(tensorrt_version
+            "${tensorrt_major}.${tensorrt_minor}.${tensorrt_patch}.${tensorrt_build}")
+    endif()
+
+    set(${out_var} "${tensorrt_version}" PARENT_SCOPE)
+endfunction()
+
+# --- Dependency discovery roots ---
+if(NOT OpenCV_DIR AND DEFINED ENV{OpenCV_DIR} AND NOT "$ENV{OpenCV_DIR}" STREQUAL "")
+    set(OpenCV_DIR "$ENV{OpenCV_DIR}")
+endif()
+set(OpenCV_DIR "${OpenCV_DIR}" CACHE PATH
+    "Path to the OpenCV CMake package directory (the folder containing OpenCVConfig.cmake)")
+
+if(NOT TENSORRT_ROOT AND DEFINED ENV{TENSORRT_ROOT} AND NOT "$ENV{TENSORRT_ROOT}" STREQUAL "")
+    set(TENSORRT_ROOT "$ENV{TENSORRT_ROOT}")
+endif()
+set(TENSORRT_ROOT "${TENSORRT_ROOT}" CACHE PATH "Path to the TensorRT installation root")
+
+if(NOT FFMPEG_ROOT AND DEFINED ENV{FFMPEG_ROOT} AND NOT "$ENV{FFMPEG_ROOT}" STREQUAL "")
+    set(FFMPEG_ROOT "$ENV{FFMPEG_ROOT}")
+endif()
+set(FFMPEG_ROOT "${FFMPEG_ROOT}" CACHE PATH "Path to a custom FFmpeg installation root")
+
+set(CRIMSON_EXPECT_CUDA_VERSION "${CRIMSON_EXPECT_CUDA_VERSION}" CACHE STRING
+    "Expected CUDA toolkit version (optional exact match)")
+set(CRIMSON_EXPECT_OPENCV_VERSION "${CRIMSON_EXPECT_OPENCV_VERSION}" CACHE STRING
+    "Expected OpenCV version (optional exact match)")
+set(CRIMSON_EXPECT_TENSORRT_VERSION "${CRIMSON_EXPECT_TENSORRT_VERSION}" CACHE STRING
+    "Expected TensorRT version (optional exact match)")
+
+set(CRIMSON_FFMPEG_INCLUDE_HINTS "")
+set(CRIMSON_FFMPEG_LIBRARY_HINTS "")
+if(FFMPEG_ROOT)
+    list(APPEND CRIMSON_FFMPEG_INCLUDE_HINTS "${FFMPEG_ROOT}/include")
+    list(APPEND CRIMSON_FFMPEG_LIBRARY_HINTS
+        "${FFMPEG_ROOT}/lib"
+        "${FFMPEG_ROOT}/lib64"
+        "${FFMPEG_ROOT}/lib/x64")
+endif()
+
+set(CRIMSON_CUDA_INCLUDE_HINTS "")
+set(CRIMSON_CUDA_LIBRARY_HINTS "")
+if(CUDA_TOOLKIT_ROOT_DIR)
+    list(APPEND CRIMSON_CUDA_INCLUDE_HINTS "${CUDA_TOOLKIT_ROOT_DIR}/include")
+    list(APPEND CRIMSON_CUDA_LIBRARY_HINTS
+        "${CUDA_TOOLKIT_ROOT_DIR}/lib64"
+        "${CUDA_TOOLKIT_ROOT_DIR}/lib/x64")
+endif()
+if(UNIX)
+    list(APPEND CRIMSON_CUDA_INCLUDE_HINTS "/usr/local/cuda/include")
+    list(APPEND CRIMSON_CUDA_LIBRARY_HINTS "/usr/local/cuda/lib64")
+endif()
+
+set(CRIMSON_TENSORRT_INCLUDE_HINTS "")
+set(CRIMSON_TENSORRT_LIBRARY_HINTS "")
+if(TENSORRT_ROOT)
+    list(APPEND CRIMSON_TENSORRT_INCLUDE_HINTS "${TENSORRT_ROOT}/include")
+    list(APPEND CRIMSON_TENSORRT_LIBRARY_HINTS
+        "${TENSORRT_ROOT}/lib"
+        "${TENSORRT_ROOT}/lib64"
+        "${TENSORRT_ROOT}/lib/x64")
+endif()
+
+# --- Set RPATH for relocatable installs ---
+if(UNIX AND NOT APPLE)
+    set(CMAKE_BUILD_RPATH_USE_ORIGIN TRUE)
+    set(CMAKE_INSTALL_RPATH
+        "$ORIGIN"
+        "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}"
+        "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}/crimson/private")
+endif()
 
 # --- Find All Dependencies ---
 find_package(CUDA REQUIRED)
@@ -41,64 +168,78 @@ find_package(glfw3 REQUIRED)
 find_package(Threads REQUIRED)
 find_package(HDF5 REQUIRED COMPONENTS CXX HL)
 
+crimson_require_exact_version("CUDA" "${CUDA_VERSION}" "${CRIMSON_EXPECT_CUDA_VERSION}")
+crimson_require_exact_version("OpenCV" "${OpenCV_VERSION}" "${CRIMSON_EXPECT_OPENCV_VERSION}")
+
+if(CUDA_TOOLKIT_ROOT_DIR)
+    list(APPEND CRIMSON_CUDA_INCLUDE_HINTS "${CUDA_TOOLKIT_ROOT_DIR}/include")
+    list(APPEND CRIMSON_CUDA_LIBRARY_HINTS
+        "${CUDA_TOOLKIT_ROOT_DIR}/lib64"
+        "${CUDA_TOOLKIT_ROOT_DIR}/lib/x64")
+endif()
+
 message(STATUS "OpenCV version: ${OpenCV_VERSION}")
 message(STATUS "OpenCV libraries: ${OpenCV_LIBS}")
 message(STATUS "OpenCV include dirs: ${OpenCV_INCLUDE_DIRS}")
 
 # --- FFmpeg with NVIDIA support ---
-find_path(AVFORMAT_INCLUDE_DIR libavformat/avformat.h HINTS "${FFMPEG_ROOT}/include")
-find_library(AVFORMAT_LIBRARY avformat HINTS "${FFMPEG_ROOT}/lib")
-find_library(AVCODEC_LIBRARY avcodec HINTS "${FFMPEG_ROOT}/lib")
-find_library(AVUTIL_LIBRARY avutil HINTS "${FFMPEG_ROOT}/lib")
-find_library(SWSCALE_LIBRARY swscale HINTS "${FFMPEG_ROOT}/lib")
-find_library(SWRESAMPLE_LIBRARY swresample HINTS "${FFMPEG_ROOT}/lib")
+find_path(AVFORMAT_INCLUDE_DIR libavformat/avformat.h HINTS ${CRIMSON_FFMPEG_INCLUDE_HINTS})
+find_library(AVFORMAT_LIBRARY avformat HINTS ${CRIMSON_FFMPEG_LIBRARY_HINTS})
+find_library(AVCODEC_LIBRARY avcodec HINTS ${CRIMSON_FFMPEG_LIBRARY_HINTS})
+find_library(AVUTIL_LIBRARY avutil HINTS ${CRIMSON_FFMPEG_LIBRARY_HINTS})
+find_library(SWSCALE_LIBRARY swscale HINTS ${CRIMSON_FFMPEG_LIBRARY_HINTS})
+find_library(SWRESAMPLE_LIBRARY swresample HINTS ${CRIMSON_FFMPEG_LIBRARY_HINTS})
 set(FFMPEG_INCLUDE_DIRS ${AVFORMAT_INCLUDE_DIR})
 set(FFMPEG_LIBRARIES ${AVFORMAT_LIBRARY} ${AVCODEC_LIBRARY} ${AVUTIL_LIBRARY} ${SWSCALE_LIBRARY} ${SWRESAMPLE_LIBRARY})
 
 # --- NVIDIA Libraries ---
 # NVENC (Video Codec SDK runtime)
 find_library(NVENC_LIBRARY
-    NAMES nvidia-encode
-    HINTS /usr/lib/x86_64-linux-gnu /usr/lib /usr/lib64
+    NAMES nvidia-encode nvencodeapi
+    HINTS ${CRIMSON_CUDA_LIBRARY_HINTS}
 )
 
 # NVML headers (from libnvidia-ml-dev OR CUDA Toolkit)
 find_path(NVML_INCLUDE_DIR nvml.h
-    HINTS ${CUDA_TOOLKIT_ROOT_DIR}/include /usr/local/cuda/include /usr/include
+    HINTS ${CRIMSON_CUDA_INCLUDE_HINTS}
 )
 
 # NVML library: accept both unversioned .so and SONAME .so.1
 if(ENABLE_NVML)
     find_library(NVML_LIBRARY
         NAMES nvidia-ml nvml libnvidia-ml.so libnvidia-ml.so.1 nvidia-ml.so nvidia-ml.so.1
-        HINTS /lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu /usr/lib64 /usr/local/lib64 /usr/lib
+        HINTS ${CRIMSON_CUDA_LIBRARY_HINTS}
     )
 endif()
 
 # --- CUDA Libraries ---
-find_library(CUDA_DRIVER cuda HINTS ${CUDA_TOOLKIT_ROOT_DIR}/lib64 /usr/local/cuda/lib64)
-find_library(NVCUVID_LIBRARY nvcuvid HINTS ${CUDA_TOOLKIT_ROOT_DIR}/lib64 /usr/local/cuda/lib64)
+find_library(CUDA_DRIVER NAMES cuda nvcuda HINTS ${CRIMSON_CUDA_LIBRARY_HINTS})
+find_library(NVCUVID_LIBRARY NAMES nvcuvid HINTS ${CRIMSON_CUDA_LIBRARY_HINTS})
 
 # NPP Libraries
-find_library(NPPC_LIBRARY nppc HINTS ${CUDA_TOOLKIT_ROOT_DIR}/lib64 /usr/local/cuda/lib64)
-find_library(NPPIG_LIBRARY nppig HINTS ${CUDA_TOOLKIT_ROOT_DIR}/lib64 /usr/local/cuda/lib64)
-find_library(NPPICC_LIBRARY nppicc HINTS ${CUDA_TOOLKIT_ROOT_DIR}/lib64 /usr/local/cuda/lib64)
-find_library(NPPIDEI_LIBRARY nppidei HINTS ${CUDA_TOOLKIT_ROOT_DIR}/lib64 /usr/local/cuda/lib64)
-find_library(NPPIAL_LIBRARY nppial HINTS ${CUDA_TOOLKIT_ROOT_DIR}/lib64 /usr/local/cuda/lib64)
+find_library(NPPC_LIBRARY NAMES nppc HINTS ${CRIMSON_CUDA_LIBRARY_HINTS})
+find_library(NPPIG_LIBRARY NAMES nppig HINTS ${CRIMSON_CUDA_LIBRARY_HINTS})
+find_library(NPPICC_LIBRARY NAMES nppicc HINTS ${CRIMSON_CUDA_LIBRARY_HINTS})
+find_library(NPPIDEI_LIBRARY NAMES nppidei HINTS ${CRIMSON_CUDA_LIBRARY_HINTS})
+find_library(NPPIAL_LIBRARY NAMES nppial HINTS ${CRIMSON_CUDA_LIBRARY_HINTS})
 
 # --- TensorRT Libraries ---
-if(EXISTS ${TENSORRT_ROOT})
-    find_path(TENSORRT_INCLUDE_DIR NvInfer.h HINTS "${TENSORRT_ROOT}/include")
-    find_library(NVINFER_LIBRARY nvinfer HINTS "${TENSORRT_ROOT}/lib")
-    find_library(NVINFER_PLUGIN_LIBRARY nvinfer_plugin HINTS "${TENSORRT_ROOT}/lib")
-    if(NVINFER_LIBRARY)
-        set(TENSORRT_FOUND TRUE)
+find_path(TENSORRT_INCLUDE_DIR NvInfer.h HINTS ${CRIMSON_TENSORRT_INCLUDE_HINTS})
+find_library(NVINFER_LIBRARY nvinfer HINTS ${CRIMSON_TENSORRT_LIBRARY_HINTS})
+find_library(NVINFER_PLUGIN_LIBRARY nvinfer_plugin HINTS ${CRIMSON_TENSORRT_LIBRARY_HINTS})
+crimson_read_tensorrt_version("${TENSORRT_INCLUDE_DIR}" TENSORRT_VERSION)
+if(TENSORRT_INCLUDE_DIR AND NVINFER_LIBRARY)
+    set(TENSORRT_FOUND TRUE)
+    if(TENSORRT_ROOT)
         message(STATUS "TensorRT found at: ${TENSORRT_ROOT}")
+    else()
+        message(STATUS "TensorRT found via default search paths")
     endif()
 else()
     set(TENSORRT_FOUND FALSE)
     message(STATUS "TensorRT not found")
 endif()
+crimson_require_exact_version("TensorRT" "${TENSORRT_VERSION}" "${CRIMSON_EXPECT_TENSORRT_VERSION}")
 
 # --- Third-Party Source Definitions (ImGui/ImPlot) ---
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui)
@@ -273,10 +414,12 @@ file(GLOB CPP_SOURCES CONFIGURE_DEPENDS "src/*.cpp")
 
 # keypoint write path requires strict IEEE NaN semantics for contract-idempotent
 # NaN-aware comparisons and writes.
-set_source_files_properties(
-    src/zarr_loader_keypoint_write.cpp
-    PROPERTIES COMPILE_OPTIONS "-fno-fast-math"
-)
+if(CRIMSON_STRICT_NAN_COMPILE_OPTION)
+    set_source_files_properties(
+        src/zarr_loader_keypoint_write.cpp
+        PROPERTIES COMPILE_OPTIONS "${CRIMSON_STRICT_NAN_COMPILE_OPTION}"
+    )
+endif()
 
 # --- Create the Executable ---
 add_executable(redgui
@@ -293,7 +436,6 @@ target_include_directories(redgui PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nvcodec
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/IconFontCppHeaders
     ${CUDA_INCLUDE_DIRS}
-    /usr/local/cuda/include
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
     ${IMPLOT_DIR}
@@ -389,6 +531,24 @@ foreach(FONT_FILE ${FONT_FILES})
     endif()
 endforeach()
 
+# --- Install Rules ---
+install(TARGETS redgui
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT core
+)
+
+install(DIRECTORY ${FONT_SOURCE_DIR}/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/crimson/fonts
+    COMPONENT core
+    FILES_MATCHING PATTERN "*.ttf"
+)
+
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/config/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/crimson/config
+    COMPONENT core
+    FILES_MATCHING PATTERN "*.json"
+)
+
 # --- Print Configuration Summary ---
 message(STATUS "========================================")
 message(STATUS "Configuration Summary:")
@@ -397,12 +557,22 @@ message(STATUS "  CUDA Toolkit Root: ${CUDA_TOOLKIT_ROOT_DIR}")
 message(STATUS "  CUDA Architecture: ${CMAKE_CUDA_ARCHITECTURES}")
 message(STATUS "  OpenCV Version: ${OpenCV_VERSION}")
 message(STATUS "  OpenCV Dir: ${OpenCV_DIR}")
+message(STATUS "  Expected OpenCV Version: ${CRIMSON_EXPECT_OPENCV_VERSION}")
 message(STATUS "  FFmpeg Directory: ${FFMPEG_ROOT}")
+message(STATUS "  Install Prefix: ${CMAKE_INSTALL_PREFIX}")
+message(STATUS "  Install Data Dir: ${CMAKE_INSTALL_FULL_DATADIR}/crimson")
 if(TENSORRT_FOUND)
-    message(STATUS "  TensorRT: FOUND at ${TENSORRT_ROOT}")
+    message(STATUS "  TensorRT Version: ${TENSORRT_VERSION}")
+    if(TENSORRT_ROOT)
+        message(STATUS "  TensorRT: FOUND at ${TENSORRT_ROOT}")
+    else()
+        message(STATUS "  TensorRT: FOUND via default search paths")
+    endif()
 else()
     message(STATUS "  TensorRT: NOT FOUND")
 endif()
+message(STATUS "  Expected CUDA Version: ${CRIMSON_EXPECT_CUDA_VERSION}")
+message(STATUS "  Expected TensorRT Version: ${CRIMSON_EXPECT_TENSORRT_VERSION}")
 if(ENABLE_NVML)
     if(NVML_LIBRARY)
         message(STATUS "  NVML: FOUND -> ${NVML_LIBRARY}")
@@ -446,7 +616,10 @@ target_link_libraries(keypoint_fish_present_contract_check PRIVATE
     ${HDF5_HL_LIBRARIES}
 )
 target_compile_features(keypoint_fish_present_contract_check PRIVATE cxx_std_17)
-target_compile_options(keypoint_fish_present_contract_check PRIVATE -fno-fast-math)
+if(CRIMSON_STRICT_NAN_COMPILE_OPTION)
+    target_compile_options(keypoint_fish_present_contract_check PRIVATE
+        ${CRIMSON_STRICT_NAN_COMPILE_OPTION})
+endif()
 
 add_executable(keypoint_plot_debug_dump
     tools/keypoint_plot_debug_dump.cpp
@@ -473,3 +646,22 @@ target_link_libraries(keypoint_plot_debug_dump PRIVATE
     ${HDF5_HL_LIBRARIES}
 )
 target_compile_features(keypoint_plot_debug_dump PRIVATE cxx_std_17)
+
+if(CRIMSON_INSTALL_DEV_TOOLS)
+    install(TARGETS
+        test_zarr3_read
+        zarr_calibration_probe
+        debug_detect_run
+        keypoint_fish_present_contract_check
+        keypoint_plot_debug_dump
+        RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/crimson
+        COMPONENT dev_tools
+    )
+
+    if(TARGET ts_zarr3_check)
+        install(TARGETS ts_zarr3_check
+            RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/crimson
+            COMPONENT dev_tools
+        )
+    endif()
+endif()
