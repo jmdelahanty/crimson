@@ -94,6 +94,14 @@ function(crimson_read_tensorrt_version include_dir out_var)
     set(${out_var} "${tensorrt_version}" PARENT_SCOPE)
 endfunction()
 
+function(crimson_tensorstore_use_system_if_target option_name target_name)
+    if(TARGET "${target_name}")
+        set(${option_name} ON CACHE BOOL
+            "Use an installed version of the dependency when ${target_name} already exists"
+            FORCE)
+    endif()
+endfunction()
+
 # --- Dependency discovery roots ---
 if(NOT OpenCV_DIR AND DEFINED ENV{OpenCV_DIR} AND NOT "$ENV{OpenCV_DIR}" STREQUAL "")
     set(OpenCV_DIR "$ENV{OpenCV_DIR}")
@@ -329,11 +337,20 @@ set(TENSORSTORE_BUILD_PYTHON_BINDINGS OFF CACHE BOOL "Build Python bindings" FOR
 set(TENSORSTORE_BUILD_BENCHMARKS OFF CACHE BOOL "Build benchmarks" FORCE)
 set(TENSORSTORE_BUILD_DOC OFF CACHE BOOL "Build documentation" FORCE)
 if(WIN32)
-  # TensorStore's vendored nlohmann_json collides with the vcpkg-provided
-  # package target on Windows. Prefer the system package when building with
-  # the Windows toolchain stack.
-  set(TENSORSTORE_USE_SYSTEM_NLOHMANN_JSON ON CACHE BOOL
-      "Use an installed version of nlohmann_json" FORCE)
+  # On Windows, packages discovered via vcpkg or upstream config packages can
+  # already define imported targets before TensorStore configures its vendored
+  # third-party tree. Prefer those system packages to avoid alias-target
+  # collisions in TensorStore's generated CMake.
+  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_NLOHMANN_JSON "nlohmann_json::nlohmann_json")
+  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_ZLIB "ZLIB::ZLIB")
+  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_OPENSSL "OpenSSL::SSL")
+  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_CURL "CURL::libcurl")
+  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_PNG "PNG::PNG")
+  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_JPEG "JPEG::JPEG")
+  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_TIFF "TIFF::TIFF")
+  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_WEBP "WebP::webp")
+  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_LIBLZMA "LibLZMA::LibLZMA")
+  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_BZIP2 "BZip2::BZip2")
 endif()
 
 # Use a specific release version for stability
