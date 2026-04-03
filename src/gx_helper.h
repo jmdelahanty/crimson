@@ -191,8 +191,8 @@ static void upload_image_pbo_to_texture(int image_width, int img_height) {
     // Assume PBO is bound before this, therefore the last
     // argument is an offset into the PBO, not a pointer to a
     // buffer stored in CPU memory
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image_width, img_height, 0, GL_RGBA,
-                 GL_UNSIGNED_BYTE, 0);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, image_width, img_height, GL_RGBA,
+                    GL_UNSIGNED_BYTE, 0);
 }
 
 static void upload_texture(GLuint *image_texture, unsigned char *frame,

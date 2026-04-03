@@ -211,7 +211,7 @@ cmake --install build/windows-trt10-cuda12.4 --config Release --prefix dist/Crim
 Check:
 
 - [ ] install step completes
-- [ ] staged app launches from `dist/Crimson/redgui.exe`
+- [ ] staged app launches from the staged install tree
 - [ ] runtime libraries are found from the staged layout
 
 Record:
@@ -223,6 +223,14 @@ Suggested note for the first successful Windows staging pass:
 
 - the first validated staged launch used `tools/set_windows_dependency_roots.ps1`
   in the same PowerShell session
+- the first observed staged launch path was `dist/Crimson/bin/redgui.exe`
+
+Suggested follow-up note for the flattening work:
+
+- re-test the Windows install tree in a clean `dist/Crimson` directory
+- verify whether `redgui.exe` is expected at the install root or under `bin/`
+- if flattening does not validate cleanly, keep the staged-path expectation as
+  `dist/Crimson/bin/redgui.exe` for the first Windows release candidate
 
 ---
 

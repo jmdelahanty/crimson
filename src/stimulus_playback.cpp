@@ -111,12 +111,13 @@ bool allocateStimulusBuffers(StimulusPlayback &stim) {
 bool initializeStimulusPlayback(StimulusPlayback &stim,
                                 const std::string &video_path,
                                 int buffer_size,
+                                bool use_cpu_buffer,
                                 int cuda_device_index) {
     destroyStimulusPlayback(stim);
 
     stim.video_path = video_path;
-    stim.buffer_size = buffer_size;
-    stim.use_cpu_buffer = false;
+    stim.buffer_size = std::max(1, buffer_size);
+    stim.use_cpu_buffer = use_cpu_buffer;
 
     std::map<std::string, std::string> ffmpeg_options;
     try {
@@ -193,6 +194,7 @@ bool initializeStimulusPlayback(StimulusPlayback &stim,
     std::cout << "[Stimulus] decoder initialized: " << video_path
               << " size=" << stim.width << "x" << stim.height
               << " fps=" << stim.fps << " buffer=" << stim.buffer_size
+              << " mode=" << (stim.use_cpu_buffer ? "cpu" : "gpu")
               << std::endl;
     return true;
 }

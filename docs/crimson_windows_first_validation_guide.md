@@ -408,7 +408,6 @@ Expected:
 
 - install completes
 - staged layout is produced under `dist/Crimson`
-- on Windows, the staged executable should be `dist/Crimson/redgui.exe`
 
 At this stage, you are testing the packaging direction as well as the build.
 
@@ -421,12 +420,25 @@ First run from the build output if needed, then from the staged install tree.
 Suggested staged launch command:
 
 ```powershell
-& .\dist\Crimson\redgui.exe
+& .\dist\Crimson\bin\redgui.exe
 ```
 
 If you already dot-sourced `tools/set_windows_dependency_roots.ps1` in the same
 PowerShell session, the helper should have already prepended the common runtime
 DLL directories to `PATH`.
+
+Current observed result on the first validated Windows laptop:
+
+- the staged app launched from `dist/Crimson/bin/redgui.exe`
+
+Follow-up packaging work:
+
+- verify the flattened Windows install layout in a clean staging directory
+- confirm whether a fresh configure/install moves `redgui.exe` to
+  `dist/Crimson/redgui.exe` or whether stale install artifacts are masking the
+  change
+- if flattening remains unreliable, decide whether to keep the `bin/` layout on
+  Windows for the first packaged release
 
 Minimum checks:
 

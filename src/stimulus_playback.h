@@ -82,6 +82,7 @@ bool allocateStimulusBuffers(StimulusPlayback &stim);
 bool initializeStimulusPlayback(StimulusPlayback &stim,
                                 const std::string &video_path,
                                 int buffer_size,
+                                bool use_cpu_buffer,
                                 int cuda_device_index);
 int findStimulusBuffer(const StimulusPlayback &stim, int target_frame);
 void releaseStimulusBufferSlot(StimulusPlayback &stim, int index);

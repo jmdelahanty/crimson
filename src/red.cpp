@@ -330,6 +330,8 @@ int main(int argc, char **argv) {
     yolo_param yolo_setting = yolo_param();
     std::string keypoints_root_folder;
     int label_buffer_size = 100;
+    int stimulus_buffer_size = 12;
+    bool stimulus_use_cpu_buffer = false;
     bool show_help_window = false;
     std::vector<bool> is_view_focused;
     bool input_is_imgs = false;
@@ -476,10 +478,10 @@ int main(int argc, char **argv) {
             return;
         }
 
-        int stim_buf_size = scene->size_of_buffer > 0
-                                ? scene->size_of_buffer : label_buffer_size;
+        int stim_buf_size = std::max(1, stimulus_buffer_size);
         if (!initializeStimulusPlayback(stimulus_player, resolved->string(),
-                                         stim_buf_size, kCudaDeviceIndex)) {
+                                         stim_buf_size, stimulus_use_cpu_buffer,
+                                         kCudaDeviceIndex)) {
             std::cerr << "[Stimulus] Failed to auto-load stimulus video: "
                       << resolved->string() << std::endl;
             return;
@@ -1977,6 +1979,25 @@ int main(int argc, char **argv) {
                 }
 
                 ImGui::InputInt("Buffer Size", &label_buffer_size);
+                label_buffer_size = std::max(1, label_buffer_size);
+            }
+            if (!stimulus_player.loaded) {
+                ImGui::InputInt("Stimulus Buffer Size", &stimulus_buffer_size);
+                stimulus_buffer_size = std::max(1, stimulus_buffer_size);
+                {
+                    const char *items[] = {"Stimulus GPU Buffer", "Stimulus CPU Buffer"};
+                    int stimulus_buffer_mode = stimulus_use_cpu_buffer ? 1 : 0;
+                    ImGui::Combo("Stimulus Buffer Type", &stimulus_buffer_mode, items,
+                                 IM_ARRAYSIZE(items));
+                    stimulus_use_cpu_buffer = (stimulus_buffer_mode == 1);
+                }
+                ImGui::Text("Stimulus Buffer Size: %d", stimulus_buffer_size);
+                ImGui::Text("Stimulus Buffer Mode: %s",
+                            stimulus_use_cpu_buffer ? "CPU" : "GPU");
+            } else {
+                ImGui::Text("Stimulus Buffer Size: %d", stimulus_player.buffer_size);
+                ImGui::Text("Stimulus Buffer Mode: %s",
+                            stimulus_player.use_cpu_buffer ? "CPU" : "GPU");
             }
             if (video_loaded) {
                 ImGui::InputInt("Seek Step", &dc_context->seek_interval, 10,
@@ -2757,11 +2778,11 @@ int main(int argc, char **argv) {
                 auto selection = ImGuiFileDialog::Instance()->GetSelection();
                 if (!selection.empty()) {
                     std::string stimulus_path = selection.begin()->second;
-                    int stimulus_buffer_size = scene->size_of_buffer > 0
-                                                   ? scene->size_of_buffer
-                                                   : label_buffer_size;
+                    int selected_stimulus_buffer_size =
+                        std::max(1, stimulus_buffer_size);
                     if (!initializeStimulusPlayback(stimulus_player, stimulus_path,
-                                                    stimulus_buffer_size,
+                                                    selected_stimulus_buffer_size,
+                                                    stimulus_use_cpu_buffer,
                                                     kCudaDeviceIndex)) {
                         show_error = true;
                         error_message = "Failed to load stimulus video: " + stimulus_path;
@@ -7565,9 +7586,6 @@ struct StateOverlay {
                 };
                 for (const auto &cam_name : camera_names) {
                     considerDecodeBound(cam_name);
-                }
-                if (stimulus_player.loaded) {
-                    considerDecodeBound(stimulus_player.window_name);
                 }
                 if (have_decode_bound) {
                     frame_to_show = std::min(frame_to_show, min_decoded_frame);
