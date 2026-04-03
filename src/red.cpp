@@ -203,12 +203,12 @@ int main(int argc, char **argv) {
     }
 
     gx_context *window = new gx_context();
-    *window =
-        (gx_context){.swap_interval = 1, // use vsync
-                     .width = 1920,
-                     .height = 1080,
-                     .render_target_title = (char *)malloc(100), // window title
-                     .glsl_version = (char *)malloc(100)};
+    *window = gx_context{};
+    window->swap_interval = 1;  // use vsync
+    window->width = 1920;
+    window->height = 1080;
+    window->render_target_title = (char *)malloc(100);  // window title
+    window->glsl_version = (char *)malloc(100);
 
     constexpr int kCudaDeviceIndex = 0;
     render_initialize_target(window, kCudaDeviceIndex, argv0_path);
@@ -227,12 +227,13 @@ int main(int argc, char **argv) {
     bool zarr_loaded = false;
 
     DecoderContext *dc_context = new DecoderContext();
-    *dc_context = (DecoderContext){.decoding_flag = false,
-                                   .stop_flag = false,
-                                   .total_num_frame = int(INT_MAX),
-                                   .estimated_num_frames = 0,
-                                   .gpu_index = kCudaDeviceIndex,
-                                   .seek_interval = 250};
+    *dc_context = DecoderContext{};
+    dc_context->decoding_flag = false;
+    dc_context->stop_flag = false;
+    dc_context->total_num_frame = int(INT_MAX);
+    dc_context->estimated_num_frames = 0;
+    dc_context->gpu_index = kCudaDeviceIndex;
+    dc_context->seek_interval = 250;
 
     // gui states, todo: bundle this later
     std::time_t last_saved = static_cast<std::time_t>(-1);
