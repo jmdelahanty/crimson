@@ -328,6 +328,13 @@ set(TENSORSTORE_BUILD_EXAMPLES OFF CACHE BOOL "Build TensorStore examples" FORCE
 set(TENSORSTORE_BUILD_PYTHON_BINDINGS OFF CACHE BOOL "Build Python bindings" FORCE)
 set(TENSORSTORE_BUILD_BENCHMARKS OFF CACHE BOOL "Build benchmarks" FORCE)
 set(TENSORSTORE_BUILD_DOC OFF CACHE BOOL "Build documentation" FORCE)
+if(WIN32)
+  # TensorStore's vendored nlohmann_json collides with the vcpkg-provided
+  # package target on Windows. Prefer the system package when building with
+  # the Windows toolchain stack.
+  set(TENSORSTORE_USE_SYSTEM_NLOHMANN_JSON ON CACHE BOOL
+      "Use an installed version of nlohmann_json" FORCE)
+endif()
 
 # Use a specific release version for stability
 FetchContent_Declare(
