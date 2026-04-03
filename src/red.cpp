@@ -332,6 +332,11 @@ int main(int argc, char **argv) {
     int label_buffer_size = 100;
     int stimulus_buffer_size = 12;
     bool stimulus_use_cpu_buffer = false;
+#ifdef _WIN32
+    bool stimulus_use_software_decode = true;
+#else
+    bool stimulus_use_software_decode = false;
+#endif
     uint64_t stimulus_catchup_seek_generation = 1;
     bool show_help_window = false;
     std::vector<bool> is_view_focused;
@@ -482,6 +487,7 @@ int main(int argc, char **argv) {
         int stim_buf_size = std::max(1, stimulus_buffer_size);
         if (!initializeStimulusPlayback(stimulus_player, resolved->string(),
                                          stim_buf_size, stimulus_use_cpu_buffer,
+                                         stimulus_use_software_decode,
                                          kCudaDeviceIndex)) {
             std::cerr << "[Stimulus] Failed to auto-load stimulus video: "
                       << resolved->string() << std::endl;
@@ -1992,11 +1998,27 @@ int main(int argc, char **argv) {
                                  IM_ARRAYSIZE(items));
                     stimulus_use_cpu_buffer = (stimulus_buffer_mode == 1);
                 }
+                {
+                    const char *items[] = {"Stimulus Software Decode",
+                                           "Stimulus GPU Decode"};
+                    int stimulus_decode_mode =
+                        stimulus_use_software_decode ? 0 : 1;
+                    ImGui::Combo("Stimulus Decode Backend", &stimulus_decode_mode,
+                                 items, IM_ARRAYSIZE(items));
+                    stimulus_use_software_decode =
+                        (stimulus_decode_mode == 0);
+                }
                 ImGui::Text("Stimulus Buffer Size: %d", stimulus_buffer_size);
+                ImGui::Text("Stimulus Decode Backend: %s",
+                            stimulus_use_software_decode ? "Software"
+                                                         : "GPU");
                 ImGui::Text("Stimulus Buffer Mode: %s",
                             stimulus_use_cpu_buffer ? "CPU" : "GPU");
             } else {
                 ImGui::Text("Stimulus Buffer Size: %d", stimulus_player.buffer_size);
+                ImGui::Text("Stimulus Decode Backend: %s",
+                            stimulus_player.use_software_decode ? "Software"
+                                                                : "GPU");
                 ImGui::Text("Stimulus Buffer Mode: %s",
                             stimulus_player.use_cpu_buffer ? "CPU" : "GPU");
             }
@@ -2784,6 +2806,7 @@ int main(int argc, char **argv) {
                     if (!initializeStimulusPlayback(stimulus_player, stimulus_path,
                                                     selected_stimulus_buffer_size,
                                                     stimulus_use_cpu_buffer,
+                                                    stimulus_use_software_decode,
                                                     kCudaDeviceIndex)) {
                         show_error = true;
                         error_message = "Failed to load stimulus video: " + stimulus_path;
