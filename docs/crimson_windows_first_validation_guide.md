@@ -408,6 +408,7 @@ Expected:
 
 - install completes
 - staged layout is produced under `dist/Crimson`
+- on Windows, the staged executable should be `dist/Crimson/redgui.exe`
 
 At this stage, you are testing the packaging direction as well as the build.
 
@@ -416,6 +417,16 @@ At this stage, you are testing the packaging direction as well as the build.
 ## Step 11: Run Runtime Smoke Checks
 
 First run from the build output if needed, then from the staged install tree.
+
+Suggested staged launch command:
+
+```powershell
+& .\dist\Crimson\redgui.exe
+```
+
+If you already dot-sourced `tools/set_windows_dependency_roots.ps1` in the same
+PowerShell session, the helper should have already prepended the common runtime
+DLL directories to `PATH`.
 
 Minimum checks:
 

@@ -182,6 +182,7 @@ std::vector<fs::path> CollectCrimsonResourceRoots(const fs::path& current_workin
 
     if (auto executable_dir = GetExecutableDir(argv0_path)) {
         AppendUniquePath(roots, *executable_dir);
+        AppendUniquePath(roots, *executable_dir / "share" / "crimson");
         fs::path install_root = executable_dir->parent_path();
         if (!install_root.empty()) {
             AppendUniquePath(roots, install_root);
@@ -386,6 +387,8 @@ UiPathConfig LoadUiPathConfig(const fs::path& current_working_dir,
 
     if (auto executable_dir = GetExecutableDir(argv0_path)) {
         candidates.push_back(*executable_dir / "config" / "ui_paths.json");
+        candidates.push_back(*executable_dir / "share" / "crimson" / "config" /
+                             "ui_paths.json");
         fs::path repo_like_root = executable_dir->parent_path();
         if (!repo_like_root.empty()) {
             candidates.push_back(repo_like_root / "config" / "ui_paths.json");
