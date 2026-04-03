@@ -5801,7 +5801,8 @@ struct StateOverlay {
                 }
             }
 
-            if (ps.play_video && mapping_available && target_stimulus_frame >= 0 &&
+            if (ps.play_video && zarr_loaded && zarr_loader.hasStimulusAlignment() &&
+                target_stimulus_frame >= 0 &&
                 seek_progress.state != SeekState::WaitingCameras &&
                 seek_progress.state != SeekState::WaitingStimulus) {
                 const int latest_stimulus_frame =
