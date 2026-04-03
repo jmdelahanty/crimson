@@ -64,6 +64,7 @@ struct StimulusPlayback {
     double fps = 0.0;
     int buffer_size = 100;
     bool use_cpu_buffer = false;
+    bool use_software_decode = false;
     PictureBuffer *display_buffer = nullptr;
     PBO_CUDA pbo = {};
     GLuint texture = 0;
@@ -88,6 +89,7 @@ bool initializeStimulusPlayback(StimulusPlayback &stim,
                                 const std::string &video_path,
                                 int buffer_size,
                                 bool use_cpu_buffer,
+                                bool use_software_decode,
                                 int cuda_device_index);
 int findStimulusBuffer(const StimulusPlayback &stim, int target_frame);
 void releaseStimulusBufferSlot(StimulusPlayback &stim, int index);
