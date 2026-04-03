@@ -51,6 +51,8 @@ For the first Windows validation record, see
 [docs/crimson_windows_trt10_cuda12.4_validation_record.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_trt10_cuda12.4_validation_record.md).
 For a step-by-step Windows laptop bring-up guide, see
 [docs/crimson_windows_first_validation_guide.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_first_validation_guide.md).
+For the recommended recording-root layout and Windows launch examples, see
+[docs/crimson_recording_folder_layout.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_recording_folder_layout.md).
 
 If you are confused by `nvidia-smi` showing a different CUDA version than
 `nvcc` or the preset name, see
