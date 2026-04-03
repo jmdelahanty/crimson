@@ -190,6 +190,10 @@ Important:
 
 - `CRIMSON_OPENCV_DIR` must point to the directory containing
   `OpenCVConfig.cmake`
+- `CRIMSON_FFMPEG_ROOT` must point to the FFmpeg install root containing
+  `include/`, `lib/`, and `bin/`
+- `CRIMSON_VIDEO_CODEC_SDK_ROOT` must point to the NVIDIA Video Codec SDK root
+  containing `Interface/` and `Lib/x64/`
 - the OpenCV build should include the modules Crimson actually uses
 - the full `windows-trt10-cuda12.4` preset expects the OpenCV SFM module for
   triangulation support
@@ -204,6 +208,21 @@ Prepare:
 
 At minimum, the root should provide headers and libraries in a structure that
 matches the CMake hints Crimson uses.
+
+If you build FFmpeg with Media Autobuild Suite, stage it into Crimson's
+expected layout by running this from a Visual Studio developer shell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\stage_windows_ffmpeg_nvidia.ps1 `
+  -MediaAutobuildRoot C:\src\media-autobuild_suite\local64 `
+  -OutputRoot C:\third_party\ffmpeg-nvidia
+```
+
+That script:
+
+- verifies that the FFmpeg build exposes CUDA/NVENC
+- copies headers and runtime DLLs into `C:\third_party\ffmpeg-nvidia`
+- generates MSVC import libraries from the suite's `.def` files using `lib.exe`
 
 ### Driver Check
 
@@ -252,6 +271,7 @@ Example:
 $env:CRIMSON_CUDA_TOOLKIT_ROOT="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4"
 $env:CRIMSON_OPENCV_DIR="C:/third_party/opencv-4.10.0/install/lib/cmake/opencv4"
 $env:CRIMSON_FFMPEG_ROOT="C:/third_party/ffmpeg-nvidia"
+$env:CRIMSON_VIDEO_CODEC_SDK_ROOT="C:/third_party/Video_Codec_SDK_13.0"
 $env:CRIMSON_TENSORRT_ROOT="C:/third_party/TensorRT-10.0.1.6"
 ```
 

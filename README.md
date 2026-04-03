@@ -74,6 +74,7 @@ The shared presets read these environment variables:
 - `CRIMSON_CUDA_TOOLKIT_ROOT`
 - `CRIMSON_OPENCV_DIR`
 - `CRIMSON_FFMPEG_ROOT`
+- `CRIMSON_VIDEO_CODEC_SDK_ROOT`
 - `CRIMSON_TENSORRT_ROOT`
 
 Notes:
@@ -82,6 +83,8 @@ Notes:
   `OpenCVConfig.cmake`
 - `CRIMSON_FFMPEG_ROOT` and `CRIMSON_TENSORRT_ROOT` should point to install
   roots
+- `CRIMSON_VIDEO_CODEC_SDK_ROOT` should point to the NVIDIA Video Codec SDK
+  root, typically the folder containing `Interface/` and `Lib/x64/`
 
 Linux example:
 
@@ -89,6 +92,7 @@ Linux example:
 export CRIMSON_CUDA_TOOLKIT_ROOT=/usr/local/cuda-12.4
 export CRIMSON_OPENCV_DIR=/opt/crimson/lib/opencv/lib/cmake/opencv4
 export CRIMSON_FFMPEG_ROOT=/opt/orange/lib/ffmpeg-nvidia
+export CRIMSON_VIDEO_CODEC_SDK_ROOT=/opt/nvidia/Video_Codec_SDK
 export CRIMSON_TENSORRT_ROOT=/usr/local/TensorRT-10.0.1.6
 
 cmake --preset linux-trt10-cuda12.4-release
@@ -101,6 +105,7 @@ Windows example:
 $env:CRIMSON_CUDA_TOOLKIT_ROOT="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4"
 $env:CRIMSON_OPENCV_DIR="C:/third_party/opencv-4.10.0/install/lib/cmake/opencv4"
 $env:CRIMSON_FFMPEG_ROOT="C:/third_party/ffmpeg-nvidia"
+$env:CRIMSON_VIDEO_CODEC_SDK_ROOT="C:/third_party/Video_Codec_SDK_13.0"
 $env:CRIMSON_TENSORRT_ROOT="C:/third_party/TensorRT-10.0.1.6"
 
 cmake --preset windows-trt10-cuda12.4
