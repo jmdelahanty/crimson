@@ -211,13 +211,18 @@ cmake --install build/windows-trt10-cuda12.4 --config Release --prefix dist/Crim
 Check:
 
 - [ ] install step completes
-- [ ] staged app launches from `dist/Crimson`
+- [ ] staged app launches from `dist/Crimson/redgui.exe`
 - [ ] runtime libraries are found from the staged layout
 
 Record:
 
 - Install/staging: `pass` / `fail` / `partial`
 - Notes:
+
+Suggested note for the first successful Windows staging pass:
+
+- the first validated staged launch used `tools/set_windows_dependency_roots.ps1`
+  in the same PowerShell session
 
 ---
 
