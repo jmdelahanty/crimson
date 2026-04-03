@@ -42,6 +42,51 @@ This is the simplest layout to support with the current auto-discovery logic.
 
 ---
 
+## Optional Legacy H5 File
+
+Crimson still has legacy H5 readers, but H5 is no longer the primary runtime
+source for stimulus synchronization in the current zarr-driven workflow.
+
+Today, the active stimulus-alignment path comes from the zarr archive's
+`analysis/stimulus_runs/.../frame_alignment` data, not from a sidecar H5 file.
+See [docs/stimulus_alignment_overview.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/stimulus_alignment_overview.md)
+and the H5 loader in [src/h5_loader.h](/home/delahantyj@hhmi.org/gitrepos/crimson/src/h5_loader.h#L92).
+
+What H5 is still useful for:
+
+- compatibility with older session formats
+- debugging or inspecting historical `frame_metadata`
+- loading legacy calibration, events, or tracking snapshots
+
+What H5 is not required for:
+
+- opening the zarr archive
+- auto-loading the affiliated raw camera video
+- auto-loading the stimulus video
+- using the current stimulus-alignment path stored in zarr
+
+If you want to keep a legacy H5 file with the recording, treat it as optional
+metadata and place it outside the required `zarr/`, `cams/`, and `raw/` paths:
+
+```text
+<recording-root>/
+  zarr/
+    <analysis-or-training>.zarr/
+  cams/
+    <camera-video>.mp4
+  raw/
+    <stimulus-video>.mp4
+  metadata/
+    <session>_analysis.h5
+```
+
+One subtle leftover from the old path is that Crimson may use a zarr
+`source_h5` attribute only as a filename hint to derive a stimulus `.mp4`
+path. That is a path-resolution hint, not a requirement to load the H5 file at
+runtime. See [src/ui_path_config.cpp](/home/delahantyj@hhmi.org/gitrepos/crimson/src/ui_path_config.cpp#L548).
+
+---
+
 ## Why This Layout Works
 
 When Crimson is given `--recording <recording-root>`, it:
