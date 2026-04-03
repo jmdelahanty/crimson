@@ -193,7 +193,7 @@ Important:
 - `CRIMSON_FFMPEG_ROOT` must point to the FFmpeg install root containing
   `include/`, `lib/`, and `bin/`
 - `CRIMSON_VIDEO_CODEC_SDK_ROOT` must point to the NVIDIA Video Codec SDK root
-  containing `Interface/` and `Lib/x64/`
+  containing `Interface/` and either `Lib/x64/` or `Lib/win/x64/`
 - the OpenCV build should include the modules Crimson actually uses
 - the full `windows-trt10-cuda12.4` preset expects the OpenCV SFM module for
   triangulation support

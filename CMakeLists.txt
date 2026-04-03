@@ -157,6 +157,8 @@ if(VIDEO_CODEC_SDK_ROOT)
         "${VIDEO_CODEC_SDK_ROOT}/Interface"
         "${VIDEO_CODEC_SDK_ROOT}/include")
     list(APPEND CRIMSON_VIDEO_CODEC_SDK_LIBRARY_HINTS
+        "${VIDEO_CODEC_SDK_ROOT}/Lib/win/x64"
+        "${VIDEO_CODEC_SDK_ROOT}/lib/win/x64"
         "${VIDEO_CODEC_SDK_ROOT}/Lib/x64"
         "${VIDEO_CODEC_SDK_ROOT}/lib/x64"
         "${VIDEO_CODEC_SDK_ROOT}/Lib"
