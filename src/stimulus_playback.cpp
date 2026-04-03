@@ -51,6 +51,10 @@ void destroyStimulusPlayback(StimulusPlayback &stim) {
     stim.last_displayed_frame = -1;
     stim.throttled = false;
     stim.throttle_resume_frame = -1;
+    stim.playback_catchup_seek_in_flight = false;
+    stim.playback_catchup_seek_id = 0;
+    stim.playback_catchup_target_frame = -1;
+    stim.playback_catchup_last_request = std::chrono::steady_clock::time_point{};
     auto need_it = window_need_decoding.find(stim.window_name);
     if (need_it != window_need_decoding.end()) {
         need_it->second.store(false);
@@ -191,6 +195,10 @@ bool initializeStimulusPlayback(StimulusPlayback &stim,
     stim.last_displayed_frame = -1;
     stim.throttled = false;
     stim.throttle_resume_frame = -1;
+    stim.playback_catchup_seek_in_flight = false;
+    stim.playback_catchup_seek_id = 0;
+    stim.playback_catchup_target_frame = -1;
+    stim.playback_catchup_last_request = std::chrono::steady_clock::time_point{};
     std::cout << "[Stimulus] decoder initialized: " << video_path
               << " size=" << stim.width << "x" << stim.height
               << " fps=" << stim.fps << " buffer=" << stim.buffer_size

@@ -75,6 +75,11 @@ struct StimulusPlayback {
     int last_displayed_frame = -1;
     bool throttled = false;
     int throttle_resume_frame = -1;
+    bool playback_catchup_seek_in_flight = false;
+    uint64_t playback_catchup_seek_id = 0;
+    int playback_catchup_target_frame = -1;
+    std::chrono::steady_clock::time_point playback_catchup_last_request =
+        std::chrono::steady_clock::time_point{};
 };
 
 void destroyStimulusPlayback(StimulusPlayback &stim);

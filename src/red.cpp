@@ -332,6 +332,7 @@ int main(int argc, char **argv) {
     int label_buffer_size = 100;
     int stimulus_buffer_size = 12;
     bool stimulus_use_cpu_buffer = false;
+    uint64_t stimulus_catchup_seek_generation = 1;
     bool show_help_window = false;
     std::vector<bool> is_view_focused;
     bool input_is_imgs = false;
@@ -5791,6 +5792,72 @@ struct StateOverlay {
             discardStimulusFramesOlderThan(stimulus_player, discard_threshold);
 
             bool decoder_active_now = window_need_decoding[stimulus_player.window_name].load();
+            if (stimulus_player.playback_catchup_seek_in_flight) {
+                std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+                if (stimulus_player.seek.seek_done &&
+                    stimulus_player.seek.settled_seek_id ==
+                        stimulus_player.playback_catchup_seek_id) {
+                    stimulus_player.playback_catchup_seek_in_flight = false;
+                }
+            }
+
+            if (ps.play_video && mapping_available && target_stimulus_frame >= 0 &&
+                seek_progress.state != SeekState::WaitingCameras &&
+                seek_progress.state != SeekState::WaitingStimulus) {
+                const int latest_stimulus_frame =
+                    latest_decoded_frame[stimulus_player.window_name].load();
+                const int stimulus_progress_frame =
+                    std::max(latest_stimulus_frame, stimulus_player.last_displayed_frame);
+                const int stimulus_lag_frames =
+                    (stimulus_progress_frame >= 0)
+                        ? (target_stimulus_frame - stimulus_progress_frame)
+                        : target_stimulus_frame;
+                const int catchup_threshold =
+                    std::max(8, static_cast<int>(std::ceil(stimulus_player.fps * 0.35)));
+                const int catchup_seek_backoff =
+                    std::max(1, static_cast<int>(std::ceil(stimulus_player.fps * 0.05)));
+                const auto now = std::chrono::steady_clock::now();
+                const bool catchup_cooldown_elapsed =
+                    !stimulus_player.playback_catchup_seek_in_flight ||
+                    (now - stimulus_player.playback_catchup_last_request) >=
+                        std::chrono::milliseconds(200);
+                const bool target_has_advanced =
+                    stimulus_player.playback_catchup_target_frame < 0 ||
+                    target_stimulus_frame >
+                        (stimulus_player.playback_catchup_target_frame +
+                         std::max(2, catchup_threshold / 2));
+
+                if (stimulus_lag_frames > catchup_threshold &&
+                    catchup_cooldown_elapsed && target_has_advanced) {
+                    const int catchup_seek_frame =
+                        std::max(0, target_stimulus_frame - catchup_seek_backoff);
+                    const uint64_t catchup_seek_id =
+                        stimulus_catchup_seek_generation++;
+                    {
+                        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+                        stimulus_player.seek.seek_frame =
+                            static_cast<uint64_t>(catchup_seek_frame);
+                        stimulus_player.seek.seek_id = catchup_seek_id;
+                        stimulus_player.seek.use_seek = true;
+                        stimulus_player.seek.seek_done = false;
+                        stimulus_player.seek.seek_accurate = false;
+                    }
+                    stimulus_player.last_displayed_frame = -1;
+                    stimulus_player.throttled = false;
+                    stimulus_player.throttle_resume_frame = -1;
+                    stimulus_player.playback_catchup_seek_in_flight = true;
+                    stimulus_player.playback_catchup_seek_id = catchup_seek_id;
+                    stimulus_player.playback_catchup_target_frame = catchup_seek_frame;
+                    stimulus_player.playback_catchup_last_request = now;
+                    decoder_requested = true;
+                    if (crimson_seek_debug_logs_enabled()) std::cout
+                        << "[Stimulus] catch-up seek target=" << target_stimulus_frame
+                        << " progress=" << stimulus_progress_frame
+                        << " lag=" << stimulus_lag_frames
+                        << " seek_frame=" << catchup_seek_frame
+                        << " seek_id=" << catchup_seek_id << std::endl;
+                }
+            }
 
             if (base_decode_request) {
                 double fps_ratio = (video_fps > 0.0) ? (stimulus_player.fps / video_fps) : 1.0;
