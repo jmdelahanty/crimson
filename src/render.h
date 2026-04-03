@@ -21,6 +21,8 @@ struct CameraResources {
     PBO_CUDA pbo_cuda = {};
     PictureBuffer *display_buffer = nullptr;
     SeekInfo seek_context = {false, false, 0, false, 0, 0};
+    int last_uploaded_frame = -1;
+    bool texture_has_valid_frame = false;
 };
 
 struct render_scene
@@ -72,6 +74,8 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
         scene->cameras[j].seek_context.seek_accurate = false;
         scene->cameras[j].seek_context.seek_id = 0;
         scene->cameras[j].seek_context.settled_seek_id = 0;
+        scene->cameras[j].last_uploaded_frame = -1;
+        scene->cameras[j].texture_has_valid_frame = false;
     }
 
     for (u32 j = 0; j < num_cams; j++)

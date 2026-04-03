@@ -3050,6 +3050,34 @@ int main(int argc, char **argv) {
                 };
 
                 if (is_visible) {
+                    auto uploadCameraFrameToTexture = [&](int slot_index) {
+                        if (slot_index < 0) {
+                            return;
+                        }
+                        auto &camera = scene->cameras[j];
+                        if (scene->use_cpu_buffer) {
+                            ck(cudaMemcpy(
+                                camera.pbo_cuda.cuda_buffer,
+                                camera.display_buffer[slot_index].frame,
+                                camera.image_width * camera.image_height * 4,
+                                cudaMemcpyHostToDevice));
+                        } else {
+                            ck(cudaMemcpy(
+                                camera.pbo_cuda.cuda_buffer,
+                                camera.display_buffer[slot_index].frame,
+                                camera.image_width * camera.image_height * 4,
+                                cudaMemcpyDeviceToDevice));
+                        }
+                        bind_pbo(&camera.pbo_cuda.pbo);
+                        bind_texture(&camera.image_texture);
+                        upload_image_pbo_to_texture(camera.image_width,
+                                                    camera.image_height);
+                        unbind_pbo();
+                        unbind_texture();
+                        camera.last_uploaded_frame =
+                            camera.display_buffer[slot_index].frame_number;
+                        camera.texture_has_valid_frame = true;
+                    };
                     auto clearCameraDisplayBuffer = [&]() {
                         const size_t bytes =
                             static_cast<size_t>(scene->cameras[j].image_width) *
@@ -3058,6 +3086,14 @@ int main(int argc, char **argv) {
                             return;
                         }
                         ck(cudaMemset(scene->cameras[j].pbo_cuda.cuda_buffer, 0, bytes));
+                        bind_pbo(&scene->cameras[j].pbo_cuda.pbo);
+                        bind_texture(&scene->cameras[j].image_texture);
+                        upload_image_pbo_to_texture(scene->cameras[j].image_width,
+                                                    scene->cameras[j].image_height);
+                        unbind_pbo();
+                        unbind_texture();
+                        scene->cameras[j].last_uploaded_frame = -1;
+                        scene->cameras[j].texture_has_valid_frame = false;
                     };
                     int presented_slot = -1;
                     int presented_frame = -1;
@@ -3098,27 +3134,15 @@ int main(int argc, char **argv) {
                         presented_slot = display_slot;
                         presented_frame = displayed_frame_num;
                         if (display_slot >= 0) {
-                            if (scene->use_cpu_buffer) {
-                                // upload_texture(&scene->cameras[j].image_texture,
-                                // scene->cameras[j].display_buffer[read_head].frame,
-                                // scene->cameras[j].image_width, scene->cameras[j].image_height);
-                                // // 2x slower than pbo copy frame to cuda buffer
-                                ck(cudaMemcpy(
-                                    scene->cameras[j].pbo_cuda.cuda_buffer,
-                                    scene->cameras[j].display_buffer[display_slot].frame,
-                                    scene->cameras[j].image_width * scene->cameras[j].image_height *
-                                        4,
-                                    cudaMemcpyHostToDevice));
-                            } else {
-                                ck(cudaMemcpy(
-                                    scene->cameras[j].pbo_cuda.cuda_buffer,
-                                    scene->cameras[j].display_buffer[display_slot].frame,
-                                    scene->cameras[j].image_width * scene->cameras[j].image_height *
-                                        4,
-                                    cudaMemcpyDeviceToDevice));
+                            if (!scene->cameras[j].texture_has_valid_frame ||
+                                scene->cameras[j].last_uploaded_frame !=
+                                    displayed_frame_num) {
+                                uploadCameraFrameToTexture(display_slot);
                             }
                         } else {
-                            clearCameraDisplayBuffer();
+                            if (scene->cameras[j].texture_has_valid_frame) {
+                                clearCameraDisplayBuffer();
+                            }
                         }
                     } else {
                         if (ps.pause_seeked || select_corr_head >= 0) {
@@ -3138,39 +3162,22 @@ int main(int argc, char **argv) {
                                 if (presented_frame >= 0) {
                                     current_frame_num = presented_frame;
                                 }
-                                if (scene->use_cpu_buffer) {
-                                    // upload_texture(&scene->cameras[j].image_texture,
-                                    // scene->cameras[j].display_buffer[select_corr_head].frame,
-                                    // scene->cameras[j].image_width, scene->cameras[j].image_height);
-                                    ck(cudaMemcpy(
-                                        scene->cameras[j].pbo_cuda.cuda_buffer,
-                                        scene->cameras[j].display_buffer[paused_slot]
-                                            .frame,
-                                        scene->cameras[j].image_width * scene->cameras[j].image_height *
-                                            4,
-                                        cudaMemcpyHostToDevice));
-                                } else {
-                                    ck(cudaMemcpy(
-                                        scene->cameras[j].pbo_cuda.cuda_buffer,
-                                        scene->cameras[j].display_buffer[paused_slot]
-                                            .frame,
-                                        scene->cameras[j].image_width * scene->cameras[j].image_height *
-                                            4,
-                                        cudaMemcpyDeviceToDevice));
+                                if (!scene->cameras[j].texture_has_valid_frame ||
+                                    scene->cameras[j].last_uploaded_frame !=
+                                        presented_frame) {
+                                    uploadCameraFrameToTexture(paused_slot);
                                 }
                             } else {
-                                clearCameraDisplayBuffer();
+                                if (scene->cameras[j].texture_has_valid_frame) {
+                                    clearCameraDisplayBuffer();
+                                }
                             }
                         } else {
-                            clearCameraDisplayBuffer();
+                            if (scene->cameras[j].texture_has_valid_frame) {
+                                clearCameraDisplayBuffer();
+                            }
                         }
                     }
-                    bind_pbo(&scene->cameras[j].pbo_cuda.pbo);
-                    bind_texture(&scene->cameras[j].image_texture);
-                    upload_image_pbo_to_texture(scene->cameras[j].image_width,
-                                                scene->cameras[j].image_height);
-                    unbind_pbo();
-                    unbind_texture();
 
                     // sync yolo detection
                     if (yolo_detection) {
