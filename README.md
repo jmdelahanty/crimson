@@ -84,7 +84,8 @@ Notes:
 - `CRIMSON_FFMPEG_ROOT` and `CRIMSON_TENSORRT_ROOT` should point to install
   roots
 - `CRIMSON_VIDEO_CODEC_SDK_ROOT` should point to the NVIDIA Video Codec SDK
-  root, typically the folder containing `Interface/` and `Lib/x64/`
+  root, typically the folder containing `Interface/` and either `Lib/x64/`
+  or `Lib/win/x64/`
 
 Linux example:
 
