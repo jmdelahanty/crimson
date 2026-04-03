@@ -79,19 +79,31 @@ function Invoke-DecodeBenchmark {
     param(
         [string]$Name,
         [string]$FfmpegExe,
-        [string[]]$Args
+        [string[]]$FfmpegArgs
     )
 
     Write-Host ""
     Write-Host "=== $Name ==="
-    Write-Host ("ffmpeg " + ($Args -join " "))
+    $cleanArgs = @($FfmpegArgs | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($cleanArgs.Count -eq 0) {
+        throw "No FFmpeg arguments were provided for benchmark mode '$Name'."
+    }
+    $quotedArgs = $cleanArgs | ForEach-Object {
+        if ($_ -match '[\s"]') {
+            '"' + ($_ -replace '"', '\"') + '"'
+        } else {
+            $_
+        }
+    }
+    $argumentLine = $quotedArgs -join " "
+    Write-Host ("ffmpeg " + $argumentLine)
 
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $stdoutFile = [System.IO.Path]::GetTempFileName()
     $stderrFile = [System.IO.Path]::GetTempFileName()
     try {
         $process = Start-Process -FilePath $FfmpegExe `
-                                 -ArgumentList $Args `
+                                 -ArgumentList $argumentLine `
                                  -NoNewWindow `
                                  -Wait `
                                  -PassThru `
