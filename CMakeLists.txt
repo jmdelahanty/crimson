@@ -566,11 +566,6 @@ if(TENSORRT_FOUND)
     target_compile_definitions(redgui PRIVATE USE_TENSORRT)
 endif()
 
-# --- Compile Definitions ---
-target_compile_definitions(redgui PRIVATE
-    GLEW_STATIC
-)
-
 if(CRIMSON_ENABLE_SFM)
     target_compile_definitions(redgui PRIVATE CRIMSON_ENABLE_SFM=1)
 else()
