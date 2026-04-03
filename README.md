@@ -104,7 +104,7 @@ Windows example:
 
 ```powershell
 $env:CRIMSON_CUDA_TOOLKIT_ROOT="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4"
-$env:CRIMSON_OPENCV_DIR="C:/third_party/opencv-4.10.0/install/lib/cmake/opencv4"
+$env:CRIMSON_OPENCV_DIR="C:/third_party/opencv-install-4.10.0"
 $env:CRIMSON_FFMPEG_ROOT="C:/third_party/ffmpeg-nvidia"
 $env:CRIMSON_VIDEO_CODEC_SDK_ROOT="C:/third_party/Video_Codec_SDK_13.0"
 $env:CRIMSON_TENSORRT_ROOT="C:/third_party/TensorRT-10.0.1.6"
