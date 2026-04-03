@@ -31,7 +31,7 @@ function Resolve-SingleFile {
     }
     if ($matches.Count -gt 1) {
         $names = $matches | Sort-Object Name | ForEach-Object { $_.Name }
-        throw "$Description is ambiguous in $Directory: $($names -join ', ')"
+        throw "${Description} is ambiguous in ${Directory}: $($names -join ', ')"
     }
     return $matches[0].FullName
 }
