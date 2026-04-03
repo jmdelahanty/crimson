@@ -269,7 +269,7 @@ Example:
 
 ```powershell
 $env:CRIMSON_CUDA_TOOLKIT_ROOT="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4"
-$env:CRIMSON_OPENCV_DIR="C:/third_party/opencv-install-4.10.0"
+$env:CRIMSON_OPENCV_DIR="C:/third_party/opencv-install-4.10.0-x64"
 $env:CRIMSON_FFMPEG_ROOT="C:/third_party/ffmpeg-nvidia"
 $env:CRIMSON_VIDEO_CODEC_SDK_ROOT="C:/third_party/Video_Codec_SDK_13.0"
 $env:CRIMSON_TENSORRT_ROOT="C:/third_party/TensorRT-10.0.1.6"
@@ -282,6 +282,10 @@ helper script from the repo root:
 . .\tools\set_windows_dependency_roots.ps1
 ```
 
+The helper script also prepends the common runtime DLL directories to `PATH`
+for the current PowerShell session so `redgui.exe` can be launched from the
+same shell without an extra manual `PATH` edit.
+
 Important:
 
 - use the leading `. ` so the variables are set in the current shell
@@ -289,7 +293,7 @@ Important:
 
 ```powershell
 . .\tools\set_windows_dependency_roots.ps1 `
-  -OpenCvDir "C:/third_party/opencv-install-4.10.0"
+  -OpenCvDir "C:/third_party/opencv-install-4.10.0-x64"
 ```
 
 Alternative:
