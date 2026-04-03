@@ -457,6 +457,51 @@ Important Windows observations:
 - whether launch fails due to missing DLLs
 - whether fonts/config/resource discovery work outside the repo root
 
+### Playback Tuning Note for Low-VRAM Laptops
+
+The first validated Windows laptop showed a clear split between the large raw
+camera stream and the smaller high-FPS stimulus stream.
+
+Important distinction:
+
+- `Buffer Type` / `Stimulus Buffer Type` control where decoded RGBA frames are
+  queued after decode
+- `Stimulus Decode Backend` controls how the compressed stimulus MP4 is decoded
+- final display still uses OpenGL textures/PBOs, so some GPU memory is still
+  required even when both ring buffers are CPU-backed
+
+Observed benchmark on the validation laptop for a `344x344 @ 120 fps`
+`H.264 Main` stimulus MP4:
+
+- software RGBA decode path: about `11048 fps`
+- CUDA decode + download + RGBA conversion path: about `3699 fps`
+- result: software decode was about `3x` faster for that stimulus stream
+
+Recommended first-pass settings on similar laptops:
+
+- main raw video: `CPU Buffer`
+- main buffer size: `8-16`
+- stimulus decode backend: `Stimulus Software Decode`
+- stimulus buffer mode: start with `Stimulus GPU Buffer`
+- stimulus buffer size: `8-12`
+
+Why `Current Playback Speed` may decay below `1.0x` during play:
+
+- Crimson advances the requested play clock from wall time and the selected
+  playback multiplier
+- the displayed speed metric is then computed from actual displayed camera
+  frame progress over wall time
+- displayed camera frames are still clamped to the slowest decoded camera
+  stream that is currently needed for rendering
+- VSync is enabled, so missed render budgets reduce steady-state playback
+  throughput
+- large raw-frame uploads, overlays, and visible windows all add pressure
+
+In practice, if playback falls from `1.0x` and stabilizes near something like
+`0.83x`, that usually means the current decode/render workload can only sustain
+about `83%` of real-time on that machine with the current layout and visible
+views.
+
 ---
 
 ## Step 12: Fill Out the Validation Record
