@@ -257,7 +257,7 @@ $benchmarks.Add(@{
 })
 
 $results = foreach ($benchmark in $benchmarks) {
-    Invoke-DecodeBenchmark -Name $benchmark.Name -FfmpegExe $ffmpegExe -Args $benchmark.Args
+    Invoke-DecodeBenchmark -Name $benchmark.Name -FfmpegExe $ffmpegExe -FfmpegArgs $benchmark.Args
 }
 
 Write-Host ""
