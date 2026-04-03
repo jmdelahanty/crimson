@@ -163,13 +163,14 @@ bool initializeStimulusPlayback(StimulusPlayback &stim,
 
     stim.resources_initialized = true;
 
-    stim.decoder_context = std::make_unique<DecoderContext>(DecoderContext{
-        .decoding_flag = false,
-        .stop_flag = false,
-        .total_num_frame = int(INT_MAX),
-        .estimated_num_frames = 0,
-        .gpu_index = cuda_device_index,
-        .seek_interval = 250});
+    auto decoder_context = DecoderContext{};
+    decoder_context.decoding_flag = false;
+    decoder_context.stop_flag = false;
+    decoder_context.total_num_frame = int(INT_MAX);
+    decoder_context.estimated_num_frames = 0;
+    decoder_context.gpu_index = cuda_device_index;
+    decoder_context.seek_interval = 250;
+    stim.decoder_context = std::make_unique<DecoderContext>(decoder_context);
 
     stim.seek.use_seek = false;
     stim.seek.seek_done = false;

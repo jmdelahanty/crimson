@@ -546,7 +546,7 @@ void load_2d_keypoints_depreciated(std::map<u32, KeyPoints *> &keypoints_map,
 
     for (const auto &entry :
          std::filesystem::directory_iterator(labeled_data_dir)) {
-        filenames.push_back(entry.path());
+        filenames.push_back(entry.path().string());
     }
 
     if (filenames.size() == 0) {
@@ -654,7 +654,7 @@ int load_keypoints_depreciated(std::map<u32, KeyPoints *> &keypoints_map,
 
         for (const auto &entry :
              std::filesystem::directory_iterator(label3d_dir)) {
-            filenames.push_back(entry.path());
+            filenames.push_back(entry.path().string());
         }
 
         if (filenames.size() == 0) {
@@ -865,7 +865,7 @@ int find_most_recent_labels(std::string root_dir, std::string &most_recent_file,
         std::string folder_name = entry.path().filename().string();
 
         if (std::regex_match(folder_name, datetime_regex)) {
-            filenames.push_back(entry.path());
+            filenames.push_back(entry.path().string());
         }
     }
 

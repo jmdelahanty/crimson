@@ -2,8 +2,7 @@
 #define YOLOv8_NORMAL_COMMON_HPP
 #include "NvInfer.h"
 #include "opencv2/opencv.hpp"
-#include <sys/stat.h>
-#include <unistd.h>
+#include <filesystem>
 
 #define CHECK(call)                                                                                                    \
     do {                                                                                                               \
@@ -87,10 +86,8 @@ inline static float clamp(float val, float min, float max)
 
 inline bool IsPathExist(const std::string& path)
 {
-    if (access(path.c_str(), 0) == F_OK) {
-        return true;
-    }
-    return false;
+    std::error_code ec;
+    return std::filesystem::exists(std::filesystem::path(path), ec);
 }
 
 inline bool IsFile(const std::string& path)
@@ -99,8 +96,8 @@ inline bool IsFile(const std::string& path)
         printf("%s:%d %s not exist\n", __FILE__, __LINE__, path.c_str());
         return false;
     }
-    struct stat buffer;
-    return (stat(path.c_str(), &buffer) == 0 && S_ISREG(buffer.st_mode));
+    std::error_code ec;
+    return std::filesystem::is_regular_file(std::filesystem::path(path), ec);
 }
 
 inline bool IsFolder(const std::string& path)
@@ -108,8 +105,8 @@ inline bool IsFolder(const std::string& path)
     if (!IsPathExist(path)) {
         return false;
     }
-    struct stat buffer;
-    return (stat(path.c_str(), &buffer) == 0 && S_ISDIR(buffer.st_mode));
+    std::error_code ec;
+    return std::filesystem::is_directory(std::filesystem::path(path), ec);
 }
 
 namespace pose {
