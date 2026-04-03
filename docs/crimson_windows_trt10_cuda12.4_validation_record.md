@@ -97,6 +97,7 @@ Record the exact paths used during configure:
 | `CRIMSON_CUDA_TOOLKIT_ROOT` | |
 | `CRIMSON_OPENCV_DIR` | |
 | `CRIMSON_FFMPEG_ROOT` | |
+| `CRIMSON_VIDEO_CODEC_SDK_ROOT` | |
 | `CRIMSON_TENSORRT_ROOT` | |
 
 If local overrides came from `CMakeUserPresets.json`, note that here too.

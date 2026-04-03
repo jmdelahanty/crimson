@@ -19,13 +19,14 @@
     {
       "name": "dep-roots-from-env",
       "hidden": true,
-      "cacheVariables": {
-        "CUDA_TOOLKIT_ROOT_DIR": "$env{CRIMSON_CUDA_TOOLKIT_ROOT}",
-        "OpenCV_DIR": "$env{CRIMSON_OPENCV_DIR}",
-        "FFMPEG_ROOT": "$env{CRIMSON_FFMPEG_ROOT}",
-        "TENSORRT_ROOT": "$env{CRIMSON_TENSORRT_ROOT}"
-      }
-    },
+        "cacheVariables": {
+          "CUDA_TOOLKIT_ROOT_DIR": "$env{CRIMSON_CUDA_TOOLKIT_ROOT}",
+          "OpenCV_DIR": "$env{CRIMSON_OPENCV_DIR}",
+          "FFMPEG_ROOT": "$env{CRIMSON_FFMPEG_ROOT}",
+          "TENSORRT_ROOT": "$env{CRIMSON_TENSORRT_ROOT}",
+          "VIDEO_CODEC_SDK_ROOT": "$env{CRIMSON_VIDEO_CODEC_SDK_ROOT}"
+        }
+      },
     {
       "name": "stack-trt10-cuda12.4-opencv4.10",
       "hidden": true,
