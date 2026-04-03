@@ -266,7 +266,7 @@ void YOLOv8_pose::copy_from_Mat(const cv::Mat& image)
     auto&    in_binding = this->input_bindings[0];
     auto     width      = in_binding.dims.d[3];
     auto     height     = in_binding.dims.d[2];
-    cv::Size size{width, height};
+    cv::Size size{static_cast<int>(width), static_cast<int>(height)};
     this->letterbox(image, nchw, size);
 
     const char* name  = this->engine->getIOTensorName(0);
