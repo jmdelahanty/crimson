@@ -87,11 +87,35 @@ function Invoke-DecodeBenchmark {
     Write-Host ("ffmpeg " + ($Args -join " "))
 
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-    $output = & $FfmpegExe @Args 2>&1
-    $exitCode = $LASTEXITCODE
-    $stopwatch.Stop()
+    $stdoutFile = [System.IO.Path]::GetTempFileName()
+    $stderrFile = [System.IO.Path]::GetTempFileName()
+    try {
+        $process = Start-Process -FilePath $FfmpegExe `
+                                 -ArgumentList $Args `
+                                 -NoNewWindow `
+                                 -Wait `
+                                 -PassThru `
+                                 -RedirectStandardOutput $stdoutFile `
+                                 -RedirectStandardError $stderrFile
+        $exitCode = $process.ExitCode
+        $stopwatch.Stop()
 
-    $outputText = ($output | Out-String)
+        $stderrText = if (Test-Path -LiteralPath $stderrFile) {
+            Get-Content -LiteralPath $stderrFile -Raw
+        } else {
+            ""
+        }
+        $stdoutText = if (Test-Path -LiteralPath $stdoutFile) {
+            Get-Content -LiteralPath $stdoutFile -Raw
+        } else {
+            ""
+        }
+        $outputText = $stderrText + $stdoutText
+    } finally {
+        Remove-Item -LiteralPath $stdoutFile -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrFile -Force -ErrorAction SilentlyContinue
+    }
+
     $frameMatches = [regex]::Matches($outputText, "frame=\s*(\d+)")
     $frameCount = $null
     if ($frameMatches.Count -gt 0) {
