@@ -104,7 +104,7 @@ Windows example:
 
 ```powershell
 $env:CRIMSON_CUDA_TOOLKIT_ROOT="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4"
-$env:CRIMSON_OPENCV_DIR="C:/third_party/opencv-install-4.10.0"
+$env:CRIMSON_OPENCV_DIR="C:/third_party/opencv-install-4.10.0-x64"
 $env:CRIMSON_FFMPEG_ROOT="C:/third_party/ffmpeg-nvidia"
 $env:CRIMSON_VIDEO_CODEC_SDK_ROOT="C:/third_party/Video_Codec_SDK_13.0"
 $env:CRIMSON_TENSORRT_ROOT="C:/third_party/TensorRT-10.0.1.6"
@@ -123,6 +123,15 @@ cmake --build --preset build-windows-trt10-cuda12.4-no-sfm-release
 
 Run the Windows preset from a Visual Studio developer shell or another shell
 that already has the MSVC toolchain available.
+
+For repeat use on the validated Windows stack, prefer the helper script:
+
+```powershell
+. .\tools\set_windows_dependency_roots.ps1
+```
+
+It sets the `CRIMSON_*` dependency roots and prepends the common runtime DLL
+directories to `PATH` for the current PowerShell session.
 
 ### Local User Presets
 

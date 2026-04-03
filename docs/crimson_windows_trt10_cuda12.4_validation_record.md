@@ -193,6 +193,8 @@ Important Windows-specific observations:
 
 - did the app use the NVIDIA GPU
 - were any DLLs missing at launch
+- if using `tools/set_windows_dependency_roots.ps1`, did launch work without any
+  additional manual `PATH` edits
 - did resource discovery work from the staged or build layout
 - if using the no-SFM preset, was triangulation correctly disabled
 
