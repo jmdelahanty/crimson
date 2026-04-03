@@ -204,9 +204,6 @@ find_package(GLEW REQUIRED)
 find_package(glfw3 REQUIRED)
 find_package(Threads REQUIRED)
 find_package(HDF5 REQUIRED COMPONENTS CXX HL)
-if(NOT TARGET nlohmann_json::nlohmann_json)
-    find_package(nlohmann_json CONFIG REQUIRED)
-endif()
 
 crimson_require_exact_version("CUDA" "${CUDA_VERSION}" "${CRIMSON_EXPECT_CUDA_VERSION}")
 crimson_require_exact_version("OpenCV" "${OpenCV_VERSION}" "${CRIMSON_EXPECT_OPENCV_VERSION}")
@@ -341,7 +338,11 @@ if(WIN32)
   # already define imported targets before TensorStore configures its vendored
   # third-party tree. Prefer those system packages to avoid alias-target
   # collisions in TensorStore's generated CMake.
-  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_NLOHMANN_JSON "nlohmann_json::nlohmann_json")
+  # Keep TensorStore on its vendored nlohmann_json 3.11.3 for now. TensorStore
+  # 0.1.64 does not compile cleanly against the newer 3.12.x headers currently
+  # provided by vcpkg on Windows.
+  set(TENSORSTORE_USE_SYSTEM_NLOHMANN_JSON OFF CACHE BOOL
+      "Use TensorStore's vendored nlohmann_json on Windows" FORCE)
   crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_ZLIB "ZLIB::ZLIB")
   crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_OPENSSL "OpenSSL::SSL")
   crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_CURL "CURL::libcurl")
