@@ -19,6 +19,7 @@ struct CameraResources {
     u32 image_height = 0;
     GLuint image_texture = 0;
     PBO_CUDA pbo_cuda = {};
+    std::vector<PBO_CUDA> display_buffer_pbos;
     PictureBuffer *display_buffer = nullptr;
     SeekInfo seek_context = {false, false, 0, false, 0, 0};
     int last_uploaded_frame = -1;
@@ -84,6 +85,7 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
         scene->cameras[j].display_texture_height =
             static_cast<int>(scene->cameras[j].image_height);
         scene->cameras[j].playback_preview_rgba_cpu.clear();
+        scene->cameras[j].display_buffer_pbos.clear();
     }
 
     for (u32 j = 0; j < num_cams; j++)
@@ -109,8 +111,18 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
                 scene->cameras[j].display_buffer[i].frame = (unsigned char *)malloc(size_pic);
                 decoder_clear_buffer_with_constant_image(scene->cameras[j].display_buffer[i].frame, scene->cameras[j].image_width, scene->cameras[j].image_height);
             } else {
-                // gpu buffer
-                cudaMalloc((void **)&scene->cameras[j].display_buffer[i].frame, size_pic);
+                // gpu buffer backed by CUDA/GL interop PBO so presentation can
+                // upload directly from the buffered slot without an extra copy.
+                scene->cameras[j].display_buffer_pbos.emplace_back();
+                PBO_CUDA &slot_pbo = scene->cameras[j].display_buffer_pbos.back();
+                create_pbo(&slot_pbo.pbo, scene->cameras[j].image_width,
+                           scene->cameras[j].image_height);
+                register_pbo_to_cuda(&slot_pbo.pbo, &slot_pbo.cuda_resource);
+                map_cuda_resource(&slot_pbo.cuda_resource);
+                cuda_pointer_from_resource(&slot_pbo.cuda_buffer,
+                                           &slot_pbo.cuda_pbo_storage_buffer_size,
+                                           &slot_pbo.cuda_resource);
+                scene->cameras[j].display_buffer[i].frame = slot_pbo.cuda_buffer;
             }
             scene->cameras[j].display_buffer[i].frame_number = -1;
             scene->cameras[j].display_buffer[i].available_to_write = true;

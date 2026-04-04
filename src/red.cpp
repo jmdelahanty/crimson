@@ -3290,6 +3290,8 @@ int main(int argc, char **argv) {
                 };
 
                 if (is_visible) {
+                    unsigned char *presented_rgba_cuda_buffer =
+                        scene->cameras[j].pbo_cuda.cuda_buffer;
                     auto uploadCameraFrameToTexture = [&](int slot_index) {
                         if (slot_index < 0) {
                             return;
@@ -3315,9 +3317,18 @@ int main(int argc, char **argv) {
                         const bool texture_shape_changed =
                             camera.display_texture_width != target_texture_width ||
                             camera.display_texture_height != target_texture_height;
+                        const bool use_direct_slot_pbo =
+                            !preview_active && !scene->use_cpu_buffer &&
+                            slot_index <
+                                static_cast<int>(camera.display_buffer_pbos.size()) &&
+                            camera.display_buffer_pbos[slot_index].pbo != 0;
                         if (camera.texture_has_valid_frame &&
                             camera.last_uploaded_frame == source_frame_number &&
                             !texture_shape_changed) {
+                            presented_rgba_cuda_buffer =
+                                use_direct_slot_pbo
+                                    ? camera.display_buffer_pbos[slot_index].cuda_buffer
+                                    : camera.pbo_cuda.cuda_buffer;
                             return;
                         }
                         if (texture_shape_changed) {
@@ -3364,6 +3375,8 @@ int main(int argc, char **argv) {
                                 cudaMemcpyHostToDevice));
                             frame_camera_pbo_copy_ms += durationMs(
                                 std::chrono::steady_clock::now() - pbo_copy_start);
+                            presented_rgba_cuda_buffer =
+                                camera.pbo_cuda.cuda_buffer;
                         } else if (scene->use_cpu_buffer) {
                             const auto pbo_copy_start =
                                 std::chrono::steady_clock::now();
@@ -3374,20 +3387,33 @@ int main(int argc, char **argv) {
                                 cudaMemcpyHostToDevice));
                             frame_camera_pbo_copy_ms += durationMs(
                                 std::chrono::steady_clock::now() - pbo_copy_start);
+                            presented_rgba_cuda_buffer =
+                                camera.pbo_cuda.cuda_buffer;
                         } else {
-                            const auto pbo_copy_start =
-                                std::chrono::steady_clock::now();
-                            ck(cudaMemcpy(
-                                camera.pbo_cuda.cuda_buffer,
-                                camera.display_buffer[slot_index].frame,
-                                camera.image_width * camera.image_height * 4,
-                                cudaMemcpyDeviceToDevice));
-                            frame_camera_pbo_copy_ms += durationMs(
-                                std::chrono::steady_clock::now() - pbo_copy_start);
+                            if (use_direct_slot_pbo) {
+                                presented_rgba_cuda_buffer =
+                                    camera.display_buffer_pbos[slot_index].cuda_buffer;
+                            } else {
+                                const auto pbo_copy_start =
+                                    std::chrono::steady_clock::now();
+                                ck(cudaMemcpy(
+                                    camera.pbo_cuda.cuda_buffer,
+                                    camera.display_buffer[slot_index].frame,
+                                    camera.image_width * camera.image_height * 4,
+                                    cudaMemcpyDeviceToDevice));
+                                frame_camera_pbo_copy_ms += durationMs(
+                                    std::chrono::steady_clock::now() - pbo_copy_start);
+                                presented_rgba_cuda_buffer =
+                                    camera.pbo_cuda.cuda_buffer;
+                            }
                         }
                         const auto texture_upload_start =
                             std::chrono::steady_clock::now();
-                        bind_pbo(&camera.pbo_cuda.pbo);
+                        GLuint upload_pbo =
+                            use_direct_slot_pbo
+                                ? camera.display_buffer_pbos[slot_index].pbo
+                                : camera.pbo_cuda.pbo;
+                        bind_pbo(&upload_pbo);
                         bind_texture(&camera.image_texture);
                         upload_image_pbo_to_texture(target_texture_width,
                                                     target_texture_height);
@@ -3508,8 +3534,7 @@ int main(int argc, char **argv) {
                         std::unique_lock<std::mutex> lck(g_mutexes[j]);
                         // std::cout << "main_thread: acquire lock" <<
                         // std::endl;
-                        yolo_input_frames_rgba[j] =
-                            scene->cameras[j].pbo_cuda.cuda_buffer;
+                        yolo_input_frames_rgba[j] = presented_rgba_cuda_buffer;
                         g_ready[j] = true;
                         g_cvs[j].notify_one();
                     }
