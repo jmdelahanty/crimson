@@ -90,21 +90,6 @@ So the late-conversion plan remains the right architectural direction, but its
 first slice is no longer the next optimization frontier. The next frontier is a
 playback render-path optimization for weaker GPUs.
 
-The first playback-renderer prototype then confirmed that this pivot was
-correct:
-
-- playback moved materially closer to `1.0x`
-- the remaining gap still looks render-bound
-
-So the immediate next step is now:
-
-- true playback render-scale reduction inside the lightweight renderer
-
-not:
-
-- more late-conversion changes
-- software main-camera decode
-
 The newer zoomed-playback telemetry further refined that conclusion:
 
 - tight zoom did not materially lower `gl_draw_ms`

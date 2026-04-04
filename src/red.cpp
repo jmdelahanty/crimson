@@ -41,7 +41,6 @@
 #include <nlohmann/json.hpp>
 #include "zarr_loader.h"
 #include "gui_interpolation.h"
-#include <nppi.h>
 #include <opencv2/imgproc.hpp>
 
 #if defined(_MSC_VER) && (_MSC_VER >= 1900) &&                                 \
@@ -254,8 +253,7 @@ struct PerfLogWriter {
             << "camera_decode_write_ms,camera_decode_pipeline_ms,"
             << "visible_camera_count,"
             << "main_buffer_mode,playback_preview_scale,playback_preview_active,"
-            << "playback_renderer_mode,playback_render_scale,"
-            << "playback_render_scale_active,"
+            << "playback_renderer_mode,"
             << "camera_viewport_width_px,camera_viewport_height_px,"
             << "camera_view_x_min,camera_view_x_max,"
             << "camera_view_y_min,camera_view_y_max,"
@@ -490,7 +488,6 @@ int main(int argc, char **argv) {
     int label_buffer_size = 100;
     int playback_preview_scale_mode = 0;
     int playback_renderer_mode = 1;
-    int playback_render_scale_mode = 0;
     int stimulus_buffer_size = 12;
     bool stimulus_use_cpu_buffer = false;
 #ifdef _WIN32
@@ -861,33 +858,6 @@ int main(int argc, char **argv) {
 
     auto playbackLightweightRendererIsActive = [&]() -> bool {
         return ps.play_video && playback_renderer_mode == 1;
-    };
-
-    auto playbackRenderScaleFactor = [&]() -> double {
-        switch (playback_render_scale_mode) {
-        case 1:
-            return 0.75;
-        case 2:
-            return 0.5;
-        default:
-            return 1.0;
-        }
-    };
-
-    auto playbackRenderScaleLabel = [&]() -> const char* {
-        switch (playback_render_scale_mode) {
-        case 1:
-            return "0.75x";
-        case 2:
-            return "0.5x";
-        default:
-            return "1x";
-        }
-    };
-
-    auto playbackRenderScaleIsActive = [&]() -> bool {
-        return playbackLightweightRendererIsActive() && !scene->use_cpu_buffer &&
-               !yolo_detection && playbackRenderScaleFactor() < 1.0;
     };
 
     auto stepPausedFrameFromBuffer = [&](int target_frame) -> bool {
@@ -2313,27 +2283,6 @@ int main(int argc, char **argv) {
                     }
                 }
             }
-            if (playback_renderer_mode == 1) {
-                const char *items[] = {"1x", "0.75x", "0.5x"};
-                ImGui::Combo("Playback Render Scale",
-                             &playback_render_scale_mode, items,
-                             IM_ARRAYSIZE(items));
-                if (playback_render_scale_mode != 0) {
-                    if (scene->use_cpu_buffer) {
-                        ImGui::TextDisabled(
-                            "Playback render scale currently applies only to the GPU buffer path.");
-                    } else if (yolo_detection) {
-                        ImGui::TextDisabled(
-                            "Playback render scale is temporarily disabled while YOLO inference is active.");
-                    } else if (!ps.play_video) {
-                        ImGui::TextDisabled(
-                            "Playback render scale applies only during playback; paused inspection remains full resolution.");
-                    } else {
-                        ImGui::Text("Active playback render scale: %s",
-                                    playbackRenderScaleLabel());
-                    }
-                }
-            }
             if (!stimulus_player.loaded) {
                 ImGui::InputInt("Stimulus Buffer Size", &stimulus_buffer_size);
                 stimulus_buffer_size = std::max(1, stimulus_buffer_size);
@@ -3437,19 +3386,11 @@ int main(int argc, char **argv) {
                         auto &camera = scene->cameras[j];
                         auto &slot = camera.display_buffer[slot_index];
                         const int source_frame_number = slot.frame_number;
-                        const bool lightweight_playback_renderer_active =
-                            playbackLightweightRendererIsActive();
                         const bool preview_active = playbackPreviewIsActive();
                         const bool preview_resize_active =
                             preview_active && scene->use_cpu_buffer;
                         const bool preview_sampling_active =
                             preview_active && !scene->use_cpu_buffer;
-                        const bool playback_render_scale_active =
-                            lightweight_playback_renderer_active &&
-                            !scene->use_cpu_buffer && !yolo_detection &&
-                            playbackRenderScaleFactor() < 1.0 &&
-                            camera.last_viewport_width_px > 0.0f &&
-                            camera.last_viewport_height_px > 0.0f;
                         const int desired_preview_sampling_mode =
                             preview_sampling_active
                                 ? playback_preview_scale_mode
@@ -3458,36 +3399,18 @@ int main(int argc, char **argv) {
                             preview_resize_active
                                 ? playbackPreviewScaleFactor()
                                 : 1.0;
-                        const double playback_render_scale =
-                            playback_render_scale_active
-                                ? playbackRenderScaleFactor()
-                                : 1.0;
                         const int target_texture_width =
                             preview_resize_active
                                 ? std::max(1, static_cast<int>(std::lround(
                                                   static_cast<double>(camera.image_width) *
                                                   preview_scale)))
-                                : (playback_render_scale_active
-                                       ? std::max(
-                                             1,
-                                             static_cast<int>(std::lround(
-                                                 static_cast<double>(
-                                                     camera.last_viewport_width_px) *
-                                                 playback_render_scale)))
-                                       : camera.image_width);
+                                : camera.image_width;
                         const int target_texture_height =
                             preview_resize_active
                                 ? std::max(1, static_cast<int>(std::lround(
                                                   static_cast<double>(camera.image_height) *
                                                   preview_scale)))
-                                : (playback_render_scale_active
-                                       ? std::max(
-                                             1,
-                                             static_cast<int>(std::lround(
-                                                 static_cast<double>(
-                                                     camera.last_viewport_height_px) *
-                                                 playback_render_scale)))
-                                       : camera.image_height);
+                                : camera.image_height;
                         const bool texture_shape_changed =
                             camera.display_texture_width != target_texture_width ||
                             camera.display_texture_height != target_texture_height;
@@ -3558,32 +3481,6 @@ int main(int argc, char **argv) {
                                 surface_preview_mode,
                                 desired_preview_sampling_mode > 0);
                         };
-                        auto resizeRgbaSurface = [&](unsigned char *src_buffer,
-                                                     int src_width,
-                                                     int src_height,
-                                                     int src_pitch_bytes,
-                                                     unsigned char *dst_buffer,
-                                                     int dst_width,
-                                                     int dst_height,
-                                                     int dst_pitch_bytes) {
-                            const auto resize_start =
-                                std::chrono::steady_clock::now();
-                            const NppiSize src_size = {src_width, src_height};
-                            const NppiRect src_roi = {0, 0, src_width, src_height};
-                            const NppiSize dst_size = {dst_width, dst_height};
-                            const NppiRect dst_roi = {0, 0, dst_width, dst_height};
-                            const NppStatus npp_result = nppiResize_8u_C4R(
-                                src_buffer, src_pitch_bytes, src_size, src_roi,
-                                dst_buffer, dst_pitch_bytes, dst_size, dst_roi,
-                                NPPI_INTER_LINEAR);
-                            frame_camera_preview_resize_ms += durationMs(
-                                std::chrono::steady_clock::now() - resize_start);
-                            if (npp_result != NPP_SUCCESS) {
-                                std::cerr
-                                    << "Error executing playback RGBA resize -- code: "
-                                    << npp_result << std::endl;
-                            }
-                        };
                         const bool preview_sampling_changed =
                             camera.applied_preview_sampling_mode !=
                             desired_preview_sampling_mode;
@@ -3643,16 +3540,12 @@ int main(int argc, char **argv) {
                                 if (slot.format == PictureBufferFormat::NV12) {
                                     const auto convert_start =
                                         std::chrono::steady_clock::now();
-                                    unsigned char *rgba_stage_buffer =
-                                        playback_render_scale_active
-                                            ? camera.pbo_cuda.cuda_buffer
-                                            : camera.playback_staging_pbo.cuda_buffer;
                                     Nv12ToColor32<RGBA32>(
                                         slot.frame,
                                         slot.pitch_bytes > 0
                                             ? slot.pitch_bytes
                                             : camera.image_width,
-                                        rgba_stage_buffer,
+                                        camera.playback_staging_pbo.cuda_buffer,
                                         4 * static_cast<int>(camera.image_width),
                                         static_cast<int>(camera.image_width),
                                         static_cast<int>(camera.image_height),
@@ -3660,43 +3553,17 @@ int main(int argc, char **argv) {
                                     frame_camera_display_convert_ms += durationMs(
                                         std::chrono::steady_clock::now() -
                                         convert_start);
-                                    if (playback_render_scale_active) {
-                                        resizeRgbaSurface(
-                                            camera.pbo_cuda.cuda_buffer,
-                                            static_cast<int>(camera.image_width),
-                                            static_cast<int>(camera.image_height),
-                                            4 * static_cast<int>(camera.image_width),
-                                            camera.playback_staging_pbo.cuda_buffer,
-                                            target_texture_width,
-                                            target_texture_height,
-                                            4 * target_texture_width);
-                                    }
                                 } else {
-                                    if (playback_render_scale_active) {
-                                        resizeRgbaSurface(
-                                            slot.frame,
-                                            static_cast<int>(camera.image_width),
-                                            static_cast<int>(camera.image_height),
-                                            slot.pitch_bytes > 0
-                                                ? slot.pitch_bytes
-                                                : 4 * static_cast<int>(
-                                                      camera.image_width),
-                                            camera.playback_staging_pbo.cuda_buffer,
-                                            target_texture_width,
-                                            target_texture_height,
-                                            4 * target_texture_width);
-                                    } else {
-                                        const auto pbo_copy_start =
-                                            std::chrono::steady_clock::now();
-                                        ck(cudaMemcpy(
-                                            camera.playback_staging_pbo.cuda_buffer,
-                                            slot.frame,
-                                            camera.image_width * camera.image_height * 4,
-                                            cudaMemcpyDeviceToDevice));
-                                        frame_camera_pbo_copy_ms += durationMs(
-                                            std::chrono::steady_clock::now() -
-                                            pbo_copy_start);
-                                    }
+                                    const auto pbo_copy_start =
+                                        std::chrono::steady_clock::now();
+                                    ck(cudaMemcpy(
+                                        camera.playback_staging_pbo.cuda_buffer,
+                                        slot.frame,
+                                        camera.image_width * camera.image_height * 4,
+                                        cudaMemcpyDeviceToDevice));
+                                    frame_camera_pbo_copy_ms += durationMs(
+                                        std::chrono::steady_clock::now() -
+                                        pbo_copy_start);
                                 }
                                 const auto stage_upload_start =
                                     std::chrono::steady_clock::now();
@@ -3723,7 +3590,6 @@ int main(int argc, char **argv) {
                         }
                         const auto upload_start =
                             std::chrono::steady_clock::now();
-                        bool upload_from_staging_surface = false;
                         if (preview_resize_active) {
                             const cv::Mat full_rgba(camera.image_height,
                                                     camera.image_width,
@@ -3769,49 +3635,7 @@ int main(int argc, char **argv) {
                             presented_rgba_cuda_buffer =
                                 camera.pbo_cuda.cuda_buffer;
                         } else {
-                            if (playback_render_scale_active) {
-                                upload_from_staging_surface = true;
-                                if (slot.format == PictureBufferFormat::NV12) {
-                                    const auto convert_start =
-                                        std::chrono::steady_clock::now();
-                                    Nv12ToColor32<RGBA32>(
-                                        slot.frame,
-                                        slot.pitch_bytes > 0 ? slot.pitch_bytes
-                                                             : camera.image_width,
-                                        camera.pbo_cuda.cuda_buffer,
-                                        4 * static_cast<int>(camera.image_width),
-                                        static_cast<int>(camera.image_width),
-                                        static_cast<int>(camera.image_height),
-                                        slot.color_matrix);
-                                    frame_camera_display_convert_ms += durationMs(
-                                        std::chrono::steady_clock::now() -
-                                        convert_start);
-                                    resizeRgbaSurface(
-                                        camera.pbo_cuda.cuda_buffer,
-                                        static_cast<int>(camera.image_width),
-                                        static_cast<int>(camera.image_height),
-                                        4 * static_cast<int>(camera.image_width),
-                                        camera.playback_staging_pbo.cuda_buffer,
-                                        target_texture_width,
-                                        target_texture_height,
-                                        4 * target_texture_width);
-                                } else {
-                                    resizeRgbaSurface(
-                                        slot.frame,
-                                        static_cast<int>(camera.image_width),
-                                        static_cast<int>(camera.image_height),
-                                        slot.pitch_bytes > 0
-                                            ? slot.pitch_bytes
-                                            : 4 * static_cast<int>(
-                                                  camera.image_width),
-                                        camera.playback_staging_pbo.cuda_buffer,
-                                        target_texture_width,
-                                        target_texture_height,
-                                        4 * target_texture_width);
-                                }
-                                presented_rgba_cuda_buffer =
-                                    camera.playback_staging_pbo.cuda_buffer;
-                            } else if (slot.format == PictureBufferFormat::NV12) {
+                            if (slot.format == PictureBufferFormat::NV12) {
                                 const auto convert_start =
                                     std::chrono::steady_clock::now();
                                 Nv12ToColor32<RGBA32>(
@@ -3826,8 +3650,6 @@ int main(int argc, char **argv) {
                                 frame_camera_display_convert_ms += durationMs(
                                     std::chrono::steady_clock::now() -
                                     convert_start);
-                                presented_rgba_cuda_buffer =
-                                    camera.pbo_cuda.cuda_buffer;
                             } else {
                                 const auto pbo_copy_start =
                                     std::chrono::steady_clock::now();
@@ -3838,14 +3660,12 @@ int main(int argc, char **argv) {
                                 frame_camera_pbo_copy_ms += durationMs(
                                     std::chrono::steady_clock::now() -
                                     pbo_copy_start);
-                                presented_rgba_cuda_buffer =
-                                    camera.pbo_cuda.cuda_buffer;
                             }
+                            presented_rgba_cuda_buffer =
+                                camera.pbo_cuda.cuda_buffer;
                         }
                         uploadSurfaceToTexture(
-                            upload_from_staging_surface
-                                ? camera.playback_staging_pbo
-                                : camera.pbo_cuda,
+                            camera.pbo_cuda,
                             camera.image_texture,
                             &camera.applied_preview_sampling_mode);
                         camera.playback_staging_frame = -1;
@@ -4123,10 +3943,6 @@ int main(int argc, char **argv) {
                                 static_cast<double>(plot_size.x);
                             perf_camera_viewport_height_px =
                                 static_cast<double>(plot_size.y);
-                            scene->cameras[j].last_viewport_width_px =
-                                plot_size.x;
-                            scene->cameras[j].last_viewport_height_px =
-                                plot_size.y;
                             perf_camera_view_x_min = clamped_x_min;
                             perf_camera_view_x_max = clamped_x_max;
                             perf_camera_view_y_min = clamped_y_min;
@@ -9024,8 +8840,6 @@ struct StateOverlay {
                     << playbackPreviewScaleLabel() << ","
                     << (playbackPreviewIsActive() ? 1 : 0) << ","
                     << playbackRendererModeLabel() << ","
-                    << playbackRenderScaleLabel() << ","
-                    << (playbackRenderScaleIsActive() ? 1 : 0) << ","
                     << perf_camera_viewport_width_px << ","
                     << perf_camera_viewport_height_px << ","
                     << perf_camera_view_x_min << ","
@@ -9111,9 +8925,6 @@ struct StateOverlay {
                       {"playback_preview_scale", playbackPreviewScaleLabel()},
                       {"playback_preview_active", playbackPreviewIsActive()},
                       {"playback_renderer_mode", playbackRendererModeLabel()},
-                      {"playback_render_scale", playbackRenderScaleLabel()},
-                      {"playback_render_scale_active",
-                       playbackRenderScaleIsActive()},
                       {"viewport_width_px", perf_camera_viewport_width_px},
                       {"viewport_height_px", perf_camera_viewport_height_px},
                       {"view_x_min", perf_camera_view_x_min},
