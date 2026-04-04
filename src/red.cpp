@@ -3318,14 +3318,14 @@ int main(int argc, char **argv) {
                 if (is_visible) {
                     unsigned char *presented_rgba_cuda_buffer =
                         scene->cameras[j].pbo_cuda.cuda_buffer;
-                    auto uploadCameraFrameToTexture = [&](int slot_index) {
+                    bool swap_playback_surface_after_draw = false;
+                    auto uploadCameraFrameToTexture = [&](int slot_index) -> int {
                         if (slot_index < 0) {
-                            return;
+                            return -1;
                         }
                         auto &camera = scene->cameras[j];
                         auto &slot = camera.display_buffer[slot_index];
-                        const int source_frame_number =
-                            slot.frame_number;
+                        const int source_frame_number = slot.frame_number;
                         const bool preview_active = playbackPreviewIsActive();
                         const bool preview_resize_active =
                             preview_active && scene->use_cpu_buffer;
@@ -3354,8 +3354,10 @@ int main(int argc, char **argv) {
                         const bool texture_shape_changed =
                             camera.display_texture_width != target_texture_width ||
                             camera.display_texture_height != target_texture_height;
-                        auto applyTexturePreviewSampling = [&](bool regenerate_mips) {
-                            bind_texture(&camera.image_texture);
+                        auto applyTexturePreviewSampling = [&](GLuint texture,
+                                                              int *applied_mode,
+                                                              bool regenerate_mips) {
+                            bind_texture(&texture);
                             if (desired_preview_sampling_mode > 0) {
                                 const int max_dim =
                                     std::max(target_texture_width,
@@ -3395,22 +3397,49 @@ int main(int argc, char **argv) {
                                                 0.0f);
                             }
                             unbind_texture();
-                            camera.applied_preview_sampling_mode =
-                                desired_preview_sampling_mode;
+                            if (applied_mode != nullptr) {
+                                *applied_mode = desired_preview_sampling_mode;
+                            }
+                        };
+                        auto uploadSurfaceToTexture = [&](PBO_CUDA &surface_pbo,
+                                                          GLuint surface_texture,
+                                                          int *surface_preview_mode) {
+                            const auto texture_upload_start =
+                                std::chrono::steady_clock::now();
+                            GLuint upload_pbo = surface_pbo.pbo;
+                            bind_pbo(&upload_pbo);
+                            bind_texture(&surface_texture);
+                            upload_image_pbo_to_texture(target_texture_width,
+                                                        target_texture_height);
+                            unbind_pbo();
+                            unbind_texture();
+                            frame_camera_texture_upload_ms += durationMs(
+                                std::chrono::steady_clock::now() -
+                                texture_upload_start);
+                            applyTexturePreviewSampling(
+                                surface_texture,
+                                surface_preview_mode,
+                                desired_preview_sampling_mode > 0);
                         };
                         const bool preview_sampling_changed =
                             camera.applied_preview_sampling_mode !=
                             desired_preview_sampling_mode;
+                        const bool pipeline_playback_present =
+                            ps.play_video && !scene->use_cpu_buffer &&
+                            !preview_resize_active && !yolo_detection &&
+                            !texture_shape_changed;
                         if (camera.texture_has_valid_frame &&
                             camera.last_uploaded_frame == source_frame_number &&
                             !texture_shape_changed) {
                             if (preview_sampling_changed) {
                                 applyTexturePreviewSampling(
+                                    camera.image_texture,
+                                    &camera.applied_preview_sampling_mode,
                                     desired_preview_sampling_mode > 0);
                             }
                             presented_rgba_cuda_buffer =
                                 camera.pbo_cuda.cuda_buffer;
-                            return;
+                            return camera.last_uploaded_frame;
                         }
                         if (texture_shape_changed) {
                             const auto texture_resize_start =
@@ -3423,6 +3452,63 @@ int main(int argc, char **argv) {
                                 texture_resize_start);
                             camera.last_uploaded_frame = -1;
                             camera.texture_has_valid_frame = false;
+                            camera.playback_staging_frame = -1;
+                            camera.playback_staging_valid = false;
+                            camera.playback_staging_preview_sampling_mode = -1;
+                        }
+                        if (pipeline_playback_present && camera.texture_has_valid_frame) {
+                            if (preview_sampling_changed) {
+                                applyTexturePreviewSampling(
+                                    camera.image_texture,
+                                    &camera.applied_preview_sampling_mode,
+                                    desired_preview_sampling_mode > 0);
+                            }
+                            if (!camera.playback_staging_valid ||
+                                camera.playback_staging_frame != source_frame_number) {
+                                const auto upload_start =
+                                    std::chrono::steady_clock::now();
+                                if (slot.format == PictureBufferFormat::NV12) {
+                                    const auto convert_start =
+                                        std::chrono::steady_clock::now();
+                                    Nv12ToColor32<RGBA32>(
+                                        slot.frame,
+                                        slot.pitch_bytes > 0
+                                            ? slot.pitch_bytes
+                                            : camera.image_width,
+                                        camera.playback_staging_pbo.cuda_buffer,
+                                        4 * static_cast<int>(camera.image_width),
+                                        static_cast<int>(camera.image_width),
+                                        static_cast<int>(camera.image_height),
+                                        slot.color_matrix);
+                                    frame_camera_display_convert_ms += durationMs(
+                                        std::chrono::steady_clock::now() -
+                                        convert_start);
+                                } else {
+                                    const auto pbo_copy_start =
+                                        std::chrono::steady_clock::now();
+                                    ck(cudaMemcpy(
+                                        camera.playback_staging_pbo.cuda_buffer,
+                                        slot.frame,
+                                        camera.image_width * camera.image_height * 4,
+                                        cudaMemcpyDeviceToDevice));
+                                    frame_camera_pbo_copy_ms += durationMs(
+                                        std::chrono::steady_clock::now() -
+                                        pbo_copy_start);
+                                }
+                                uploadSurfaceToTexture(
+                                    camera.playback_staging_pbo,
+                                    camera.playback_staging_texture,
+                                    &camera.playback_staging_preview_sampling_mode);
+                                camera.playback_staging_frame = source_frame_number;
+                                camera.playback_staging_valid = true;
+                                frame_camera_upload_ms += durationMs(
+                                    std::chrono::steady_clock::now() -
+                                    upload_start);
+                                frame_camera_upload_count++;
+                                swap_playback_surface_after_draw = true;
+                            }
+                            presented_rgba_cuda_buffer = camera.pbo_cuda.cuda_buffer;
+                            return camera.last_uploaded_frame;
                         }
                         const auto upload_start =
                             std::chrono::steady_clock::now();
@@ -3500,25 +3586,20 @@ int main(int argc, char **argv) {
                             presented_rgba_cuda_buffer =
                                 camera.pbo_cuda.cuda_buffer;
                         }
-                        const auto texture_upload_start =
-                            std::chrono::steady_clock::now();
-                        GLuint upload_pbo = camera.pbo_cuda.pbo;
-                        bind_pbo(&upload_pbo);
-                        bind_texture(&camera.image_texture);
-                        upload_image_pbo_to_texture(target_texture_width,
-                                                    target_texture_height);
-                        unbind_pbo();
-                        unbind_texture();
-                        frame_camera_texture_upload_ms += durationMs(
-                            std::chrono::steady_clock::now() -
-                            texture_upload_start);
-                        applyTexturePreviewSampling(
-                            desired_preview_sampling_mode > 0);
+                        uploadSurfaceToTexture(
+                            camera.pbo_cuda,
+                            camera.image_texture,
+                            &camera.applied_preview_sampling_mode);
+                        camera.playback_staging_frame = -1;
+                        camera.playback_staging_valid = false;
+                        camera.playback_staging_preview_sampling_mode = -1;
+                        presented_rgba_cuda_buffer = camera.pbo_cuda.cuda_buffer;
                         camera.last_uploaded_frame = source_frame_number;
                         camera.texture_has_valid_frame = true;
                         frame_camera_upload_ms += durationMs(
                             std::chrono::steady_clock::now() - upload_start);
                         frame_camera_upload_count++;
+                        return source_frame_number;
                     };
                     auto clearCameraDisplayBuffer = [&]() {
                         auto &camera = scene->cameras[j];
@@ -3545,6 +3626,9 @@ int main(int argc, char **argv) {
                         camera.last_uploaded_frame = -1;
                         camera.texture_has_valid_frame = false;
                         camera.applied_preview_sampling_mode = -1;
+                        camera.playback_staging_frame = -1;
+                        camera.playback_staging_valid = false;
+                        camera.playback_staging_preview_sampling_mode = -1;
                     };
                     int presented_slot = -1;
                     int presented_frame = -1;
@@ -3573,20 +3657,19 @@ int main(int argc, char **argv) {
                                 j, ps.to_display_frame_number, preferred_slot);
 
                         int displayed_frame_num = -1;
+                        presented_slot = display_slot;
                         if (display_slot >= 0) {
                             displayed_frame_num =
-                                scene->cameras[j].display_buffer[display_slot].frame_number;
-                        }
-                        if (displayed_frame_num >= 0) {
-                            current_frame_num = displayed_frame_num;
+                                uploadCameraFrameToTexture(display_slot);
+                            presented_frame = displayed_frame_num;
+                            if (displayed_frame_num >= 0) {
+                                current_frame_num = displayed_frame_num;
+                            } else {
+                                current_frame_num = ps.to_display_frame_number;
+                            }
                         } else {
+                            presented_frame = -1;
                             current_frame_num = ps.to_display_frame_number;
-                        }
-                        presented_slot = display_slot;
-                        presented_frame = displayed_frame_num;
-                        if (display_slot >= 0) {
-                            uploadCameraFrameToTexture(display_slot);
-                        } else {
                             if (scene->cameras[j].texture_has_valid_frame) {
                                 clearCameraDisplayBuffer();
                             }
@@ -3605,11 +3688,13 @@ int main(int argc, char **argv) {
                             if (paused_slot >= 0) {
                                 presented_slot = paused_slot;
                                 presented_frame =
-                                    scene->cameras[j].display_buffer[paused_slot].frame_number;
+                                    uploadCameraFrameToTexture(paused_slot);
                                 if (presented_frame >= 0) {
                                     current_frame_num = presented_frame;
+                                } else {
+                                    current_frame_num =
+                                        std::max(0, ps.to_display_frame_number);
                                 }
-                                uploadCameraFrameToTexture(paused_slot);
                             } else {
                                 if (scene->cameras[j].texture_has_valid_frame) {
                                     clearCameraDisplayBuffer();
@@ -5688,6 +5773,28 @@ struct StateOverlay {
                             }
                         }     
                         ImPlot::EndPlot();
+                        if (swap_playback_surface_after_draw) {
+                            auto &camera = scene->cameras[j];
+                            std::swap(camera.image_texture,
+                                      camera.playback_staging_texture);
+                            std::swap(camera.pbo_cuda,
+                                      camera.playback_staging_pbo);
+                            std::swap(camera.applied_preview_sampling_mode,
+                                      camera.playback_staging_preview_sampling_mode);
+                            const int previous_front_frame =
+                                camera.last_uploaded_frame;
+                            const bool previous_front_valid =
+                                camera.texture_has_valid_frame;
+                            camera.last_uploaded_frame =
+                                camera.playback_staging_frame;
+                            camera.texture_has_valid_frame =
+                                camera.playback_staging_valid;
+                            camera.playback_staging_frame =
+                                previous_front_frame;
+                            camera.playback_staging_valid =
+                                previous_front_valid;
+                            swap_playback_surface_after_draw = false;
+                        }
                         frame_camera_overlay_ui_ms += durationMs(
                             std::chrono::steady_clock::now() -
                             camera_overlay_ui_start);

@@ -2,6 +2,24 @@
 
 Date anchored: 2026-04-04.
 
+## Status Update
+
+This doc remains useful background, but the latest zoomed-playback telemetry
+changed the immediate priority.
+
+Specifically:
+
+- tight zoom during playback did **not** materially reduce `gl_draw_ms`
+- the camera viewport stayed the same size on screen
+- render time remained effectively flat between full-view and tight-zoom
+  samples
+
+That means ROI-aware rendering is no longer the highest-priority next
+experiment by itself. The next plan has shifted to a cheaper playback-specific
+camera renderer:
+
+- [docs/crimson_main_camera_playback_renderer_plan.md](./crimson_main_camera_playback_renderer_plan.md)
+
 ## Why This Exists
 
 The first late-conversion slice for the main camera is now in place:
@@ -103,9 +121,9 @@ This is the next logical step after late conversion:
 - current late conversion decides **which frame** to convert late
 - the next step decides **how much of that frame** to convert and render
 
-## Why This Is The Right Next Step
+## Why This Was A Plausible Next Step
 
-The current evidence says this is more promising than:
+This was a reasonable next hypothesis because:
 
 - further main-camera decode tuning
 - a software main-camera decoder
@@ -116,12 +134,16 @@ Why:
 
 - the FFmpeg benchmark already showed software main-camera decode is not the
   right direction for `4512x4512 HEVC 60 fps`
-- the profiler now shows render cost, not upload cost, as the dominant steady
+- the profiler showed render cost, not upload cost, as the dominant steady
   limiter
 - the user needs zoom during playback, so a simpler non-interactive renderer is
   not acceptable
 
-## Target Design
+But the newer zoomed-playback capture showed that zooming into a tiny visible
+source-image fraction still did not lower draw time. That makes ROI-aware
+rendering a weaker next optimization than a cheaper playback renderer.
+
+## Target Design Context
 
 ### Zoomed-Out Playback Path
 
@@ -172,7 +194,7 @@ The safer approach is:
 
 This suggests a render-path change, not a wholesale camera-widget rewrite.
 
-## Implementation Shape
+## Implementation Shape Context
 
 ### Phase 1: Instrument And Detect View State
 
@@ -199,7 +221,8 @@ Acceptance:
 
 - playback still looks correct when fully zoomed out
 - overlays remain aligned
-- `gl_draw_ms` drops materially on the laptop
+- if this path is revisited later, `gl_draw_ms` should drop materially on the
+  laptop
 
 ### Phase 3: ROI Full-Resolution Playback Path
 
@@ -214,6 +237,8 @@ Acceptance:
 - zoomed playback remains crisp in the visible region
 - overlays still align correctly
 - no interaction regressions
+- if revisited later, this phase should be justified by a renderer path where
+  ROI can actually reduce work
 
 ### Phase 4: Tune Thresholds
 
