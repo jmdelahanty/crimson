@@ -31,6 +31,7 @@ This doc is the follow-on design note after:
 And it now feeds into the next render-focused plan:
 
 - [docs/crimson_main_camera_zoom_aware_render_plan.md](./crimson_main_camera_zoom_aware_render_plan.md)
+- [docs/crimson_main_camera_playback_renderer_plan.md](./crimson_main_camera_playback_renderer_plan.md)
 
 ## Key Evidence
 
@@ -87,7 +88,14 @@ But it also clarified the next bottleneck:
 
 So the late-conversion plan remains the right architectural direction, but its
 first slice is no longer the next optimization frontier. The next frontier is a
-zoom-aware playback render path for weaker GPUs.
+playback render-path optimization for weaker GPUs.
+
+The newer zoomed-playback telemetry further refined that conclusion:
+
+- tight zoom did not materially lower `gl_draw_ms`
+- so ROI-aware rendering is not the highest-priority next change by itself
+- the next stronger hypothesis is a cheaper playback-specific camera renderer
+  that still preserves zoom/pan semantics
 
 ## Problem Summary
 

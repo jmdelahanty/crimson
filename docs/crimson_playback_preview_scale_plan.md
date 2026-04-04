@@ -65,6 +65,11 @@ render path depend on the visible view / ROI, see:
 
 - [docs/crimson_main_camera_zoom_aware_render_plan.md](./crimson_main_camera_zoom_aware_render_plan.md)
 
+For the newer revision after zoomed-playback telemetry showed that ROI alone
+did not materially reduce draw cost, see:
+
+- [docs/crimson_main_camera_playback_renderer_plan.md](./crimson_main_camera_playback_renderer_plan.md)
+
 It does **not**:
 
 - change the source video
@@ -137,6 +142,12 @@ laptop: mip-sampled playback preview in the `GPU Buffer` path was not enough to
 materially reduce `gl_draw_ms`, because it still rendered from a full-size
 display texture. That is why the next plan has shifted to a zoom-aware
 playback render path rather than more preview-scale tuning.
+
+Further telemetry then showed that tight zoom during playback still did not
+lower `gl_draw_ms`, because the viewport stayed the same size and the playback
+camera image still went through the same expensive presentation path. That is
+why the next implementation focus has shifted again toward a cheaper
+playback-specific camera renderer.
 
 ## Success Criteria
 
