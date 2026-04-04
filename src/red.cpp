@@ -37,6 +37,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <fstream>
+#include <nlohmann/json.hpp>
 #include "zarr_loader.h"
 #include "gui_interpolation.h"
 #include <opencv2/imgproc.hpp>
@@ -164,12 +165,16 @@ static EyeOrientationSmoother g_eye_orientation_smoother;
 
 namespace {
 
+using json = nlohmann::json;
+
 double durationMs(std::chrono::steady_clock::duration duration) {
     return std::chrono::duration<double, std::milli>(duration).count();
 }
 
 struct PerfLogWriter {
     std::ofstream stream;
+    std::filesystem::path csv_path;
+    std::filesystem::path metadata_path;
     std::chrono::steady_clock::time_point start_steady{};
     std::chrono::steady_clock::time_point last_sample_steady{};
 
@@ -177,6 +182,9 @@ struct PerfLogWriter {
         if (output_path.empty()) {
             return false;
         }
+        csv_path = output_path;
+        metadata_path = output_path;
+        metadata_path.replace_extension(".meta.json");
         std::error_code ec;
         if (output_path.has_parent_path()) {
             std::filesystem::create_directories(output_path.parent_path(), ec);
@@ -207,10 +215,25 @@ struct PerfLogWriter {
         stream.flush();
         std::cout << "[PerfLog] Writing CSV samples to " << output_path
                   << std::endl;
+        std::cout << "[PerfLog] Writing metadata sidecar to " << metadata_path
+                  << std::endl;
         return true;
     }
 
     bool enabled() const { return stream.is_open(); }
+
+    void writeMetadata(const json& payload) const {
+        if (metadata_path.empty()) {
+            return;
+        }
+        std::ofstream meta_stream(metadata_path, std::ios::out | std::ios::trunc);
+        if (!meta_stream.is_open()) {
+            std::cerr << "[PerfLog] Failed to write metadata sidecar "
+                      << metadata_path << std::endl;
+            return;
+        }
+        meta_stream << payload.dump(2) << "\n";
+    }
 };
 
 }  // namespace
@@ -7896,6 +7919,63 @@ struct StateOverlay {
                     << stimulus_buffered_frames << ","
                     << stimulus_progress_gap_frames << "\n";
                 perf_log_writer.stream.flush();
+
+                json metadata = {
+                    {"format", "crimson_perf_metadata_v1"},
+                    {"generated_wall_epoch_ms", wall_epoch_ms},
+                    {"perf_csv_path", perf_log_writer.csv_path.string()},
+                    {"cwd", cwd.string()},
+                    {"argv0_path", argv0_path.string()},
+                    {"recording_path",
+                     cli_recording_path.empty() ? json(nullptr)
+                                                : json(cli_recording_path)},
+                    {"zarr_override_path",
+                     cli_zarr_override_path.empty()
+                         ? json(nullptr)
+                         : json(cli_zarr_override_path)},
+                    {"window",
+                     {{"swap_interval", window->swap_interval},
+                      {"width", window->width},
+                      {"height", window->height}}},
+                    {"main_video",
+                     {{"loaded", video_loaded},
+                      {"fps", video_fps},
+                      {"buffer_mode", scene->use_cpu_buffer ? "cpu" : "gpu"},
+                      {"buffer_size",
+                       video_loaded ? static_cast<int>(scene->size_of_buffer)
+                                    : label_buffer_size},
+                      {"requested_playback_speed", set_playback_speed},
+                      {"measured_playback_speed", inst_speed},
+                      {"requested_camera_frame", perf_requested_camera_frame},
+                      {"displayed_camera_frame", displayed_camera_frame},
+                      {"current_frame_num", current_frame_num},
+                      {"min_decoded_camera_frame", perf_min_decoded_camera_frame},
+                      {"camera_decode_gap_frames", camera_decode_gap_frames},
+                      {"visible_camera_count", visible_camera_count},
+                      {"camera_names", camera_names}}},
+                    {"stimulus",
+                     {{"loaded", stimulus_player.loaded},
+                      {"decode_backend",
+                       ((stimulus_player.loaded
+                             ? stimulus_player.use_software_decode
+                             : stimulus_use_software_decode)
+                            ? "software"
+                            : "gpu")},
+                      {"buffer_mode",
+                       ((stimulus_player.loaded ? stimulus_player.use_cpu_buffer
+                                                : stimulus_use_cpu_buffer)
+                            ? "cpu"
+                            : "gpu")},
+                      {"buffer_size",
+                       stimulus_player.loaded ? stimulus_player.buffer_size
+                                              : stimulus_buffer_size},
+                      {"target_frame", stimulus_target_frame},
+                      {"latest_decoded_frame", stimulus_latest_decoded},
+                      {"last_displayed_frame", stimulus_last_displayed},
+                      {"buffered_frames", stimulus_buffered_frames},
+                      {"progress_gap_frames", stimulus_progress_gap_frames}}}
+                };
+                perf_log_writer.writeMetadata(metadata);
             }
         }
     }
