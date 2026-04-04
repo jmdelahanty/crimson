@@ -828,7 +828,7 @@ int main(int argc, char **argv) {
     };
 
     auto playbackPreviewIsActive = [&]() -> bool {
-        return ps.play_video && scene->use_cpu_buffer && !yolo_detection &&
+        return ps.play_video && !yolo_detection &&
                playbackPreviewScaleFactor() < 1.0;
     };
 
@@ -2195,17 +2195,17 @@ int main(int argc, char **argv) {
                 ImGui::Combo("Playback Preview Scale", &playback_preview_scale_mode,
                              items, IM_ARRAYSIZE(items));
                 if (playback_preview_scale_mode != 0) {
-                    if (!scene->use_cpu_buffer) {
-                        ImGui::TextDisabled(
-                            "Preview scaling is currently active only when the main stream uses CPU Buffer.");
-                    } else if (yolo_detection) {
+                    if (yolo_detection) {
                         ImGui::TextDisabled(
                             "Preview scaling is temporarily disabled while YOLO inference is active.");
                     } else if (!ps.play_video) {
                         ImGui::TextDisabled(
                             "Preview scaling applies only during playback; paused inspection remains full resolution.");
+                    } else if (scene->use_cpu_buffer) {
+                        ImGui::Text("Effective preview scale: %s (CPU resized preview)",
+                                    playbackPreviewScaleLabel());
                     } else {
-                        ImGui::Text("Effective preview scale: %s",
+                        ImGui::Text("Effective preview scale: %s (GPU mip preview)",
                                     playbackPreviewScaleLabel());
                     }
                 }
@@ -3305,16 +3305,26 @@ int main(int argc, char **argv) {
                         const int source_frame_number =
                             camera.display_buffer[slot_index].frame_number;
                         const bool preview_active = playbackPreviewIsActive();
+                        const bool preview_resize_active =
+                            preview_active && scene->use_cpu_buffer;
+                        const bool preview_sampling_active =
+                            preview_active && !scene->use_cpu_buffer;
+                        const int desired_preview_sampling_mode =
+                            preview_sampling_active
+                                ? playback_preview_scale_mode
+                                : 0;
                         const double preview_scale =
-                            preview_active ? playbackPreviewScaleFactor() : 1.0;
+                            preview_resize_active
+                                ? playbackPreviewScaleFactor()
+                                : 1.0;
                         const int target_texture_width =
-                            preview_active
+                            preview_resize_active
                                 ? std::max(1, static_cast<int>(std::lround(
                                                   static_cast<double>(camera.image_width) *
                                                   preview_scale)))
                                 : camera.image_width;
                         const int target_texture_height =
-                            preview_active
+                            preview_resize_active
                                 ? std::max(1, static_cast<int>(std::lround(
                                                   static_cast<double>(camera.image_height) *
                                                   preview_scale)))
@@ -3323,13 +3333,64 @@ int main(int argc, char **argv) {
                             camera.display_texture_width != target_texture_width ||
                             camera.display_texture_height != target_texture_height;
                         const bool use_direct_slot_pbo =
-                            !preview_active && !scene->use_cpu_buffer &&
+                            !preview_resize_active && !scene->use_cpu_buffer &&
                             slot_index <
                                 static_cast<int>(camera.display_buffer_pbos.size()) &&
                             camera.display_buffer_pbos[slot_index].pbo != 0;
+                        auto applyTexturePreviewSampling = [&](bool regenerate_mips) {
+                            bind_texture(&camera.image_texture);
+                            if (desired_preview_sampling_mode > 0) {
+                                const int max_dim =
+                                    std::max(target_texture_width,
+                                             target_texture_height);
+                                const int max_mip_level =
+                                    max_dim > 0
+                                        ? static_cast<int>(std::floor(std::log2(
+                                              static_cast<double>(max_dim))))
+                                        : 0;
+                                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+                                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,
+                                                max_mip_level);
+                                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                                                GL_LINEAR_MIPMAP_LINEAR);
+                                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+                                                GL_LINEAR);
+                                glTexParameterf(
+                                    GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS,
+                                    desired_preview_sampling_mode == 1 ? 1.0f
+                                                                       : 2.0f);
+                                if (regenerate_mips) {
+                                    const auto mip_start =
+                                        std::chrono::steady_clock::now();
+                                    glGenerateMipmap(GL_TEXTURE_2D);
+                                    frame_camera_preview_resize_ms += durationMs(
+                                        std::chrono::steady_clock::now() -
+                                        mip_start);
+                                }
+                            } else {
+                                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+                                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+                                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                                                GL_LINEAR);
+                                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+                                                GL_LINEAR);
+                                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS,
+                                                0.0f);
+                            }
+                            unbind_texture();
+                            camera.applied_preview_sampling_mode =
+                                desired_preview_sampling_mode;
+                        };
+                        const bool preview_sampling_changed =
+                            camera.applied_preview_sampling_mode !=
+                            desired_preview_sampling_mode;
                         if (camera.texture_has_valid_frame &&
                             camera.last_uploaded_frame == source_frame_number &&
                             !texture_shape_changed) {
+                            if (preview_sampling_changed) {
+                                applyTexturePreviewSampling(
+                                    desired_preview_sampling_mode > 0);
+                            }
                             presented_rgba_cuda_buffer =
                                 use_direct_slot_pbo
                                     ? camera.display_buffer_pbos[slot_index].cuda_buffer
@@ -3350,7 +3411,7 @@ int main(int argc, char **argv) {
                         }
                         const auto upload_start =
                             std::chrono::steady_clock::now();
-                        if (preview_active) {
+                        if (preview_resize_active) {
                             const cv::Mat full_rgba(camera.image_height,
                                                     camera.image_width,
                                                     CV_8UC4,
@@ -3427,6 +3488,8 @@ int main(int argc, char **argv) {
                         frame_camera_texture_upload_ms += durationMs(
                             std::chrono::steady_clock::now() -
                             texture_upload_start);
+                        applyTexturePreviewSampling(
+                            desired_preview_sampling_mode > 0);
                         camera.last_uploaded_frame = source_frame_number;
                         camera.texture_has_valid_frame = true;
                         frame_camera_upload_ms += durationMs(
@@ -3457,6 +3520,7 @@ int main(int argc, char **argv) {
                         unbind_texture();
                         camera.last_uploaded_frame = -1;
                         camera.texture_has_valid_frame = false;
+                        camera.applied_preview_sampling_mode = -1;
                     };
                     int presented_slot = -1;
                     int presented_frame = -1;
