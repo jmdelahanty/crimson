@@ -19,12 +19,17 @@ struct CameraResources {
     u32 image_height = 0;
     GLuint image_texture = 0;
     PBO_CUDA pbo_cuda = {};
+    GLuint playback_staging_texture = 0;
+    PBO_CUDA playback_staging_pbo = {};
     std::vector<PBO_CUDA> display_buffer_pbos;
     PictureBuffer *display_buffer = nullptr;
     SeekInfo seek_context = {false, false, 0, false, 0, 0};
     int last_uploaded_frame = -1;
     bool texture_has_valid_frame = false;
     int applied_preview_sampling_mode = -1;
+    int playback_staging_frame = -1;
+    bool playback_staging_valid = false;
+    int playback_staging_preview_sampling_mode = -1;
     int display_texture_width = 0;
     int display_texture_height = 0;
     std::vector<unsigned char> playback_preview_rgba_cpu;
@@ -82,6 +87,9 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
         scene->cameras[j].last_uploaded_frame = -1;
         scene->cameras[j].texture_has_valid_frame = false;
         scene->cameras[j].applied_preview_sampling_mode = -1;
+        scene->cameras[j].playback_staging_frame = -1;
+        scene->cameras[j].playback_staging_valid = false;
+        scene->cameras[j].playback_staging_preview_sampling_mode = -1;
         scene->cameras[j].display_texture_width =
             static_cast<int>(scene->cameras[j].image_width);
         scene->cameras[j].display_texture_height =
@@ -100,6 +108,17 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
         register_pbo_to_cuda(&scene->cameras[j].pbo_cuda.pbo, &scene->cameras[j].pbo_cuda.cuda_resource);
         map_cuda_resource(&scene->cameras[j].pbo_cuda.cuda_resource);
         cuda_pointer_from_resource(&scene->cameras[j].pbo_cuda.cuda_buffer, &scene->cameras[j].pbo_cuda.cuda_pbo_storage_buffer_size, &scene->cameras[j].pbo_cuda.cuda_resource);
+
+        create_pbo(&scene->cameras[j].playback_staging_pbo.pbo,
+                   scene->cameras[j].image_width,
+                   scene->cameras[j].image_height);
+        register_pbo_to_cuda(&scene->cameras[j].playback_staging_pbo.pbo,
+                             &scene->cameras[j].playback_staging_pbo.cuda_resource);
+        map_cuda_resource(&scene->cameras[j].playback_staging_pbo.cuda_resource);
+        cuda_pointer_from_resource(
+            &scene->cameras[j].playback_staging_pbo.cuda_buffer,
+            &scene->cameras[j].playback_staging_pbo.cuda_pbo_storage_buffer_size,
+            &scene->cameras[j].playback_staging_pbo.cuda_resource);
     }
 
 
@@ -168,6 +187,14 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); // This is required on WebGL for non power-of-two textures
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE); // Same
+
+        glGenTextures(1, &scene->cameras[j].playback_staging_texture);
+        glBindTexture(GL_TEXTURE_2D, scene->cameras[j].playback_staging_texture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, scene->cameras[j].image_width, scene->cameras[j].image_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }
 
 }
