@@ -133,6 +133,10 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
     bool skip_first_decode_after_seek = false;
     int seek_debug_frames_to_log = 0;
     uint64_t seek_discard_count = 0;
+    const bool buffer_requires_rgba =
+        use_cpu_buffer || (size_of_buffer > 0 &&
+                           display_buffer[0].format ==
+                               PictureBufferFormat::RGBA32);
     auto seek_requested = [&]() -> bool {
         std::lock_guard<std::mutex> lock(g_seek_info_mutex);
         return seek_info->use_seek;
@@ -276,13 +280,6 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
             }
 
             // reset the display buffer after seeking
-            size_t clear_bytes = 0;
-            int clear_w = static_cast<int>(demuxer->GetWidth());
-            int clear_h = static_cast<int>(demuxer->GetHeight());
-            if (clear_w > 0 && clear_h > 0) {
-                clear_bytes = static_cast<size_t>(clear_w) *
-                              static_cast<size_t>(clear_h) * 4;
-            }
             for (int i = 0; i < size_of_buffer; i++) {
                 // if (use_cpu_buffer) {
                 //     decoder_clear_buffer_with_constant_image(display_buffer[i].frame,
@@ -290,13 +287,17 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                 // }
                 display_buffer[i].available_to_write = true;
                 display_buffer[i].frame_number = -1;
-                if (clear_bytes > 0 && display_buffer[i].frame) {
+                if (display_buffer[i].frame_bytes > 0 &&
+                    display_buffer[i].frame) {
                     if (use_cpu_buffer) {
-                        std::memset(display_buffer[i].frame, 0, clear_bytes);
+                        std::memset(display_buffer[i].frame, 0,
+                                    display_buffer[i].frame_bytes);
                     } else {
-                        ck(cudaMemset(display_buffer[i].frame, 0, clear_bytes));
+                        ck(cudaMemset(display_buffer[i].frame, 0,
+                                      display_buffer[i].frame_bytes));
                     }
                 }
+                display_buffer[i].color_matrix = ColorSpaceStandard_BT709;
             }
             // Flush parser/display-queue state before seek discontinuity so
             // stale pre-seek frames cannot leak into post-seek output.
@@ -518,13 +519,16 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                     skip_first_decode_after_seek = false;
                 }
 
-                if (!pTmpImage && nFrameReturned) {
+                if (!pTmpImage && nFrameReturned && buffer_requires_rgba) {
                     LOG(INFO) << dec->GetVideoInfo();
                     // Get output frame size from decoder
                     nWidth = dec->GetWidth();
                     nHeight = dec->GetHeight();
                     size_in_bytes = nWidth * nHeight * 4;
                     cuMemAlloc(&pTmpImage, size_in_bytes);
+                } else if ((nWidth == 0 || nHeight == 0) && nFrameReturned) {
+                    nWidth = dec->GetWidth();
+                    nHeight = dec->GetHeight();
                 }
 
                 for (int i = 0; i < nFrameReturned; i++) {
@@ -544,6 +548,16 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         mapped_frame_num = nFrame;
                     }
                     const int assigned_frame_num = static_cast<int>(mapped_frame_num);
+                    const PictureBufferFormat slot_format =
+                        display_buffer[buffer_head].format;
+                    const int slot_pitch =
+                        display_buffer[buffer_head].pitch_bytes > 0
+                            ? display_buffer[buffer_head].pitch_bytes
+                            : dec->GetWidth();
+                    const size_t slot_frame_bytes =
+                        display_buffer[buffer_head].frame_bytes > 0
+                            ? display_buffer[buffer_head].frame_bytes
+                            : static_cast<size_t>(dec->GetFrameSize());
                     auto convert_to_rgba = [&]() {
                         const auto convert_start = std::chrono::steady_clock::now();
                         Nv12ToColor32<RGBA32>(
@@ -559,20 +573,30 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                             decoder_get_image_from_gpu(
                                 pTmpImage, display_buffer[buffer_head].frame,
                                 4 * dec->GetWidth(), dec->GetHeight());
-                        } else {
+                        } else if (slot_format ==
+                                   PictureBufferFormat::RGBA32) {
                             cudaMemcpy(display_buffer[buffer_head].frame,
                                        (uint8_t *)pTmpImage, size_in_bytes,
+                                       cudaMemcpyDeviceToDevice);
+                        } else {
+                            cudaMemcpy(display_buffer[buffer_head].frame,
+                                       pFrame, slot_frame_bytes,
                                        cudaMemcpyDeviceToDevice);
                         }
                         decode_write_ms += decoder_duration_ms(
                             std::chrono::steady_clock::now() - write_start);
                     };
-                    if (nFrame == 0) {
+                    if (slot_format == PictureBufferFormat::RGBA32) {
                         convert_to_rgba();
+                    }
+                    if (nFrame == 0) {
                         write_buffered_frame();
                         display_buffer[buffer_head].available_to_write = false;
                         dc_context->decoding_flag = true;
                         display_buffer[buffer_head].frame_number = assigned_frame_num;
+                        display_buffer[buffer_head].pitch_bytes = slot_pitch;
+                        display_buffer[buffer_head].frame_bytes = slot_frame_bytes;
+                        display_buffer[buffer_head].color_matrix = iMatrix;
                         latest_decoded_frame[cam_name].store(assigned_frame_num);
                         if (pending_seek_done) {
                             const bool marked =
@@ -605,11 +629,13 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         }
                         decode_wait_ms += decoder_duration_ms(
                             std::chrono::steady_clock::now() - wait_start);
-                        convert_to_rgba();
                         write_buffered_frame();
 
                         display_buffer[buffer_head].available_to_write = false;
                         display_buffer[buffer_head].frame_number = assigned_frame_num;
+                        display_buffer[buffer_head].pitch_bytes = slot_pitch;
+                        display_buffer[buffer_head].frame_bytes = slot_frame_bytes;
+                        display_buffer[buffer_head].color_matrix = iMatrix;
                         latest_decoded_frame[cam_name].store(assigned_frame_num);
                         if (pending_seek_done) {
                             const bool marked =
@@ -718,6 +744,7 @@ void image_loader(DecoderContext *dc_context,
                 // }
                 display_buffer[i].available_to_write = true;
                 display_buffer[i].frame_number = -1;
+                display_buffer[i].color_matrix = ColorSpaceStandard_BT709;
             }
             buffer_head = 0;
             frame_number = static_cast<int>(requested_frame);
@@ -740,6 +767,13 @@ void image_loader(DecoderContext *dc_context,
                     display_buffer[buffer_head].available_to_write = false;
                     dc_context->decoding_flag = true;
                     display_buffer[buffer_head].frame_number = frame_number;
+                    display_buffer[buffer_head].pitch_bytes =
+                        image_rgba.cols * static_cast<int>(image_rgba.elemSize());
+                    display_buffer[buffer_head].frame_bytes = buffer_size;
+                    display_buffer[buffer_head].color_matrix =
+                        ColorSpaceStandard_BT709;
+                    display_buffer[buffer_head].format =
+                        PictureBufferFormat::RGBA32;
                 } else {
                     while (!display_buffer[buffer_head].available_to_write &&
                            !(dc_context->stop_flag) && !seek_requested()) {
@@ -758,6 +792,13 @@ void image_loader(DecoderContext *dc_context,
                            buffer_size);
                     display_buffer[buffer_head].available_to_write = false;
                     display_buffer[buffer_head].frame_number = frame_number;
+                    display_buffer[buffer_head].pitch_bytes =
+                        image_rgba.cols * static_cast<int>(image_rgba.elemSize());
+                    display_buffer[buffer_head].frame_bytes = buffer_size;
+                    display_buffer[buffer_head].color_matrix =
+                        ColorSpaceStandard_BT709;
+                    display_buffer[buffer_head].format =
+                        PictureBufferFormat::RGBA32;
                 }
                 frame_number = frame_number + 1;
                 buffer_head = (buffer_head + 1) % size_of_buffer;

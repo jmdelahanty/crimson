@@ -254,7 +254,8 @@ struct PerfLogWriter {
             << "visible_camera_count,"
             << "main_buffer_mode,playback_preview_scale,playback_preview_active,"
             << "camera_upload_count,camera_upload_ms,camera_texture_resize_ms,"
-            << "camera_preview_resize_ms,camera_pbo_copy_ms,camera_texture_upload_ms,"
+            << "camera_preview_resize_ms,camera_display_convert_ms,"
+            << "camera_pbo_copy_ms,camera_texture_upload_ms,"
             << "camera_plot_image_ui_ms,camera_overlay_ui_ms,camera_scene_ui_ms,"
             << "stimulus_window_ui_ms,stimulus_timeline_ui_ms,movement_timeline_ui_ms,"
             << "gl_draw_ms,swap_ms,frame_loop_ms,ui_build_ms,imgui_render_ms,"
@@ -1828,6 +1829,7 @@ int main(int argc, char **argv) {
         int frame_camera_upload_count = 0;
         double frame_camera_texture_resize_ms = 0.0;
         double frame_camera_preview_resize_ms = 0.0;
+        double frame_camera_display_convert_ms = 0.0;
         double frame_camera_pbo_copy_ms = 0.0;
         double frame_camera_texture_upload_ms = 0.0;
         double frame_camera_plot_image_ui_ms = 0.0;
@@ -3302,8 +3304,9 @@ int main(int argc, char **argv) {
                             return;
                         }
                         auto &camera = scene->cameras[j];
+                        auto &slot = camera.display_buffer[slot_index];
                         const int source_frame_number =
-                            camera.display_buffer[slot_index].frame_number;
+                            slot.frame_number;
                         const bool preview_active = playbackPreviewIsActive();
                         const bool preview_resize_active =
                             preview_active && scene->use_cpu_buffer;
@@ -3332,11 +3335,6 @@ int main(int argc, char **argv) {
                         const bool texture_shape_changed =
                             camera.display_texture_width != target_texture_width ||
                             camera.display_texture_height != target_texture_height;
-                        const bool use_direct_slot_pbo =
-                            !preview_resize_active && !scene->use_cpu_buffer &&
-                            slot_index <
-                                static_cast<int>(camera.display_buffer_pbos.size()) &&
-                            camera.display_buffer_pbos[slot_index].pbo != 0;
                         auto applyTexturePreviewSampling = [&](bool regenerate_mips) {
                             bind_texture(&camera.image_texture);
                             if (desired_preview_sampling_mode > 0) {
@@ -3392,9 +3390,7 @@ int main(int argc, char **argv) {
                                     desired_preview_sampling_mode > 0);
                             }
                             presented_rgba_cuda_buffer =
-                                use_direct_slot_pbo
-                                    ? camera.display_buffer_pbos[slot_index].cuda_buffer
-                                    : camera.pbo_cuda.cuda_buffer;
+                                camera.pbo_cuda.cuda_buffer;
                             return;
                         }
                         if (texture_shape_changed) {
@@ -3415,7 +3411,7 @@ int main(int argc, char **argv) {
                             const cv::Mat full_rgba(camera.image_height,
                                                     camera.image_width,
                                                     CV_8UC4,
-                                                    camera.display_buffer[slot_index].frame);
+                                                    slot.frame);
                             camera.playback_preview_rgba_cpu.resize(
                                 static_cast<size_t>(target_texture_width) *
                                 static_cast<size_t>(target_texture_height) * 4);
@@ -3448,7 +3444,7 @@ int main(int argc, char **argv) {
                                 std::chrono::steady_clock::now();
                             ck(cudaMemcpy(
                                 camera.pbo_cuda.cuda_buffer,
-                                camera.display_buffer[slot_index].frame,
+                                slot.frame,
                                 camera.image_width * camera.image_height * 4,
                                 cudaMemcpyHostToDevice));
                             frame_camera_pbo_copy_ms += durationMs(
@@ -3456,29 +3452,38 @@ int main(int argc, char **argv) {
                             presented_rgba_cuda_buffer =
                                 camera.pbo_cuda.cuda_buffer;
                         } else {
-                            if (use_direct_slot_pbo) {
-                                presented_rgba_cuda_buffer =
-                                    camera.display_buffer_pbos[slot_index].cuda_buffer;
+                            if (slot.format == PictureBufferFormat::NV12) {
+                                const auto convert_start =
+                                    std::chrono::steady_clock::now();
+                                Nv12ToColor32<RGBA32>(
+                                    slot.frame,
+                                    slot.pitch_bytes > 0 ? slot.pitch_bytes
+                                                         : camera.image_width,
+                                    camera.pbo_cuda.cuda_buffer,
+                                    4 * static_cast<int>(camera.image_width),
+                                    static_cast<int>(camera.image_width),
+                                    static_cast<int>(camera.image_height),
+                                    slot.color_matrix);
+                                frame_camera_display_convert_ms += durationMs(
+                                    std::chrono::steady_clock::now() -
+                                    convert_start);
                             } else {
                                 const auto pbo_copy_start =
                                     std::chrono::steady_clock::now();
                                 ck(cudaMemcpy(
-                                    camera.pbo_cuda.cuda_buffer,
-                                    camera.display_buffer[slot_index].frame,
+                                    camera.pbo_cuda.cuda_buffer, slot.frame,
                                     camera.image_width * camera.image_height * 4,
                                     cudaMemcpyDeviceToDevice));
                                 frame_camera_pbo_copy_ms += durationMs(
-                                    std::chrono::steady_clock::now() - pbo_copy_start);
-                                presented_rgba_cuda_buffer =
-                                    camera.pbo_cuda.cuda_buffer;
+                                    std::chrono::steady_clock::now() -
+                                    pbo_copy_start);
                             }
+                            presented_rgba_cuda_buffer =
+                                camera.pbo_cuda.cuda_buffer;
                         }
                         const auto texture_upload_start =
                             std::chrono::steady_clock::now();
-                        GLuint upload_pbo =
-                            use_direct_slot_pbo
-                                ? camera.display_buffer_pbos[slot_index].pbo
-                                : camera.pbo_cuda.pbo;
+                        GLuint upload_pbo = camera.pbo_cuda.pbo;
                         bind_pbo(&upload_pbo);
                         bind_texture(&camera.image_texture);
                         upload_image_pbo_to_texture(target_texture_width,
@@ -8292,6 +8297,7 @@ struct StateOverlay {
                     << frame_camera_upload_ms << ","
                     << frame_camera_texture_resize_ms << ","
                     << frame_camera_preview_resize_ms << ","
+                    << frame_camera_display_convert_ms << ","
                     << frame_camera_pbo_copy_ms << ","
                     << frame_camera_texture_upload_ms << ","
                     << frame_camera_plot_image_ui_ms << ","
@@ -8347,6 +8353,8 @@ struct StateOverlay {
                      {{"loaded", video_loaded},
                       {"fps", video_fps},
                       {"buffer_mode", scene->use_cpu_buffer ? "cpu" : "gpu"},
+                      {"buffer_storage_format",
+                       scene->use_cpu_buffer ? "rgba32" : "nv12"},
                       {"playback_preview_scale", playbackPreviewScaleLabel()},
                       {"playback_preview_active", playbackPreviewIsActive()},
                       {"buffer_size",

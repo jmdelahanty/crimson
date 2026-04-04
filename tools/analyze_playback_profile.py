@@ -39,6 +39,7 @@ NUMERIC_COLUMNS = {
     "camera_upload_ms": float,
     "camera_texture_resize_ms": float,
     "camera_preview_resize_ms": float,
+    "camera_display_convert_ms": float,
     "camera_pbo_copy_ms": float,
     "camera_texture_upload_ms": float,
     "camera_plot_image_ui_ms": float,
@@ -418,6 +419,9 @@ def build_summary(
     camera_preview_resize_stats = describe(
         [row.get("camera_preview_resize_ms", math.nan) for row in active_rows]
     )
+    camera_display_convert_stats = describe(
+        [row.get("camera_display_convert_ms", math.nan) for row in active_rows]
+    )
     camera_pbo_copy_stats = describe(
         [row.get("camera_pbo_copy_ms", math.nan) for row in active_rows]
     )
@@ -535,6 +539,7 @@ def build_summary(
                 "camera_upload_ms": row.get("camera_upload_ms"),
                 "camera_texture_resize_ms": row.get("camera_texture_resize_ms"),
                 "camera_preview_resize_ms": row.get("camera_preview_resize_ms"),
+                "camera_display_convert_ms": row.get("camera_display_convert_ms"),
                 "camera_pbo_copy_ms": row.get("camera_pbo_copy_ms"),
                 "camera_texture_upload_ms": row.get("camera_texture_upload_ms"),
                 "camera_plot_image_ui_ms": row.get("camera_plot_image_ui_ms"),
@@ -586,6 +591,7 @@ def build_summary(
         "camera_upload_ms": upload_stats,
         "camera_texture_resize_ms": camera_texture_resize_stats,
         "camera_preview_resize_ms": camera_preview_resize_stats,
+        "camera_display_convert_ms": camera_display_convert_stats,
         "camera_pbo_copy_ms": camera_pbo_copy_stats,
         "camera_texture_upload_ms": camera_texture_upload_stats,
         "camera_plot_image_ui_ms": camera_plot_image_ui_stats,
@@ -632,6 +638,7 @@ def print_summary(summary: dict[str, Any]) -> None:
         "camera_upload_ms",
         "camera_texture_resize_ms",
         "camera_preview_resize_ms",
+        "camera_display_convert_ms",
         "camera_pbo_copy_ms",
         "camera_texture_upload_ms",
         "camera_plot_image_ui_ms",
@@ -692,6 +699,7 @@ def print_summary(summary: dict[str, Any]) -> None:
                 f"upload={format_stat(stall.get('camera_upload_ms'), 'ms')}, "
                 f"tex_resize={format_stat(stall.get('camera_texture_resize_ms'), 'ms')}, "
                 f"preview_resize={format_stat(stall.get('camera_preview_resize_ms'), 'ms')}, "
+                f"display_convert={format_stat(stall.get('camera_display_convert_ms'), 'ms')}, "
                 f"pbo_copy={format_stat(stall.get('camera_pbo_copy_ms'), 'ms')}, "
                 f"tex_upload={format_stat(stall.get('camera_texture_upload_ms'), 'ms')}, "
                 f"plot_image={format_stat(stall.get('camera_plot_image_ui_ms'), 'ms')}, "

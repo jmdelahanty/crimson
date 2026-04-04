@@ -54,6 +54,7 @@ NUMERIC_COLUMNS = {
     "camera_upload_ms": float,
     "camera_texture_resize_ms": float,
     "camera_preview_resize_ms": float,
+    "camera_display_convert_ms": float,
     "camera_pbo_copy_ms": float,
     "camera_texture_upload_ms": float,
     "camera_plot_image_ui_ms": float,
@@ -190,6 +191,9 @@ def print_summary(columns: dict[str, list[Any]], metadata: dict[str, Any] | None
     )
     print(
         f"  camera_preview_resize_ms: {describe(columns.get('camera_preview_resize_ms', []))}"
+    )
+    print(
+        f"  camera_display_convert_ms: {describe(columns.get('camera_display_convert_ms', []))}"
     )
     print(
         f"  camera_pbo_copy_ms: {describe(columns.get('camera_pbo_copy_ms', []))}"
@@ -388,6 +392,14 @@ def plot_profile(
         columns.get("camera_preview_resize_ms", []),
         "camera preview resize ms",
         color="tab:blue",
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("camera_display_convert_ms", []),
+        "camera display convert ms",
+        color="tab:cyan",
+        alpha=0.8,
     )
     maybe_plot_line(
         axes[2],

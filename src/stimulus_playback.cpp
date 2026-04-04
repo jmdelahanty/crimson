@@ -144,6 +144,7 @@ void stimulus_software_decode_process(DecoderContext *dc_context,
 
         display_buffer[buffer_head].available_to_write = false;
         display_buffer[buffer_head].frame_number = frame_number;
+        display_buffer[buffer_head].color_matrix = ColorSpaceStandard_BT709;
         latest_decoded_frame[window_name].store(frame_number);
         dc_context->decoding_flag = true;
 
@@ -226,6 +227,10 @@ bool allocateStimulusBuffers(StimulusPlayback &stim) {
         stim.display_buffer[i].frame = nullptr;
         stim.display_buffer[i].frame_number = -1;
         stim.display_buffer[i].available_to_write = true;
+        stim.display_buffer[i].pitch_bytes = stim.width * 4;
+        stim.display_buffer[i].frame_bytes = frame_bytes;
+        stim.display_buffer[i].color_matrix = ColorSpaceStandard_BT709;
+        stim.display_buffer[i].format = PictureBufferFormat::RGBA32;
         if (stim.use_cpu_buffer) {
             stim.display_buffer[i].frame =
                 static_cast<unsigned char *>(malloc(frame_bytes));
