@@ -30,6 +30,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <iostream>
+#include <ctime>
 #include <stdio.h>
 #include <stdlib.h>
 #include <thread>
@@ -171,6 +172,45 @@ double durationMs(std::chrono::steady_clock::duration duration) {
     return std::chrono::duration<double, std::milli>(duration).count();
 }
 
+std::filesystem::path makeAutoAppendedPerfPath(
+    const std::filesystem::path& requested_path) {
+    std::error_code ec;
+    if (!std::filesystem::exists(requested_path, ec) || ec) {
+        return requested_path;
+    }
+
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+    std::tm local_tm{};
+#ifdef _WIN32
+    localtime_s(&local_tm, &now_time);
+#else
+    localtime_r(&now_time, &local_tm);
+#endif
+    std::ostringstream timestamp_stream;
+    timestamp_stream << std::put_time(&local_tm, "%Y%m%d-%H%M%S");
+
+    const std::filesystem::path parent = requested_path.parent_path();
+    const std::string stem = requested_path.stem().string();
+    const std::string extension = requested_path.extension().string();
+
+    for (int attempt = 0; attempt < 1000; ++attempt) {
+        std::ostringstream candidate_name;
+        candidate_name << stem << "-" << timestamp_stream.str();
+        if (attempt > 0) {
+            candidate_name << "-" << attempt;
+        }
+        candidate_name << extension;
+        const std::filesystem::path candidate = parent / candidate_name.str();
+        std::error_code candidate_ec;
+        if (!std::filesystem::exists(candidate, candidate_ec) || candidate_ec) {
+            return candidate;
+        }
+    }
+
+    return requested_path;
+}
+
 struct PerfLogWriter {
     std::ofstream stream;
     std::filesystem::path csv_path;
@@ -182,21 +222,21 @@ struct PerfLogWriter {
         if (output_path.empty()) {
             return false;
         }
-        csv_path = output_path;
-        metadata_path = output_path;
+        csv_path = makeAutoAppendedPerfPath(output_path);
+        metadata_path = csv_path;
         metadata_path.replace_extension(".meta.json");
         std::error_code ec;
-        if (output_path.has_parent_path()) {
-            std::filesystem::create_directories(output_path.parent_path(), ec);
+        if (csv_path.has_parent_path()) {
+            std::filesystem::create_directories(csv_path.parent_path(), ec);
             if (ec) {
                 std::cerr << "[PerfLog] Failed to create parent directory for "
-                          << output_path << ": " << ec.message() << std::endl;
+                          << csv_path << ": " << ec.message() << std::endl;
                 return false;
             }
         }
-        stream.open(output_path, std::ios::out | std::ios::trunc);
+        stream.open(csv_path, std::ios::out | std::ios::trunc);
         if (!stream.is_open()) {
-            std::cerr << "[PerfLog] Failed to open " << output_path
+            std::cerr << "[PerfLog] Failed to open " << csv_path
                       << " for writing" << std::endl;
             return false;
         }
@@ -208,13 +248,17 @@ struct PerfLogWriter {
             << "video_fps,requested_camera_frame,displayed_camera_frame,current_frame_num,"
             << "min_decoded_camera_frame,camera_decode_gap_frames,visible_camera_count,"
             << "main_buffer_mode,playback_preview_scale,playback_preview_active,"
-            << "camera_upload_count,camera_upload_ms,gl_draw_ms,"
-            << "swap_ms,frame_loop_ms,stimulus_loaded,stimulus_decode_backend,"
+            << "camera_upload_count,camera_upload_ms,camera_scene_ui_ms,gl_draw_ms,"
+            << "swap_ms,frame_loop_ms,ui_build_ms,stimulus_loaded,stimulus_decode_backend,"
             << "stimulus_buffer_mode,stimulus_target_frame,stimulus_latest_decoded,"
             << "stimulus_last_displayed,stimulus_buffered_frames,"
             << "stimulus_progress_gap_frames\n";
         stream.flush();
-        std::cout << "[PerfLog] Writing CSV samples to " << output_path
+        if (csv_path != output_path) {
+            std::cout << "[PerfLog] Requested path exists; auto-appended to "
+                      << csv_path << std::endl;
+        }
+        std::cout << "[PerfLog] Writing CSV samples to " << csv_path
                   << std::endl;
         std::cout << "[PerfLog] Writing metadata sidecar to " << metadata_path
                   << std::endl;
@@ -1771,8 +1815,10 @@ int main(int argc, char **argv) {
         const auto frame_loop_start = std::chrono::steady_clock::now();
         double frame_camera_upload_ms = 0.0;
         int frame_camera_upload_count = 0;
+        double frame_camera_scene_ui_ms = 0.0;
         double frame_gl_draw_ms = 0.0;
         double frame_swap_ms = 0.0;
+        double frame_ui_build_ms = 0.0;
         int perf_requested_camera_frame = -1;
         int perf_min_decoded_camera_frame = -1;
 
@@ -1783,6 +1829,7 @@ int main(int argc, char **argv) {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+        const auto ui_build_start = std::chrono::steady_clock::now();
 
         // --- Seek state machine polling ---
         if (seek_progress.state == SeekState::WaitingCameras) {
@@ -3420,6 +3467,8 @@ int main(int argc, char **argv) {
                         g_cvs[j].notify_one();
                     }
 
+                    const auto scene_ui_build_start =
+                        std::chrono::steady_clock::now();
                     ImGui::BeginGroup();
                     std::string scene_name = "scene view" + std::to_string(j);
                     ImGui::BeginChild(
@@ -5521,6 +5570,9 @@ struct StateOverlay {
                     }
 
                     ImGui::EndGroup();
+                    frame_camera_scene_ui_ms += durationMs(
+                        std::chrono::steady_clock::now() -
+                        scene_ui_build_start);
                 }
                 ImGui::End();
             }
@@ -7840,6 +7892,8 @@ struct StateOverlay {
         }
 
         // Rendering
+        frame_ui_build_ms =
+            durationMs(std::chrono::steady_clock::now() - ui_build_start);
         ImGui::Render();
         int display_w, display_h;
         glfwGetFramebufferSize(window->render_target, &display_w, &display_h);
@@ -8005,8 +8059,11 @@ struct StateOverlay {
                     << playbackPreviewScaleLabel() << ","
                     << (playbackPreviewIsActive() ? 1 : 0) << ","
                     << frame_camera_upload_count << ","
-                    << frame_camera_upload_ms << "," << frame_gl_draw_ms << ","
+                    << frame_camera_upload_ms << ","
+                    << frame_camera_scene_ui_ms << ","
+                    << frame_gl_draw_ms << ","
                     << frame_swap_ms << "," << frame_loop_ms << ","
+                    << frame_ui_build_ms << ","
                     << (stimulus_player.loaded ? 1 : 0) << ","
                     << ((stimulus_player.loaded
                              ? stimulus_player.use_software_decode
