@@ -207,7 +207,8 @@ struct PerfLogWriter {
             << "elapsed_s,wall_epoch_ms,play_video,set_playback_speed,inst_speed,"
             << "video_fps,requested_camera_frame,displayed_camera_frame,current_frame_num,"
             << "min_decoded_camera_frame,camera_decode_gap_frames,visible_camera_count,"
-            << "main_buffer_mode,camera_upload_count,camera_upload_ms,gl_draw_ms,"
+            << "main_buffer_mode,playback_preview_scale,playback_preview_active,"
+            << "camera_upload_count,camera_upload_ms,gl_draw_ms,"
             << "swap_ms,frame_loop_ms,stimulus_loaded,stimulus_decode_backend,"
             << "stimulus_buffer_mode,stimulus_target_frame,stimulus_latest_decoded,"
             << "stimulus_last_displayed,stimulus_buffered_frames,"
@@ -8001,6 +8002,8 @@ struct StateOverlay {
                     << perf_min_decoded_camera_frame << ","
                     << camera_decode_gap_frames << "," << visible_camera_count
                     << "," << (scene->use_cpu_buffer ? "cpu" : "gpu") << ","
+                    << playbackPreviewScaleLabel() << ","
+                    << (playbackPreviewIsActive() ? 1 : 0) << ","
                     << frame_camera_upload_count << ","
                     << frame_camera_upload_ms << "," << frame_gl_draw_ms << ","
                     << frame_swap_ms << "," << frame_loop_ms << ","

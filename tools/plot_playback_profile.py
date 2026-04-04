@@ -45,6 +45,7 @@ NUMERIC_COLUMNS = {
     "min_decoded_camera_frame": int,
     "camera_decode_gap_frames": int,
     "visible_camera_count": int,
+    "playback_preview_active": int,
     "camera_upload_count": int,
     "camera_upload_ms": float,
     "gl_draw_ms": float,
