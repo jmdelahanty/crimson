@@ -52,6 +52,8 @@ NUMERIC_COLUMNS = {
     "camera_preview_resize_ms": float,
     "camera_pbo_copy_ms": float,
     "camera_texture_upload_ms": float,
+    "camera_plot_image_ui_ms": float,
+    "camera_overlay_ui_ms": float,
     "camera_scene_ui_ms": float,
     "stimulus_window_ui_ms": float,
     "stimulus_timeline_ui_ms": float,
@@ -60,6 +62,11 @@ NUMERIC_COLUMNS = {
     "swap_ms": float,
     "frame_loop_ms": float,
     "ui_build_ms": float,
+    "imgui_render_ms": float,
+    "imgui_draw_cmd_count": int,
+    "imgui_draw_list_count": int,
+    "imgui_total_vtx_count": int,
+    "imgui_total_idx_count": int,
     "stimulus_loaded": int,
     "stimulus_target_frame": int,
     "stimulus_latest_decoded": int,
@@ -187,6 +194,12 @@ def print_summary(columns: dict[str, list[Any]], metadata: dict[str, Any] | None
         f"  camera_texture_upload_ms: {describe(columns.get('camera_texture_upload_ms', []))}"
     )
     print(
+        f"  camera_plot_image_ui_ms: {describe(columns.get('camera_plot_image_ui_ms', []))}"
+    )
+    print(
+        f"  camera_overlay_ui_ms: {describe(columns.get('camera_overlay_ui_ms', []))}"
+    )
+    print(
         f"  camera_scene_ui_ms: {describe(columns.get('camera_scene_ui_ms', []))}"
     )
     print(
@@ -199,6 +212,19 @@ def print_summary(columns: dict[str, list[Any]], metadata: dict[str, Any] | None
         f"  movement_timeline_ui_ms: {describe(columns.get('movement_timeline_ui_ms', []))}"
     )
     print(f"  ui_build_ms: {describe(columns.get('ui_build_ms', []))}")
+    print(f"  imgui_render_ms: {describe(columns.get('imgui_render_ms', []))}")
+    print(
+        f"  imgui_draw_cmd_count: {describe(columns.get('imgui_draw_cmd_count', []))}"
+    )
+    print(
+        f"  imgui_draw_list_count: {describe(columns.get('imgui_draw_list_count', []))}"
+    )
+    print(
+        f"  imgui_total_vtx_count: {describe(columns.get('imgui_total_vtx_count', []))}"
+    )
+    print(
+        f"  imgui_total_idx_count: {describe(columns.get('imgui_total_idx_count', []))}"
+    )
     print(f"  gl_draw_ms: {describe(columns.get('gl_draw_ms', []))}")
     print(f"  swap_ms: {describe(columns.get('swap_ms', []))}")
     print(f"  frame_loop_ms: {describe(columns.get('frame_loop_ms', []))}")
@@ -362,6 +388,22 @@ def plot_profile(
     maybe_plot_line(
         axes[2],
         elapsed,
+        columns.get("camera_plot_image_ui_ms", []),
+        "camera plot image UI ms",
+        color="tab:orange",
+        alpha=0.8,
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("camera_overlay_ui_ms", []),
+        "camera overlay UI ms",
+        color="tab:red",
+        alpha=0.8,
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
         columns.get("camera_scene_ui_ms", []),
         "camera scene UI ms",
         color="tab:brown",
@@ -389,6 +431,14 @@ def plot_profile(
     )
     maybe_plot_line(
         axes[2], elapsed, columns.get("ui_build_ms", []), "UI build ms", color="tab:purple"
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("imgui_render_ms", []),
+        "ImGui render ms",
+        color="tab:gray",
+        linestyle="--",
     )
     maybe_plot_line(
         axes[2], elapsed, columns.get("gl_draw_ms", []), "GL draw ms", color="tab:orange"

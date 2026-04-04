@@ -37,6 +37,8 @@ NUMERIC_COLUMNS = {
     "camera_preview_resize_ms": float,
     "camera_pbo_copy_ms": float,
     "camera_texture_upload_ms": float,
+    "camera_plot_image_ui_ms": float,
+    "camera_overlay_ui_ms": float,
     "camera_scene_ui_ms": float,
     "stimulus_window_ui_ms": float,
     "stimulus_timeline_ui_ms": float,
@@ -45,6 +47,11 @@ NUMERIC_COLUMNS = {
     "swap_ms": float,
     "frame_loop_ms": float,
     "ui_build_ms": float,
+    "imgui_render_ms": float,
+    "imgui_draw_cmd_count": int,
+    "imgui_draw_list_count": int,
+    "imgui_total_vtx_count": int,
+    "imgui_total_idx_count": int,
     "stimulus_loaded": int,
     "stimulus_target_frame": int,
     "stimulus_latest_decoded": int,
@@ -413,6 +420,12 @@ def build_summary(
     camera_texture_upload_stats = describe(
         [row.get("camera_texture_upload_ms", math.nan) for row in active_rows]
     )
+    camera_plot_image_ui_stats = describe(
+        [row.get("camera_plot_image_ui_ms", math.nan) for row in active_rows]
+    )
+    camera_overlay_ui_stats = describe(
+        [row.get("camera_overlay_ui_ms", math.nan) for row in active_rows]
+    )
     camera_scene_ui_stats = describe(
         [row.get("camera_scene_ui_ms", math.nan) for row in active_rows]
     )
@@ -426,6 +439,21 @@ def build_summary(
         [row.get("movement_timeline_ui_ms", math.nan) for row in active_rows]
     )
     ui_build_stats = describe([row.get("ui_build_ms", math.nan) for row in active_rows])
+    imgui_render_stats = describe(
+        [row.get("imgui_render_ms", math.nan) for row in active_rows]
+    )
+    imgui_draw_cmd_count_stats = describe(
+        [row.get("imgui_draw_cmd_count", math.nan) for row in active_rows]
+    )
+    imgui_draw_list_count_stats = describe(
+        [row.get("imgui_draw_list_count", math.nan) for row in active_rows]
+    )
+    imgui_total_vtx_count_stats = describe(
+        [row.get("imgui_total_vtx_count", math.nan) for row in active_rows]
+    )
+    imgui_total_idx_count_stats = describe(
+        [row.get("imgui_total_idx_count", math.nan) for row in active_rows]
+    )
     draw_stats = describe([row.get("gl_draw_ms", math.nan) for row in active_rows])
     swap_stats = describe([row.get("swap_ms", math.nan) for row in active_rows])
     frame_loop_stats = describe([row.get("frame_loop_ms", math.nan) for row in active_rows])
@@ -493,13 +521,20 @@ def build_summary(
                 "camera_preview_resize_ms": row.get("camera_preview_resize_ms"),
                 "camera_pbo_copy_ms": row.get("camera_pbo_copy_ms"),
                 "camera_texture_upload_ms": row.get("camera_texture_upload_ms"),
+                "camera_plot_image_ui_ms": row.get("camera_plot_image_ui_ms"),
+                "camera_overlay_ui_ms": row.get("camera_overlay_ui_ms"),
                 "camera_scene_ui_ms": row.get("camera_scene_ui_ms"),
                 "stimulus_window_ui_ms": row.get("stimulus_window_ui_ms"),
                 "stimulus_timeline_ui_ms": row.get("stimulus_timeline_ui_ms"),
                 "movement_timeline_ui_ms": row.get("movement_timeline_ui_ms"),
                 "ui_build_ms": row.get("ui_build_ms"),
+                "imgui_render_ms": row.get("imgui_render_ms"),
                 "gl_draw_ms": row.get("gl_draw_ms"),
                 "swap_ms": row.get("swap_ms"),
+                "imgui_draw_cmd_count": row.get("imgui_draw_cmd_count"),
+                "imgui_draw_list_count": row.get("imgui_draw_list_count"),
+                "imgui_total_vtx_count": row.get("imgui_total_vtx_count"),
+                "imgui_total_idx_count": row.get("imgui_total_idx_count"),
                 "camera_decode_gap_frames": row.get("camera_decode_gap_frames"),
                 "stimulus_progress_gap_frames": row.get("stimulus_progress_gap_frames"),
                 "displayed_camera_frame": row.get("displayed_camera_frame"),
@@ -533,11 +568,18 @@ def build_summary(
         "camera_preview_resize_ms": camera_preview_resize_stats,
         "camera_pbo_copy_ms": camera_pbo_copy_stats,
         "camera_texture_upload_ms": camera_texture_upload_stats,
+        "camera_plot_image_ui_ms": camera_plot_image_ui_stats,
+        "camera_overlay_ui_ms": camera_overlay_ui_stats,
         "camera_scene_ui_ms": camera_scene_ui_stats,
         "stimulus_window_ui_ms": stimulus_window_ui_stats,
         "stimulus_timeline_ui_ms": stimulus_timeline_ui_stats,
         "movement_timeline_ui_ms": movement_timeline_ui_stats,
         "ui_build_ms": ui_build_stats,
+        "imgui_render_ms": imgui_render_stats,
+        "imgui_draw_cmd_count": imgui_draw_cmd_count_stats,
+        "imgui_draw_list_count": imgui_draw_list_count_stats,
+        "imgui_total_vtx_count": imgui_total_vtx_count_stats,
+        "imgui_total_idx_count": imgui_total_idx_count_stats,
         "gl_draw_ms": draw_stats,
         "swap_ms": swap_stats,
         "frame_loop_ms": frame_loop_stats,
@@ -568,11 +610,18 @@ def print_summary(summary: dict[str, Any]) -> None:
         "camera_preview_resize_ms",
         "camera_pbo_copy_ms",
         "camera_texture_upload_ms",
+        "camera_plot_image_ui_ms",
+        "camera_overlay_ui_ms",
         "camera_scene_ui_ms",
         "stimulus_window_ui_ms",
         "stimulus_timeline_ui_ms",
         "movement_timeline_ui_ms",
         "ui_build_ms",
+        "imgui_render_ms",
+        "imgui_draw_cmd_count",
+        "imgui_draw_list_count",
+        "imgui_total_vtx_count",
+        "imgui_total_idx_count",
         "gl_draw_ms",
         "swap_ms",
         "frame_loop_ms",
@@ -617,13 +666,20 @@ def print_summary(summary: dict[str, Any]) -> None:
                 f"preview_resize={format_stat(stall.get('camera_preview_resize_ms'), 'ms')}, "
                 f"pbo_copy={format_stat(stall.get('camera_pbo_copy_ms'), 'ms')}, "
                 f"tex_upload={format_stat(stall.get('camera_texture_upload_ms'), 'ms')}, "
+                f"plot_image={format_stat(stall.get('camera_plot_image_ui_ms'), 'ms')}, "
+                f"overlay_ui={format_stat(stall.get('camera_overlay_ui_ms'), 'ms')}, "
                 f"scene_ui={format_stat(stall.get('camera_scene_ui_ms'), 'ms')}, "
                 f"stim_window={format_stat(stall.get('stimulus_window_ui_ms'), 'ms')}, "
                 f"stim_timeline={format_stat(stall.get('stimulus_timeline_ui_ms'), 'ms')}, "
                 f"movement_ui={format_stat(stall.get('movement_timeline_ui_ms'), 'ms')}, "
                 f"ui={format_stat(stall.get('ui_build_ms'), 'ms')}, "
+                f"imgui_render={format_stat(stall.get('imgui_render_ms'), 'ms')}, "
                 f"draw={format_stat(stall.get('gl_draw_ms'), 'ms')}, "
                 f"swap={format_stat(stall.get('swap_ms'), 'ms')}, "
+                f"draw_cmds={format_stat(stall.get('imgui_draw_cmd_count'))}, "
+                f"draw_lists={format_stat(stall.get('imgui_draw_list_count'))}, "
+                f"vtx={format_stat(stall.get('imgui_total_vtx_count'))}, "
+                f"idx={format_stat(stall.get('imgui_total_idx_count'))}, "
                 f"cam_gap={format_stat(stall.get('camera_decode_gap_frames'))}, "
                 f"stim_gap={format_stat(stall.get('stimulus_progress_gap_frames'))}"
             )
