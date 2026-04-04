@@ -17,8 +17,6 @@ struct PBO_CUDA {
 struct CameraResources {
     u32 image_width = 0;
     u32 image_height = 0;
-    float last_viewport_width_px = 0.0f;
-    float last_viewport_height_px = 0.0f;
     GLuint image_texture = 0;
     PBO_CUDA pbo_cuda = {};
     GLuint playback_staging_texture = 0;
@@ -96,8 +94,6 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
             static_cast<int>(scene->cameras[j].image_width);
         scene->cameras[j].display_texture_height =
             static_cast<int>(scene->cameras[j].image_height);
-        scene->cameras[j].last_viewport_width_px = 0.0f;
-        scene->cameras[j].last_viewport_height_px = 0.0f;
         scene->cameras[j].playback_preview_rgba_cpu.clear();
         scene->cameras[j].display_buffer_pbos.clear();
     }
@@ -216,15 +212,6 @@ static void render_resize_camera_texture(CameraResources* camera,
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    glBindTexture(GL_TEXTURE_2D, camera->playback_staging_texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, texture_width, texture_height, 0,
-                 GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
     camera->display_texture_width = texture_width;
     camera->display_texture_height = texture_height;
 }

@@ -149,15 +149,6 @@ camera image still went through the same expensive presentation path. That is
 why the next implementation focus has shifted again toward a cheaper
 playback-specific camera renderer.
 
-That renderer work has now produced a meaningful improvement on the Windows
-RTX A1000 laptop. The recommended next render experiment is therefore no longer
-more mip-based preview tuning. It is:
-
-- a true playback render scale inside the lightweight playback renderer
-
-In other words, the next preview-like control should reduce the actual
-playback render-target size, not just the source sampling path.
-
 ## Success Criteria
 
 The first pass is successful if:
