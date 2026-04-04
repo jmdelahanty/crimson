@@ -44,6 +44,10 @@ NUMERIC_COLUMNS = {
     "current_frame_num": int,
     "min_decoded_camera_frame": int,
     "camera_decode_gap_frames": int,
+    "camera_decode_convert_ms": float,
+    "camera_decode_wait_ms": float,
+    "camera_decode_write_ms": float,
+    "camera_decode_pipeline_ms": float,
     "visible_camera_count": int,
     "playback_preview_active": int,
     "camera_upload_count": int,
@@ -231,6 +235,22 @@ def print_summary(columns: dict[str, list[Any]], metadata: dict[str, Any] | None
     print(
         "  camera_decode_gap_frames: "
         f"{describe(columns.get('camera_decode_gap_frames', []))}"
+    )
+    print(
+        "  camera_decode_convert_ms: "
+        f"{describe(columns.get('camera_decode_convert_ms', []))}"
+    )
+    print(
+        "  camera_decode_wait_ms: "
+        f"{describe(columns.get('camera_decode_wait_ms', []))}"
+    )
+    print(
+        "  camera_decode_write_ms: "
+        f"{describe(columns.get('camera_decode_write_ms', []))}"
+    )
+    print(
+        "  camera_decode_pipeline_ms: "
+        f"{describe(columns.get('camera_decode_pipeline_ms', []))}"
     )
     print(
         "  stimulus_progress_gap_frames: "
@@ -452,6 +472,42 @@ def plot_profile(
         columns.get("frame_loop_ms", []),
         "frame loop ms",
         color="tab:blue",
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("camera_decode_convert_ms", []),
+        "decode convert ms",
+        color="tab:green",
+        linestyle="--",
+        alpha=0.7,
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("camera_decode_wait_ms", []),
+        "decode wait ms",
+        color="tab:brown",
+        linestyle="--",
+        alpha=0.7,
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("camera_decode_write_ms", []),
+        "decode write ms",
+        color="tab:cyan",
+        linestyle="--",
+        alpha=0.7,
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("camera_decode_pipeline_ms", []),
+        "decode total ms",
+        color="tab:gray",
+        linestyle=":",
+        alpha=0.7,
     )
     axes[2].set_ylabel("Milliseconds")
     axes[2].grid(True, alpha=0.3)

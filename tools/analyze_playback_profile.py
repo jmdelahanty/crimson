@@ -29,6 +29,10 @@ NUMERIC_COLUMNS = {
     "current_frame_num": int,
     "min_decoded_camera_frame": int,
     "camera_decode_gap_frames": int,
+    "camera_decode_convert_ms": float,
+    "camera_decode_wait_ms": float,
+    "camera_decode_write_ms": float,
+    "camera_decode_pipeline_ms": float,
     "visible_camera_count": int,
     "playback_preview_active": int,
     "camera_upload_count": int,
@@ -460,6 +464,18 @@ def build_summary(
     camera_gap_stats = describe(
         [row.get("camera_decode_gap_frames", math.nan) for row in active_rows]
     )
+    camera_decode_convert_stats = describe(
+        [row.get("camera_decode_convert_ms", math.nan) for row in active_rows]
+    )
+    camera_decode_wait_stats = describe(
+        [row.get("camera_decode_wait_ms", math.nan) for row in active_rows]
+    )
+    camera_decode_write_stats = describe(
+        [row.get("camera_decode_write_ms", math.nan) for row in active_rows]
+    )
+    camera_decode_pipeline_stats = describe(
+        [row.get("camera_decode_pipeline_ms", math.nan) for row in active_rows]
+    )
     stimulus_gap_stats = describe(
         [row.get("stimulus_progress_gap_frames", math.nan) for row in active_rows]
     )
@@ -536,6 +552,10 @@ def build_summary(
                 "imgui_total_vtx_count": row.get("imgui_total_vtx_count"),
                 "imgui_total_idx_count": row.get("imgui_total_idx_count"),
                 "camera_decode_gap_frames": row.get("camera_decode_gap_frames"),
+                "camera_decode_convert_ms": row.get("camera_decode_convert_ms"),
+                "camera_decode_wait_ms": row.get("camera_decode_wait_ms"),
+                "camera_decode_write_ms": row.get("camera_decode_write_ms"),
+                "camera_decode_pipeline_ms": row.get("camera_decode_pipeline_ms"),
                 "stimulus_progress_gap_frames": row.get("stimulus_progress_gap_frames"),
                 "displayed_camera_frame": row.get("displayed_camera_frame"),
                 "stimulus_target_frame": row.get("stimulus_target_frame"),
@@ -584,6 +604,10 @@ def build_summary(
         "swap_ms": swap_stats,
         "frame_loop_ms": frame_loop_stats,
         "camera_decode_gap_frames": camera_gap_stats,
+        "camera_decode_convert_ms": camera_decode_convert_stats,
+        "camera_decode_wait_ms": camera_decode_wait_stats,
+        "camera_decode_write_ms": camera_decode_write_stats,
+        "camera_decode_pipeline_ms": camera_decode_pipeline_stats,
         "stimulus_progress_gap_frames": stimulus_gap_stats,
         "ranked_bottlenecks": ranked_bottlenecks,
         "interpretation": interpretation,
@@ -626,6 +650,10 @@ def print_summary(summary: dict[str, Any]) -> None:
         "swap_ms",
         "frame_loop_ms",
         "camera_decode_gap_frames",
+        "camera_decode_convert_ms",
+        "camera_decode_wait_ms",
+        "camera_decode_write_ms",
+        "camera_decode_pipeline_ms",
         "stimulus_progress_gap_frames",
     ]:
         stats = summary.get(key)
@@ -681,6 +709,10 @@ def print_summary(summary: dict[str, Any]) -> None:
                 f"vtx={format_stat(stall.get('imgui_total_vtx_count'))}, "
                 f"idx={format_stat(stall.get('imgui_total_idx_count'))}, "
                 f"cam_gap={format_stat(stall.get('camera_decode_gap_frames'))}, "
+                f"decode_convert={format_stat(stall.get('camera_decode_convert_ms'), 'ms')}, "
+                f"decode_wait={format_stat(stall.get('camera_decode_wait_ms'), 'ms')}, "
+                f"decode_write={format_stat(stall.get('camera_decode_write_ms'), 'ms')}, "
+                f"decode_total={format_stat(stall.get('camera_decode_pipeline_ms'), 'ms')}, "
                 f"stim_gap={format_stat(stall.get('stimulus_progress_gap_frames'))}"
             )
 
