@@ -6313,33 +6313,6 @@ struct StateOverlay {
                             }
                         }     
                         ImPlot::EndPlot();
-                        if (swap_playback_surface_after_draw) {
-                            auto &camera = scene->cameras[j];
-                            const auto swap_start =
-                                std::chrono::steady_clock::now();
-                            std::swap(camera.image_texture,
-                                      camera.playback_staging_texture);
-                            std::swap(camera.pbo_cuda,
-                                      camera.playback_staging_pbo);
-                            std::swap(camera.applied_preview_sampling_mode,
-                                      camera.playback_staging_preview_sampling_mode);
-                            const int previous_front_frame =
-                                camera.last_uploaded_frame;
-                            const bool previous_front_valid =
-                                camera.texture_has_valid_frame;
-                            camera.last_uploaded_frame =
-                                camera.playback_staging_frame;
-                            camera.texture_has_valid_frame =
-                                camera.playback_staging_valid;
-                            camera.playback_staging_frame =
-                                previous_front_frame;
-                            camera.playback_staging_valid =
-                                previous_front_valid;
-                            swap_playback_surface_after_draw = false;
-                            frame_camera_playback_swap_ms += durationMs(
-                                std::chrono::steady_clock::now() -
-                                swap_start);
-                        }
                         frame_camera_overlay_ui_ms += durationMs(
                             std::chrono::steady_clock::now() -
                             camera_overlay_ui_start);
@@ -6353,6 +6326,32 @@ struct StateOverlay {
                     if (scene_plot_style_var_count > 0) {
                         ImPlot::PopStyleVar(scene_plot_style_var_count);
                     }
+                    }
+                    if (swap_playback_surface_after_draw) {
+                        auto &camera = scene->cameras[j];
+                        const auto swap_start =
+                            std::chrono::steady_clock::now();
+                        std::swap(camera.image_texture,
+                                  camera.playback_staging_texture);
+                        std::swap(camera.pbo_cuda,
+                                  camera.playback_staging_pbo);
+                        std::swap(camera.applied_preview_sampling_mode,
+                                  camera.playback_staging_preview_sampling_mode);
+                        const int previous_front_frame =
+                            camera.last_uploaded_frame;
+                        const bool previous_front_valid =
+                            camera.texture_has_valid_frame;
+                        camera.last_uploaded_frame =
+                            camera.playback_staging_frame;
+                        camera.texture_has_valid_frame =
+                            camera.playback_staging_valid;
+                        camera.playback_staging_frame =
+                            previous_front_frame;
+                        camera.playback_staging_valid =
+                            previous_front_valid;
+                        swap_playback_surface_after_draw = false;
+                        frame_camera_playback_swap_ms += durationMs(
+                            std::chrono::steady_clock::now() - swap_start);
                     }
 
                     ImGui::EndChild();
