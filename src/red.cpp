@@ -251,10 +251,9 @@ struct PerfLogWriter {
             << "min_decoded_camera_frame,camera_decode_gap_frames,"
             << "camera_decode_convert_ms,camera_decode_wait_ms,"
             << "camera_decode_write_ms,camera_decode_pipeline_ms,"
-            << "visible_camera_count,"
+            << "visible_camera_count,swap_interval_setting,"
             << "main_buffer_mode,playback_preview_scale,playback_preview_active,"
-            << "playback_renderer_mode,playback_render_scale,"
-            << "playback_render_scale_active,"
+            << "playback_renderer_mode,"
             << "camera_viewport_width_px,camera_viewport_height_px,"
             << "camera_view_x_min,camera_view_x_max,"
             << "camera_view_y_min,camera_view_y_max,"
@@ -489,7 +488,6 @@ int main(int argc, char **argv) {
     int label_buffer_size = 100;
     int playback_preview_scale_mode = 0;
     int playback_renderer_mode = 1;
-    int playback_render_scale_mode = 0;
     int stimulus_buffer_size = 12;
     bool stimulus_use_cpu_buffer = false;
 #ifdef _WIN32
@@ -860,33 +858,6 @@ int main(int argc, char **argv) {
 
     auto playbackLightweightRendererIsActive = [&]() -> bool {
         return ps.play_video && playback_renderer_mode == 1;
-    };
-
-    auto playbackRenderScaleFactor = [&]() -> double {
-        switch (playback_render_scale_mode) {
-        case 1:
-            return 0.75;
-        case 2:
-            return 0.5;
-        default:
-            return 1.0;
-        }
-    };
-
-    auto playbackRenderScaleLabel = [&]() -> const char* {
-        switch (playback_render_scale_mode) {
-        case 1:
-            return "0.75x";
-        case 2:
-            return "0.5x";
-        default:
-            return "1x";
-        }
-    };
-
-    auto playbackRenderScaleIsActive = [&]() -> bool {
-        return playbackLightweightRendererIsActive() &&
-               playbackRenderScaleFactor() < 1.0;
     };
 
     auto stepPausedFrameFromBuffer = [&](int target_frame) -> bool {
@@ -2257,6 +2228,17 @@ int main(int argc, char **argv) {
             ImGui::Text("Application average %.3f ms/frame (%.1f FPS)",
                         1000.0f / ImGui::GetIO().Framerate,
                         ImGui::GetIO().Framerate);
+            {
+                bool vsync_enabled = window->swap_interval != 0;
+                if (ImGui::Checkbox("VSync", &vsync_enabled)) {
+                    window->swap_interval = vsync_enabled ? 1 : 0;
+                    glfwSwapInterval(window->swap_interval);
+                }
+                if (window->swap_interval != 0) {
+                    ImGui::TextDisabled(
+                        "VSync is on. Turn it off only for playback diagnostics.");
+                }
+            }
 
             if (!video_loaded) {
                 {
@@ -2309,26 +2291,6 @@ int main(int argc, char **argv) {
                         ImGui::Text(
                             "Active playback renderer: %s",
                             playbackRendererModeLabel());
-                    }
-                }
-            }
-            {
-                const char *items[] = {"Full Viewport (1x)",
-                                       "Three-Quarter Viewport (0.75x)",
-                                       "Half Viewport (0.5x)"};
-                ImGui::Combo("Playback Render Scale",
-                             &playback_render_scale_mode,
-                             items, IM_ARRAYSIZE(items));
-                if (playback_render_scale_mode != 0) {
-                    if (playback_renderer_mode != 1) {
-                        ImGui::TextDisabled(
-                            "Playback render scale currently applies only to the Lightweight Playback Renderer.");
-                    } else if (!ps.play_video) {
-                        ImGui::TextDisabled(
-                            "Playback render scale applies only during playback; paused inspection returns to the full viewport.");
-                    } else {
-                        ImGui::Text("Effective render scale: %s",
-                                    playbackRenderScaleLabel());
                     }
                 }
             }
@@ -3929,24 +3891,7 @@ int main(int argc, char **argv) {
                     }
                     const auto camera_plot_image_ui_start =
                         std::chrono::steady_clock::now();
-                    ImVec2 scene_plot_size = avail_size;
-                    if (playbackRenderScaleIsActive()) {
-                        const float render_scale =
-                            static_cast<float>(playbackRenderScaleFactor());
-                        scene_plot_size.x =
-                            std::max(64.0f, avail_size.x * render_scale);
-                        scene_plot_size.y =
-                            std::max(64.0f, avail_size.y * render_scale);
-                        const ImVec2 cursor_pos = ImGui::GetCursorPos();
-                        const float pad_x = std::max(
-                            0.0f, (avail_size.x - scene_plot_size.x) * 0.5f);
-                        const float pad_y = std::max(
-                            0.0f, (avail_size.y - scene_plot_size.y) * 0.5f);
-                        ImGui::SetCursorPos(
-                            ImVec2(cursor_pos.x + pad_x, cursor_pos.y + pad_y));
-                    }
-                    if (ImPlot::BeginPlot("##no_plot_name", scene_plot_size,
-                                          scene_plot_flags)) {
+                    if (ImPlot::BeginPlot("##no_plot_name", avail_size, scene_plot_flags)) {
                         if (lightweight_playback_renderer_active) {
                             constexpr ImPlotAxisFlags kPlaybackAxisFlags =
                                 ImPlotAxisFlags_NoDecorations |
@@ -8901,13 +8846,12 @@ struct StateOverlay {
                     << perf_camera_decode_wait_ms << ","
                     << perf_camera_decode_write_ms << ","
                     << perf_camera_decode_pipeline_ms << ","
-                    << visible_camera_count
+                    << visible_camera_count << ","
+                    << window->swap_interval
                     << "," << (scene->use_cpu_buffer ? "cpu" : "gpu") << ","
                     << playbackPreviewScaleLabel() << ","
                     << (playbackPreviewIsActive() ? 1 : 0) << ","
                     << playbackRendererModeLabel() << ","
-                    << playbackRenderScaleLabel() << ","
-                    << (playbackRenderScaleIsActive() ? 1 : 0) << ","
                     << perf_camera_viewport_width_px << ","
                     << perf_camera_viewport_height_px << ","
                     << perf_camera_view_x_min << ","
@@ -8993,9 +8937,6 @@ struct StateOverlay {
                       {"playback_preview_scale", playbackPreviewScaleLabel()},
                       {"playback_preview_active", playbackPreviewIsActive()},
                       {"playback_renderer_mode", playbackRendererModeLabel()},
-                      {"playback_render_scale", playbackRenderScaleLabel()},
-                      {"playback_render_scale_active",
-                       playbackRenderScaleIsActive()},
                       {"viewport_width_px", perf_camera_viewport_width_px},
                       {"viewport_height_px", perf_camera_viewport_height_px},
                       {"view_x_min", perf_camera_view_x_min},
