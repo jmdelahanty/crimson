@@ -253,6 +253,7 @@ struct PerfLogWriter {
             << "camera_decode_write_ms,camera_decode_pipeline_ms,"
             << "visible_camera_count,"
             << "main_buffer_mode,playback_preview_scale,playback_preview_active,"
+            << "playback_renderer_mode,"
             << "camera_viewport_width_px,camera_viewport_height_px,"
             << "camera_view_x_min,camera_view_x_max,"
             << "camera_view_y_min,camera_view_y_max,"
@@ -486,6 +487,7 @@ int main(int argc, char **argv) {
     std::string keypoints_root_folder;
     int label_buffer_size = 100;
     int playback_preview_scale_mode = 0;
+    int playback_renderer_mode = 1;
     int stimulus_buffer_size = 12;
     bool stimulus_use_cpu_buffer = false;
 #ifdef _WIN32
@@ -843,6 +845,19 @@ int main(int argc, char **argv) {
     auto playbackPreviewIsActive = [&]() -> bool {
         return ps.play_video && !yolo_detection &&
                playbackPreviewScaleFactor() < 1.0;
+    };
+
+    auto playbackRendererModeLabel = [&]() -> const char* {
+        switch (playback_renderer_mode) {
+        case 1:
+            return "lightweight";
+        default:
+            return "standard";
+        }
+    };
+
+    auto playbackLightweightRendererIsActive = [&]() -> bool {
+        return ps.play_video && playback_renderer_mode == 1;
     };
 
     auto stepPausedFrameFromBuffer = [&](int target_frame) -> bool {
@@ -2249,6 +2264,22 @@ int main(int argc, char **argv) {
                     } else {
                         ImGui::Text("Effective preview scale: %s (GPU mip preview)",
                                     playbackPreviewScaleLabel());
+                    }
+                }
+            }
+            {
+                const char *items[] = {"Standard Renderer",
+                                       "Lightweight Playback Renderer"};
+                ImGui::Combo("Playback Renderer", &playback_renderer_mode,
+                             items, IM_ARRAYSIZE(items));
+                if (playback_renderer_mode == 1) {
+                    if (!ps.play_video) {
+                        ImGui::TextDisabled(
+                            "The lightweight renderer applies only during playback; paused inspection keeps the full plot path.");
+                    } else {
+                        ImGui::Text(
+                            "Active playback renderer: %s",
+                            playbackRendererModeLabel());
                     }
                 }
             }
@@ -3813,15 +3844,62 @@ int main(int argc, char **argv) {
                         }
                     }
 
-                    const ImPlotFlags scene_plot_flags =
-                        ImPlotFlags_Equal |
-                        ImPlotAxisFlags_AutoFit |
-                        (suppress_crosshairs ? ImPlotFlags_None : ImPlotFlags_Crosshairs);
-                    ImPlot::PushStyleVar(ImPlotStyleVar_LegendPadding, ImVec2(12.0f, 12.0f));
+                    const bool lightweight_playback_renderer_active =
+                        playbackLightweightRendererIsActive();
+                    ImPlotFlags scene_plot_flags = ImPlotFlags_Equal;
+                    if (!suppress_crosshairs &&
+                        !lightweight_playback_renderer_active) {
+                        scene_plot_flags |= ImPlotFlags_Crosshairs;
+                    }
+                    if (lightweight_playback_renderer_active) {
+                        scene_plot_flags |=
+                            ImPlotFlags_CanvasOnly | ImPlotFlags_NoFrame;
+                    } else {
+                        scene_plot_flags |= ImPlotAxisFlags_AutoFit;
+                    }
+                    int scene_plot_style_var_count = 0;
+                    int scene_plot_style_color_count = 0;
+                    if (lightweight_playback_renderer_active) {
+                        ImPlot::PushStyleVar(ImPlotStyleVar_PlotPadding,
+                                             ImVec2(0.0f, 0.0f));
+                        scene_plot_style_var_count++;
+                        ImPlot::PushStyleVar(ImPlotStyleVar_FitPadding,
+                                             ImVec2(0.0f, 0.0f));
+                        scene_plot_style_var_count++;
+                        ImPlot::PushStyleColor(ImPlotCol_PlotBg,
+                                               ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+                        scene_plot_style_color_count++;
+                        ImPlot::PushStyleColor(
+                            ImPlotCol_PlotBorder,
+                            ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+                        scene_plot_style_color_count++;
+                    } else {
+                        ImPlot::PushStyleVar(ImPlotStyleVar_LegendPadding,
+                                             ImVec2(12.0f, 12.0f));
+                        scene_plot_style_var_count++;
+                    }
                     const auto camera_plot_image_ui_start =
                         std::chrono::steady_clock::now();
                     if (ImPlot::BeginPlot("##no_plot_name", avail_size, scene_plot_flags)) {
-                        ImPlot::SetupLegend(ImPlotLocation_SouthWest, ImPlotLegendFlags_None);
+                        if (lightweight_playback_renderer_active) {
+                            constexpr ImPlotAxisFlags kPlaybackAxisFlags =
+                                ImPlotAxisFlags_NoDecorations |
+                                ImPlotAxisFlags_NoMenus |
+                                ImPlotAxisFlags_NoHighlight |
+                                ImPlotAxisFlags_NoSideSwitch;
+                            ImPlot::SetupAxes(nullptr, nullptr,
+                                              kPlaybackAxisFlags,
+                                              kPlaybackAxisFlags);
+                            ImPlot::SetupAxesLimits(
+                                0,
+                                static_cast<double>(scene->cameras[j].image_width),
+                                0,
+                                static_cast<double>(scene->cameras[j].image_height),
+                                ImGuiCond_Once);
+                        } else {
+                            ImPlot::SetupLegend(ImPlotLocation_SouthWest,
+                                                ImPlotLegendFlags_None);
+                        }
                         ImPlot::PlotImage(
                             "##no_image_name",
                             (ImTextureID)(intptr_t)scene->cameras[j].image_texture,
@@ -5854,7 +5932,12 @@ struct StateOverlay {
                     if (restore_plot_pan_mod) {
                         plot_input_map.PanMod = previous_plot_pan_mod;
                     }
-                    ImPlot::PopStyleVar();
+                    if (scene_plot_style_color_count > 0) {
+                        ImPlot::PopStyleColor(scene_plot_style_color_count);
+                    }
+                    if (scene_plot_style_var_count > 0) {
+                        ImPlot::PopStyleVar(scene_plot_style_var_count);
+                    }
 
                     ImGui::EndChild();
 
@@ -8756,6 +8839,7 @@ struct StateOverlay {
                     << "," << (scene->use_cpu_buffer ? "cpu" : "gpu") << ","
                     << playbackPreviewScaleLabel() << ","
                     << (playbackPreviewIsActive() ? 1 : 0) << ","
+                    << playbackRendererModeLabel() << ","
                     << perf_camera_viewport_width_px << ","
                     << perf_camera_viewport_height_px << ","
                     << perf_camera_view_x_min << ","
@@ -8840,6 +8924,7 @@ struct StateOverlay {
                        scene->use_cpu_buffer ? "rgba32" : "nv12"},
                       {"playback_preview_scale", playbackPreviewScaleLabel()},
                       {"playback_preview_active", playbackPreviewIsActive()},
+                      {"playback_renderer_mode", playbackRendererModeLabel()},
                       {"viewport_width_px", perf_camera_viewport_width_px},
                       {"viewport_height_px", perf_camera_viewport_height_px},
                       {"view_x_min", perf_camera_view_x_min},
