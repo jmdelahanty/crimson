@@ -5,6 +5,7 @@
 #include "NvCodecUtils.h"
 #include "NvDecoder.h"
 #include <cuda.h>
+#include <cstddef>
 #include <opencv2/opencv.hpp>
 struct SeekInfo {
     bool use_seek;
@@ -15,10 +16,19 @@ struct SeekInfo {
     uint64_t settled_seek_id;   // generation echoed back on completion
 };
 
+enum class PictureBufferFormat {
+    RGBA32 = 0,
+    NV12 = 1,
+};
+
 struct PictureBuffer {
     unsigned char *frame;
     int frame_number;
     bool available_to_write;
+    int pitch_bytes;
+    size_t frame_bytes;
+    int color_matrix;
+    PictureBufferFormat format;
 };
 
 struct DecoderContext {

@@ -106,28 +106,54 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
     // allocate buffer on cpu
     for (u32 j = 0; j < num_cams; j++)
     {
-        unsigned int size_pic = scene->cameras[j].image_width * scene->cameras[j].image_height * 4 * sizeof(unsigned char);
+        const int rgba_pitch =
+            static_cast<int>(scene->cameras[j].image_width) * 4;
+        const size_t rgba_frame_bytes =
+            static_cast<size_t>(rgba_pitch) *
+            static_cast<size_t>(scene->cameras[j].image_height);
+        const int nv12_pitch =
+            static_cast<int>((scene->cameras[j].image_width + 1) & ~1u);
+        const int nv12_chroma_height =
+            static_cast<int>((scene->cameras[j].image_height + 1) / 2);
+        const size_t nv12_frame_bytes =
+            static_cast<size_t>(nv12_pitch) *
+            static_cast<size_t>(scene->cameras[j].image_height +
+                                nv12_chroma_height);
         for (u32 i = 0; i < size_of_buffer; i++)
         {
             if (scene->use_cpu_buffer) {
-                scene->cameras[j].display_buffer[i].frame = (unsigned char *)malloc(size_pic);
-                decoder_clear_buffer_with_constant_image(scene->cameras[j].display_buffer[i].frame, scene->cameras[j].image_width, scene->cameras[j].image_height);
+                scene->cameras[j].display_buffer[i].frame =
+                    static_cast<unsigned char *>(malloc(rgba_frame_bytes));
+                decoder_clear_buffer_with_constant_image(
+                    scene->cameras[j].display_buffer[i].frame,
+                    scene->cameras[j].image_width,
+                    scene->cameras[j].image_height);
+                scene->cameras[j].display_buffer[i].pitch_bytes = rgba_pitch;
+                scene->cameras[j].display_buffer[i].frame_bytes =
+                    rgba_frame_bytes;
+                scene->cameras[j].display_buffer[i].format =
+                    PictureBufferFormat::RGBA32;
             } else {
-                // gpu buffer backed by CUDA/GL interop PBO so presentation can
-                // upload directly from the buffered slot without an extra copy.
-                scene->cameras[j].display_buffer_pbos.emplace_back();
-                PBO_CUDA &slot_pbo = scene->cameras[j].display_buffer_pbos.back();
-                create_pbo(&slot_pbo.pbo, scene->cameras[j].image_width,
-                           scene->cameras[j].image_height);
-                register_pbo_to_cuda(&slot_pbo.pbo, &slot_pbo.cuda_resource);
-                map_cuda_resource(&slot_pbo.cuda_resource);
-                cuda_pointer_from_resource(&slot_pbo.cuda_buffer,
-                                           &slot_pbo.cuda_pbo_storage_buffer_size,
-                                           &slot_pbo.cuda_resource);
-                scene->cameras[j].display_buffer[i].frame = slot_pbo.cuda_buffer;
+                // GPU-buffer mode stores compact NV12 slots and converts only
+                // the selected display frame to RGBA at presentation time.
+                unsigned char *slot_buffer = nullptr;
+                checkCudaStatus(
+                    cudaMalloc(reinterpret_cast<void **>(&slot_buffer),
+                               nv12_frame_bytes),
+                    "cudaMalloc failed for camera NV12 display buffer");
+                checkCudaStatus(cudaMemset(slot_buffer, 0, nv12_frame_bytes),
+                                "cudaMemset failed for camera NV12 display buffer");
+                scene->cameras[j].display_buffer[i].frame = slot_buffer;
+                scene->cameras[j].display_buffer[i].pitch_bytes = nv12_pitch;
+                scene->cameras[j].display_buffer[i].frame_bytes =
+                    nv12_frame_bytes;
+                scene->cameras[j].display_buffer[i].format =
+                    PictureBufferFormat::NV12;
             }
             scene->cameras[j].display_buffer[i].frame_number = -1;
             scene->cameras[j].display_buffer[i].available_to_write = true;
+            scene->cameras[j].display_buffer[i].color_matrix =
+                ColorSpaceStandard_BT709;
         }
     }
 
