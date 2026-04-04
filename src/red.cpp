@@ -251,7 +251,7 @@ struct PerfLogWriter {
             << "min_decoded_camera_frame,camera_decode_gap_frames,"
             << "camera_decode_convert_ms,camera_decode_wait_ms,"
             << "camera_decode_write_ms,camera_decode_pipeline_ms,"
-            << "visible_camera_count,"
+            << "visible_camera_count,swap_interval_setting,"
             << "main_buffer_mode,playback_preview_scale,playback_preview_active,"
             << "playback_renderer_mode,"
             << "camera_viewport_width_px,camera_viewport_height_px,"
@@ -2228,6 +2228,17 @@ int main(int argc, char **argv) {
             ImGui::Text("Application average %.3f ms/frame (%.1f FPS)",
                         1000.0f / ImGui::GetIO().Framerate,
                         ImGui::GetIO().Framerate);
+            {
+                bool vsync_enabled = window->swap_interval != 0;
+                if (ImGui::Checkbox("VSync", &vsync_enabled)) {
+                    window->swap_interval = vsync_enabled ? 1 : 0;
+                    glfwSwapInterval(window->swap_interval);
+                }
+                if (window->swap_interval != 0) {
+                    ImGui::TextDisabled(
+                        "VSync is on. Turn it off only for playback diagnostics.");
+                }
+            }
 
             if (!video_loaded) {
                 {
@@ -8835,7 +8846,8 @@ struct StateOverlay {
                     << perf_camera_decode_wait_ms << ","
                     << perf_camera_decode_write_ms << ","
                     << perf_camera_decode_pipeline_ms << ","
-                    << visible_camera_count
+                    << visible_camera_count << ","
+                    << window->swap_interval
                     << "," << (scene->use_cpu_buffer ? "cpu" : "gpu") << ","
                     << playbackPreviewScaleLabel() << ","
                     << (playbackPreviewIsActive() ? 1 : 0) << ","
