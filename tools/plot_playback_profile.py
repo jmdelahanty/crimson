@@ -72,9 +72,17 @@ NUMERIC_COLUMNS = {
     "camera_plot_image_ui_ms": float,
     "camera_overlay_ui_ms": float,
     "camera_scene_ui_ms": float,
+    "file_browser_ui_ms": float,
+    "frame_debug_ui_ms": float,
+    "buffer_window_ui_ms": float,
+    "crop_preview_ui_ms": float,
+    "stimulus_buffer_window_ui_ms": float,
+    "keypoints_window_ui_ms": float,
+    "labeling_tool_ui_ms": float,
     "stimulus_window_ui_ms": float,
     "stimulus_timeline_ui_ms": float,
     "movement_timeline_ui_ms": float,
+    "help_menu_ui_ms": float,
     "gl_draw_ms": float,
     "swap_ms": float,
     "frame_loop_ms": float,
@@ -244,6 +252,28 @@ def print_summary(columns: dict[str, list[Any]], metadata: dict[str, Any] | None
         f"  camera_scene_ui_ms: {describe(columns.get('camera_scene_ui_ms', []))}"
     )
     print(
+        f"  file_browser_ui_ms: {describe(columns.get('file_browser_ui_ms', []))}"
+    )
+    print(
+        f"  frame_debug_ui_ms: {describe(columns.get('frame_debug_ui_ms', []))}"
+    )
+    print(
+        f"  buffer_window_ui_ms: {describe(columns.get('buffer_window_ui_ms', []))}"
+    )
+    print(
+        f"  crop_preview_ui_ms: {describe(columns.get('crop_preview_ui_ms', []))}"
+    )
+    print(
+        "  stimulus_buffer_window_ui_ms: "
+        f"{describe(columns.get('stimulus_buffer_window_ui_ms', []))}"
+    )
+    print(
+        f"  keypoints_window_ui_ms: {describe(columns.get('keypoints_window_ui_ms', []))}"
+    )
+    print(
+        f"  labeling_tool_ui_ms: {describe(columns.get('labeling_tool_ui_ms', []))}"
+    )
+    print(
         f"  stimulus_window_ui_ms: {describe(columns.get('stimulus_window_ui_ms', []))}"
     )
     print(
@@ -251,6 +281,9 @@ def print_summary(columns: dict[str, list[Any]], metadata: dict[str, Any] | None
     )
     print(
         f"  movement_timeline_ui_ms: {describe(columns.get('movement_timeline_ui_ms', []))}"
+    )
+    print(
+        f"  help_menu_ui_ms: {describe(columns.get('help_menu_ui_ms', []))}"
     )
     print(f"  ui_build_ms: {describe(columns.get('ui_build_ms', []))}")
     print(f"  imgui_render_ms: {describe(columns.get('imgui_render_ms', []))}")
@@ -476,6 +509,62 @@ def plot_profile(
     maybe_plot_line(
         axes[2],
         elapsed,
+        columns.get("file_browser_ui_ms", []),
+        "file browser UI ms",
+        color="tab:gray",
+        alpha=0.7,
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("frame_debug_ui_ms", []),
+        "frame debug UI ms",
+        color="tab:pink",
+        alpha=0.7,
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("buffer_window_ui_ms", []),
+        "buffer window UI ms",
+        color="tab:olive",
+        alpha=0.7,
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("crop_preview_ui_ms", []),
+        "crop preview UI ms",
+        color="tab:green",
+        alpha=0.7,
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("stimulus_buffer_window_ui_ms", []),
+        "stim buffer UI ms",
+        color="tab:cyan",
+        alpha=0.7,
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("keypoints_window_ui_ms", []),
+        "keypoints UI ms",
+        color="tab:blue",
+        alpha=0.7,
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("labeling_tool_ui_ms", []),
+        "labeling tool UI ms",
+        color="tab:orange",
+        alpha=0.7,
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
         columns.get("stimulus_window_ui_ms", []),
         "stimulus window UI ms",
         color="tab:pink",
@@ -493,6 +582,14 @@ def plot_profile(
         columns.get("movement_timeline_ui_ms", []),
         "movement timeline UI ms",
         color="tab:cyan",
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("help_menu_ui_ms", []),
+        "help menu UI ms",
+        color="tab:red",
+        alpha=0.7,
     )
     maybe_plot_line(
         axes[2], elapsed, columns.get("ui_build_ms", []), "UI build ms", color="tab:purple"
