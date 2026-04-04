@@ -248,8 +248,10 @@ struct PerfLogWriter {
             << "video_fps,requested_camera_frame,displayed_camera_frame,current_frame_num,"
             << "min_decoded_camera_frame,camera_decode_gap_frames,visible_camera_count,"
             << "main_buffer_mode,playback_preview_scale,playback_preview_active,"
-            << "camera_upload_count,camera_upload_ms,camera_scene_ui_ms,gl_draw_ms,"
-            << "swap_ms,frame_loop_ms,ui_build_ms,stimulus_loaded,stimulus_decode_backend,"
+            << "camera_upload_count,camera_upload_ms,camera_scene_ui_ms,"
+            << "stimulus_window_ui_ms,stimulus_timeline_ui_ms,movement_timeline_ui_ms,"
+            << "gl_draw_ms,swap_ms,frame_loop_ms,ui_build_ms,"
+            << "stimulus_loaded,stimulus_decode_backend,"
             << "stimulus_buffer_mode,stimulus_target_frame,stimulus_latest_decoded,"
             << "stimulus_last_displayed,stimulus_buffered_frames,"
             << "stimulus_progress_gap_frames\n";
@@ -1816,6 +1818,9 @@ int main(int argc, char **argv) {
         double frame_camera_upload_ms = 0.0;
         int frame_camera_upload_count = 0;
         double frame_camera_scene_ui_ms = 0.0;
+        double frame_stimulus_window_ui_ms = 0.0;
+        double frame_stimulus_timeline_ui_ms = 0.0;
+        double frame_movement_timeline_ui_ms = 0.0;
         double frame_gl_draw_ms = 0.0;
         double frame_swap_ms = 0.0;
         double frame_ui_build_ms = 0.0;
@@ -6041,6 +6046,8 @@ struct StateOverlay {
         }
 
         if (stimulus_player.loaded) {
+            const auto stimulus_window_ui_start =
+                std::chrono::steady_clock::now();
             ImGui::SetNextWindowSize(ImVec2(480.0f, 360.0f), ImGuiCond_FirstUseEver);
             bool stimulus_visible = ImGui::Begin(stimulus_player.window_name.c_str());
 
@@ -6295,6 +6302,8 @@ struct StateOverlay {
                             stimulus_player.width, stimulus_player.height, stimulus_player.fps);
             }
             ImGui::End();
+            frame_stimulus_window_ui_ms += durationMs(
+                std::chrono::steady_clock::now() - stimulus_window_ui_start);
 
             ImGui::SetNextWindowSize(ImVec2(500.0f, 440.0f), ImGuiCond_FirstUseEver);
             if (ImGui::Begin("Stimulus Frames in Buffer")) {
@@ -6638,6 +6647,8 @@ struct StateOverlay {
 
         // Stimulus Event Timeline Window
         if (zarr_loaded) {
+            const auto stimulus_timeline_ui_start =
+                std::chrono::steady_clock::now();
             if (ImGui::Begin("Stimulus Event Timeline")) {
                 auto timeline = zarr_loader.getStimulusEventTimeline();
                 static size_t last_logged_timeline_count = std::numeric_limits<size_t>::max();
@@ -7076,6 +7087,8 @@ struct StateOverlay {
                 }
             }
             ImGui::End();
+            frame_stimulus_timeline_ui_ms += durationMs(
+                std::chrono::steady_clock::now() - stimulus_timeline_ui_start);
         }
 
         // Movement timeline windows
@@ -7159,6 +7172,8 @@ struct StateOverlay {
                 return selected_series;
             };
 
+            const auto movement_timeline_ui_start =
+                std::chrono::steady_clock::now();
             if (ImGui::Begin("Speed & Distance Timeline")) {
                 const auto* selected_series = renderMovementDatasetUI("Dataset");
 
@@ -7804,6 +7819,8 @@ struct StateOverlay {
                 }
             }
             ImGui::End();
+            frame_movement_timeline_ui_ms += durationMs(
+                std::chrono::steady_clock::now() - movement_timeline_ui_start);
         }
 
         s_timeline_scrolling_prev = s_timeline_scrolling_enabled;
@@ -8061,6 +8078,9 @@ struct StateOverlay {
                     << frame_camera_upload_count << ","
                     << frame_camera_upload_ms << ","
                     << frame_camera_scene_ui_ms << ","
+                    << frame_stimulus_window_ui_ms << ","
+                    << frame_stimulus_timeline_ui_ms << ","
+                    << frame_movement_timeline_ui_ms << ","
                     << frame_gl_draw_ms << ","
                     << frame_swap_ms << "," << frame_loop_ms << ","
                     << frame_ui_build_ms << ","
