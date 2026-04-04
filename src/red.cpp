@@ -40,6 +40,7 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include "zarr_loader.h"
+#include "gui/file_browser_window.h"
 #include "gui_interpolation.h"
 #include "gui/movement_timeline_window.h"
 #include "gui/stimulus_event_timeline_window.h"
@@ -2108,6 +2109,7 @@ int main(int argc, char **argv) {
     };
 
     while (!glfwWindowShouldClose(window->render_target)) {
+        static FileBrowserWindowState file_browser_window_state;
         const auto frame_loop_start = std::chrono::steady_clock::now();
         double frame_camera_upload_ms = 0.0;
         int frame_camera_upload_count = 0;
@@ -2322,296 +2324,134 @@ int main(int argc, char **argv) {
         double playback_time_now = ps.accumulated_play_time;
 
         const auto file_browser_ui_start = std::chrono::steady_clock::now();
-        if (ImGui::Begin("File Browser", NULL, ImGuiWindowFlags_MenuBar)) {
-            if (ImGui::BeginMenuBar()) {
-                if (ImGui::BeginMenu("File")) {
-                    if (ImGui::MenuItem("Open")) {
-                        IGFD::FileDialogConfig config;
-                        config.countSelectionMax = 0;
-                        config.path = start_folder_name;
-                        config.flags = ImGuiFileDialogFlags_Modal;
-                        ImGuiFileDialog::Instance()->OpenDialog(
-                            "ChooseMedia", "Choose Media",
-                            ".mp4,.tiff,.jpeg,.jpg,.png", config);
-                    };
-                    if (ImGui::MenuItem("Load Zarr Archive")) {
-                        IGFD::FileDialogConfig config;
-                        config.countSelectionMax = 1;
-                        config.path = root_dir.empty() ? start_folder_name : root_dir;
-                        config.flags = ImGuiFileDialogFlags_Modal;
-                        ImGuiFileDialog::Instance()->OpenDialog(
-                            "ChooseZarrArchive", "Choose Zarr Archive Directory",
-                            nullptr, config);
-                    }
-                    if (video_loaded) {
-                        if (ImGui::MenuItem("Load Stimulus Video")) {
-                            IGFD::FileDialogConfig config;
-                            config.countSelectionMax = 1;
-                            config.path = root_dir;
-                            config.flags = ImGuiFileDialogFlags_Modal;
-                            ImGuiFileDialog::Instance()->OpenDialog(
-                                "ChooseStimulus", "Choose Stimulus Video",
-                                ".mp4", config);
-                        }
-                    }
-                    if (!ui_path_config.preferred_roots.empty() &&
-                        ImGui::BeginMenu("Path Preset")) {
-                        for (const auto& preset_path : ui_path_config.preferred_roots) {
-                            bool selected = (preset_path == start_folder_name);
-                            if (ImGui::MenuItem(preset_path.c_str(), nullptr, selected)) {
-                                start_folder_name = preset_path;
-                                std::cout << "[UIPathConfig] Start path set to: "
-                                          << start_folder_name << std::endl;
-                            }
-                        }
-                        ImGui::EndMenu();
-                    }
-                    ImGui::EndMenu();
-                }
-
-                if (video_loaded) {
-                    if (ImGui::BeginMenu("Skeleton")) {
-                        if (!skeleton_chosen) {
-                            skeleton = std::make_unique<SkeletonContext>();
-                            skeleton_map = skeleton_get_all();
-                        }
-
-                        for (auto &element : skeleton_map) {
-
-                            if (ImGui::MenuItem(element.first.c_str(), NULL,
-                                                skeleton->name == element.first,
-                                                !skeleton_chosen)) {
-                                if (element.second == SP_LOAD) {
-                                    IGFD::FileDialogConfig config;
-                                    config.countSelectionMax = 1;
-                                    config.path = skeleton_dir;
-                                    config.flags = ImGuiFileDialogFlags_Modal;
-                                    ImGuiFileDialog::Instance()->OpenDialog(
-                                        "ChooseSkeleton", "Choose Skeleton",
-                                        ".json", config);
-                                } else {
-
-                                    bool load_calibration = true;
-                                    if (scene->num_cams > 1) {
-                                        for (u32 i = 0; i < scene->num_cams;
-                                             i++) {
-                                            std::string cam_file =
-                                                root_dir + "/calibration/" +
-                                                camera_names[i] + ".yaml";
-
-                                            if (!std::filesystem::exists(cam_file)) {
-                                                load_calibration = false;
-                                                error_message = "Calibration file not found: " + cam_file;
-                                                show_error = true;
-                                                break;
-                                            }
-                                            if (!camera_load_params_from_yaml(cam_file, camera_params[i], error_message)) {
-                                                load_calibration = false;
-                                                camera_params.clear();
-                                                camera_params.resize(scene->num_cams);
-                                                show_error = true;
-                                                break;
-                                            }
-                                        }
-                                    }
-
-                                    if (load_calibration) {
-                                        skeleton_initialize(element.first,
-                                                            root_dir, skeleton.get(),
-                                                            element.second);
-                                        plot_keypoints_flag = true;
-                                        keypoints_root_folder =
-                                            root_dir + "/labeled_data/";
-                                        // create folders
-                                        std::filesystem::create_directory(
-                                            keypoints_root_folder);
-                                        skeleton_chosen = true;
-                                    }
-                                }
-                            }
-
-                        }
-                        ImGui::EndMenu();
-                    }
-
-                    if (ImGui::BeginMenu("Detection")) {
-                        if (cpu_buffer_toggle) {
-                            if (ImGui::MenuItem("YOLOv5")) {
-                                std::string yolov5_onnx =
-                                    root_dir + "/yolo/v5/best.onnx";
-                                std::string yolov5_labelname =
-                                    root_dir + "/yolo/v5/label.names";
-                                read_yolo_labels(yolov5_labelname,
-                                                 &yolo_setting);
-
-                                for (int i = 0; i < scene->num_cams; i++) {
-                                    yolo_threads.push_back(
-                                        std::thread(&yolo_process, yolov5_onnx,
-                                                    &yolo_setting, i));
-                                }
-                                yolo_detection = true;
-                            }
-                        } else {
-                            if (ImGui::MenuItem("YOLOv8")) {
-                                std::string engine_file_path =
-                                    root_dir +
-                                    "/yolo/yolorat_bbox/rat_bbox.engine";
-                                for (int i = 0; i < scene->num_cams; i++) {
-                                    yolo_threads.push_back(std::thread(
-                                        &yolo_process_trt, engine_file_path, i,
-                                        scene->cameras[i].image_width,
-                                        scene->cameras[i].image_height));
-                                }
-                                yolo_detection = true;
-                            }
-
-                            if (ImGui::MenuItem("YOLOv8Pose")) {
-                                std::string engine_file_path =
-                                    root_dir + "/yolo/yolopose/rat_pose.engine";
-                                for (int i = 0; i < scene->num_cams; i++) {
-                                    yolo_threads.push_back(std::thread(
-                                        &yolo_process_v8pose, engine_file_path,
-                                        i, scene->cameras[i].image_width,
-                                        scene->cameras[i].image_height));
-                                }
-                                yolo_detection = true;
-                            }
-                        }
-                        ImGui::EndMenu();
-                    }
-                }
-                ImGui::EndMenuBar();
+        if (video_loaded && !skeleton_chosen) {
+            if (!skeleton) {
+                skeleton = std::make_unique<SkeletonContext>();
             }
-            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)",
-                        1000.0f / ImGui::GetIO().Framerate,
-                        ImGui::GetIO().Framerate);
-
-            if (!video_loaded) {
-                {
-                    const char *items[] = {"CPU Buffer", "GPU Buffer"};
-                    static int item_current = 0;
-                    ImGui::Combo("Buffer Type", &item_current, items,
-                                 IM_ARRAYSIZE(items));
-                    if (item_current == 0) {
-                        scene->use_cpu_buffer = true;
-                    } else {
-                        scene->use_cpu_buffer = false;
-                    }
-                }
-
-                ImGui::InputInt("Buffer Size", &label_buffer_size);
-                label_buffer_size = std::max(1, label_buffer_size);
-            }
-            {
-                const char *items[] = {"Full Resolution (1x)",
-                                       "Half-Resolution Preview (1/2)",
-                                       "Quarter-Resolution Preview (1/4)"};
-                ImGui::Combo("Playback Preview Scale", &playback_preview_scale_mode,
-                             items, IM_ARRAYSIZE(items));
-                if (playback_preview_scale_mode != 0) {
-                    if (yolo_detection) {
-                        ImGui::TextDisabled(
-                            "Preview scaling is temporarily disabled while YOLO inference is active.");
-                    } else if (!ps.play_video) {
-                        ImGui::TextDisabled(
-                            "Preview scaling applies only during playback; paused inspection remains full resolution.");
-                    } else if (scene->use_cpu_buffer) {
-                        ImGui::Text("Effective preview scale: %s (CPU resized preview)",
-                                    playbackPreviewScaleLabel());
-                    } else {
-                        ImGui::Text("Effective preview scale: %s (GPU mip preview)",
-                                    playbackPreviewScaleLabel());
-                    }
-                }
-            }
-            {
-                const char *items[] = {"Standard Renderer",
-                                       "Lightweight Playback Renderer"};
-                ImGui::Combo("Playback Renderer", &playback_renderer_mode,
-                             items, IM_ARRAYSIZE(items));
-                if (playback_renderer_mode == 1) {
-                    if (!ps.play_video) {
-                        ImGui::TextDisabled(
-                            "The lightweight renderer applies only during playback; paused inspection keeps the full plot path.");
-                    } else {
-                        ImGui::Text(
-                            "Active playback renderer: %s",
-                            playbackRendererModeLabel());
-                    }
-                }
-            }
-            if (!stimulus_player.loaded) {
-                ImGui::InputInt("Stimulus Buffer Size", &stimulus_buffer_size);
-                stimulus_buffer_size = std::max(1, stimulus_buffer_size);
-                {
-                    const char *items[] = {"Stimulus GPU Buffer", "Stimulus CPU Buffer"};
-                    int stimulus_buffer_mode = stimulus_use_cpu_buffer ? 1 : 0;
-                    ImGui::Combo("Stimulus Buffer Type", &stimulus_buffer_mode, items,
-                                 IM_ARRAYSIZE(items));
-                    stimulus_use_cpu_buffer = (stimulus_buffer_mode == 1);
-                }
-                {
-                    const char *items[] = {"Stimulus Software Decode",
-                                           "Stimulus GPU Decode"};
-                    int stimulus_decode_mode =
-                        stimulus_use_software_decode ? 0 : 1;
-                    ImGui::Combo("Stimulus Decode Backend", &stimulus_decode_mode,
-                                 items, IM_ARRAYSIZE(items));
-                    stimulus_use_software_decode =
-                        (stimulus_decode_mode == 0);
-                }
-                ImGui::Text("Stimulus Buffer Size: %d", stimulus_buffer_size);
-                ImGui::Text("Stimulus Decode Backend: %s",
-                            stimulus_use_software_decode ? "Software"
-                                                         : "GPU");
-                ImGui::Text("Stimulus Buffer Mode: %s",
-                            stimulus_use_cpu_buffer ? "CPU" : "GPU");
-            } else {
-                ImGui::Text("Stimulus Buffer Size: %d", stimulus_player.buffer_size);
-                ImGui::Text("Stimulus Decode Backend: %s",
-                            stimulus_player.use_software_decode ? "Software"
-                                                                : "GPU");
-                ImGui::Text("Stimulus Buffer Mode: %s",
-                            stimulus_player.use_cpu_buffer ? "CPU" : "GPU");
-            }
-            if (video_loaded) {
-                ImGui::InputInt("Seek Step", &dc_context->seek_interval, 10,
-                                100);
-                static int seek_accurate_frame_num = 0;
-                ImGui::InputInt("Seek Accurate", &seek_accurate_frame_num, 1,
-                                100);
-                if (ImGui::IsItemDeactivatedAfterEdit()) {
-                    seekToFrame(seek_accurate_frame_num, false);
-                }
-
-                auto now_wall = std::chrono::steady_clock::now();
-                double wall_seconds =
-                    std::chrono::duration<double>(now_wall -
-                                                  ps.last_wall_time_playspeed)
-                        .count();
-                int frame_delta =
-                    current_frame_num - ps.last_frame_num_playspeed;
-                if (wall_seconds > 0.5 && ps.play_video) {
-                    inst_speed =
-                        frame_delta /
-                        (video_fps * wall_seconds); // Real-time normalized
-                    ps.last_frame_num_playspeed = current_frame_num;
-                    ps.last_wall_time_playspeed = now_wall;
-                }
-
-                // Always draw the latest value
-                if (ps.play_video) {
-                    ImGui::Text("Video FPS: %.1f", video_fps);
-                    ImGui::SliderFloat("Set Playback Speed",
-                                       &set_playback_speed, 0.1f, 1.0f,
-                                       "%.1fx");
-                    ImGui::Text("Current Playback Speed: %.2fx", inst_speed);
-                    ImGui::Text("Tip: If playback is slower than real-time, \n"
-                                "collapse camera views to improve speed.");
-                }
+            if (skeleton_map.empty()) {
+                skeleton_map = skeleton_get_all();
             }
         }
-        ImGui::End();
+        const std::string active_skeleton_name =
+            skeleton ? skeleton->name : std::string();
+        FileBrowserWindowContext file_browser_context{
+            ui_path_config,
+            start_folder_name,
+            root_dir,
+            skeleton_dir,
+            video_loaded,
+            skeleton_chosen,
+            active_skeleton_name,
+            skeleton_map,
+            cpu_buffer_toggle,
+            scene->use_cpu_buffer,
+            label_buffer_size,
+            playback_preview_scale_mode,
+            playback_renderer_mode,
+            yolo_detection,
+            ps.play_video,
+            set_playback_speed,
+            inst_speed,
+            video_fps,
+            current_frame_num,
+            ps.last_frame_num_playspeed,
+            ps.last_wall_time_playspeed,
+            stimulus_player.loaded,
+            stimulus_buffer_size,
+            stimulus_use_cpu_buffer,
+            stimulus_use_software_decode,
+            stimulus_player.buffer_size,
+            stimulus_player.use_cpu_buffer,
+            stimulus_player.use_software_decode,
+            dc_context->seek_interval,
+        };
+        FileBrowserWindowResult file_browser_result =
+            drawFileBrowserWindow(file_browser_context,
+                                  file_browser_window_state);
+        if (file_browser_result.skeleton_selection.has_value()) {
+            const auto& selection = *file_browser_result.skeleton_selection;
+            bool load_calibration = true;
+            if (scene->num_cams > 1) {
+                for (u32 i = 0; i < scene->num_cams; i++) {
+                    std::string cam_file = root_dir + "/calibration/" +
+                                           camera_names[i] + ".yaml";
+
+                    if (!std::filesystem::exists(cam_file)) {
+                        load_calibration = false;
+                        error_message = "Calibration file not found: " + cam_file;
+                        show_error = true;
+                        break;
+                    }
+                    if (!camera_load_params_from_yaml(cam_file,
+                                                      camera_params[i],
+                                                      error_message)) {
+                        load_calibration = false;
+                        camera_params.clear();
+                        camera_params.resize(scene->num_cams);
+                        show_error = true;
+                        break;
+                    }
+                }
+            }
+
+            if (load_calibration) {
+                skeleton_initialize(selection.name,
+                                    root_dir,
+                                    skeleton.get(),
+                                    selection.primitive);
+                plot_keypoints_flag = true;
+                keypoints_root_folder = root_dir + "/labeled_data/";
+                std::filesystem::create_directory(keypoints_root_folder);
+                skeleton_chosen = true;
+            }
+        }
+        switch (file_browser_result.detection_action) {
+        case FileBrowserDetectionAction::YOLOv5: {
+            std::string yolov5_onnx = root_dir + "/yolo/v5/best.onnx";
+            std::string yolov5_labelname = root_dir + "/yolo/v5/label.names";
+            read_yolo_labels(yolov5_labelname, &yolo_setting);
+
+            for (int i = 0; i < scene->num_cams; i++) {
+                yolo_threads.push_back(std::thread(&yolo_process,
+                                                   yolov5_onnx,
+                                                   &yolo_setting,
+                                                   i));
+            }
+            yolo_detection = true;
+            break;
+        }
+        case FileBrowserDetectionAction::YOLOv8: {
+            std::string engine_file_path =
+                root_dir + "/yolo/yolorat_bbox/rat_bbox.engine";
+            for (int i = 0; i < scene->num_cams; i++) {
+                yolo_threads.push_back(std::thread(&yolo_process_trt,
+                                                   engine_file_path,
+                                                   i,
+                                                   scene->cameras[i].image_width,
+                                                   scene->cameras[i].image_height));
+            }
+            yolo_detection = true;
+            break;
+        }
+        case FileBrowserDetectionAction::YOLOv8Pose: {
+            std::string engine_file_path =
+                root_dir + "/yolo/yolopose/rat_pose.engine";
+            for (int i = 0; i < scene->num_cams; i++) {
+                yolo_threads.push_back(std::thread(&yolo_process_v8pose,
+                                                   engine_file_path,
+                                                   i,
+                                                   scene->cameras[i].image_width,
+                                                   scene->cameras[i].image_height));
+            }
+            yolo_detection = true;
+            break;
+        }
+        case FileBrowserDetectionAction::None:
+            break;
+        }
+        if (file_browser_result.accurate_seek_target_frame.has_value()) {
+            seekToFrame(*file_browser_result.accurate_seek_target_frame, false);
+        }
         frame_file_browser_ui_ms +=
             durationMs(std::chrono::steady_clock::now() - file_browser_ui_start);
 
