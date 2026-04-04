@@ -50,6 +50,14 @@ NUMERIC_COLUMNS = {
     "camera_decode_pipeline_ms": float,
     "visible_camera_count": int,
     "playback_preview_active": int,
+    "camera_viewport_width_px": float,
+    "camera_viewport_height_px": float,
+    "camera_view_x_min": float,
+    "camera_view_x_max": float,
+    "camera_view_y_min": float,
+    "camera_view_y_max": float,
+    "camera_view_visible_fraction": float,
+    "camera_view_zoomed_in": int,
     "camera_upload_count": int,
     "camera_upload_ms": float,
     "camera_texture_resize_ms": float,
@@ -185,6 +193,15 @@ def print_summary(columns: dict[str, list[Any]], metadata: dict[str, Any] | None
     print(f"  playing_speed: {describe(playing_speeds)}")
     print(
         f"  camera_upload_ms: {describe(columns.get('camera_upload_ms', []))}"
+    )
+    print(
+        f"  camera_viewport_width_px: {describe(columns.get('camera_viewport_width_px', []))}"
+    )
+    print(
+        f"  camera_viewport_height_px: {describe(columns.get('camera_viewport_height_px', []))}"
+    )
+    print(
+        f"  camera_view_visible_fraction: {describe(columns.get('camera_view_visible_fraction', []))}"
     )
     print(
         f"  camera_texture_resize_ms: {describe(columns.get('camera_texture_resize_ms', []))}"

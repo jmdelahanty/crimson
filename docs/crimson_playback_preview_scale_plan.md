@@ -60,6 +60,11 @@ converts only the displayed frame, see:
 
 - [docs/crimson_main_camera_late_conversion_plan.md](./crimson_main_camera_late_conversion_plan.md)
 
+For the newer follow-on plan that keeps zoom during playback while making the
+render path depend on the visible view / ROI, see:
+
+- [docs/crimson_main_camera_zoom_aware_render_plan.md](./crimson_main_camera_zoom_aware_render_plan.md)
+
 It does **not**:
 
 - change the source video
@@ -126,6 +131,12 @@ likely still needed after this:
 - deeper camera decode instrumentation
 - lighter play-mode overlays
 - possibly a simpler play-mode camera renderer
+
+That limitation has now been observed in practice on the Windows RTX A1000
+laptop: mip-sampled playback preview in the `GPU Buffer` path was not enough to
+materially reduce `gl_draw_ms`, because it still rendered from a full-size
+display texture. That is why the next plan has shifted to a zoom-aware
+playback render path rather than more preview-scale tuning.
 
 ## Success Criteria
 
