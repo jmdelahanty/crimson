@@ -33,9 +33,11 @@ NUMERIC_COLUMNS = {
     "playback_preview_active": int,
     "camera_upload_count": int,
     "camera_upload_ms": float,
+    "camera_scene_ui_ms": float,
     "gl_draw_ms": float,
     "swap_ms": float,
     "frame_loop_ms": float,
+    "ui_build_ms": float,
     "stimulus_loaded": int,
     "stimulus_target_frame": int,
     "stimulus_latest_decoded": int,
@@ -215,6 +217,32 @@ def score_draw_bound(rows: list[dict[str, Any]], budget_ms: float | None) -> flo
     return clamp01(score)
 
 
+def score_ui_build_bound(rows: list[dict[str, Any]], budget_ms: float | None) -> float:
+    ui_p90 = percentile([row.get("ui_build_ms", math.nan) for row in rows], 0.90)
+    if ui_p90 is None or not math.isfinite(ui_p90):
+        return 0.0
+    budget_ratio = safe_ratio(ui_p90, budget_ms or math.nan)
+    score = min(ui_p90 / 16.0, 1.0) * 0.5
+    if math.isfinite(budget_ratio):
+        score += min(budget_ratio, 1.0) * 0.5
+    return clamp01(score)
+
+
+def score_camera_scene_ui_bound(
+    rows: list[dict[str, Any]], budget_ms: float | None
+) -> float:
+    scene_ui_p90 = percentile(
+        [row.get("camera_scene_ui_ms", math.nan) for row in rows], 0.90
+    )
+    if scene_ui_p90 is None or not math.isfinite(scene_ui_p90):
+        return 0.0
+    budget_ratio = safe_ratio(scene_ui_p90, budget_ms or math.nan)
+    score = min(scene_ui_p90 / 16.0, 1.0) * 0.5
+    if math.isfinite(budget_ratio):
+        score += min(budget_ratio, 1.0) * 0.5
+    return clamp01(score)
+
+
 def score_swap_bound(rows: list[dict[str, Any]], budget_ms: float | None) -> float:
     swap_p90 = percentile([row.get("swap_ms", math.nan) for row in rows], 0.90)
     if swap_p90 is None or not math.isfinite(swap_p90):
@@ -248,6 +276,8 @@ def score_stimulus_bound(rows: list[dict[str, Any]]) -> float:
 def build_interpretation(
     ranked_bottlenecks: list[dict[str, float]],
     budget_ms: float | None,
+    camera_scene_ui_stats: dict[str, float] | None,
+    ui_build_stats: dict[str, float] | None,
     draw_stats: dict[str, float] | None,
     upload_stats: dict[str, float] | None,
     swap_stats: dict[str, float] | None,
@@ -256,6 +286,18 @@ def build_interpretation(
 ) -> list[str]:
     notes: list[str] = []
     top_names = {item["name"] for item in ranked_bottlenecks[:2]}
+    if "camera_scene_ui_bound" in top_names and camera_scene_ui_stats:
+        scene_ui_p90 = camera_scene_ui_stats.get("p90", math.nan)
+        if math.isfinite(scene_ui_p90):
+            notes.append(
+                f"Camera scene UI construction is near the frame budget ({scene_ui_p90:.2f} ms p90), so ImPlot image/overlay building is a primary limiter."
+            )
+    if "ui_build_bound" in top_names and ui_build_stats:
+        ui_p90 = ui_build_stats.get("p90", math.nan)
+        if math.isfinite(ui_p90):
+            notes.append(
+                f"CPU UI build time is near the frame budget ({ui_p90:.2f} ms p90), so ImGui/ImPlot scene construction is a primary limiter."
+            )
     if "gl_draw_bound" in top_names and draw_stats:
         draw_p90 = draw_stats.get("p90", math.nan)
         if math.isfinite(draw_p90):
@@ -318,6 +360,10 @@ def build_summary(
 
     speed_stats = describe([row.get("inst_speed", math.nan) for row in active_rows])
     upload_stats = describe([row.get("camera_upload_ms", math.nan) for row in active_rows])
+    camera_scene_ui_stats = describe(
+        [row.get("camera_scene_ui_ms", math.nan) for row in active_rows]
+    )
+    ui_build_stats = describe([row.get("ui_build_ms", math.nan) for row in active_rows])
     draw_stats = describe([row.get("gl_draw_ms", math.nan) for row in active_rows])
     swap_stats = describe([row.get("swap_ms", math.nan) for row in active_rows])
     frame_loop_stats = describe([row.get("frame_loop_ms", math.nan) for row in active_rows])
@@ -331,6 +377,8 @@ def build_summary(
     bottleneck_scores = {
         "camera_decode_bound": score_decode_bound(active_rows, budget_ms),
         "camera_upload_bound": score_upload_bound(active_rows, budget_ms),
+        "camera_scene_ui_bound": score_camera_scene_ui_bound(active_rows, budget_ms),
+        "ui_build_bound": score_ui_build_bound(active_rows, budget_ms),
         "gl_draw_bound": score_draw_bound(active_rows, budget_ms),
         "swap_or_vsync_bound": score_swap_bound(active_rows, budget_ms),
     }
@@ -352,6 +400,8 @@ def build_summary(
     interpretation = build_interpretation(
         ranked_bottlenecks,
         budget_ms if math.isfinite(budget_ms) else None,
+        camera_scene_ui_stats,
+        ui_build_stats,
         draw_stats,
         upload_stats,
         swap_stats,
@@ -365,6 +415,8 @@ def build_summary(
                 "elapsed_s": row.get("elapsed_s"),
                 "frame_loop_ms": row.get("frame_loop_ms"),
                 "camera_upload_ms": row.get("camera_upload_ms"),
+                "camera_scene_ui_ms": row.get("camera_scene_ui_ms"),
+                "ui_build_ms": row.get("ui_build_ms"),
                 "gl_draw_ms": row.get("gl_draw_ms"),
                 "swap_ms": row.get("swap_ms"),
                 "camera_decode_gap_frames": row.get("camera_decode_gap_frames"),
@@ -396,6 +448,8 @@ def build_summary(
         "frame_budget_ms": budget_ms,
         "speed": speed_stats,
         "camera_upload_ms": upload_stats,
+        "camera_scene_ui_ms": camera_scene_ui_stats,
+        "ui_build_ms": ui_build_stats,
         "gl_draw_ms": draw_stats,
         "swap_ms": swap_stats,
         "frame_loop_ms": frame_loop_stats,
@@ -422,6 +476,8 @@ def print_summary(summary: dict[str, Any]) -> None:
     for key in [
         "speed",
         "camera_upload_ms",
+        "camera_scene_ui_ms",
+        "ui_build_ms",
         "gl_draw_ms",
         "swap_ms",
         "frame_loop_ms",
@@ -462,6 +518,8 @@ def print_summary(summary: dict[str, Any]) -> None:
                 f"t={format_stat(stall.get('elapsed_s'), 's')}, "
                 f"loop={format_stat(stall.get('frame_loop_ms'), 'ms')}, "
                 f"upload={format_stat(stall.get('camera_upload_ms'), 'ms')}, "
+                f"scene_ui={format_stat(stall.get('camera_scene_ui_ms'), 'ms')}, "
+                f"ui={format_stat(stall.get('ui_build_ms'), 'ms')}, "
                 f"draw={format_stat(stall.get('gl_draw_ms'), 'ms')}, "
                 f"swap={format_stat(stall.get('swap_ms'), 'ms')}, "
                 f"cam_gap={format_stat(stall.get('camera_decode_gap_frames'))}, "

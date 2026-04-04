@@ -48,9 +48,11 @@ NUMERIC_COLUMNS = {
     "playback_preview_active": int,
     "camera_upload_count": int,
     "camera_upload_ms": float,
+    "camera_scene_ui_ms": float,
     "gl_draw_ms": float,
     "swap_ms": float,
     "frame_loop_ms": float,
+    "ui_build_ms": float,
     "stimulus_loaded": int,
     "stimulus_target_frame": int,
     "stimulus_latest_decoded": int,
@@ -165,6 +167,10 @@ def print_summary(columns: dict[str, list[Any]], metadata: dict[str, Any] | None
     print(
         f"  camera_upload_ms: {describe(columns.get('camera_upload_ms', []))}"
     )
+    print(
+        f"  camera_scene_ui_ms: {describe(columns.get('camera_scene_ui_ms', []))}"
+    )
+    print(f"  ui_build_ms: {describe(columns.get('ui_build_ms', []))}")
     print(f"  gl_draw_ms: {describe(columns.get('gl_draw_ms', []))}")
     print(f"  swap_ms: {describe(columns.get('swap_ms', []))}")
     print(f"  frame_loop_ms: {describe(columns.get('frame_loop_ms', []))}")
@@ -294,6 +300,16 @@ def plot_profile(
         columns.get("camera_upload_ms", []),
         "camera upload ms",
         color="tab:green",
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("camera_scene_ui_ms", []),
+        "camera scene UI ms",
+        color="tab:brown",
+    )
+    maybe_plot_line(
+        axes[2], elapsed, columns.get("ui_build_ms", []), "UI build ms", color="tab:purple"
     )
     maybe_plot_line(
         axes[2], elapsed, columns.get("gl_draw_ms", []), "GL draw ms", color="tab:orange"
