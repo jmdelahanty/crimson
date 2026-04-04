@@ -20,6 +20,7 @@
 #include <cmath>
 #include <chrono>
 #include <array>
+#include <iomanip>
 #include <limits>
 #include <sstream>
 #include <numeric>
@@ -161,9 +162,63 @@ private:
 
 static EyeOrientationSmoother g_eye_orientation_smoother;
 
+namespace {
+
+double durationMs(std::chrono::steady_clock::duration duration) {
+    return std::chrono::duration<double, std::milli>(duration).count();
+}
+
+struct PerfLogWriter {
+    std::ofstream stream;
+    std::chrono::steady_clock::time_point start_steady{};
+    std::chrono::steady_clock::time_point last_sample_steady{};
+
+    bool open(const std::filesystem::path& output_path) {
+        if (output_path.empty()) {
+            return false;
+        }
+        std::error_code ec;
+        if (output_path.has_parent_path()) {
+            std::filesystem::create_directories(output_path.parent_path(), ec);
+            if (ec) {
+                std::cerr << "[PerfLog] Failed to create parent directory for "
+                          << output_path << ": " << ec.message() << std::endl;
+                return false;
+            }
+        }
+        stream.open(output_path, std::ios::out | std::ios::trunc);
+        if (!stream.is_open()) {
+            std::cerr << "[PerfLog] Failed to open " << output_path
+                      << " for writing" << std::endl;
+            return false;
+        }
+        start_steady = std::chrono::steady_clock::now();
+        last_sample_steady = start_steady;
+        stream << std::fixed << std::setprecision(3);
+        stream
+            << "elapsed_s,wall_epoch_ms,play_video,set_playback_speed,inst_speed,"
+            << "video_fps,requested_camera_frame,displayed_camera_frame,current_frame_num,"
+            << "min_decoded_camera_frame,camera_decode_gap_frames,visible_camera_count,"
+            << "main_buffer_mode,camera_upload_count,camera_upload_ms,gl_draw_ms,"
+            << "swap_ms,frame_loop_ms,stimulus_loaded,stimulus_decode_backend,"
+            << "stimulus_buffer_mode,stimulus_target_frame,stimulus_latest_decoded,"
+            << "stimulus_last_displayed,stimulus_buffered_frames,"
+            << "stimulus_progress_gap_frames\n";
+        stream.flush();
+        std::cout << "[PerfLog] Writing CSV samples to " << output_path
+                  << std::endl;
+        return true;
+    }
+
+    bool enabled() const { return stream.is_open(); }
+};
+
+}  // namespace
+
 int main(int argc, char **argv) {
     std::string cli_zarr_override_path;
     std::string cli_recording_path;
+    std::filesystem::path cli_perf_log_path;
     const std::filesystem::path argv0_path = (argc > 0) ? argv[0] : "";
     std::error_code cwd_error;
     const std::filesystem::path cwd = std::filesystem::current_path(cwd_error);
@@ -183,6 +238,14 @@ int main(int argc, char **argv) {
                 return 1;
             }
             cli_recording_path = argv[++i];
+            continue;
+        }
+        if (arg == "--perf-log") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value for --perf-log" << std::endl;
+                return 1;
+            }
+            cli_perf_log_path = argv[++i];
             continue;
         }
         std::cerr << "Ignoring unknown argument: " << arg << std::endl;
@@ -355,6 +418,11 @@ int main(int argc, char **argv) {
     int frame_sync_latest_decoded = -1;
     int frame_sync_recording_remaining = -1;
     int frame_sync_recording_total = -1;
+    PerfLogWriter perf_log_writer;
+    constexpr auto kPerfLogSamplePeriod = std::chrono::milliseconds(250);
+    if (!cli_perf_log_path.empty()) {
+        (void)perf_log_writer.open(cli_perf_log_path);
+    }
 
     window_need_decoding[stimulus_player.window_name].store(false);
     latest_decoded_frame[stimulus_player.window_name].store(-1);
@@ -1648,6 +1716,14 @@ int main(int argc, char **argv) {
     };
 
     while (!glfwWindowShouldClose(window->render_target)) {
+        const auto frame_loop_start = std::chrono::steady_clock::now();
+        double frame_camera_upload_ms = 0.0;
+        int frame_camera_upload_count = 0;
+        double frame_gl_draw_ms = 0.0;
+        double frame_swap_ms = 0.0;
+        int perf_requested_camera_frame = -1;
+        int perf_min_decoded_camera_frame = -1;
+
         // Poll and handle events (inputs, window resize, etc.)
         glfwPollEvents();
 
@@ -3078,6 +3154,8 @@ int main(int argc, char **argv) {
                             return;
                         }
                         auto &camera = scene->cameras[j];
+                        const auto upload_start =
+                            std::chrono::steady_clock::now();
                         if (scene->use_cpu_buffer) {
                             ck(cudaMemcpy(
                                 camera.pbo_cuda.cuda_buffer,
@@ -3100,6 +3178,9 @@ int main(int argc, char **argv) {
                         camera.last_uploaded_frame =
                             camera.display_buffer[slot_index].frame_number;
                         camera.texture_has_valid_frame = true;
+                        frame_camera_upload_ms += durationMs(
+                            std::chrono::steady_clock::now() - upload_start);
+                        frame_camera_upload_count++;
                     };
                     auto clearCameraDisplayBuffer = [&]() {
                         const size_t bytes =
@@ -7641,7 +7722,10 @@ struct StateOverlay {
                      clear_color.y * clear_color.w,
                      clear_color.z * clear_color.w, clear_color.w);
         glClear(GL_COLOR_BUFFER_BIT);
+        const auto gl_draw_start = std::chrono::steady_clock::now();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        frame_gl_draw_ms = durationMs(std::chrono::steady_clock::now() -
+                                      gl_draw_start);
 
         // Update and Render additional Platform Windows
         // (Platform functions may change the current OpenGL context, so we
@@ -7653,7 +7737,10 @@ struct StateOverlay {
 //             ImGui::UpdatePlatformWindows();
 //             ImGui::RenderPlatformWindowsDefault();
 //             glfwMakeContextCurrent(backup_current_context);
+        const auto swap_start = std::chrono::steady_clock::now();
         glfwSwapBuffers(window->render_target);
+        frame_swap_ms =
+            durationMs(std::chrono::steady_clock::now() - swap_start);
 
         if (ps.just_seeked) {
             ps.just_seeked = false;
@@ -7662,6 +7749,7 @@ struct StateOverlay {
                 // always round up, mimimum 1
                 int frame_to_show =
                     static_cast<int>(std::ceil(playback_time_now * video_fps));
+                perf_requested_camera_frame = frame_to_show;
 
                 int min_decoded_frame = INT_MAX;
                 bool have_decode_bound = false;
@@ -7685,6 +7773,8 @@ struct StateOverlay {
                 for (const auto &cam_name : camera_names) {
                     considerDecodeBound(cam_name);
                 }
+                perf_min_decoded_camera_frame =
+                    have_decode_bound ? min_decoded_frame : -1;
                 if (have_decode_bound) {
                     frame_to_show = std::min(frame_to_show, min_decoded_frame);
                 } else {
@@ -7729,6 +7819,83 @@ struct StateOverlay {
                     // Optional: update slider/UI sync
                     ps.slider_frame_number = ps.to_display_frame_number;
                 }
+            }
+        }
+
+        if (perf_log_writer.enabled()) {
+            const auto now_steady = std::chrono::steady_clock::now();
+            if (now_steady - perf_log_writer.last_sample_steady >=
+                kPerfLogSamplePeriod) {
+                perf_log_writer.last_sample_steady = now_steady;
+                const auto now_system = std::chrono::system_clock::now();
+                const auto wall_epoch_ms =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now_system.time_since_epoch())
+                        .count();
+                int visible_camera_count = 0;
+                for (const auto& cam_name : camera_names) {
+                    auto it = window_need_decoding.find(cam_name);
+                    if (it != window_need_decoding.end() && it->second.load()) {
+                        visible_camera_count++;
+                    }
+                }
+                const int displayed_camera_frame = ps.to_display_frame_number;
+                const int camera_decode_gap_frames =
+                    (perf_requested_camera_frame >= 0 &&
+                     perf_min_decoded_camera_frame >= 0)
+                        ? (perf_requested_camera_frame -
+                           perf_min_decoded_camera_frame)
+                        : -1;
+                const int stimulus_latest_decoded =
+                    latest_decoded_frame[stimulus_player.window_name].load();
+                const int stimulus_last_displayed =
+                    stimulus_player.last_displayed_frame;
+                const int stimulus_progress_frame =
+                    std::max(stimulus_latest_decoded, stimulus_last_displayed);
+                const int stimulus_target_frame = ps.current_stimulus_frame;
+                const int stimulus_progress_gap_frames =
+                    (stimulus_target_frame >= 0 && stimulus_progress_frame >= 0)
+                        ? (stimulus_target_frame - stimulus_progress_frame)
+                        : -1;
+                const int stimulus_buffered_frames =
+                    stimulus_player.loaded
+                        ? countBufferedStimulusFrames(stimulus_player)
+                        : 0;
+                const double elapsed_s =
+                    std::chrono::duration<double>(
+                        now_steady - perf_log_writer.start_steady)
+                        .count();
+                const double frame_loop_ms =
+                    durationMs(now_steady - frame_loop_start);
+                perf_log_writer.stream
+                    << elapsed_s << "," << wall_epoch_ms << ","
+                    << (ps.play_video ? 1 : 0) << "," << set_playback_speed
+                    << "," << inst_speed << "," << video_fps << ","
+                    << perf_requested_camera_frame << ","
+                    << displayed_camera_frame << "," << current_frame_num << ","
+                    << perf_min_decoded_camera_frame << ","
+                    << camera_decode_gap_frames << "," << visible_camera_count
+                    << "," << (scene->use_cpu_buffer ? "cpu" : "gpu") << ","
+                    << frame_camera_upload_count << ","
+                    << frame_camera_upload_ms << "," << frame_gl_draw_ms << ","
+                    << frame_swap_ms << "," << frame_loop_ms << ","
+                    << (stimulus_player.loaded ? 1 : 0) << ","
+                    << ((stimulus_player.loaded
+                             ? stimulus_player.use_software_decode
+                             : stimulus_use_software_decode)
+                            ? "software"
+                            : "gpu")
+                    << ","
+                    << ((stimulus_player.loaded ? stimulus_player.use_cpu_buffer
+                                                : stimulus_use_cpu_buffer)
+                            ? "cpu"
+                            : "gpu")
+                    << "," << stimulus_target_frame << ","
+                    << stimulus_latest_decoded << ","
+                    << stimulus_last_displayed << ","
+                    << stimulus_buffered_frames << ","
+                    << stimulus_progress_gap_frames << "\n";
+                perf_log_writer.stream.flush();
             }
         }
     }

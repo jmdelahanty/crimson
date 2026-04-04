@@ -198,6 +198,37 @@ Important Windows-specific observations:
 - did resource discovery work from the staged or build layout
 - if using the no-SFM preset, was triangulation correctly disabled
 
+### Low-VRAM Playback Findings
+
+Record any playback-specific observations here, especially on laptop GPUs.
+
+Suggested fields:
+
+- main raw-video buffer mode and size
+- stimulus decode backend
+- stimulus buffer mode and size
+- whether `Current Playback Speed` stayed at `1.0x` or settled lower
+- whether target stimulus frame progression outran latest decoded or last
+  displayed stimulus frame
+
+Observed evidence from the first validated Windows laptop:
+
+- the large raw camera stream was most stable with main `CPU Buffer`
+- a small, high-FPS `H.264 Main` stimulus MP4 decoded better with `Stimulus
+  Software Decode` than with `Stimulus GPU Decode`
+- benchmark evidence on that machine:
+  - software RGBA decode path: about `11048 fps`
+  - CUDA decode + download + RGBA conversion path: about `3699 fps`
+  - software decode was about `3x` faster for that stimulus stream
+
+Interpretation note:
+
+- `Stimulus Decode Backend` and `Stimulus Buffer Mode` are independent
+- software decode plus GPU buffer is a valid combination
+- final display still uses GPU textures/PBOs even if the queue is CPU-backed
+- if the UI stabilizes below `1.0x`, record whether the likely bottleneck is
+  raw-camera decode, render/upload cost, or stimulus catch-up behavior
+
 ---
 
 ## Install / Staging Result
