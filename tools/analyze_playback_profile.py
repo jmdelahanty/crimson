@@ -50,6 +50,10 @@ NUMERIC_COLUMNS = {
     "camera_display_convert_ms": float,
     "camera_pbo_copy_ms": float,
     "camera_texture_upload_ms": float,
+    "camera_playback_front_path_ms": float,
+    "camera_playback_stage_total_ms": float,
+    "camera_playback_stage_upload_ms": float,
+    "camera_playback_swap_ms": float,
     "camera_plot_image_ui_ms": float,
     "camera_overlay_ui_ms": float,
     "camera_scene_ui_ms": float,
@@ -445,6 +449,18 @@ def build_summary(
     camera_texture_upload_stats = describe(
         [row.get("camera_texture_upload_ms", math.nan) for row in active_rows]
     )
+    camera_playback_front_path_stats = describe(
+        [row.get("camera_playback_front_path_ms", math.nan) for row in active_rows]
+    )
+    camera_playback_stage_total_stats = describe(
+        [row.get("camera_playback_stage_total_ms", math.nan) for row in active_rows]
+    )
+    camera_playback_stage_upload_stats = describe(
+        [row.get("camera_playback_stage_upload_ms", math.nan) for row in active_rows]
+    )
+    camera_playback_swap_stats = describe(
+        [row.get("camera_playback_swap_ms", math.nan) for row in active_rows]
+    )
     camera_plot_image_ui_stats = describe(
         [row.get("camera_plot_image_ui_ms", math.nan) for row in active_rows]
     )
@@ -567,6 +583,10 @@ def build_summary(
                 "camera_display_convert_ms": row.get("camera_display_convert_ms"),
                 "camera_pbo_copy_ms": row.get("camera_pbo_copy_ms"),
                 "camera_texture_upload_ms": row.get("camera_texture_upload_ms"),
+                "camera_playback_front_path_ms": row.get("camera_playback_front_path_ms"),
+                "camera_playback_stage_total_ms": row.get("camera_playback_stage_total_ms"),
+                "camera_playback_stage_upload_ms": row.get("camera_playback_stage_upload_ms"),
+                "camera_playback_swap_ms": row.get("camera_playback_swap_ms"),
                 "camera_plot_image_ui_ms": row.get("camera_plot_image_ui_ms"),
                 "camera_overlay_ui_ms": row.get("camera_overlay_ui_ms"),
                 "camera_scene_ui_ms": row.get("camera_scene_ui_ms"),
@@ -622,6 +642,10 @@ def build_summary(
         "camera_display_convert_ms": camera_display_convert_stats,
         "camera_pbo_copy_ms": camera_pbo_copy_stats,
         "camera_texture_upload_ms": camera_texture_upload_stats,
+        "camera_playback_front_path_ms": camera_playback_front_path_stats,
+        "camera_playback_stage_total_ms": camera_playback_stage_total_stats,
+        "camera_playback_stage_upload_ms": camera_playback_stage_upload_stats,
+        "camera_playback_swap_ms": camera_playback_swap_stats,
         "camera_plot_image_ui_ms": camera_plot_image_ui_stats,
         "camera_overlay_ui_ms": camera_overlay_ui_stats,
         "camera_scene_ui_ms": camera_scene_ui_stats,
@@ -672,6 +696,10 @@ def print_summary(summary: dict[str, Any]) -> None:
         "camera_display_convert_ms",
         "camera_pbo_copy_ms",
         "camera_texture_upload_ms",
+        "camera_playback_front_path_ms",
+        "camera_playback_stage_total_ms",
+        "camera_playback_stage_upload_ms",
+        "camera_playback_swap_ms",
         "camera_plot_image_ui_ms",
         "camera_overlay_ui_ms",
         "camera_scene_ui_ms",
@@ -737,6 +765,10 @@ def print_summary(summary: dict[str, Any]) -> None:
                 f"display_convert={format_stat(stall.get('camera_display_convert_ms'), 'ms')}, "
                 f"pbo_copy={format_stat(stall.get('camera_pbo_copy_ms'), 'ms')}, "
                 f"tex_upload={format_stat(stall.get('camera_texture_upload_ms'), 'ms')}, "
+                f"front_path={format_stat(stall.get('camera_playback_front_path_ms'), 'ms')}, "
+                f"stage_total={format_stat(stall.get('camera_playback_stage_total_ms'), 'ms')}, "
+                f"stage_upload={format_stat(stall.get('camera_playback_stage_upload_ms'), 'ms')}, "
+                f"swap_path={format_stat(stall.get('camera_playback_swap_ms'), 'ms')}, "
                 f"plot_image={format_stat(stall.get('camera_plot_image_ui_ms'), 'ms')}, "
                 f"overlay_ui={format_stat(stall.get('camera_overlay_ui_ms'), 'ms')}, "
                 f"scene_ui={format_stat(stall.get('camera_scene_ui_ms'), 'ms')}, "

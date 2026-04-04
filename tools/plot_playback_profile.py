@@ -65,6 +65,10 @@ NUMERIC_COLUMNS = {
     "camera_display_convert_ms": float,
     "camera_pbo_copy_ms": float,
     "camera_texture_upload_ms": float,
+    "camera_playback_front_path_ms": float,
+    "camera_playback_stage_total_ms": float,
+    "camera_playback_stage_upload_ms": float,
+    "camera_playback_swap_ms": float,
     "camera_plot_image_ui_ms": float,
     "camera_overlay_ui_ms": float,
     "camera_scene_ui_ms": float,
@@ -217,6 +221,18 @@ def print_summary(columns: dict[str, list[Any]], metadata: dict[str, Any] | None
     )
     print(
         f"  camera_texture_upload_ms: {describe(columns.get('camera_texture_upload_ms', []))}"
+    )
+    print(
+        f"  camera_playback_front_path_ms: {describe(columns.get('camera_playback_front_path_ms', []))}"
+    )
+    print(
+        f"  camera_playback_stage_total_ms: {describe(columns.get('camera_playback_stage_total_ms', []))}"
+    )
+    print(
+        f"  camera_playback_stage_upload_ms: {describe(columns.get('camera_playback_stage_upload_ms', []))}"
+    )
+    print(
+        f"  camera_playback_swap_ms: {describe(columns.get('camera_playback_swap_ms', []))}"
     )
     print(
         f"  camera_plot_image_ui_ms: {describe(columns.get('camera_plot_image_ui_ms', []))}"
