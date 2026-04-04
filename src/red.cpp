@@ -260,6 +260,10 @@ struct PerfLogWriter {
             << "camera_upload_count,camera_upload_ms,camera_texture_resize_ms,"
             << "camera_preview_resize_ms,camera_display_convert_ms,"
             << "camera_pbo_copy_ms,camera_texture_upload_ms,"
+            << "camera_playback_front_path_ms,"
+            << "camera_playback_stage_total_ms,"
+            << "camera_playback_stage_upload_ms,"
+            << "camera_playback_swap_ms,"
             << "camera_plot_image_ui_ms,camera_overlay_ui_ms,camera_scene_ui_ms,"
             << "stimulus_window_ui_ms,stimulus_timeline_ui_ms,movement_timeline_ui_ms,"
             << "gl_draw_ms,swap_ms,frame_loop_ms,ui_build_ms,imgui_render_ms,"
@@ -1836,6 +1840,10 @@ int main(int argc, char **argv) {
         double frame_camera_display_convert_ms = 0.0;
         double frame_camera_pbo_copy_ms = 0.0;
         double frame_camera_texture_upload_ms = 0.0;
+        double frame_camera_playback_front_path_ms = 0.0;
+        double frame_camera_playback_stage_total_ms = 0.0;
+        double frame_camera_playback_stage_upload_ms = 0.0;
+        double frame_camera_playback_swap_ms = 0.0;
         double frame_camera_plot_image_ui_ms = 0.0;
         double frame_camera_overlay_ui_ms = 0.0;
         double frame_camera_scene_ui_ms = 0.0;
@@ -3431,12 +3439,17 @@ int main(int argc, char **argv) {
                         if (camera.texture_has_valid_frame &&
                             camera.last_uploaded_frame == source_frame_number &&
                             !texture_shape_changed) {
+                            const auto front_path_start =
+                                std::chrono::steady_clock::now();
                             if (preview_sampling_changed) {
                                 applyTexturePreviewSampling(
                                     camera.image_texture,
                                     &camera.applied_preview_sampling_mode,
                                     desired_preview_sampling_mode > 0);
                             }
+                            frame_camera_playback_front_path_ms += durationMs(
+                                std::chrono::steady_clock::now() -
+                                front_path_start);
                             presented_rgba_cuda_buffer =
                                 camera.pbo_cuda.cuda_buffer;
                             return camera.last_uploaded_frame;
@@ -3457,15 +3470,20 @@ int main(int argc, char **argv) {
                             camera.playback_staging_preview_sampling_mode = -1;
                         }
                         if (pipeline_playback_present && camera.texture_has_valid_frame) {
+                            const auto front_path_start =
+                                std::chrono::steady_clock::now();
                             if (preview_sampling_changed) {
                                 applyTexturePreviewSampling(
                                     camera.image_texture,
                                     &camera.applied_preview_sampling_mode,
                                     desired_preview_sampling_mode > 0);
                             }
+                            frame_camera_playback_front_path_ms += durationMs(
+                                std::chrono::steady_clock::now() -
+                                front_path_start);
                             if (!camera.playback_staging_valid ||
                                 camera.playback_staging_frame != source_frame_number) {
-                                const auto upload_start =
+                                const auto stage_total_start =
                                     std::chrono::steady_clock::now();
                                 if (slot.format == PictureBufferFormat::NV12) {
                                     const auto convert_start =
@@ -3495,15 +3513,23 @@ int main(int argc, char **argv) {
                                         std::chrono::steady_clock::now() -
                                         pbo_copy_start);
                                 }
+                                const auto stage_upload_start =
+                                    std::chrono::steady_clock::now();
                                 uploadSurfaceToTexture(
                                     camera.playback_staging_pbo,
                                     camera.playback_staging_texture,
                                     &camera.playback_staging_preview_sampling_mode);
+                                frame_camera_playback_stage_upload_ms += durationMs(
+                                    std::chrono::steady_clock::now() -
+                                    stage_upload_start);
                                 camera.playback_staging_frame = source_frame_number;
                                 camera.playback_staging_valid = true;
-                                frame_camera_upload_ms += durationMs(
+                                const double stage_total_ms = durationMs(
                                     std::chrono::steady_clock::now() -
-                                    upload_start);
+                                    stage_total_start);
+                                frame_camera_playback_stage_total_ms +=
+                                    stage_total_ms;
+                                frame_camera_upload_ms += stage_total_ms;
                                 frame_camera_upload_count++;
                                 swap_playback_surface_after_draw = true;
                             }
@@ -5775,6 +5801,8 @@ struct StateOverlay {
                         ImPlot::EndPlot();
                         if (swap_playback_surface_after_draw) {
                             auto &camera = scene->cameras[j];
+                            const auto swap_start =
+                                std::chrono::steady_clock::now();
                             std::swap(camera.image_texture,
                                       camera.playback_staging_texture);
                             std::swap(camera.pbo_cuda,
@@ -5794,6 +5822,9 @@ struct StateOverlay {
                             camera.playback_staging_valid =
                                 previous_front_valid;
                             swap_playback_surface_after_draw = false;
+                            frame_camera_playback_swap_ms += durationMs(
+                                std::chrono::steady_clock::now() -
+                                swap_start);
                         }
                         frame_camera_overlay_ui_ms += durationMs(
                             std::chrono::steady_clock::now() -
@@ -8480,6 +8511,10 @@ struct StateOverlay {
                     << frame_camera_display_convert_ms << ","
                     << frame_camera_pbo_copy_ms << ","
                     << frame_camera_texture_upload_ms << ","
+                    << frame_camera_playback_front_path_ms << ","
+                    << frame_camera_playback_stage_total_ms << ","
+                    << frame_camera_playback_stage_upload_ms << ","
+                    << frame_camera_playback_swap_ms << ","
                     << frame_camera_plot_image_ui_ms << ","
                     << frame_camera_overlay_ui_ms << ","
                     << frame_camera_scene_ui_ms << ","
