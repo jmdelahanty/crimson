@@ -502,18 +502,35 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
             static thread_local bool logged_idle = false;
             if (window_need_decoding[cam_name].load()) {
                 logged_idle = false;
+                double demux_call_ms = 0.0;
+                double decode_submit_call_ms = 0.0;
                 if (!skip_first_decode_after_seek) {
+                    const auto demux_call_start =
+                        std::chrono::steady_clock::now();
                     demux_success =
                         demuxer->Demux(pVideo, nVideoBytes, pktinfo);
+                    demux_call_ms = decoder_duration_ms(
+                        std::chrono::steady_clock::now() -
+                        demux_call_start);
                     if (!demux_success) {
                         // end of stream
                         // std::cout << "Demux error..." << std::endl;
+                        const auto decode_submit_start =
+                            std::chrono::steady_clock::now();
                         nFrameReturned =
                             dec->Decode(NULL, 0, CUVID_PKT_DISCONTINUITY);
+                        decode_submit_call_ms = decoder_duration_ms(
+                            std::chrono::steady_clock::now() -
+                            decode_submit_start);
                         dc_context->total_num_frame = nFrame + nFrameReturned;
                     } else {
+                        const auto decode_submit_start =
+                            std::chrono::steady_clock::now();
                         nFrameReturned =
                             dec->Decode(pVideo, nVideoBytes, 0, pktinfo.pts);
+                        decode_submit_call_ms = decoder_duration_ms(
+                            std::chrono::steady_clock::now() -
+                            decode_submit_start);
                     }
                 } else {
                     skip_first_decode_after_seek = false;
@@ -538,6 +555,16 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                     double decode_wait_ms = 0.0;
                     double decode_convert_ms = 0.0;
                     double decode_write_ms = 0.0;
+                    const double decode_demux_ms =
+                        (nFrameReturned > 0)
+                            ? (demux_call_ms /
+                               static_cast<double>(nFrameReturned))
+                            : demux_call_ms;
+                    const double decode_submit_ms =
+                        (nFrameReturned > 0)
+                            ? (decode_submit_call_ms /
+                               static_cast<double>(nFrameReturned))
+                            : decode_submit_call_ms;
                     int64_t frame_timestamp = 0;
                     pFrame = dec->GetFrame(&frame_timestamp);
                     iMatrix = dec->GetVideoFormatInfo()
@@ -652,6 +679,8 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                             pending_seek_was_accurate = false;
                         }
                     }
+                    decoder_perf->demux_ms.store(decode_demux_ms);
+                    decoder_perf->decode_submit_ms.store(decode_submit_ms);
                     decoder_perf->nv12_to_rgba_ms.store(decode_convert_ms);
                     decoder_perf->buffer_wait_ms.store(decode_wait_ms);
                     decoder_perf->frame_write_ms.store(decode_write_ms);

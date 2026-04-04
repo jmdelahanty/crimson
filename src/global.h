@@ -10,6 +10,8 @@
 #define MAX_VIEWS 17
 
 struct DecoderPerfSample {
+    std::atomic<double> demux_ms{0.0};
+    std::atomic<double> decode_submit_ms{0.0};
     std::atomic<double> nv12_to_rgba_ms{0.0};
     std::atomic<double> buffer_wait_ms{0.0};
     std::atomic<double> frame_write_ms{0.0};
