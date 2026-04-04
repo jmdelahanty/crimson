@@ -34,6 +34,9 @@ NUMERIC_COLUMNS = {
     "camera_upload_count": int,
     "camera_upload_ms": float,
     "camera_scene_ui_ms": float,
+    "stimulus_window_ui_ms": float,
+    "stimulus_timeline_ui_ms": float,
+    "movement_timeline_ui_ms": float,
     "gl_draw_ms": float,
     "swap_ms": float,
     "frame_loop_ms": float,
@@ -243,6 +246,19 @@ def score_camera_scene_ui_bound(
     return clamp01(score)
 
 
+def score_named_panel_bound(
+    rows: list[dict[str, Any]], budget_ms: float | None, column_name: str
+) -> float:
+    panel_p90 = percentile([row.get(column_name, math.nan) for row in rows], 0.90)
+    if panel_p90 is None or not math.isfinite(panel_p90):
+        return 0.0
+    budget_ratio = safe_ratio(panel_p90, budget_ms or math.nan)
+    score = min(panel_p90 / 16.0, 1.0) * 0.5
+    if math.isfinite(budget_ratio):
+        score += min(budget_ratio, 1.0) * 0.5
+    return clamp01(score)
+
+
 def score_swap_bound(rows: list[dict[str, Any]], budget_ms: float | None) -> float:
     swap_p90 = percentile([row.get("swap_ms", math.nan) for row in rows], 0.90)
     if swap_p90 is None or not math.isfinite(swap_p90):
@@ -277,6 +293,9 @@ def build_interpretation(
     ranked_bottlenecks: list[dict[str, float]],
     budget_ms: float | None,
     camera_scene_ui_stats: dict[str, float] | None,
+    stimulus_window_ui_stats: dict[str, float] | None,
+    stimulus_timeline_ui_stats: dict[str, float] | None,
+    movement_timeline_ui_stats: dict[str, float] | None,
     ui_build_stats: dict[str, float] | None,
     draw_stats: dict[str, float] | None,
     upload_stats: dict[str, float] | None,
@@ -286,6 +305,24 @@ def build_interpretation(
 ) -> list[str]:
     notes: list[str] = []
     top_names = {item["name"] for item in ranked_bottlenecks[:2]}
+    if "movement_timeline_ui_bound" in top_names and movement_timeline_ui_stats:
+        movement_ui_p90 = movement_timeline_ui_stats.get("p90", math.nan)
+        if math.isfinite(movement_ui_p90):
+            notes.append(
+                f"Speed & Distance Timeline UI is near the frame budget ({movement_ui_p90:.2f} ms p90), so that panel is a primary playback limiter."
+            )
+    if "stimulus_timeline_ui_bound" in top_names and stimulus_timeline_ui_stats:
+        stimulus_timeline_p90 = stimulus_timeline_ui_stats.get("p90", math.nan)
+        if math.isfinite(stimulus_timeline_p90):
+            notes.append(
+                f"Stimulus Event Timeline UI is near the frame budget ({stimulus_timeline_p90:.2f} ms p90), so that panel is a primary playback limiter."
+            )
+    if "stimulus_window_ui_bound" in top_names and stimulus_window_ui_stats:
+        stimulus_window_p90 = stimulus_window_ui_stats.get("p90", math.nan)
+        if math.isfinite(stimulus_window_p90):
+            notes.append(
+                f"Stimulus video window UI is near the frame budget ({stimulus_window_p90:.2f} ms p90), so that panel is a primary playback limiter."
+            )
     if "camera_scene_ui_bound" in top_names and camera_scene_ui_stats:
         scene_ui_p90 = camera_scene_ui_stats.get("p90", math.nan)
         if math.isfinite(scene_ui_p90):
@@ -363,6 +400,15 @@ def build_summary(
     camera_scene_ui_stats = describe(
         [row.get("camera_scene_ui_ms", math.nan) for row in active_rows]
     )
+    stimulus_window_ui_stats = describe(
+        [row.get("stimulus_window_ui_ms", math.nan) for row in active_rows]
+    )
+    stimulus_timeline_ui_stats = describe(
+        [row.get("stimulus_timeline_ui_ms", math.nan) for row in active_rows]
+    )
+    movement_timeline_ui_stats = describe(
+        [row.get("movement_timeline_ui_ms", math.nan) for row in active_rows]
+    )
     ui_build_stats = describe([row.get("ui_build_ms", math.nan) for row in active_rows])
     draw_stats = describe([row.get("gl_draw_ms", math.nan) for row in active_rows])
     swap_stats = describe([row.get("swap_ms", math.nan) for row in active_rows])
@@ -378,6 +424,15 @@ def build_summary(
         "camera_decode_bound": score_decode_bound(active_rows, budget_ms),
         "camera_upload_bound": score_upload_bound(active_rows, budget_ms),
         "camera_scene_ui_bound": score_camera_scene_ui_bound(active_rows, budget_ms),
+        "stimulus_window_ui_bound": score_named_panel_bound(
+            active_rows, budget_ms, "stimulus_window_ui_ms"
+        ),
+        "stimulus_timeline_ui_bound": score_named_panel_bound(
+            active_rows, budget_ms, "stimulus_timeline_ui_ms"
+        ),
+        "movement_timeline_ui_bound": score_named_panel_bound(
+            active_rows, budget_ms, "movement_timeline_ui_ms"
+        ),
         "ui_build_bound": score_ui_build_bound(active_rows, budget_ms),
         "gl_draw_bound": score_draw_bound(active_rows, budget_ms),
         "swap_or_vsync_bound": score_swap_bound(active_rows, budget_ms),
@@ -401,6 +456,9 @@ def build_summary(
         ranked_bottlenecks,
         budget_ms if math.isfinite(budget_ms) else None,
         camera_scene_ui_stats,
+        stimulus_window_ui_stats,
+        stimulus_timeline_ui_stats,
+        movement_timeline_ui_stats,
         ui_build_stats,
         draw_stats,
         upload_stats,
@@ -416,6 +474,9 @@ def build_summary(
                 "frame_loop_ms": row.get("frame_loop_ms"),
                 "camera_upload_ms": row.get("camera_upload_ms"),
                 "camera_scene_ui_ms": row.get("camera_scene_ui_ms"),
+                "stimulus_window_ui_ms": row.get("stimulus_window_ui_ms"),
+                "stimulus_timeline_ui_ms": row.get("stimulus_timeline_ui_ms"),
+                "movement_timeline_ui_ms": row.get("movement_timeline_ui_ms"),
                 "ui_build_ms": row.get("ui_build_ms"),
                 "gl_draw_ms": row.get("gl_draw_ms"),
                 "swap_ms": row.get("swap_ms"),
@@ -449,6 +510,9 @@ def build_summary(
         "speed": speed_stats,
         "camera_upload_ms": upload_stats,
         "camera_scene_ui_ms": camera_scene_ui_stats,
+        "stimulus_window_ui_ms": stimulus_window_ui_stats,
+        "stimulus_timeline_ui_ms": stimulus_timeline_ui_stats,
+        "movement_timeline_ui_ms": movement_timeline_ui_stats,
         "ui_build_ms": ui_build_stats,
         "gl_draw_ms": draw_stats,
         "swap_ms": swap_stats,
@@ -477,6 +541,9 @@ def print_summary(summary: dict[str, Any]) -> None:
         "speed",
         "camera_upload_ms",
         "camera_scene_ui_ms",
+        "stimulus_window_ui_ms",
+        "stimulus_timeline_ui_ms",
+        "movement_timeline_ui_ms",
         "ui_build_ms",
         "gl_draw_ms",
         "swap_ms",
@@ -519,6 +586,9 @@ def print_summary(summary: dict[str, Any]) -> None:
                 f"loop={format_stat(stall.get('frame_loop_ms'), 'ms')}, "
                 f"upload={format_stat(stall.get('camera_upload_ms'), 'ms')}, "
                 f"scene_ui={format_stat(stall.get('camera_scene_ui_ms'), 'ms')}, "
+                f"stim_window={format_stat(stall.get('stimulus_window_ui_ms'), 'ms')}, "
+                f"stim_timeline={format_stat(stall.get('stimulus_timeline_ui_ms'), 'ms')}, "
+                f"movement_ui={format_stat(stall.get('movement_timeline_ui_ms'), 'ms')}, "
                 f"ui={format_stat(stall.get('ui_build_ms'), 'ms')}, "
                 f"draw={format_stat(stall.get('gl_draw_ms'), 'ms')}, "
                 f"swap={format_stat(stall.get('swap_ms'), 'ms')}, "
