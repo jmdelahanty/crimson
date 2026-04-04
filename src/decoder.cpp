@@ -2,9 +2,16 @@
 #include "AppDecUtils.h"
 #include "global.h"
 #include "debug_flags.h"
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+
+inline double decoder_duration_ms(std::chrono::steady_clock::duration duration) {
+    return std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+               duration)
+        .count();
+}
 
 void decoder_get_image_from_gpu(CUdeviceptr dpSrc, uint8_t *pDst, int nWidth,
                                 int nHeight) {
@@ -74,6 +81,14 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
         return std::make_unique<NvDecoder>(cuContext, true, codec_id);
     };
     std::unique_ptr<NvDecoder> dec = make_decoder();
+    auto decoder_perf = [&]() -> std::shared_ptr<DecoderPerfSample> {
+        std::lock_guard<std::mutex> lock(g_decoder_perf_mutex);
+        auto &sample = decoder_perf_samples[cam_name];
+        if (!sample) {
+            sample = std::make_shared<DecoderPerfSample>();
+        }
+        return sample;
+    }();
     const bool recreate_decoder_on_seek = []() {
         const char *env = std::getenv("CRIMSON_RECREATE_DECODER_ON_SEEK");
         if (!env) {
@@ -514,6 +529,11 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
 
                 for (int i = 0; i < nFrameReturned; i++) {
                     // decode frame and conversion
+                    const auto decode_pipeline_start =
+                        std::chrono::steady_clock::now();
+                    double decode_wait_ms = 0.0;
+                    double decode_convert_ms = 0.0;
+                    double decode_write_ms = 0.0;
                     int64_t frame_timestamp = 0;
                     pFrame = dec->GetFrame(&frame_timestamp);
                     iMatrix = dec->GetVideoFormatInfo()
@@ -524,24 +544,32 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         mapped_frame_num = nFrame;
                     }
                     const int assigned_frame_num = static_cast<int>(mapped_frame_num);
-                    if (nFrame == 0) {
+                    auto convert_to_rgba = [&]() {
+                        const auto convert_start = std::chrono::steady_clock::now();
+                        Nv12ToColor32<RGBA32>(
+                            pFrame, dec->GetWidth(), (uint8_t *)pTmpImage,
+                            4 * dec->GetWidth(), dec->GetWidth(),
+                            dec->GetHeight(), iMatrix);
+                        decode_convert_ms += decoder_duration_ms(
+                            std::chrono::steady_clock::now() - convert_start);
+                    };
+                    auto write_buffered_frame = [&]() {
+                        const auto write_start = std::chrono::steady_clock::now();
                         if (use_cpu_buffer) {
-                            Nv12ToColor32<RGBA32>(
-                                pFrame, dec->GetWidth(), (uint8_t *)pTmpImage,
-                                4 * dec->GetWidth(), dec->GetWidth(),
-                                dec->GetHeight(), iMatrix);
                             decoder_get_image_from_gpu(
                                 pTmpImage, display_buffer[buffer_head].frame,
                                 4 * dec->GetWidth(), dec->GetHeight());
                         } else {
-                            Nv12ToColor32<RGBA32>(
-                                pFrame, dec->GetWidth(), (uint8_t *)pTmpImage,
-                                4 * dec->GetWidth(), dec->GetWidth(),
-                                dec->GetHeight(), iMatrix);
                             cudaMemcpy(display_buffer[buffer_head].frame,
                                        (uint8_t *)pTmpImage, size_in_bytes,
                                        cudaMemcpyDeviceToDevice);
                         }
+                        decode_write_ms += decoder_duration_ms(
+                            std::chrono::steady_clock::now() - write_start);
+                    };
+                    if (nFrame == 0) {
+                        convert_to_rgba();
+                        write_buffered_frame();
                         display_buffer[buffer_head].available_to_write = false;
                         dc_context->decoding_flag = true;
                         display_buffer[buffer_head].frame_number = assigned_frame_num;
@@ -561,6 +589,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                             pending_seek_was_accurate = false;
                         }
                     } else {
+                        const auto wait_start = std::chrono::steady_clock::now();
                         while (
                             !display_buffer[buffer_head].available_to_write &&
                             !(dc_context->stop_flag) &&
@@ -574,23 +603,10 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                             std::this_thread::sleep_for(
                                 std::chrono::milliseconds(1));
                         }
-                        if (use_cpu_buffer) {
-                            Nv12ToColor32<RGBA32>(
-                                pFrame, dec->GetWidth(), (uint8_t *)pTmpImage,
-                                4 * dec->GetWidth(), dec->GetWidth(),
-                                dec->GetHeight(), iMatrix);
-                            decoder_get_image_from_gpu(
-                                pTmpImage, display_buffer[buffer_head].frame,
-                                4 * dec->GetWidth(), dec->GetHeight());
-                        } else {
-                            Nv12ToColor32<RGBA32>(
-                                pFrame, dec->GetWidth(), (uint8_t *)pTmpImage,
-                                4 * dec->GetWidth(), dec->GetWidth(),
-                                dec->GetHeight(), iMatrix);
-                            cudaMemcpy(display_buffer[buffer_head].frame,
-                                       (uint8_t *)pTmpImage, size_in_bytes,
-                                       cudaMemcpyDeviceToDevice);
-                        }
+                        decode_wait_ms += decoder_duration_ms(
+                            std::chrono::steady_clock::now() - wait_start);
+                        convert_to_rgba();
+                        write_buffered_frame();
 
                         display_buffer[buffer_head].available_to_write = false;
                         display_buffer[buffer_head].frame_number = assigned_frame_num;
@@ -610,6 +626,13 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                             pending_seek_was_accurate = false;
                         }
                     }
+                    decoder_perf->nv12_to_rgba_ms.store(decode_convert_ms);
+                    decoder_perf->buffer_wait_ms.store(decode_wait_ms);
+                    decoder_perf->frame_write_ms.store(decode_write_ms);
+                    decoder_perf->frame_total_ms.store(decoder_duration_ms(
+                        std::chrono::steady_clock::now() -
+                        decode_pipeline_start));
+                    decoder_perf->published_frame.store(assigned_frame_num);
                     if (seek_debug_frames_to_log > 0) {
                         const int64_t pts_frame =
                             (frame_timestamp >= 0)

@@ -63,7 +63,9 @@ std::vector<std::vector<int>> yolo_classid(MAX_VIEWS);
 std::vector<unsigned char *> yolo_input_frames_rgba(MAX_VIEWS);
 std::unordered_map<std::string, std::atomic<bool>> window_need_decoding;
 std::unordered_map<std::string, std::atomic<int>> latest_decoded_frame;
+std::unordered_map<std::string, std::shared_ptr<DecoderPerfSample>> decoder_perf_samples;
 std::mutex g_seek_info_mutex;
+std::mutex g_decoder_perf_mutex;
 
 // Global variables
 bool show_interpolation_debug = false;
@@ -246,7 +248,10 @@ struct PerfLogWriter {
         stream
             << "elapsed_s,wall_epoch_ms,play_video,set_playback_speed,inst_speed,"
             << "video_fps,requested_camera_frame,displayed_camera_frame,current_frame_num,"
-            << "min_decoded_camera_frame,camera_decode_gap_frames,visible_camera_count,"
+            << "min_decoded_camera_frame,camera_decode_gap_frames,"
+            << "camera_decode_convert_ms,camera_decode_wait_ms,"
+            << "camera_decode_write_ms,camera_decode_pipeline_ms,"
+            << "visible_camera_count,"
             << "main_buffer_mode,playback_preview_scale,playback_preview_active,"
             << "camera_upload_count,camera_upload_ms,camera_texture_resize_ms,"
             << "camera_preview_resize_ms,camera_pbo_copy_ms,camera_texture_upload_ms,"
@@ -8138,6 +8143,50 @@ struct StateOverlay {
                         ? (perf_requested_camera_frame -
                            perf_min_decoded_camera_frame)
                         : -1;
+                double perf_camera_decode_convert_ms =
+                    std::numeric_limits<double>::quiet_NaN();
+                double perf_camera_decode_wait_ms =
+                    std::numeric_limits<double>::quiet_NaN();
+                double perf_camera_decode_write_ms =
+                    std::numeric_limits<double>::quiet_NaN();
+                double perf_camera_decode_pipeline_ms =
+                    std::numeric_limits<double>::quiet_NaN();
+                auto updateMaxFinite = [](double& dst, double value) {
+                    if (!std::isfinite(value)) {
+                        return;
+                    }
+                    if (!std::isfinite(dst) || value > dst) {
+                        dst = value;
+                    }
+                };
+                {
+                    std::lock_guard<std::mutex> lock(g_decoder_perf_mutex);
+                    for (const auto& cam_name : camera_names) {
+                        auto need_it = window_need_decoding.find(cam_name);
+                        if (need_it == window_need_decoding.end() ||
+                            !need_it->second.load()) {
+                            continue;
+                        }
+                        auto perf_it = decoder_perf_samples.find(cam_name);
+                        if (perf_it == decoder_perf_samples.end() ||
+                            !perf_it->second) {
+                            continue;
+                        }
+                        const auto& perf = perf_it->second;
+                        updateMaxFinite(
+                            perf_camera_decode_convert_ms,
+                            perf->nv12_to_rgba_ms.load());
+                        updateMaxFinite(
+                            perf_camera_decode_wait_ms,
+                            perf->buffer_wait_ms.load());
+                        updateMaxFinite(
+                            perf_camera_decode_write_ms,
+                            perf->frame_write_ms.load());
+                        updateMaxFinite(
+                            perf_camera_decode_pipeline_ms,
+                            perf->frame_total_ms.load());
+                    }
+                }
                 const int stimulus_latest_decoded =
                     latest_decoded_frame[stimulus_player.window_name].load();
                 const int stimulus_last_displayed =
@@ -8166,7 +8215,12 @@ struct StateOverlay {
                     << perf_requested_camera_frame << ","
                     << displayed_camera_frame << "," << current_frame_num << ","
                     << perf_min_decoded_camera_frame << ","
-                    << camera_decode_gap_frames << "," << visible_camera_count
+                    << camera_decode_gap_frames << ","
+                    << perf_camera_decode_convert_ms << ","
+                    << perf_camera_decode_wait_ms << ","
+                    << perf_camera_decode_write_ms << ","
+                    << perf_camera_decode_pipeline_ms << ","
+                    << visible_camera_count
                     << "," << (scene->use_cpu_buffer ? "cpu" : "gpu") << ","
                     << playbackPreviewScaleLabel() << ","
                     << (playbackPreviewIsActive() ? 1 : 0) << ","
