@@ -250,9 +250,11 @@ struct PerfLogWriter {
             << "main_buffer_mode,playback_preview_scale,playback_preview_active,"
             << "camera_upload_count,camera_upload_ms,camera_texture_resize_ms,"
             << "camera_preview_resize_ms,camera_pbo_copy_ms,camera_texture_upload_ms,"
-            << "camera_scene_ui_ms,"
+            << "camera_plot_image_ui_ms,camera_overlay_ui_ms,camera_scene_ui_ms,"
             << "stimulus_window_ui_ms,stimulus_timeline_ui_ms,movement_timeline_ui_ms,"
-            << "gl_draw_ms,swap_ms,frame_loop_ms,ui_build_ms,"
+            << "gl_draw_ms,swap_ms,frame_loop_ms,ui_build_ms,imgui_render_ms,"
+            << "imgui_draw_cmd_count,imgui_draw_list_count,imgui_total_vtx_count,"
+            << "imgui_total_idx_count,"
             << "stimulus_loaded,stimulus_decode_backend,"
             << "stimulus_buffer_mode,stimulus_target_frame,stimulus_latest_decoded,"
             << "stimulus_last_displayed,stimulus_buffered_frames,"
@@ -1823,6 +1825,8 @@ int main(int argc, char **argv) {
         double frame_camera_preview_resize_ms = 0.0;
         double frame_camera_pbo_copy_ms = 0.0;
         double frame_camera_texture_upload_ms = 0.0;
+        double frame_camera_plot_image_ui_ms = 0.0;
+        double frame_camera_overlay_ui_ms = 0.0;
         double frame_camera_scene_ui_ms = 0.0;
         double frame_stimulus_window_ui_ms = 0.0;
         double frame_stimulus_timeline_ui_ms = 0.0;
@@ -1830,6 +1834,11 @@ int main(int argc, char **argv) {
         double frame_gl_draw_ms = 0.0;
         double frame_swap_ms = 0.0;
         double frame_ui_build_ms = 0.0;
+        double frame_imgui_render_ms = 0.0;
+        int frame_imgui_draw_cmd_count = 0;
+        int frame_imgui_draw_list_count = 0;
+        int frame_imgui_total_vtx_count = 0;
+        int frame_imgui_total_idx_count = 0;
         int perf_requested_camera_frame = -1;
         int perf_min_decoded_camera_frame = -1;
 
@@ -3559,6 +3568,8 @@ int main(int argc, char **argv) {
                         ImPlotAxisFlags_AutoFit |
                         (suppress_crosshairs ? ImPlotFlags_None : ImPlotFlags_Crosshairs);
                     ImPlot::PushStyleVar(ImPlotStyleVar_LegendPadding, ImVec2(12.0f, 12.0f));
+                    const auto camera_plot_image_ui_start =
+                        std::chrono::steady_clock::now();
                     if (ImPlot::BeginPlot("##no_plot_name", avail_size, scene_plot_flags)) {
                         ImPlot::SetupLegend(ImPlotLocation_SouthWest, ImPlotLegendFlags_None);
                         ImPlot::PlotImage(
@@ -3567,6 +3578,11 @@ int main(int argc, char **argv) {
                             ImVec2(0, 0),
                             ImVec2(scene->cameras[j].image_width,
                                 scene->cameras[j].image_height));
+                        frame_camera_plot_image_ui_ms += durationMs(
+                            std::chrono::steady_clock::now() -
+                            camera_plot_image_ui_start);
+                        const auto camera_overlay_ui_start =
+                            std::chrono::steady_clock::now();
 
                         if (yolo_detection) {
                             draw_cv_contours(
@@ -5508,6 +5524,9 @@ struct StateOverlay {
                             }
                         }     
                         ImPlot::EndPlot();
+                        frame_camera_overlay_ui_ms += durationMs(
+                            std::chrono::steady_clock::now() -
+                            camera_overlay_ui_start);
                     }
                     if (restore_plot_pan_mod) {
                         plot_input_map.PanMod = previous_plot_pan_mod;
@@ -7944,7 +7963,25 @@ struct StateOverlay {
         // Rendering
         frame_ui_build_ms =
             durationMs(std::chrono::steady_clock::now() - ui_build_start);
+        const auto imgui_render_start = std::chrono::steady_clock::now();
         ImGui::Render();
+        frame_imgui_render_ms = durationMs(
+            std::chrono::steady_clock::now() - imgui_render_start);
+        ImDrawData* imgui_draw_data = ImGui::GetDrawData();
+        if (imgui_draw_data != nullptr) {
+            frame_imgui_draw_list_count = imgui_draw_data->CmdListsCount;
+            frame_imgui_total_vtx_count = imgui_draw_data->TotalVtxCount;
+            frame_imgui_total_idx_count = imgui_draw_data->TotalIdxCount;
+            int draw_cmd_count = 0;
+            for (int list_idx = 0; list_idx < imgui_draw_data->CmdListsCount;
+                 ++list_idx) {
+                const ImDrawList* draw_list = imgui_draw_data->CmdLists[list_idx];
+                if (draw_list != nullptr) {
+                    draw_cmd_count += draw_list->CmdBuffer.Size;
+                }
+            }
+            frame_imgui_draw_cmd_count = draw_cmd_count;
+        }
         int display_w, display_h;
         glfwGetFramebufferSize(window->render_target, &display_w, &display_h);
         glViewport(0, 0, display_w, display_h);
@@ -8114,6 +8151,8 @@ struct StateOverlay {
                     << frame_camera_preview_resize_ms << ","
                     << frame_camera_pbo_copy_ms << ","
                     << frame_camera_texture_upload_ms << ","
+                    << frame_camera_plot_image_ui_ms << ","
+                    << frame_camera_overlay_ui_ms << ","
                     << frame_camera_scene_ui_ms << ","
                     << frame_stimulus_window_ui_ms << ","
                     << frame_stimulus_timeline_ui_ms << ","
@@ -8121,6 +8160,11 @@ struct StateOverlay {
                     << frame_gl_draw_ms << ","
                     << frame_swap_ms << "," << frame_loop_ms << ","
                     << frame_ui_build_ms << ","
+                    << frame_imgui_render_ms << ","
+                    << frame_imgui_draw_cmd_count << ","
+                    << frame_imgui_draw_list_count << ","
+                    << frame_imgui_total_vtx_count << ","
+                    << frame_imgui_total_idx_count << ","
                     << (stimulus_player.loaded ? 1 : 0) << ","
                     << ((stimulus_player.loaded
                              ? stimulus_player.use_software_decode
