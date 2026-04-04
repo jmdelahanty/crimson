@@ -23,6 +23,9 @@ struct CameraResources {
     SeekInfo seek_context = {false, false, 0, false, 0, 0};
     int last_uploaded_frame = -1;
     bool texture_has_valid_frame = false;
+    int display_texture_width = 0;
+    int display_texture_height = 0;
+    std::vector<unsigned char> playback_preview_rgba_cpu;
 };
 
 struct render_scene
@@ -76,6 +79,11 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
         scene->cameras[j].seek_context.settled_seek_id = 0;
         scene->cameras[j].last_uploaded_frame = -1;
         scene->cameras[j].texture_has_valid_frame = false;
+        scene->cameras[j].display_texture_width =
+            static_cast<int>(scene->cameras[j].image_width);
+        scene->cameras[j].display_texture_height =
+            static_cast<int>(scene->cameras[j].image_height);
+        scene->cameras[j].playback_preview_rgba_cpu.clear();
     }
 
     for (u32 j = 0; j < num_cams; j++)
@@ -122,6 +130,23 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE); // Same
     }
 
+}
+
+static void render_resize_camera_texture(CameraResources* camera,
+                                         int texture_width,
+                                         int texture_height) {
+    if (camera == nullptr || texture_width <= 0 || texture_height <= 0) {
+        return;
+    }
+    glBindTexture(GL_TEXTURE_2D, camera->image_texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, texture_width, texture_height, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    camera->display_texture_width = texture_width;
+    camera->display_texture_height = texture_height;
 }
 
 #endif
