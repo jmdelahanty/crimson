@@ -28,6 +28,10 @@ This doc is the follow-on design note after:
 
 - [docs/crimson_playback_preview_scale_plan.md](./crimson_playback_preview_scale_plan.md)
 
+And it now feeds into the next render-focused plan:
+
+- [docs/crimson_main_camera_zoom_aware_render_plan.md](./crimson_main_camera_zoom_aware_render_plan.md)
+
 ## Key Evidence
 
 ### FFmpeg Camera Benchmark
@@ -63,6 +67,27 @@ Recent main-camera `GPU Buffer` captures showed:
 
 That means the next high-impact move is not more upload tuning. It is to stop
 materializing the main camera as full `RGBA` earlier than necessary.
+
+## Current Status
+
+As of 2026-04-04, the first late-conversion slice has now landed:
+
+- main-camera `GPU Buffer` slots store compact `NV12`
+- only the selected displayed frame is converted for presentation
+- the perf log now records `camera_display_convert_ms`
+
+That slice succeeded in its immediate goal:
+
+- upload became negligible
+- steady decoder write/materialization became negligible
+
+But it also clarified the next bottleneck:
+
+- `gl_draw_ms` remains near the frame budget on the Windows RTX A1000 laptop
+
+So the late-conversion plan remains the right architectural direction, but its
+first slice is no longer the next optimization frontier. The next frontier is a
+zoom-aware playback render path for weaker GPUs.
 
 ## Problem Summary
 
@@ -364,4 +389,6 @@ The first architectural pass is successful if:
 1. land the compact-slot representation
 2. land late conversion for the displayed frame
 3. validate on the Windows laptop with the existing perf log
-4. only then add ROI-aware conversion as a second-stage optimization
+4. after confirming render is still the bottleneck, move to the zoom-aware
+   playback render plan in
+   [docs/crimson_main_camera_zoom_aware_render_plan.md](./crimson_main_camera_zoom_aware_render_plan.md)
