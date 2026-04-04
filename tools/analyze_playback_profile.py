@@ -35,6 +35,14 @@ NUMERIC_COLUMNS = {
     "camera_decode_pipeline_ms": float,
     "visible_camera_count": int,
     "playback_preview_active": int,
+    "camera_viewport_width_px": float,
+    "camera_viewport_height_px": float,
+    "camera_view_x_min": float,
+    "camera_view_x_max": float,
+    "camera_view_y_min": float,
+    "camera_view_y_max": float,
+    "camera_view_visible_fraction": float,
+    "camera_view_zoomed_in": int,
     "camera_upload_count": int,
     "camera_upload_ms": float,
     "camera_texture_resize_ms": float,
@@ -412,6 +420,15 @@ def build_summary(
     budget_ms = 1000.0 / target_fps if math.isfinite(target_fps) and target_fps > 0.0 else math.nan
 
     speed_stats = describe([row.get("inst_speed", math.nan) for row in active_rows])
+    camera_viewport_width_stats = describe(
+        [row.get("camera_viewport_width_px", math.nan) for row in active_rows]
+    )
+    camera_viewport_height_stats = describe(
+        [row.get("camera_viewport_height_px", math.nan) for row in active_rows]
+    )
+    camera_view_visible_fraction_stats = describe(
+        [row.get("camera_view_visible_fraction", math.nan) for row in active_rows]
+    )
     upload_stats = describe([row.get("camera_upload_ms", math.nan) for row in active_rows])
     camera_texture_resize_stats = describe(
         [row.get("camera_texture_resize_ms", math.nan) for row in active_rows]
@@ -537,6 +554,14 @@ def build_summary(
                 "elapsed_s": row.get("elapsed_s"),
                 "frame_loop_ms": row.get("frame_loop_ms"),
                 "camera_upload_ms": row.get("camera_upload_ms"),
+                "camera_viewport_width_px": row.get("camera_viewport_width_px"),
+                "camera_viewport_height_px": row.get("camera_viewport_height_px"),
+                "camera_view_x_min": row.get("camera_view_x_min"),
+                "camera_view_x_max": row.get("camera_view_x_max"),
+                "camera_view_y_min": row.get("camera_view_y_min"),
+                "camera_view_y_max": row.get("camera_view_y_max"),
+                "camera_view_visible_fraction": row.get("camera_view_visible_fraction"),
+                "camera_view_zoomed_in": row.get("camera_view_zoomed_in"),
                 "camera_texture_resize_ms": row.get("camera_texture_resize_ms"),
                 "camera_preview_resize_ms": row.get("camera_preview_resize_ms"),
                 "camera_display_convert_ms": row.get("camera_display_convert_ms"),
@@ -588,6 +613,9 @@ def build_summary(
         "target_fps": target_fps,
         "frame_budget_ms": budget_ms,
         "speed": speed_stats,
+        "camera_viewport_width_px": camera_viewport_width_stats,
+        "camera_viewport_height_px": camera_viewport_height_stats,
+        "camera_view_visible_fraction": camera_view_visible_fraction_stats,
         "camera_upload_ms": upload_stats,
         "camera_texture_resize_ms": camera_texture_resize_stats,
         "camera_preview_resize_ms": camera_preview_resize_stats,
@@ -635,6 +663,9 @@ def print_summary(summary: dict[str, Any]) -> None:
 
     for key in [
         "speed",
+        "camera_viewport_width_px",
+        "camera_viewport_height_px",
+        "camera_view_visible_fraction",
         "camera_upload_ms",
         "camera_texture_resize_ms",
         "camera_preview_resize_ms",
@@ -695,6 +726,10 @@ def print_summary(summary: dict[str, Any]) -> None:
             print(
                 "  "
                 f"t={format_stat(stall.get('elapsed_s'), 's')}, "
+                f"view={format_stat(stall.get('camera_viewport_width_px'))}x"
+                f"{format_stat(stall.get('camera_viewport_height_px'))}, "
+                f"view_frac={format_stat(stall.get('camera_view_visible_fraction'))}, "
+                f"zoomed={format_stat(stall.get('camera_view_zoomed_in'))}, "
                 f"loop={format_stat(stall.get('frame_loop_ms'), 'ms')}, "
                 f"upload={format_stat(stall.get('camera_upload_ms'), 'ms')}, "
                 f"tex_resize={format_stat(stall.get('camera_texture_resize_ms'), 'ms')}, "

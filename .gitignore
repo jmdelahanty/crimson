@@ -31,6 +31,7 @@ Makefile
 .idea/
 *.code-workspace
 *.DS_Store
+/.codex
 
 # --- Python cache ---
 __pycache__/

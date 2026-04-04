@@ -253,6 +253,10 @@ struct PerfLogWriter {
             << "camera_decode_write_ms,camera_decode_pipeline_ms,"
             << "visible_camera_count,"
             << "main_buffer_mode,playback_preview_scale,playback_preview_active,"
+            << "camera_viewport_width_px,camera_viewport_height_px,"
+            << "camera_view_x_min,camera_view_x_max,"
+            << "camera_view_y_min,camera_view_y_max,"
+            << "camera_view_visible_fraction,camera_view_zoomed_in,"
             << "camera_upload_count,camera_upload_ms,camera_texture_resize_ms,"
             << "camera_preview_resize_ms,camera_display_convert_ms,"
             << "camera_pbo_copy_ms,camera_texture_upload_ms,"
@@ -1846,6 +1850,21 @@ int main(int argc, char **argv) {
         int frame_imgui_draw_list_count = 0;
         int frame_imgui_total_vtx_count = 0;
         int frame_imgui_total_idx_count = 0;
+        double perf_camera_viewport_width_px =
+            std::numeric_limits<double>::quiet_NaN();
+        double perf_camera_viewport_height_px =
+            std::numeric_limits<double>::quiet_NaN();
+        double perf_camera_view_x_min =
+            std::numeric_limits<double>::quiet_NaN();
+        double perf_camera_view_x_max =
+            std::numeric_limits<double>::quiet_NaN();
+        double perf_camera_view_y_min =
+            std::numeric_limits<double>::quiet_NaN();
+        double perf_camera_view_y_max =
+            std::numeric_limits<double>::quiet_NaN();
+        double perf_camera_view_visible_fraction =
+            std::numeric_limits<double>::quiet_NaN();
+        int perf_camera_view_zoomed_in = -1;
         int perf_requested_camera_frame = -1;
         int perf_min_decoded_camera_frame = -1;
 
@@ -3677,6 +3696,52 @@ int main(int argc, char **argv) {
                             ImVec2(0, 0),
                             ImVec2(scene->cameras[j].image_width,
                                 scene->cameras[j].image_height));
+                        {
+                            const ImPlotRect plot_limits =
+                                ImPlot::GetPlotLimits();
+                            const ImVec2 plot_size = ImPlot::GetPlotSize();
+                            const double image_width =
+                                static_cast<double>(
+                                    scene->cameras[j].image_width);
+                            const double image_height =
+                                static_cast<double>(
+                                    scene->cameras[j].image_height);
+                            const double clamped_x_min = std::clamp(
+                                plot_limits.X.Min, 0.0, image_width);
+                            const double clamped_x_max = std::clamp(
+                                plot_limits.X.Max, 0.0, image_width);
+                            const double clamped_y_min = std::clamp(
+                                plot_limits.Y.Min, 0.0, image_height);
+                            const double clamped_y_max = std::clamp(
+                                plot_limits.Y.Max, 0.0, image_height);
+                            const double visible_width = std::max(
+                                0.0, clamped_x_max - clamped_x_min);
+                            const double visible_height = std::max(
+                                0.0, clamped_y_max - clamped_y_min);
+                            const double total_area = image_width * image_height;
+                            const double visible_area =
+                                visible_width * visible_height;
+                            const double visible_fraction =
+                                total_area > 0.0
+                                    ? std::clamp(visible_area / total_area,
+                                                 0.0, 1.0)
+                                    : std::numeric_limits<double>::quiet_NaN();
+                            const bool zoomed_in =
+                                visible_width < (image_width - 1.0) ||
+                                visible_height < (image_height - 1.0);
+                            perf_camera_viewport_width_px =
+                                static_cast<double>(plot_size.x);
+                            perf_camera_viewport_height_px =
+                                static_cast<double>(plot_size.y);
+                            perf_camera_view_x_min = clamped_x_min;
+                            perf_camera_view_x_max = clamped_x_max;
+                            perf_camera_view_y_min = clamped_y_min;
+                            perf_camera_view_y_max = clamped_y_max;
+                            perf_camera_view_visible_fraction =
+                                visible_fraction;
+                            perf_camera_view_zoomed_in =
+                                zoomed_in ? 1 : 0;
+                        }
                         frame_camera_plot_image_ui_ms += durationMs(
                             std::chrono::steady_clock::now() -
                             camera_plot_image_ui_start);
@@ -8293,6 +8358,14 @@ struct StateOverlay {
                     << "," << (scene->use_cpu_buffer ? "cpu" : "gpu") << ","
                     << playbackPreviewScaleLabel() << ","
                     << (playbackPreviewIsActive() ? 1 : 0) << ","
+                    << perf_camera_viewport_width_px << ","
+                    << perf_camera_viewport_height_px << ","
+                    << perf_camera_view_x_min << ","
+                    << perf_camera_view_x_max << ","
+                    << perf_camera_view_y_min << ","
+                    << perf_camera_view_y_max << ","
+                    << perf_camera_view_visible_fraction << ","
+                    << perf_camera_view_zoomed_in << ","
                     << frame_camera_upload_count << ","
                     << frame_camera_upload_ms << ","
                     << frame_camera_texture_resize_ms << ","
@@ -8357,6 +8430,15 @@ struct StateOverlay {
                        scene->use_cpu_buffer ? "rgba32" : "nv12"},
                       {"playback_preview_scale", playbackPreviewScaleLabel()},
                       {"playback_preview_active", playbackPreviewIsActive()},
+                      {"viewport_width_px", perf_camera_viewport_width_px},
+                      {"viewport_height_px", perf_camera_viewport_height_px},
+                      {"view_x_min", perf_camera_view_x_min},
+                      {"view_x_max", perf_camera_view_x_max},
+                      {"view_y_min", perf_camera_view_y_min},
+                      {"view_y_max", perf_camera_view_y_max},
+                      {"view_visible_fraction",
+                       perf_camera_view_visible_fraction},
+                      {"view_zoomed_in", perf_camera_view_zoomed_in},
                       {"buffer_size",
                        video_loaded ? static_cast<int>(scene->size_of_buffer)
                                     : label_buffer_size},
