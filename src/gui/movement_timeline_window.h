@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gui/stimulus_event_timeline_window.h"
+#include "stimulus_event_timeline_window.h"
 
 class ZarrDetectionLoader;
 

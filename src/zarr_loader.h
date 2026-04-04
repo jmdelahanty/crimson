@@ -144,6 +144,7 @@ struct ZarrDetectionData {
     std::string keypoints_run_name;
     std::string keypoints_source_crop_run;
     std::vector<float> flat_keypoints_px;               // flattened [det, kp, coord]
+    std::vector<int32_t> keypoint_roi_indices;          // detection-aligned ROI row index in selected keypoint run
     size_t keypoints_per_detection = 0;
     std::vector<std::string> keypoint_labels;
     std::vector<std::array<size_t, 2>> skeleton_edges;  // from pose_schema.edges
@@ -580,6 +581,19 @@ public:
         int32_t roi_index = -1;
     };
     bool getCropImageForIndex(int32_t roi_index, CropImageView& out_view) const;
+    struct KeypointRoiMetadata {
+        bool valid = false;
+        bool has_crop_metadata = false;
+        int32_t roi_index = -1;
+        float offset_x = std::numeric_limits<float>::quiet_NaN();
+        float offset_y = std::numeric_limits<float>::quiet_NaN();
+        float roi_width = 0.0f;
+        float roi_height = 0.0f;
+    };
+    KeypointRoiMetadata getKeypointRoiMetadataForFrameDetection(
+        size_t frame_id,
+        size_t detection_idx,
+        bool use_interpolated = false) const;
     const std::string& getMovementCategory() const {
         static const std::string kEmpty;
         const auto* series = getSelectedMovementSeries();
@@ -688,6 +702,9 @@ public:
     FrameDetections getRawDetections(size_t frame_id,
                                      bool use_interpolated = true,
                                      bool include_eye_masks = false) const;
+    int32_t getKeypointRoiIndexForFrameDetection(size_t frame_id,
+                                                 size_t detection_idx,
+                                                 bool use_interpolated = false) const;
 
     bool hasHeadingData() const { return data_.has_heading_data; }
     bool hasKeypointData() const { return data_.has_keypoints; }

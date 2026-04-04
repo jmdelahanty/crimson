@@ -9,6 +9,7 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     data_.keypoints_run_name.clear();
     data_.keypoints_source_crop_run.clear();
     data_.flat_keypoints_px.clear();
+    data_.keypoint_roi_indices.clear();
     data_.keypoint_labels.clear();
     data_.keypoints_per_detection = 0;
     data_.has_keypoints = false;
@@ -452,6 +453,7 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     data_.flat_swim_bladder_px.assign(
         total_detections, std::array<float, 2>{nan_value, nan_value});
     data_.flat_heading_valid.assign(total_detections, 0);
+    data_.keypoint_roi_indices.assign(total_detections, -1);
     data_.mask_roi_indices.assign(total_detections, -1);
     data_.roi_offset_x.assign(total_detections, nan_value);
     data_.roi_offset_y.assign(total_detections, nan_value);
@@ -498,6 +500,7 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
         size_t det_index = start + offset;
         frame_cursor[frame]++;
         roi_to_det[roi_index] = det_index;
+        data_.keypoint_roi_indices[det_index] = static_cast<int32_t>(roi_index);
 
         data_.mask_roi_indices[det_index] = (roi_ok && roi_offsets.size() >= (roi_index * 2 + 2))
                                                 ? static_cast<int32_t>(roi_index)
@@ -1445,4 +1448,3 @@ bool ZarrDetectionLoader::populateEyeMaskEntry(
     }
     return out_mask.valid;
 }
-

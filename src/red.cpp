@@ -39,6 +39,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include "refined_keypoint_repository.h"
 #include "zarr_loader.h"
 #include "gui/file_browser_window.h"
 #include "gui_interpolation.h"
@@ -1402,6 +1403,12 @@ int main(int argc, char **argv) {
     std::optional<ManualDetectPayloadPreview> manual_payload_preview;
     static int manual_write_intended_use = 0;  // 0 = full_recording, 1 = training
     static int manual_write_review_state = 0;  // 0 = approved, 1 = needs_review, 2 = pending, 3 = rejected
+    static int keypoint_review_intended_use = 1;  // 0 = full_recording, 1 = training
+    static int keypoint_review_state = 0;         // 0 = approved, 1 = needs_review, 2 = pending, 3 = rejected
+    static int keypoint_review_method = 0;        // 0 = manual, 1 = algorithmic, 2 = hybrid, 3 = spotcheck
+    static char keypoint_review_reviewer[64] = "";
+    static char keypoint_review_notes[256] = "";
+    static std::string keypoint_review_write_status;
 
     auto sanitizePathComponent = [](std::string value) -> std::string {
         if (value.empty()) {
@@ -2562,6 +2569,98 @@ int main(int argc, char **argv) {
                     }
                     if (!zarr_loader.getKeypointReviewNotes().empty()) {
                         ImGui::Text("  KP Notes: %s", zarr_loader.getKeypointReviewNotes().c_str());
+                    }
+                }
+                if (zarr_loader.hasKeypointData()) {
+                    ImGui::Separator();
+                    ImGui::Text("Keypoint Review Write:");
+                    RefinedKeypointRepository refined_keypoint_repo(zarr_loader);
+                    std::string keypoint_edit_reason;
+                    const bool can_write_kp_review =
+                        refined_keypoint_repo.canEditActiveRun(&keypoint_edit_reason);
+                    const char* keypoint_review_use_items[] = {"full_recording", "training"};
+                    const char* keypoint_review_state_items[] = {
+                        "approved", "needs_review", "pending", "rejected"};
+                    const char* keypoint_review_method_items[] = {
+                        "manual", "algorithmic", "hybrid", "spotcheck"};
+                    if (!can_write_kp_review) {
+                        ImGui::TextWrapped("%s", keypoint_edit_reason.c_str());
+                    }
+                    ImGui::BeginDisabled(!can_write_kp_review);
+                    ImGui::Combo("KP Intended Use##write",
+                                 &keypoint_review_intended_use,
+                                 keypoint_review_use_items,
+                                 IM_ARRAYSIZE(keypoint_review_use_items));
+                    ImGui::Combo("KP Review State##write",
+                                 &keypoint_review_state,
+                                 keypoint_review_state_items,
+                                 IM_ARRAYSIZE(keypoint_review_state_items));
+                    ImGui::Combo("KP Review Method##write",
+                                 &keypoint_review_method,
+                                 keypoint_review_method_items,
+                                 IM_ARRAYSIZE(keypoint_review_method_items));
+                    ImGui::InputText("KP Reviewer##write",
+                                     keypoint_review_reviewer,
+                                     IM_ARRAYSIZE(keypoint_review_reviewer));
+                    ImGui::InputText("KP Notes##write",
+                                     keypoint_review_notes,
+                                     IM_ARRAYSIZE(keypoint_review_notes));
+                    if (ImGui::Button("Write Keypoint Review Status")) {
+                        RefinedKeypointReviewStatusWriteOptions review_options;
+                        review_options.intended_use =
+                            keypoint_review_use_items[keypoint_review_intended_use];
+                        review_options.state =
+                            keypoint_review_state_items[keypoint_review_state];
+                        review_options.method =
+                            keypoint_review_method_items[keypoint_review_method];
+                        review_options.reviewer = keypoint_review_reviewer;
+                        review_options.notes = keypoint_review_notes;
+
+                        std::string write_error;
+                        std::string resolved_run_name;
+                        if (!refined_keypoint_repo.writeReviewStatus(
+                                review_options, write_error, &resolved_run_name)) {
+                            keypoint_review_write_status =
+                                "Keypoint review write failed: " + write_error;
+                        } else {
+                            const auto previous_dataset =
+                                zarr_loader.getActiveDetectionDataset();
+                            std::string reload_error;
+                            const std::string archive_path =
+                                zarr_loader.getArchivePath();
+                            if (!archive_path.empty() &&
+                                zarr_loader.loadZarrFile(archive_path, reload_error)) {
+                                zarr_loaded = true;
+                                if (zarr_loader.isDatasetAvailable(previous_dataset)) {
+                                    (void)zarr_loader.setActiveDetectionDataset(
+                                        previous_dataset);
+                                }
+                                refreshDetectionDatasetOptions(zarr_loader);
+                                invalidateReviewFrameCache();
+                                review_frame_status.clear();
+                                std::ostringstream status;
+                                status << "Keypoint review status updated: run="
+                                       << (resolved_run_name.empty() ? "<latest>"
+                                                                     : resolved_run_name)
+                                       << " state=" << review_options.state
+                                       << " use=" << review_options.intended_use
+                                       << " method=" << review_options.method;
+                                keypoint_review_write_status = status.str();
+                            } else {
+                                zarr_loaded = false;
+                                keypoint_review_write_status =
+                                    "Keypoint review write succeeded but reload failed: " +
+                                    reload_error;
+                            }
+                        }
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::TextWrapped(
+                        "  Writes keypoint_review_status on refined_keypoints_runs/<active> and updates the latest status pointer.");
+                    if (!keypoint_review_write_status.empty()) {
+                        ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f),
+                                           "%s",
+                                           keypoint_review_write_status.c_str());
                     }
                 }
                 if (!zarr_loader.hasDetectionData()) {
@@ -6234,10 +6333,29 @@ struct StateOverlay {
             const auto crop_preview_ui_start = std::chrono::steady_clock::now();
             bool crop_window_open = ImGui::Begin("Crop Preview");
             if (crop_window_open) {
+                RefinedKeypointRepository refined_keypoint_repo(zarr_loader);
                 const auto& movement_frames = zarr_loader.getMovementFrameIndices();
                 const auto& detection_indices = zarr_loader.getMovementDetectionIndices();
                 int32_t crop_roi_index = -1;
+                std::string crop_roi_source;
+                std::optional<RefinedKeypointSelection> selected_keypoint_selection;
+                if (g_zarr_bbox_edit_state.selected_frame == current_frame_num &&
+                    g_zarr_bbox_edit_state.selected_box >= 0) {
+                    auto selection = refined_keypoint_repo.resolveFrameDetectionSelection(
+                        static_cast<size_t>(current_frame_num),
+                        static_cast<size_t>(g_zarr_bbox_edit_state.selected_box),
+                        false);
+                    if (selection.valid) {
+                        crop_roi_index = selection.roi_index;
+                        crop_roi_source =
+                            selection.editable
+                                ? "selected refined keypoint detection"
+                                : "selected keypoint detection";
+                        selected_keypoint_selection = selection;
+                    }
+                }
                 if (!movement_frames.empty() &&
+                    crop_roi_index < 0 &&
                     movement_frames.size() == detection_indices.size()) {
                     auto it = std::lower_bound(movement_frames.begin(),
                                                movement_frames.end(),
@@ -6246,6 +6364,7 @@ struct StateOverlay {
                         size_t idx = static_cast<size_t>(std::distance(movement_frames.begin(), it));
                         if (idx < detection_indices.size()) {
                             crop_roi_index = detection_indices[idx];
+                            crop_roi_source = "movement ROI";
                         }
                     }
                 }
@@ -6259,6 +6378,7 @@ struct StateOverlay {
                     if (it != crop_frames.end()) {
                         crop_roi_index = static_cast<int32_t>(
                             std::distance(crop_frames.begin(), it));
+                        crop_roi_source = "crop frame fallback";
                     }
                 }
 
@@ -6290,6 +6410,7 @@ struct StateOverlay {
                 static bool arrow_origin_valid = false;
                 static int displayed_crop_roi_index = -1;
                 static int displayed_crop_source_frame = -1;
+                static std::string displayed_crop_source_label;
 
                 if (crop_roi_index >= 0) {
                     constexpr auto kCropPreviewPlaybackRefreshInterval =
@@ -6355,6 +6476,7 @@ struct StateOverlay {
                             last_channels = crop_view.channels;
                             displayed_crop_roi_index = crop_roi_index;
                             displayed_crop_source_frame = current_frame_num;
+                            displayed_crop_source_label = crop_roi_source;
                             last_crop_preview_source_frame = current_frame_num;
                             last_crop_preview_refresh_time = now_steady;
                             crop_kp_positions.clear();
@@ -6368,9 +6490,44 @@ struct StateOverlay {
                                 auto det = zarr_loader.getRawDetections(
                                     static_cast<size_t>(current_frame_num), false, true);
                                 size_t matched = SIZE_MAX;
-                                for (size_t di = 0; di < det.eye_masks.size(); ++di) {
-                                    if (det.eye_masks[di].roi_index == crop_roi_index) {
-                                    matched = di; break;
+                                std::optional<RefinedKeypointSelection> matched_keypoint_selection;
+                                if (selected_keypoint_selection.has_value() &&
+                                    selected_keypoint_selection->roi_index == crop_roi_index &&
+                                    selected_keypoint_selection->detection_index <
+                                        det.boxes.size()) {
+                                    matched = selected_keypoint_selection->detection_index;
+                                    matched_keypoint_selection = selected_keypoint_selection;
+                                }
+                                if (matched == SIZE_MAX) {
+                                    for (size_t di = 0; di < det.eye_masks.size(); ++di) {
+                                        if (det.eye_masks[di].roi_index == crop_roi_index) {
+                                            matched = di;
+                                            matched_keypoint_selection =
+                                                refined_keypoint_repo
+                                                    .resolveFrameDetectionSelection(
+                                                        static_cast<size_t>(current_frame_num),
+                                                        di,
+                                                        false);
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (matched == SIZE_MAX && det.has_keypoints) {
+                                    size_t keypoint_detection_count =
+                                        std::min(det.keypoints_pixels.size(), det.boxes.size());
+                                    for (size_t di = 0; di < keypoint_detection_count; ++di) {
+                                        auto candidate =
+                                            refined_keypoint_repo
+                                                .resolveFrameDetectionSelection(
+                                                    static_cast<size_t>(current_frame_num),
+                                                    di,
+                                                    false);
+                                        if (candidate.valid &&
+                                            candidate.roi_index == crop_roi_index) {
+                                            matched = di;
+                                            matched_keypoint_selection = std::move(candidate);
+                                            break;
+                                        }
                                     }
                                 }
                                 if (matched != SIZE_MAX && matched < det.headings_deg.size() &&
@@ -6431,12 +6588,23 @@ struct StateOverlay {
                                     rotated_kp_labels.clear();
                                     rotated_kp_edges = det.skeleton_edges;
                                     crop_kp_edges = det.skeleton_edges;
-                                    if (det.has_keypoints && matched < det.keypoints_pixels.size() &&
-                                        det.includes_eye_masks) {
+                                    if (det.has_keypoints && matched < det.keypoints_pixels.size()) {
                                         const auto& kps = det.keypoints_pixels[matched];
-                                        const auto& mask = det.eye_masks[matched];
-                                        float off_x = mask.offset_x;
-                                        float off_y = mask.offset_y;
+                                        float off_x = NAN;
+                                        float off_y = NAN;
+                                        if (matched < det.eye_masks.size() &&
+                                            std::isfinite(det.eye_masks[matched].offset_x) &&
+                                            std::isfinite(det.eye_masks[matched].offset_y)) {
+                                            off_x = det.eye_masks[matched].offset_x;
+                                            off_y = det.eye_masks[matched].offset_y;
+                                        } else if (matched_keypoint_selection.has_value() &&
+                                                   matched_keypoint_selection->roi_metadata
+                                                       .has_crop_metadata) {
+                                            off_x =
+                                                matched_keypoint_selection->roi_metadata.offset_x;
+                                            off_y =
+                                                matched_keypoint_selection->roi_metadata.offset_y;
+                                        }
                                         if (std::isfinite(off_x) && std::isfinite(off_y)) {
                                             double r0 = rot_mat.at<double>(0, 0);
                                             double r1 = rot_mat.at<double>(0, 1);
@@ -6534,6 +6702,10 @@ struct StateOverlay {
                             ImVec2 image_tl = ImGui::GetCursorScreenPos();
                             ImGui::Image((ImTextureID)(intptr_t)crop_texture, img_size);
                             ImGui::Text("ROI #%d", displayed_crop_roi_index);
+                            if (!displayed_crop_source_label.empty()) {
+                                ImGui::TextDisabled("%s",
+                                                    displayed_crop_source_label.c_str());
+                            }
                             if (ps.play_video && displayed_crop_source_frame >= 0 &&
                                 displayed_crop_source_frame != current_frame_num) {
                                 ImGui::TextDisabled("Preview frame %d", displayed_crop_source_frame);
@@ -6706,6 +6878,10 @@ struct StateOverlay {
                             ImVec2 image_tl = ImGui::GetCursorScreenPos();
                             ImGui::Image((ImTextureID)(intptr_t)crop_texture, img_size);
                             ImGui::Text("ROI #%d", displayed_crop_roi_index);
+                            if (!displayed_crop_source_label.empty()) {
+                                ImGui::TextDisabled("%s",
+                                                    displayed_crop_source_label.c_str());
+                            }
                             if (displayed_crop_source_frame >= 0 &&
                                 displayed_crop_source_frame != current_frame_num) {
                                 ImGui::TextDisabled("Preview frame %d",
@@ -6860,6 +7036,7 @@ struct StateOverlay {
                         last_roi_index = -1;
                         displayed_crop_roi_index = -1;
                         displayed_crop_source_frame = -1;
+                        displayed_crop_source_label.clear();
                         crop_kp_positions.clear();
                         crop_kp_labels.clear();
                         crop_kp_edges.clear();
@@ -6869,6 +7046,7 @@ struct StateOverlay {
                     last_roi_index = -1;
                     displayed_crop_roi_index = -1;
                     displayed_crop_source_frame = -1;
+                    displayed_crop_source_label.clear();
                     crop_kp_positions.clear();
                     crop_kp_labels.clear();
                     crop_kp_edges.clear();

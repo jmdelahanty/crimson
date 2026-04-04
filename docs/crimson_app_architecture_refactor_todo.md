@@ -519,6 +519,9 @@ Acceptance:
 - [ ] Keep Zarr as the primary store for both sparse and dense data.
 - [ ] Define sparse review/edit payloads explicitly instead of forcing every UI
       concern through dense arrays.
+- [ ] Use [crimson_zarr_keypoint_editor_plan.md](./crimson_zarr_keypoint_editor_plan.md)
+      as the keypoint-specific design reference for refined-run editing and
+      review acceptance.
 - [ ] For manual detection and keypoint review:
   - expose frame-local read/write APIs
   - preserve chunked storage for dense backing arrays where it matters
