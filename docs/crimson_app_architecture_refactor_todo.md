@@ -1,0 +1,584 @@
+# Crimson App Architecture Refactor TODO
+
+Date anchored: 2026-04-03.
+
+## Why This Exists
+
+`crimson` has already done useful mechanical splits, but the core architecture
+still has three god-object pressure points:
+
+- `src/red.cpp` is still the application shell, playback coordinator, UI event
+  loop, review workflow host, editing host, and large parts of runtime state.
+- `src/gui.h` still contains real behavior instead of being a narrow interface
+  layer.
+- `src/zarr_loader.h` plus `src/zarr_loader*.cpp` still expose a single large
+  "load everything" API surface even after file splitting.
+
+This doc is the follow-on to `docs/crimson_cli_and_modularization_todo.md`.
+That doc intentionally left "AppState extraction from main()" out of scope.
+This doc covers that larger architectural pass.
+
+## Primary Goal
+
+Keep Zarr as the canonical store and preserve the good parts of the current
+data model, while inheriting the strongest application-structure ideas from the
+`rob_ui_overhaul` branch:
+
+- feature-local UI modules instead of one giant implementation sink
+- explicit state buckets for windows and workflows
+- small infrastructure helpers for notifications and deferred actions
+- a thinner composition root in `main()`
+
+Do not inherit the weak parts of `rob_ui_overhaul`:
+
+- a giant catch-all `AppContext`
+- header-only UI files that mix drawing, IO, and business logic
+- tests/build targets that depend on recompiling nearly the whole app
+
+## Non-Negotiable Guardrails
+
+- Keep Zarr as the primary system of record.
+- Do not regress chunked or lazy read paths that matter for large recordings or
+  NFS-backed access.
+- Keep the current Palette Zarr contract stable unless a separate tracked task
+  explicitly changes it.
+- Prefer narrow service/context objects over introducing a new all-knowing
+  `AppState`.
+- Refactor in small slices that keep the app runnable after each phase.
+
+## Refactor Rules During This Work
+
+- No new feature logic should land in `src/red.cpp` or `src/gui.h` unless it is
+  a short-lived mechanical shim required by an active refactor PR.
+- New UI workflow code should start in `src/gui/*.cpp` plus a narrow context,
+  not in `src/gui.h`.
+- New Zarr behavior should land behind a repository/service seam, not by making
+  `ZarrDetectionLoader` a bigger public API.
+- Any PR that increases coupling between UI code and TensorStore details should
+  be considered a regression unless there is a documented exception.
+
+## Good Parts To Keep
+
+From current Crimson:
+
+- Zarr as a single object store with hierarchy and provenance.
+- TensorStore-backed reads and writes.
+- Chunk-aware eye mask access and local cache/prefetch behavior.
+- Exact dependency stack control via `CMakePresets.json`.
+
+From `rob_ui_overhaul`:
+
+- workflow-specific UI files under `src/gui/`
+- explicit per-window or per-feature state structs
+- narrow infrastructure helpers like deferred actions, popups, and toasts
+- a project/session load path that is easier to reason about than raw globals
+
+## Target Shape
+
+The intended end state is:
+
+1. `src/red.cpp` becomes a composition root and frame loop, not the home for
+   most business logic.
+2. `src/gui.h` stops being an implementation file and either becomes a very
+   small facade or disappears entirely.
+3. Zarr access is split into domain repositories/services with narrow public
+   APIs:
+   - detection review reads/writes
+   - keypoint reads/writes
+   - eye mask reads
+   - stimulus alignment
+   - movement/chaser data
+   - archive discovery / path resolution
+4. App state is split into a few intentional buckets:
+   - session state
+   - playback state
+   - feature/window state
+   - ephemeral command/edit state
+5. UI features call services through narrow contexts instead of directly
+   grabbing everything from globals or a giant loader object.
+
+## Suggested File/Module Layout
+
+This is a target, not a mandatory one-shot rename:
+
+```text
+src/
+  app/
+    session_state.h
+    playback_state.h
+    feature_state.h
+    deferred_actions.h
+    notifications.h
+  gui/
+    main_menu_bar.cpp
+    recording_loader_panel.cpp
+    review_panel.cpp
+    bbox_editor_panel.cpp
+    stimulus_panel.cpp
+    playback_panel.cpp
+  zarr/
+    archive_context.h
+    archive_discovery.cpp
+    detection_repository.cpp
+    keypoint_repository.cpp
+    eye_mask_repository.cpp
+    stimulus_repository.cpp
+    movement_repository.cpp
+    review_write_repository.cpp
+```
+
+## Immediate PR Sequence
+
+These are the first three safe PRs. They are intentionally smaller than the
+full phase list below.
+
+### PR1: State Buckets + Fixture Baseline
+
+Goal: create intentional state boundaries and land regression fixtures before
+touching loader architecture.
+
+- [ ] Add:
+  - `src/app/session_state.h`
+  - `src/app/playback_state.h`
+  - `src/app/feature_state.h`
+  - `src/app/notifications.*`
+  - `src/app/deferred_actions.*`
+- [ ] Add miniature fixture archives for:
+  - raw detect frame lookup
+  - refined detect dataset switching
+  - eye mask chunk reads
+  - stimulus alignment metadata
+- [ ] Add baseline tests that encode current expected behavior for those
+      fixtures before further refactors.
+- [ ] Wire the new state structs into existing code mechanically, with no
+      workflow redesign yet.
+
+Acceptance:
+
+- App behavior is unchanged.
+- Fixture tests pass.
+- New state structs exist and are used in at least one path.
+- No new feature code was added to `src/red.cpp` or `src/gui.h`.
+
+#### PR1 Detailed Implementation Checklist
+
+This is the recommended file-by-file slice for PR1.
+
+1. Add `src/app/session_state.h`.
+   Initial struct should absorb "loaded session / archive / media identity"
+   concerns from `src/red.cpp`, not playback counters or widget toggles.
+   First-pass fields:
+   - `UiPathConfig ui_path_config`
+   - `std::string start_folder_name`
+   - `std::string recording_root`
+   - `std::string skeleton_root`
+   - `std::string archive_path`
+   - `std::string affiliated_video_path`
+   - `std::string stimulus_video_path`
+   - `bool zarr_loaded`
+   - `bool input_is_imgs`
+   - `std::vector<std::string> camera_names`
+   - `std::vector<CameraParams> camera_params`
+   - detection-dataset selection metadata now tied to the loaded archive
+     rather than to ad hoc globals
+
+2. Add `src/app/playback_state.h`.
+   Do not replace existing playback structs yet. Wrap and group them.
+   First-pass struct should aggregate:
+   - existing `PlaybackState`
+   - existing `SeekProgress`
+   - existing `StimulusPlayback`
+   - `double video_fps`
+   - `double inst_speed`
+   - `float set_playback_speed`
+   - `int current_frame_num`
+   - `int label_buffer_size`
+   - `int stimulus_buffer_size`
+   - `bool stimulus_use_cpu_buffer`
+   - `bool stimulus_use_software_decode`
+   - frame-sync debug fields now living near playback, not near unrelated UI
+
+3. Add `src/app/feature_state.h`.
+   This should absorb UI/workflow state that is currently spread across
+   `src/red.cpp`, `src/review_frame_state.h`, and `src/zarr_bbox_edit.h`.
+   First-pass grouping:
+   - help / modal / error flags:
+     - `bool show_help_window`
+     - `bool show_error`
+     - `std::string error_message`
+   - review flow:
+     - `ReviewFrameFilters review_filters`
+     - `ReviewFrameCache review_cache`
+     - `std::string review_frame_status`
+   - bbox review/edit flow:
+     - `ZarrBBoxEditState bbox_edit`
+     - `std::string bbox_payload_status`
+     - `std::optional<ManualDetectPayloadPreview>` or equivalent preview struct
+     - manual write setting fields currently in static locals
+   - debug/status strings that are not playback-owned:
+     - `std::string decode_debug_status`
+
+4. Add `src/app/notifications.h` and `src/app/notifications.cpp`.
+   Keep this intentionally small in PR1.
+   First-pass types:
+   - `enum class NotificationLevel { Info, Warning, Error }`
+   - `struct NotificationMessage`
+   - `class NotificationQueue`
+   This is not a UI system rewrite. It just stops random status strings from
+   being threaded through unrelated code.
+
+5. Add `src/app/deferred_actions.h` and `src/app/deferred_actions.cpp`.
+   Keep this tiny and generic.
+   First-pass API:
+   - `void push(std::function<void()>)`
+   - `void run_all()`
+   - `bool empty() const`
+   Use it only for actions already being effectively deferred via ad hoc flags.
+
+6. Update `src/red.cpp` mechanically.
+   First PR should only replace local-group sprawl with explicit grouped state.
+   Concrete locals to move first:
+   - `UiPathConfig ui_path_config`
+   - `start_folder_name`
+   - `show_help_window`
+   - `show_error`
+   - `error_message`
+   - `video_fps`
+   - `inst_speed`
+   - `set_playback_speed`
+   - `PlaybackState ps`
+   - `SeekProgress seek_progress`
+   - the `stimulus_player` singleton
+   - `ReviewFrameFilters review_frame_filters`
+   - `ReviewFrameCache review_frame_cache`
+   - `review_frame_status`
+   - `decode_debug_status`
+   - `bbox_payload_status`
+   - manual-write preview/settings locals
+   - `g_zarr_bbox_edit_state`
+   Keep behavior identical. Avoid moving controller logic in PR1.
+
+7. Create `tests/` and `tests/fixtures/` if they do not already exist.
+   Recommended first committed fixtures:
+   - `tests/fixtures/palette_small_review.zarr/`
+   - `tests/fixtures/palette_small_eye_masks.zarr/`
+   - `tests/fixtures/palette_small_stimulus.zarr/`
+   - `tests/fixtures/palette_long_sparse.zarr/`
+   The long sparse fixture should have many frames and low per-frame detection
+   counts to guard offset-based lookup behavior for long recordings.
+
+8. Add `tests/test_support.h`.
+   Keep it minimal:
+   - `CRIMSON_TEST_CHECK(cond)`
+   - `CRIMSON_TEST_EQUAL(a, b)`
+   - helper for resolving `tests/fixtures/...` relative to the test file
+
+9. Add `tests/test_app_state_defaults.cpp`.
+   Verify:
+   - new state structs default-construct cleanly
+   - `FeatureState` does not own playback counters
+   - `SessionState` does not own transient drag state
+   - `PlaybackRuntimeState` owns seek/playback/stimulus state and frame-sync
+     counters
+
+10. Add `tests/test_zarr_fixture_detection_lookup.cpp`.
+    Verify against `palette_small_review.zarr` and `palette_long_sparse.zarr`:
+    - archive opens successfully
+    - `getDetectionsForFrame(frame)` matches expected counts
+    - `getBoundingBoxesForFrame(frame)` returns expected rows
+    - sparse far-apart frame lookups behave correctly
+    - refined dataset switching still preserves correct frame-local lookup
+
+11. Add `tests/test_zarr_fixture_eye_mask_chunks.cpp`.
+    Verify against `palette_small_eye_masks.zarr`:
+    - archive opens successfully
+    - eye masks can be requested for selected ROI/frame rows
+    - repeated access to nearby rows succeeds
+    - adjacent chunk prefetch path is exercised indirectly by neighboring ROI
+      requests
+
+12. Add `tests/test_zarr_fixture_stimulus_alignment.cpp`.
+    Verify against `palette_small_stimulus.zarr`:
+    - archive opens successfully
+    - stimulus alignment is detected
+    - representative camera-frame to stimulus-frame lookups are stable
+    - missing or out-of-range frame queries fail cleanly
+
+13. Update `CMakeLists.txt`.
+    For PR1, use simple test executables plus `add_test(...)`.
+    Recommended first targets:
+    - `test_app_state_defaults`
+    - `test_zarr_fixture_detection_lookup`
+    - `test_zarr_fixture_eye_mask_chunks`
+    - `test_zarr_fixture_stimulus_alignment`
+    Link them the same way current small Zarr tools are linked:
+    - `tensorstore::all_drivers`
+    - `Threads::Threads`
+    - `nlohmann_json::nlohmann_json`
+    and the minimum Crimson source files needed for the loader path.
+
+14. PR1 done means:
+    - the app still launches and behaves the same
+    - there is now a `tests/` home for fixture-based regression checks
+    - state is grouped intentionally enough that PR2 can add repository seams
+      without digging through hundreds of unrelated locals first
+
+### PR2: Repository Facades Without Implementation Migration
+
+Goal: define the future public seams while keeping the current loader as the
+backing implementation.
+
+- [ ] Add:
+  - `src/zarr/archive_context.*`
+  - `src/zarr/detection_repository.*`
+  - `src/zarr/eye_mask_repository.*`
+  - `src/zarr/stimulus_repository.*`
+  - `src/zarr/review_write_repository.*`
+- [ ] Implement these as thin adapters over the existing loader first.
+- [ ] Move no heavy logic yet. This PR is about public shape, not code motion.
+- [ ] Update tests to target repository interfaces where possible.
+
+Acceptance:
+
+- UI-facing code can consume repository interfaces without importing
+  TensorStore-heavy details.
+- Existing chunk-sensitive behavior still passes fixture tests.
+- `ZarrDetectionLoader` is no longer the only public seam future UI work can
+  depend on.
+
+### PR3: Review/BBox Workflow Extraction
+
+Goal: prove the new seams by extracting one real workflow from `red.cpp` and
+`gui.h`.
+
+- [ ] Add:
+  - `src/gui/review_panel.*`
+  - `src/gui/bbox_editor_panel.*`
+  - `ReviewController`
+  - `BBoxEditController`
+- [ ] Make the review and bbox-edit path consume:
+  - state buckets from PR1
+  - repository facades from PR2
+- [ ] Remove review/bbox behavior from `src/gui.h` where possible.
+- [ ] Reduce direct review/bbox mutation code in `src/red.cpp`.
+
+Acceptance:
+
+- The review/bbox workflow still works end to end.
+- Review/bbox panel code no longer reaches directly into `ZarrDetectionLoader`
+  internals.
+- `src/gui.h` gets smaller and loses behavior, not just declarations moved
+  around.
+
+## Phase 0: Freeze The Seams
+
+- [ ] Write down the current public contracts that must remain stable during the
+      refactor:
+  - `docs/crimson_detect_bbox_read_contract.md`
+  - `docs/crimson_keypoint_read_contract.md`
+  - `docs/crimson_refined_detect_manual_contract.md`
+  - `docs/crimson_keypoint_manual_write_contract.md`
+  - `zarr_structure.md`
+- [ ] Add a short architecture note to each refactor PR stating:
+  - which public API moved
+  - which contract stayed the same
+  - which large object got smaller
+- [ ] Keep a running inventory of which parts of `red.cpp` and `gui.h` still
+      own real behavior after each phase.
+
+## Phase 0.5: Fixture And Regression Baseline
+
+- [ ] Add miniature Zarr fixtures for the current critical access patterns:
+  - raw detect frame lookup
+  - refined detect manual/interpolated preference
+  - eye mask chunk loading
+  - stimulus alignment lookup
+- [ ] Add a synthetic "long recording" fixture with many frames and sparse
+      detections to guard frame-offset access behavior.
+- [ ] Add tests that lock in current behavior before any repository or loader
+      surgery:
+  - frame-local detection lookup via offsets
+  - eye mask chunk cache + adjacent prefetch
+  - dataset switching behavior
+  - manual review write payload generation where applicable
+- [ ] Make these tests required before Phase 4 implementation migration starts.
+
+## Phase 1: Split Runtime State Without Creating A New God Object
+
+- [ ] Create `src/app/session_state.h`.
+  - Hold current archive path, affiliated video path, calibration info,
+    selected detection dataset, and loaded-run metadata.
+  - Do not put playback counters, temporary drag state, or per-panel toggles
+    here.
+- [ ] Create `src/app/playback_state.h`.
+  - Hold frame number, seek state, play/pause, decoder coordination state, and
+    stimulus playback coordination.
+- [ ] Create `src/app/feature_state.h`.
+  - Hold per-feature UI state now scattered across `red.cpp`, `gui.h`, and
+    globals such as review filters, bbox edit mode, selected box, and active
+    tool toggles.
+- [ ] Move "notification" concerns into `src/app/notifications.*`.
+  - Toasts, warnings, and transient status should no longer be ad hoc strings
+    threaded through unrelated code.
+- [ ] Move deferred one-frame-later actions into `src/app/deferred_actions.*`.
+  - This is a direct inheritance from the useful `rob_ui_overhaul` pattern,
+    but keep it tiny and explicit.
+
+## Phase 2: Kill `gui.h` As An Implementation Sink
+
+- [ ] Inventory every non-trivial function in `src/gui.h`.
+  - Classify each as draw-only, state mutation, IO, parsing, threading, or
+    domain logic.
+- [ ] Move draw-only routines into `src/gui/*.cpp` by workflow:
+  - review / detection browsing
+  - bbox editing
+  - stimulus playback
+  - loading / startup flows
+  - timeline / overlays
+- [ ] Move non-draw routines out of `gui.h` into the correct domain module.
+  - CSV parsing and filesystem traversal do not belong in UI code.
+  - Thread spawning does not belong in UI code.
+  - Triangulation / geometry does not belong in UI code.
+- [ ] Reduce `gui.h` to declarations or delete it once call sites are updated.
+- [ ] Ban new behavior-heavy header-only UI helpers unless they are genuinely
+      tiny and side-effect free.
+
+## Phase 3: Turn `red.cpp` Into A Composition Root
+
+- [ ] Define the maximum responsibilities `red.cpp` is allowed to keep:
+  - bootstrapping the app
+  - wiring module instances together
+  - per-frame dispatch order
+  - high-level shutdown
+- [ ] Extract feature controllers/services from `red.cpp`:
+  - `RecordingLoader`
+  - `PlaybackController`
+  - `ReviewController`
+  - `BBoxEditController`
+  - `StimulusController`
+- [ ] Replace direct mutation of unrelated globals with explicit command calls.
+  - Example: "select detection dataset", "apply frame edits", "schedule seek",
+    "reload archive", "mark review accepted".
+- [ ] Move per-feature initialization and teardown out of `main()`.
+- [ ] Keep `red.cpp` focused on orchestration, not storage details or
+      per-feature state transitions.
+
+## Phase 4: Break `ZarrDetectionLoader` Into Domain APIs
+
+### Phase 4a: Introduce Public Repository Facades
+
+- [ ] Introduce a small shared archive context layer.
+  - Hold TensorStore context, kvstore, root path, and common metadata helpers.
+  - This replaces the need for every domain service to rediscover the archive.
+- [ ] Split the public loader API by domain, even if implementation initially
+      delegates to the current code:
+  - `DetectionRepository`
+  - `KeypointRepository`
+  - `EyeMaskRepository`
+  - `StimulusRepository`
+  - `MovementRepository`
+  - `ReviewWriteRepository`
+- [ ] Move call sites toward those facades before moving implementation.
+- [ ] Keep `ZarrDetectionLoader` as a backend adapter during this phase.
+
+### Phase 4b: Migrate Implementation Behind Those Facades
+
+- [ ] Shrink `ZarrDetectionLoader` so it is no longer the dominant public type.
+- [ ] Move domain-specific data structs beside their domain APIs.
+  - Eye-mask types should not live in the same giant public type as movement
+    series and detect review status.
+- [ ] Keep chunked eye-mask caching local to the eye-mask repository.
+- [ ] Keep flattened per-detection offsets/caches local to the detection
+      repository.
+- [ ] Remove "load everything" assumptions from the public API surface.
+  - Loading detections should not imply loading crop images.
+  - Loading movement data should not imply loading eye masks.
+  - Writing manual detect review should not require the full reader surface.
+
+## Phase 5: Add Narrow Feature Contexts
+
+- [ ] For each major panel/workflow, define a small context struct containing
+      only what that feature needs.
+- [ ] Recommended first contexts:
+  - `ReviewPanelContext`
+  - `BBoxEditorContext`
+  - `StimulusPanelContext`
+  - `PlaybackPanelContext`
+  - `RecordingLoaderContext`
+- [ ] Pass repositories/services into these contexts explicitly.
+- [ ] Do not pass a giant `AppContext` equivalent.
+- [ ] If multiple features need the same state, decide whether it belongs in:
+  - session state
+  - playback state
+  - feature state
+  - a shared service
+  instead of defaulting to "put it in one bigger context".
+
+## Phase 6: Separate Sparse Manual Review Data From Dense Derived Arrays
+
+- [ ] Keep Zarr as the primary store for both sparse and dense data.
+- [ ] Define sparse review/edit payloads explicitly instead of forcing every UI
+      concern through dense arrays.
+- [ ] For manual detection and keypoint review:
+  - expose frame-local read/write APIs
+  - preserve chunked storage for dense backing arrays where it matters
+  - avoid eager full-archive reads when only current-frame review data is needed
+- [ ] Treat CSV/JSON exports as interchange/debug outputs, not the canonical
+      storage model.
+
+## Phase 7: Testing And Verification
+
+- [ ] Expand repository-level tests against the miniature fixture Zarr archives.
+- [ ] Add tests for chunk-sensitive paths:
+  - eye mask chunk reads
+  - neighboring chunk prefetch
+  - frame-local detection lookup via offsets
+- [ ] Add controller/state tests that do not require full GUI boot:
+  - seek state transitions
+  - dataset switching
+  - edit-apply-discard flows
+  - review acceptance payload generation
+- [ ] Add at least one integration test proving that a long recording can:
+  - open
+  - seek
+  - render current-frame detections
+  - access eye masks without bulk-loading unrelated data
+
+## Suggested Execution Order
+
+1. Phase 0: freeze contracts and seams
+2. Phase 0.5: land fixture archives and regression tests
+3. Phase 1: state split
+4. Phase 4a: public repository facades
+5. Phase 2: `gui.h` extraction
+6. Phase 3: `red.cpp` controller extraction
+7. Phase 4b: implementation migration behind repository seams
+8. Phase 5: narrow feature contexts
+9. Phase 6: sparse-vs-dense review API cleanup
+10. Phase 7: tests and acceptance hardening
+
+## Success Criteria
+
+- `src/red.cpp` is mostly orchestration, not domain behavior, and is under
+  4,000 lines.
+- `src/gui.h` is either deleted or reduced to a narrow declaration-only file of
+  roughly 150 lines or less.
+- No single public loader class owns detections, keypoints, eye masks,
+  stimulus, movement, and writeback together.
+- No file under `src/gui/` includes `zarr_loader.h` directly.
+- Review and bbox panels do not call TensorStore or kvstore APIs directly.
+- Zarr remains the canonical storage layer.
+- Chunk-aware paths for large recordings still exist where they matter.
+- Fixture tests cover long-recording frame access and chunk-sensitive paths.
+- Adding a new UI workflow no longer requires touching all of:
+  `red.cpp`, `gui.h`, and `zarr_loader.h`.
+
+## Explicit Anti-Goals
+
+- Replacing Zarr with CSV snapshots.
+- Porting `rob_ui_overhaul` literally.
+- Introducing a framework-heavy abstraction layer before the current seams are
+  stable.
+- Pausing feature work for a giant all-at-once rewrite.
+- Changing read/write contracts and application structure in the same commit
+  without a very strong reason.
