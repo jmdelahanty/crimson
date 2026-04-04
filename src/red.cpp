@@ -253,7 +253,8 @@ struct PerfLogWriter {
             << "camera_decode_write_ms,camera_decode_pipeline_ms,"
             << "visible_camera_count,"
             << "main_buffer_mode,playback_preview_scale,playback_preview_active,"
-            << "playback_renderer_mode,"
+            << "playback_renderer_mode,playback_render_scale,"
+            << "playback_render_scale_active,"
             << "camera_viewport_width_px,camera_viewport_height_px,"
             << "camera_view_x_min,camera_view_x_max,"
             << "camera_view_y_min,camera_view_y_max,"
@@ -488,6 +489,7 @@ int main(int argc, char **argv) {
     int label_buffer_size = 100;
     int playback_preview_scale_mode = 0;
     int playback_renderer_mode = 1;
+    int playback_render_scale_mode = 0;
     int stimulus_buffer_size = 12;
     bool stimulus_use_cpu_buffer = false;
 #ifdef _WIN32
@@ -851,8 +853,6 @@ int main(int argc, char **argv) {
         switch (playback_renderer_mode) {
         case 1:
             return "lightweight";
-        case 2:
-            return "custom_widget";
         default:
             return "standard";
         }
@@ -862,8 +862,31 @@ int main(int argc, char **argv) {
         return ps.play_video && playback_renderer_mode == 1;
     };
 
-    auto playbackCustomRendererIsActive = [&]() -> bool {
-        return ps.play_video && playback_renderer_mode == 2;
+    auto playbackRenderScaleFactor = [&]() -> double {
+        switch (playback_render_scale_mode) {
+        case 1:
+            return 0.75;
+        case 2:
+            return 0.5;
+        default:
+            return 1.0;
+        }
+    };
+
+    auto playbackRenderScaleLabel = [&]() -> const char* {
+        switch (playback_render_scale_mode) {
+        case 1:
+            return "0.75x";
+        case 2:
+            return "0.5x";
+        default:
+            return "1x";
+        }
+    };
+
+    auto playbackRenderScaleIsActive = [&]() -> bool {
+        return playbackLightweightRendererIsActive() &&
+               playbackRenderScaleFactor() < 1.0;
     };
 
     auto stepPausedFrameFromBuffer = [&](int target_frame) -> bool {
@@ -2275,19 +2298,37 @@ int main(int argc, char **argv) {
             }
             {
                 const char *items[] = {"Standard Renderer",
-                                       "Lightweight Playback Renderer",
-                                       "Custom Playback Widget"};
+                                       "Lightweight Playback Renderer"};
                 ImGui::Combo("Playback Renderer", &playback_renderer_mode,
                              items, IM_ARRAYSIZE(items));
-                if (playback_renderer_mode == 1 ||
-                    playback_renderer_mode == 2) {
+                if (playback_renderer_mode == 1) {
                     if (!ps.play_video) {
                         ImGui::TextDisabled(
-                            "Playback-specific renderers apply only during playback; paused inspection keeps the full plot path.");
+                            "The lightweight renderer applies only during playback; paused inspection keeps the full plot path.");
                     } else {
                         ImGui::Text(
                             "Active playback renderer: %s",
                             playbackRendererModeLabel());
+                    }
+                }
+            }
+            {
+                const char *items[] = {"Full Viewport (1x)",
+                                       "Three-Quarter Viewport (0.75x)",
+                                       "Half Viewport (0.5x)"};
+                ImGui::Combo("Playback Render Scale",
+                             &playback_render_scale_mode,
+                             items, IM_ARRAYSIZE(items));
+                if (playback_render_scale_mode != 0) {
+                    if (playback_renderer_mode != 1) {
+                        ImGui::TextDisabled(
+                            "Playback render scale currently applies only to the Lightweight Playback Renderer.");
+                    } else if (!ps.play_video) {
+                        ImGui::TextDisabled(
+                            "Playback render scale applies only during playback; paused inspection returns to the full viewport.");
+                    } else {
+                        ImGui::Text("Effective render scale: %s",
+                                    playbackRenderScaleLabel());
                     }
                 }
             }
@@ -3824,408 +3865,6 @@ int main(int argc, char **argv) {
                         }
                     }
 
-                    const bool custom_playback_renderer_active =
-                        playbackCustomRendererIsActive() && !yolo_detection;
-
-                    if (custom_playback_renderer_active) {
-                        auto &camera = scene->cameras[j];
-                        const double image_width =
-                            static_cast<double>(camera.image_width);
-                        const double image_height =
-                            static_cast<double>(camera.image_height);
-                        if (!camera.playback_view_initialized ||
-                            camera.playback_view_x_max <= camera.playback_view_x_min ||
-                            camera.playback_view_y_max <= camera.playback_view_y_min) {
-                            camera.playback_view_initialized = true;
-                            camera.playback_view_x_min = 0.0;
-                            camera.playback_view_x_max = image_width;
-                            camera.playback_view_y_min = 0.0;
-                            camera.playback_view_y_max = image_height;
-                        }
-
-                        const float image_aspect =
-                            image_width > 0.0 ? static_cast<float>(image_height / image_width)
-                                              : 1.0f;
-                        ImVec2 widget_size = avail_size;
-                        widget_size.y = widget_size.x * image_aspect;
-                        if (widget_size.y > avail_size.y && avail_size.y > 0.0f) {
-                            widget_size.y = avail_size.y;
-                            widget_size.x =
-                                widget_size.y / std::max(image_aspect, 1e-6f);
-                        }
-                        if (widget_size.x <= 0.0f || widget_size.y <= 0.0f) {
-                            widget_size = ImVec2(static_cast<float>(camera.image_width),
-                                                 static_cast<float>(camera.image_height));
-                        }
-
-                        const float horizontal_pad =
-                            std::max(0.0f, (avail_size.x - widget_size.x) * 0.5f);
-                        ImVec2 widget_origin = ImGui::GetCursorScreenPos();
-                        if (horizontal_pad > 0.0f) {
-                            ImGui::SetCursorScreenPos(
-                                ImVec2(widget_origin.x + horizontal_pad,
-                                       widget_origin.y));
-                            widget_origin = ImGui::GetCursorScreenPos();
-                        }
-
-                        const std::string widget_id =
-                            "##camera_playback_widget_" + std::to_string(j);
-                        const auto camera_plot_image_ui_start =
-                            std::chrono::steady_clock::now();
-                        ImGui::InvisibleButton(widget_id.c_str(), widget_size,
-                                               ImGuiButtonFlags_MouseButtonLeft |
-                                                   ImGuiButtonFlags_MouseButtonRight |
-                                                   ImGuiButtonFlags_MouseButtonMiddle);
-                        const ImVec2 widget_min = ImGui::GetItemRectMin();
-                        const ImVec2 widget_max = ImGui::GetItemRectMax();
-                        const ImVec2 widget_draw_size =
-                            ImVec2(widget_max.x - widget_min.x,
-                                   widget_max.y - widget_min.y);
-                        const bool widget_hovered = ImGui::IsItemHovered();
-                        const bool widget_active = ImGui::IsItemActive();
-                        is_view_focused[j] = widget_hovered || widget_active;
-
-                        auto clampPlaybackView = [&]() {
-                            double view_width = std::clamp(
-                                camera.playback_view_x_max -
-                                    camera.playback_view_x_min,
-                                32.0, image_width);
-                            double view_height = std::clamp(
-                                camera.playback_view_y_max -
-                                    camera.playback_view_y_min,
-                                32.0, image_height);
-                            if (camera.playback_view_x_min < 0.0) {
-                                camera.playback_view_x_max -=
-                                    camera.playback_view_x_min;
-                                camera.playback_view_x_min = 0.0;
-                            }
-                            if (camera.playback_view_y_min < 0.0) {
-                                camera.playback_view_y_max -=
-                                    camera.playback_view_y_min;
-                                camera.playback_view_y_min = 0.0;
-                            }
-                            if (camera.playback_view_x_max > image_width) {
-                                const double overflow =
-                                    camera.playback_view_x_max - image_width;
-                                camera.playback_view_x_min -= overflow;
-                                camera.playback_view_x_max = image_width;
-                            }
-                            if (camera.playback_view_y_max > image_height) {
-                                const double overflow =
-                                    camera.playback_view_y_max - image_height;
-                                camera.playback_view_y_min -= overflow;
-                                camera.playback_view_y_max = image_height;
-                            }
-                            camera.playback_view_x_min = std::clamp(
-                                camera.playback_view_x_min, 0.0,
-                                std::max(0.0, image_width - view_width));
-                            camera.playback_view_y_min = std::clamp(
-                                camera.playback_view_y_min, 0.0,
-                                std::max(0.0, image_height - view_height));
-                            camera.playback_view_x_max =
-                                camera.playback_view_x_min + view_width;
-                            camera.playback_view_y_max =
-                                camera.playback_view_y_min + view_height;
-                        };
-
-                        auto imageToScreen = [&](double x, double y) -> ImVec2 {
-                            const double view_width =
-                                std::max(1e-6, camera.playback_view_x_max -
-                                                    camera.playback_view_x_min);
-                            const double view_height =
-                                std::max(1e-6, camera.playback_view_y_max -
-                                                    camera.playback_view_y_min);
-                            const float sx =
-                                widget_min.x +
-                                static_cast<float>((x - camera.playback_view_x_min) /
-                                                   view_width) *
-                                    widget_draw_size.x;
-                            const float sy =
-                                widget_min.y +
-                                static_cast<float>((y - camera.playback_view_y_min) /
-                                                   view_height) *
-                                    widget_draw_size.y;
-                            return ImVec2(sx, sy);
-                        };
-
-                        auto screenToImage = [&](ImVec2 p) -> ImVec2 {
-                            const double view_width =
-                                std::max(1e-6, camera.playback_view_x_max -
-                                                    camera.playback_view_x_min);
-                            const double view_height =
-                                std::max(1e-6, camera.playback_view_y_max -
-                                                    camera.playback_view_y_min);
-                            const double rel_x =
-                                widget_draw_size.x > 0.0f
-                                    ? std::clamp((p.x - widget_min.x) /
-                                                     widget_draw_size.x,
-                                                 0.0f, 1.0f)
-                                    : 0.0f;
-                            const double rel_y =
-                                widget_draw_size.y > 0.0f
-                                    ? std::clamp((p.y - widget_min.y) /
-                                                     widget_draw_size.y,
-                                                 0.0f, 1.0f)
-                                    : 0.0f;
-                            return ImVec2(
-                                static_cast<float>(camera.playback_view_x_min +
-                                                   rel_x * view_width),
-                                static_cast<float>(camera.playback_view_y_min +
-                                                   rel_y * view_height));
-                        };
-
-                        if (widget_hovered) {
-                            const float wheel = ImGui::GetIO().MouseWheel;
-                            if (std::fabs(wheel) > 0.0f) {
-                                const ImVec2 mouse_img =
-                                    screenToImage(ImGui::GetIO().MousePos);
-                                const double current_width =
-                                    camera.playback_view_x_max -
-                                    camera.playback_view_x_min;
-                                const double current_height =
-                                    camera.playback_view_y_max -
-                                    camera.playback_view_y_min;
-                                const double zoom_factor =
-                                    wheel > 0.0f ? 0.9 : (1.0 / 0.9);
-                                const double new_width = std::clamp(
-                                    current_width * zoom_factor, 32.0,
-                                    image_width);
-                                const double new_height = std::clamp(
-                                    current_height * zoom_factor, 32.0,
-                                    image_height);
-                                const double rel_x =
-                                    current_width > 0.0
-                                        ? (mouse_img.x -
-                                           static_cast<float>(
-                                               camera.playback_view_x_min)) /
-                                              current_width
-                                        : 0.5;
-                                const double rel_y =
-                                    current_height > 0.0
-                                        ? (mouse_img.y -
-                                           static_cast<float>(
-                                               camera.playback_view_y_min)) /
-                                              current_height
-                                        : 0.5;
-                                camera.playback_view_x_min =
-                                    static_cast<double>(mouse_img.x) -
-                                    rel_x * new_width;
-                                camera.playback_view_y_min =
-                                    static_cast<double>(mouse_img.y) -
-                                    rel_y * new_height;
-                                camera.playback_view_x_max =
-                                    camera.playback_view_x_min + new_width;
-                                camera.playback_view_y_max =
-                                    camera.playback_view_y_min + new_height;
-                                clampPlaybackView();
-                            }
-                            if (ImGui::IsMouseDragging(ImGuiMouseButton_Left,
-                                                       0.0f)) {
-                                const ImVec2 delta = ImGui::GetIO().MouseDelta;
-                                const double view_width =
-                                    camera.playback_view_x_max -
-                                    camera.playback_view_x_min;
-                                const double view_height =
-                                    camera.playback_view_y_max -
-                                    camera.playback_view_y_min;
-                                if (widget_draw_size.x > 0.0f &&
-                                    widget_draw_size.y > 0.0f) {
-                                    camera.playback_view_x_min -=
-                                        static_cast<double>(delta.x) *
-                                        view_width / widget_draw_size.x;
-                                    camera.playback_view_x_max -=
-                                        static_cast<double>(delta.x) *
-                                        view_width / widget_draw_size.x;
-                                    camera.playback_view_y_min -=
-                                        static_cast<double>(delta.y) *
-                                        view_height / widget_draw_size.y;
-                                    camera.playback_view_y_max -=
-                                        static_cast<double>(delta.y) *
-                                        view_height / widget_draw_size.y;
-                                    clampPlaybackView();
-                                }
-                            }
-                            if (ImGui::IsMouseDoubleClicked(
-                                    ImGuiMouseButton_Right)) {
-                                camera.playback_view_x_min = 0.0;
-                                camera.playback_view_x_max = image_width;
-                                camera.playback_view_y_min = 0.0;
-                                camera.playback_view_y_max = image_height;
-                                clampPlaybackView();
-                            }
-                        }
-
-                        clampPlaybackView();
-
-                        ImDrawList *draw_list = ImGui::GetWindowDrawList();
-                        draw_list->AddImage(
-                            (ImTextureID)(intptr_t)camera.image_texture,
-                            widget_min, widget_max,
-                            ImVec2(static_cast<float>(camera.playback_view_x_min /
-                                                      image_width),
-                                   static_cast<float>(camera.playback_view_y_min /
-                                                      image_height)),
-                            ImVec2(static_cast<float>(camera.playback_view_x_max /
-                                                      image_width),
-                                   static_cast<float>(camera.playback_view_y_max /
-                                                      image_height)));
-
-                        perf_camera_viewport_width_px =
-                            static_cast<double>(widget_draw_size.x);
-                        perf_camera_viewport_height_px =
-                            static_cast<double>(widget_draw_size.y);
-                        perf_camera_view_x_min = camera.playback_view_x_min;
-                        perf_camera_view_x_max = camera.playback_view_x_max;
-                        perf_camera_view_y_min = camera.playback_view_y_min;
-                        perf_camera_view_y_max = camera.playback_view_y_max;
-                        const double visible_width =
-                            camera.playback_view_x_max -
-                            camera.playback_view_x_min;
-                        const double visible_height =
-                            camera.playback_view_y_max -
-                            camera.playback_view_y_min;
-                        const double total_area = image_width * image_height;
-                        const double visible_area =
-                            std::max(0.0, visible_width) *
-                            std::max(0.0, visible_height);
-                        perf_camera_view_visible_fraction =
-                            total_area > 0.0
-                                ? std::clamp(visible_area / total_area, 0.0,
-                                             1.0)
-                                : std::numeric_limits<double>::quiet_NaN();
-                        perf_camera_view_zoomed_in =
-                            (visible_width < (image_width - 1.0) ||
-                             visible_height < (image_height - 1.0))
-                                ? 1
-                                : 0;
-                        frame_camera_plot_image_ui_ms += durationMs(
-                            std::chrono::steady_clock::now() -
-                            camera_plot_image_ui_start);
-
-                        const auto camera_overlay_ui_start =
-                            std::chrono::steady_clock::now();
-                        if (zarr_loaded) {
-                            const int query_frame = current_frame_num;
-                            std::vector<LoggedBoundingBox> zarr_boxes =
-                                zarr_loader.getBoundingBoxesForFrame(query_frame);
-                            for (const auto &box : zarr_boxes) {
-                                const ImVec2 p0 = imageToScreen(box.x_min, box.y_min);
-                                const ImVec2 p1 = imageToScreen(box.x_min + box.width,
-                                                                box.y_min + box.height);
-                                draw_list->AddRect(
-                                    p0, p1, IM_COL32(51, 153, 255, 255), 0.0f, 0,
-                                    2.0f);
-                            }
-
-                            if (show_keypoint_markers) {
-                                auto detection_details =
-                                    zarr_loader.getRawDetections(query_frame, false);
-                                const size_t kp_per_det =
-                                    detection_details.keypoints_per_detection;
-                                auto chooseColor = [&](size_t kp_idx) -> ImU32 {
-                                    std::string label;
-                                    if (kp_idx <
-                                        detection_details.keypoint_labels.size()) {
-                                        label =
-                                            detection_details.keypoint_labels[kp_idx];
-                                        std::transform(
-                                            label.begin(), label.end(),
-                                            label.begin(),
-                                            [](unsigned char c) {
-                                                return static_cast<char>(
-                                                    std::tolower(c));
-                                            });
-                                    }
-                                    if (label.find("swim") !=
-                                            std::string::npos ||
-                                        label.find("bladder") !=
-                                            std::string::npos) {
-                                        return IM_COL32(255, 217, 38, 255);
-                                    }
-                                    if (label.find("left") != std::string::npos) {
-                                        return IM_COL32(77, 242, 102, 255);
-                                    }
-                                    if (label.find("right") != std::string::npos) {
-                                        return IM_COL32(191, 102, 242, 255);
-                                    }
-                                    static const ImU32 fallback_colors[] = {
-                                        IM_COL32(242, 153, 51, 255),
-                                        IM_COL32(89, 217, 140, 255),
-                                        IM_COL32(153, 128, 242, 255),
-                                        IM_COL32(242, 102, 102, 255),
-                                        IM_COL32(102, 191, 242, 255)};
-                                    return fallback_colors[kp_idx %
-                                                           (sizeof(fallback_colors) /
-                                                            sizeof(fallback_colors[0]))];
-                                };
-
-                                const size_t detection_count = std::min(
-                                    detection_details.keypoints_pixels.size(),
-                                    detection_details.boxes.size());
-                                if (!detection_details.skeleton_edges.empty()) {
-                                    for (size_t det_idx = 0;
-                                         det_idx < detection_count; ++det_idx) {
-                                        const auto &keypoints =
-                                            detection_details.keypoints_pixels[det_idx];
-                                        if (keypoints.size() != kp_per_det) {
-                                            continue;
-                                        }
-                                        for (const auto &edge :
-                                             detection_details.skeleton_edges) {
-                                            size_t a = edge[0];
-                                            size_t b = edge[1];
-                                            if (a >= kp_per_det ||
-                                                b >= kp_per_det) {
-                                                continue;
-                                            }
-                                            float ax = keypoints[a][0];
-                                            float ay = keypoints[a][1];
-                                            float bx = keypoints[b][0];
-                                            float by = keypoints[b][1];
-                                            if (!std::isfinite(ax) ||
-                                                !std::isfinite(ay) ||
-                                                !std::isfinite(bx) ||
-                                                !std::isfinite(by)) {
-                                                continue;
-                                            }
-                                            draw_list->AddLine(
-                                                imageToScreen(ax, ay),
-                                                imageToScreen(bx, by),
-                                                IM_COL32(255, 255, 255, 160),
-                                                1.5f);
-                                        }
-                                    }
-                                }
-                                for (size_t det_idx = 0;
-                                     det_idx < detection_count; ++det_idx) {
-                                    const auto &keypoints =
-                                        detection_details.keypoints_pixels[det_idx];
-                                    if (keypoints.size() != kp_per_det) {
-                                        continue;
-                                    }
-                                    for (size_t kp_idx = 0; kp_idx < kp_per_det;
-                                         ++kp_idx) {
-                                        const auto &kp = keypoints[kp_idx];
-                                        if (!std::isfinite(kp[0]) ||
-                                            !std::isfinite(kp[1])) {
-                                            continue;
-                                        }
-                                        const ImVec2 center =
-                                            imageToScreen(kp[0], kp[1]);
-                                        const ImU32 color = chooseColor(kp_idx);
-                                        draw_list->AddCircleFilled(center, 3.5f,
-                                                                   color, 12);
-                                        draw_list->AddCircle(center, 3.5f,
-                                                             IM_COL32(0, 0, 0, 220),
-                                                             12, 1.0f);
-                                    }
-                                }
-                            }
-                        }
-                        frame_camera_overlay_ui_ms += durationMs(
-                            std::chrono::steady_clock::now() -
-                            camera_overlay_ui_start);
-                    } else {
                     ImPlotInputMap& plot_input_map = ImPlot::GetInputMap();
                     const int previous_plot_pan_mod = plot_input_map.PanMod;
                     bool restore_plot_pan_mod = false;
@@ -4290,7 +3929,24 @@ int main(int argc, char **argv) {
                     }
                     const auto camera_plot_image_ui_start =
                         std::chrono::steady_clock::now();
-                    if (ImPlot::BeginPlot("##no_plot_name", avail_size, scene_plot_flags)) {
+                    ImVec2 scene_plot_size = avail_size;
+                    if (playbackRenderScaleIsActive()) {
+                        const float render_scale =
+                            static_cast<float>(playbackRenderScaleFactor());
+                        scene_plot_size.x =
+                            std::max(64.0f, avail_size.x * render_scale);
+                        scene_plot_size.y =
+                            std::max(64.0f, avail_size.y * render_scale);
+                        const ImVec2 cursor_pos = ImGui::GetCursorPos();
+                        const float pad_x = std::max(
+                            0.0f, (avail_size.x - scene_plot_size.x) * 0.5f);
+                        const float pad_y = std::max(
+                            0.0f, (avail_size.y - scene_plot_size.y) * 0.5f);
+                        ImGui::SetCursorPos(
+                            ImVec2(cursor_pos.x + pad_x, cursor_pos.y + pad_y));
+                    }
+                    if (ImPlot::BeginPlot("##no_plot_name", scene_plot_size,
+                                          scene_plot_flags)) {
                         if (lightweight_playback_renderer_active) {
                             constexpr ImPlotAxisFlags kPlaybackAxisFlags =
                                 ImPlotAxisFlags_NoDecorations |
@@ -4361,11 +4017,6 @@ int main(int argc, char **argv) {
                                 visible_fraction;
                             perf_camera_view_zoomed_in =
                                 zoomed_in ? 1 : 0;
-                            scene->cameras[j].playback_view_initialized = true;
-                            scene->cameras[j].playback_view_x_min = clamped_x_min;
-                            scene->cameras[j].playback_view_x_max = clamped_x_max;
-                            scene->cameras[j].playback_view_y_min = clamped_y_min;
-                            scene->cameras[j].playback_view_y_max = clamped_y_max;
                         }
                         frame_camera_plot_image_ui_ms += durationMs(
                             std::chrono::steady_clock::now() -
@@ -6313,6 +5964,33 @@ struct StateOverlay {
                             }
                         }     
                         ImPlot::EndPlot();
+                        if (swap_playback_surface_after_draw) {
+                            auto &camera = scene->cameras[j];
+                            const auto swap_start =
+                                std::chrono::steady_clock::now();
+                            std::swap(camera.image_texture,
+                                      camera.playback_staging_texture);
+                            std::swap(camera.pbo_cuda,
+                                      camera.playback_staging_pbo);
+                            std::swap(camera.applied_preview_sampling_mode,
+                                      camera.playback_staging_preview_sampling_mode);
+                            const int previous_front_frame =
+                                camera.last_uploaded_frame;
+                            const bool previous_front_valid =
+                                camera.texture_has_valid_frame;
+                            camera.last_uploaded_frame =
+                                camera.playback_staging_frame;
+                            camera.texture_has_valid_frame =
+                                camera.playback_staging_valid;
+                            camera.playback_staging_frame =
+                                previous_front_frame;
+                            camera.playback_staging_valid =
+                                previous_front_valid;
+                            swap_playback_surface_after_draw = false;
+                            frame_camera_playback_swap_ms += durationMs(
+                                std::chrono::steady_clock::now() -
+                                swap_start);
+                        }
                         frame_camera_overlay_ui_ms += durationMs(
                             std::chrono::steady_clock::now() -
                             camera_overlay_ui_start);
@@ -6325,33 +6003,6 @@ struct StateOverlay {
                     }
                     if (scene_plot_style_var_count > 0) {
                         ImPlot::PopStyleVar(scene_plot_style_var_count);
-                    }
-                    }
-                    if (swap_playback_surface_after_draw) {
-                        auto &camera = scene->cameras[j];
-                        const auto swap_start =
-                            std::chrono::steady_clock::now();
-                        std::swap(camera.image_texture,
-                                  camera.playback_staging_texture);
-                        std::swap(camera.pbo_cuda,
-                                  camera.playback_staging_pbo);
-                        std::swap(camera.applied_preview_sampling_mode,
-                                  camera.playback_staging_preview_sampling_mode);
-                        const int previous_front_frame =
-                            camera.last_uploaded_frame;
-                        const bool previous_front_valid =
-                            camera.texture_has_valid_frame;
-                        camera.last_uploaded_frame =
-                            camera.playback_staging_frame;
-                        camera.texture_has_valid_frame =
-                            camera.playback_staging_valid;
-                        camera.playback_staging_frame =
-                            previous_front_frame;
-                        camera.playback_staging_valid =
-                            previous_front_valid;
-                        swap_playback_surface_after_draw = false;
-                        frame_camera_playback_swap_ms += durationMs(
-                            std::chrono::steady_clock::now() - swap_start);
                     }
 
                     ImGui::EndChild();
@@ -9255,6 +8906,8 @@ struct StateOverlay {
                     << playbackPreviewScaleLabel() << ","
                     << (playbackPreviewIsActive() ? 1 : 0) << ","
                     << playbackRendererModeLabel() << ","
+                    << playbackRenderScaleLabel() << ","
+                    << (playbackRenderScaleIsActive() ? 1 : 0) << ","
                     << perf_camera_viewport_width_px << ","
                     << perf_camera_viewport_height_px << ","
                     << perf_camera_view_x_min << ","
@@ -9340,6 +8993,9 @@ struct StateOverlay {
                       {"playback_preview_scale", playbackPreviewScaleLabel()},
                       {"playback_preview_active", playbackPreviewIsActive()},
                       {"playback_renderer_mode", playbackRendererModeLabel()},
+                      {"playback_render_scale", playbackRenderScaleLabel()},
+                      {"playback_render_scale_active",
+                       playbackRenderScaleIsActive()},
                       {"viewport_width_px", perf_camera_viewport_width_px},
                       {"viewport_height_px", perf_camera_viewport_height_px},
                       {"view_x_min", perf_camera_view_x_min},
