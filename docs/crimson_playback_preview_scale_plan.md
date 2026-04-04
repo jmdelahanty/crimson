@@ -55,6 +55,11 @@ fidelity for paused inspection or downstream data.
 
 This is a **display-only** optimization.
 
+For the larger follow-on architecture that stores compact main-camera frames and
+converts only the displayed frame, see:
+
+- [docs/crimson_main_camera_late_conversion_plan.md](./crimson_main_camera_late_conversion_plan.md)
+
 It does **not**:
 
 - change the source video
