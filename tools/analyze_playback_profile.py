@@ -57,9 +57,17 @@ NUMERIC_COLUMNS = {
     "camera_plot_image_ui_ms": float,
     "camera_overlay_ui_ms": float,
     "camera_scene_ui_ms": float,
+    "file_browser_ui_ms": float,
+    "frame_debug_ui_ms": float,
+    "buffer_window_ui_ms": float,
+    "crop_preview_ui_ms": float,
+    "stimulus_buffer_window_ui_ms": float,
+    "keypoints_window_ui_ms": float,
+    "labeling_tool_ui_ms": float,
     "stimulus_window_ui_ms": float,
     "stimulus_timeline_ui_ms": float,
     "movement_timeline_ui_ms": float,
+    "help_menu_ui_ms": float,
     "gl_draw_ms": float,
     "swap_ms": float,
     "frame_loop_ms": float,
@@ -470,6 +478,27 @@ def build_summary(
     camera_scene_ui_stats = describe(
         [row.get("camera_scene_ui_ms", math.nan) for row in active_rows]
     )
+    file_browser_ui_stats = describe(
+        [row.get("file_browser_ui_ms", math.nan) for row in active_rows]
+    )
+    frame_debug_ui_stats = describe(
+        [row.get("frame_debug_ui_ms", math.nan) for row in active_rows]
+    )
+    buffer_window_ui_stats = describe(
+        [row.get("buffer_window_ui_ms", math.nan) for row in active_rows]
+    )
+    crop_preview_ui_stats = describe(
+        [row.get("crop_preview_ui_ms", math.nan) for row in active_rows]
+    )
+    stimulus_buffer_window_ui_stats = describe(
+        [row.get("stimulus_buffer_window_ui_ms", math.nan) for row in active_rows]
+    )
+    keypoints_window_ui_stats = describe(
+        [row.get("keypoints_window_ui_ms", math.nan) for row in active_rows]
+    )
+    labeling_tool_ui_stats = describe(
+        [row.get("labeling_tool_ui_ms", math.nan) for row in active_rows]
+    )
     stimulus_window_ui_stats = describe(
         [row.get("stimulus_window_ui_ms", math.nan) for row in active_rows]
     )
@@ -478,6 +507,9 @@ def build_summary(
     )
     movement_timeline_ui_stats = describe(
         [row.get("movement_timeline_ui_ms", math.nan) for row in active_rows]
+    )
+    help_menu_ui_stats = describe(
+        [row.get("help_menu_ui_ms", math.nan) for row in active_rows]
     )
     ui_build_stats = describe([row.get("ui_build_ms", math.nan) for row in active_rows])
     imgui_render_stats = describe(
@@ -521,6 +553,27 @@ def build_summary(
         "camera_decode_bound": score_decode_bound(active_rows, budget_ms),
         "camera_upload_bound": score_upload_bound(active_rows, budget_ms),
         "camera_scene_ui_bound": score_camera_scene_ui_bound(active_rows, budget_ms),
+        "file_browser_ui_bound": score_named_panel_bound(
+            active_rows, budget_ms, "file_browser_ui_ms"
+        ),
+        "frame_debug_ui_bound": score_named_panel_bound(
+            active_rows, budget_ms, "frame_debug_ui_ms"
+        ),
+        "buffer_window_ui_bound": score_named_panel_bound(
+            active_rows, budget_ms, "buffer_window_ui_ms"
+        ),
+        "crop_preview_ui_bound": score_named_panel_bound(
+            active_rows, budget_ms, "crop_preview_ui_ms"
+        ),
+        "stimulus_buffer_window_ui_bound": score_named_panel_bound(
+            active_rows, budget_ms, "stimulus_buffer_window_ui_ms"
+        ),
+        "keypoints_window_ui_bound": score_named_panel_bound(
+            active_rows, budget_ms, "keypoints_window_ui_ms"
+        ),
+        "labeling_tool_ui_bound": score_named_panel_bound(
+            active_rows, budget_ms, "labeling_tool_ui_ms"
+        ),
         "stimulus_window_ui_bound": score_named_panel_bound(
             active_rows, budget_ms, "stimulus_window_ui_ms"
         ),
@@ -529,6 +582,9 @@ def build_summary(
         ),
         "movement_timeline_ui_bound": score_named_panel_bound(
             active_rows, budget_ms, "movement_timeline_ui_ms"
+        ),
+        "help_menu_ui_bound": score_named_panel_bound(
+            active_rows, budget_ms, "help_menu_ui_ms"
         ),
         "ui_build_bound": score_ui_build_bound(active_rows, budget_ms),
         "gl_draw_bound": score_draw_bound(active_rows, budget_ms),
@@ -590,9 +646,19 @@ def build_summary(
                 "camera_plot_image_ui_ms": row.get("camera_plot_image_ui_ms"),
                 "camera_overlay_ui_ms": row.get("camera_overlay_ui_ms"),
                 "camera_scene_ui_ms": row.get("camera_scene_ui_ms"),
+                "file_browser_ui_ms": row.get("file_browser_ui_ms"),
+                "frame_debug_ui_ms": row.get("frame_debug_ui_ms"),
+                "buffer_window_ui_ms": row.get("buffer_window_ui_ms"),
+                "crop_preview_ui_ms": row.get("crop_preview_ui_ms"),
+                "stimulus_buffer_window_ui_ms": row.get(
+                    "stimulus_buffer_window_ui_ms"
+                ),
+                "keypoints_window_ui_ms": row.get("keypoints_window_ui_ms"),
+                "labeling_tool_ui_ms": row.get("labeling_tool_ui_ms"),
                 "stimulus_window_ui_ms": row.get("stimulus_window_ui_ms"),
                 "stimulus_timeline_ui_ms": row.get("stimulus_timeline_ui_ms"),
                 "movement_timeline_ui_ms": row.get("movement_timeline_ui_ms"),
+                "help_menu_ui_ms": row.get("help_menu_ui_ms"),
                 "ui_build_ms": row.get("ui_build_ms"),
                 "imgui_render_ms": row.get("imgui_render_ms"),
                 "gl_draw_ms": row.get("gl_draw_ms"),
@@ -649,9 +715,17 @@ def build_summary(
         "camera_plot_image_ui_ms": camera_plot_image_ui_stats,
         "camera_overlay_ui_ms": camera_overlay_ui_stats,
         "camera_scene_ui_ms": camera_scene_ui_stats,
+        "file_browser_ui_ms": file_browser_ui_stats,
+        "frame_debug_ui_ms": frame_debug_ui_stats,
+        "buffer_window_ui_ms": buffer_window_ui_stats,
+        "crop_preview_ui_ms": crop_preview_ui_stats,
+        "stimulus_buffer_window_ui_ms": stimulus_buffer_window_ui_stats,
+        "keypoints_window_ui_ms": keypoints_window_ui_stats,
+        "labeling_tool_ui_ms": labeling_tool_ui_stats,
         "stimulus_window_ui_ms": stimulus_window_ui_stats,
         "stimulus_timeline_ui_ms": stimulus_timeline_ui_stats,
         "movement_timeline_ui_ms": movement_timeline_ui_stats,
+        "help_menu_ui_ms": help_menu_ui_stats,
         "ui_build_ms": ui_build_stats,
         "imgui_render_ms": imgui_render_stats,
         "imgui_draw_cmd_count": imgui_draw_cmd_count_stats,
@@ -703,9 +777,17 @@ def print_summary(summary: dict[str, Any]) -> None:
         "camera_plot_image_ui_ms",
         "camera_overlay_ui_ms",
         "camera_scene_ui_ms",
+        "file_browser_ui_ms",
+        "frame_debug_ui_ms",
+        "buffer_window_ui_ms",
+        "crop_preview_ui_ms",
+        "stimulus_buffer_window_ui_ms",
+        "keypoints_window_ui_ms",
+        "labeling_tool_ui_ms",
         "stimulus_window_ui_ms",
         "stimulus_timeline_ui_ms",
         "movement_timeline_ui_ms",
+        "help_menu_ui_ms",
         "ui_build_ms",
         "imgui_render_ms",
         "imgui_draw_cmd_count",
@@ -772,9 +854,17 @@ def print_summary(summary: dict[str, Any]) -> None:
                 f"plot_image={format_stat(stall.get('camera_plot_image_ui_ms'), 'ms')}, "
                 f"overlay_ui={format_stat(stall.get('camera_overlay_ui_ms'), 'ms')}, "
                 f"scene_ui={format_stat(stall.get('camera_scene_ui_ms'), 'ms')}, "
+                f"file_browser={format_stat(stall.get('file_browser_ui_ms'), 'ms')}, "
+                f"frame_debug={format_stat(stall.get('frame_debug_ui_ms'), 'ms')}, "
+                f"buffer_ui={format_stat(stall.get('buffer_window_ui_ms'), 'ms')}, "
+                f"crop_ui={format_stat(stall.get('crop_preview_ui_ms'), 'ms')}, "
+                f"stim_buffer={format_stat(stall.get('stimulus_buffer_window_ui_ms'), 'ms')}, "
+                f"keypoints_ui={format_stat(stall.get('keypoints_window_ui_ms'), 'ms')}, "
+                f"labeling_ui={format_stat(stall.get('labeling_tool_ui_ms'), 'ms')}, "
                 f"stim_window={format_stat(stall.get('stimulus_window_ui_ms'), 'ms')}, "
                 f"stim_timeline={format_stat(stall.get('stimulus_timeline_ui_ms'), 'ms')}, "
                 f"movement_ui={format_stat(stall.get('movement_timeline_ui_ms'), 'ms')}, "
+                f"help_ui={format_stat(stall.get('help_menu_ui_ms'), 'ms')}, "
                 f"ui={format_stat(stall.get('ui_build_ms'), 'ms')}, "
                 f"imgui_render={format_stat(stall.get('imgui_render_ms'), 'ms')}, "
                 f"draw={format_stat(stall.get('gl_draw_ms'), 'ms')}, "

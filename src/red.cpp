@@ -265,7 +265,11 @@ struct PerfLogWriter {
             << "camera_playback_stage_upload_ms,"
             << "camera_playback_swap_ms,"
             << "camera_plot_image_ui_ms,camera_overlay_ui_ms,camera_scene_ui_ms,"
+            << "file_browser_ui_ms,frame_debug_ui_ms,buffer_window_ui_ms,"
+            << "crop_preview_ui_ms,stimulus_buffer_window_ui_ms,"
+            << "keypoints_window_ui_ms,labeling_tool_ui_ms,"
             << "stimulus_window_ui_ms,stimulus_timeline_ui_ms,movement_timeline_ui_ms,"
+            << "help_menu_ui_ms,"
             << "gl_draw_ms,swap_ms,frame_loop_ms,ui_build_ms,imgui_render_ms,"
             << "imgui_draw_cmd_count,imgui_draw_list_count,imgui_total_vtx_count,"
             << "imgui_total_idx_count,"
@@ -1847,9 +1851,17 @@ int main(int argc, char **argv) {
         double frame_camera_plot_image_ui_ms = 0.0;
         double frame_camera_overlay_ui_ms = 0.0;
         double frame_camera_scene_ui_ms = 0.0;
+        double frame_file_browser_ui_ms = 0.0;
+        double frame_frame_debug_ui_ms = 0.0;
+        double frame_buffer_window_ui_ms = 0.0;
+        double frame_crop_preview_ui_ms = 0.0;
+        double frame_stimulus_buffer_window_ui_ms = 0.0;
+        double frame_keypoints_window_ui_ms = 0.0;
+        double frame_labeling_tool_ui_ms = 0.0;
         double frame_stimulus_window_ui_ms = 0.0;
         double frame_stimulus_timeline_ui_ms = 0.0;
         double frame_movement_timeline_ui_ms = 0.0;
+        double frame_help_menu_ui_ms = 0.0;
         double frame_gl_draw_ms = 0.0;
         double frame_swap_ms = 0.0;
         double frame_ui_build_ms = 0.0;
@@ -2037,6 +2049,7 @@ int main(int argc, char **argv) {
         }
         double playback_time_now = ps.accumulated_play_time;
 
+        const auto file_browser_ui_start = std::chrono::steady_clock::now();
         if (ImGui::Begin("File Browser", NULL, ImGuiWindowFlags_MenuBar)) {
             if (ImGui::BeginMenuBar()) {
                 if (ImGui::BeginMenu("File")) {
@@ -2311,8 +2324,11 @@ int main(int argc, char **argv) {
             }
         }
         ImGui::End();
+        frame_file_browser_ui_ms +=
+            durationMs(std::chrono::steady_clock::now() - file_browser_ui_start);
 
         if (video_loaded) {
+            const auto frame_debug_ui_start = std::chrono::steady_clock::now();
             ImGui::Begin("Frame Debug");
             ImGui::Text("Inspecting Frame: %d", current_frame_num);
             ImGui::Text("Display target frame: %d", ps.to_display_frame_number);
@@ -2877,6 +2893,8 @@ int main(int argc, char **argv) {
             }
 
             ImGui::End();
+            frame_frame_debug_ui_ms +=
+                durationMs(std::chrono::steady_clock::now() - frame_debug_ui_start);
         }
 
         // file explorer display
@@ -3164,6 +3182,7 @@ int main(int argc, char **argv) {
             };
 
             ImGui::SetNextWindowSize(ImVec2(500, 440), ImGuiCond_FirstUseEver);
+            const auto buffer_window_ui_start = std::chrono::steady_clock::now();
             if (ImGui::Begin("Frames in the buffer")) {
                 ImGui::Text("Valid frames: %zu / %u",
                             paused_buffer_items.size(), scene->size_of_buffer);
@@ -3229,6 +3248,8 @@ int main(int argc, char **argv) {
                 };
             }
             ImGui::End();
+            frame_buffer_window_ui_ms +=
+                durationMs(std::chrono::steady_clock::now() - buffer_window_ui_start);
             select_corr_head = getPreferredPausedSlot();
             if (select_corr_head >= 0) {
                 ps.read_head = select_corr_head;
@@ -5975,6 +5996,7 @@ struct StateOverlay {
             ImGui::SetNextWindowSize(ImVec2(300.0f, 300.0f), ImGuiCond_FirstUseEver);
             ImGui::SetNextWindowSizeConstraints(ImVec2(120.0f, 120.0f),
                                                 ImVec2(420.0f, 700.0f));
+            const auto crop_preview_ui_start = std::chrono::steady_clock::now();
             bool crop_window_open = ImGui::Begin("Crop Preview");
             if (crop_window_open) {
                 const auto& movement_frames = zarr_loader.getMovementFrameIndices();
@@ -6397,6 +6419,8 @@ struct StateOverlay {
                 }
             }
             ImGui::End();
+            frame_crop_preview_ui_ms +=
+                durationMs(std::chrono::steady_clock::now() - crop_preview_ui_start);
         }
 
         if (stimulus_player.loaded) {
@@ -6660,6 +6684,8 @@ struct StateOverlay {
                 std::chrono::steady_clock::now() - stimulus_window_ui_start);
 
             ImGui::SetNextWindowSize(ImVec2(500.0f, 440.0f), ImGuiCond_FirstUseEver);
+            const auto stimulus_buffer_window_ui_start =
+                std::chrono::steady_clock::now();
             if (ImGui::Begin("Stimulus Frames in Buffer")) {
                 struct StimulusBufferListItem {
                     int slot = -1;
@@ -6745,9 +6771,13 @@ struct StateOverlay {
                 }
             }
             ImGui::End();
+            frame_stimulus_buffer_window_ui_ms += durationMs(
+                std::chrono::steady_clock::now() - stimulus_buffer_window_ui_start);
         }
 
         if (plot_keypoints_flag) {
+            const auto keypoints_window_ui_start =
+                std::chrono::steady_clock::now();
             if (ImGui::Begin("Keypoints")) {
 
                 const float TEXT_BASE_HEIGHT =
@@ -6847,9 +6877,13 @@ struct StateOverlay {
                 }
             }
             ImGui::End();
+            frame_keypoints_window_ui_ms += durationMs(
+                std::chrono::steady_clock::now() - keypoints_window_ui_start);
         }
 
         if (plot_keypoints_flag) {
+            const auto labeling_tool_ui_start =
+                std::chrono::steady_clock::now();
             if (ImGui::Begin("Labeling Tool")) {
 
                 if (scene->num_cams > 1) {
@@ -6993,6 +7027,8 @@ struct StateOverlay {
                 ImGui::Text("Total labeled frames : %zu", keypoints_map.size());
             }
             ImGui::End();
+            frame_labeling_tool_ui_ms += durationMs(
+                std::chrono::steady_clock::now() - labeling_tool_ui_start);
         }
 
         static bool s_timeline_scrolling_enabled = false;
@@ -8208,6 +8244,7 @@ struct StateOverlay {
         }
 
         if (show_help_window) {
+            const auto help_menu_ui_start = std::chrono::steady_clock::now();
             if (ImGui::Begin("Help Menu")) {
                 ImGui::Text("<Space>: toggle play and pause");
                 ImGui::Text("<Left Arrow>    : Seek backward");
@@ -8242,6 +8279,8 @@ struct StateOverlay {
                 ImGui::Text("Click keypoint to active it");
             }
             ImGui::End();
+            frame_help_menu_ui_ms +=
+                durationMs(std::chrono::steady_clock::now() - help_menu_ui_start);
         }
 
         if (show_error) {
@@ -8518,9 +8557,17 @@ struct StateOverlay {
                     << frame_camera_plot_image_ui_ms << ","
                     << frame_camera_overlay_ui_ms << ","
                     << frame_camera_scene_ui_ms << ","
+                    << frame_file_browser_ui_ms << ","
+                    << frame_frame_debug_ui_ms << ","
+                    << frame_buffer_window_ui_ms << ","
+                    << frame_crop_preview_ui_ms << ","
+                    << frame_stimulus_buffer_window_ui_ms << ","
+                    << frame_keypoints_window_ui_ms << ","
+                    << frame_labeling_tool_ui_ms << ","
                     << frame_stimulus_window_ui_ms << ","
                     << frame_stimulus_timeline_ui_ms << ","
                     << frame_movement_timeline_ui_ms << ","
+                    << frame_help_menu_ui_ms << ","
                     << frame_gl_draw_ms << ","
                     << frame_swap_ms << "," << frame_loop_ms << ","
                     << frame_ui_build_ms << ","
