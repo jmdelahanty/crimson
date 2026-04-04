@@ -35,6 +35,7 @@ NUMERIC_COLUMNS = {
     "camera_decode_pipeline_ms": float,
     "visible_camera_count": int,
     "playback_preview_active": int,
+    "playback_render_scale_active": int,
     "camera_viewport_width_px": float,
     "camera_viewport_height_px": float,
     "camera_view_x_min": float,
