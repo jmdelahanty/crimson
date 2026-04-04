@@ -54,260 +54,6 @@ simplelogger::Logger *logger =
 #include "ui_path_config.h"
 #include "zarr_bbox_edit.h"
 
-namespace {
-
-struct Nv12PlaybackPresenter {
-    GLuint program = 0;
-    GLuint vao = 0;
-    GLuint vbo = 0;
-    GLint luma_texture_location = -1;
-    GLint chroma_texture_location = -1;
-    GLint yuv_matrix_location = -1;
-};
-
-static GLuint compileGlShader(GLenum shader_type, const char *source) {
-    GLuint shader = glCreateShader(shader_type);
-    glShaderSource(shader, 1, &source, nullptr);
-    glCompileShader(shader);
-
-    GLint compile_status = GL_FALSE;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &compile_status);
-    if (compile_status != GL_TRUE) {
-        GLint log_length = 0;
-        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &log_length);
-        std::string log(static_cast<size_t>(std::max(log_length, 1)), '\0');
-        glGetShaderInfoLog(shader, log_length, nullptr, log.data());
-        std::cerr << "OpenGL shader compilation failed: " << log << std::endl;
-    }
-    return shader;
-}
-
-static void ensureNv12PlaybackPresenter(Nv12PlaybackPresenter *presenter) {
-    if (presenter == nullptr || presenter->program != 0) {
-        return;
-    }
-
-    static const char *kVertexShader = R"GLSL(
-        #version 130
-        attribute vec2 aPos;
-        attribute vec2 aUV;
-        varying vec2 vUV;
-
-        void main() {
-            vUV = aUV;
-            gl_Position = vec4(aPos, 0.0, 1.0);
-        }
-    )GLSL";
-
-    static const char *kFragmentShader = R"GLSL(
-        #version 130
-        uniform sampler2D uLumaTex;
-        uniform sampler2D uChromaTex;
-        uniform mat3 uYuvToRgb;
-        varying vec2 vUV;
-
-        void main() {
-            float y = texture2D(uLumaTex, vUV).r * 255.0 - 16.0;
-            vec2 uv = texture2D(uChromaTex, vUV).rg * 255.0 - vec2(128.0, 128.0);
-            vec3 rgb = clamp(uYuvToRgb * vec3(y, uv), 0.0, 1.0);
-            gl_FragColor = vec4(rgb, 1.0);
-        }
-    )GLSL";
-
-    GLuint vertex_shader = compileGlShader(GL_VERTEX_SHADER, kVertexShader);
-    GLuint fragment_shader =
-        compileGlShader(GL_FRAGMENT_SHADER, kFragmentShader);
-
-    presenter->program = glCreateProgram();
-    glAttachShader(presenter->program, vertex_shader);
-    glAttachShader(presenter->program, fragment_shader);
-    glBindAttribLocation(presenter->program, 0, "aPos");
-    glBindAttribLocation(presenter->program, 1, "aUV");
-    glLinkProgram(presenter->program);
-
-    GLint link_status = GL_FALSE;
-    glGetProgramiv(presenter->program, GL_LINK_STATUS, &link_status);
-    if (link_status != GL_TRUE) {
-        GLint log_length = 0;
-        glGetProgramiv(presenter->program, GL_INFO_LOG_LENGTH, &log_length);
-        std::string log(static_cast<size_t>(std::max(log_length, 1)), '\0');
-        glGetProgramInfoLog(presenter->program, log_length, nullptr, log.data());
-        std::cerr << "OpenGL NV12 playback program link failed: " << log
-                  << std::endl;
-    }
-
-    glDeleteShader(vertex_shader);
-    glDeleteShader(fragment_shader);
-
-    presenter->luma_texture_location =
-        glGetUniformLocation(presenter->program, "uLumaTex");
-    presenter->chroma_texture_location =
-        glGetUniformLocation(presenter->program, "uChromaTex");
-    presenter->yuv_matrix_location =
-        glGetUniformLocation(presenter->program, "uYuvToRgb");
-
-    const float quad_vertices[] = {
-        -1.0f, -1.0f, 0.0f, 0.0f,
-         1.0f, -1.0f, 1.0f, 0.0f,
-        -1.0f,  1.0f, 0.0f, 1.0f,
-         1.0f,  1.0f, 1.0f, 1.0f,
-    };
-
-    glGenVertexArrays(1, &presenter->vao);
-    glBindVertexArray(presenter->vao);
-    glGenBuffers(1, &presenter->vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, presenter->vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(quad_vertices), quad_vertices,
-                 GL_STATIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
-                          reinterpret_cast<void *>(0));
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
-                          reinterpret_cast<void *>(2 * sizeof(float)));
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindVertexArray(0);
-}
-
-static void fillNv12YuvToRgbMatrix(int color_matrix, float matrix_out[9]) {
-    float wr = 0.2126f;
-    float wb = 0.0722f;
-    switch (color_matrix) {
-    case ColorSpaceStandard_FCC:
-        wr = 0.30f;
-        wb = 0.11f;
-        break;
-    case ColorSpaceStandard_BT470:
-    case ColorSpaceStandard_BT601:
-        wr = 0.2990f;
-        wb = 0.1140f;
-        break;
-    case ColorSpaceStandard_SMPTE240M:
-        wr = 0.212f;
-        wb = 0.087f;
-        break;
-    case ColorSpaceStandard_BT2020:
-    case ColorSpaceStandard_BT2020C:
-        wr = 0.2627f;
-        wb = 0.0593f;
-        break;
-    case ColorSpaceStandard_BT709:
-    default:
-        break;
-    }
-
-    const float scale = 1.0f / 219.0f;
-    const float one_minus_wb_wr = 1.0f - wb - wr;
-    matrix_out[0] = scale;
-    matrix_out[1] = 0.0f;
-    matrix_out[2] = scale * ((1.0f - wr) / 0.5f);
-    matrix_out[3] = scale;
-    matrix_out[4] =
-        scale * (-wb * (1.0f - wb) / 0.5f / one_minus_wb_wr);
-    matrix_out[5] =
-        scale * (-wr * (1.0f - wr) / 0.5f / one_minus_wb_wr);
-    matrix_out[6] = scale;
-    matrix_out[7] = scale * ((1.0f - wb) / 0.5f);
-    matrix_out[8] = 0.0f;
-}
-
-static void presentNv12PboToTexture(const CameraResources &camera,
-                                    const PBO_CUDA &nv12_pbo,
-                                    GLuint destination_texture,
-                                    Nv12PlaybackPresenter *presenter,
-                                    int nv12_pitch_bytes,
-                                    int color_matrix) {
-    ensureNv12PlaybackPresenter(presenter);
-
-    const int image_width = static_cast<int>(camera.image_width);
-    const int image_height = static_cast<int>(camera.image_height);
-    const int chroma_width = (image_width + 1) / 2;
-    const int chroma_height = (image_height + 1) / 2;
-    const intptr_t chroma_offset =
-        static_cast<intptr_t>(nv12_pitch_bytes) * image_height;
-
-    GLint previous_framebuffer = 0;
-    GLint previous_program = 0;
-    GLint previous_vertex_array = 0;
-    GLint previous_array_buffer = 0;
-    GLint previous_active_texture = 0;
-    GLint previous_texture0 = 0;
-    GLint previous_texture1 = 0;
-    GLint previous_unpack_alignment = 0;
-    GLint previous_unpack_row_length = 0;
-    GLint previous_viewport[4] = {0, 0, 0, 0};
-
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous_framebuffer);
-    glGetIntegerv(GL_CURRENT_PROGRAM, &previous_program);
-    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &previous_vertex_array);
-    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &previous_array_buffer);
-    glGetIntegerv(GL_ACTIVE_TEXTURE, &previous_active_texture);
-    glGetIntegerv(GL_UNPACK_ALIGNMENT, &previous_unpack_alignment);
-    glGetIntegerv(GL_UNPACK_ROW_LENGTH, &previous_unpack_row_length);
-    glGetIntegerv(GL_VIEWPORT, previous_viewport);
-
-    glActiveTexture(GL_TEXTURE0);
-    glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture0);
-    glActiveTexture(GL_TEXTURE1);
-    glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture1);
-
-    GLuint upload_pbo = nv12_pbo.pbo;
-    bind_pbo(&upload_pbo);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-
-    glBindTexture(GL_TEXTURE_2D, camera.nv12_luma_texture);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, nv12_pitch_bytes);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, image_width, image_height, GL_RED,
-                    GL_UNSIGNED_BYTE, reinterpret_cast<void *>(0));
-
-    glBindTexture(GL_TEXTURE_2D, camera.nv12_chroma_texture);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, nv12_pitch_bytes / 2);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, chroma_width, chroma_height, GL_RG,
-                    GL_UNSIGNED_BYTE,
-                    reinterpret_cast<void *>(chroma_offset));
-
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, previous_unpack_row_length);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, previous_unpack_alignment);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    unbind_pbo();
-
-    glBindFramebuffer(GL_FRAMEBUFFER, camera.nv12_stage_fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-                           destination_texture, 0);
-    glViewport(0, 0, image_width, image_height);
-    glUseProgram(presenter->program);
-
-    float yuv_to_rgb[9];
-    fillNv12YuvToRgbMatrix(color_matrix, yuv_to_rgb);
-    glUniformMatrix3fv(presenter->yuv_matrix_location, 1, GL_FALSE,
-                       yuv_to_rgb);
-
-    glUniform1i(presenter->luma_texture_location, 0);
-    glUniform1i(presenter->chroma_texture_location, 1);
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, camera.nv12_luma_texture);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, camera.nv12_chroma_texture);
-
-    glBindVertexArray(presenter->vao);
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-
-    glBindVertexArray(previous_vertex_array);
-    glBindBuffer(GL_ARRAY_BUFFER, previous_array_buffer);
-    glUseProgram(previous_program);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, previous_texture0);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, previous_texture1);
-    glActiveTexture(previous_active_texture);
-    glBindFramebuffer(GL_FRAMEBUFFER, previous_framebuffer);
-    glViewport(previous_viewport[0], previous_viewport[1], previous_viewport[2],
-               previous_viewport[3]);
-}
-
-} // namespace
-
 std::vector<std::mutex> g_mutexes(MAX_VIEWS);
 std::vector<std::condition_variable> g_cvs(MAX_VIEWS);
 std::vector<bool> g_ready(MAX_VIEWS);
@@ -622,7 +368,6 @@ int main(int argc, char **argv) {
 
     constexpr int kCudaDeviceIndex = 0;
     render_initialize_target(window, kCudaDeviceIndex, argv0_path);
-    Nv12PlaybackPresenter nv12_playback_presenter;
 
     render_scene *scene = new render_scene();
 
@@ -3641,18 +3386,11 @@ int main(int argc, char **argv) {
                         auto &camera = scene->cameras[j];
                         auto &slot = camera.display_buffer[slot_index];
                         const int source_frame_number = slot.frame_number;
-                        const bool lightweight_playback_renderer_active =
-                            playbackLightweightRendererIsActive();
                         const bool preview_active = playbackPreviewIsActive();
                         const bool preview_resize_active =
                             preview_active && scene->use_cpu_buffer;
                         const bool preview_sampling_active =
                             preview_active && !scene->use_cpu_buffer;
-                        const bool direct_nv12_playback_present_active =
-                            ps.play_video &&
-                            lightweight_playback_renderer_active &&
-                            !scene->use_cpu_buffer && !yolo_detection &&
-                            slot.format == PictureBufferFormat::NV12;
                         const int desired_preview_sampling_mode =
                             preview_sampling_active
                                 ? playback_preview_scale_mode
@@ -3743,34 +3481,6 @@ int main(int argc, char **argv) {
                                 surface_preview_mode,
                                 desired_preview_sampling_mode > 0);
                         };
-                        auto presentNv12SlotToTexture = [&](PBO_CUDA &surface_pbo,
-                                                            GLuint destination_texture,
-                                                            int *surface_preview_mode) {
-                            const auto pbo_copy_start =
-                                std::chrono::steady_clock::now();
-                            ck(cudaMemcpy(surface_pbo.cuda_buffer, slot.frame,
-                                          slot.frame_bytes,
-                                          cudaMemcpyDeviceToDevice));
-                            frame_camera_pbo_copy_ms += durationMs(
-                                std::chrono::steady_clock::now() -
-                                pbo_copy_start);
-
-                            const auto texture_upload_start =
-                                std::chrono::steady_clock::now();
-                            presentNv12PboToTexture(
-                                camera, surface_pbo, destination_texture,
-                                &nv12_playback_presenter,
-                                slot.pitch_bytes > 0
-                                    ? slot.pitch_bytes
-                                    : static_cast<int>(camera.image_width),
-                                slot.color_matrix);
-                            frame_camera_texture_upload_ms += durationMs(
-                                std::chrono::steady_clock::now() -
-                                texture_upload_start);
-                            applyTexturePreviewSampling(
-                                destination_texture, surface_preview_mode,
-                                desired_preview_sampling_mode > 0);
-                        };
                         const bool preview_sampling_changed =
                             camera.applied_preview_sampling_mode !=
                             desired_preview_sampling_mode;
@@ -3778,9 +3488,6 @@ int main(int argc, char **argv) {
                             ps.play_video && !scene->use_cpu_buffer &&
                             !preview_resize_active && !yolo_detection &&
                             !texture_shape_changed;
-                        const bool direct_nv12_pipeline_present =
-                            pipeline_playback_present &&
-                            direct_nv12_playback_present_active;
                         if (camera.texture_has_valid_frame &&
                             camera.last_uploaded_frame == source_frame_number &&
                             !texture_shape_changed) {
@@ -3830,48 +3537,40 @@ int main(int argc, char **argv) {
                                 camera.playback_staging_frame != source_frame_number) {
                                 const auto stage_total_start =
                                     std::chrono::steady_clock::now();
+                                if (slot.format == PictureBufferFormat::NV12) {
+                                    const auto convert_start =
+                                        std::chrono::steady_clock::now();
+                                    Nv12ToColor32<RGBA32>(
+                                        slot.frame,
+                                        slot.pitch_bytes > 0
+                                            ? slot.pitch_bytes
+                                            : camera.image_width,
+                                        camera.playback_staging_pbo.cuda_buffer,
+                                        4 * static_cast<int>(camera.image_width),
+                                        static_cast<int>(camera.image_width),
+                                        static_cast<int>(camera.image_height),
+                                        slot.color_matrix);
+                                    frame_camera_display_convert_ms += durationMs(
+                                        std::chrono::steady_clock::now() -
+                                        convert_start);
+                                } else {
+                                    const auto pbo_copy_start =
+                                        std::chrono::steady_clock::now();
+                                    ck(cudaMemcpy(
+                                        camera.playback_staging_pbo.cuda_buffer,
+                                        slot.frame,
+                                        camera.image_width * camera.image_height * 4,
+                                        cudaMemcpyDeviceToDevice));
+                                    frame_camera_pbo_copy_ms += durationMs(
+                                        std::chrono::steady_clock::now() -
+                                        pbo_copy_start);
+                                }
                                 const auto stage_upload_start =
                                     std::chrono::steady_clock::now();
-                                if (direct_nv12_pipeline_present) {
-                                    presentNv12SlotToTexture(
-                                        camera.playback_staging_pbo,
-                                        camera.playback_staging_texture,
-                                        &camera.playback_staging_preview_sampling_mode);
-                                } else {
-                                    if (slot.format == PictureBufferFormat::NV12) {
-                                        const auto convert_start =
-                                            std::chrono::steady_clock::now();
-                                        Nv12ToColor32<RGBA32>(
-                                            slot.frame,
-                                            slot.pitch_bytes > 0
-                                                ? slot.pitch_bytes
-                                                : camera.image_width,
-                                            camera.playback_staging_pbo.cuda_buffer,
-                                            4 * static_cast<int>(camera.image_width),
-                                            static_cast<int>(camera.image_width),
-                                            static_cast<int>(camera.image_height),
-                                            slot.color_matrix);
-                                        frame_camera_display_convert_ms += durationMs(
-                                            std::chrono::steady_clock::now() -
-                                            convert_start);
-                                    } else {
-                                        const auto pbo_copy_start =
-                                            std::chrono::steady_clock::now();
-                                        ck(cudaMemcpy(
-                                            camera.playback_staging_pbo.cuda_buffer,
-                                            slot.frame,
-                                            camera.image_width *
-                                                camera.image_height * 4,
-                                            cudaMemcpyDeviceToDevice));
-                                        frame_camera_pbo_copy_ms += durationMs(
-                                            std::chrono::steady_clock::now() -
-                                            pbo_copy_start);
-                                    }
-                                    uploadSurfaceToTexture(
-                                        camera.playback_staging_pbo,
-                                        camera.playback_staging_texture,
-                                        &camera.playback_staging_preview_sampling_mode);
-                                }
+                                uploadSurfaceToTexture(
+                                    camera.playback_staging_pbo,
+                                    camera.playback_staging_texture,
+                                    &camera.playback_staging_preview_sampling_mode);
                                 frame_camera_playback_stage_upload_ms += durationMs(
                                     std::chrono::steady_clock::now() -
                                     stage_upload_start);
@@ -3936,14 +3635,7 @@ int main(int argc, char **argv) {
                             presented_rgba_cuda_buffer =
                                 camera.pbo_cuda.cuda_buffer;
                         } else {
-                            if (direct_nv12_playback_present_active) {
-                                presentNv12SlotToTexture(
-                                    camera.pbo_cuda,
-                                    camera.image_texture,
-                                    &camera.applied_preview_sampling_mode);
-                                presented_rgba_cuda_buffer =
-                                    camera.pbo_cuda.cuda_buffer;
-                            } else if (slot.format == PictureBufferFormat::NV12) {
+                            if (slot.format == PictureBufferFormat::NV12) {
                                 const auto convert_start =
                                     std::chrono::steady_clock::now();
                                 Nv12ToColor32<RGBA32>(
@@ -3972,12 +3664,10 @@ int main(int argc, char **argv) {
                             presented_rgba_cuda_buffer =
                                 camera.pbo_cuda.cuda_buffer;
                         }
-                        if (!direct_nv12_playback_present_active) {
-                            uploadSurfaceToTexture(
-                                camera.pbo_cuda,
-                                camera.image_texture,
-                                &camera.applied_preview_sampling_mode);
-                        }
+                        uploadSurfaceToTexture(
+                            camera.pbo_cuda,
+                            camera.image_texture,
+                            &camera.applied_preview_sampling_mode);
                         camera.playback_staging_frame = -1;
                         camera.playback_staging_valid = false;
                         camera.playback_staging_preview_sampling_mode = -1;
