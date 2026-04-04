@@ -33,6 +33,11 @@ struct CameraResources {
     int display_texture_width = 0;
     int display_texture_height = 0;
     std::vector<unsigned char> playback_preview_rgba_cpu;
+    bool playback_view_initialized = false;
+    double playback_view_x_min = 0.0;
+    double playback_view_x_max = 0.0;
+    double playback_view_y_min = 0.0;
+    double playback_view_y_max = 0.0;
 };
 
 struct render_scene
@@ -96,6 +101,13 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
             static_cast<int>(scene->cameras[j].image_height);
         scene->cameras[j].playback_preview_rgba_cpu.clear();
         scene->cameras[j].display_buffer_pbos.clear();
+        scene->cameras[j].playback_view_initialized = false;
+        scene->cameras[j].playback_view_x_min = 0.0;
+        scene->cameras[j].playback_view_x_max =
+            static_cast<double>(scene->cameras[j].image_width);
+        scene->cameras[j].playback_view_y_min = 0.0;
+        scene->cameras[j].playback_view_y_max =
+            static_cast<double>(scene->cameras[j].image_height);
     }
 
     for (u32 j = 0; j < num_cams; j++)
