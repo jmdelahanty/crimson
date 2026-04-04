@@ -6033,6 +6033,12 @@ struct StateOverlay {
                 static size_t last_width = 0;
                 static size_t last_height = 0;
                 static size_t last_channels = 0;
+                static int last_crop_preview_source_frame = -1;
+                static auto last_crop_preview_refresh_time =
+                    std::chrono::steady_clock::time_point{};
+                static std::vector<std::array<float, 2>> crop_kp_positions;
+                static std::vector<std::string> crop_kp_labels;
+                static std::vector<std::array<size_t, 2>> crop_kp_edges;
 
                 static GLuint rotated_crop_texture = 0;
                 static std::vector<uint8_t> rotated_rgba_buffer;
@@ -6047,15 +6053,34 @@ struct StateOverlay {
                 static std::array<float, 2> arrow_origin_crop = {0, 0};   // in crop-local px
                 static std::array<float, 2> arrow_origin_rotated = {0, 0}; // in rotated-crop-local px
                 static bool arrow_origin_valid = false;
+                static int displayed_crop_roi_index = -1;
+                static int displayed_crop_source_frame = -1;
 
                 if (crop_roi_index >= 0) {
+                    constexpr auto kCropPreviewPlaybackRefreshInterval =
+                        std::chrono::milliseconds(100);
+                    const auto now_steady = std::chrono::steady_clock::now();
+                    const bool playback_refresh_due =
+                        !ps.play_video ||
+                        last_crop_preview_refresh_time ==
+                            std::chrono::steady_clock::time_point{} ||
+                        (now_steady - last_crop_preview_refresh_time) >=
+                            kCropPreviewPlaybackRefreshInterval;
+                    const bool frame_changed =
+                        current_frame_num != last_crop_preview_source_frame;
+                    const bool should_refresh_preview =
+                        !ps.play_video || !frame_changed || playback_refresh_due;
+
                     ZarrDetectionLoader::CropImageView crop_view;
-                    if (zarr_loader.getCropImageForIndex(crop_roi_index, crop_view)) {
+                    bool crop_preview_available = false;
+                    if (should_refresh_preview &&
+                        zarr_loader.getCropImageForIndex(crop_roi_index, crop_view)) {
                         bool needs_upload =
                             crop_roi_index != last_roi_index ||
                             crop_view.width != last_width ||
                             crop_view.height != last_height ||
-                            crop_view.channels != last_channels;
+                            crop_view.channels != last_channels ||
+                            frame_changed;
 
                         if (crop_texture == 0) {
                             create_texture(&crop_texture);
@@ -6093,6 +6118,13 @@ struct StateOverlay {
                             last_width = crop_view.width;
                             last_height = crop_view.height;
                             last_channels = crop_view.channels;
+                            displayed_crop_roi_index = crop_roi_index;
+                            displayed_crop_source_frame = current_frame_num;
+                            last_crop_preview_source_frame = current_frame_num;
+                            last_crop_preview_refresh_time = now_steady;
+                            crop_kp_positions.clear();
+                            crop_kp_labels.clear();
+                            crop_kp_edges.clear();
 
                             // Compute heading-normalized rotated crop
                             rotated_valid = false;
@@ -6103,7 +6135,7 @@ struct StateOverlay {
                                 size_t matched = SIZE_MAX;
                                 for (size_t di = 0; di < det.eye_masks.size(); ++di) {
                                     if (det.eye_masks[di].roi_index == crop_roi_index) {
-                                        matched = di; break;
+                                    matched = di; break;
                                     }
                                 }
                                 if (matched != SIZE_MAX && matched < det.headings_deg.size() &&
@@ -6163,6 +6195,7 @@ struct StateOverlay {
                                     rotated_kp_positions.clear();
                                     rotated_kp_labels.clear();
                                     rotated_kp_edges = det.skeleton_edges;
+                                    crop_kp_edges = det.skeleton_edges;
                                     if (det.has_keypoints && matched < det.keypoints_pixels.size() &&
                                         det.includes_eye_masks) {
                                         const auto& kps = det.keypoints_pixels[matched];
@@ -6179,14 +6212,19 @@ struct StateOverlay {
                                             for (size_t ki = 0; ki < kps.size(); ++ki) {
                                                 if (!std::isfinite(kps[ki][0]) ||
                                                     !std::isfinite(kps[ki][1])) {
+                                                    crop_kp_positions.push_back({NAN, NAN});
                                                     rotated_kp_positions.push_back({NAN, NAN});
                                                 } else {
                                                     float px = kps[ki][0] - off_x;
                                                     float py = kps[ki][1] - off_y;
+                                                    crop_kp_positions.push_back({px, py});
                                                     float rx = static_cast<float>(r0 * px + r1 * py + r2) - cx;
                                                     float ry = static_cast<float>(r3 * px + r4 * py + r5) - cy;
                                                     rotated_kp_positions.push_back({rx, ry});
                                                 }
+                                                crop_kp_labels.push_back(
+                                                    ki < det.keypoint_labels.size()
+                                                        ? det.keypoint_labels[ki] : "");
                                                 rotated_kp_labels.push_back(
                                                     ki < det.keypoint_labels.size()
                                                         ? det.keypoint_labels[ki] : "");
@@ -6224,11 +6262,17 @@ struct StateOverlay {
                                             }
                                         }
                                     }
+                                } else {
+                                    crop_kp_positions.clear();
+                                    crop_kp_labels.clear();
+                                    crop_kp_edges.clear();
                                 }
                             }
                         }
 
-                        if (crop_texture != 0) {
+                        crop_preview_available =
+                            crop_texture != 0 && last_width > 0 && last_height > 0;
+                        if (crop_preview_available) {
                             static bool show_crop_keypoints = true;
                             static bool show_rotated_crop = true;
                             static bool show_heading_arrow = false;
@@ -6237,9 +6281,13 @@ struct StateOverlay {
                             ImGui::Checkbox("Rotated", &show_rotated_crop);
                             ImGui::SameLine();
                             ImGui::Checkbox("Heading", &show_heading_arrow);
+                            if (ps.play_video) {
+                                ImGui::TextDisabled(
+                                    "Playback preview throttled to 10 Hz");
+                            }
 
-                            ImVec2 img_size(static_cast<float>(crop_view.width),
-                                            static_cast<float>(crop_view.height));
+                            ImVec2 img_size(static_cast<float>(last_width),
+                                            static_cast<float>(last_height));
                             float max_dim = std::max(img_size.x, img_size.y);
                             const float preview_max = 260.0f;
                             float scale = 1.0f;
@@ -6250,70 +6298,55 @@ struct StateOverlay {
                             }
                             ImVec2 image_tl = ImGui::GetCursorScreenPos();
                             ImGui::Image((ImTextureID)(intptr_t)crop_texture, img_size);
-                            ImGui::Text("ROI #%d", crop_roi_index);
+                            ImGui::Text("ROI #%d", displayed_crop_roi_index);
+                            if (ps.play_video && displayed_crop_source_frame >= 0 &&
+                                displayed_crop_source_frame != current_frame_num) {
+                                ImGui::TextDisabled("Preview frame %d", displayed_crop_source_frame);
+                            }
 
-                            if (show_crop_keypoints && zarr_loader.hasKeypointData()) {
-                                auto det = zarr_loader.getRawDetections(
-                                    static_cast<size_t>(current_frame_num), false, true);
+                            if (show_crop_keypoints && !crop_kp_positions.empty()) {
+                                ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
-                                if (det.has_keypoints && !det.keypoints_pixels.empty() &&
-                                    det.includes_eye_masks) {
-                                    size_t matched_det = SIZE_MAX;
-                                    for (size_t di = 0; di < det.eye_masks.size(); ++di) {
-                                        if (det.eye_masks[di].roi_index == crop_roi_index) {
-                                            matched_det = di;
-                                            break;
-                                        }
-                                    }
+                                auto kpColor = [&](size_t kp_idx) -> ImU32 {
+                                    const std::string& lbl =
+                                        kp_idx < crop_kp_labels.size()
+                                            ? crop_kp_labels[kp_idx] : "";
+                                    if (lbl.find("swim") != std::string::npos ||
+                                        lbl.find("bladder") != std::string::npos)
+                                        return IM_COL32(255, 217, 38, 220);
+                                    if (lbl.find("left") != std::string::npos)
+                                        return IM_COL32(77, 242, 102, 220);
+                                    if (lbl.find("right") != std::string::npos)
+                                        return IM_COL32(191, 102, 242, 220);
+                                    return IM_COL32(242, 153, 51, 220);
+                                };
 
-                                    if (matched_det != SIZE_MAX &&
-                                        matched_det < det.keypoints_pixels.size()) {
-                                        const auto& kps = det.keypoints_pixels[matched_det];
-                                        const auto& mask = det.eye_masks[matched_det];
-                                        float off_x = mask.offset_x;
-                                        float off_y = mask.offset_y;
-
-                                        if (std::isfinite(off_x) && std::isfinite(off_y)) {
-                                            ImDrawList* draw_list = ImGui::GetWindowDrawList();
-
-                                            auto kpColor = [&](size_t kp_idx) -> ImU32 {
-                                                const std::string& lbl =
-                                                    kp_idx < det.keypoint_labels.size()
-                                                        ? det.keypoint_labels[kp_idx] : "";
-                                                if (lbl.find("swim") != std::string::npos ||
-                                                    lbl.find("bladder") != std::string::npos)
-                                                    return IM_COL32(255, 217, 38, 220);
-                                                if (lbl.find("left") != std::string::npos)
-                                                    return IM_COL32(77, 242, 102, 220);
-                                                if (lbl.find("right") != std::string::npos)
-                                                    return IM_COL32(191, 102, 242, 220);
-                                                return IM_COL32(242, 153, 51, 220);
-                                            };
-
-                                            for (const auto& edge : det.skeleton_edges) {
-                                                size_t a = edge[0], b = edge[1];
-                                                if (a >= kps.size() || b >= kps.size()) continue;
-                                                if (!std::isfinite(kps[a][0]) || !std::isfinite(kps[a][1]) ||
-                                                    !std::isfinite(kps[b][0]) || !std::isfinite(kps[b][1])) continue;
-                                                ImVec2 pa(image_tl.x + (kps[a][0] - off_x) * scale,
-                                                          image_tl.y + (kps[a][1] - off_y) * scale);
-                                                ImVec2 pb(image_tl.x + (kps[b][0] - off_x) * scale,
-                                                          image_tl.y + (kps[b][1] - off_y) * scale);
-                                                draw_list->AddLine(pa, pb, IM_COL32(255, 255, 255, 160), 1.5f);
-                                            }
-                                            for (size_t ki = 0; ki < kps.size(); ++ki) {
-                                                if (!std::isfinite(kps[ki][0]) ||
-                                                    !std::isfinite(kps[ki][1])) continue;
-                                                float lx = (kps[ki][0] - off_x) * scale;
-                                                float ly = (kps[ki][1] - off_y) * scale;
-                                                ImVec2 center(image_tl.x + lx, image_tl.y + ly);
-                                                draw_list->AddCircleFilled(center, 4.0f * scale,
-                                                                           kpColor(ki));
-                                                draw_list->AddCircle(center, 4.0f * scale,
-                                                                     IM_COL32(255, 255, 255, 180), 0, 1.5f);
-                                            }
-                                        }
-                                    }
+                                for (const auto& edge : crop_kp_edges) {
+                                    size_t a = edge[0], b = edge[1];
+                                    if (a >= crop_kp_positions.size() ||
+                                        b >= crop_kp_positions.size()) continue;
+                                    float ax = crop_kp_positions[a][0];
+                                    float ay = crop_kp_positions[a][1];
+                                    float bx = crop_kp_positions[b][0];
+                                    float by = crop_kp_positions[b][1];
+                                    if (!std::isfinite(ax) || !std::isfinite(ay) ||
+                                        !std::isfinite(bx) || !std::isfinite(by)) continue;
+                                    ImVec2 pa(image_tl.x + ax * scale,
+                                              image_tl.y + ay * scale);
+                                    ImVec2 pb(image_tl.x + bx * scale,
+                                              image_tl.y + by * scale);
+                                    draw_list->AddLine(pa, pb, IM_COL32(255, 255, 255, 160), 1.5f);
+                                }
+                                for (size_t ki = 0; ki < crop_kp_positions.size(); ++ki) {
+                                    float kx = crop_kp_positions[ki][0];
+                                    float ky = crop_kp_positions[ki][1];
+                                    if (!std::isfinite(kx) || !std::isfinite(ky)) continue;
+                                    ImVec2 center(image_tl.x + kx * scale,
+                                                  image_tl.y + ky * scale);
+                                    draw_list->AddCircleFilled(center, 4.0f * scale,
+                                                               kpColor(ki));
+                                    draw_list->AddCircle(center, 4.0f * scale,
+                                                         IM_COL32(255, 255, 255, 180), 0, 1.5f);
                                 }
                             }
 
@@ -6409,13 +6442,201 @@ struct StateOverlay {
                                 ImGui::Text("Heading-normalized");
                             }
                         }
+                    } else if (!should_refresh_preview) {
+                        crop_preview_available =
+                            crop_texture != 0 && displayed_crop_roi_index >= 0 &&
+                            last_width > 0 && last_height > 0;
+                        if (crop_preview_available) {
+                            static bool show_crop_keypoints = true;
+                            static bool show_rotated_crop = true;
+                            static bool show_heading_arrow = false;
+                            ImGui::Checkbox("Keypoints", &show_crop_keypoints);
+                            ImGui::SameLine();
+                            ImGui::Checkbox("Rotated", &show_rotated_crop);
+                            ImGui::SameLine();
+                            ImGui::Checkbox("Heading", &show_heading_arrow);
+                            ImGui::TextDisabled(
+                                "Playback preview throttled to 10 Hz");
+
+                            ImVec2 img_size(static_cast<float>(last_width),
+                                            static_cast<float>(last_height));
+                            float max_dim = std::max(img_size.x, img_size.y);
+                            const float preview_max = 260.0f;
+                            float scale = 1.0f;
+                            if (max_dim > preview_max && max_dim > 0.0f) {
+                                scale = preview_max / max_dim;
+                                img_size.x *= scale;
+                                img_size.y *= scale;
+                            }
+                            ImVec2 image_tl = ImGui::GetCursorScreenPos();
+                            ImGui::Image((ImTextureID)(intptr_t)crop_texture, img_size);
+                            ImGui::Text("ROI #%d", displayed_crop_roi_index);
+                            if (displayed_crop_source_frame >= 0 &&
+                                displayed_crop_source_frame != current_frame_num) {
+                                ImGui::TextDisabled("Preview frame %d",
+                                                    displayed_crop_source_frame);
+                            }
+
+                            if (show_crop_keypoints && !crop_kp_positions.empty()) {
+                                ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+                                auto kpColor = [&](size_t kp_idx) -> ImU32 {
+                                    const std::string& lbl =
+                                        kp_idx < crop_kp_labels.size()
+                                            ? crop_kp_labels[kp_idx] : "";
+                                    if (lbl.find("swim") != std::string::npos ||
+                                        lbl.find("bladder") != std::string::npos)
+                                        return IM_COL32(255, 217, 38, 220);
+                                    if (lbl.find("left") != std::string::npos)
+                                        return IM_COL32(77, 242, 102, 220);
+                                    if (lbl.find("right") != std::string::npos)
+                                        return IM_COL32(191, 102, 242, 220);
+                                    return IM_COL32(242, 153, 51, 220);
+                                };
+
+                                for (const auto& edge : crop_kp_edges) {
+                                    size_t a = edge[0], b = edge[1];
+                                    if (a >= crop_kp_positions.size() ||
+                                        b >= crop_kp_positions.size()) continue;
+                                    float ax = crop_kp_positions[a][0];
+                                    float ay = crop_kp_positions[a][1];
+                                    float bx = crop_kp_positions[b][0];
+                                    float by = crop_kp_positions[b][1];
+                                    if (!std::isfinite(ax) || !std::isfinite(ay) ||
+                                        !std::isfinite(bx) || !std::isfinite(by)) continue;
+                                    ImVec2 pa(image_tl.x + ax * scale,
+                                              image_tl.y + ay * scale);
+                                    ImVec2 pb(image_tl.x + bx * scale,
+                                              image_tl.y + by * scale);
+                                    draw_list->AddLine(pa, pb, IM_COL32(255, 255, 255, 160), 1.5f);
+                                }
+                                for (size_t ki = 0; ki < crop_kp_positions.size(); ++ki) {
+                                    float kx = crop_kp_positions[ki][0];
+                                    float ky = crop_kp_positions[ki][1];
+                                    if (!std::isfinite(kx) || !std::isfinite(ky)) continue;
+                                    ImVec2 center(image_tl.x + kx * scale,
+                                                  image_tl.y + ky * scale);
+                                    draw_list->AddCircleFilled(center, 4.0f * scale,
+                                                               kpColor(ki));
+                                    draw_list->AddCircle(center, 4.0f * scale,
+                                                         IM_COL32(255, 255, 255, 180), 0, 1.5f);
+                                }
+                            }
+
+                            if (show_heading_arrow && stored_heading_valid &&
+                                arrow_origin_valid) {
+                                float rad = stored_heading_deg *
+                                    (3.14159265f / 180.0f);
+                                float arrow_len =
+                                    std::min(img_size.x, img_size.y) * 0.2f;
+                                ImVec2 center(image_tl.x + arrow_origin_crop[0] * scale,
+                                              image_tl.y + arrow_origin_crop[1] * scale);
+                                float dx = std::cos(rad) * arrow_len;
+                                float dy = -std::sin(rad) * arrow_len;
+                                ImVec2 tip(center.x + dx, center.y + dy);
+                                ImDrawList* dl = ImGui::GetWindowDrawList();
+                                dl->AddLine(center, tip, IM_COL32(255, 50, 50, 220), 2.5f);
+                                float head_len = 8.0f * scale;
+                                float head_angle = 2.6f;
+                                ImVec2 h1(tip.x + head_len * std::cos(rad + head_angle),
+                                          tip.y - head_len * std::sin(rad + head_angle));
+                                ImVec2 h2(tip.x + head_len * std::cos(rad - head_angle),
+                                          tip.y - head_len * std::sin(rad - head_angle));
+                                dl->AddTriangleFilled(tip, h1, h2, IM_COL32(255, 50, 50, 220));
+                            }
+
+                            if (show_rotated_crop && rotated_valid &&
+                                rotated_crop_texture != 0) {
+                                ImGui::Separator();
+                                ImVec2 rot_size(static_cast<float>(rotated_width),
+                                                static_cast<float>(rotated_height));
+                                float rot_max = std::max(rot_size.x, rot_size.y);
+                                float rot_scale = 1.0f;
+                                if (rot_max > preview_max && rot_max > 0.0f) {
+                                    rot_scale = preview_max / rot_max;
+                                    rot_size.x *= rot_scale;
+                                    rot_size.y *= rot_scale;
+                                }
+                                ImVec2 rot_image_tl = ImGui::GetCursorScreenPos();
+                                ImGui::Image((ImTextureID)(intptr_t)rotated_crop_texture, rot_size);
+
+                                if (show_crop_keypoints &&
+                                    !rotated_kp_positions.empty()) {
+                                    ImDrawList* draw_list =
+                                        ImGui::GetWindowDrawList();
+                                    auto kpColor = [&](size_t kp_idx) -> ImU32 {
+                                        const std::string& lbl =
+                                            kp_idx < rotated_kp_labels.size()
+                                                ? rotated_kp_labels[kp_idx] : "";
+                                        if (lbl.find("swim") != std::string::npos ||
+                                            lbl.find("bladder") != std::string::npos)
+                                            return IM_COL32(255, 217, 38, 220);
+                                        if (lbl.find("left") != std::string::npos)
+                                            return IM_COL32(77, 242, 102, 220);
+                                        if (lbl.find("right") != std::string::npos)
+                                            return IM_COL32(191, 102, 242, 220);
+                                        return IM_COL32(242, 153, 51, 220);
+                                    };
+                                    for (const auto& edge : rotated_kp_edges) {
+                                        size_t a = edge[0], b = edge[1];
+                                        if (a >= rotated_kp_positions.size() ||
+                                            b >= rotated_kp_positions.size()) continue;
+                                        float ax = rotated_kp_positions[a][0], ay = rotated_kp_positions[a][1];
+                                        float bx = rotated_kp_positions[b][0], by = rotated_kp_positions[b][1];
+                                        if (!std::isfinite(ax) || !std::isfinite(ay) ||
+                                            !std::isfinite(bx) || !std::isfinite(by)) continue;
+                                        ImVec2 pa(rot_image_tl.x + ax * rot_scale, rot_image_tl.y + ay * rot_scale);
+                                        ImVec2 pb(rot_image_tl.x + bx * rot_scale, rot_image_tl.y + by * rot_scale);
+                                        draw_list->AddLine(pa, pb, IM_COL32(255, 255, 255, 160), 1.5f);
+                                    }
+                                    for (size_t ki = 0; ki < rotated_kp_positions.size(); ++ki) {
+                                        float rx = rotated_kp_positions[ki][0];
+                                        float ry = rotated_kp_positions[ki][1];
+                                        if (!std::isfinite(rx) || !std::isfinite(ry)) continue;
+                                        float sx = rx * rot_scale;
+                                        float sy = ry * rot_scale;
+                                        ImVec2 pt(rot_image_tl.x + sx, rot_image_tl.y + sy);
+                                        draw_list->AddCircleFilled(pt, 4.0f * rot_scale, kpColor(ki));
+                                        draw_list->AddCircle(pt, 4.0f * rot_scale,
+                                                             IM_COL32(255, 255, 255, 180), 0, 1.5f);
+                                    }
+                                }
+                                if (show_heading_arrow && stored_heading_valid &&
+                                    arrow_origin_valid) {
+                                    float arrow_len = std::min(rot_size.x, rot_size.y) * 0.2f;
+                                    ImVec2 center(rot_image_tl.x + arrow_origin_rotated[0] * rot_scale,
+                                                  rot_image_tl.y + arrow_origin_rotated[1] * rot_scale);
+                                    ImVec2 tip(center.x + arrow_len, center.y);
+                                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                                    dl->AddLine(center, tip, IM_COL32(255, 50, 50, 220), 2.5f);
+                                    float head_len = 8.0f * rot_scale;
+                                    float head_angle = 2.6f;
+                                    ImVec2 h1(tip.x + head_len * std::cos(head_angle),
+                                              tip.y - head_len * std::sin(head_angle));
+                                    ImVec2 h2(tip.x + head_len * std::cos(-head_angle),
+                                              tip.y - head_len * std::sin(-head_angle));
+                                    dl->AddTriangleFilled(tip, h1, h2, IM_COL32(255, 50, 50, 220));
+                                }
+                                ImGui::Text("Heading-normalized");
+                            }
+                        }
                     } else {
                         ImGui::TextUnformatted("No crop available for current frame.");
                         last_roi_index = -1;
+                        displayed_crop_roi_index = -1;
+                        displayed_crop_source_frame = -1;
+                        crop_kp_positions.clear();
+                        crop_kp_labels.clear();
+                        crop_kp_edges.clear();
                     }
                 } else {
                     ImGui::TextUnformatted("No crop available for current frame.");
                     last_roi_index = -1;
+                    displayed_crop_roi_index = -1;
+                    displayed_crop_source_frame = -1;
+                    crop_kp_positions.clear();
+                    crop_kp_labels.clear();
+                    crop_kp_edges.clear();
                 }
             }
             ImGui::End();
