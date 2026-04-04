@@ -44,6 +44,8 @@ NUMERIC_COLUMNS = {
     "current_frame_num": int,
     "min_decoded_camera_frame": int,
     "camera_decode_gap_frames": int,
+    "camera_decode_demux_ms": float,
+    "camera_decode_submit_ms": float,
     "camera_decode_convert_ms": float,
     "camera_decode_wait_ms": float,
     "camera_decode_write_ms": float,
@@ -305,6 +307,14 @@ def print_summary(columns: dict[str, list[Any]], metadata: dict[str, Any] | None
     print(
         "  camera_decode_gap_frames: "
         f"{describe(columns.get('camera_decode_gap_frames', []))}"
+    )
+    print(
+        "  camera_decode_demux_ms: "
+        f"{describe(columns.get('camera_decode_demux_ms', []))}"
+    )
+    print(
+        "  camera_decode_submit_ms: "
+        f"{describe(columns.get('camera_decode_submit_ms', []))}"
     )
     print(
         "  camera_decode_convert_ms: "
@@ -614,6 +624,24 @@ def plot_profile(
         columns.get("frame_loop_ms", []),
         "frame loop ms",
         color="tab:blue",
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("camera_decode_demux_ms", []),
+        "decode demux ms",
+        color="tab:olive",
+        linestyle="-.",
+        alpha=0.7,
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("camera_decode_submit_ms", []),
+        "decode submit ms",
+        color="tab:red",
+        linestyle="-.",
+        alpha=0.7,
     )
     maybe_plot_line(
         axes[2],

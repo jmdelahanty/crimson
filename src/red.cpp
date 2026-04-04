@@ -249,6 +249,7 @@ struct PerfLogWriter {
             << "elapsed_s,wall_epoch_ms,play_video,set_playback_speed,inst_speed,"
             << "video_fps,requested_camera_frame,displayed_camera_frame,current_frame_num,"
             << "min_decoded_camera_frame,camera_decode_gap_frames,"
+            << "camera_decode_demux_ms,camera_decode_submit_ms,"
             << "camera_decode_convert_ms,camera_decode_wait_ms,"
             << "camera_decode_write_ms,camera_decode_pipeline_ms,"
             << "visible_camera_count,swap_interval_setting,"
@@ -8771,6 +8772,10 @@ struct StateOverlay {
                         : -1;
                 double perf_camera_decode_convert_ms =
                     std::numeric_limits<double>::quiet_NaN();
+                double perf_camera_decode_demux_ms =
+                    std::numeric_limits<double>::quiet_NaN();
+                double perf_camera_decode_submit_ms =
+                    std::numeric_limits<double>::quiet_NaN();
                 double perf_camera_decode_wait_ms =
                     std::numeric_limits<double>::quiet_NaN();
                 double perf_camera_decode_write_ms =
@@ -8799,6 +8804,12 @@ struct StateOverlay {
                             continue;
                         }
                         const auto& perf = perf_it->second;
+                        updateMaxFinite(
+                            perf_camera_decode_demux_ms,
+                            perf->demux_ms.load());
+                        updateMaxFinite(
+                            perf_camera_decode_submit_ms,
+                            perf->decode_submit_ms.load());
                         updateMaxFinite(
                             perf_camera_decode_convert_ms,
                             perf->nv12_to_rgba_ms.load());
@@ -8842,6 +8853,8 @@ struct StateOverlay {
                     << displayed_camera_frame << "," << current_frame_num << ","
                     << perf_min_decoded_camera_frame << ","
                     << camera_decode_gap_frames << ","
+                    << perf_camera_decode_demux_ms << ","
+                    << perf_camera_decode_submit_ms << ","
                     << perf_camera_decode_convert_ms << ","
                     << perf_camera_decode_wait_ms << ","
                     << perf_camera_decode_write_ms << ","
