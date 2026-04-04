@@ -248,7 +248,9 @@ struct PerfLogWriter {
             << "video_fps,requested_camera_frame,displayed_camera_frame,current_frame_num,"
             << "min_decoded_camera_frame,camera_decode_gap_frames,visible_camera_count,"
             << "main_buffer_mode,playback_preview_scale,playback_preview_active,"
-            << "camera_upload_count,camera_upload_ms,camera_scene_ui_ms,"
+            << "camera_upload_count,camera_upload_ms,camera_texture_resize_ms,"
+            << "camera_preview_resize_ms,camera_pbo_copy_ms,camera_texture_upload_ms,"
+            << "camera_scene_ui_ms,"
             << "stimulus_window_ui_ms,stimulus_timeline_ui_ms,movement_timeline_ui_ms,"
             << "gl_draw_ms,swap_ms,frame_loop_ms,ui_build_ms,"
             << "stimulus_loaded,stimulus_decode_backend,"
@@ -1817,6 +1819,10 @@ int main(int argc, char **argv) {
         const auto frame_loop_start = std::chrono::steady_clock::now();
         double frame_camera_upload_ms = 0.0;
         int frame_camera_upload_count = 0;
+        double frame_camera_texture_resize_ms = 0.0;
+        double frame_camera_preview_resize_ms = 0.0;
+        double frame_camera_pbo_copy_ms = 0.0;
+        double frame_camera_texture_upload_ms = 0.0;
         double frame_camera_scene_ui_ms = 0.0;
         double frame_stimulus_window_ui_ms = 0.0;
         double frame_stimulus_timeline_ui_ms = 0.0;
@@ -3306,9 +3312,14 @@ int main(int argc, char **argv) {
                             return;
                         }
                         if (texture_shape_changed) {
+                            const auto texture_resize_start =
+                                std::chrono::steady_clock::now();
                             render_resize_camera_texture(&camera,
                                                          target_texture_width,
                                                          target_texture_height);
+                            frame_camera_texture_resize_ms += durationMs(
+                                std::chrono::steady_clock::now() -
+                                texture_resize_start);
                             camera.last_uploaded_frame = -1;
                             camera.texture_has_valid_frame = false;
                         }
@@ -3325,35 +3336,57 @@ int main(int argc, char **argv) {
                             cv::Mat preview_rgba(
                                 target_texture_height, target_texture_width, CV_8UC4,
                                 camera.playback_preview_rgba_cpu.data());
+                            const auto preview_resize_start =
+                                std::chrono::steady_clock::now();
                             cv::resize(full_rgba, preview_rgba,
                                        cv::Size(target_texture_width,
                                                 target_texture_height),
                                        0.0, 0.0, cv::INTER_AREA);
+                            frame_camera_preview_resize_ms += durationMs(
+                                std::chrono::steady_clock::now() -
+                                preview_resize_start);
+                            const auto pbo_copy_start =
+                                std::chrono::steady_clock::now();
                             ck(cudaMemcpy(
                                 camera.pbo_cuda.cuda_buffer,
                                 camera.playback_preview_rgba_cpu.data(),
                                 static_cast<size_t>(target_texture_width) *
                                     static_cast<size_t>(target_texture_height) * 4,
                                 cudaMemcpyHostToDevice));
+                            frame_camera_pbo_copy_ms += durationMs(
+                                std::chrono::steady_clock::now() - pbo_copy_start);
                         } else if (scene->use_cpu_buffer) {
+                            const auto pbo_copy_start =
+                                std::chrono::steady_clock::now();
                             ck(cudaMemcpy(
                                 camera.pbo_cuda.cuda_buffer,
                                 camera.display_buffer[slot_index].frame,
                                 camera.image_width * camera.image_height * 4,
                                 cudaMemcpyHostToDevice));
+                            frame_camera_pbo_copy_ms += durationMs(
+                                std::chrono::steady_clock::now() - pbo_copy_start);
                         } else {
+                            const auto pbo_copy_start =
+                                std::chrono::steady_clock::now();
                             ck(cudaMemcpy(
                                 camera.pbo_cuda.cuda_buffer,
                                 camera.display_buffer[slot_index].frame,
                                 camera.image_width * camera.image_height * 4,
                                 cudaMemcpyDeviceToDevice));
+                            frame_camera_pbo_copy_ms += durationMs(
+                                std::chrono::steady_clock::now() - pbo_copy_start);
                         }
+                        const auto texture_upload_start =
+                            std::chrono::steady_clock::now();
                         bind_pbo(&camera.pbo_cuda.pbo);
                         bind_texture(&camera.image_texture);
                         upload_image_pbo_to_texture(target_texture_width,
                                                     target_texture_height);
                         unbind_pbo();
                         unbind_texture();
+                        frame_camera_texture_upload_ms += durationMs(
+                            std::chrono::steady_clock::now() -
+                            texture_upload_start);
                         camera.last_uploaded_frame = source_frame_number;
                         camera.texture_has_valid_frame = true;
                         frame_camera_upload_ms += durationMs(
@@ -8077,6 +8110,10 @@ struct StateOverlay {
                     << (playbackPreviewIsActive() ? 1 : 0) << ","
                     << frame_camera_upload_count << ","
                     << frame_camera_upload_ms << ","
+                    << frame_camera_texture_resize_ms << ","
+                    << frame_camera_preview_resize_ms << ","
+                    << frame_camera_pbo_copy_ms << ","
+                    << frame_camera_texture_upload_ms << ","
                     << frame_camera_scene_ui_ms << ","
                     << frame_stimulus_window_ui_ms << ","
                     << frame_stimulus_timeline_ui_ms << ","

@@ -48,6 +48,10 @@ NUMERIC_COLUMNS = {
     "playback_preview_active": int,
     "camera_upload_count": int,
     "camera_upload_ms": float,
+    "camera_texture_resize_ms": float,
+    "camera_preview_resize_ms": float,
+    "camera_pbo_copy_ms": float,
+    "camera_texture_upload_ms": float,
     "camera_scene_ui_ms": float,
     "stimulus_window_ui_ms": float,
     "stimulus_timeline_ui_ms": float,
@@ -169,6 +173,18 @@ def print_summary(columns: dict[str, list[Any]], metadata: dict[str, Any] | None
     print(f"  playing_speed: {describe(playing_speeds)}")
     print(
         f"  camera_upload_ms: {describe(columns.get('camera_upload_ms', []))}"
+    )
+    print(
+        f"  camera_texture_resize_ms: {describe(columns.get('camera_texture_resize_ms', []))}"
+    )
+    print(
+        f"  camera_preview_resize_ms: {describe(columns.get('camera_preview_resize_ms', []))}"
+    )
+    print(
+        f"  camera_pbo_copy_ms: {describe(columns.get('camera_pbo_copy_ms', []))}"
+    )
+    print(
+        f"  camera_texture_upload_ms: {describe(columns.get('camera_texture_upload_ms', []))}"
     )
     print(
         f"  camera_scene_ui_ms: {describe(columns.get('camera_scene_ui_ms', []))}"
@@ -312,6 +328,36 @@ def plot_profile(
         columns.get("camera_upload_ms", []),
         "camera upload ms",
         color="tab:green",
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("camera_texture_resize_ms", []),
+        "camera texture resize ms",
+        color="tab:gray",
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("camera_preview_resize_ms", []),
+        "camera preview resize ms",
+        color="tab:blue",
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("camera_pbo_copy_ms", []),
+        "camera pbo copy ms",
+        color="tab:olive",
+        alpha=0.65,
+    )
+    maybe_plot_line(
+        axes[2],
+        elapsed,
+        columns.get("camera_texture_upload_ms", []),
+        "camera texture upload ms",
+        color="tab:pink",
+        alpha=0.65,
     )
     maybe_plot_line(
         axes[2],

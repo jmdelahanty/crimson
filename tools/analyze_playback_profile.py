@@ -33,6 +33,10 @@ NUMERIC_COLUMNS = {
     "playback_preview_active": int,
     "camera_upload_count": int,
     "camera_upload_ms": float,
+    "camera_texture_resize_ms": float,
+    "camera_preview_resize_ms": float,
+    "camera_pbo_copy_ms": float,
+    "camera_texture_upload_ms": float,
     "camera_scene_ui_ms": float,
     "stimulus_window_ui_ms": float,
     "stimulus_timeline_ui_ms": float,
@@ -397,6 +401,18 @@ def build_summary(
 
     speed_stats = describe([row.get("inst_speed", math.nan) for row in active_rows])
     upload_stats = describe([row.get("camera_upload_ms", math.nan) for row in active_rows])
+    camera_texture_resize_stats = describe(
+        [row.get("camera_texture_resize_ms", math.nan) for row in active_rows]
+    )
+    camera_preview_resize_stats = describe(
+        [row.get("camera_preview_resize_ms", math.nan) for row in active_rows]
+    )
+    camera_pbo_copy_stats = describe(
+        [row.get("camera_pbo_copy_ms", math.nan) for row in active_rows]
+    )
+    camera_texture_upload_stats = describe(
+        [row.get("camera_texture_upload_ms", math.nan) for row in active_rows]
+    )
     camera_scene_ui_stats = describe(
         [row.get("camera_scene_ui_ms", math.nan) for row in active_rows]
     )
@@ -473,6 +489,10 @@ def build_summary(
                 "elapsed_s": row.get("elapsed_s"),
                 "frame_loop_ms": row.get("frame_loop_ms"),
                 "camera_upload_ms": row.get("camera_upload_ms"),
+                "camera_texture_resize_ms": row.get("camera_texture_resize_ms"),
+                "camera_preview_resize_ms": row.get("camera_preview_resize_ms"),
+                "camera_pbo_copy_ms": row.get("camera_pbo_copy_ms"),
+                "camera_texture_upload_ms": row.get("camera_texture_upload_ms"),
                 "camera_scene_ui_ms": row.get("camera_scene_ui_ms"),
                 "stimulus_window_ui_ms": row.get("stimulus_window_ui_ms"),
                 "stimulus_timeline_ui_ms": row.get("stimulus_timeline_ui_ms"),
@@ -509,6 +529,10 @@ def build_summary(
         "frame_budget_ms": budget_ms,
         "speed": speed_stats,
         "camera_upload_ms": upload_stats,
+        "camera_texture_resize_ms": camera_texture_resize_stats,
+        "camera_preview_resize_ms": camera_preview_resize_stats,
+        "camera_pbo_copy_ms": camera_pbo_copy_stats,
+        "camera_texture_upload_ms": camera_texture_upload_stats,
         "camera_scene_ui_ms": camera_scene_ui_stats,
         "stimulus_window_ui_ms": stimulus_window_ui_stats,
         "stimulus_timeline_ui_ms": stimulus_timeline_ui_stats,
@@ -540,6 +564,10 @@ def print_summary(summary: dict[str, Any]) -> None:
     for key in [
         "speed",
         "camera_upload_ms",
+        "camera_texture_resize_ms",
+        "camera_preview_resize_ms",
+        "camera_pbo_copy_ms",
+        "camera_texture_upload_ms",
         "camera_scene_ui_ms",
         "stimulus_window_ui_ms",
         "stimulus_timeline_ui_ms",
@@ -585,6 +613,10 @@ def print_summary(summary: dict[str, Any]) -> None:
                 f"t={format_stat(stall.get('elapsed_s'), 's')}, "
                 f"loop={format_stat(stall.get('frame_loop_ms'), 'ms')}, "
                 f"upload={format_stat(stall.get('camera_upload_ms'), 'ms')}, "
+                f"tex_resize={format_stat(stall.get('camera_texture_resize_ms'), 'ms')}, "
+                f"preview_resize={format_stat(stall.get('camera_preview_resize_ms'), 'ms')}, "
+                f"pbo_copy={format_stat(stall.get('camera_pbo_copy_ms'), 'ms')}, "
+                f"tex_upload={format_stat(stall.get('camera_texture_upload_ms'), 'ms')}, "
                 f"scene_ui={format_stat(stall.get('camera_scene_ui_ms'), 'ms')}, "
                 f"stim_window={format_stat(stall.get('stimulus_window_ui_ms'), 'ms')}, "
                 f"stim_timeline={format_stat(stall.get('stimulus_timeline_ui_ms'), 'ms')}, "
