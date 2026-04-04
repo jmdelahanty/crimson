@@ -207,7 +207,8 @@ struct PerfLogWriter {
             << "elapsed_s,wall_epoch_ms,play_video,set_playback_speed,inst_speed,"
             << "video_fps,requested_camera_frame,displayed_camera_frame,current_frame_num,"
             << "min_decoded_camera_frame,camera_decode_gap_frames,visible_camera_count,"
-            << "main_buffer_mode,camera_upload_count,camera_upload_ms,gl_draw_ms,"
+            << "main_buffer_mode,playback_preview_scale,playback_preview_active,"
+            << "camera_upload_count,camera_upload_ms,gl_draw_ms,"
             << "swap_ms,frame_loop_ms,stimulus_loaded,stimulus_decode_backend,"
             << "stimulus_buffer_mode,stimulus_target_frame,stimulus_latest_decoded,"
             << "stimulus_last_displayed,stimulus_buffered_frames,"
@@ -416,6 +417,7 @@ int main(int argc, char **argv) {
     yolo_param yolo_setting = yolo_param();
     std::string keypoints_root_folder;
     int label_buffer_size = 100;
+    int playback_preview_scale_mode = 0;
     int stimulus_buffer_size = 12;
     bool stimulus_use_cpu_buffer = false;
 #ifdef _WIN32
@@ -746,6 +748,33 @@ int main(int argc, char **argv) {
             }
         }
         return valid;
+    };
+
+    auto playbackPreviewScaleFactor = [&]() -> double {
+        switch (playback_preview_scale_mode) {
+        case 1:
+            return 0.5;
+        case 2:
+            return 0.25;
+        default:
+            return 1.0;
+        }
+    };
+
+    auto playbackPreviewScaleLabel = [&]() -> const char* {
+        switch (playback_preview_scale_mode) {
+        case 1:
+            return "1/2";
+        case 2:
+            return "1/4";
+        default:
+            return "1x";
+        }
+    };
+
+    auto playbackPreviewIsActive = [&]() -> bool {
+        return ps.play_video && scene->use_cpu_buffer && !yolo_detection &&
+               playbackPreviewScaleFactor() < 1.0;
     };
 
     auto stepPausedFrameFromBuffer = [&](int target_frame) -> bool {
@@ -2087,6 +2116,28 @@ int main(int argc, char **argv) {
                 ImGui::InputInt("Buffer Size", &label_buffer_size);
                 label_buffer_size = std::max(1, label_buffer_size);
             }
+            {
+                const char *items[] = {"Full Resolution (1x)",
+                                       "Half-Resolution Preview (1/2)",
+                                       "Quarter-Resolution Preview (1/4)"};
+                ImGui::Combo("Playback Preview Scale", &playback_preview_scale_mode,
+                             items, IM_ARRAYSIZE(items));
+                if (playback_preview_scale_mode != 0) {
+                    if (!scene->use_cpu_buffer) {
+                        ImGui::TextDisabled(
+                            "Preview scaling is currently active only when the main stream uses CPU Buffer.");
+                    } else if (yolo_detection) {
+                        ImGui::TextDisabled(
+                            "Preview scaling is temporarily disabled while YOLO inference is active.");
+                    } else if (!ps.play_video) {
+                        ImGui::TextDisabled(
+                            "Preview scaling applies only during playback; paused inspection remains full resolution.");
+                    } else {
+                        ImGui::Text("Effective preview scale: %s",
+                                    playbackPreviewScaleLabel());
+                    }
+                }
+            }
             if (!stimulus_player.loaded) {
                 ImGui::InputInt("Stimulus Buffer Size", &stimulus_buffer_size);
                 stimulus_buffer_size = std::max(1, stimulus_buffer_size);
@@ -3177,9 +3228,62 @@ int main(int argc, char **argv) {
                             return;
                         }
                         auto &camera = scene->cameras[j];
+                        const int source_frame_number =
+                            camera.display_buffer[slot_index].frame_number;
+                        const bool preview_active = playbackPreviewIsActive();
+                        const double preview_scale =
+                            preview_active ? playbackPreviewScaleFactor() : 1.0;
+                        const int target_texture_width =
+                            preview_active
+                                ? std::max(1, static_cast<int>(std::lround(
+                                                  static_cast<double>(camera.image_width) *
+                                                  preview_scale)))
+                                : camera.image_width;
+                        const int target_texture_height =
+                            preview_active
+                                ? std::max(1, static_cast<int>(std::lround(
+                                                  static_cast<double>(camera.image_height) *
+                                                  preview_scale)))
+                                : camera.image_height;
+                        const bool texture_shape_changed =
+                            camera.display_texture_width != target_texture_width ||
+                            camera.display_texture_height != target_texture_height;
+                        if (camera.texture_has_valid_frame &&
+                            camera.last_uploaded_frame == source_frame_number &&
+                            !texture_shape_changed) {
+                            return;
+                        }
+                        if (texture_shape_changed) {
+                            render_resize_camera_texture(&camera,
+                                                         target_texture_width,
+                                                         target_texture_height);
+                            camera.last_uploaded_frame = -1;
+                            camera.texture_has_valid_frame = false;
+                        }
                         const auto upload_start =
                             std::chrono::steady_clock::now();
-                        if (scene->use_cpu_buffer) {
+                        if (preview_active) {
+                            const cv::Mat full_rgba(camera.image_height,
+                                                    camera.image_width,
+                                                    CV_8UC4,
+                                                    camera.display_buffer[slot_index].frame);
+                            camera.playback_preview_rgba_cpu.resize(
+                                static_cast<size_t>(target_texture_width) *
+                                static_cast<size_t>(target_texture_height) * 4);
+                            cv::Mat preview_rgba(
+                                target_texture_height, target_texture_width, CV_8UC4,
+                                camera.playback_preview_rgba_cpu.data());
+                            cv::resize(full_rgba, preview_rgba,
+                                       cv::Size(target_texture_width,
+                                                target_texture_height),
+                                       0.0, 0.0, cv::INTER_AREA);
+                            ck(cudaMemcpy(
+                                camera.pbo_cuda.cuda_buffer,
+                                camera.playback_preview_rgba_cpu.data(),
+                                static_cast<size_t>(target_texture_width) *
+                                    static_cast<size_t>(target_texture_height) * 4,
+                                cudaMemcpyHostToDevice));
+                        } else if (scene->use_cpu_buffer) {
                             ck(cudaMemcpy(
                                 camera.pbo_cuda.cuda_buffer,
                                 camera.display_buffer[slot_index].frame,
@@ -3194,33 +3298,40 @@ int main(int argc, char **argv) {
                         }
                         bind_pbo(&camera.pbo_cuda.pbo);
                         bind_texture(&camera.image_texture);
-                        upload_image_pbo_to_texture(camera.image_width,
-                                                    camera.image_height);
+                        upload_image_pbo_to_texture(target_texture_width,
+                                                    target_texture_height);
                         unbind_pbo();
                         unbind_texture();
-                        camera.last_uploaded_frame =
-                            camera.display_buffer[slot_index].frame_number;
+                        camera.last_uploaded_frame = source_frame_number;
                         camera.texture_has_valid_frame = true;
                         frame_camera_upload_ms += durationMs(
                             std::chrono::steady_clock::now() - upload_start);
                         frame_camera_upload_count++;
                     };
                     auto clearCameraDisplayBuffer = [&]() {
+                        auto &camera = scene->cameras[j];
+                        const int clear_width =
+                            camera.display_texture_width > 0
+                                ? camera.display_texture_width
+                                : camera.image_width;
+                        const int clear_height =
+                            camera.display_texture_height > 0
+                                ? camera.display_texture_height
+                                : camera.image_height;
                         const size_t bytes =
-                            static_cast<size_t>(scene->cameras[j].image_width) *
-                            static_cast<size_t>(scene->cameras[j].image_height) * 4;
+                            static_cast<size_t>(clear_width) *
+                            static_cast<size_t>(clear_height) * 4;
                         if (bytes == 0) {
                             return;
                         }
-                        ck(cudaMemset(scene->cameras[j].pbo_cuda.cuda_buffer, 0, bytes));
-                        bind_pbo(&scene->cameras[j].pbo_cuda.pbo);
-                        bind_texture(&scene->cameras[j].image_texture);
-                        upload_image_pbo_to_texture(scene->cameras[j].image_width,
-                                                    scene->cameras[j].image_height);
+                        ck(cudaMemset(camera.pbo_cuda.cuda_buffer, 0, bytes));
+                        bind_pbo(&camera.pbo_cuda.pbo);
+                        bind_texture(&camera.image_texture);
+                        upload_image_pbo_to_texture(clear_width, clear_height);
                         unbind_pbo();
                         unbind_texture();
-                        scene->cameras[j].last_uploaded_frame = -1;
-                        scene->cameras[j].texture_has_valid_frame = false;
+                        camera.last_uploaded_frame = -1;
+                        camera.texture_has_valid_frame = false;
                     };
                     int presented_slot = -1;
                     int presented_frame = -1;
@@ -3261,11 +3372,7 @@ int main(int argc, char **argv) {
                         presented_slot = display_slot;
                         presented_frame = displayed_frame_num;
                         if (display_slot >= 0) {
-                            if (!scene->cameras[j].texture_has_valid_frame ||
-                                scene->cameras[j].last_uploaded_frame !=
-                                    displayed_frame_num) {
-                                uploadCameraFrameToTexture(display_slot);
-                            }
+                            uploadCameraFrameToTexture(display_slot);
                         } else {
                             if (scene->cameras[j].texture_has_valid_frame) {
                                 clearCameraDisplayBuffer();
@@ -3289,11 +3396,7 @@ int main(int argc, char **argv) {
                                 if (presented_frame >= 0) {
                                     current_frame_num = presented_frame;
                                 }
-                                if (!scene->cameras[j].texture_has_valid_frame ||
-                                    scene->cameras[j].last_uploaded_frame !=
-                                        presented_frame) {
-                                    uploadCameraFrameToTexture(paused_slot);
-                                }
+                                uploadCameraFrameToTexture(paused_slot);
                             } else {
                                 if (scene->cameras[j].texture_has_valid_frame) {
                                     clearCameraDisplayBuffer();
@@ -7899,6 +8002,8 @@ struct StateOverlay {
                     << perf_min_decoded_camera_frame << ","
                     << camera_decode_gap_frames << "," << visible_camera_count
                     << "," << (scene->use_cpu_buffer ? "cpu" : "gpu") << ","
+                    << playbackPreviewScaleLabel() << ","
+                    << (playbackPreviewIsActive() ? 1 : 0) << ","
                     << frame_camera_upload_count << ","
                     << frame_camera_upload_ms << "," << frame_gl_draw_ms << ","
                     << frame_swap_ms << "," << frame_loop_ms << ","
@@ -7941,6 +8046,8 @@ struct StateOverlay {
                      {{"loaded", video_loaded},
                       {"fps", video_fps},
                       {"buffer_mode", scene->use_cpu_buffer ? "cpu" : "gpu"},
+                      {"playback_preview_scale", playbackPreviewScaleLabel()},
+                      {"playback_preview_active", playbackPreviewIsActive()},
                       {"buffer_size",
                        video_loaded ? static_cast<int>(scene->size_of_buffer)
                                     : label_buffer_size},
