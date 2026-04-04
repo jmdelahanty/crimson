@@ -18,6 +18,9 @@ struct CameraResources {
     u32 image_width = 0;
     u32 image_height = 0;
     GLuint image_texture = 0;
+    GLuint nv12_luma_texture = 0;
+    GLuint nv12_chroma_texture = 0;
+    GLuint nv12_stage_fbo = 0;
     PBO_CUDA pbo_cuda = {};
     GLuint playback_staging_texture = 0;
     PBO_CUDA playback_staging_pbo = {};
@@ -195,6 +198,31 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        glGenTextures(1, &scene->cameras[j].nv12_luma_texture);
+        glBindTexture(GL_TEXTURE_2D, scene->cameras[j].nv12_luma_texture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, scene->cameras[j].image_width,
+                     scene->cameras[j].image_height, 0, GL_RED,
+                     GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        const int chroma_width =
+            static_cast<int>((scene->cameras[j].image_width + 1) / 2);
+        const int chroma_height =
+            static_cast<int>((scene->cameras[j].image_height + 1) / 2);
+        glGenTextures(1, &scene->cameras[j].nv12_chroma_texture);
+        glBindTexture(GL_TEXTURE_2D, scene->cameras[j].nv12_chroma_texture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8, chroma_width, chroma_height, 0,
+                     GL_RG, GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        glGenFramebuffers(1, &scene->cameras[j].nv12_stage_fbo);
     }
 
 }
