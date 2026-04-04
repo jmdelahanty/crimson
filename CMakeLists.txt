@@ -471,7 +471,7 @@ foreach(CUDA_FILE ${POSSIBLE_CUDA_SOURCES})
 endforeach()
 
 # C++ sources
-file(GLOB CPP_SOURCES CONFIGURE_DEPENDS "src/*.cpp")
+file(GLOB CPP_SOURCES CONFIGURE_DEPENDS "src/*.cpp" "src/gui/*.cpp")
 
 # keypoint write path requires strict IEEE NaN semantics for contract-idempotent
 # NaN-aware comparisons and writes.
