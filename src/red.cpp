@@ -43,7 +43,7 @@
 #include "zarr_loader.h"
 #include "gui/crop_keypoint_editor.h"
 #include "gui/file_browser_window.h"
-#include "gui/refined_keypoint_review_panel.h"
+#include "gui/refined_keypoint_review_window.h"
 #include "gui_interpolation.h"
 #include "gui/movement_timeline_window.h"
 #include "gui/stimulus_event_timeline_window.h"
@@ -1405,7 +1405,8 @@ int main(int argc, char **argv) {
     std::optional<ManualDetectPayloadPreview> manual_payload_preview;
     static int manual_write_intended_use = 0;  // 0 = full_recording, 1 = training
     static int manual_write_review_state = 0;  // 0 = approved, 1 = needs_review, 2 = pending, 3 = rejected
-    static RefinedKeypointReviewPanelState refined_keypoint_review_panel_state;
+    static RefinedKeypointReviewWindowState
+        refined_keypoint_review_window_state;
     CropKeypointEditorState crop_keypoint_editor_state;
 
     auto sanitizePathComponent = [](std::string value) -> std::string {
@@ -2579,74 +2580,6 @@ int main(int argc, char **argv) {
                     }
                     if (!zarr_loader.getReviewNotes().empty()) {
                         ImGui::Text("  Notes: %s", zarr_loader.getReviewNotes().c_str());
-                    }
-                }
-                if (zarr_loader.hasKeypointReviewStatus()) {
-                    const auto& krs = zarr_loader.getKeypointReviewState();
-                    ImVec4 kp_status_color = (krs == "approved")
-                        ? ImVec4(0.2f, 0.9f, 0.2f, 1.0f)
-                        : (krs == "rejected")
-                            ? ImVec4(1.0f, 0.3f, 0.3f, 1.0f)
-                            : ImVec4(1.0f, 0.85f, 0.3f, 1.0f);
-                    ImGui::TextColored(kp_status_color, "KP Review: %s", krs.c_str());
-                    ImGui::SameLine();
-                    ImGui::Text("| Use: %s | Method: %s",
-                                zarr_loader.getKeypointReviewIntendedUse().c_str(),
-                                zarr_loader.getKeypointReviewMethod().c_str());
-                    if (!zarr_loader.getKeypointReviewTimestamp().empty()) {
-                        ImGui::Text("  KP Reviewed: %s", zarr_loader.getKeypointReviewTimestamp().c_str());
-                    }
-                    if (!zarr_loader.getKeypointReviewReviewer().empty()) {
-                        ImGui::Text("  KP Reviewer: %s", zarr_loader.getKeypointReviewReviewer().c_str());
-                    }
-                    if (!zarr_loader.getKeypointReviewNotes().empty()) {
-                        ImGui::Text("  KP Notes: %s", zarr_loader.getKeypointReviewNotes().c_str());
-                    }
-                }
-                if (zarr_loader.hasKeypointData()) {
-                    const RefinedKeypointReviewPanelContext review_panel_context{
-                        zarr_loader,
-                        current_frame_num,
-                        g_zarr_bbox_edit_state.selected_frame,
-                        g_zarr_bbox_edit_state.selected_box,
-                    };
-                    const auto review_panel_result =
-                        drawRefinedKeypointReviewPanel(
-                            review_panel_context,
-                            refined_keypoint_review_panel_state);
-                    if (review_panel_result.request_review_write) {
-                        RefinedKeypointRepository refined_keypoint_repo(zarr_loader);
-                        std::string write_error;
-                        std::string resolved_run_name;
-                        if (!refined_keypoint_repo.writeReviewStatus(
-                                review_panel_result.review_options,
-                                write_error,
-                                &resolved_run_name)) {
-                            refined_keypoint_review_panel_state.review_write_status =
-                                "Keypoint review write failed: " + write_error;
-                        } else {
-                            std::string reload_error;
-                            if (reloadActiveZarrPreserveDataset(reload_error)) {
-                                std::ostringstream status;
-                                status << "Keypoint review status updated: run="
-                                       << (resolved_run_name.empty() ? "<latest>"
-                                                                     : resolved_run_name)
-                                       << " state="
-                                       << review_panel_result.review_options.state
-                                       << " use="
-                                       << review_panel_result.review_options
-                                              .intended_use
-                                       << " method="
-                                       << review_panel_result.review_options.method;
-                                refined_keypoint_review_panel_state.review_write_status =
-                                    status.str();
-                            } else {
-                                zarr_loaded = false;
-                                refined_keypoint_review_panel_state.review_write_status =
-                                    "Keypoint review write succeeded but reload failed: " +
-                                    reload_error;
-                            }
-                        }
                     }
                 }
                 if (!zarr_loader.hasDetectionData()) {
@@ -6411,7 +6344,8 @@ struct StateOverlay {
                                         action.keypoints_roi,
                                         write_error,
                                         &edit_result)) {
-                                    refined_keypoint_review_panel_state
+                                    refined_keypoint_review_window_state
+                                        .panel_state
                                         .manual_write_status =
                                         "Keypoint edit failed: " +
                                         write_error;
@@ -6438,11 +6372,13 @@ struct StateOverlay {
                                                    << edit_result
                                                           .stale_eye_mask_runs;
                                         }
-                                        refined_keypoint_review_panel_state
+                                        refined_keypoint_review_window_state
+                                            .panel_state
                                             .manual_write_status =
                                             status.str();
                                     } else {
-                                        refined_keypoint_review_panel_state
+                                        refined_keypoint_review_window_state
+                                            .panel_state
                                             .manual_write_status =
                                             "Keypoint edit saved but reload failed: " +
                                             reload_error;
@@ -6460,7 +6396,8 @@ struct StateOverlay {
                                              *selected_keypoint_selection,
                                              write_error,
                                              &edit_result)) {
-                                    refined_keypoint_review_panel_state
+                                    refined_keypoint_review_window_state
+                                        .panel_state
                                         .manual_write_status =
                                         "Mark no keypoints failed: " +
                                         write_error;
@@ -6484,11 +6421,13 @@ struct StateOverlay {
                                                    << edit_result
                                                           .stale_eye_mask_runs;
                                         }
-                                        refined_keypoint_review_panel_state
+                                        refined_keypoint_review_window_state
+                                            .panel_state
                                             .manual_write_status =
                                             status.str();
                                     } else {
-                                        refined_keypoint_review_panel_state
+                                        refined_keypoint_review_window_state
+                                            .panel_state
                                             .manual_write_status =
                                             "Marked fish_present_no_keypoints but reload failed: " +
                                             reload_error;
@@ -6505,7 +6444,8 @@ struct StateOverlay {
                                         *selected_keypoint_selection,
                                         write_error,
                                         &edit_result)) {
-                                    refined_keypoint_review_panel_state
+                                    refined_keypoint_review_window_state
+                                        .panel_state
                                         .manual_write_status =
                                         "Mark detection issue failed: " +
                                         write_error;
@@ -6529,11 +6469,13 @@ struct StateOverlay {
                                                    << edit_result
                                                           .stale_eye_mask_runs;
                                         }
-                                        refined_keypoint_review_panel_state
+                                        refined_keypoint_review_window_state
+                                            .panel_state
                                             .manual_write_status =
                                             status.str();
                                     } else {
-                                        refined_keypoint_review_panel_state
+                                        refined_keypoint_review_window_state
+                                            .panel_state
                                             .manual_write_status =
                                             "Marked detection_issue but reload failed: " +
                                             reload_error;
@@ -6846,7 +6788,8 @@ struct StateOverlay {
                             crop_keypoint_editor_context
                                 .base_arrow_origin_valid = arrow_origin_valid;
                             crop_keypoint_editor_context.status_message =
-                                &refined_keypoint_review_panel_state
+                                &refined_keypoint_review_window_state
+                                     .panel_state
                                      .manual_write_status;
 
                             CropKeypointPreviewPanelContext
@@ -6925,6 +6868,56 @@ struct StateOverlay {
             ImGui::End();
             frame_crop_preview_ui_ms +=
                 durationMs(std::chrono::steady_clock::now() - crop_preview_ui_start);
+        }
+
+        if (zarr_loaded && zarr_loader.hasKeypointData()) {
+            const RefinedKeypointReviewWindowContext keypoint_review_window_context{
+                zarr_loader,
+                current_frame_num,
+                g_zarr_bbox_edit_state.selected_frame,
+                g_zarr_bbox_edit_state.selected_box,
+            };
+            const auto keypoint_review_window_result =
+                drawRefinedKeypointReviewWindow(
+                    keypoint_review_window_context,
+                    refined_keypoint_review_window_state);
+            if (keypoint_review_window_result.request_review_write) {
+                RefinedKeypointRepository refined_keypoint_repo(zarr_loader);
+                std::string write_error;
+                std::string resolved_run_name;
+                if (!refined_keypoint_repo.writeReviewStatus(
+                        keypoint_review_window_result.review_options,
+                        write_error,
+                        &resolved_run_name)) {
+                    refined_keypoint_review_window_state.panel_state
+                        .review_write_status =
+                        "Keypoint review write failed: " + write_error;
+                } else {
+                    std::string reload_error;
+                    if (reloadActiveZarrPreserveDataset(reload_error)) {
+                        std::ostringstream status;
+                        status << "Keypoint review status updated: run="
+                               << (resolved_run_name.empty() ? "<latest>"
+                                                             : resolved_run_name)
+                               << " state="
+                               << keypoint_review_window_result.review_options.state
+                               << " use="
+                               << keypoint_review_window_result.review_options
+                                      .intended_use
+                               << " method="
+                               << keypoint_review_window_result.review_options
+                                      .method;
+                        refined_keypoint_review_window_state.panel_state
+                            .review_write_status = status.str();
+                    } else {
+                        zarr_loaded = false;
+                        refined_keypoint_review_window_state.panel_state
+                            .review_write_status =
+                            "Keypoint review write succeeded but reload failed: " +
+                            reload_error;
+                    }
+                }
+            }
         }
 
         if (stimulus_player.loaded) {
