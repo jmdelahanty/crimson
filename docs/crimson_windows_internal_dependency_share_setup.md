@@ -83,6 +83,16 @@ cmake --preset windows-trt10-cuda12.4-no-sfm
 cmake --build --preset build-windows-trt10-cuda12.4-no-sfm-release
 ```
 
+Or use the smoke wrapper:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\smoke_test_windows_build.ps1 `
+  -RunInstall
+```
+
+Because the dependency roots are already loaded in the current shell by the
+setup wrapper, the smoke script can reuse them directly.
+
 If you want the staged install tree too:
 
 ```powershell

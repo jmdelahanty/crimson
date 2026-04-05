@@ -259,6 +259,23 @@ Full build:
 cmake --build --preset build-windows-trt10-cuda12.4-release
 ```
 
+Optional one-command smoke path:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\smoke_test_windows_build.ps1 `
+  -LoadDependencyRoots `
+  -RunInstall
+```
+
+That wrapper can run:
+
+- dependency-root loading
+- prereq check
+- configure
+- build
+- install
+- executable existence verification
+
 ---
 
 ## 8. Stage An Install Tree
