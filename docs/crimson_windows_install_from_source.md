@@ -110,6 +110,33 @@ Run that from a Visual Studio developer shell so `lib.exe` is available.
 
 ---
 
+## Optional: Stage Local Dependency Archives
+
+If you want to make Windows setup easier by distributing prebuilt dependency
+archives inside your own team, Crimson now includes a local archive staging
+helper:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\stage_windows_dependency_archives.ps1 `
+  -DownloadRoot C:\third_party\downloads `
+  -CleanDestination
+```
+
+It is designed for local `.zip` files you already have, not for downloading
+from vendor sites.
+
+Expected staged destinations:
+
+- `C:\third_party\opencv-install-4.10.0-x64`
+- `C:\third_party\TensorRT-10.0.1.6`
+- `C:\third_party\Video_Codec_SDK_13.0`
+- `C:\third_party\ffmpeg-nvidia`
+
+Use this only with archives you are actually allowed to redistribute. The
+script does not attempt to download vendor packages for you.
+
+---
+
 ## 3. Open The Right Shell
 
 Use one of:
