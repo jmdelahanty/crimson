@@ -1,6 +1,7 @@
 #ifndef REFINED_KEYPOINT_REPOSITORY_H
 #define REFINED_KEYPOINT_REPOSITORY_H
 
+#include <array>
 #include <cstddef>
 #include <string>
 #include "zarr_loader.h"
@@ -25,8 +26,14 @@ struct RefinedKeypointReviewStatusWriteOptions {
     bool update_latest = true;
 };
 
-// Central seam for refined-keypoint editing. Selection/lookup lands here first,
-// and the row-level manual-write methods should be added here next.
+struct RefinedKeypointEditResult {
+    bool changed = false;
+    bool summary_updated = false;
+    int stale_eye_mask_runs = 0;
+};
+
+// Central seam for refined-keypoint editing. Selection, review-status writes,
+// and row-level manual-write operations land here.
 class RefinedKeypointRepository {
 public:
     explicit RefinedKeypointRepository(const ZarrDetectionLoader& loader)
@@ -41,6 +48,19 @@ public:
         const RefinedKeypointReviewStatusWriteOptions& options,
         std::string& error_message,
         std::string* resolved_run_name = nullptr) const;
+    bool writeManualCorrection(
+        const RefinedKeypointSelection& selection,
+        const std::array<std::array<double, 2>, 3>& keypoints_roi,
+        std::string& error_message,
+        RefinedKeypointEditResult* edit_result = nullptr) const;
+    bool markFishPresentNoKeypoints(
+        const RefinedKeypointSelection& selection,
+        std::string& error_message,
+        RefinedKeypointEditResult* edit_result = nullptr) const;
+    bool markDetectionIssue(
+        const RefinedKeypointSelection& selection,
+        std::string& error_message,
+        RefinedKeypointEditResult* edit_result = nullptr) const;
 
 private:
     const ZarrDetectionLoader& loader_;
