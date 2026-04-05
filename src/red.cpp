@@ -43,6 +43,7 @@
 #include "zarr_loader.h"
 #include "gui/crop_keypoint_editor.h"
 #include "gui/file_browser_window.h"
+#include "gui/frame_debug_window.h"
 #include "gui/keypoints_window.h"
 #include "gui/labeling_tool_window.h"
 #include "gui/refined_keypoint_review_window.h"
@@ -1411,6 +1412,7 @@ int main(int argc, char **argv) {
         refined_keypoint_review_window_state;
     CropKeypointEditorState crop_keypoint_editor_state;
     LabelingToolWindowState labeling_tool_window_state;
+    FrameDebugWindowState frame_debug_window_state;
 
     auto sanitizePathComponent = [](std::string value) -> std::string {
         if (value.empty()) {
@@ -2500,548 +2502,250 @@ int main(int argc, char **argv) {
 
         if (video_loaded) {
             const auto frame_debug_ui_start = std::chrono::steady_clock::now();
-            ImGui::Begin("Frame Debug");
-            ImGui::Text("Inspecting Frame: %d", current_frame_num);
-            ImGui::Text("Display target frame: %d", ps.to_display_frame_number);
-            ImGui::Text("Slider frame: %d", ps.slider_frame_number);
-            if (frame_sync_valid_slots >= 0 && frame_sync_empty_slots >= 0) {
-                ImGui::Text("Buffer frames: valid=%d empty_remaining=%d total=%u",
-                            frame_sync_valid_slots, frame_sync_empty_slots,
-                            scene->size_of_buffer);
-            }
-            if (frame_sync_recording_remaining >= 0 && frame_sync_recording_total > 0) {
-                ImGui::Text("Recording decode: latest=%d remaining=%d total=%d",
-                            frame_sync_latest_decoded,
-                            frame_sync_recording_remaining,
-                            frame_sync_recording_total);
-            }
-            if (!frame_sync_debug_line.empty()) {
-                ImGui::TextWrapped("Frame sync: %s", frame_sync_debug_line.c_str());
-            }
-            ImGui::Separator();
-
-            // Check for Labeled Keypoints
-            if (plot_keypoints_flag) {
-                if (keypoints_map.count(current_frame_num)) {
-                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[Manual] Keypoints:   Found");
-                } else {
-                    ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "[Manual] Keypoints:   None");
-                }
-            }
-
+            std::vector<LoggedBoundingBox> zarr_boxes;
+            bool frame_is_interpolated = false;
+            const bool frame_has_bbox_edits =
+                g_zarr_bbox_edit_state.isFrameDirty(current_frame_num);
+            bool dataset_has_synthetic_boxes = false;
+            bool dataset_allows_bbox_edit = false;
+            ZarrDetectionLoader::FrameDetections detection_details;
+            const ZarrDetectionLoader::FrameDetections* detection_details_ptr =
+                nullptr;
             if (zarr_loaded) {
-                const bool dataset_has_synthetic_boxes = zarr_loader.activeDatasetHasSyntheticDetections();
-                if (!detection_dataset_labels.empty()) {
-                    ImGui::Text("Detection dataset:");
-                    const char* current_label =
-                        detection_dataset_labels[std::min<int>(detection_dataset_choice,
-                                                               static_cast<int>(detection_dataset_labels.size()) - 1)].c_str();
-                    bool dataset_changed = false;
-                    if (ImGui::BeginCombo("##detection_dataset_combo", current_label)) {
-                        for (int i = 0; i < static_cast<int>(detection_dataset_labels.size()); ++i) {
-                            bool selected = (i == detection_dataset_choice);
-                            if (ImGui::Selectable(detection_dataset_labels[i].c_str(), selected)) {
-                                if (zarr_loader.setActiveDetectionDataset(detection_dataset_ids[i])) {
-                                    detection_dataset_choice = i;
-                                    dataset_changed = true;
-                                }
-                            }
-                            if (selected) {
-                                ImGui::SetItemDefaultFocus();
-                            }
-                        }
-                        ImGui::EndCombo();
-                        if (dataset_changed) {
-                            refreshDetectionDatasetOptions(zarr_loader);
-                            g_zarr_bbox_edit_state.clearAll();
-                            invalidateReviewFrameCache();
-                            review_frame_status.clear();
-                            if (zarr_loader.getTotalFrames() > 0 &&
-                                current_frame_num >= static_cast<int>(zarr_loader.getTotalFrames())) {
-                                current_frame_num = static_cast<int>(zarr_loader.getTotalFrames()) - 1;
-                            }
-                        }
-                    }
-                }
-                if (zarr_loader.hasReviewStatus()) {
-                    const auto& rs = zarr_loader.getReviewState();
-                    ImVec4 status_color = (rs == "approved")
-                        ? ImVec4(0.2f, 0.9f, 0.2f, 1.0f)
-                        : (rs == "rejected")
-                            ? ImVec4(1.0f, 0.3f, 0.3f, 1.0f)
-                            : ImVec4(1.0f, 0.85f, 0.3f, 1.0f);
-                    ImGui::TextColored(status_color, "Review: %s", rs.c_str());
-                    ImGui::SameLine();
-                    ImGui::Text("| Use: %s | Method: %s",
-                                zarr_loader.getReviewIntendedUse().c_str(),
-                                zarr_loader.getReviewMethod().c_str());
-                    if (!zarr_loader.getReviewTimestamp().empty()) {
-                        ImGui::Text("  Reviewed: %s", zarr_loader.getReviewTimestamp().c_str());
-                    }
-                    if (!zarr_loader.getReviewReviewer().empty()) {
-                        ImGui::Text("  Reviewer: %s", zarr_loader.getReviewReviewer().c_str());
-                    }
-                    if (!zarr_loader.getReviewNotes().empty()) {
-                        ImGui::Text("  Notes: %s", zarr_loader.getReviewNotes().c_str());
-                    }
-                }
-                if (!zarr_loader.hasDetectionData()) {
-                    ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.25f, 1.0f),
-                                       "[Zarr] Detection runs: unavailable (metadata/stimulus-only mode)");
-                }
-
-                    if (zarr_loader.hasStimulusAlignment()) {
-                        ImGui::Separator();
-                        ImGui::Text("Stimulus Alignment:");
-                        if (zarr_loader.hasStimulusFrameMapping()) {
-                            ImGui::Text("  Mapping variant: %s",
-                                        zarr_loader.hasCorrectedStimulusFrameMapping()
-                                            ? "corrected"
-                                            : "legacy");
-                            if (ps.current_stimulus_frame >= 0) {
-                                ImGui::Text("  Current stimulus frame: %d", ps.current_stimulus_frame);
-                            } else {
-                                ImGui::Text("  Current stimulus frame: (not mapped)");
-                            }
-                            if (auto metadata_index =
-                                    zarr_loader.getStimulusMetadataIndexForCameraFrame(current_frame_num)) {
-                                ImGui::Text("  Frame metadata index: %d", *metadata_index);
-                            }
-                            if (auto first_cam = zarr_loader.getFirstCameraFrameWithStimulus()) {
-                                if (auto first_stim = zarr_loader.getFirstStimulusFrameNumber()) {
-                                    ImGui::Text("  First mapped camera frame: %d -> Stim %d",
-                                                *first_cam, *first_stim);
-                                } else {
-                                    ImGui::Text("  First mapped camera frame: %d", *first_cam);
-                                }
-                            }
-                            ImGui::Text("  Camera frame offset: %lld",
-                                        static_cast<long long>(zarr_loader.getStimulusCameraFrameOffset()));
-                        } else {
-                            ImGui::Text("  Mapping data not available");
-                        }
-                    }
-
-                std::vector<LoggedBoundingBox> zarr_boxes;
-                bool frame_is_interpolated = false;
-                const bool frame_has_bbox_edits =
-                    g_zarr_bbox_edit_state.isFrameDirty(current_frame_num);
-
+                dataset_has_synthetic_boxes =
+                    zarr_loader.activeDatasetHasSyntheticDetections();
                 if (zarr_loader.hasInterpolation()) {
-                    frame_is_interpolated = zarr_loader.isFrameInterpolated(current_frame_num);
+                    frame_is_interpolated =
+                        zarr_loader.isFrameInterpolated(current_frame_num);
                 }
-
                 std::vector<LoggedBoundingBox> loaded_zarr_boxes =
                     zarr_loader.getBoundingBoxesForFrame(current_frame_num);
-                zarr_boxes = g_zarr_bbox_edit_state.resolveFrameBoxes(current_frame_num,
-                                                                      loaded_zarr_boxes);
+                zarr_boxes = g_zarr_bbox_edit_state.resolveFrameBoxes(
+                    current_frame_num, loaded_zarr_boxes);
                 const bool active_dataset_is_raw_detect =
                     zarr_loader.hasDetectionData() &&
                     (zarr_loader.getActiveDetectionDataset() ==
                      ZarrDetectionLoader::DetectionDataset::RawDetect);
-                const bool dataset_allows_bbox_edit =
+                dataset_allows_bbox_edit =
                     zarr_loader.hasDetectionData() && !active_dataset_is_raw_detect;
                 if (!dataset_allows_bbox_edit) {
                     g_zarr_bbox_edit_state.draw_mode = false;
                     g_zarr_bbox_edit_state.cancelDraw();
                     g_zarr_bbox_edit_state.clearSelection();
                 }
-
                 const bool need_details =
                     zarr_loader.hasScores() ||
                     zarr_loader.hasHeadingData() ||
-                    zarr_loader.hasKeypointData() ||
-                    dataset_has_synthetic_boxes;
-                ZarrDetectionLoader::FrameDetections detection_details;
+                    zarr_loader.hasKeypointData() || dataset_has_synthetic_boxes;
                 if (need_details) {
-                    detection_details = zarr_loader.getRawDetections(current_frame_num, false);
+                    detection_details =
+                        zarr_loader.getRawDetections(current_frame_num, false);
+                    detection_details_ptr = &detection_details;
                 }
+            }
 
-                if (!zarr_boxes.empty()) {
-                    if (frame_is_interpolated && dataset_has_synthetic_boxes) {
-                        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f),
-                                           "[Zarr] Detections:    Found %zu (INTERPOLATED)",
-                                           zarr_boxes.size());
-                    } else if (frame_is_interpolated && !dataset_has_synthetic_boxes) {
-                        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f),
-                                           "[Zarr] Detections:    Found %zu (original, interp available)",
-                                           zarr_boxes.size());
-                    } else {
-                        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f),
-                                           "[Zarr] Detections:    Found %zu", zarr_boxes.size());
-                    }
+            const FrameDebugWindowContext frame_debug_context{
+                current_frame_num,
+                ps.to_display_frame_number,
+                ps.slider_frame_number,
+                frame_sync_valid_slots,
+                frame_sync_empty_slots,
+                scene->size_of_buffer,
+                frame_sync_recording_remaining,
+                frame_sync_recording_total,
+                frame_sync_latest_decoded,
+                frame_sync_debug_line,
+                plot_keypoints_flag,
+                keypoints_map.count(current_frame_num) != 0,
+                zarr_loaded,
+                zarr_loader,
+                detection_dataset_labels,
+                detection_dataset_choice,
+                dataset_has_synthetic_boxes,
+                frame_is_interpolated,
+                frame_has_bbox_edits,
+                dataset_allows_bbox_edit,
+                zarr_boxes,
+                detection_details_ptr,
+                review_frame_filters,
+                review_frame_cache.valid,
+                review_frame_cache.frames.size(),
+                review_frame_status,
+                decode_debug_status,
+                default_buffer_dump_root.string(),
+                g_zarr_bbox_edit_state,
+                ps.play_video,
+                bbox_payload_status,
+                show_keypoint_markers,
+                show_heading_arrows,
+                show_eye_masks,
+            };
+            const FrameDebugWindowResult frame_debug_result =
+                drawFrameDebugWindow(frame_debug_context, frame_debug_window_state);
 
-                    if (zarr_loader.hasScores() && !detection_details.scores.empty()) {
-                        float max_score = *std::max_element(
-                            detection_details.scores.begin(), detection_details.scores.end());
-                        ImGui::Text("  Max confidence: %.2f", max_score);
-                    }
+            show_keypoint_markers = frame_debug_result.show_keypoint_markers;
+            show_heading_arrows = frame_debug_result.show_heading_arrows;
+            show_eye_masks = frame_debug_result.show_eye_masks;
 
-                    if (zarr_loader.hasClassIDs()) {
-                        ImGui::Text("  Has class IDs: Yes");
-                    }
+            if (frame_debug_result.requested_detection_dataset_index >= 0 &&
+                frame_debug_result.requested_detection_dataset_index <
+                    static_cast<int>(detection_dataset_ids.size()) &&
+                zarr_loader.setActiveDetectionDataset(
+                    detection_dataset_ids[frame_debug_result
+                                              .requested_detection_dataset_index])) {
+                detection_dataset_choice =
+                    frame_debug_result.requested_detection_dataset_index;
+                refreshDetectionDatasetOptions(zarr_loader);
+                g_zarr_bbox_edit_state.clearAll();
+                invalidateReviewFrameCache();
+                review_frame_status.clear();
+                if (zarr_loader.getTotalFrames() > 0 &&
+                    current_frame_num >=
+                        static_cast<int>(zarr_loader.getTotalFrames())) {
+                    current_frame_num =
+                        static_cast<int>(zarr_loader.getTotalFrames()) - 1;
+                }
+            }
 
-                    if (zarr_loader.hasHeadingData()) {
-                        if (!dataset_has_synthetic_boxes &&
-                            !detection_details.heading_valid.empty()) {
-                            size_t valid_headings =
-                                std::count(detection_details.heading_valid.begin(),
-                                           detection_details.heading_valid.end(), 1);
-                            ImGui::Text("  Heading vectors: %zu valid", valid_headings);
-                        } else {
-                            ImGui::Text("  Heading vectors available (use original detections)");
-                        }
-                    }
-
-                    if (zarr_loader.hasInterpolation()) {
-                        ImGui::Text("  Interpolation available: Yes");
-                        ImGui::Text("  Current frame interpolated: %s",
-                                    frame_is_interpolated ? "Yes" : "No");
-                        ImGui::Text("  Using interpolation: %s",
-                                    dataset_has_synthetic_boxes ? "Yes" : "No");
-                        ImGui::Text("  Method: %s",
-                                    zarr_loader.getInterpolationMethod().c_str());
-                    }
+            if (frame_debug_result.review_filters_changed) {
+                review_frame_filters =
+                    frame_debug_result.review_frame_filters;
+                invalidateReviewFrameCache();
+                review_frame_status.clear();
+            }
+            if (frame_debug_result.request_prev_review_frame) {
+                jumpToReviewFrame(false);
+            }
+            if (frame_debug_result.request_next_review_frame) {
+                jumpToReviewFrame(true);
+            }
+            if (frame_debug_result.request_dump_decode_buffers) {
+                dumpDecodeBuffersToVideos("manual_dump");
+            }
+            if (frame_debug_result.request_random_seek_dump) {
+                randomSeekAndDumpBuffers();
+            }
+            if (frame_debug_result.request_reset_frame_bbox_edits) {
+                g_zarr_bbox_edit_state.clearFrameEdits(current_frame_num);
+            }
+            if (frame_debug_result.request_clear_bbox_selection) {
+                g_zarr_bbox_edit_state.clearSelection();
+            }
+            if (frame_debug_result.request_build_manual_payload_preview) {
+                manual_payload_preview = buildManualDetectPayloadPreview();
+                if (!manual_payload_preview->valid) {
+                    bbox_payload_status =
+                        "Manual payload preview failed: " +
+                        manual_payload_preview->error;
                 } else {
-                    if (zarr_loader.hasInterpolation() && frame_is_interpolated) {
-                        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f),
-                                           "[Zarr] Detections:    None (frame is interpolated)");
-                    } else {
-                        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f),
-                                           "[Zarr] Detections:    None");
+                    std::ostringstream payload_msg;
+                    payload_msg << "Manual payload preview: frames="
+                                << manual_payload_preview->total_frames
+                                << " detections="
+                                << manual_payload_preview->total_detections
+                                << " clean="
+                                << manual_payload_preview->clean_rows
+                                << " interpolated="
+                                << manual_payload_preview->interpolated_rows
+                                << " manual="
+                                << manual_payload_preview->manual_rows
+                                << " dirty_frames="
+                                << g_zarr_bbox_edit_state.dirtyFrameCount();
+                    bbox_payload_status = payload_msg.str();
+                }
+            }
+            if (frame_debug_result.request_write_manual_payload) {
+                manual_payload_preview = buildManualDetectPayloadPreview();
+                if (!manual_payload_preview->valid) {
+                    bbox_payload_status =
+                        "Manual write failed: payload preview invalid: " +
+                        manual_payload_preview->error;
+                } else {
+                    std::string source_variant = "interpolated";
+                    if (zarr_loader.getActiveDetectionDataset() ==
+                        ZarrDetectionLoader::DetectionDataset::RefinedFiltered) {
+                        source_variant = "filtered";
                     }
-	                }
 
-                ImGui::Separator();
-                ImGui::Text("Review Navigation:");
-                bool review_filter_changed = false;
-                review_filter_changed |=
-                    ImGui::Checkbox("Interpolated##review_filter_interpolated",
-                                    &review_frame_filters.include_interpolated);
-                ImGui::SameLine();
-                review_filter_changed |=
-                    ImGui::Checkbox("Non-clean##review_filter_non_clean",
-                                    &review_frame_filters.include_non_clean);
-                ImGui::SameLine();
-                review_filter_changed |=
-                    ImGui::Checkbox("Empty##review_filter_empty",
-                                    &review_frame_filters.include_empty);
-                if (review_filter_changed) {
-                    invalidateReviewFrameCache();
-                    review_frame_status.clear();
-                }
-
-                const bool review_filter_enabled =
-                    review_frame_filters.include_interpolated ||
-                    review_frame_filters.include_non_clean ||
-                    review_frame_filters.include_empty;
-                ImGui::BeginDisabled(!review_filter_enabled);
-                if (ImGui::Button("Prev Review Frame")) {
-                    jumpToReviewFrame(false);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Next Review Frame")) {
-                    jumpToReviewFrame(true);
-                }
-                ImGui::EndDisabled();
-                if (!review_filter_enabled) {
-                    ImGui::TextColored(
-                        ImVec4(1.0f, 0.75f, 0.2f, 1.0f),
-                        "Enable at least one review filter to jump frames.");
-                } else if (review_frame_cache.valid) {
-                    ImGui::Text("  Indexed review frames: %zu",
-                                review_frame_cache.frames.size());
-                }
-                if (!review_frame_status.empty()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
-                                       "%s",
-                                       review_frame_status.c_str());
-                }
-
-                ImGui::Separator();
-                ImGui::Text("Decode Debug:");
-                if (ImGui::Button("Dump Decode Buffers")) {
-                    dumpDecodeBuffersToVideos("manual_dump");
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Random Seek + Dump")) {
-                    randomSeekAndDumpBuffers();
-                }
-                ImGui::TextWrapped(
-                    "  Output dir: CRIMSON_BUFFER_DUMP_DIR (default %s)",
-                    default_buffer_dump_root.string().c_str());
-                if (!decode_debug_status.empty()) {
-                    ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f),
-                                       "%s",
-                                       decode_debug_status.c_str());
-                }
-
-                ImGui::TextWrapped(
-                    "  Box colors: clean=blue, interpolated=orange, manual=teal");
-
-	                ImGui::Separator();
-	                ImGui::Text("BBox Edit (in-memory):");
-                if (!dataset_allows_bbox_edit) {
-                    ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.25f, 1.0f),
-                                       "Read-only: Zarr Raw Detect (read-only) cannot be edited.");
-                }
-                ImGui::BeginDisabled(!dataset_allows_bbox_edit);
-                ImGui::Checkbox("Enable bbox drag editing", &g_zarr_bbox_edit_state.enabled);
-                bool draw_mode_enabled = g_zarr_bbox_edit_state.draw_mode;
-                if (ImGui::Checkbox("Draw new boxes (N)", &draw_mode_enabled)) {
-                    g_zarr_bbox_edit_state.draw_mode = draw_mode_enabled;
-                    if (!draw_mode_enabled) {
-                        g_zarr_bbox_edit_state.cancelDraw();
+                    std::string write_error;
+                    std::string resolved_refined_run;
+                    ManualWriteReviewOptions review_opts;
+                    const char* intended_use_items[] = {"full_recording",
+                                                        "training"};
+                    const char* review_state_items[] = {
+                        "approved", "needs_review", "pending", "rejected"};
+                    review_opts.intended_use =
+                        intended_use_items
+                            [frame_debug_window_state.manual_write_intended_use];
+                    review_opts.state =
+                        review_state_items
+                            [frame_debug_window_state.manual_write_review_state];
+                    const bool write_ok =
+                        zarr_loader.writeManualRefinedDetections(
+                            manual_payload_preview->frame_indices,
+                            manual_payload_preview->bbox_norm_coords,
+                            manual_payload_preview->scores,
+                            manual_payload_preview->class_ids,
+                            manual_payload_preview->frame_counts,
+                            manual_payload_preview->detection_source,
+                            manual_payload_preview->reason,
+                            "manual",
+                            source_variant,
+                            write_error,
+                            &resolved_refined_run,
+                            review_opts);
+                    if (!write_ok) {
+                        bbox_payload_status =
+                            "Manual write failed: " + write_error;
                     } else {
-                        g_zarr_bbox_edit_state.clearSelection();
-                    }
-                }
-                if (ps.play_video && g_zarr_bbox_edit_state.enabled &&
-                    !g_zarr_bbox_edit_state.allow_edit_while_playing) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f),
-                                       "Pause playback to drag boxes.");
-                }
-                if (g_zarr_bbox_edit_state.draw_mode) {
-                    ImGui::Text("  Draw mode active: Ctrl + left-drag to place; Esc cancels.");
-                }
-                ImGui::Text("  Cycle/select bbox: B (Shift+B reverse)");
-                ImGui::Text("  Move selected bbox: Ctrl + left-drag");
-                ImGui::Text("  Pan while editing: Shift + drag");
-                ImGui::Text("  Delete selected bbox: Del");
-                ImGui::Text("  Current frame: %s",
-                            frame_has_bbox_edits ? "edited (unsaved)" : "unchanged");
-                ImGui::Text("  Pending edited frames: %zu",
-                            g_zarr_bbox_edit_state.dirtyFrameCount());
-                if (ImGui::Button("Reset Frame BBox Edits (Shift+R)")) {
-                    g_zarr_bbox_edit_state.clearFrameEdits(current_frame_num);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Clear BBox Selection (Esc)")) {
-                    g_zarr_bbox_edit_state.clearSelection();
-                }
-                if (ImGui::Button("Build Manual Payload Preview")) {
-                    manual_payload_preview = buildManualDetectPayloadPreview();
-                    if (!manual_payload_preview->valid) {
-                        bbox_payload_status = "Manual payload preview failed: " +
-                                              manual_payload_preview->error;
-                    } else {
-                        std::ostringstream payload_msg;
-                        payload_msg << "Manual payload preview: frames="
-                                    << manual_payload_preview->total_frames
-                                    << " detections="
-                                    << manual_payload_preview->total_detections
-                                    << " clean=" << manual_payload_preview->clean_rows
-                                    << " interpolated="
-                                    << manual_payload_preview->interpolated_rows
-                                    << " manual=" << manual_payload_preview->manual_rows
-                                    << " dirty_frames="
-                                    << g_zarr_bbox_edit_state.dirtyFrameCount();
-                        bbox_payload_status = payload_msg.str();
-                    }
-                }
-                const char* intended_use_items[] = {"full_recording", "training"};
-                ImGui::Combo("Intended Use##manual_write",
-                             &manual_write_intended_use,
-                             intended_use_items,
-                             IM_ARRAYSIZE(intended_use_items));
-                const char* review_state_items[] = {"approved", "needs_review", "pending", "rejected"};
-                ImGui::Combo("Review State##manual_write",
-                             &manual_write_review_state,
-                             review_state_items,
-                             IM_ARRAYSIZE(review_state_items));
-                if (ImGui::Button("Write Manual Payload to Zarr")) {
-                    manual_payload_preview = buildManualDetectPayloadPreview();
-
-                    if (!manual_payload_preview->valid) {
-                        bbox_payload_status = "Manual write failed: payload preview invalid: " +
-                                              manual_payload_preview->error;
-                    } else {
-                        std::string source_variant = "interpolated";
-                        if (zarr_loader.getActiveDetectionDataset() ==
-                            ZarrDetectionLoader::DetectionDataset::RefinedFiltered) {
-                            source_variant = "filtered";
-                        }
-
-                        std::string write_error;
-                        std::string resolved_refined_run;
-                        ManualWriteReviewOptions review_opts;
-                        review_opts.intended_use = intended_use_items[manual_write_intended_use];
-                        review_opts.state = review_state_items[manual_write_review_state];
-                        const bool write_ok =
-                            zarr_loader.writeManualRefinedDetections(
-                                manual_payload_preview->frame_indices,
-                                manual_payload_preview->bbox_norm_coords,
-                                manual_payload_preview->scores,
-                                manual_payload_preview->class_ids,
-                                manual_payload_preview->frame_counts,
-                                manual_payload_preview->detection_source,
-                                manual_payload_preview->reason,
-                                "manual",
-                                source_variant,
-                                write_error,
-                                &resolved_refined_run,
-                                review_opts);
-                        if (!write_ok) {
-                            bbox_payload_status =
-                                "Manual write failed: " + write_error;
+                        const size_t written_detections =
+                            manual_payload_preview->total_detections;
+                        std::string reload_error;
+                        const std::string archive_path =
+                            zarr_loader.getArchivePath();
+                        if (!archive_path.empty() &&
+                            zarr_loader.loadZarrFile(archive_path,
+                                                     reload_error)) {
+                            zarr_loaded = true;
+                            if (zarr_loader.isDatasetAvailable(
+                                    ZarrDetectionLoader::DetectionDataset::
+                                        RefinedManual)) {
+                                (void)zarr_loader.setActiveDetectionDataset(
+                                    ZarrDetectionLoader::DetectionDataset::
+                                        RefinedManual);
+                            }
+                            refreshDetectionDatasetOptions(zarr_loader);
+                            g_zarr_bbox_edit_state.clearAll();
+                            manual_payload_preview.reset();
+                            invalidateReviewFrameCache();
+                            review_frame_status.clear();
+                            if (zarr_loader.getTotalFrames() > 0 &&
+                                current_frame_num >= static_cast<int>(
+                                                         zarr_loader
+                                                             .getTotalFrames())) {
+                                current_frame_num =
+                                    static_cast<int>(
+                                        zarr_loader.getTotalFrames()) -
+                                    1;
+                            }
+                            std::ostringstream payload_msg;
+                            payload_msg
+                                << "Manual write complete: run="
+                                << (resolved_refined_run.empty() ? "<latest>"
+                                                                : resolved_refined_run)
+                                << " group=manual"
+                                << " detections=" << written_detections;
+                            bbox_payload_status = payload_msg.str();
                         } else {
-                            const size_t written_detections =
-                                manual_payload_preview->total_detections;
-                            std::string reload_error;
-                            const std::string archive_path = zarr_loader.getArchivePath();
-                            if (!archive_path.empty() &&
-                                zarr_loader.loadZarrFile(archive_path, reload_error)) {
-                                zarr_loaded = true;
-                                if (zarr_loader.isDatasetAvailable(
-                                        ZarrDetectionLoader::DetectionDataset::RefinedManual)) {
-                                    (void)zarr_loader.setActiveDetectionDataset(
-                                        ZarrDetectionLoader::DetectionDataset::RefinedManual);
-                                }
-                                refreshDetectionDatasetOptions(zarr_loader);
-                                g_zarr_bbox_edit_state.clearAll();
-                                manual_payload_preview.reset();
-                                invalidateReviewFrameCache();
-                                review_frame_status.clear();
-                                if (zarr_loader.getTotalFrames() > 0 &&
-                                    current_frame_num >= static_cast<int>(zarr_loader.getTotalFrames())) {
-                                    current_frame_num =
-                                        static_cast<int>(zarr_loader.getTotalFrames()) - 1;
-                                }
-                                std::ostringstream payload_msg;
-                                payload_msg
-                                    << "Manual write complete: run="
-                                    << (resolved_refined_run.empty() ? "<latest>" : resolved_refined_run)
-                                    << " group=manual"
-                                    << " detections=" << written_detections;
-                                bbox_payload_status = payload_msg.str();
-                            } else {
-                                zarr_loaded = false;
-                                g_zarr_bbox_edit_state.clearAll();
-                                bbox_payload_status =
-                                    "Manual write succeeded but reload failed: " +
-                                    reload_error;
-                            }
+                            zarr_loaded = false;
+                            g_zarr_bbox_edit_state.clearAll();
+                            bbox_payload_status =
+                                "Manual write succeeded but reload failed: " +
+                                reload_error;
                         }
                     }
                 }
-                ImGui::TextWrapped(
-                    "  Writes refined_detect_runs/<latest>/manual and updates manual pointers/status.");
-                ImGui::EndDisabled();
-                if (!bbox_payload_status.empty()) {
-                    ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f),
-                                       "%s",
-                                       bbox_payload_status.c_str());
-                }
-
-                if (zarr_loader.hasKeypointData() || zarr_loader.hasHeadingData()) {
-                    ImGui::Separator();
-                    if (zarr_loader.hasKeypointData()) {
-                        ImGui::Text("Keypoint Overlay:");
-                        ImGui::Checkbox("Show keypoint markers", &show_keypoint_markers);
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("Overlay swim bladder and eye keypoints on the video frame.");
-                        }
-                        if (!zarr_loader.getKeypointsRunName().empty()) {
-                            ImGui::Text("  Keypoints run: %s (%s)",
-                                        zarr_loader.getKeypointsRunName().c_str(),
-                                        zarr_loader.isRefinedKeypoints() ? "refined" : "raw");
-                        }
-                        if (detection_details.is_refined_keypoints &&
-                            !detection_details.keypoint_usable.empty()) {
-                            size_t usable_count = 0;
-                            size_t flip_count = 0;
-                            size_t det_count = detection_details.keypoint_usable.size();
-                            for (size_t qi = 0; qi < det_count; ++qi) {
-                                if (detection_details.keypoint_usable[qi] != 0) usable_count++;
-                                if (qi < detection_details.keypoint_flip_corrected.size() &&
-                                    detection_details.keypoint_flip_corrected[qi] != 0) flip_count++;
-                            }
-                            ImGui::Text("  Quality: %zu/%zu usable (%zu flip-corrected)",
-                                        usable_count, det_count, flip_count);
-                            if (!detection_details.keypoint_reason.empty() &&
-                                !detection_details.keypoint_reason[0].empty()) {
-                                ImGui::TextWrapped("  Reason: %s",
-                                                   detection_details.keypoint_reason[0].c_str());
-                            }
-                        }
-                        if (detection_details.keypoints_per_detection > 0 &&
-                            !detection_details.keypoint_labels.empty()) {
-                            std::string label_list;
-                            for (size_t i = 0; i < detection_details.keypoint_labels.size(); ++i) {
-                                if (i > 0) {
-                                    label_list += ", ";
-                                }
-                                label_list += detection_details.keypoint_labels[i];
-                                if (label_list.size() > 72 &&
-                                    i + 1 < detection_details.keypoint_labels.size()) {
-                                    label_list += "...";
-                                    break;
-                                }
-                            }
-                            if (!label_list.empty()) {
-                                ImGui::TextWrapped("  Labels: %s", label_list.c_str());
-                            }
-                        }
-                        if (zarr_loader.activeDatasetHasSyntheticDetections()) {
-                            ImGui::TextWrapped("Synthetic detections are present; interpolated boxes draw with hollow keypoint markers.");
-                        }
-                    }
-                    if (zarr_loader.hasHeadingData()) {
-                        if (zarr_loader.hasKeypointData()) {
-                            ImGui::Spacing();
-                        }
-                        ImGui::Text("Heading Overlay:");
-                        ImGui::Checkbox("Show heading arrows", &show_heading_arrows);
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("Visualize swim bladder headings from the keypoints run.");
-                        }
-                        if (!zarr_loader.getKeypointsRunName().empty() &&
-                            !zarr_loader.hasKeypointData()) {
-                            ImGui::Text("  Keypoints run: %s (%s)",
-                                        zarr_loader.getKeypointsRunName().c_str(),
-                                        zarr_loader.isRefinedKeypoints() ? "refined" : "raw");
-                        }
-                        if (zarr_loader.activeDatasetHasSyntheticDetections()) {
-                            ImGui::TextWrapped("Synthetic detections are present; arrows render only for real boxes.");
-                        }
-                    }
-                }
-            } else {
-                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
-                                   "[Zarr] Detections:    Not loaded");
             }
-
-            if (zarr_loaded && zarr_loader.hasInterpolation()) {
-                ImGui::Separator();
-                ImGui::Text("Interpolation Status:");
-                bool current_interpolated = zarr_loader.isFrameInterpolated(current_frame_num);
-                ImGui::Text("  Current frame interpolated: %s", current_interpolated ? "Yes" : "No");
-                ImGui::Text("  Dataset uses interpolation: %s",
-                            zarr_loader.activeDatasetHasSyntheticDetections() ? "Yes" : "No");
-                ImGui::Text("  Method: %s", zarr_loader.getInterpolationMethod().c_str());
-            }
-
-            if (zarr_loaded && zarr_loader.hasEyeMasks()) {
-                ImGui::Separator();
-                ImGui::Text("Eye Mask Overlay:");
-                if (kEyeMaskDebugLoggingEnabled && eye_mask_debug_logged_toggle_disabled) {
-                    eyeMaskDebugLog("Eye mask overlay toggle re-enabled; attempting to draw masks.");
-                    eye_mask_debug_logged_toggle_disabled = false;
-                }
-                ImGui::Checkbox("Show refined eye masks", &show_eye_masks);
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Visualize refined eye masks as semi-transparent overlays.");
-                }
-                if (!zarr_loader.getEyeMaskRunName().empty()) {
-                    ImGui::Text("  Eye mask run: %s",
-                                zarr_loader.getEyeMaskRunName().c_str());
-                }
-                if (zarr_loader.activeDatasetHasSyntheticDetections()) {
-                    ImGui::TextWrapped("Synthetic detections are present; masks are skipped for interpolated boxes.");
-                }
-            }
-
-            ImGui::End();
             frame_frame_debug_ui_ms +=
                 durationMs(std::chrono::steady_clock::now() - frame_debug_ui_start);
         }
