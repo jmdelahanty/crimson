@@ -143,6 +143,14 @@ So the current guidance is:
 - do not spend more time on main-camera software decode unless the decode stack
   changes substantially
 
+As of the latest Windows laptop findings, there is now also a higher-confidence
+product fallback when renderer-only work is not enough:
+
+- [crimson_main_camera_playback_proxy_plan.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_main_camera_playback_proxy_plan.md)
+
+That plan trades playback fidelity for smoother playback on weaker GPUs while
+preserving full-resolution paused inspection.
+
 ## Why This Is More Promising Than ROI Alone
 
 The profiler now says:

@@ -42,6 +42,7 @@
 #include "zarr_loader.h"
 #include "gui_interpolation.h"
 #include <opencv2/imgproc.hpp>
+#include <opencv2/videoio.hpp>
 
 #if defined(_MSC_VER) && (_MSC_VER >= 1900) &&                                 \
     !defined(IMGUI_DISABLE_WIN32_FUNCTIONS)
@@ -169,6 +170,71 @@ static EyeOrientationSmoother g_eye_orientation_smoother;
 namespace {
 
 using json = nlohmann::json;
+
+struct PlaybackProxyInfo {
+    std::filesystem::path source_path;
+    std::filesystem::path proxy_path;
+    bool candidate_found = false;
+    bool valid = false;
+    int source_width = 0;
+    int source_height = 0;
+    int64_t source_frame_count = -1;
+    double source_fps = 0.0;
+    int proxy_width = 0;
+    int proxy_height = 0;
+    int64_t proxy_frame_count = -1;
+    double proxy_fps = 0.0;
+    std::string rejection_reason;
+};
+
+struct VideoProbeInfo {
+    int width = 0;
+    int height = 0;
+    int64_t frame_count = -1;
+    double fps = 0.0;
+};
+
+std::optional<VideoProbeInfo> probeVideoInfo(const std::filesystem::path& path) {
+    cv::VideoCapture probe(path.string(), cv::CAP_FFMPEG);
+    if (!probe.isOpened()) {
+        return std::nullopt;
+    }
+
+    VideoProbeInfo info;
+    info.width = static_cast<int>(std::llround(
+        probe.get(cv::CAP_PROP_FRAME_WIDTH)));
+    info.height = static_cast<int>(std::llround(
+        probe.get(cv::CAP_PROP_FRAME_HEIGHT)));
+    const double frame_count_value = probe.get(cv::CAP_PROP_FRAME_COUNT);
+    if (std::isfinite(frame_count_value) && frame_count_value > 0.0) {
+        info.frame_count = static_cast<int64_t>(std::llround(frame_count_value));
+    }
+    info.fps = probe.get(cv::CAP_PROP_FPS);
+    if (!std::isfinite(info.fps) || info.fps <= 0.0) {
+        info.fps = 0.0;
+    }
+    return info;
+}
+
+std::vector<std::filesystem::path> playbackProxyCandidates(
+    const std::filesystem::path& source_path) {
+    std::vector<std::filesystem::path> candidates;
+    if (source_path.empty()) {
+        return candidates;
+    }
+    const std::filesystem::path parent = source_path.parent_path();
+    const std::string stem = source_path.stem().string();
+    const std::string ext = source_path.extension().string();
+    if (!stem.empty()) {
+        if (!ext.empty()) {
+            candidates.push_back(parent / (stem + ".playback-proxy" + ext));
+        }
+        if (ext != ".mp4") {
+            candidates.push_back(parent / (stem + ".playback-proxy.mp4"));
+        }
+    }
+    return candidates;
+}
 
 double durationMs(std::chrono::steady_clock::duration duration) {
     return std::chrono::duration<double, std::milli>(duration).count();
@@ -503,6 +569,8 @@ int main(int argc, char **argv) {
     bool show_error = false;
     std::string error_message;
     std::unordered_map<std::string, bool> window_was_decoding;
+    std::vector<std::filesystem::path> loaded_video_paths;
+    PlaybackProxyInfo main_playback_proxy_info;
     double inst_speed = 1.0;
     double video_fps = 60.0f;
     float set_playback_speed = 1.0f;
@@ -523,6 +591,104 @@ int main(int argc, char **argv) {
     window_need_decoding[stimulus_player.window_name].store(false);
     latest_decoded_frame[stimulus_player.window_name].store(-1);
     window_was_decoding[stimulus_player.window_name] = false;
+
+    auto clearMainPlaybackProxyInfo = [&]() {
+        main_playback_proxy_info = PlaybackProxyInfo{};
+    };
+
+    auto refreshMainPlaybackProxyInfo = [&]() {
+        clearMainPlaybackProxyInfo();
+        if (!video_loaded || input_is_imgs || loaded_video_paths.size() != 1 ||
+            demuxers.size() != 1 || scene->num_cams != 1) {
+            return;
+        }
+
+        main_playback_proxy_info.source_path = loaded_video_paths.front();
+        main_playback_proxy_info.source_width =
+            static_cast<int>(scene->cameras[0].image_width);
+        main_playback_proxy_info.source_height =
+            static_cast<int>(scene->cameras[0].image_height);
+        main_playback_proxy_info.source_fps = video_fps;
+        main_playback_proxy_info.source_frame_count =
+            static_cast<int64_t>(demuxers[0]->GetNumFrames());
+
+        const auto candidates =
+            playbackProxyCandidates(main_playback_proxy_info.source_path);
+        auto rejectProxy = [&](std::string reason) {
+            main_playback_proxy_info.rejection_reason = std::move(reason);
+            std::cout << "[PlaybackProxy] Rejected proxy "
+                      << main_playback_proxy_info.proxy_path << ": "
+                      << main_playback_proxy_info.rejection_reason << std::endl;
+        };
+        std::error_code ec;
+        for (const auto& candidate : candidates) {
+            if (!std::filesystem::exists(candidate, ec) || ec) {
+                ec.clear();
+                continue;
+            }
+
+            main_playback_proxy_info.candidate_found = true;
+            main_playback_proxy_info.proxy_path = candidate;
+
+            const auto proxy_info_opt = probeVideoInfo(candidate);
+            if (!proxy_info_opt.has_value()) {
+                rejectProxy("failed to open proxy with FFmpeg");
+                return;
+            }
+
+            const auto& proxy_info = *proxy_info_opt;
+            main_playback_proxy_info.proxy_width = proxy_info.width;
+            main_playback_proxy_info.proxy_height = proxy_info.height;
+            main_playback_proxy_info.proxy_frame_count = proxy_info.frame_count;
+            main_playback_proxy_info.proxy_fps = proxy_info.fps;
+
+            if (proxy_info.width <= 0 || proxy_info.height <= 0) {
+                rejectProxy("proxy dimensions are unavailable");
+                return;
+            }
+            if (main_playback_proxy_info.source_frame_count <= 0 ||
+                proxy_info.frame_count <= 0) {
+                rejectProxy("frame count unavailable for exact validation");
+                return;
+            }
+            if (proxy_info.frame_count !=
+                main_playback_proxy_info.source_frame_count) {
+                std::ostringstream reason;
+                reason << "frame count mismatch (source="
+                       << main_playback_proxy_info.source_frame_count
+                       << ", proxy=" << proxy_info.frame_count << ")";
+                rejectProxy(reason.str());
+                return;
+            }
+            if (main_playback_proxy_info.source_fps <= 0.0 || proxy_info.fps <= 0.0) {
+                rejectProxy("fps unavailable for exact validation");
+                return;
+            }
+            const double fps_tolerance =
+                std::max(0.01, main_playback_proxy_info.source_fps * 1e-3);
+            if (std::abs(proxy_info.fps - main_playback_proxy_info.source_fps) >
+                fps_tolerance) {
+                std::ostringstream reason;
+                reason << "fps mismatch (source="
+                       << main_playback_proxy_info.source_fps << ", proxy="
+                       << proxy_info.fps << ")";
+                rejectProxy(reason.str());
+                return;
+            }
+
+            main_playback_proxy_info.valid = true;
+            main_playback_proxy_info.rejection_reason.clear();
+            std::cout << "[PlaybackProxy] Valid proxy detected: "
+                      << main_playback_proxy_info.proxy_path << std::endl;
+            return;
+        }
+
+        if (!main_playback_proxy_info.candidate_found &&
+            !main_playback_proxy_info.source_path.empty()) {
+            std::cout << "[PlaybackProxy] No matching proxy detected for "
+                      << main_playback_proxy_info.source_path << std::endl;
+        }
+    };
 
     auto loadCameraCalibrationsForCurrentMedia = [&]() {
         if (!video_loaded) {
@@ -586,10 +752,12 @@ int main(int argc, char **argv) {
             camera_names.clear();
             demuxers.clear();
             is_view_focused.clear();
+            loaded_video_paths.clear();
 
             camera_names.push_back(camera_name);
             window_need_decoding[camera_name].store(true);
             window_was_decoding[camera_name] = true;
+            loaded_video_paths.push_back(resolved_video);
 
             std::map<std::string, std::string> ffmpeg_options;
             demuxers.push_back(
@@ -610,6 +778,7 @@ int main(int argc, char **argv) {
                 scene->use_cpu_buffer));
             is_view_focused.push_back(false);
             video_loaded = true;
+            refreshMainPlaybackProxyInfo();
 
             int initial_frame = std::max(0, ps.to_display_frame_number);
             double seek_fps = (video_fps > 0.0) ? video_fps : 30.0;
@@ -740,10 +909,12 @@ int main(int argc, char **argv) {
                     camera_names.clear();
                     demuxers.clear();
                     is_view_focused.clear();
+                    loaded_video_paths.clear();
 
                     camera_names.push_back(camera_name);
                     window_need_decoding[camera_name].store(true);
                     window_was_decoding[camera_name] = true;
+                    loaded_video_paths.push_back(video_path);
 
                     std::map<std::string, std::string> ffmpeg_options;
                     demuxers.push_back(
@@ -764,6 +935,7 @@ int main(int argc, char **argv) {
                         scene->use_cpu_buffer));
                     is_view_focused.push_back(false);
                     video_loaded = true;
+                    refreshMainPlaybackProxyInfo();
 
                     int initial_frame = std::max(0, ps.to_display_frame_number);
                     double seek_fps = (video_fps > 0.0) ? video_fps : 30.0;
@@ -2295,6 +2467,41 @@ int main(int argc, char **argv) {
                     }
                 }
             }
+            if (video_loaded && !input_is_imgs) {
+                if (loaded_video_paths.size() != 1 || demuxers.size() != 1 ||
+                    scene->num_cams != 1) {
+                    ImGui::TextDisabled(
+                        "Playback Proxy: detection is currently supported only for single-camera video.");
+                } else if (main_playback_proxy_info.valid) {
+                    ImGui::TextColored(
+                        ImVec4(0.20f, 0.85f, 0.35f, 1.00f),
+                        "Playback Proxy: available (%dx%d, %.3f fps, %lld frames)",
+                        main_playback_proxy_info.proxy_width,
+                        main_playback_proxy_info.proxy_height,
+                        main_playback_proxy_info.proxy_fps,
+                        static_cast<long long>(
+                            main_playback_proxy_info.proxy_frame_count));
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s",
+                                          main_playback_proxy_info.proxy_path
+                                              .string()
+                                              .c_str());
+                    }
+                } else if (main_playback_proxy_info.candidate_found) {
+                    ImGui::TextColored(
+                        ImVec4(0.92f, 0.72f, 0.20f, 1.00f),
+                        "Playback Proxy: rejected (%s)",
+                        main_playback_proxy_info.rejection_reason.c_str());
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s",
+                                          main_playback_proxy_info.proxy_path
+                                              .string()
+                                              .c_str());
+                    }
+                } else if (!loaded_video_paths.empty()) {
+                    ImGui::TextDisabled("Playback Proxy: none detected");
+                }
+            }
             if (!stimulus_player.loaded) {
                 ImGui::InputInt("Stimulus Buffer Size", &stimulus_buffer_size);
                 stimulus_buffer_size = std::max(1, stimulus_buffer_size);
@@ -2947,6 +3154,8 @@ int main(int argc, char **argv) {
                     ImGuiFileDialog::Instance()->GetSelection();
                 root_dir = ImGuiFileDialog::Instance()->GetCurrentPath();
                 skeleton_dir = root_dir;
+                loaded_video_paths.clear();
+                clearMainPlaybackProxyInfo();
 
                 // Reset any previously loaded stimulus video
                 destroyStimulusPlayback(stimulus_player);
@@ -2990,6 +3199,7 @@ int main(int argc, char **argv) {
                         std::map<std::string, std::string> m;
                         demuxers.push_back(
                             std::make_unique<FFmpegDemuxer>(elem.second.c_str(), m));
+                        loaded_video_paths.push_back(std::filesystem::path(elem.second));
                     }
                     std::map<std::string, std::string> m;
                     FFmpegDemuxer dummy_dmuxer(
@@ -3015,8 +3225,10 @@ int main(int argc, char **argv) {
                         is_view_focused.push_back(false);
                     }
                     video_loaded = true;
+                    refreshMainPlaybackProxyInfo();
                 } else {
                     input_is_imgs = true;
+                    clearMainPlaybackProxyInfo();
                     for (const auto &elem : selected_files) {
                         std::size_t cam_string_position = elem.first.find("_");
                         std::string cam_name =
@@ -8947,9 +9159,39 @@ struct StateOverlay {
                       {"buffer_mode", scene->use_cpu_buffer ? "cpu" : "gpu"},
                       {"buffer_storage_format",
                        scene->use_cpu_buffer ? "rgba32" : "nv12"},
+                      {"source_path",
+                       loaded_video_paths.empty()
+                           ? json(nullptr)
+                           : json(loaded_video_paths.front().string())},
                       {"playback_preview_scale", playbackPreviewScaleLabel()},
                       {"playback_preview_active", playbackPreviewIsActive()},
                       {"playback_renderer_mode", playbackRendererModeLabel()},
+                      {"playback_proxy",
+                       {{"candidate_found",
+                         main_playback_proxy_info.candidate_found},
+                        {"valid", main_playback_proxy_info.valid},
+                        {"source_path",
+                         main_playback_proxy_info.source_path.empty()
+                             ? json(nullptr)
+                             : json(main_playback_proxy_info.source_path.string())},
+                        {"proxy_path",
+                         main_playback_proxy_info.proxy_path.empty()
+                             ? json(nullptr)
+                             : json(main_playback_proxy_info.proxy_path.string())},
+                        {"source_width", main_playback_proxy_info.source_width},
+                        {"source_height", main_playback_proxy_info.source_height},
+                        {"source_frame_count",
+                         main_playback_proxy_info.source_frame_count},
+                        {"source_fps", main_playback_proxy_info.source_fps},
+                        {"proxy_width", main_playback_proxy_info.proxy_width},
+                        {"proxy_height", main_playback_proxy_info.proxy_height},
+                        {"proxy_frame_count",
+                         main_playback_proxy_info.proxy_frame_count},
+                        {"proxy_fps", main_playback_proxy_info.proxy_fps},
+                        {"rejection_reason",
+                         main_playback_proxy_info.rejection_reason.empty()
+                             ? json(nullptr)
+                             : json(main_playback_proxy_info.rejection_reason)}}},
                       {"viewport_width_px", perf_camera_viewport_width_px},
                       {"viewport_height_px", perf_camera_viewport_height_px},
                       {"view_x_min", perf_camera_view_x_min},

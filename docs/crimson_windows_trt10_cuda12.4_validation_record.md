@@ -262,6 +262,20 @@ Outcome of that follow-up experiment:
   machine and treat the software main-camera backend as a rejected experiment,
   not a new default
 
+Discrete-GPU / OpenGL forcing follow-up:
+
+- the app was also tested after explicitly forcing the Windows Graphics
+  preference to `High performance` and setting the NVIDIA Control Panel's
+  OpenGL rendering GPU to the discrete NVIDIA GPU
+- this did not produce a material playback improvement in the comparable
+  `GPU Buffer` / lightweight-renderer run
+- observed result stayed roughly the same:
+  - playback remained about `0.88x`
+  - `gl_draw_ms` stayed near the frame budget
+  - `camera_decode_submit_ms` stayed near the frame budget
+- conclusion: discrete-GPU forcing was worth verifying, but it did not reveal a
+  hidden "wrong GPU" issue or unlock stable `1.0x` playback on this machine
+
 Interpretation note:
 
 - `Stimulus Decode Backend` and `Stimulus Buffer Mode` are independent
