@@ -117,15 +117,18 @@ ImU32 cropKeypointColor(const std::string& label) {
     return IM_COL32(242, 153, 51, 220);
 }
 
-void drawKeypointOverlay(const CropKeypointEditorContext& context,
-                         const std::vector<std::array<float, 2>>& positions) {
-    if (!context.show_keypoints || context.labels == nullptr ||
-        context.edges == nullptr || positions.empty()) {
+void drawKeypointOverlayAt(
+    const std::vector<std::array<float, 2>>& positions,
+    const std::vector<std::string>* labels,
+    const std::vector<std::array<size_t, 2>>* edges,
+    ImVec2 image_top_left,
+    float image_scale) {
+    if (labels == nullptr || edges == nullptr || positions.empty()) {
         return;
     }
 
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
-    for (const auto& edge : *context.edges) {
+    for (const auto& edge : *edges) {
         const size_t a = edge[0];
         const size_t b = edge[1];
         if (a >= positions.size() || b >= positions.size()) {
@@ -140,10 +143,10 @@ void drawKeypointOverlay(const CropKeypointEditorContext& context,
             continue;
         }
         draw_list->AddLine(
-            ImVec2(context.image_top_left.x + ax * context.image_scale,
-                   context.image_top_left.y + ay * context.image_scale),
-            ImVec2(context.image_top_left.x + bx * context.image_scale,
-                   context.image_top_left.y + by * context.image_scale),
+            ImVec2(image_top_left.x + ax * image_scale,
+                   image_top_left.y + ay * image_scale),
+            ImVec2(image_top_left.x + bx * image_scale,
+                   image_top_left.y + by * image_scale),
             IM_COL32(255, 255, 255, 160),
             1.5f);
     }
@@ -155,46 +158,73 @@ void drawKeypointOverlay(const CropKeypointEditorContext& context,
             continue;
         }
         const std::string& label =
-            i < context.labels->size() ? (*context.labels)[i] : "";
-        ImVec2 center(context.image_top_left.x + x * context.image_scale,
-                      context.image_top_left.y + y * context.image_scale);
+            i < labels->size() ? (*labels)[i] : "";
+        ImVec2 center(image_top_left.x + x * image_scale,
+                      image_top_left.y + y * image_scale);
         draw_list->AddCircleFilled(center,
-                                   4.0f * context.image_scale,
+                                   4.0f * image_scale,
                                    cropKeypointColor(label));
         draw_list->AddCircle(center,
-                             4.0f * context.image_scale,
+                             4.0f * image_scale,
                              IM_COL32(255, 255, 255, 180),
                              0,
                              1.5f);
     }
 }
 
-void drawHeadingArrow(const CropKeypointEditorContext& context,
-                      const std::array<float, 2>& arrow_origin,
-                      bool arrow_origin_valid) {
-    if (!context.show_heading_arrow || !context.stored_heading_valid ||
-        !arrow_origin_valid) {
+void drawKeypointOverlay(const CropKeypointEditorContext& context,
+                         const std::vector<std::array<float, 2>>& positions) {
+    if (!context.show_keypoints) {
+        return;
+    }
+    drawKeypointOverlayAt(positions,
+                          context.labels,
+                          context.edges,
+                          context.image_top_left,
+                          context.image_scale);
+}
+
+void drawHeadingArrowAt(bool show_heading_arrow,
+                        bool stored_heading_valid,
+                        float stored_heading_deg,
+                        const std::array<float, 2>& arrow_origin,
+                        bool arrow_origin_valid,
+                        ImVec2 image_top_left,
+                        ImVec2 image_size,
+                        float image_scale) {
+    if (!show_heading_arrow || !stored_heading_valid || !arrow_origin_valid) {
         return;
     }
 
-    const float rad = context.stored_heading_deg *
-                      (3.14159265f / 180.0f);
-    const float arrow_len =
-        std::min(context.image_size.x, context.image_size.y) * 0.2f;
-    ImVec2 center(context.image_top_left.x + arrow_origin[0] * context.image_scale,
-                  context.image_top_left.y + arrow_origin[1] * context.image_scale);
+    const float rad = stored_heading_deg * (3.14159265f / 180.0f);
+    const float arrow_len = std::min(image_size.x, image_size.y) * 0.2f;
+    ImVec2 center(image_top_left.x + arrow_origin[0] * image_scale,
+                  image_top_left.y + arrow_origin[1] * image_scale);
     const float dx = std::cos(rad) * arrow_len;
     const float dy = -std::sin(rad) * arrow_len;
     ImVec2 tip(center.x + dx, center.y + dy);
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     draw_list->AddLine(center, tip, IM_COL32(255, 50, 50, 220), 2.5f);
-    const float head_len = 8.0f * context.image_scale;
+    const float head_len = 8.0f * image_scale;
     const float head_angle = 2.6f;
     ImVec2 h1(tip.x + head_len * std::cos(rad + head_angle),
               tip.y - head_len * std::sin(rad + head_angle));
     ImVec2 h2(tip.x + head_len * std::cos(rad - head_angle),
               tip.y - head_len * std::sin(rad - head_angle));
     draw_list->AddTriangleFilled(tip, h1, h2, IM_COL32(255, 50, 50, 220));
+}
+
+void drawHeadingArrow(const CropKeypointEditorContext& context,
+                      const std::array<float, 2>& arrow_origin,
+                      bool arrow_origin_valid) {
+    drawHeadingArrowAt(context.show_heading_arrow,
+                       context.stored_heading_valid,
+                       context.stored_heading_deg,
+                       arrow_origin,
+                       arrow_origin_valid,
+                       context.image_top_left,
+                       context.image_size,
+                       context.image_scale);
 }
 
 }  // namespace
@@ -383,4 +413,103 @@ CropKeypointEditorAction drawCropKeypointEditorPanel(
         ImGui::TextWrapped("%s", context.status_message->c_str());
     }
     return action;
+}
+
+CropKeypointPreviewPanelResult drawCropKeypointPreviewPanel(
+    const CropKeypointPreviewPanelContext& context,
+    CropKeypointPreviewUiState& ui_state,
+    CropKeypointEditorState& editor_state) {
+    CropKeypointPreviewPanelResult result;
+    if (context.crop_texture_id == 0 || context.crop_width == 0 ||
+        context.crop_height == 0) {
+        return result;
+    }
+
+    ImGui::Checkbox("Keypoints", &ui_state.show_keypoints);
+    ImGui::SameLine();
+    ImGui::Checkbox("Rotated", &ui_state.show_rotated_crop);
+    ImGui::SameLine();
+    ImGui::Checkbox("Heading", &ui_state.show_heading_arrow);
+    if (context.play_video) {
+        ImGui::TextDisabled("Playback preview throttled to 10 Hz");
+    }
+
+    ImVec2 image_size(static_cast<float>(context.crop_width),
+                      static_cast<float>(context.crop_height));
+    const float preview_max = 260.0f;
+    const float max_dim = std::max(image_size.x, image_size.y);
+    float image_scale = 1.0f;
+    if (max_dim > preview_max && max_dim > 0.0f) {
+        image_scale = preview_max / max_dim;
+        image_size.x *= image_scale;
+        image_size.y *= image_scale;
+    }
+
+    ImVec2 image_top_left = ImGui::GetCursorScreenPos();
+    ImGui::Image((ImTextureID)(intptr_t)context.crop_texture_id, image_size);
+
+    CropKeypointEditorContext editor_context = context.editor_context;
+    editor_context.play_video = context.play_video;
+    editor_context.crop_width = static_cast<float>(context.crop_width);
+    editor_context.crop_height = static_cast<float>(context.crop_height);
+    editor_context.image_top_left = image_top_left;
+    editor_context.image_size = image_size;
+    editor_context.image_scale = image_scale;
+    editor_context.show_keypoints = ui_state.show_keypoints;
+    editor_context.show_heading_arrow = ui_state.show_heading_arrow;
+    editor_context.show_rotated_crop = ui_state.show_rotated_crop;
+
+    result.editor_display =
+        drawCropKeypointEditorOverlay(editor_context, editor_state);
+
+    ImGui::Text("ROI #%d", context.displayed_crop_roi_index);
+    if (context.displayed_crop_source_label != nullptr &&
+        !context.displayed_crop_source_label->empty()) {
+        ImGui::TextDisabled("%s",
+                            context.displayed_crop_source_label->c_str());
+    }
+    if (context.displayed_crop_source_frame >= 0 &&
+        context.displayed_crop_source_frame != context.current_frame_num) {
+        ImGui::TextDisabled("Preview frame %d",
+                            context.displayed_crop_source_frame);
+    }
+
+    if (ui_state.show_rotated_crop && context.rotated.valid &&
+        context.rotated.texture_id != 0) {
+        ImGui::Separator();
+        ImVec2 rotated_size(static_cast<float>(context.rotated.width),
+                            static_cast<float>(context.rotated.height));
+        const float rotated_max =
+            std::max(rotated_size.x, rotated_size.y);
+        float rotated_scale = 1.0f;
+        if (rotated_max > preview_max && rotated_max > 0.0f) {
+            rotated_scale = preview_max / rotated_max;
+            rotated_size.x *= rotated_scale;
+            rotated_size.y *= rotated_scale;
+        }
+        ImVec2 rotated_top_left = ImGui::GetCursorScreenPos();
+        ImGui::Image((ImTextureID)(intptr_t)context.rotated.texture_id,
+                     rotated_size);
+
+        if (ui_state.show_keypoints && context.rotated.positions != nullptr) {
+            drawKeypointOverlayAt(*context.rotated.positions,
+                                  context.rotated.labels,
+                                  context.rotated.edges,
+                                  rotated_top_left,
+                                  rotated_scale);
+        }
+        drawHeadingArrowAt(ui_state.show_heading_arrow,
+                           context.editor_context.stored_heading_valid,
+                           context.editor_context.stored_heading_deg,
+                           context.rotated.arrow_origin,
+                           context.rotated.arrow_origin_valid,
+                           rotated_top_left,
+                           rotated_size,
+                           rotated_scale);
+        ImGui::Text("Heading-normalized");
+    }
+
+    result.editor_action =
+        drawCropKeypointEditorPanel(editor_context, editor_state);
+    return result;
 }
