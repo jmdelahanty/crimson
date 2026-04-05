@@ -40,6 +40,49 @@ Why:
 
 So the next optimization should target the playback camera renderer itself.
 
+## Additional April 2026 Findings
+
+The later Windows laptop captures added two important clarifications:
+
+- a runtime `VSync` toggle proved that some of the old `gl_draw_ms` cost was
+  really driver/compositor pacing charged to the render call instead of to
+  `SwapBuffers`
+- but turning `VSync` off did **not** reach stable `1.0x` playback, so VSync
+  was only part of the story
+
+The newer decoder instrumentation then exposed the missing decoder-side cost:
+
+- `camera_decode_demux_ms` stayed small
+- `camera_decode_submit_ms` was consistently near or above the `16.67 ms`
+  frame budget on the Windows RTX A1000 laptop
+
+This means the laptop is not only render-limited. It is also paying a
+meaningful per-frame hardware decode submit cost on the same weak GPU.
+
+### Why Buffer Size Matters More Than Expected
+
+The main-camera `GPU Buffer` size now looks like a real throughput/VRAM tradeoff
+on this machine:
+
+- a very large `GPU Buffer` ring (`100`) produced much better playback headroom
+  than expected, but at the cost of a very large GPU allocation
+- a small `GPU Buffer` ring (`8`) made playback substantially worse and exposed
+  larger decode gaps and occasional decoder wait spikes
+
+Interpretation:
+
+- the large ring appears to give the decoder enough runway to hide some decode
+  and render jitter
+- the small ring does not leave enough headroom for this laptop's combined
+  decode/render path
+
+So the current evidence no longer points to "just make the renderer cheaper."
+It points to a mixed bottleneck:
+
+- final playback presentation is still expensive
+- hardware decode submit is also expensive
+- the two are likely competing for the same limited GPU capacity
+
 ## Why We Are Doing This Change
 
 This is now a targeted low-end GPU optimization, not a general correctness fix.
@@ -81,6 +124,20 @@ In practice:
   meaningful
 - overlays remain visible, but should be drawn through the cheapest path that
   still preserves alignment
+
+As of the latest captures, that renderer work is no longer the only follow-up.
+There is now a second experiment with a stronger signal behind it:
+
+- add a main-camera software decode backend
+- compare it directly against the current GPU decode path on the Windows laptop
+
+Why this is now justified:
+
+- the stimulus software-decode experiment already proved that GPU decode is not
+  always the best choice on this machine
+- the new `camera_decode_submit_ms` metric shows the main camera's GPU decode
+  path is also expensive in-app
+- reducing render cost alone has not been enough to reach stable `1.0x`
 
 ## Why This Is More Promising Than ROI Alone
 
@@ -181,6 +238,20 @@ Once the cheaper playback renderer is in place:
 
 - reconsider whether ROI-aware conversion is still worth adding
 - use the existing view-state telemetry to guide that decision
+
+### Phase 5: Main-Camera Software Decode Experiment
+
+- add a main-camera decode backend selector
+- preserve the current GPU decode path as the default/fallback
+- measure whether moving main-camera decode work off the GPU improves the
+  combined decode + render throughput on the Windows RTX A1000 laptop
+
+Acceptance:
+
+- the experiment produces a direct `GPU decode` vs `software decode` comparison
+  under the same playback conditions
+- the perf log shows whether `camera_decode_submit_ms` collapses and whether
+  overall playback speed improves enough to justify keeping the backend
 
 ## Success Criteria
 

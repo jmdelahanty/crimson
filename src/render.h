@@ -41,6 +41,7 @@ struct render_scene
     std::vector<CameraResources> cameras;
     u32 size_of_buffer = 0;
     bool use_cpu_buffer = false;
+    bool use_software_decode = false;
 };
 
 inline void checkCudaStatus(cudaError_t status, const char* message) {
@@ -147,6 +148,20 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
                     scene->cameras[j].display_buffer[i].frame,
                     scene->cameras[j].image_width,
                     scene->cameras[j].image_height);
+                scene->cameras[j].display_buffer[i].pitch_bytes = rgba_pitch;
+                scene->cameras[j].display_buffer[i].frame_bytes =
+                    rgba_frame_bytes;
+                scene->cameras[j].display_buffer[i].format =
+                    PictureBufferFormat::RGBA32;
+            } else if (scene->use_software_decode) {
+                unsigned char *slot_buffer = nullptr;
+                checkCudaStatus(
+                    cudaMalloc(reinterpret_cast<void **>(&slot_buffer),
+                               rgba_frame_bytes),
+                    "cudaMalloc failed for camera RGBA display buffer");
+                checkCudaStatus(cudaMemset(slot_buffer, 0, rgba_frame_bytes),
+                                "cudaMemset failed for camera RGBA display buffer");
+                scene->cameras[j].display_buffer[i].frame = slot_buffer;
                 scene->cameras[j].display_buffer[i].pitch_bytes = rgba_pitch;
                 scene->cameras[j].display_buffer[i].frame_bytes =
                     rgba_frame_bytes;
