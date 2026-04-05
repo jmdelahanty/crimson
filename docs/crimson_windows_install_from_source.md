@@ -125,7 +125,35 @@ cd C:\src\crimson
 
 ---
 
-## 4. Load Dependency Roots Into The Session
+## 4. Run The Prereq Check
+
+Crimson now includes a Windows prereq checker:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\check_windows_prereqs.ps1
+```
+
+It verifies:
+
+- core build tools such as `git`, `cmake`, `ninja`, `cl`, `nvcc`
+- repo layout and required submodules
+- CUDA, OpenCV, FFmpeg, Video Codec SDK, and TensorRT roots
+- the staged FFmpeg `include/`, `lib/`, and `bin/` layout Crimson expects
+
+If your local dependency roots differ from the defaults, pass them explicitly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\check_windows_prereqs.ps1 `
+  -CudaToolkitRoot "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4" `
+  -OpenCvDir "C:/third_party/opencv-install-4.10.0-x64" `
+  -FfmpegRoot "C:/third_party/ffmpeg-nvidia" `
+  -VideoCodecSdkRoot "C:/third_party/Video_Codec_SDK_13.0" `
+  -TensorRtRoot "C:/third_party/TensorRT-10.0.1.6"
+```
+
+---
+
+## 5. Load Dependency Roots Into The Session
 
 The fastest path is the helper script:
 
@@ -157,7 +185,7 @@ nvcc --version
 
 ---
 
-## 5. Configure
+## 6. Configure
 
 Recommended first configure:
 
@@ -173,7 +201,7 @@ cmake --preset windows-trt10-cuda12.4
 
 ---
 
-## 6. Build
+## 7. Build
 
 Recommended first build:
 
@@ -189,7 +217,7 @@ cmake --build --preset build-windows-trt10-cuda12.4-release
 
 ---
 
-## 7. Stage An Install Tree
+## 8. Stage An Install Tree
 
 If you want the staged install layout under `dist/Crimson`:
 
@@ -205,7 +233,7 @@ cmake --install build/windows-trt10-cuda12.4 --config Release --prefix dist/Crim
 
 ---
 
-## 8. Launch Crimson
+## 9. Launch Crimson
 
 You can launch either from the build output or from the staged install tree.
 
@@ -227,7 +255,7 @@ are available in that session.
 
 ---
 
-## 9. Open A Recording
+## 10. Open A Recording
 
 The current recommended Windows recording layout is:
 
@@ -249,7 +277,7 @@ You can launch directly into a recording:
 
 ---
 
-## 10. Practical Windows Notes
+## 11. Practical Windows Notes
 
 - If you run from `release\Release`, rebuilding is enough.
 - If you run from `dist\Crimson\bin`, rebuild and reinstall after pulling new
@@ -262,7 +290,7 @@ You can launch directly into a recording:
 
 ---
 
-## 11. Known Playback Caveat For Low-End Laptop GPUs
+## 12. Known Playback Caveat For Low-End Laptop GPUs
 
 For the validated RTX A1000 laptop, the best current playback path is:
 

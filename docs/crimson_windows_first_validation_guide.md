@@ -310,6 +310,7 @@ That file is ignored by git.
 From the repo root:
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\check_windows_prereqs.ps1
 cmake --list-presets
 nvidia-smi
 nvcc --version
@@ -317,6 +318,7 @@ nvcc --version
 
 Confirm:
 
+- the prereq checker passes or only fails for known intentional gaps
 - the `windows-trt10-cuda12.4` preset exists
 - the `windows-trt10-cuda12.4-no-sfm` preset exists
 - `nvidia-smi` works
