@@ -485,6 +485,17 @@ Recommended first-pass settings on similar laptops:
 - stimulus buffer mode: start with `Stimulus GPU Buffer`
 - stimulus buffer size: `8-12`
 
+Discrete-GPU verification note:
+
+- it is still worth forcing `redgui.exe` to `High performance` in Windows
+  Graphics Settings and, if available, setting the NVIDIA Control Panel's
+  OpenGL rendering GPU to the discrete NVIDIA GPU
+- however, on the first validated Windows RTX A1000 laptop this did **not**
+  materially improve playback once the app was already on the known-good
+  `GPU Decode` + `GPU Buffer` + lightweight-renderer path
+- treat that step as a useful sanity check, not as a likely silver bullet for
+  low-end playback throughput
+
 Why `Current Playback Speed` may decay below `1.0x` during play:
 
 - Crimson advances the requested play clock from wall time and the selected
