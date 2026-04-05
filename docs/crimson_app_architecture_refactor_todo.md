@@ -522,6 +522,9 @@ Acceptance:
 - [ ] Use [crimson_zarr_keypoint_editor_plan.md](./crimson_zarr_keypoint_editor_plan.md)
       as the keypoint-specific design reference for refined-run editing and
       review acceptance.
+- [ ] Use [crimson_zarr_keypoint_review_window_plan.md](./crimson_zarr_keypoint_review_window_plan.md)
+      as the UI/workflow reference for replacing the legacy `Labeling Tool`
+      mental model with a Zarr-native review window.
 - [ ] For manual detection and keypoint review:
   - expose frame-local read/write APIs
   - preserve chunked storage for dense backing arrays where it matters

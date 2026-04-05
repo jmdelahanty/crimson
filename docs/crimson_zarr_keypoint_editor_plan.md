@@ -10,6 +10,10 @@ Palette's current contracts and write behavior.
 
 This plan is intentionally separate from the legacy CSV-based `Labeling Tool`.
 
+For the UI/workflow layer that should replace the old `Labeling Tool` feel
+while staying Zarr-native, see
+[crimson_zarr_keypoint_review_window_plan.md](./crimson_zarr_keypoint_review_window_plan.md).
+
 ## Core Conclusion
 
 Crimson currently has two different keypoint workflows:
