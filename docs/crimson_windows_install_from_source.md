@@ -119,11 +119,27 @@ helper:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\stage_windows_dependency_archives.ps1 `
   -DownloadRoot C:\third_party\downloads `
+  -RequireManifest `
   -CleanDestination
 ```
 
 It is designed for local `.zip` files you already have, not for downloading
-from vendor sites.
+from vendor sites. For deterministic team use, put a manifest named
+`crimson-windows-deps.manifest.json` in the download root and pin each archive
+with an exact filename and SHA-256 checksum.
+
+Crimson includes a template you can copy and fill in:
+
+```text
+tools\crimson-windows-deps.manifest.example.json
+```
+
+Typical flow:
+
+1. copy the example manifest into `C:\third_party\downloads\crimson-windows-deps.manifest.json`
+2. fill in the exact archive filenames and SHA-256 values
+3. place the matching archives in `C:\third_party\downloads`
+4. run the staging helper with `-RequireManifest`
 
 Expected staged destinations:
 

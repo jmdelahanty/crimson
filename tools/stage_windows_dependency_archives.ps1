@@ -2,21 +2,71 @@
 param(
     [string]$DownloadRoot = "C:/third_party/downloads",
     [string]$DestinationRoot = "C:/third_party",
+    [string]$ManifestPath,
     [string]$OpenCvArchive,
     [string]$TensorRtArchive,
     [string]$VideoCodecSdkArchive,
     [string]$FfmpegArchive,
-    [switch]$CleanDestination
+    [switch]$CleanDestination,
+    [switch]$RequireManifest
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($ManifestPath)) {
+    $ManifestPath = Join-Path $DownloadRoot "crimson-windows-deps.manifest.json"
+}
+
+function Load-Manifest {
+    param(
+        [string]$PathValue,
+        [switch]$Required
+    )
+
+    if (-not (Test-Path -LiteralPath $PathValue)) {
+        if ($Required) {
+            throw "Manifest file not found: $PathValue"
+        }
+        return $null
+    }
+
+    $content = Get-Content -LiteralPath $PathValue -Raw
+    $manifest = $content | ConvertFrom-Json
+    if (-not $manifest.archives) {
+        throw "Manifest does not contain an 'archives' object: $PathValue"
+    }
+    return $manifest
+}
+
+function Get-ManifestEntry {
+    param(
+        [object]$Manifest,
+        [string]$Label
+    )
+
+    if ($null -eq $Manifest) {
+        return $null
+    }
+
+    $archivesProperty = $Manifest.PSObject.Properties["archives"]
+    if ($null -eq $archivesProperty) {
+        return $null
+    }
+
+    $entry = $archivesProperty.Value.PSObject.Properties[$Label]
+    if ($null -eq $entry) {
+        return $null
+    }
+    return $entry.Value
+}
 
 function Resolve-ArchivePath {
     param(
         [string]$ExplicitPath,
         [string]$SearchRoot,
         [string[]]$Patterns,
-        [string]$Label
+        [string]$Label,
+        [object]$ManifestEntry
     )
 
     if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) {
@@ -24,6 +74,14 @@ function Resolve-ArchivePath {
             throw "$Label archive not found: $ExplicitPath"
         }
         return (Resolve-Path -LiteralPath $ExplicitPath).Path
+    }
+
+    if ($null -ne $ManifestEntry -and -not [string]::IsNullOrWhiteSpace($ManifestEntry.filename)) {
+        $manifestCandidate = Join-Path $SearchRoot $ManifestEntry.filename
+        if (-not (Test-Path -LiteralPath $manifestCandidate)) {
+            throw "$Label archive from manifest not found: $manifestCandidate"
+        }
+        return (Resolve-Path -LiteralPath $manifestCandidate).Path
     }
 
     if (-not (Test-Path -LiteralPath $SearchRoot)) {
@@ -51,6 +109,42 @@ function Resolve-ArchivePath {
     return $unique[0].FullName
 }
 
+function Resolve-DestinationPath {
+    param(
+        [string]$DefaultName,
+        [object]$ManifestEntry
+    )
+
+    if ($null -ne $ManifestEntry -and -not [string]::IsNullOrWhiteSpace($ManifestEntry.destination)) {
+        return (Join-Path $DestinationRoot $ManifestEntry.destination)
+    }
+    return (Join-Path $DestinationRoot $DefaultName)
+}
+
+function Validate-ArchiveChecksum {
+    param(
+        [string]$ArchivePath,
+        [string]$Label,
+        [object]$ManifestEntry
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ArchivePath) -or $null -eq $ManifestEntry) {
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ManifestEntry.sha256)) {
+        return
+    }
+
+    $hash = (Get-FileHash -LiteralPath $ArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $expected = $ManifestEntry.sha256.ToLowerInvariant()
+    if ($hash -ne $expected) {
+        throw "$Label SHA256 mismatch. expected=$expected actual=$hash"
+    }
+
+    Write-Host "$Label SHA256 verified."
+}
+
 function Remove-IfRequested {
     param(
         [string]$TargetPath
@@ -72,6 +166,22 @@ function Get-SingleExpandedRoot {
         return $entries[0].FullName
     }
     return $TempExtractRoot
+}
+
+function Report-ManifestUse {
+    param(
+        [string]$PathValue,
+        [object]$Manifest
+    )
+
+    if ($null -eq $Manifest) {
+        Write-Host "No manifest loaded. Falling back to explicit paths or filename patterns."
+        return
+    }
+
+    $version = if ($Manifest.PSObject.Properties["version"]) { $Manifest.version } else { "(unspecified)" }
+    Write-Host "Loaded dependency manifest: $PathValue"
+    Write-Host "Manifest version: $version"
 }
 
 function Expand-ArchiveToDestination {
@@ -163,15 +273,28 @@ function Validate-Ffmpeg {
     Test-RequiredPath -PathValue (Join-Path $Root "bin/ffprobe.exe") -Label "ffprobe.exe"
 }
 
-$resolvedOpenCvArchive = Resolve-ArchivePath -ExplicitPath $OpenCvArchive -SearchRoot $DownloadRoot -Patterns @("opencv*.zip", "opencv-install*.zip") -Label "OpenCV"
-$resolvedTensorRtArchive = Resolve-ArchivePath -ExplicitPath $TensorRtArchive -SearchRoot $DownloadRoot -Patterns @("TensorRT-*.zip") -Label "TensorRT"
-$resolvedVideoCodecSdkArchive = Resolve-ArchivePath -ExplicitPath $VideoCodecSdkArchive -SearchRoot $DownloadRoot -Patterns @("Video_Codec_SDK*.zip", "nvcodec*.zip") -Label "Video Codec SDK"
-$resolvedFfmpegArchive = Resolve-ArchivePath -ExplicitPath $FfmpegArchive -SearchRoot $DownloadRoot -Patterns @("ffmpeg-nvidia*.zip", "ffmpeg*.zip") -Label "FFmpeg"
+$manifest = Load-Manifest -PathValue $ManifestPath -Required:$RequireManifest
+Report-ManifestUse -PathValue $ManifestPath -Manifest $manifest
 
-$openCvDest = Join-Path $DestinationRoot "opencv-install-4.10.0-x64"
-$tensorRtDest = Join-Path $DestinationRoot "TensorRT-10.0.1.6"
-$videoCodecSdkDest = Join-Path $DestinationRoot "Video_Codec_SDK_13.0"
-$ffmpegDest = Join-Path $DestinationRoot "ffmpeg-nvidia"
+$openCvManifest = Get-ManifestEntry -Manifest $manifest -Label "OpenCV"
+$tensorRtManifest = Get-ManifestEntry -Manifest $manifest -Label "TensorRT"
+$videoCodecSdkManifest = Get-ManifestEntry -Manifest $manifest -Label "VideoCodecSdk"
+$ffmpegManifest = Get-ManifestEntry -Manifest $manifest -Label "FFmpeg"
+
+$resolvedOpenCvArchive = Resolve-ArchivePath -ExplicitPath $OpenCvArchive -SearchRoot $DownloadRoot -Patterns @("opencv*.zip", "opencv-install*.zip") -Label "OpenCV" -ManifestEntry $openCvManifest
+$resolvedTensorRtArchive = Resolve-ArchivePath -ExplicitPath $TensorRtArchive -SearchRoot $DownloadRoot -Patterns @("TensorRT-*.zip") -Label "TensorRT" -ManifestEntry $tensorRtManifest
+$resolvedVideoCodecSdkArchive = Resolve-ArchivePath -ExplicitPath $VideoCodecSdkArchive -SearchRoot $DownloadRoot -Patterns @("Video_Codec_SDK*.zip", "nvcodec*.zip") -Label "Video Codec SDK" -ManifestEntry $videoCodecSdkManifest
+$resolvedFfmpegArchive = Resolve-ArchivePath -ExplicitPath $FfmpegArchive -SearchRoot $DownloadRoot -Patterns @("ffmpeg-nvidia*.zip", "ffmpeg*.zip") -Label "FFmpeg" -ManifestEntry $ffmpegManifest
+
+Validate-ArchiveChecksum -ArchivePath $resolvedOpenCvArchive -Label "OpenCV" -ManifestEntry $openCvManifest
+Validate-ArchiveChecksum -ArchivePath $resolvedTensorRtArchive -Label "TensorRT" -ManifestEntry $tensorRtManifest
+Validate-ArchiveChecksum -ArchivePath $resolvedVideoCodecSdkArchive -Label "Video Codec SDK" -ManifestEntry $videoCodecSdkManifest
+Validate-ArchiveChecksum -ArchivePath $resolvedFfmpegArchive -Label "FFmpeg" -ManifestEntry $ffmpegManifest
+
+$openCvDest = Resolve-DestinationPath -DefaultName "opencv-install-4.10.0-x64" -ManifestEntry $openCvManifest
+$tensorRtDest = Resolve-DestinationPath -DefaultName "TensorRT-10.0.1.6" -ManifestEntry $tensorRtManifest
+$videoCodecSdkDest = Resolve-DestinationPath -DefaultName "Video_Codec_SDK_13.0" -ManifestEntry $videoCodecSdkManifest
+$ffmpegDest = Resolve-DestinationPath -DefaultName "ffmpeg-nvidia" -ManifestEntry $ffmpegManifest
 
 $stagedAnything = $false
 $stagedAnything = (Expand-ArchiveToDestination -ArchivePath $resolvedOpenCvArchive -DestinationPath $openCvDest -Label "OpenCV") -or $stagedAnything
