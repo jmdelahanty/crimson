@@ -43,6 +43,8 @@
 #include "zarr_loader.h"
 #include "gui/crop_keypoint_editor.h"
 #include "gui/file_browser_window.h"
+#include "gui/keypoints_window.h"
+#include "gui/labeling_tool_window.h"
 #include "gui/refined_keypoint_review_window.h"
 #include "gui_interpolation.h"
 #include "gui/movement_timeline_window.h"
@@ -1408,6 +1410,7 @@ int main(int argc, char **argv) {
     static RefinedKeypointReviewWindowState
         refined_keypoint_review_window_state;
     CropKeypointEditorState crop_keypoint_editor_state;
+    LabelingToolWindowState labeling_tool_window_state;
 
     auto sanitizePathComponent = [](std::string value) -> std::string {
         if (value.empty()) {
@@ -7275,105 +7278,16 @@ struct StateOverlay {
         if (plot_keypoints_flag) {
             const auto keypoints_window_ui_start =
                 std::chrono::steady_clock::now();
-            if (ImGui::Begin("Keypoints")) {
-
-                const float TEXT_BASE_HEIGHT =
-                    ImGui::GetTextLineHeightWithSpacing();
-                {
-                    const int rows_count = scene->num_cams;
-                    const int columns_count = skeleton->num_nodes + 1;
-
-                    static ImGuiTableFlags table_flags =
-                        ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY |
-                        ImGuiTableFlags_SizingFixedFit |
-                        ImGuiTableFlags_BordersOuter |
-                        ImGuiTableFlags_BordersInnerH |
-                        ImGuiTableFlags_Hideable | ImGuiTableFlags_Resizable |
-                        ImGuiTableFlags_HighlightHoveredColumn;
-
-                    if (ImGui::BeginTable(
-                            "table_angled_headers", columns_count, table_flags,
-                            ImVec2(0.0f, TEXT_BASE_HEIGHT * 12))) {
-                        ImGui::TableSetupColumn(
-                            "Name", ImGuiTableColumnFlags_NoHide |
-                                        ImGuiTableColumnFlags_NoReorder);
-                        for (int column = 1; column < columns_count; column++)
-                            ImGui::TableSetupColumn(
-                                skeleton->node_names[column - 1].c_str(),
-                                ImGuiTableColumnFlags_AngledHeader |
-                                    ImGuiTableColumnFlags_WidthFixed);
-                        ImGui::TableSetupScrollFreeze(1, 2);
-
-                        ImGui::
-                            TableAngledHeadersRow(); // Draw angled headers
-                                                     // for all columns with
-                                                     // the
-                                                     // ImGuiTableColumnFlags_AngledHeader
-                                                     // flag.
-                        ImGui::TableHeadersRow(); // Draw remaining headers
-                                                  // and allow access to
-                                                  // context-menu and other
-                                                  // functions.
-
-                        for (int row = 0; row < rows_count; row++) {
-                            ImGui::PushID(row);
-                            ImGui::TableNextRow();
-
-                            if (is_view_focused[row] && keypoints_find) {
-                                ImU32 row_bg_color = ImGui::GetColorU32(
-                                    ImVec4(0.7f, 0.3f, 0.3f, 0.65f));
-                                ImGui::TableSetBgColor(
-                                    ImGuiTableBgTarget_RowBg0, row_bg_color);
-                            }
-
-                            ImGui::TableSetColumnIndex(0);
-                            ImGui::AlignTextToFramePadding();
-                            ImGui::Text("%s", camera_names[row].c_str());
-                            for (int column = 1; column < columns_count;
-                                 column++)
-                                if (ImGui::TableSetColumnIndex(column)) {
-                                    if (keypoints_find) {
-                                        ImVec4 node_color;
-                                        if (keypoints_map[current_frame_num]
-                                                ->active_id[row] ==
-                                            column - 1) {
-                                            node_color = (ImVec4)ImColor::HSV(
-                                                0.8, 1.0f, 1.0f);
-                                        } else {
-                                            if (keypoints_map[current_frame_num]
-                                                    ->keypoints2d[row]
-                                                                 [column - 1]
-                                                    .is_labeled) {
-                                                node_color =
-                                                    skeleton
-                                                        ->node_colors[column -
-                                                                      1];
-                                                node_color.w = 0.9;
-                                            }
-                                        }
-
-                                        if (keypoints_map[current_frame_num]
-                                                ->keypoints2d[row][column - 1]
-                                                .is_triangulated) {
-                                            ImGui::TextColored(
-                                                ImVec4(1.0f, 1.0f, 1.0f, 1.0f),
-                                                "T");
-                                        }
-
-                                        ImU32 cell_bg_color =
-                                            ImGui::GetColorU32(node_color);
-                                        ImGui::TableSetBgColor(
-                                            ImGuiTableBgTarget_CellBg,
-                                            cell_bg_color);
-                                    }
-                                }
-                            ImGui::PopID();
-                        }
-                        ImGui::EndTable();
-                    }
-                }
-            }
-            ImGui::End();
+            const KeypointsWindowContext keypoints_window_context{
+                static_cast<int>(scene->num_cams),
+                skeleton.get(),
+                keypoints_map,
+                current_frame_num,
+                camera_names,
+                is_view_focused,
+                keypoints_find,
+            };
+            drawKeypointsWindow(keypoints_window_context);
             frame_keypoints_window_ui_ms += durationMs(
                 std::chrono::steady_clock::now() - keypoints_window_ui_start);
         }
@@ -7381,149 +7295,92 @@ struct StateOverlay {
         if (plot_keypoints_flag) {
             const auto labeling_tool_ui_start =
                 std::chrono::steady_clock::now();
-            if (ImGui::Begin("Labeling Tool")) {
-
-                if (scene->num_cams > 1) {
-                    bool keypoint_triangulated_all = true;
-#if CRIMSON_ENABLE_SFM
-                    constexpr bool triangulation_supported = true;
-#else
-                    constexpr bool triangulation_supported = false;
-#endif
-                    if (keypoints_find) {
-                        for (int i = 0; i < scene->num_cams; i++) {
-                            for (int j = 0; j < skeleton->num_nodes; j++) {
-                                if (!keypoints_map.at(current_frame_num)
-                                         ->keypoints2d[i][j]
-                                         .is_triangulated) {
-                                    keypoint_triangulated_all = false;
-                                }
-                            }
-                        }
-                    } else {
-                        keypoint_triangulated_all = false;
-                    }
-
-                    bool enabled = keypoints_find && triangulation_supported;
-                    bool apply_color =
-                        triangulation_supported && !keypoint_triangulated_all &&
-                        enabled;
-                    if (apply_color) {
-                        ImGui::PushStyleColor(
-                            ImGuiCol_Button,
-                            (ImVec4)ImColor::HSV(0.8, 1.0f, 1.0f));
-                        ImGui::PushStyleColor(
-                            ImGuiCol_ButtonHovered,
-                            (ImVec4)ImColor::HSV(0.8, 0.9f, 0.8f));
-                        ImGui::PushStyleColor(
-                            ImGuiCol_ButtonActive,
-                            (ImVec4)ImColor::HSV(0.8, 0.9f, 0.5f));
-                    }
-
-                    ImGui::BeginDisabled(!enabled);
-                    if (ImGui::Button("Triangulate")) {
-                        reprojection(keypoints_map.at(current_frame_num),
-                                     skeleton.get(), camera_params, scene);
-                    }
-                    ImGui::EndDisabled();
-
-                    if (apply_color) {
-                        ImGui::PopStyleColor(3);
-                    }
-
-                    if (!triangulation_supported) {
-                        ImGui::SameLine();
-                        ImGui::TextDisabled("SFM disabled in this build");
-                    }
-
-                    if (enabled) {
-                        if (ImGui::IsKeyPressed(ImGuiKey_T,
-                                                false)) // triangulate
-                        {
-                            reprojection(keypoints_map.at(current_frame_num),
-                                         skeleton.get(), camera_params, scene);
-                        }
-                    }
-                }
-
-                if (ImGui::Button("Update keypoints working directory")) {
-                    IGFD::FileDialogConfig config;
-                    config.countSelectionMax = 1;
-                    config.path = root_dir;
-                    config.flags = ImGuiFileDialogFlags_Modal;
-                    ImGuiFileDialog::Instance()->OpenDialog(
-                        "ChooseKeypointsFolder",
-                        "Choose keypoints working directory", nullptr, config);
-                }
-                ImGui::SameLine();
-                ImGui::Text("%s", keypoints_root_folder.c_str());
-
-                if (ImGui::Button("Save Labeled Data") ||
-                    (ImGui::GetIO().KeyCtrl &&
-                     ImGui::IsKeyPressed(ImGuiKey_S, false))) {
-                    save_keypoints(keypoints_map, skeleton.get(),
-                                   keypoints_root_folder, scene->num_cams,
-                                   camera_names, &input_is_imgs, imgs_names);
-                    last_saved = time(NULL);
-                }
-                if (last_saved != static_cast<std::time_t>(-1)) {
-                    ImGui::SameLine();
-                    ImGui::Text("Last saved: %s", ctime(&last_saved));
-                }
-
-                static bool load_old_format = false;
-                if (ImGui::Button("Load Most Recent Labels")) {
-                    free_all_keypoints(keypoints_map, scene);
-                    if (load_old_format) {
-                        if (load_keypoints_depreciated(
-                                keypoints_map, skeleton.get(), keypoints_root_folder,
-                                scene, camera_names, error_message)) {
-                            free_all_keypoints(keypoints_map, scene);
-                            show_error = true;
-                        }
-
-                    } else {
-                        std::string most_recent_folder;
-                        if (find_most_recent_labels(keypoints_root_folder,
-                                                    most_recent_folder,
-                                                    error_message)) {
-                            show_error = true;
-                        } else {
-                            if (load_keypoints(most_recent_folder,
-                                               keypoints_map, skeleton.get(), scene,
-                                               camera_names, error_message)) {
-                                free_all_keypoints(keypoints_map, scene);
-                                show_error = true;
-                            }
-                        }
-                    }
-                }
-                ImGui::SameLine();
-                ImGui::Checkbox("Old format", &load_old_format);
-
-                if (ImGui::Button("Load From Selected")) {
-                    IGFD::FileDialogConfig config;
-                    config.countSelectionMax = 1;
-                    config.path = keypoints_root_folder;
-                    config.flags = ImGuiFileDialogFlags_Modal;
-                    ImGuiFileDialog::Instance()->OpenDialog(
-                        "LoadFromSelected", "Load from selected", nullptr,
-                        config);
-                }
-
+            bool has_labeled_frames = !keypoints_map.empty();
+            int next_labeled_frame = -1;
+            if (has_labeled_frames) {
                 auto upper_it = keypoints_map.upper_bound(current_frame_num);
                 if (upper_it == keypoints_map.end()) {
                     upper_it = keypoints_map.begin();
                 }
-
-                ImGui::Separator();
-                ImGui::Text("Next labeled frame : %d", (*upper_it).first);
-                if (ImGui::Button("Jump to Next Labeled Frame")) {
-                    seekToFrame((*upper_it).first, true);
-                }
-                ImGui::Text("Total labeled frames : %zu", keypoints_map.size());
+                next_labeled_frame = upper_it->first;
             }
-            ImGui::End();
+#if CRIMSON_ENABLE_SFM
+            constexpr bool triangulation_supported = true;
+#else
+            constexpr bool triangulation_supported = false;
+#endif
+            const LabelingToolWindowContext labeling_tool_context{
+                root_dir,
+                keypoints_root_folder,
+                static_cast<int>(scene->num_cams),
+                skeleton.get(),
+                keypoints_map,
+                current_frame_num,
+                keypoints_find,
+                triangulation_supported,
+                last_saved,
+                has_labeled_frames,
+                next_labeled_frame,
+                keypoints_map.size(),
+            };
+            const LabelingToolWindowResult labeling_tool_result =
+                drawLabelingToolWindow(labeling_tool_context,
+                                       labeling_tool_window_state);
+
+            if (labeling_tool_result.request_triangulate) {
+                auto keypoint_it = keypoints_map.find(current_frame_num);
+                if (keypoint_it != keypoints_map.end()) {
+                    reprojection(keypoint_it->second, skeleton.get(),
+                                 camera_params, scene);
+                }
+            }
+
+            if (labeling_tool_result.request_save) {
+                save_keypoints(keypoints_map, skeleton.get(),
+                               keypoints_root_folder, scene->num_cams,
+                               camera_names, &input_is_imgs, imgs_names);
+                last_saved = time(NULL);
+            }
+
+            if (labeling_tool_result.request_load_most_recent) {
+                free_all_keypoints(keypoints_map, scene);
+                if (labeling_tool_result.load_old_format) {
+                    if (load_keypoints_depreciated(keypoints_map, skeleton.get(),
+                                                   keypoints_root_folder, scene,
+                                                   camera_names,
+                                                   error_message)) {
+                        free_all_keypoints(keypoints_map, scene);
+                        show_error = true;
+                    }
+                } else {
+                    std::string most_recent_folder;
+                    if (find_most_recent_labels(keypoints_root_folder,
+                                                most_recent_folder,
+                                                error_message)) {
+                        show_error = true;
+                    } else if (load_keypoints(most_recent_folder, keypoints_map,
+                                              skeleton.get(), scene,
+                                              camera_names, error_message)) {
+                        free_all_keypoints(keypoints_map, scene);
+                        show_error = true;
+                    }
+                }
+            }
+
+            if (labeling_tool_result.selected_load_folder.has_value()) {
+                free_all_keypoints(keypoints_map, scene);
+                if (load_keypoints(*labeling_tool_result.selected_load_folder,
+                                   keypoints_map, skeleton.get(), scene,
+                                   camera_names, error_message)) {
+                    free_all_keypoints(keypoints_map, scene);
+                    show_error = true;
+                }
+            }
+
+            if (labeling_tool_result.jump_target_frame.has_value()) {
+                seekToFrame(*labeling_tool_result.jump_target_frame, true);
+            }
+
             frame_labeling_tool_ui_ms += durationMs(
                 std::chrono::steady_clock::now() - labeling_tool_ui_start);
         }
@@ -7570,30 +7427,6 @@ struct StateOverlay {
 
         shared_timeline_scroll_state.prev_enabled =
             shared_timeline_scroll_state.enabled;
-
-        if (ImGuiFileDialog::Instance()->Display("ChooseKeypointsFolder")) {
-            if (ImGuiFileDialog::Instance()->IsOk()) {
-                keypoints_root_folder =
-                    ImGuiFileDialog::Instance()->GetCurrentPath();
-            }
-            // close
-            ImGuiFileDialog::Instance()->Close();
-        }
-
-        if (ImGuiFileDialog::Instance()->Display("LoadFromSelected")) {
-            if (ImGuiFileDialog::Instance()->IsOk()) {
-                auto selected_folder =
-                    ImGuiFileDialog::Instance()->GetCurrentPath();
-                free_all_keypoints(keypoints_map, scene);
-                if (load_keypoints(selected_folder, keypoints_map, skeleton.get(),
-                                   scene, camera_names, error_message)) {
-                    free_all_keypoints(keypoints_map, scene);
-                    show_error = true;
-                }
-            }
-            // close
-            ImGuiFileDialog::Instance()->Close();
-        }
 
         if (ImGui::IsKeyPressed(ImGuiKey_H, false)) {
             show_help_window = !show_help_window;
