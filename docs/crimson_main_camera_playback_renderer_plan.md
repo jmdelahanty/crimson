@@ -125,19 +125,23 @@ In practice:
 - overlays remain visible, but should be drawn through the cheapest path that
   still preserves alignment
 
-As of the latest captures, that renderer work is no longer the only follow-up.
-There is now a second experiment with a stronger signal behind it:
+As of the latest captures, that renderer work is still the right primary
+follow-up.
 
-- add a main-camera software decode backend
-- compare it directly against the current GPU decode path on the Windows laptop
+A main-camera software-decode experiment was run after these notes were first
+written, and it failed decisively on the Windows laptop:
 
-Why this is now justified:
+- software main-camera decode collapsed to about `0.30x` playback speed
+- the same workload on the `GPU Decode` path stayed near `0.89x`
+- decoder-side submit/convert/write costs all became much worse on the software
+  path
 
-- the stimulus software-decode experiment already proved that GPU decode is not
-  always the best choice on this machine
-- the new `camera_decode_submit_ms` metric shows the main camera's GPU decode
-  path is also expensive in-app
-- reducing render cost alone has not been enough to reach stable `1.0x`
+So the current guidance is:
+
+- keep the main camera on `GPU Decode`
+- continue treating the playback renderer as the main optimization frontier
+- do not spend more time on main-camera software decode unless the decode stack
+  changes substantially
 
 ## Why This Is More Promising Than ROI Alone
 
@@ -241,17 +245,20 @@ Once the cheaper playback renderer is in place:
 
 ### Phase 5: Main-Camera Software Decode Experiment
 
-- add a main-camera decode backend selector
-- preserve the current GPU decode path as the default/fallback
-- measure whether moving main-camera decode work off the GPU improves the
-  combined decode + render throughput on the Windows RTX A1000 laptop
+Status: completed and rejected on the Windows RTX A1000 laptop.
 
-Acceptance:
+Observed result:
 
-- the experiment produces a direct `GPU decode` vs `software decode` comparison
-  under the same playback conditions
-- the perf log shows whether `camera_decode_submit_ms` collapses and whether
-  overall playback speed improves enough to justify keeping the backend
+- the software path regressed to roughly `0.30x` playback
+- `GPU Decode` remained much better at roughly `0.89x`
+- the experiment did not reduce the real bottleneck enough to justify keeping
+  it as a recommended path
+
+Follow-up:
+
+- retain the documented result for future reference
+- do not prioritize more work on this experiment ahead of playback-render
+  optimization
 
 ## Success Criteria
 
