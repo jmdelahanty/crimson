@@ -276,6 +276,34 @@ Discrete-GPU / OpenGL forcing follow-up:
 - conclusion: discrete-GPU forcing was worth verifying, but it did not reveal a
   hidden "wrong GPU" issue or unlock stable `1.0x` playback on this machine
 
+Large-main-camera playback conclusion:
+
+- after the renderer, upload, stimulus, VSync, and decode-backend experiments,
+  the best Windows RTX A1000 laptop runs still remained below stable `1.0x`
+  playback for the `4512x4512 @ 60 fps` main camera stream
+- the remaining comparable bottlenecks stayed near the frame budget:
+  - `camera_decode_submit_ms`
+  - `gl_draw_ms`
+- that means the limiting factor on this machine is no longer one obvious app
+  bug; it is the combined decode + presentation workload for a very large
+  `HEVC` stream on a low-tier mobile workstation GPU
+- practical conclusion: on this class of laptop, full-fidelity playback of
+  this stream should be expected to remain somewhat slower than real time
+  unless playback fidelity is reduced or the hardware is stronger
+
+Codec / re-encode interpretation:
+
+- re-encoding the same `4512x4512 @ 60 fps` source to a different codec may
+  reduce decode pressure somewhat, but it is unlikely to remove the whole
+  bottleneck by itself
+- the app-side evidence says rendering/presentation is still near the frame
+  budget even after upload and several decode-path costs were reduced
+- the isolated FFmpeg benchmark also suggested the current GPU path already has
+  roughly real-time decode throughput once the same large frame is involved
+- so the most promising re-encode, if one is tried later, is not merely "same
+  size, different codec"; it is a lower-fidelity playback representation such
+  as a downscaled proxy
+
 Interpretation note:
 
 - `Stimulus Decode Backend` and `Stimulus Buffer Mode` are independent
