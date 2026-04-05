@@ -103,8 +103,19 @@ So the late-conversion plan remains the right architectural direction, but its
 first slice is no longer the only optimization frontier. The next frontiers are:
 
 - playback render-path optimization for weaker GPUs
-- and a main-camera software decode experiment to test whether moving decode off
-  the laptop GPU improves combined throughput
+
+A later main-camera software-decode experiment was run and rejected on this
+same laptop:
+
+- software decode regressed badly relative to `NVDEC`
+- the main-camera software path fell to about `0.30x` playback
+- `GPU Decode` remained far better for the same workload
+
+So the late-conversion plan should now assume:
+
+- main-camera decode stays on `NVDEC`
+- future work should focus on playback render-path cost rather than revisiting
+  software main-camera decode
 
 The newer zoomed-playback telemetry further refined that conclusion:
 

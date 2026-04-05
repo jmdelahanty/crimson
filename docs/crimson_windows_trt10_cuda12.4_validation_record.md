@@ -247,6 +247,21 @@ Interpretation:
 - on this specific machine, software main-camera decode became a justified
   follow-up experiment after these measurements
 
+Outcome of that follow-up experiment:
+
+- the software main-camera decode path was decisively worse than `NVDEC` on the
+  Windows RTX A1000 laptop
+- under comparable playback settings, the software-decode run fell to roughly
+  `0.30x` playback speed, while the GPU-decode run stayed near `0.89x`
+- the software-decode run also showed:
+  - `camera_decode_submit_ms` around `44 ms`
+  - `camera_decode_convert_ms` around `4.4 ms`
+  - `camera_decode_write_ms` around `9-10 ms`
+  - much larger decode gaps
+- conclusion: keep main-camera `GPU Decode` as the recommended path on this
+  machine and treat the software main-camera backend as a rejected experiment,
+  not a new default
+
 Interpretation note:
 
 - `Stimulus Decode Backend` and `Stimulus Buffer Mode` are independent

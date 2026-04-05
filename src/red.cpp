@@ -42,7 +42,6 @@
 #include "zarr_loader.h"
 #include "gui_interpolation.h"
 #include <opencv2/imgproc.hpp>
-#include <opencv2/videoio.hpp>
 
 #if defined(_MSC_VER) && (_MSC_VER >= 1900) &&                                 \
     !defined(IMGUI_DISABLE_WIN32_FUNCTIONS)
@@ -254,8 +253,7 @@ struct PerfLogWriter {
             << "camera_decode_convert_ms,camera_decode_wait_ms,"
             << "camera_decode_write_ms,camera_decode_pipeline_ms,"
             << "visible_camera_count,swap_interval_setting,"
-            << "main_buffer_mode,main_decode_backend,"
-            << "playback_preview_scale,playback_preview_active,"
+            << "main_buffer_mode,playback_preview_scale,playback_preview_active,"
             << "playback_renderer_mode,"
             << "camera_viewport_width_px,camera_viewport_height_px,"
             << "camera_view_x_min,camera_view_x_max,"
@@ -491,7 +489,6 @@ int main(int argc, char **argv) {
     int label_buffer_size = 100;
     int playback_preview_scale_mode = 0;
     int playback_renderer_mode = 1;
-    bool main_use_software_decode = false;
     int stimulus_buffer_size = 12;
     bool stimulus_use_cpu_buffer = false;
 #ifdef _WIN32
@@ -553,64 +550,6 @@ int main(int argc, char **argv) {
         }
     };
 
-    auto probeMainVideoProperties = [&](const std::string& video_path,
-                                        uint32_t& width,
-                                        uint32_t& height,
-                                        double& fps) -> bool {
-        if (main_use_software_decode) {
-            cv::VideoCapture probe(video_path, cv::CAP_FFMPEG);
-            if (!probe.isOpened()) {
-                std::cerr << "[Video] Failed to open software probe for "
-                          << video_path << std::endl;
-                return false;
-            }
-            width = static_cast<uint32_t>(probe.get(cv::CAP_PROP_FRAME_WIDTH));
-            height = static_cast<uint32_t>(probe.get(cv::CAP_PROP_FRAME_HEIGHT));
-            fps = probe.get(cv::CAP_PROP_FPS);
-            if (width == 0 || height == 0) {
-                std::cerr << "[Video] Software probe reported invalid dimensions for "
-                          << video_path << std::endl;
-                return false;
-            }
-            if (fps <= 0.0) {
-                fps = 30.0;
-            }
-            return true;
-        }
-
-        std::map<std::string, std::string> ffmpeg_options;
-        auto probe_demuxer =
-            std::make_unique<FFmpegDemuxer>(video_path.c_str(), ffmpeg_options);
-        width = probe_demuxer->GetWidth();
-        height = probe_demuxer->GetHeight();
-        fps = probe_demuxer->GetFramerate();
-        return width != 0 && height != 0;
-    };
-
-    auto launchMainVideoDecoder = [&](const std::string& video_path,
-                                      int camera_index) {
-        if (main_use_software_decode) {
-            decoder_threads.push_back(std::thread(
-                &software_decoder_process,
-                dc_context,
-                video_path,
-                camera_names[camera_index],
-                scene->cameras[camera_index].display_buffer,
-                scene->size_of_buffer,
-                &scene->cameras[camera_index].seek_context,
-                scene->use_cpu_buffer,
-                static_cast<int>(scene->cameras[camera_index].image_width),
-                static_cast<int>(scene->cameras[camera_index].image_height)));
-            return;
-        }
-
-        decoder_threads.push_back(std::thread(
-            &decoder_process, dc_context, demuxers[camera_index].get(),
-            camera_names[camera_index], scene->cameras[camera_index].display_buffer,
-            scene->size_of_buffer, &scene->cameras[camera_index].seek_context,
-            scene->use_cpu_buffer));
-    };
-
     auto tryAutoLoadAffiliatedVideoFromZarr = [&](const char* trigger_label) {
         if (!zarr_loaded) {
             return;
@@ -651,30 +590,24 @@ int main(int argc, char **argv) {
             camera_names.push_back(camera_name);
             window_need_decoding[camera_name].store(true);
             window_was_decoding[camera_name] = true;
-            scene->use_software_decode = main_use_software_decode;
+
+            std::map<std::string, std::string> ffmpeg_options;
+            demuxers.push_back(
+                std::make_unique<FFmpegDemuxer>(resolved_video.string().c_str(), ffmpeg_options));
+
+            dc_context->seek_interval =
+                static_cast<int>(demuxers[0]->FindKeyFrameInterval());
+            video_fps = demuxers[0]->GetFramerate();
             scene->num_cams = 1;
             scene->cameras.resize(scene->num_cams);
-
-            uint32_t probe_width = 0;
-            uint32_t probe_height = 0;
-            if (!probeMainVideoProperties(resolved_video.string(), probe_width,
-                                          probe_height, video_fps)) {
-                throw std::runtime_error(
-                    "Failed to probe affiliated video properties");
-            }
-            scene->cameras[0].image_width = probe_width;
-            scene->cameras[0].image_height = probe_height;
-            if (!main_use_software_decode) {
-                std::map<std::string, std::string> ffmpeg_options;
-                demuxers.push_back(std::make_unique<FFmpegDemuxer>(
-                    resolved_video.string().c_str(), ffmpeg_options));
-                dc_context->seek_interval =
-                    static_cast<int>(demuxers[0]->FindKeyFrameInterval());
-            } else {
-                dc_context->seek_interval = 1;
-            }
+            scene->cameras[0].image_width = demuxers[0]->GetWidth();
+            scene->cameras[0].image_height = demuxers[0]->GetHeight();
             render_allocate_scene_memory(scene, label_buffer_size);
-            launchMainVideoDecoder(resolved_video.string(), 0);
+
+            decoder_threads.push_back(std::thread(
+                &decoder_process, dc_context, demuxers[0].get(), camera_names[0],
+                scene->cameras[0].display_buffer, scene->size_of_buffer, &scene->cameras[0].seek_context,
+                scene->use_cpu_buffer));
             is_view_focused.push_back(false);
             video_loaded = true;
 
@@ -811,30 +744,24 @@ int main(int argc, char **argv) {
                     camera_names.push_back(camera_name);
                     window_need_decoding[camera_name].store(true);
                     window_was_decoding[camera_name] = true;
-                    scene->use_software_decode = main_use_software_decode;
+
+                    std::map<std::string, std::string> ffmpeg_options;
+                    demuxers.push_back(
+                        std::make_unique<FFmpegDemuxer>(found_video.c_str(), ffmpeg_options));
+
+                    dc_context->seek_interval =
+                        static_cast<int>(demuxers[0]->FindKeyFrameInterval());
+                    video_fps = demuxers[0]->GetFramerate();
                     scene->num_cams = 1;
                     scene->cameras.resize(scene->num_cams);
-
-                    uint32_t probe_width = 0;
-                    uint32_t probe_height = 0;
-                    if (!probeMainVideoProperties(found_video, probe_width,
-                                                  probe_height, video_fps)) {
-                        throw std::runtime_error(
-                            "Failed to probe fallback video properties");
-                    }
-                    scene->cameras[0].image_width = probe_width;
-                    scene->cameras[0].image_height = probe_height;
-                    if (!main_use_software_decode) {
-                        std::map<std::string, std::string> ffmpeg_options;
-                        demuxers.push_back(std::make_unique<FFmpegDemuxer>(
-                            found_video.c_str(), ffmpeg_options));
-                        dc_context->seek_interval =
-                            static_cast<int>(demuxers[0]->FindKeyFrameInterval());
-                    } else {
-                        dc_context->seek_interval = 1;
-                    }
+                    scene->cameras[0].image_width = demuxers[0]->GetWidth();
+                    scene->cameras[0].image_height = demuxers[0]->GetHeight();
                     render_allocate_scene_memory(scene, label_buffer_size);
-                    launchMainVideoDecoder(found_video, 0);
+
+                    decoder_threads.push_back(std::thread(
+                        &decoder_process, dc_context, demuxers[0].get(), camera_names[0],
+                        scene->cameras[0].display_buffer, scene->size_of_buffer, &scene->cameras[0].seek_context,
+                        scene->use_cpu_buffer));
                     is_view_focused.push_back(false);
                     video_loaded = true;
 
@@ -2316,16 +2243,6 @@ int main(int argc, char **argv) {
 
             if (!video_loaded) {
                 {
-                    const char *items[] = {"Main Camera GPU Decode",
-                                           "Main Camera Software Decode"};
-                    int main_decode_mode = main_use_software_decode ? 1 : 0;
-                    ImGui::Combo("Main Decode Backend", &main_decode_mode, items,
-                                 IM_ARRAYSIZE(items));
-                    main_use_software_decode = (main_decode_mode == 1);
-                    ImGui::Text("Main Decode Backend: %s",
-                                main_use_software_decode ? "Software" : "GPU");
-                }
-                {
                     const char *items[] = {"CPU Buffer", "GPU Buffer"};
                     static int item_current = 0;
                     ImGui::Combo("Buffer Type", &item_current, items,
@@ -3055,8 +2972,6 @@ int main(int argc, char **argv) {
                 auto first_selection =
                     *selected_files.begin(); // Dereferencing iterator
                 if (string_ends_with(first_selection.first, ".mp4")) {
-                    input_is_imgs = false;
-                    scene->use_software_decode = main_use_software_decode;
                     for (const auto &elem : selected_files) {
                         std::string cam_string_full = elem.first;
                         std::size_t last_slash = cam_string_full.find_last_of("/\\");
@@ -3072,46 +2987,36 @@ int main(int argc, char **argv) {
                                   << std::endl;
                         window_need_decoding[cam_string].store(true);
                         window_was_decoding[cam_string] = true;
-                        if (!main_use_software_decode) {
-                            std::map<std::string, std::string> m;
-                            demuxers.push_back(
-                                std::make_unique<FFmpegDemuxer>(elem.second.c_str(), m));
-                        }
+                        std::map<std::string, std::string> m;
+                        demuxers.push_back(
+                            std::make_unique<FFmpegDemuxer>(elem.second.c_str(), m));
                     }
+                    std::map<std::string, std::string> m;
+                    FFmpegDemuxer dummy_dmuxer(
+                        selected_files.begin()->second.c_str(), m);
+                    dc_context->seek_interval =
+                        (int)dummy_dmuxer
+                            .FindKeyFrameInterval(); // get the seek interval
+                    video_fps = dummy_dmuxer.GetFramerate();
                     scene->num_cams = selected_files.size();
                     scene->cameras.resize(scene->num_cams);
                     for (u32 j = 0; j < scene->num_cams; j++) {
-                        double probed_fps = video_fps;
-                        uint32_t probed_width = 0;
-                        uint32_t probed_height = 0;
-                        if (!probeMainVideoProperties(
-                                selected_files[camera_names[j]], probed_width,
-                                probed_height, probed_fps)) {
-                            throw std::runtime_error(
-                                "Failed to probe selected video properties");
-                        }
-                        scene->cameras[j].image_width = probed_width;
-                        scene->cameras[j].image_height = probed_height;
-                        if (j == 0) {
-                            video_fps = probed_fps;
-                        }
-                    }
-                    if (!main_use_software_decode) {
-                        dc_context->seek_interval = static_cast<int>(
-                            demuxers[0]->FindKeyFrameInterval());
-                    } else {
-                        dc_context->seek_interval = 1;
+                        scene->cameras[j].image_width = demuxers[j]->GetWidth();
+                        scene->cameras[j].image_height = demuxers[j]->GetHeight();
                     }
                     render_allocate_scene_memory(scene, label_buffer_size);
                     // multiple threads for decoding for selected videos
                     for (int i = 0; i < scene->num_cams; i++) {
-                        launchMainVideoDecoder(selected_files[camera_names[i]], i);
+                        decoder_threads.push_back(std::thread(
+                            &decoder_process, dc_context, demuxers[i].get(),
+                            camera_names[i], scene->cameras[i].display_buffer,
+                            scene->size_of_buffer, &scene->cameras[i].seek_context,
+                            scene->use_cpu_buffer));
                         is_view_focused.push_back(false);
                     }
                     video_loaded = true;
                 } else {
                     input_is_imgs = true;
-                    scene->use_software_decode = false;
                     for (const auto &elem : selected_files) {
                         std::size_t cam_string_position = elem.first.find("_");
                         std::string cam_name =
@@ -8957,11 +8862,6 @@ struct StateOverlay {
                     << visible_camera_count << ","
                     << window->swap_interval
                     << "," << (scene->use_cpu_buffer ? "cpu" : "gpu") << ","
-                    << ((video_loaded ? scene->use_software_decode
-                                      : main_use_software_decode)
-                            ? "software"
-                            : "gpu")
-                    << ","
                     << playbackPreviewScaleLabel() << ","
                     << (playbackPreviewIsActive() ? 1 : 0) << ","
                     << playbackRendererModeLabel() << ","
@@ -9044,16 +8944,9 @@ struct StateOverlay {
                     {"main_video",
                      {{"loaded", video_loaded},
                       {"fps", video_fps},
-                      {"decode_backend",
-                       ((video_loaded ? scene->use_software_decode
-                                      : main_use_software_decode)
-                            ? "software"
-                            : "gpu")},
                       {"buffer_mode", scene->use_cpu_buffer ? "cpu" : "gpu"},
                       {"buffer_storage_format",
-                       (scene->use_cpu_buffer || scene->use_software_decode)
-                           ? "rgba32"
-                           : "nv12"},
+                       scene->use_cpu_buffer ? "rgba32" : "nv12"},
                       {"playback_preview_scale", playbackPreviewScaleLabel()},
                       {"playback_preview_active", playbackPreviewIsActive()},
                       {"playback_renderer_mode", playbackRendererModeLabel()},
