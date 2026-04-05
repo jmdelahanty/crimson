@@ -50,6 +50,13 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                      std::string cam_name, PictureBuffer *display_buffer,
                      int size_of_buffer, SeekInfo *seek_info,
                      bool use_cpu_buffer);
+void software_decoder_process(DecoderContext *dc_context,
+                              const std::string &video_path,
+                              std::string cam_name,
+                              PictureBuffer *display_buffer,
+                              int size_of_buffer, SeekInfo *seek_info,
+                              bool use_cpu_buffer,
+                              int width, int height);
 void image_loader(DecoderContext *dc_context,
                   const std::vector<std::string> &img_list_vector,
                   PictureBuffer *display_buffer, int size_of_buffer,
