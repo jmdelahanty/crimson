@@ -221,6 +221,32 @@ Observed evidence from the first validated Windows laptop:
   - CUDA decode + download + RGBA conversion path: about `3699 fps`
   - software decode was about `3x` faster for that stimulus stream
 
+Later playback profiling on the same Windows RTX A1000 laptop found:
+
+- VSync/compositor pacing was part of the apparent draw cost, but turning
+  VSync off did not by itself restore stable `1.0x` playback
+- after adding deeper decoder timing, the main camera showed:
+  - `camera_decode_demux_ms` small
+  - `camera_decode_submit_ms` near or above the frame budget
+- that means the laptop is paying both:
+  - render cost near the frame budget
+  - and hardware decode submit cost near the frame budget
+
+Main-camera `GPU Buffer` size also proved to be a real tradeoff:
+
+- a very large ring (`100`) gave the decoder much more runway and produced much
+  better playback stability than a small ring
+- a small ring (`8`) made playback worse on that laptop, with larger decode
+  gaps and occasional decoder wait spikes
+
+Interpretation:
+
+- the large ring trades a lot of VRAM for decoder/runway stability
+- the small ring reduces VRAM pressure but can expose the laptop's combined
+  decode/render bottleneck
+- on this specific machine, software main-camera decode became a justified
+  follow-up experiment after these measurements
+
 Interpretation note:
 
 - `Stimulus Decode Backend` and `Stimulus Buffer Mode` are independent

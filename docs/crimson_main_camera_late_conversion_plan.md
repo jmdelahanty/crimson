@@ -50,11 +50,22 @@ Measured on the Windows laptop:
 - `cuda-download-nv12`: about `71.37 fps`
 - `cuda-download-rgba`: about `60.23 fps`
 
-Interpretation:
+Interpretation at the time:
 
-- hardware decode has headroom when the camera frame stays in `NV12`
-- that headroom mostly disappears once the path forces full-frame `RGBA`
-- software main-camera decode is not the right next move
+- hardware decode had headroom when the camera frame stayed in `NV12`
+- that headroom mostly disappeared once the path forced full-frame `RGBA`
+- software main-camera decode did not look like the right immediate next move
+
+That conclusion has now been softened by newer in-app measurements:
+
+- once `NV12` buffering and late conversion landed, the new
+  `camera_decode_submit_ms` metric showed that the app is still paying a
+  significant hardware decode submit cost on the Windows laptop
+- that cost sits near or above the frame budget and competes with rendering on
+  the same GPU
+
+So software main-camera decode is no longer dismissed outright. It is now a
+real experiment worth trying on this specific low-end laptop.
 
 ### Crimson Perf Findings
 
@@ -85,10 +96,15 @@ That slice succeeded in its immediate goal:
 But it also clarified the next bottleneck:
 
 - `gl_draw_ms` remains near the frame budget on the Windows RTX A1000 laptop
+- `camera_decode_submit_ms` is also near or above the frame budget on the same
+  machine
 
 So the late-conversion plan remains the right architectural direction, but its
-first slice is no longer the next optimization frontier. The next frontier is a
-playback render-path optimization for weaker GPUs.
+first slice is no longer the only optimization frontier. The next frontiers are:
+
+- playback render-path optimization for weaker GPUs
+- and a main-camera software decode experiment to test whether moving decode off
+  the laptop GPU improves combined throughput
 
 The newer zoomed-playback telemetry further refined that conclusion:
 
