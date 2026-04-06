@@ -7,6 +7,9 @@ Date anchored: 2026-04-06.
 
 This document is for run-only users. It is not a source-build guide.
 
+The published app drop now also includes a root-level `README.txt` with the
+same basic install and launch instructions.
+
 Related docs:
 
 - [docs/crimson_windows_internal_publish_workflow.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_internal_publish_workflow.md)
