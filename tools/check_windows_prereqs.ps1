@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$RepoRoot,
     [string]$CudaToolkitRoot = $(if ($env:CRIMSON_CUDA_TOOLKIT_ROOT) { $env:CRIMSON_CUDA_TOOLKIT_ROOT } else { "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4" }),
     [string]$OpenCvDir = $(if ($env:CRIMSON_OPENCV_DIR) { $env:CRIMSON_OPENCV_DIR } else { "C:/third_party/opencv-install-4.10.0-x64" }),
     [string]$FfmpegRoot = $(if ($env:CRIMSON_FFMPEG_ROOT) { $env:CRIMSON_FFMPEG_ROOT } else { "C:/third_party/ffmpeg-nvidia" }),
@@ -10,6 +10,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    $RepoRoot = Split-Path -Parent $PSScriptRoot
+}
 
 $results = New-Object System.Collections.Generic.List[object]
 

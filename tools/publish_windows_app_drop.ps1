@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$RepoRoot,
     [string]$StageRoot,
     [string]$ShareRoot = "\\YOUR-SERVER\crimson\windows-app",
     [string]$DropName = "current",
@@ -8,6 +8,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    $RepoRoot = Split-Path -Parent $PSScriptRoot
+}
 
 if ([string]::IsNullOrWhiteSpace($StageRoot)) {
     $StageRoot = Join-Path $RepoRoot "dist/Crimson"

@@ -2,13 +2,17 @@
 param(
     [string]$ShareRoot = "\\YOUR-SERVER\crimson-windows-deps",
     [string]$DestinationRoot = "C:/third_party",
-    [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$RepoRoot,
     [switch]$CleanDestination,
     [switch]$SkipPrereqCheck,
     [switch]$LoadDependencyRoots
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    $RepoRoot = Split-Path -Parent $PSScriptRoot
+}
 
 function Require-Path {
     param(
