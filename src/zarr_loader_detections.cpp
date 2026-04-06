@@ -1560,6 +1560,50 @@ std::vector<LoggedBoundingBox> ZarrDetectionLoader::convertDetectionsToLoggedBox
 }
 
 ZarrDetectionLoader::KeypointRoiMetadata
+ZarrDetectionLoader::getCropRoiMetadataForRoiIndex(int32_t roi_index) const {
+    KeypointRoiMetadata metadata;
+    metadata.roi_index = roi_index;
+    if (roi_index < 0) {
+        return metadata;
+    }
+
+    auto fill_from_detection_row = [&](size_t det_row) {
+        metadata.valid = true;
+        if (det_row < data_.roi_offset_x.size()) {
+            metadata.offset_x = data_.roi_offset_x[det_row];
+        }
+        if (det_row < data_.roi_offset_y.size()) {
+            metadata.offset_y = data_.roi_offset_y[det_row];
+        }
+        if (det_row < data_.roi_width_px.size()) {
+            metadata.roi_width = data_.roi_width_px[det_row];
+        }
+        if (det_row < data_.roi_height_px.size()) {
+            metadata.roi_height = data_.roi_height_px[det_row];
+        }
+        metadata.has_crop_metadata =
+            std::isfinite(metadata.offset_x) &&
+            std::isfinite(metadata.offset_y) &&
+            metadata.roi_width > 0.0f &&
+            metadata.roi_height > 0.0f;
+    };
+
+    for (size_t det_row = 0; det_row < data_.keypoint_roi_indices.size(); ++det_row) {
+        if (data_.keypoint_roi_indices[det_row] == roi_index) {
+            fill_from_detection_row(det_row);
+            return metadata;
+        }
+    }
+    for (size_t det_row = 0; det_row < data_.mask_roi_indices.size(); ++det_row) {
+        if (data_.mask_roi_indices[det_row] == roi_index) {
+            fill_from_detection_row(det_row);
+            return metadata;
+        }
+    }
+    return metadata;
+}
+
+ZarrDetectionLoader::KeypointRoiMetadata
 ZarrDetectionLoader::getKeypointRoiMetadataForFrameDetection(
     size_t frame_id,
     size_t detection_idx,

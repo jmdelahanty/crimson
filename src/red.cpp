@@ -39,6 +39,8 @@
 #include <cstdlib>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include "chained_crop_image_provider.h"
+#include "live_crop_image_provider.h"
 #include "refined_keypoint_repository.h"
 #include "zarr_persisted_crop_provider.h"
 #include "zarr_loader.h"
@@ -5953,10 +5955,57 @@ struct StateOverlay {
             }
         }
 
-        if (zarr_loaded && zarr_loader.hasCropImages()) {
+        if (zarr_loaded &&
+            (zarr_loader.hasCropImages() || zarr_loader.hasKeypointData() ||
+             zarr_loader.hasEyeMasks())) {
             const auto crop_preview_ui_start = std::chrono::steady_clock::now();
             RefinedKeypointRepository refined_keypoint_repo(zarr_loader);
-            ZarrPersistedCropProvider crop_image_provider(zarr_loader);
+            CropFrameSource live_crop_frame_source;
+            if (video_loaded) {
+                const int visible_idx = getVisibleCameraIndex();
+                if (visible_idx >= 0 && scene->size_of_buffer > 0) {
+                    const int preferred_slot = ps.read_head % scene->size_of_buffer;
+                    const int slot_index = findDisplaySlotForFrame(
+                        visible_idx, current_frame_num, preferred_slot);
+                    if (slot_index >= 0) {
+                        const auto& camera = scene->cameras[visible_idx];
+                        const auto& slot = camera.display_buffer[slot_index];
+                        if (!slot.available_to_write &&
+                            slot.frame_number == current_frame_num &&
+                            slot.frame != nullptr) {
+                            live_crop_frame_source.frame = slot.frame;
+                            live_crop_frame_source.frame_number =
+                                slot.frame_number;
+                            live_crop_frame_source.width =
+                                static_cast<int>(camera.image_width);
+                            live_crop_frame_source.height =
+                                static_cast<int>(camera.image_height);
+                            live_crop_frame_source.pitch_bytes =
+                                slot.pitch_bytes;
+                            live_crop_frame_source.color_matrix =
+                                slot.color_matrix;
+                            if (scene->use_cpu_buffer &&
+                                slot.format == PictureBufferFormat::RGBA32) {
+                                live_crop_frame_source.storage =
+                                    CropFrameStorage::HostRGBA32;
+                            } else if (slot.format ==
+                                       PictureBufferFormat::RGBA32) {
+                                live_crop_frame_source.storage =
+                                    CropFrameStorage::DeviceRGBA32;
+                            } else if (slot.format ==
+                                       PictureBufferFormat::NV12) {
+                                live_crop_frame_source.storage =
+                                    CropFrameStorage::DeviceNV12;
+                            }
+                        }
+                    }
+                }
+            }
+            ZarrPersistedCropProvider persisted_crop_image_provider(zarr_loader);
+            LiveCropImageProvider live_crop_image_provider(
+                zarr_loader, live_crop_frame_source);
+            ChainedCropImageProvider crop_image_provider(
+                live_crop_image_provider, persisted_crop_image_provider);
             const CropPreviewWindowContext crop_preview_context{
                 crop_image_provider,
                 zarr_loader,

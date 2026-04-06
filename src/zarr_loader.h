@@ -590,6 +590,7 @@ public:
         float roi_width = 0.0f;
         float roi_height = 0.0f;
     };
+    KeypointRoiMetadata getCropRoiMetadataForRoiIndex(int32_t roi_index) const;
     KeypointRoiMetadata getKeypointRoiMetadataForFrameDetection(
         size_t frame_id,
         size_t detection_idx,
