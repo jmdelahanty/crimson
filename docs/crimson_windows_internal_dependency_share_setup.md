@@ -57,12 +57,22 @@ and replace the placeholder hashes with the real SHA-256 values.
 
 Open `Developer PowerShell for VS 2022` or `x64 Native Tools PowerShell for VS 2022`.
 
-Then from the repo root:
+Then from the repo root, use either the UNC path directly:
 
 ```powershell
 cd C:\src\crimson
 . .\tools\setup_windows_from_internal_share.ps1 `
   -ShareRoot "\\YOUR-SERVER\crimson-windows-deps" `
+  -CleanDestination `
+  -LoadDependencyRoots
+```
+
+Or, if your lab maps the share as a drive letter, use the mapped path instead:
+
+```powershell
+cd C:\src\crimson
+. .\tools\setup_windows_from_internal_share.ps1 `
+  -ShareRoot "Z:\crimson\windows-deps" `
   -CleanDestination `
   -LoadDependencyRoots
 ```
@@ -135,6 +145,8 @@ The wrapper script:
 If the wrapper fails:
 
 - confirm the share path is reachable from Windows
+  This can be either a UNC path like `\\YOUR-SERVER\crimson-windows-deps` or a
+  mapped drive path like `Z:\crimson\windows-deps`.
 - confirm the manifest filename is exactly
   `crimson-windows-deps.manifest.json`
 - confirm the archive filenames match the manifest exactly
