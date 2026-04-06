@@ -60,7 +60,7 @@ function Require-ExistingCandidate {
 
     foreach ($candidate in $Candidates) {
         if (Test-Path -LiteralPath $candidate) {
-            Write-Host "$Label: $candidate"
+            Write-Host "${Label}: ${candidate}"
             return $candidate
         }
     }
