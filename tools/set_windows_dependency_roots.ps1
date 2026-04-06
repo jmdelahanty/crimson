@@ -81,6 +81,7 @@ $env:CRIMSON_OPENCV_DIR = $OpenCvDir
 $env:CRIMSON_FFMPEG_ROOT = $FfmpegRoot
 $env:CRIMSON_VIDEO_CODEC_SDK_ROOT = $VideoCodecSdkRoot
 $env:CRIMSON_TENSORRT_ROOT = $TensorRtRoot
+$env:CRIMSON_VCPKG_BIN_DIR = $VcpkgBinDir
 
 $runtimePathEntries = @(
     $VcpkgBinDir,
