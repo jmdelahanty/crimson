@@ -17,6 +17,10 @@
 #define CRIMSON_ENABLE_SFM 1
 #endif
 
+#if CRIMSON_ENABLE_SFM
+#include <opencv2/sfm.hpp>
+#endif
+
 struct ProjectContext {
     std::string root_dir;
     std::vector<std::string> input_file_names;

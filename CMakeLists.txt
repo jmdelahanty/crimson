@@ -344,6 +344,106 @@ endif()
 # ============================================================================
 message(STATUS "Configuring TensorStore for Zarr support...")
 
+set(CRIMSON_TENSORSTORE_IMPORTED_FROM_PREBUILT OFF)
+
+function(crimson_import_prebuilt_tensorstore prebuilt_build_dir)
+    find_program(CRIMSON_JQ_EXECUTABLE jq)
+    if(NOT CRIMSON_JQ_EXECUTABLE)
+        message(STATUS "jq not found; cannot import prebuilt TensorStore metadata")
+        return()
+    endif()
+
+    set(_compile_commands "${prebuilt_build_dir}/compile_commands.json")
+    set(_link_txt "${prebuilt_build_dir}/CMakeFiles/ts_zarr3_check.dir/link.txt")
+    set(_nlohmann_include "${prebuilt_build_dir}/_deps/nlohmann_json-src/include")
+
+    if(NOT EXISTS "${_compile_commands}" OR NOT EXISTS "${_link_txt}")
+        return()
+    endif()
+
+    execute_process(
+        COMMAND ${CRIMSON_JQ_EXECUTABLE} -r
+                ".[] | select(.file|endswith(\"tools/test_zarr3_read.cpp\")) | .command"
+                "${_compile_commands}"
+        RESULT_VARIABLE _compile_result
+        OUTPUT_VARIABLE _compile_command
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    if(NOT _compile_result EQUAL 0 OR _compile_command STREQUAL "")
+        message(STATUS "Could not extract prebuilt TensorStore compile metadata from ${_compile_commands}")
+        return()
+    endif()
+
+    separate_arguments(_compile_args UNIX_COMMAND "${_compile_command}")
+    set(_tensorstore_include_dirs "")
+    set(_tensorstore_compile_defs "")
+    foreach(_arg IN LISTS _compile_args)
+        if(_arg MATCHES "^-I(.+)")
+            list(APPEND _tensorstore_include_dirs "${CMAKE_MATCH_1}")
+        elseif(_arg MATCHES "^-D(.+)")
+            list(APPEND _tensorstore_compile_defs "${CMAKE_MATCH_1}")
+        endif()
+    endforeach()
+
+    file(READ "${_link_txt}" _link_line)
+    string(STRIP "${_link_line}" _link_line)
+    string(REGEX REPLACE "^.* -o [^ ]+ +" "" _link_tail "${_link_line}")
+    if(_link_tail STREQUAL "${_link_line}" OR _link_tail STREQUAL "")
+        message(STATUS "Could not parse prebuilt TensorStore link metadata from ${_link_txt}")
+        return()
+    endif()
+
+    separate_arguments(_link_args UNIX_COMMAND "${_link_tail}")
+    set(_tensorstore_link_args "")
+    foreach(_arg IN LISTS _link_args)
+        if(_arg MATCHES "^_deps/")
+            list(APPEND _tensorstore_link_args "${prebuilt_build_dir}/${_arg}")
+        elseif(_arg MATCHES "^-L(_deps/.+)")
+            list(APPEND _tensorstore_link_args "-L${prebuilt_build_dir}/${CMAKE_MATCH_1}")
+        else()
+            list(APPEND _tensorstore_link_args "${_arg}")
+        endif()
+    endforeach()
+
+    list(JOIN _tensorstore_link_args "\n" _tensorstore_link_rsp_content)
+    set(_tensorstore_link_rsp "${CMAKE_CURRENT_BINARY_DIR}/tensorstore-prebuilt-link.rsp")
+    file(WRITE "${_tensorstore_link_rsp}" "${_tensorstore_link_rsp_content}\n")
+
+    if(NOT TARGET nlohmann_json)
+        add_library(nlohmann_json INTERFACE)
+        target_include_directories(nlohmann_json INTERFACE "${_nlohmann_include}")
+    endif()
+    if(NOT TARGET nlohmann_json::nlohmann_json)
+        add_library(nlohmann_json::nlohmann_json ALIAS nlohmann_json)
+    endif()
+
+    add_library(crimson_prebuilt_tensorstore INTERFACE)
+    target_include_directories(crimson_prebuilt_tensorstore INTERFACE ${_tensorstore_include_dirs})
+    target_compile_definitions(crimson_prebuilt_tensorstore INTERFACE ${_tensorstore_compile_defs})
+    target_compile_features(crimson_prebuilt_tensorstore INTERFACE cxx_std_17)
+
+    if(NOT TARGET tensorstore::all_drivers)
+        add_library(tensorstore::all_drivers ALIAS crimson_prebuilt_tensorstore)
+    endif()
+
+    set(CMAKE_CXX_LINK_EXECUTABLE
+        "<CMAKE_CXX_COMPILER> <FLAGS> <CMAKE_CXX_LINK_FLAGS> <LINK_FLAGS> <OBJECTS> @${_tensorstore_link_rsp} -o <TARGET> <LINK_LIBRARIES>"
+        PARENT_SCOPE)
+    set(CRIMSON_TENSORSTORE_IMPORTED_FROM_PREBUILT ON PARENT_SCOPE)
+    set(CRIMSON_TENSORSTORE_IMPORTED_FROM_PREBUILT ON CACHE INTERNAL "Imported TensorStore from a sibling build")
+    message(STATUS "Reusing prebuilt TensorStore from ${prebuilt_build_dir}")
+endfunction()
+
+get_filename_component(CRIMSON_WORKTREE_PARENT "${CMAKE_CURRENT_SOURCE_DIR}" DIRECTORY)
+set(CRIMSON_PREBUILT_TENSORSTORE_BUILD_DIR
+    "${CRIMSON_WORKTREE_PARENT}/crimson/build"
+    CACHE PATH "Existing Crimson build directory to reuse for TensorStore imports")
+
+if(EXISTS "${CRIMSON_PREBUILT_TENSORSTORE_BUILD_DIR}")
+    crimson_import_prebuilt_tensorstore("${CRIMSON_PREBUILT_TENSORSTORE_BUILD_DIR}")
+endif()
+
+if(NOT CRIMSON_TENSORSTORE_IMPORTED_FROM_PREBUILT)
 include(FetchContent)
 
 # Set TensorStore options before declaring
@@ -384,6 +484,7 @@ FetchContent_Declare(
 
 # This will download and configure TensorStore
 FetchContent_MakeAvailable(tensorstore)
+endif()
 
 # ============================================================================
 # TensorStore Zarr3 build/test-time verification

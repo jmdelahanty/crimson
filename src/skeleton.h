@@ -51,7 +51,7 @@ enum SkeletonPrimitive {
     SP_LOAD
 };
 
-std::map<std::string, SkeletonPrimitive> skeleton_get_all() {
+inline std::map<std::string, SkeletonPrimitive> skeleton_get_all() {
     std::map<std::string, SkeletonPrimitive> skeleton_all = {
         {"Target", Target},
         {"Rat7Target", Rat7Target},
@@ -75,7 +75,7 @@ std::map<std::string, SkeletonPrimitive> skeleton_get_all() {
     return skeleton_all;
 }
 
-void load_skeleton_json(std::string file_name, SkeletonContext *skeleton) {
+inline void load_skeleton_json(std::string file_name, SkeletonContext *skeleton) {
     std::ifstream f(file_name);
     json s_config = json::parse(f);
     skeleton->name = file_name;
@@ -93,9 +93,9 @@ void load_skeleton_json(std::string file_name, SkeletonContext *skeleton) {
     }
 }
 
-void skeleton_initialize(std::string name, std::string skeleton_file_name,
-                         SkeletonContext *skeleton,
-                         SkeletonPrimitive skeleton_type) {
+inline void skeleton_initialize(std::string name, std::string skeleton_file_name,
+                                SkeletonContext *skeleton,
+                                SkeletonPrimitive skeleton_type) {
     switch (skeleton_type) {
     case Table3Corners:
         skeleton->name = name;
@@ -429,8 +429,8 @@ void skeleton_initialize(std::string name, std::string skeleton_file_name,
     }
 };
 
-void allocate_keypoints(KeyPoints *keypoints, render_scene *scene,
-                        SkeletonContext *skeleton) {
+inline void allocate_keypoints(KeyPoints *keypoints, render_scene *scene,
+                               SkeletonContext *skeleton) {
     // allocate memory for storing keypoints
     keypoints->active_id = (u32 *)malloc(sizeof(u32) * scene->num_cams);
     keypoints->keypoints3d =
@@ -460,7 +460,7 @@ void allocate_keypoints(KeyPoints *keypoints, render_scene *scene,
     }
 }
 
-void free_keypoints(KeyPoints *keypoints, render_scene *scene) {
+inline void free_keypoints(KeyPoints *keypoints, render_scene *scene) {
     if (!keypoints)
         return;
 
@@ -476,8 +476,8 @@ void free_keypoints(KeyPoints *keypoints, render_scene *scene) {
     free(keypoints); // finally free the KeyPoints struct itself
 }
 
-void free_all_keypoints(std::map<u32, KeyPoints *> &keypoints_map,
-                        render_scene *scene) {
+inline void free_all_keypoints(std::map<u32, KeyPoints *> &keypoints_map,
+                               render_scene *scene) {
     for (auto &[frame, kp] : keypoints_map)
         free_keypoints(kp, scene);
     keypoints_map.clear();
