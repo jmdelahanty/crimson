@@ -47,6 +47,7 @@
 #include "gui/file_browser_window.h"
 #include "gui/crop_preview_window.h"
 #include "gui/frame_debug_window.h"
+#include "gui/full_frame_rect_edit_overlay.h"
 #include "gui/keypoints_window.h"
 #include "gui/labeling_tool_window.h"
 #include "gui/refined_keypoint_review_window.h"
@@ -4122,23 +4123,6 @@ int main(int argc, char **argv) {
                                 (g_zarr_bbox_edit_state.allow_edit_while_playing ||
                                  !ps.play_video);
 
-                            if (g_zarr_bbox_edit_state.selected_frame == current_frame_num &&
-                                (g_zarr_bbox_edit_state.selected_box < 0 ||
-                                 g_zarr_bbox_edit_state.selected_box >=
-                                     static_cast<int>(zarr_boxes.size()))) {
-                                g_zarr_bbox_edit_state.clearSelection();
-                            }
-
-                            auto clampPlotPointToImage = [&](ImPlotPoint plot_point) -> ImVec2 {
-                                const float clamped_x = std::clamp(
-                                    static_cast<float>(plot_point.x), 0.0f, image_width_px);
-                                const float clamped_y = std::clamp(
-                                    image_height_px - static_cast<float>(plot_point.y),
-                                    0.0f,
-                                    image_height_px);
-                                return ImVec2(clamped_x, clamped_y);
-                            };
-
                             auto deleteSelectedBoxOnCurrentFrame = [&]() -> bool {
                                 if (!can_modify_boxes) {
                                     return false;
@@ -4222,375 +4206,207 @@ int main(int argc, char **argv) {
                                 return true;
                             };
 
-                            if (plot_hovered) {
-                                if (dataset_allows_bbox_edit &&
-                                    ImGui::IsKeyPressed(ImGuiKey_N, false)) {
-                                    g_zarr_bbox_edit_state.draw_mode =
-                                        !g_zarr_bbox_edit_state.draw_mode;
-                                    g_zarr_bbox_edit_state.cancelDraw();
-                                    if (g_zarr_bbox_edit_state.draw_mode) {
-                                        g_zarr_bbox_edit_state.clearSelection();
-                                    }
-                                }
-                                if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-                                    if (g_zarr_bbox_edit_state.draw_active) {
-                                        g_zarr_bbox_edit_state.cancelDraw();
-                                    } else if (g_zarr_bbox_edit_state.draw_mode) {
-                                        g_zarr_bbox_edit_state.draw_mode = false;
-                                    } else {
-                                        g_zarr_bbox_edit_state.clearSelection();
-                                    }
-                                }
-                                if (ImGui::IsKeyPressed(ImGuiKey_R, false) &&
-                                    ImGui::GetIO().KeyShift) {
-                                    g_zarr_bbox_edit_state.clearFrameEdits(current_frame_num);
-                                    zarr_boxes = loaded_zarr_boxes;
-                                }
-                                if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
-                                    deleteSelectedBoxOnCurrentFrame();
-                                }
-                                if (ImGui::IsKeyPressed(ImGuiKey_B, false)) {
-                                    if (zarr_boxes.empty()) {
-                                        g_zarr_bbox_edit_state.clearSelection();
-                                    } else {
-                                        if (g_zarr_bbox_edit_state.draw_mode) {
-                                            g_zarr_bbox_edit_state.draw_mode = false;
-                                            g_zarr_bbox_edit_state.cancelDraw();
-                                        }
-                                        int next_idx = 0;
-                                        const bool reverse_cycle = ImGui::GetIO().KeyShift;
-                                        if (g_zarr_bbox_edit_state.selected_frame == current_frame_num &&
-                                            g_zarr_bbox_edit_state.selected_box >= 0 &&
-                                            g_zarr_bbox_edit_state.selected_box <
-                                                static_cast<int>(zarr_boxes.size())) {
-                                            const int box_count =
-                                                static_cast<int>(zarr_boxes.size());
-                                            const int current_idx =
-                                                g_zarr_bbox_edit_state.selected_box;
-                                            if (reverse_cycle) {
-                                                next_idx = (current_idx - 1 + box_count) % box_count;
-                                            } else {
-                                                next_idx = (current_idx + 1) % box_count;
-                                            }
-                                        }
-                                        g_zarr_bbox_edit_state.selected_frame = current_frame_num;
-                                        g_zarr_bbox_edit_state.selected_box = next_idx;
-                                        g_zarr_bbox_edit_state.drag_active = false;
-                                        g_zarr_bbox_edit_state.drag_mouse_button = -1;
-                                    }
-                                }
+                            std::vector<FullFrameRect> editable_rects;
+                            editable_rects.reserve(zarr_boxes.size());
+                            for (const auto& box : zarr_boxes) {
+                                editable_rects.push_back(
+                                    {box.x_min, box.y_min, box.width, box.height});
                             }
 
-                            if (g_zarr_bbox_edit_state.draw_mode &&
-                                g_zarr_bbox_edit_state.drag_active) {
-                                g_zarr_bbox_edit_state.drag_active = false;
-                                g_zarr_bbox_edit_state.drag_mouse_button = -1;
+                            FullFrameRectEditStateView full_frame_edit_state;
+                            full_frame_edit_state.selected_frame =
+                                g_zarr_bbox_edit_state.selected_frame;
+                            full_frame_edit_state.selected_box =
+                                g_zarr_bbox_edit_state.selected_box;
+                            full_frame_edit_state.drag_active =
+                                g_zarr_bbox_edit_state.drag_active;
+                            full_frame_edit_state.drag_mouse_button =
+                                g_zarr_bbox_edit_state.drag_mouse_button;
+                            full_frame_edit_state.drag_offset_x =
+                                g_zarr_bbox_edit_state.drag_offset_x;
+                            full_frame_edit_state.drag_offset_y =
+                                g_zarr_bbox_edit_state.drag_offset_y;
+                            full_frame_edit_state.draw_mode =
+                                g_zarr_bbox_edit_state.draw_mode;
+                            full_frame_edit_state.draw_active =
+                                g_zarr_bbox_edit_state.draw_active;
+                            full_frame_edit_state.draw_frame =
+                                g_zarr_bbox_edit_state.draw_frame;
+                            full_frame_edit_state.draw_anchor_x =
+                                g_zarr_bbox_edit_state.draw_anchor_x;
+                            full_frame_edit_state.draw_anchor_y =
+                                g_zarr_bbox_edit_state.draw_anchor_y;
+                            full_frame_edit_state.draw_current_x =
+                                g_zarr_bbox_edit_state.draw_current_x;
+                            full_frame_edit_state.draw_current_y =
+                                g_zarr_bbox_edit_state.draw_current_y;
+
+                            const FullFrameRectEditContext full_frame_edit_context{
+                                current_frame_num,
+                                image_width_px,
+                                image_height_px,
+                                plot_hovered,
+                                dataset_allows_bbox_edit,
+                                can_modify_boxes,
+                                &editable_rects,
+                                6.0f,
+                            };
+                            const auto full_frame_edit_result =
+                                processFullFrameRectEditInput(
+                                    full_frame_edit_context, full_frame_edit_state);
+
+                            g_zarr_bbox_edit_state.selected_frame =
+                                full_frame_edit_result.state.selected_frame;
+                            g_zarr_bbox_edit_state.selected_box =
+                                full_frame_edit_result.state.selected_box;
+                            g_zarr_bbox_edit_state.drag_active =
+                                full_frame_edit_result.state.drag_active;
+                            g_zarr_bbox_edit_state.drag_mouse_button =
+                                full_frame_edit_result.state.drag_mouse_button;
+                            g_zarr_bbox_edit_state.drag_offset_x =
+                                full_frame_edit_result.state.drag_offset_x;
+                            g_zarr_bbox_edit_state.drag_offset_y =
+                                full_frame_edit_result.state.drag_offset_y;
+                            g_zarr_bbox_edit_state.draw_mode =
+                                full_frame_edit_result.state.draw_mode;
+                            g_zarr_bbox_edit_state.draw_active =
+                                full_frame_edit_result.state.draw_active;
+                            g_zarr_bbox_edit_state.draw_frame =
+                                full_frame_edit_result.state.draw_frame;
+                            g_zarr_bbox_edit_state.draw_anchor_x =
+                                full_frame_edit_result.state.draw_anchor_x;
+                            g_zarr_bbox_edit_state.draw_anchor_y =
+                                full_frame_edit_result.state.draw_anchor_y;
+                            g_zarr_bbox_edit_state.draw_current_x =
+                                full_frame_edit_result.state.draw_current_x;
+                            g_zarr_bbox_edit_state.draw_current_y =
+                                full_frame_edit_result.state.draw_current_y;
+
+                            if (full_frame_edit_result.request_reset_frame) {
+                                g_zarr_bbox_edit_state.clearFrameEdits(current_frame_num);
+                                zarr_boxes = loaded_zarr_boxes;
                             }
+                            if (full_frame_edit_result.request_delete_selected) {
+                                deleteSelectedBoxOnCurrentFrame();
+                            }
+                            if (full_frame_edit_result.request_add_rect) {
+                                auto& editable_boxes =
+                                    g_zarr_bbox_edit_state.ensureFrameOverride(
+                                        current_frame_num,
+                                        loaded_zarr_boxes,
+                                        &detection_details);
+                                auto& added_flags =
+                                    g_zarr_bbox_edit_state.ensureAddedFlags(
+                                        current_frame_num,
+                                        editable_boxes.size());
+                                auto& manual_flags =
+                                    g_zarr_bbox_edit_state.ensureManualFlags(
+                                        current_frame_num,
+                                        editable_boxes.size());
+                                g_zarr_bbox_edit_state.ensureSourceMetadata(
+                                    current_frame_num,
+                                    editable_boxes.size());
+                                auto& source_indices =
+                                    g_zarr_bbox_edit_state
+                                        .frame_source_indices[current_frame_num];
+                                auto& source_detection_source =
+                                    g_zarr_bbox_edit_state
+                                        .frame_source_detection_source[current_frame_num];
+                                auto& source_reason =
+                                    g_zarr_bbox_edit_state
+                                        .frame_source_reason[current_frame_num];
 
-                            if (g_zarr_bbox_edit_state.draw_active) {
-                                if (!g_zarr_bbox_edit_state.draw_mode ||
-                                    !can_modify_boxes ||
-                                    g_zarr_bbox_edit_state.draw_frame != current_frame_num) {
-                                    g_zarr_bbox_edit_state.cancelDraw();
-                                } else {
-                                    ImVec2 current_img = clampPlotPointToImage(
-                                        ImPlot::GetPlotMousePos());
-                                    g_zarr_bbox_edit_state.draw_current_x = current_img.x;
-                                    g_zarr_bbox_edit_state.draw_current_y = current_img.y;
-                                    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-                                        const float x_min = std::min(
-                                            g_zarr_bbox_edit_state.draw_anchor_x,
-                                            g_zarr_bbox_edit_state.draw_current_x);
-                                        const float y_min = std::min(
-                                            g_zarr_bbox_edit_state.draw_anchor_y,
-                                            g_zarr_bbox_edit_state.draw_current_y);
-                                        const float width = std::fabs(
-                                            g_zarr_bbox_edit_state.draw_current_x -
-                                            g_zarr_bbox_edit_state.draw_anchor_x);
-                                        const float height = std::fabs(
-                                            g_zarr_bbox_edit_state.draw_current_y -
-                                            g_zarr_bbox_edit_state.draw_anchor_y);
-                                        if (width >= 2.0f && height >= 2.0f) {
-                                            auto& editable_boxes =
-                                                g_zarr_bbox_edit_state.ensureFrameOverride(
-                                                    current_frame_num,
-                                                    loaded_zarr_boxes,
-                                                    &detection_details);
-                                            auto& added_flags =
-                                                g_zarr_bbox_edit_state.ensureAddedFlags(
-                                                    current_frame_num,
-                                                    editable_boxes.size());
-                                            auto& manual_flags =
-                                                g_zarr_bbox_edit_state.ensureManualFlags(
-                                                    current_frame_num,
-                                                    editable_boxes.size());
-                                            g_zarr_bbox_edit_state.ensureSourceMetadata(
-                                                current_frame_num,
-                                                editable_boxes.size());
-                                            auto& source_indices =
-                                                g_zarr_bbox_edit_state
-                                                    .frame_source_indices[current_frame_num];
-                                            auto& source_detection_source =
-                                                g_zarr_bbox_edit_state
-                                                    .frame_source_detection_source[current_frame_num];
-                                            auto& source_reason =
-                                                g_zarr_bbox_edit_state
-                                                    .frame_source_reason[current_frame_num];
-
-                                            uint16_t new_class_id = 0;
-                                            float new_confidence = 1.0f;
-                                            if (g_zarr_bbox_edit_state.selected_frame ==
-                                                    current_frame_num &&
-                                                g_zarr_bbox_edit_state.selected_box >= 0 &&
-                                                g_zarr_bbox_edit_state.selected_box <
-                                                    static_cast<int>(zarr_boxes.size())) {
-                                                const auto& selected_box =
-                                                    zarr_boxes[g_zarr_bbox_edit_state.selected_box];
-                                                new_class_id = selected_box.class_id;
-                                                new_confidence = selected_box.confidence;
-                                            } else if (!zarr_boxes.empty()) {
-                                                new_class_id = zarr_boxes.front().class_id;
-                                                new_confidence = zarr_boxes.front().confidence;
-                                            }
-
-                                            LoggedBoundingBox new_box{};
-                                            new_box.payload_timestamp_ns_epoch = 0;
-                                            new_box.received_timestamp_ns_epoch = 0;
-                                            new_box.payload_frame_id =
-                                                static_cast<uint64_t>(
-                                                    std::max(0, current_frame_num));
-                                            new_box.payload_camera_id = 0;
-                                            new_box.box_index_in_payload =
-                                                static_cast<uint8_t>(editable_boxes.size());
-                                            new_box.x_min = x_min;
-                                            new_box.y_min = y_min;
-                                            new_box.width = width;
-                                            new_box.height = height;
-                                            new_box.class_id = new_class_id;
-                                            new_box.confidence =
-                                                std::isfinite(new_confidence)
-                                                    ? new_confidence
-                                                    : 1.0f;
-
-                                            editable_boxes.push_back(new_box);
-                                            added_flags.push_back(1);
-                                            manual_flags.push_back(1);
-                                            source_indices.push_back(-1);
-                                            source_detection_source.push_back(0);
-                                            source_reason.emplace_back("manual");
-                                            g_zarr_bbox_edit_state.dirty_frames.insert(
-                                                current_frame_num);
-                                            g_zarr_bbox_edit_state.selected_frame =
-                                                current_frame_num;
-                                            g_zarr_bbox_edit_state.selected_box =
-                                                static_cast<int>(editable_boxes.size() - 1);
-                                            zarr_boxes = editable_boxes;
-                                        }
-                                        g_zarr_bbox_edit_state.cancelDraw();
-                                    }
+                                uint16_t new_class_id = 0;
+                                float new_confidence = 1.0f;
+                                if (g_zarr_bbox_edit_state.selected_frame ==
+                                        current_frame_num &&
+                                    g_zarr_bbox_edit_state.selected_box >= 0 &&
+                                    g_zarr_bbox_edit_state.selected_box <
+                                        static_cast<int>(zarr_boxes.size())) {
+                                    const auto& selected_box =
+                                        zarr_boxes[g_zarr_bbox_edit_state.selected_box];
+                                    new_class_id = selected_box.class_id;
+                                    new_confidence = selected_box.confidence;
+                                } else if (!zarr_boxes.empty()) {
+                                    new_class_id = zarr_boxes.front().class_id;
+                                    new_confidence = zarr_boxes.front().confidence;
                                 }
-                            }
 
-                            if (!g_zarr_bbox_edit_state.draw_mode &&
-                                !g_zarr_bbox_edit_state.drag_active &&
-                                plot_hovered &&
-                                can_modify_boxes &&
-                                ImGui::GetIO().KeyCtrl &&
-                                ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
-                                g_zarr_bbox_edit_state.selected_frame == current_frame_num &&
-                                g_zarr_bbox_edit_state.selected_box >= 0 &&
-                                g_zarr_bbox_edit_state.selected_box <
-                                    static_cast<int>(zarr_boxes.size())) {
+                                LoggedBoundingBox new_box{};
+                                new_box.payload_timestamp_ns_epoch = 0;
+                                new_box.received_timestamp_ns_epoch = 0;
+                                new_box.payload_frame_id = static_cast<uint64_t>(
+                                    std::max(0, current_frame_num));
+                                new_box.payload_camera_id = 0;
+                                new_box.box_index_in_payload =
+                                    static_cast<uint8_t>(editable_boxes.size());
+                                new_box.x_min =
+                                    full_frame_edit_result.new_rect.x_min;
+                                new_box.y_min =
+                                    full_frame_edit_result.new_rect.y_min;
+                                new_box.width =
+                                    full_frame_edit_result.new_rect.width;
+                                new_box.height =
+                                    full_frame_edit_result.new_rect.height;
+                                new_box.class_id = new_class_id;
+                                new_box.confidence =
+                                    std::isfinite(new_confidence)
+                                        ? new_confidence
+                                        : 1.0f;
+
+                                editable_boxes.push_back(new_box);
+                                added_flags.push_back(1);
+                                manual_flags.push_back(1);
+                                source_indices.push_back(-1);
+                                source_detection_source.push_back(0);
+                                source_reason.emplace_back("manual");
+                                g_zarr_bbox_edit_state.dirty_frames.insert(
+                                    current_frame_num);
+                                g_zarr_bbox_edit_state.selected_frame =
+                                    current_frame_num;
+                                g_zarr_bbox_edit_state.selected_box =
+                                    static_cast<int>(editable_boxes.size() - 1);
+                                zarr_boxes = editable_boxes;
+                            }
+                            if (full_frame_edit_result.request_move_selected) {
+                                auto& editable_boxes =
+                                    g_zarr_bbox_edit_state.ensureFrameOverride(
+                                        current_frame_num,
+                                        loaded_zarr_boxes,
+                                        &detection_details);
+                                auto& manual_flags =
+                                    g_zarr_bbox_edit_state.ensureManualFlags(
+                                        current_frame_num,
+                                        editable_boxes.size());
                                 const int selected_idx =
-                                    g_zarr_bbox_edit_state.selected_box;
-                                const LoggedBoundingBox& selected_box =
-                                    zarr_boxes[selected_idx];
-                                ImPlotPoint mouse_plot = ImPlot::GetPlotMousePos();
-                                if (IsPlotPointInsideZarrBox(selected_box,
-                                                             mouse_plot.x,
-                                                             mouse_plot.y,
-                                                             image_height_px,
-                                                             6.0f)) {
-                                    g_zarr_bbox_edit_state.drag_active = true;
-                                    g_zarr_bbox_edit_state.drag_mouse_button =
-                                        ImGuiMouseButton_Left;
-                                    g_zarr_bbox_edit_state.drag_offset_x =
-                                        static_cast<float>(mouse_plot.x) -
-                                        selected_box.x_min;
-                                    const float mouse_y_img =
-                                        image_height_px -
-                                        static_cast<float>(mouse_plot.y);
-                                    g_zarr_bbox_edit_state.drag_offset_y =
-                                        mouse_y_img - selected_box.y_min;
-                                }
-                            }
-
-                            if (g_zarr_bbox_edit_state.drag_active) {
-                                const int held_button = g_zarr_bbox_edit_state.drag_mouse_button;
-                                if (held_button < 0 ||
-                                    !ImGui::IsMouseDown(static_cast<ImGuiMouseButton>(held_button)) ||
-                                    g_zarr_bbox_edit_state.selected_frame != current_frame_num ||
-                                    g_zarr_bbox_edit_state.selected_box < 0) {
-                                    g_zarr_bbox_edit_state.drag_active = false;
-                                    g_zarr_bbox_edit_state.drag_mouse_button = -1;
-                                } else if (can_modify_boxes) {
-                                    auto& editable_boxes =
-                                        g_zarr_bbox_edit_state.ensureFrameOverride(
-                                            current_frame_num,
-                                            loaded_zarr_boxes,
-                                            &detection_details);
-                                    auto& manual_flags =
-                                        g_zarr_bbox_edit_state.ensureManualFlags(
-                                            current_frame_num,
-                                            editable_boxes.size());
-                                    const int selected_idx =
-                                        g_zarr_bbox_edit_state.selected_box;
+                                    full_frame_edit_result.move_box_index;
+                                if (selected_idx >= 0 &&
+                                    selected_idx <
+                                        static_cast<int>(editable_boxes.size())) {
+                                    LoggedBoundingBox& moving_box =
+                                        editable_boxes[selected_idx];
+                                    const float max_x = std::max(
+                                        0.0f, image_width_px - moving_box.width);
+                                    const float max_y = std::max(
+                                        0.0f, image_height_px - moving_box.height);
+                                    moving_box.x_min = std::clamp(
+                                        full_frame_edit_result.move_target_x,
+                                        0.0f,
+                                        max_x);
+                                    moving_box.y_min = std::clamp(
+                                        full_frame_edit_result.move_target_y,
+                                        0.0f,
+                                        max_y);
                                     if (selected_idx >= 0 &&
                                         selected_idx <
-                                            static_cast<int>(editable_boxes.size())) {
-                                        ImPlotPoint mouse_plot =
-                                            ImPlot::GetPlotMousePos();
-                                        LoggedBoundingBox& moving_box =
-                                            editable_boxes[selected_idx];
-                                        const float mouse_y_img =
-                                            image_height_px -
-                                            static_cast<float>(mouse_plot.y);
-                                        const float target_x =
-                                            static_cast<float>(mouse_plot.x) -
-                                            g_zarr_bbox_edit_state.drag_offset_x;
-                                        const float target_y =
-                                            mouse_y_img -
-                                            g_zarr_bbox_edit_state.drag_offset_y;
-                                        const float max_x = std::max(
-                                            0.0f, image_width_px - moving_box.width);
-                                        const float max_y = std::max(
-                                            0.0f, image_height_px - moving_box.height);
-                                        moving_box.x_min =
-                                            std::clamp(target_x, 0.0f, max_x);
-                                        moving_box.y_min =
-                                            std::clamp(target_y, 0.0f, max_y);
-                                        if (selected_idx >= 0 &&
-                                            selected_idx < static_cast<int>(manual_flags.size())) {
-                                            manual_flags[selected_idx] = 1;
-                                        }
-                                        g_zarr_bbox_edit_state.dirty_frames.insert(
-                                            current_frame_num);
-                                        zarr_boxes = editable_boxes;
-                                    } else {
-                                        g_zarr_bbox_edit_state.clearSelection();
+                                            static_cast<int>(manual_flags.size())) {
+                                        manual_flags[selected_idx] = 1;
                                     }
+                                    g_zarr_bbox_edit_state.dirty_frames.insert(
+                                        current_frame_num);
+                                    zarr_boxes = editable_boxes;
                                 } else {
-                                    g_zarr_bbox_edit_state.drag_active = false;
-                                    g_zarr_bbox_edit_state.drag_mouse_button = -1;
-                                }
-                            }
-
-                            int click_button = -1;
-                            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left, false)) {
-                                click_button = ImGuiMouseButton_Left;
-                            }
-                            if (plot_hovered && click_button >= 0) {
-                                if (g_zarr_bbox_edit_state.draw_mode) {
-                                    if (click_button == ImGuiMouseButton_Left &&
-                                        can_modify_boxes &&
-                                        ImGui::GetIO().KeyCtrl) {
-                                        ImVec2 start_img = clampPlotPointToImage(
-                                            ImPlot::GetPlotMousePos());
-                                        g_zarr_bbox_edit_state.draw_active = true;
-                                        g_zarr_bbox_edit_state.draw_frame =
-                                            current_frame_num;
-                                        g_zarr_bbox_edit_state.draw_anchor_x = start_img.x;
-                                        g_zarr_bbox_edit_state.draw_anchor_y = start_img.y;
-                                        g_zarr_bbox_edit_state.draw_current_x = start_img.x;
-                                        g_zarr_bbox_edit_state.draw_current_y = start_img.y;
-                                        g_zarr_bbox_edit_state.drag_active = false;
-                                        g_zarr_bbox_edit_state.drag_mouse_button = -1;
-                                    } else if (!can_modify_boxes) {
-                                        g_zarr_bbox_edit_state.cancelDraw();
-                                    }
-                                } else {
-                                    ImPlotPoint mouse_plot = ImPlot::GetPlotMousePos();
-                                    bool started_selected_drag = false;
-                                    if (can_modify_boxes &&
-                                        g_zarr_bbox_edit_state.selected_frame ==
-                                            current_frame_num &&
-                                        g_zarr_bbox_edit_state.selected_box >= 0 &&
-                                        g_zarr_bbox_edit_state.selected_box <
-                                            static_cast<int>(zarr_boxes.size())) {
-                                        const int selected_idx =
-                                            g_zarr_bbox_edit_state.selected_box;
-                                        const LoggedBoundingBox& selected_box =
-                                            zarr_boxes[selected_idx];
-                                        if (IsPlotPointInsideZarrBox(selected_box,
-                                                                     mouse_plot.x,
-                                                                     mouse_plot.y,
-                                                                     image_height_px,
-                                                                     6.0f)) {
-                                            g_zarr_bbox_edit_state.selected_frame =
-                                                current_frame_num;
-                                            g_zarr_bbox_edit_state.selected_box =
-                                                selected_idx;
-                                            g_zarr_bbox_edit_state.drag_active = true;
-                                            g_zarr_bbox_edit_state.drag_mouse_button =
-                                                click_button;
-                                            g_zarr_bbox_edit_state.drag_offset_x =
-                                                static_cast<float>(mouse_plot.x) -
-                                                selected_box.x_min;
-                                            const float mouse_y_img =
-                                                image_height_px -
-                                                static_cast<float>(mouse_plot.y);
-                                            g_zarr_bbox_edit_state.drag_offset_y =
-                                                mouse_y_img - selected_box.y_min;
-                                            started_selected_drag = true;
-                                        }
-                                    }
-
-                                    if (!started_selected_drag) {
-                                        int hit_idx = HitTestZarrBoxAtPlotPoint(
-                                            zarr_boxes,
-                                            mouse_plot.x,
-                                            mouse_plot.y,
-                                            image_height_px,
-                                            6.0f);
-                                        if (hit_idx >= 0 &&
-                                            hit_idx <
-                                                static_cast<int>(zarr_boxes.size())) {
-                                            g_zarr_bbox_edit_state.selected_frame =
-                                                current_frame_num;
-                                            g_zarr_bbox_edit_state.selected_box =
-                                                hit_idx;
-                                            if (can_modify_boxes) {
-                                                g_zarr_bbox_edit_state.drag_active =
-                                                    true;
-                                                g_zarr_bbox_edit_state
-                                                    .drag_mouse_button =
-                                                    click_button;
-                                                const LoggedBoundingBox&
-                                                    selected_box =
-                                                        zarr_boxes[hit_idx];
-                                                g_zarr_bbox_edit_state
-                                                    .drag_offset_x =
-                                                    static_cast<float>(mouse_plot.x) -
-                                                    selected_box.x_min;
-                                                const float mouse_y_img =
-                                                    image_height_px -
-                                                    static_cast<float>(
-                                                        mouse_plot.y);
-                                                g_zarr_bbox_edit_state
-                                                    .drag_offset_y =
-                                                    mouse_y_img -
-                                                    selected_box.y_min;
-                                            } else {
-                                                g_zarr_bbox_edit_state
-                                                    .drag_active = false;
-                                                g_zarr_bbox_edit_state
-                                                    .drag_mouse_button = -1;
-                                            }
-                                        } else {
-                                            g_zarr_bbox_edit_state
-                                                .clearSelection();
-                                        }
-                                    }
+                                    g_zarr_bbox_edit_state.clearSelection();
                                 }
                             }
 
@@ -4642,24 +4458,10 @@ int main(int argc, char **argv) {
                                                                : BoxProvenance::Clean;
                                 };
 
+                                std::vector<FullFrameRectOverlayItem> overlay_items;
+                                overlay_items.reserve(zarr_boxes.size());
                                 for (size_t box_idx = 0; box_idx < zarr_boxes.size(); ++box_idx) {
                                     const auto& box = zarr_boxes[box_idx];
-                                    double x_coords[5] = {
-                                        box.x_min, 
-                                        box.x_min + box.width, 
-                                        box.x_min + box.width, 
-                                        box.x_min, 
-                                        box.x_min
-                                    };
-                                    
-                                    double y_coords[5] = {
-                                        (double)scene->cameras[j].image_height - box.y_min,
-                                        (double)scene->cameras[j].image_height - box.y_min,
-                                        (double)scene->cameras[j].image_height - (box.y_min + box.height),
-                                        (double)scene->cameras[j].image_height - (box.y_min + box.height),
-                                        (double)scene->cameras[j].image_height - box.y_min
-                                    };
-
                                     BoxProvenance box_provenance =
                                         classify_box_provenance(box_idx);
                                     ImVec4 box_color = ImVec4(0.2f, 0.6f, 1.0f, 1.0f);  // clean
@@ -4714,49 +4516,23 @@ int main(int argc, char **argv) {
                                     } else if (frame_has_bbox_edits) {
                                         label += " [M]";
                                     }
-                                    
-                                    ImPlot::PlotLine(label.c_str(), x_coords, y_coords, 5);
+
+                                    overlay_items.push_back(
+                                        {{box.x_min, box.y_min, box.width, box.height},
+                                         box_color,
+                                         line_width,
+                                         std::move(label)});
                                 }
+                                drawFullFrameRectOverlays(overlay_items, image_height_px);
                             }
 
-                            if (g_zarr_bbox_edit_state.draw_active &&
-                                g_zarr_bbox_edit_state.draw_frame == current_frame_num) {
-                                const double draft_x0 = std::min(
-                                    g_zarr_bbox_edit_state.draw_anchor_x,
-                                    g_zarr_bbox_edit_state.draw_current_x);
-                                const double draft_x1 = std::max(
-                                    g_zarr_bbox_edit_state.draw_anchor_x,
-                                    g_zarr_bbox_edit_state.draw_current_x);
-                                const double draft_y0 = std::min(
-                                    g_zarr_bbox_edit_state.draw_anchor_y,
-                                    g_zarr_bbox_edit_state.draw_current_y);
-                                const double draft_y1 = std::max(
-                                    g_zarr_bbox_edit_state.draw_anchor_y,
-                                    g_zarr_bbox_edit_state.draw_current_y);
-                                if ((draft_x1 - draft_x0) >= 1.0 &&
-                                    (draft_y1 - draft_y0) >= 1.0) {
-                                    double x_coords[5] = {
-                                        draft_x0,
-                                        draft_x1,
-                                        draft_x1,
-                                        draft_x0,
-                                        draft_x0
-                                    };
-                                    double y_coords[5] = {
-                                        static_cast<double>(scene->cameras[j].image_height) - draft_y0,
-                                        static_cast<double>(scene->cameras[j].image_height) - draft_y0,
-                                        static_cast<double>(scene->cameras[j].image_height) - draft_y1,
-                                        static_cast<double>(scene->cameras[j].image_height) - draft_y1,
-                                        static_cast<double>(scene->cameras[j].image_height) - draft_y0
-                                    };
-                                    ImPlot::SetNextLineStyle(
-                                        ImVec4(1.0f, 1.0f, 0.2f, 0.95f), 2.0f);
-                                    std::string draft_label =
-                                        "ZarrDrawDraft##" + std::to_string(j);
-                                    ImPlot::PlotLine(
-                                        draft_label.c_str(), x_coords, y_coords, 5);
-                                }
-                            }
+                            const std::string draft_label_suffix =
+                                std::to_string(j);
+                            drawFullFrameRectDraftOverlay(
+                                full_frame_edit_result.state,
+                                current_frame_num,
+                                image_height_px,
+                                draft_label_suffix.c_str());
 
                             // Draw chaser bounding boxes and target positions
                             if (zarr_loaded) {
