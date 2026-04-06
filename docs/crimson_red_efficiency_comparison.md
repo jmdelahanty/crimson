@@ -250,3 +250,7 @@ a backend refactor note describing:
 - current Crimson NVIDIA backend responsibilities
 - which responsibilities should move behind a real backend interface
 - what a future Apple backend or future D3D/Windows backend would need to own
+
+Follow-up:
+
+- [docs/crimson_backend_refactor_plan.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_backend_refactor_plan.md)
