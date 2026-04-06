@@ -634,13 +634,12 @@ else()
     set(CRIMSON_INSTALL_RUNTIME_DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 
-install(TARGETS redgui
-    RUNTIME_DEPENDENCY_SET redgui_runtime_deps
-    RUNTIME DESTINATION ${CRIMSON_INSTALL_RUNTIME_DESTINATION}
-    COMPONENT core
-)
-
 if(WIN32)
+    install(TARGETS redgui
+        RUNTIME DESTINATION ${CRIMSON_INSTALL_RUNTIME_DESTINATION}
+        COMPONENT core
+    )
+
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ${CRIMSON_INSTALL_RUNTIME_DESTINATION})
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_COMPONENT core)
     include(InstallRequiredSystemLibraries)
@@ -651,17 +650,73 @@ if(WIN32)
         )
     endif()
 
+    set(CRIMSON_WINDOWS_IGNORED_UNRESOLVED_RUNTIME_DLLS
+        "AzureAttestManager.dll"
+        "AzureAttestNormal.dll"
+        "HvsiFileTrust.dll"
+        "PdmUtilities.dll"
+        "wpaxholder.dll"
+    )
+    set(_crimson_windows_runtime_dep_script "${CMAKE_CURRENT_BINARY_DIR}/install_windows_runtime_deps_$<CONFIG>.cmake")
+    set(_crimson_windows_runtime_dep_script_content [=[
+set(_crimson_runtime_executable "$<TARGET_FILE:redgui>")
+set(_crimson_runtime_destination "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/@CRIMSON_INSTALL_RUNTIME_DESTINATION@")
+set(_crimson_runtime_dependency_search_dirs "@CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS@")
+set(_crimson_ignored_unresolved_runtime_dlls "@CRIMSON_WINDOWS_IGNORED_UNRESOLVED_RUNTIME_DLLS@")
+
+file(GET_RUNTIME_DEPENDENCIES
+    RESOLVED_DEPENDENCIES_VAR _crimson_resolved_runtime_deps
+    UNRESOLVED_DEPENDENCIES_VAR _crimson_unresolved_runtime_deps
+    EXECUTABLES "${_crimson_runtime_executable}"
+    DIRECTORIES ${_crimson_runtime_dependency_search_dirs}
+    PRE_EXCLUDE_REGEXES
+        "api-ms-win-.*"
+        "ext-ms-.*"
+    POST_EXCLUDE_REGEXES
+        ".*[Ww]indows[\\\\/](System32|SysWOW64)[\\\\/].*"
+)
+
+set(_crimson_remaining_unresolved_runtime_deps "")
+foreach(_crimson_runtime_dep IN LISTS _crimson_unresolved_runtime_deps)
+    get_filename_component(_crimson_runtime_dep_name "${_crimson_runtime_dep}" NAME)
+    list(FIND _crimson_ignored_unresolved_runtime_dlls "${_crimson_runtime_dep_name}" _crimson_ignored_runtime_dep_index)
+    if(_crimson_ignored_runtime_dep_index EQUAL -1)
+        list(APPEND _crimson_remaining_unresolved_runtime_deps "${_crimson_runtime_dep_name}")
+    endif()
+endforeach()
+
+if(_crimson_remaining_unresolved_runtime_deps)
+    list(REMOVE_DUPLICATES _crimson_remaining_unresolved_runtime_deps)
+    string(REPLACE ";" "\n  " _crimson_unresolved_runtime_dep_message "${_crimson_remaining_unresolved_runtime_deps}")
+    message(FATAL_ERROR "Could not resolve runtime dependencies:\n  ${_crimson_unresolved_runtime_dep_message}")
+endif()
+
+if(_crimson_resolved_runtime_deps)
+    list(REMOVE_DUPLICATES _crimson_resolved_runtime_deps)
+    file(INSTALL
+        DESTINATION "${_crimson_runtime_destination}"
+        TYPE FILE
+        FOLLOW_SYMLINK_CHAIN
+        FILES ${_crimson_resolved_runtime_deps}
+    )
+endif()
+]=])
+    string(CONFIGURE "${_crimson_windows_runtime_dep_script_content}" _crimson_windows_runtime_dep_script_content @ONLY)
+    file(GENERATE
+        OUTPUT "${_crimson_windows_runtime_dep_script}"
+        CONTENT "${_crimson_windows_runtime_dep_script_content}"
+    )
+    install(SCRIPT "${_crimson_windows_runtime_dep_script}" COMPONENT core)
+else()
+    install(TARGETS redgui
+        RUNTIME_DEPENDENCY_SET redgui_runtime_deps
+        RUNTIME DESTINATION ${CRIMSON_INSTALL_RUNTIME_DESTINATION}
+        COMPONENT core
+    )
+
     install(RUNTIME_DEPENDENCY_SET redgui_runtime_deps
         DESTINATION ${CRIMSON_INSTALL_RUNTIME_DESTINATION}
         COMPONENT core
-        DIRECTORIES ${CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS}
-        PRE_EXCLUDE_REGEXES
-            "api-ms-win-.*"
-            "ext-ms-.*"
-            ".*[\\\\/](AzureAttestManager|AzureAttestNormal|HvsiFileTrust|PdmUtilities|wpaxholder)\\.dll"
-            "(AzureAttestManager|AzureAttestNormal|HvsiFileTrust|PdmUtilities|wpaxholder)\\.dll"
-        POST_EXCLUDE_REGEXES
-            ".*[Ww]indows[\\\\/](System32|SysWOW64)[\\\\/].*"
     )
 endif()
 
