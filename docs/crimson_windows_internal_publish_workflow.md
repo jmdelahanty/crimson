@@ -166,6 +166,7 @@ What it does:
 - copies the whole staged tree to the target app-drop folder
 - preserves the standard Windows app layout:
   - `bin\redgui.exe` plus runtime `.dll` files
+  - `install_crimson.ps1` and `install_crimson.cmd` at the app-drop root
   - `share\crimson\...` assets
 
 That is the right thing to publish for run-only users. Do not publish random

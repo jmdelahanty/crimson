@@ -11,6 +11,7 @@ Related docs:
 
 - [docs/crimson_windows_internal_publish_workflow.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_internal_publish_workflow.md)
 - [docs/crimson_windows_install_from_source.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_install_from_source.md)
+- [tools/install_crimson.ps1](/home/delahantyj@hhmi.org/gitrepos/crimson/tools/install_crimson.ps1)
 
 ---
 
@@ -76,19 +77,59 @@ Crimson\
 
 ### Mapped-Drive Example
 
-In File Explorer:
+Preferred:
+
+1. Open PowerShell
+2. Run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "Z:\crimson\windows-app\current\install_crimson.ps1" `
+  -CreateDesktopShortcut
+```
+
+Double-click alternative:
 
 1. Open `Z:\crimson\windows-app\current`
-2. Copy the whole `current` folder to your machine
-3. Rename the copied folder to `Crimson` if needed
+2. Run `install_crimson.cmd`
 
 ### UNC Example
 
-In File Explorer:
+Preferred:
+
+1. Open PowerShell
+2. Run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "\\YOUR-SERVER\crimson\windows-app\current\install_crimson.ps1" `
+  -CreateDesktopShortcut
+```
+
+Double-click alternative:
 
 1. Open `\\YOUR-SERVER\crimson\windows-app\current`
-2. Copy the whole `current` folder to your machine
-3. Rename the copied folder to `Crimson` if needed
+2. Run `install_crimson.cmd`
+
+Default install location:
+
+```text
+C:\Users\<your-user>\AppData\Local\Crimson
+```
+
+To update an existing install:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "Z:\crimson\windows-app\current\install_crimson.ps1" `
+  -ReplaceExisting `
+  -CreateDesktopShortcut
+```
+
+To install somewhere else, pass `-InstallRoot`, for example:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "Z:\crimson\windows-app\current\install_crimson.ps1" `
+  -InstallRoot "C:\Program Files\Crimson" `
+  -ReplaceExisting
+```
 
 ---
 
@@ -118,9 +159,7 @@ should prefer a local copy.
 When a new internal app drop is published:
 
 1. close Crimson
-2. delete or rename your local `Crimson` folder
-3. copy the new published app folder locally
-4. launch the new `bin\redgui.exe`
+2. rerun `install_crimson.ps1` with `-ReplaceExisting`
 
 Do not mix files from two different app drops in the same folder.
 
@@ -134,6 +173,7 @@ Do not:
 - copy only the `bin\` folder
 - move the `.dll` files away from `bin\`
 - point the app at a partially copied folder
+- run `install_crimson.ps1` from an existing local install instead of from the published app drop
 
 The `.dll` files need to stay next to `redgui.exe` in `bin\`.
 
