@@ -12,6 +12,7 @@ Related docs:
 
 - [docs/crimson_windows_internal_dependency_share_setup.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_internal_dependency_share_setup.md)
 - [docs/crimson_windows_install_from_source.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_install_from_source.md)
+- [docs/crimson_windows_run_only.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_run_only.md)
 - [tools/publish_windows_dependency_share.ps1](/home/delahantyj@hhmi.org/gitrepos/crimson/tools/publish_windows_dependency_share.ps1)
 - [tools/publish_windows_app_drop.ps1](/home/delahantyj@hhmi.org/gitrepos/crimson/tools/publish_windows_app_drop.ps1)
 
@@ -165,10 +166,15 @@ What it does:
 - copies the whole staged tree to the target app-drop folder
 - preserves the standard Windows app layout:
   - `bin\redgui.exe` plus runtime `.dll` files
+  - `install_crimson.ps1` and `install_crimson.cmd` at the app-drop root
   - `share\crimson\...` assets
 
 That is the right thing to publish for run-only users. Do not publish random
 files copied by hand from `build\` or `release\Release\`.
+
+Hand run-only users:
+
+- [docs/crimson_windows_run_only.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_run_only.md)
 
 ---
 

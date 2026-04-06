@@ -12,6 +12,7 @@ Related docs:
 
 - [docs/crimson_windows_first_validation_guide.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_first_validation_guide.md)
 - [docs/crimson_windows_internal_dependency_share_setup.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_internal_dependency_share_setup.md)
+- [docs/crimson_windows_run_only.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_run_only.md)
 - [tools/set_windows_dependency_roots.ps1](/home/delahantyj@hhmi.org/gitrepos/crimson/tools/set_windows_dependency_roots.ps1)
 - [tools/stage_windows_ffmpeg_nvidia.ps1](/home/delahantyj@hhmi.org/gitrepos/crimson/tools/stage_windows_ffmpeg_nvidia.ps1)
 

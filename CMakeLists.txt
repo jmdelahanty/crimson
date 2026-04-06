@@ -636,6 +636,13 @@ if(WIN32)
         COMPONENT core
     )
 
+    install(PROGRAMS
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/install_crimson.ps1
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/install_crimson.cmd
+        DESTINATION .
+        COMPONENT core
+    )
+
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ${CRIMSON_INSTALL_RUNTIME_DESTINATION})
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_COMPONENT core)
     include(InstallRequiredSystemLibraries)
