@@ -2,6 +2,16 @@
 
 Date anchored: 2026-04-04.
 
+Status: shelved / not currently being pursued.
+
+Reason:
+
+- the product cost of managing duplicate camera videos is high
+- the team decided to document the Windows RTX A1000 laptop ceiling first
+  instead of moving forward with proxy playback immediately
+- this document is kept as an archival design option, not as the active next
+  implementation step
+
 ## Why This Exists
 
 The Windows RTX A1000 laptop investigations have now ruled out most of the
@@ -282,4 +292,3 @@ Acceptance:
 - paused inspection still returns to full-resolution source frames
 - overlays remain aligned
 - no proxy is required for existing workflows
-

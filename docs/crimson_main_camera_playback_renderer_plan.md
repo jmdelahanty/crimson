@@ -143,13 +143,16 @@ So the current guidance is:
 - do not spend more time on main-camera software decode unless the decode stack
   changes substantially
 
-As of the latest Windows laptop findings, there is now also a higher-confidence
-product fallback when renderer-only work is not enough:
+As of the latest Windows laptop findings, the practical product conclusion is
+more conservative than this document originally assumed:
 
-- [crimson_main_camera_playback_proxy_plan.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_main_camera_playback_proxy_plan.md)
-
-That plan trades playback fidelity for smoother playback on weaker GPUs while
-preserving full-resolution paused inspection.
+- on the validated Windows RTX A1000 laptop, full-fidelity
+  `4512x4512 @ 60 fps HEVC` playback is likely to remain somewhat slower than
+  real time on the current path
+- reducing playback fidelity may still help, but that is now a deliberate
+  product tradeoff, not a near-term renderer fix
+- for current guidance, prefer documenting the hardware ceiling clearly instead
+  of assuming a proxy-based playback path will be adopted immediately
 
 ## Why This Is More Promising Than ROI Alone
 

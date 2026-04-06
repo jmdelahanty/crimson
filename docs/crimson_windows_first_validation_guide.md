@@ -14,6 +14,7 @@ Scope:
 
 Related docs:
 
+- [docs/crimson_windows_install_from_source.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_install_from_source.md)
 - [docs/crimson_windows_trt10_cuda12.4_validation_record.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_trt10_cuda12.4_validation_record.md)
 - [docs/crimson_supported_dependency_stack_matrix.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_supported_dependency_stack_matrix.md)
 - [docs/crimson_dependency_stack_promotion_process.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_dependency_stack_promotion_process.md)
@@ -309,6 +310,7 @@ That file is ignored by git.
 From the repo root:
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\check_windows_prereqs.ps1
 cmake --list-presets
 nvidia-smi
 nvcc --version
@@ -316,6 +318,7 @@ nvcc --version
 
 Confirm:
 
+- the prereq checker passes or only fails for known intentional gaps
 - the `windows-trt10-cuda12.4` preset exists
 - the `windows-trt10-cuda12.4-no-sfm` preset exists
 - `nvidia-smi` works
