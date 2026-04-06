@@ -43,6 +43,40 @@ Your current dependency-share folder can map to:
 
 ## Publish The Dependency Share
 
+### First: Create The Local Archive Set
+
+If your machine already has the unpacked dependency folders under
+`C:\third_party\...`, create the archive inputs with `tar.exe`, not with
+PowerShell `Compress-Archive`.
+
+Reason:
+
+- `Compress-Archive` can run out of memory on large trees such as TensorRT
+- `tar.exe` is much more reliable for these large internal bundles
+
+Recommended local staging folder:
+
+```powershell
+New-Item -ItemType Directory -Force -Path C:\third_party\downloads
+```
+
+Create the archives:
+
+```powershell
+tar -a -c -f C:\third_party\downloads\opencv-install-4.10.0-x64.zip -C C:\third_party opencv-install-4.10.0-x64
+tar -a -c -f C:\third_party\downloads\TensorRT-10.0.1.6.Windows10.x86_64.cuda-12.4.zip -C C:\third_party TensorRT-10.0.1.6
+tar -a -c -f C:\third_party\downloads\Video_Codec_SDK_13.0.19.zip -C C:\third_party Video_Codec_SDK_13.0
+tar -a -c -f C:\third_party\downloads\ffmpeg-nvidia.zip -C C:\third_party ffmpeg-nvidia
+```
+
+Then verify:
+
+```powershell
+Get-ChildItem C:\third_party\downloads
+```
+
+### Then Publish The Dependency Share
+
 From a machine that already has the approved dependency archives locally:
 
 ```powershell
