@@ -22,7 +22,7 @@ function Resolve-ArchivePath {
 
     if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) {
         if (-not (Test-Path -LiteralPath $ExplicitPath)) {
-            throw "$Label archive not found: $ExplicitPath"
+            throw "${Label} archive not found: ${ExplicitPath}"
         }
         return (Resolve-Path -LiteralPath $ExplicitPath).Path
     }
@@ -39,11 +39,11 @@ function Resolve-ArchivePath {
 
     $unique = $matches | Sort-Object FullName -Unique
     if ($unique.Count -eq 0) {
-        throw "$Label archive not found in $SearchRoot"
+        throw "${Label} archive not found in ${SearchRoot}"
     }
     if ($unique.Count -gt 1) {
         $names = $unique | ForEach-Object { $_.Name }
-        throw "$Label archive is ambiguous in $SearchRoot: $($names -join ', ')"
+        throw "${Label} archive is ambiguous in ${SearchRoot}: $($names -join ', ')"
     }
     return $unique[0].FullName
 }

@@ -25,7 +25,7 @@ function Load-Manifest {
 
     if (-not (Test-Path -LiteralPath $PathValue)) {
         if ($Required) {
-            throw "Manifest file not found: $PathValue"
+            throw "Manifest file not found: ${PathValue}"
         }
         return $null
     }
@@ -33,7 +33,7 @@ function Load-Manifest {
     $content = Get-Content -LiteralPath $PathValue -Raw
     $manifest = $content | ConvertFrom-Json
     if (-not $manifest.archives) {
-        throw "Manifest does not contain an 'archives' object: $PathValue"
+        throw "Manifest does not contain an 'archives' object: ${PathValue}"
     }
     return $manifest
 }
@@ -71,7 +71,7 @@ function Resolve-ArchivePath {
 
     if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) {
         if (-not (Test-Path -LiteralPath $ExplicitPath)) {
-            throw "$Label archive not found: $ExplicitPath"
+            throw "${Label} archive not found: ${ExplicitPath}"
         }
         return (Resolve-Path -LiteralPath $ExplicitPath).Path
     }
@@ -79,7 +79,7 @@ function Resolve-ArchivePath {
     if ($null -ne $ManifestEntry -and -not [string]::IsNullOrWhiteSpace($ManifestEntry.filename)) {
         $manifestCandidate = Join-Path $SearchRoot $ManifestEntry.filename
         if (-not (Test-Path -LiteralPath $manifestCandidate)) {
-            throw "$Label archive from manifest not found: $manifestCandidate"
+            throw "${Label} archive from manifest not found: ${manifestCandidate}"
         }
         return (Resolve-Path -LiteralPath $manifestCandidate).Path
     }
@@ -103,7 +103,7 @@ function Resolve-ArchivePath {
 
     if ($unique.Count -gt 1) {
         $names = $unique | ForEach-Object { $_.Name }
-        throw "$Label archive is ambiguous in $SearchRoot: $($names -join ', ')"
+        throw "${Label} archive is ambiguous in ${SearchRoot}: $($names -join ', ')"
     }
 
     return $unique[0].FullName
@@ -139,10 +139,10 @@ function Validate-ArchiveChecksum {
     $hash = (Get-FileHash -LiteralPath $ArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $expected = $ManifestEntry.sha256.ToLowerInvariant()
     if ($hash -ne $expected) {
-        throw "$Label SHA256 mismatch. expected=$expected actual=$hash"
+        throw "${Label} SHA256 mismatch. expected=$expected actual=$hash"
     }
 
-    Write-Host "$Label SHA256 verified."
+    Write-Host "${Label} SHA256 verified."
 }
 
 function Remove-IfRequested {
@@ -192,15 +192,15 @@ function Expand-ArchiveToDestination {
     )
 
     if ([string]::IsNullOrWhiteSpace($ArchivePath)) {
-        Write-Host "$Label archive not provided or not found. Skipping."
+        Write-Host "${Label} archive not provided or not found. Skipping."
         return $false
     }
 
-    Write-Host "Staging $Label from $ArchivePath"
+    Write-Host "Staging ${Label} from ${ArchivePath}"
     Remove-IfRequested -TargetPath $DestinationPath
 
     if (Test-Path -LiteralPath $DestinationPath) {
-        throw "Destination already exists: $DestinationPath. Use -CleanDestination to replace it."
+        throw "Destination already exists: ${DestinationPath}. Use -CleanDestination to replace it."
     }
 
     $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("crimson-stage-" + [System.Guid]::NewGuid().ToString("N"))
@@ -230,7 +230,7 @@ function Test-RequiredPath {
     )
 
     if (-not (Test-Path -LiteralPath $PathValue)) {
-        throw "$Label missing after staging: $PathValue"
+        throw "${Label} missing after staging: ${PathValue}"
     }
 }
 
