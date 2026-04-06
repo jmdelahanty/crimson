@@ -160,9 +160,12 @@ powershell -ExecutionPolicy Bypass -File .\tools\publish_windows_app_drop.ps1 `
 
 What it does:
 
-- validates the staged tree contains `redgui.exe`
+- validates the staged tree contains `bin\redgui.exe`
 - validates `share\crimson\fonts` and `share\crimson\config`
 - copies the whole staged tree to the target app-drop folder
+- preserves the standard Windows app layout:
+  - `bin\redgui.exe` plus runtime `.dll` files
+  - `share\crimson\...` assets
 
 That is the right thing to publish for run-only users. Do not publish random
 files copied by hand from `build\` or `release\Release\`.

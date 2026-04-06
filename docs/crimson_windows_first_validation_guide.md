@@ -437,12 +437,9 @@ Current observed result on the first validated Windows laptop:
 
 Follow-up packaging work:
 
-- verify the flattened Windows install layout in a clean staging directory
-- confirm whether a fresh configure/install moves `redgui.exe` to
-  `dist/Crimson/redgui.exe` or whether stale install artifacts are masking the
-  change
-- if flattening remains unreliable, decide whether to keep the `bin/` layout on
-  Windows for the first packaged release
+- keep the Windows staged runtime layout under `dist/Crimson/bin/`
+- bundle `redgui.exe` and all runtime `.dll` files together in `bin/`
+- keep fonts and config under `share/crimson/...`
 
 Minimum checks:
 

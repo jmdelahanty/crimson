@@ -32,6 +32,17 @@ function Require-ExistingCandidate {
     throw "$Label not found. Checked: $($Candidates -join ', ')"
 }
 
+function Assert-MissingPath {
+    param(
+        [string]$PathValue,
+        [string]$Label
+    )
+
+    if (Test-Path -LiteralPath $PathValue) {
+        throw "$Label should not exist: $PathValue`nClean the staged install tree and reinstall so the Windows app layout is consistent."
+    }
+}
+
 function Require-Path {
     param(
         [string]$PathValue,
@@ -41,6 +52,8 @@ function Require-Path {
     if (-not (Test-Path -LiteralPath $PathValue)) {
         throw "$Label not found: $PathValue"
     }
+
+    return $PathValue
 }
 
 Require-Path -PathValue $StageRoot -Label "Stage root"
@@ -57,10 +70,8 @@ if ($CleanDestination -and (Test-Path -LiteralPath $targetRoot)) {
     Remove-Item -LiteralPath $targetRoot -Recurse -Force
 }
 
-$stageExe = Require-ExistingCandidate -Label "Staged redgui.exe" -Candidates @(
-    (Join-Path $StageRoot "bin/redgui.exe"),
-    (Join-Path $StageRoot "redgui.exe")
-)
+$stageExe = Require-Path -PathValue (Join-Path $StageRoot "bin/redgui.exe") -Label "Staged redgui.exe"
+Assert-MissingPath -PathValue (Join-Path $StageRoot "redgui.exe") -Label "Legacy staged redgui.exe"
 
 $fontsDir = Require-Path -PathValue (Join-Path $StageRoot "share/crimson/fonts") -Label "Fonts directory"
 $configDir = Require-Path -PathValue (Join-Path $StageRoot "share/crimson/config") -Label "Config directory"
@@ -71,10 +82,8 @@ Write-Host "  from: $StageRoot"
 Write-Host "  to:   $targetRoot"
 Copy-Item -Path (Join-Path $StageRoot "*") -Destination $targetRoot -Recurse -Force
 
-$publishedExe = Require-ExistingCandidate -Label "Published redgui.exe" -Candidates @(
-    (Join-Path $targetRoot "bin/redgui.exe"),
-    (Join-Path $targetRoot "redgui.exe")
-)
+$publishedExe = Require-Path -PathValue (Join-Path $targetRoot "bin/redgui.exe") -Label "Published redgui.exe"
+Assert-MissingPath -PathValue (Join-Path $targetRoot "redgui.exe") -Label "Legacy published redgui.exe"
 
 Write-Host ""
 Write-Host "Published Crimson Windows app drop:"
