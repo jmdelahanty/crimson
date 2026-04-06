@@ -74,6 +74,7 @@ $stageExe = Require-Path -PathValue (Join-Path $StageRoot "bin/redgui.exe") -Lab
 Assert-MissingPath -PathValue (Join-Path $StageRoot "redgui.exe") -Label "Legacy staged redgui.exe"
 $stageInstallScript = Require-Path -PathValue (Join-Path $StageRoot "install_crimson.ps1") -Label "Staged install_crimson.ps1"
 $stageInstallWrapper = Require-Path -PathValue (Join-Path $StageRoot "install_crimson.cmd") -Label "Staged install_crimson.cmd"
+$stageReadme = Require-Path -PathValue (Join-Path $StageRoot "README.txt") -Label "Staged README.txt"
 
 $fontsDir = Require-Path -PathValue (Join-Path $StageRoot "share/crimson/fonts") -Label "Fonts directory"
 $configDir = Require-Path -PathValue (Join-Path $StageRoot "share/crimson/config") -Label "Config directory"
@@ -88,6 +89,7 @@ $publishedExe = Require-Path -PathValue (Join-Path $targetRoot "bin/redgui.exe")
 Assert-MissingPath -PathValue (Join-Path $targetRoot "redgui.exe") -Label "Legacy published redgui.exe"
 $publishedInstallScript = Require-Path -PathValue (Join-Path $targetRoot "install_crimson.ps1") -Label "Published install_crimson.ps1"
 $publishedInstallWrapper = Require-Path -PathValue (Join-Path $targetRoot "install_crimson.cmd") -Label "Published install_crimson.cmd"
+$publishedReadme = Require-Path -PathValue (Join-Path $targetRoot "README.txt") -Label "Published README.txt"
 
 Write-Host ""
 Write-Host "Published Crimson Windows app drop:"
@@ -97,5 +99,6 @@ Write-Host "Verified:"
 Write-Host "  app:    $publishedExe"
 Write-Host "  install script: $publishedInstallScript"
 Write-Host "  install wrapper: $publishedInstallWrapper"
+Write-Host "  readme: $publishedReadme"
 Write-Host "  fonts:  $(Join-Path $targetRoot 'share/crimson/fonts')"
 Write-Host "  config: $(Join-Path $targetRoot 'share/crimson/config')"
