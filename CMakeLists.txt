@@ -658,6 +658,8 @@ if(WIN32)
         PRE_EXCLUDE_REGEXES
             "api-ms-win-.*"
             "ext-ms-.*"
+            ".*[\\\\/](AzureAttestManager|AzureAttestNormal|HvsiFileTrust|PdmUtilities|wpaxholder)\\.dll"
+            "(AzureAttestManager|AzureAttestNormal|HvsiFileTrust|PdmUtilities|wpaxholder)\\.dll"
         POST_EXCLUDE_REGEXES
             ".*[Ww]indows[\\\\/](System32|SysWOW64)[\\\\/].*"
     )
