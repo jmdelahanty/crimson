@@ -14,6 +14,7 @@ This is an internal-team workflow. It assumes:
 Related docs:
 
 - [docs/crimson_windows_install_from_source.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_install_from_source.md)
+- [docs/crimson_windows_internal_publish_workflow.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_internal_publish_workflow.md)
 - [tools/setup_windows_from_internal_share.ps1](/home/delahantyj@hhmi.org/gitrepos/crimson/tools/setup_windows_from_internal_share.ps1)
 - [tools/crimson-windows-deps.manifest.example.json](/home/delahantyj@hhmi.org/gitrepos/crimson/tools/crimson-windows-deps.manifest.example.json)
 
