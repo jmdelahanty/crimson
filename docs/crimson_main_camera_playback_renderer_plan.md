@@ -93,6 +93,10 @@ That matches observed behavior:
   `4512x4512 @ 60 fps` playback
 - the user does not see this problem on a stronger desktop with an RTX A6000
 
+Related comparison note:
+
+- [docs/crimson_red_efficiency_comparison.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_red_efficiency_comparison.md)
+
 The goal is therefore:
 
 - keep full playback functionality

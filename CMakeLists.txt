@@ -114,6 +114,12 @@ if(NOT TENSORRT_ROOT AND DEFINED ENV{TENSORRT_ROOT} AND NOT "$ENV{TENSORRT_ROOT}
 endif()
 set(TENSORRT_ROOT "${TENSORRT_ROOT}" CACHE PATH "Path to the TensorRT installation root")
 
+if(NOT CRIMSON_VCPKG_BIN_DIR AND DEFINED ENV{CRIMSON_VCPKG_BIN_DIR} AND NOT "$ENV{CRIMSON_VCPKG_BIN_DIR}" STREQUAL "")
+    set(CRIMSON_VCPKG_BIN_DIR "$ENV{CRIMSON_VCPKG_BIN_DIR}")
+endif()
+set(CRIMSON_VCPKG_BIN_DIR "${CRIMSON_VCPKG_BIN_DIR}" CACHE PATH
+    "Path to a vcpkg runtime bin directory containing Windows DLLs used by Crimson")
+
 if(NOT FFMPEG_ROOT AND DEFINED ENV{FFMPEG_ROOT} AND NOT "$ENV{FFMPEG_ROOT}" STREQUAL "")
     set(FFMPEG_ROOT "$ENV{FFMPEG_ROOT}")
 endif()
@@ -185,6 +191,34 @@ if(TENSORRT_ROOT)
         "${TENSORRT_ROOT}/lib"
         "${TENSORRT_ROOT}/lib64"
         "${TENSORRT_ROOT}/lib/x64")
+endif()
+
+function(crimson_append_existing_dir list_var dir_path)
+    if(NOT dir_path)
+        return()
+    endif()
+    if(EXISTS "${dir_path}")
+        list(APPEND ${list_var} "${dir_path}")
+        list(REMOVE_DUPLICATES ${list_var})
+        set(${list_var} "${${list_var}}" PARENT_SCOPE)
+    endif()
+endfunction()
+
+set(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "")
+if(WIN32)
+    crimson_append_existing_dir(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "${FFMPEG_ROOT}/bin")
+    crimson_append_existing_dir(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "${TENSORRT_ROOT}/bin")
+    crimson_append_existing_dir(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "${TENSORRT_ROOT}/lib")
+    crimson_append_existing_dir(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "${CRIMSON_VCPKG_BIN_DIR}")
+
+    if(OpenCV_DIR)
+        crimson_append_existing_dir(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "${OpenCV_DIR}/x64/vc17/bin")
+        get_filename_component(CRIMSON_OPENCV_DIR_LEAF "${OpenCV_DIR}" NAME)
+        if(CRIMSON_OPENCV_DIR_LEAF STREQUAL "lib")
+            get_filename_component(CRIMSON_OPENCV_DIR_PARENT "${OpenCV_DIR}" DIRECTORY)
+            crimson_append_existing_dir(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "${CRIMSON_OPENCV_DIR_PARENT}/bin")
+        endif()
+    endif()
 endif()
 
 # --- Set RPATH for relocatable installs ---
@@ -601,9 +635,33 @@ else()
 endif()
 
 install(TARGETS redgui
+    RUNTIME_DEPENDENCY_SET redgui_runtime_deps
     RUNTIME DESTINATION ${CRIMSON_INSTALL_RUNTIME_DESTINATION}
     COMPONENT core
 )
+
+if(WIN32)
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ${CRIMSON_INSTALL_RUNTIME_DESTINATION})
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_COMPONENT core)
+    include(InstallRequiredSystemLibraries)
+    if(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
+        install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
+            DESTINATION ${CRIMSON_INSTALL_RUNTIME_DESTINATION}
+            COMPONENT core
+        )
+    endif()
+
+    install(RUNTIME_DEPENDENCY_SET redgui_runtime_deps
+        DESTINATION ${CRIMSON_INSTALL_RUNTIME_DESTINATION}
+        COMPONENT core
+        DIRECTORIES ${CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS}
+        PRE_EXCLUDE_REGEXES
+            "api-ms-win-.*"
+            "ext-ms-.*"
+        POST_EXCLUDE_REGEXES
+            ".*[Ww]indows[\\\\/](System32|SysWOW64)[\\\\/].*"
+    )
+endif()
 
 install(DIRECTORY ${FONT_SOURCE_DIR}/
     DESTINATION ${CMAKE_INSTALL_DATADIR}/crimson/fonts
@@ -629,6 +687,7 @@ message(STATUS "  Expected OpenCV Version: ${CRIMSON_EXPECT_OPENCV_VERSION}")
 message(STATUS "  OpenCV SFM Triangulation: ${CRIMSON_ENABLE_SFM}")
 message(STATUS "  FFmpeg Directory: ${FFMPEG_ROOT}")
 message(STATUS "  Video Codec SDK Root: ${VIDEO_CODEC_SDK_ROOT}")
+message(STATUS "  Vcpkg Runtime Bin Dir: ${CRIMSON_VCPKG_BIN_DIR}")
 message(STATUS "  Install Prefix: ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "  Install Data Dir: ${CMAKE_INSTALL_FULL_DATADIR}/crimson")
 if(TENSORRT_FOUND)
