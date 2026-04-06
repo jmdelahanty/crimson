@@ -179,6 +179,8 @@ powershell -ExecutionPolicy Bypass -File .\tools\check_windows_prereqs.ps1
 
 It verifies:
 
+- Visual Studio 2022 / Build Tools with the C++ workload, using `vswhere`
+  when available and standard `vcvars` paths as a fallback
 - core build tools such as `git`, `cmake`, `ninja`, `cl`, `nvcc`
 - repo layout and required submodules
 - CUDA, OpenCV, FFmpeg, Video Codec SDK, and TensorRT roots

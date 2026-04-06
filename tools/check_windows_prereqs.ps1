@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$RepoRoot,
     [string]$CudaToolkitRoot = $(if ($env:CRIMSON_CUDA_TOOLKIT_ROOT) { $env:CRIMSON_CUDA_TOOLKIT_ROOT } else { "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4" }),
     [string]$OpenCvDir = $(if ($env:CRIMSON_OPENCV_DIR) { $env:CRIMSON_OPENCV_DIR } else { "C:/third_party/opencv-install-4.10.0-x64" }),
     [string]$FfmpegRoot = $(if ($env:CRIMSON_FFMPEG_ROOT) { $env:CRIMSON_FFMPEG_ROOT } else { "C:/third_party/ffmpeg-nvidia" }),
@@ -10,6 +10,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    $RepoRoot = Split-Path -Parent $PSScriptRoot
+}
 
 $results = New-Object System.Collections.Generic.List[object]
 
@@ -108,6 +112,74 @@ function Test-RequiredFile {
     $detail = "missing: " + ($Candidates -join " | ")
     Add-Result -Category $Category -Name $Label -Ok $false -Details $detail
     return $false
+}
+
+function Test-VisualStudioToolchain {
+    $vswhereCandidates = @()
+    if ($env:ProgramFiles) {
+        $vswhereCandidates += (Join-Path $env:ProgramFiles "Microsoft Visual Studio/Installer/vswhere.exe")
+    }
+    if (${env:ProgramFiles(x86)}) {
+        $vswhereCandidates += (Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/Installer/vswhere.exe")
+    }
+
+    $vswhere = Find-FirstExistingPath -Candidates $vswhereCandidates
+    if ($vswhere) {
+        try {
+            $json = & $vswhere `
+                -latest `
+                -products * `
+                -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+                -format json `
+                -utf8 2>$null
+
+            if ($LASTEXITCODE -eq 0 -and $json) {
+                $installations = @($json | ConvertFrom-Json)
+                if ($installations.Count -gt 0) {
+                    $install = $installations[0]
+                    $displayName = if ($install.displayName) { $install.displayName } else { $install.productId }
+                    $installVersion = if ($install.catalog -and $install.catalog.productDisplayVersion) {
+                        $install.catalog.productDisplayVersion
+                    } elseif ($install.installationVersion) {
+                        $install.installationVersion
+                    } else {
+                        "unknown-version"
+                    }
+                    $detail = "$displayName | $installVersion | $($install.installationPath)"
+                    Add-Result -Category "visual_studio" -Name "Visual Studio C++ toolchain" -Ok $true -Details $detail
+                    return
+                }
+            }
+        } catch {
+            # Fall through to path-based checks below.
+        }
+
+    }
+
+    $devShellCandidates = @()
+    foreach ($edition in @("BuildTools", "Community", "Professional", "Enterprise")) {
+        if (${env:ProgramFiles(x86)}) {
+            $devShellCandidates += (Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/2022/$edition/Common7/Tools/VsDevCmd.bat")
+            $devShellCandidates += (Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/2022/$edition/VC/Auxiliary/Build/vcvars64.bat")
+        }
+        if ($env:ProgramFiles) {
+            $devShellCandidates += (Join-Path $env:ProgramFiles "Microsoft Visual Studio/2022/$edition/Common7/Tools/VsDevCmd.bat")
+            $devShellCandidates += (Join-Path $env:ProgramFiles "Microsoft Visual Studio/2022/$edition/VC/Auxiliary/Build/vcvars64.bat")
+        }
+    }
+
+    $resolvedDevShell = Find-FirstExistingPath -Candidates $devShellCandidates
+    if ($resolvedDevShell) {
+        Add-Result -Category "visual_studio" -Name "Visual Studio developer shell scripts" -Ok $true -Details $resolvedDevShell
+        return
+    }
+
+    $detail = if ($vswhere) {
+        "No Visual Studio 2022 Build Tools / C++ workload detected via vswhere or standard vcvars paths"
+    } else {
+        "vswhere.exe missing and no standard Visual Studio 2022 vcvars paths were found"
+    }
+    Add-Result -Category "visual_studio" -Name "Visual Studio C++ toolchain" -Ok $false -Details $detail
 }
 
 function Test-VideoCodecSdk {
@@ -261,6 +333,7 @@ function Test-RepoLayout {
 Write-Host "Checking Crimson Windows prerequisites..."
 Write-Host ""
 
+Test-VisualStudioToolchain
 Test-Command -Name "git" -FriendlyName "Git"
 Test-Command -Name "cmake" -FriendlyName "CMake"
 Test-Command -Name "ninja" -FriendlyName "Ninja"

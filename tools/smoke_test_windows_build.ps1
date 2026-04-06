@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$RepoRoot,
     [string]$ConfigurePreset = "windows-trt10-cuda12.4-no-sfm",
     [string]$BuildPreset = "build-windows-trt10-cuda12.4-no-sfm-release",
     [string]$Configuration = "Release",
@@ -17,6 +17,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    $RepoRoot = Split-Path -Parent $PSScriptRoot
+}
 
 function Require-Path {
     param(

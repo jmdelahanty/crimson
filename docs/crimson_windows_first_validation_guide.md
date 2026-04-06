@@ -319,6 +319,7 @@ nvcc --version
 Confirm:
 
 - the prereq checker passes or only fails for known intentional gaps
+- Visual Studio 2022 / Build Tools with the C++ workload is detected
 - the `windows-trt10-cuda12.4` preset exists
 - the `windows-trt10-cuda12.4-no-sfm` preset exists
 - `nvidia-smi` works

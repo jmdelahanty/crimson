@@ -33,6 +33,13 @@ Recommended internal paths:
 \\YOUR-SERVER\crimson\windows-app
 ```
 
+If your lab prefers mapped drives, the same locations might look like:
+
+```text
+Z:\crimson\windows-deps
+Z:\crimson\windows-app
+```
+
 Your current dependency-share folder can map to:
 
 ```text
@@ -87,6 +94,16 @@ powershell -ExecutionPolicy Bypass -File .\tools\publish_windows_dependency_shar
   -CleanShare
 ```
 
+If you publish through a mapped drive instead:
+
+```powershell
+cd C:\src\crimson
+powershell -ExecutionPolicy Bypass -File .\tools\publish_windows_dependency_share.ps1 `
+  -DownloadRoot C:\third_party\downloads `
+  -ShareRoot "Z:\crimson\windows-deps" `
+  -CleanShare
+```
+
 What it does:
 
 - copies the approved archives into the share
@@ -127,6 +144,16 @@ Then publish that staged tree:
 powershell -ExecutionPolicy Bypass -File .\tools\publish_windows_app_drop.ps1 `
   -StageRoot C:\src\crimson\dist\Crimson `
   -ShareRoot "\\YOUR-SERVER\crimson\windows-app" `
+  -DropName current `
+  -CleanDestination
+```
+
+Mapped-drive example:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\publish_windows_app_drop.ps1 `
+  -StageRoot C:\src\crimson\dist\Crimson `
+  -ShareRoot "Z:\crimson\windows-app" `
   -DropName current `
   -CleanDestination
 ```
