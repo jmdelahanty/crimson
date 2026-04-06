@@ -283,9 +283,28 @@ endif()
 crimson_require_exact_version("TensorRT" "${TENSORRT_VERSION}" "${CRIMSON_EXPECT_TENSORRT_VERSION}")
 
 # --- Third-Party Source Definitions (ImGui/ImPlot) ---
-set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui)
-set(IMPLOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/implot)
-set(IMGUI_FILE_DIALOG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ImGuiFileDialog)
+function(crimson_resolve_vendored_dir out_var relative_dir required_file)
+    set(_local_dir "${CMAKE_CURRENT_SOURCE_DIR}/${relative_dir}")
+    if(EXISTS "${_local_dir}/${required_file}")
+        set(${out_var} "${_local_dir}" PARENT_SCOPE)
+        return()
+    endif()
+
+    get_filename_component(_repo_parent "${CMAKE_CURRENT_SOURCE_DIR}" DIRECTORY)
+    set(_fallback_dir "${_repo_parent}/crimson/${relative_dir}")
+    if(EXISTS "${_fallback_dir}/${required_file}")
+        message(STATUS "Using vendored dependency from sibling checkout: ${_fallback_dir}")
+        set(${out_var} "${_fallback_dir}" PARENT_SCOPE)
+        return()
+    endif()
+
+    set(${out_var} "${_local_dir}" PARENT_SCOPE)
+endfunction()
+
+crimson_resolve_vendored_dir(IMGUI_DIR "third_party/imgui" "imgui.cpp")
+crimson_resolve_vendored_dir(IMPLOT_DIR "third_party/implot" "implot.cpp")
+crimson_resolve_vendored_dir(IMGUI_FILE_DIALOG_DIR "third_party/ImGuiFileDialog" "ImGuiFileDialog.cpp")
+crimson_resolve_vendored_dir(ICON_FONT_CPP_HEADERS_DIR "third_party/IconFontCppHeaders" "IconsFontAwesome6.h")
 
 # ImGui sources
 if(EXISTS ${IMGUI_DIR})
@@ -495,7 +514,7 @@ add_executable(redgui
 target_include_directories(redgui PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nvcodec
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/IconFontCppHeaders
+    ${ICON_FONT_CPP_HEADERS_DIR}
     ${CUDA_INCLUDE_DIRS}
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
