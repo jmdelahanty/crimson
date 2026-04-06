@@ -187,6 +187,8 @@ What that does:
 - publishes the new staged app under `releases\<timestamp>`
 - copies the previous `current\` to `releases\current-before-<timestamp>` if it exists
 - refreshes `current\` from the new versioned release
+- writes `release.json` into the published app root
+- writes `latest.json` at the share root
 
 Legacy direct-publish flow is still available if you really want a one-off drop:
 
@@ -217,6 +219,7 @@ What it does:
   - `bin\redgui.exe` plus runtime `.dll` files
   - `install_crimson.ps1` and `install_crimson.cmd` at the app-drop root
   - `README.txt` at the app-drop root
+  - `release.json` at the app-drop root
   - `share\crimson\...` assets
 
 That is the right thing to publish for run-only users. Do not publish random

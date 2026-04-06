@@ -10,6 +10,10 @@ This document is for run-only users. It is not a source-build guide.
 The published app drop now also includes a root-level `README.txt` with the
 same basic install and launch instructions.
 
+When installed from the published app drop, Crimson also writes a local
+`install_metadata.json` and can show an in-app "update available" notice when
+the share publishes a newer `latest.json`.
+
 Related docs:
 
 - [docs/crimson_windows_internal_publish_workflow.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_internal_publish_workflow.md)
