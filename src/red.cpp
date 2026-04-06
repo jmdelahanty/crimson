@@ -40,9 +40,10 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include "refined_keypoint_repository.h"
+#include "zarr_persisted_crop_provider.h"
 #include "zarr_loader.h"
-#include "gui/crop_keypoint_editor.h"
 #include "gui/file_browser_window.h"
+#include "gui/crop_preview_window.h"
 #include "gui/frame_debug_window.h"
 #include "gui/keypoints_window.h"
 #include "gui/labeling_tool_window.h"
@@ -1410,7 +1411,7 @@ int main(int argc, char **argv) {
     static int manual_write_review_state = 0;  // 0 = approved, 1 = needs_review, 2 = pending, 3 = rejected
     static RefinedKeypointReviewWindowState
         refined_keypoint_review_window_state;
-    CropKeypointEditorState crop_keypoint_editor_state;
+    CropPreviewWindowState crop_preview_window_state;
     LabelingToolWindowState labeling_tool_window_state;
     FrameDebugWindowState frame_debug_window_state;
 
@@ -5953,626 +5954,167 @@ struct StateOverlay {
         }
 
         if (zarr_loaded && zarr_loader.hasCropImages()) {
-            ImGui::SetNextWindowSize(ImVec2(300.0f, 300.0f), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowSizeConstraints(ImVec2(120.0f, 120.0f),
-                                                ImVec2(420.0f, 700.0f));
             const auto crop_preview_ui_start = std::chrono::steady_clock::now();
-            bool crop_window_open = ImGui::Begin("Crop Preview");
-            if (crop_window_open) {
-                RefinedKeypointRepository refined_keypoint_repo(zarr_loader);
-                const auto& movement_frames = zarr_loader.getMovementFrameIndices();
-                const auto& detection_indices = zarr_loader.getMovementDetectionIndices();
-                int32_t crop_roi_index = -1;
-                std::string crop_roi_source;
-                std::optional<RefinedKeypointSelection> selected_keypoint_selection;
-                if (g_zarr_bbox_edit_state.selected_frame == current_frame_num &&
-                    g_zarr_bbox_edit_state.selected_box >= 0) {
-                    auto selection = refined_keypoint_repo.resolveFrameDetectionSelection(
-                        static_cast<size_t>(current_frame_num),
-                        static_cast<size_t>(g_zarr_bbox_edit_state.selected_box),
-                        false);
-                    if (selection.valid) {
-                        crop_roi_index = selection.roi_index;
-                        crop_roi_source =
-                            selection.editable
-                                ? "selected refined keypoint detection"
-                                : "selected keypoint detection";
-                        selected_keypoint_selection = selection;
-                    }
-                }
-                if (!movement_frames.empty() &&
-                    crop_roi_index < 0 &&
-                    movement_frames.size() == detection_indices.size()) {
-                    auto it = std::lower_bound(movement_frames.begin(),
-                                               movement_frames.end(),
-                                               current_frame_num);
-                    if (it != movement_frames.end() && *it == current_frame_num) {
-                        size_t idx = static_cast<size_t>(std::distance(movement_frames.begin(), it));
-                        if (idx < detection_indices.size()) {
-                            crop_roi_index = detection_indices[idx];
-                            crop_roi_source = "movement ROI";
-                        }
-                    }
-                }
-                // Fallback: use crop frame_indices directly when movement
-                // data is absent (frame_indices maps roi_index → frame).
-                if (crop_roi_index < 0) {
-                    const auto& crop_frames = zarr_loader.getCropFrameIndices();
-                    auto it = std::find(crop_frames.begin(),
-                                        crop_frames.end(),
-                                        current_frame_num);
-                    if (it != crop_frames.end()) {
-                        crop_roi_index = static_cast<int32_t>(
-                            std::distance(crop_frames.begin(), it));
-                        crop_roi_source = "crop frame fallback";
-                    }
-                }
+            RefinedKeypointRepository refined_keypoint_repo(zarr_loader);
+            ZarrPersistedCropProvider crop_image_provider(zarr_loader);
+            const CropPreviewWindowContext crop_preview_context{
+                crop_image_provider,
+                zarr_loader,
+                refined_keypoint_repo,
+                current_frame_num,
+                g_zarr_bbox_edit_state.selected_frame,
+                g_zarr_bbox_edit_state.selected_box,
+                ps.play_video,
+                &refined_keypoint_review_window_state.panel_state
+                     .manual_write_status,
+            };
+            const auto crop_preview_result = drawCropPreviewWindow(
+                crop_preview_context, crop_preview_window_state);
 
-                static GLuint crop_texture = 0;
-                static std::vector<uint8_t> crop_rgba_buffer;
-                static int last_roi_index = -1;
-                static size_t last_width = 0;
-                static size_t last_height = 0;
-                static size_t last_channels = 0;
-                static int last_crop_preview_source_frame = -1;
-                static auto last_crop_preview_refresh_time =
-                    std::chrono::steady_clock::time_point{};
-                static std::vector<std::array<float, 2>> crop_kp_positions;
-                static std::vector<std::string> crop_kp_labels;
-                static std::vector<std::array<size_t, 2>> crop_kp_edges;
-
-                static GLuint rotated_crop_texture = 0;
-                static std::vector<uint8_t> rotated_rgba_buffer;
-                static unsigned int rotated_width = 0;
-                static unsigned int rotated_height = 0;
-                static bool rotated_valid = false;
-                static std::vector<std::array<float, 2>> rotated_kp_positions;
-                static std::vector<std::string> rotated_kp_labels;
-                static std::vector<std::array<size_t, 2>> rotated_kp_edges;
-                static float stored_heading_deg = 0.0f;
-                static bool stored_heading_valid = false;
-                static std::array<float, 2> arrow_origin_crop = {0, 0};   // in crop-local px
-                static std::array<float, 2> arrow_origin_rotated = {0, 0}; // in rotated-crop-local px
-                static bool arrow_origin_valid = false;
-                static int displayed_crop_roi_index = -1;
-                static int displayed_crop_source_frame = -1;
-                static std::string displayed_crop_source_label;
-                static CropKeypointPreviewUiState crop_keypoint_preview_ui_state;
-
-                auto applyCropKeypointEditorAction =
-                    [&](const CropKeypointEditorAction& action) {
-                        switch (action.type) {
-                        case CropKeypointEditorActionType::Save: {
-                            if (selected_keypoint_selection.has_value()) {
-                                RefinedKeypointEditResult edit_result;
-                                std::string write_error;
-                                if (!refined_keypoint_repo.writeManualCorrection(
-                                        *selected_keypoint_selection,
-                                        action.keypoints_roi,
-                                        write_error,
-                                        &edit_result)) {
-                                    refined_keypoint_review_window_state
-                                        .panel_state
-                                        .manual_write_status =
-                                        "Keypoint edit failed: " +
-                                        write_error;
-                                } else {
-                                    std::string reload_error;
-                                    resetCropKeypointEditorState(
-                                        crop_keypoint_editor_state);
-                                    if (reloadActiveZarrPreserveDataset(
-                                            reload_error)) {
-                                        std::ostringstream status;
-                                        status
-                                            << (edit_result.changed
-                                                    ? "Keypoint edit saved"
-                                                    : "Keypoint edit was a no-op")
-                                            << ": roi="
-                                            << selected_keypoint_selection
-                                                   ->roi_index;
-                                        if (edit_result.summary_updated) {
-                                            status << " summary=updated";
-                                        }
-                                        if (edit_result.stale_eye_mask_runs >
-                                            0) {
-                                            status << " stale_eye_masks="
-                                                   << edit_result
-                                                          .stale_eye_mask_runs;
-                                        }
-                                        refined_keypoint_review_window_state
-                                            .panel_state
-                                            .manual_write_status =
-                                            status.str();
-                                    } else {
-                                        refined_keypoint_review_window_state
-                                            .panel_state
-                                            .manual_write_status =
-                                            "Keypoint edit saved but reload failed: " +
-                                            reload_error;
-                                    }
-                                }
-                            }
-                            break;
-                        }
-                        case CropKeypointEditorActionType::MarkNoKeypoints: {
-                            if (selected_keypoint_selection.has_value()) {
-                                RefinedKeypointEditResult edit_result;
-                                std::string write_error;
-                                if (!refined_keypoint_repo
-                                         .markFishPresentNoKeypoints(
-                                             *selected_keypoint_selection,
-                                             write_error,
-                                             &edit_result)) {
-                                    refined_keypoint_review_window_state
-                                        .panel_state
-                                        .manual_write_status =
-                                        "Mark no keypoints failed: " +
-                                        write_error;
-                                } else {
-                                    std::string reload_error;
-                                    resetCropKeypointEditorState(
-                                        crop_keypoint_editor_state);
-                                    if (reloadActiveZarrPreserveDataset(
-                                            reload_error)) {
-                                        std::ostringstream status;
-                                        status
-                                            << "Marked fish_present_no_keypoints: roi="
-                                            << selected_keypoint_selection
-                                                   ->roi_index;
-                                        if (edit_result.summary_updated) {
-                                            status << " summary=updated";
-                                        }
-                                        if (edit_result.stale_eye_mask_runs >
-                                            0) {
-                                            status << " stale_eye_masks="
-                                                   << edit_result
-                                                          .stale_eye_mask_runs;
-                                        }
-                                        refined_keypoint_review_window_state
-                                            .panel_state
-                                            .manual_write_status =
-                                            status.str();
-                                    } else {
-                                        refined_keypoint_review_window_state
-                                            .panel_state
-                                            .manual_write_status =
-                                            "Marked fish_present_no_keypoints but reload failed: " +
-                                            reload_error;
-                                    }
-                                }
-                            }
-                            break;
-                        }
-                        case CropKeypointEditorActionType::MarkDetectionIssue: {
-                            if (selected_keypoint_selection.has_value()) {
-                                RefinedKeypointEditResult edit_result;
-                                std::string write_error;
-                                if (!refined_keypoint_repo.markDetectionIssue(
-                                        *selected_keypoint_selection,
-                                        write_error,
-                                        &edit_result)) {
-                                    refined_keypoint_review_window_state
-                                        .panel_state
-                                        .manual_write_status =
-                                        "Mark detection issue failed: " +
-                                        write_error;
-                                } else {
-                                    std::string reload_error;
-                                    resetCropKeypointEditorState(
-                                        crop_keypoint_editor_state);
-                                    if (reloadActiveZarrPreserveDataset(
-                                            reload_error)) {
-                                        std::ostringstream status;
-                                        status
-                                            << "Marked detection_issue: roi="
-                                            << selected_keypoint_selection
-                                                   ->roi_index;
-                                        if (edit_result.summary_updated) {
-                                            status << " summary=updated";
-                                        }
-                                        if (edit_result.stale_eye_mask_runs >
-                                            0) {
-                                            status << " stale_eye_masks="
-                                                   << edit_result
-                                                          .stale_eye_mask_runs;
-                                        }
-                                        refined_keypoint_review_window_state
-                                            .panel_state
-                                            .manual_write_status =
-                                            status.str();
-                                    } else {
-                                        refined_keypoint_review_window_state
-                                            .panel_state
-                                            .manual_write_status =
-                                            "Marked detection_issue but reload failed: " +
-                                            reload_error;
-                                    }
-                                }
-                            }
-                            break;
-                        }
-                        case CropKeypointEditorActionType::Reset:
-                        case CropKeypointEditorActionType::None:
-                        default:
-                            break;
-                        }
-                    };
-
-                if (crop_roi_index >= 0) {
-                    constexpr auto kCropPreviewPlaybackRefreshInterval =
-                        std::chrono::milliseconds(100);
-                    const auto now_steady = std::chrono::steady_clock::now();
-                    const bool playback_refresh_due =
-                        !ps.play_video ||
-                        last_crop_preview_refresh_time ==
-                            std::chrono::steady_clock::time_point{} ||
-                        (now_steady - last_crop_preview_refresh_time) >=
-                            kCropPreviewPlaybackRefreshInterval;
-                    const bool frame_changed =
-                        current_frame_num != last_crop_preview_source_frame;
-                    const bool should_refresh_preview =
-                        !ps.play_video || !frame_changed || playback_refresh_due;
-
-                    ZarrDetectionLoader::CropImageView crop_view;
-                    bool crop_preview_available = false;
-                    if (should_refresh_preview &&
-                        zarr_loader.getCropImageForIndex(crop_roi_index, crop_view)) {
-                        bool needs_upload =
-                            crop_roi_index != last_roi_index ||
-                            crop_view.width != last_width ||
-                            crop_view.height != last_height ||
-                            crop_view.channels != last_channels ||
-                            frame_changed;
-
-                        if (crop_texture == 0) {
-                            create_texture(&crop_texture);
-                            needs_upload = true;
-                        }
-
-                        if (needs_upload) {
-                            size_t pixel_count = crop_view.width * crop_view.height;
-                            crop_rgba_buffer.resize(pixel_count * 4);
-                            const uint8_t* src = crop_view.data;
-                            uint8_t* dst = crop_rgba_buffer.data();
-                            if (crop_view.channels == 4) {
-                                std::memcpy(dst, src, pixel_count * 4);
-                            } else if (crop_view.channels == 3) {
-                                for (size_t p = 0; p < pixel_count; ++p) {
-                                    dst[4 * p + 0] = src[3 * p + 0];
-                                    dst[4 * p + 1] = src[3 * p + 1];
-                                    dst[4 * p + 2] = src[3 * p + 2];
-                                    dst[4 * p + 3] = 255;
-                                }
+            auto applyCropKeypointEditorAction =
+                [&](const CropKeypointEditorAction& action,
+                    const std::optional<RefinedKeypointSelection>& selection) {
+                    switch (action.type) {
+                    case CropKeypointEditorActionType::Save: {
+                        if (selection.has_value()) {
+                            RefinedKeypointEditResult edit_result;
+                            std::string write_error;
+                            if (!refined_keypoint_repo.writeManualCorrection(
+                                    *selection,
+                                    action.keypoints_roi,
+                                    write_error,
+                                    &edit_result)) {
+                                refined_keypoint_review_window_state
+                                    .panel_state
+                                    .manual_write_status =
+                                    "Keypoint edit failed: " + write_error;
                             } else {
-                                for (size_t p = 0; p < pixel_count; ++p) {
-                                    uint8_t v = src[p];
-                                    dst[4 * p + 0] = v;
-                                    dst[4 * p + 1] = v;
-                                    dst[4 * p + 2] = v;
-                                    dst[4 * p + 3] = 255;
-                                }
-                            }
-                            upload_texture(&crop_texture,
-                                           crop_rgba_buffer.data(),
-                                           static_cast<unsigned int>(crop_view.width),
-                                           static_cast<unsigned int>(crop_view.height));
-                            last_roi_index = crop_roi_index;
-                            last_width = crop_view.width;
-                            last_height = crop_view.height;
-                            last_channels = crop_view.channels;
-                            displayed_crop_roi_index = crop_roi_index;
-                            displayed_crop_source_frame = current_frame_num;
-                            displayed_crop_source_label = crop_roi_source;
-                            last_crop_preview_source_frame = current_frame_num;
-                            last_crop_preview_refresh_time = now_steady;
-                            crop_kp_positions.clear();
-                            crop_kp_labels.clear();
-                            crop_kp_edges.clear();
-
-                            // Compute heading-normalized rotated crop
-                            rotated_valid = false;
-                            stored_heading_valid = false;
-                            if (zarr_loader.hasKeypointData()) {
-                                auto det = zarr_loader.getRawDetections(
-                                    static_cast<size_t>(current_frame_num), false, true);
-                                size_t matched = SIZE_MAX;
-                                std::optional<RefinedKeypointSelection> matched_keypoint_selection;
-                                if (selected_keypoint_selection.has_value() &&
-                                    selected_keypoint_selection->roi_index == crop_roi_index &&
-                                    selected_keypoint_selection->detection_index <
-                                        det.boxes.size()) {
-                                    matched = selected_keypoint_selection->detection_index;
-                                    matched_keypoint_selection = selected_keypoint_selection;
-                                }
-                                if (matched == SIZE_MAX) {
-                                    for (size_t di = 0; di < det.eye_masks.size(); ++di) {
-                                        if (det.eye_masks[di].roi_index == crop_roi_index) {
-                                            matched = di;
-                                            matched_keypoint_selection =
-                                                refined_keypoint_repo
-                                                    .resolveFrameDetectionSelection(
-                                                        static_cast<size_t>(current_frame_num),
-                                                        di,
-                                                        false);
-                                            break;
-                                        }
+                                std::string reload_error;
+                                resetCropKeypointEditorState(
+                                    crop_preview_window_state.editor_state);
+                                if (reloadActiveZarrPreserveDataset(
+                                        reload_error)) {
+                                    std::ostringstream status;
+                                    status
+                                        << (edit_result.changed
+                                                ? "Keypoint edit saved"
+                                                : "Keypoint edit was a no-op")
+                                        << ": roi=" << selection->roi_index;
+                                    if (edit_result.summary_updated) {
+                                        status << " summary=updated";
                                     }
-                                }
-                                if (matched == SIZE_MAX && det.has_keypoints) {
-                                    size_t keypoint_detection_count =
-                                        std::min(det.keypoints_pixels.size(), det.boxes.size());
-                                    for (size_t di = 0; di < keypoint_detection_count; ++di) {
-                                        auto candidate =
-                                            refined_keypoint_repo
-                                                .resolveFrameDetectionSelection(
-                                                    static_cast<size_t>(current_frame_num),
-                                                    di,
-                                                    false);
-                                        if (candidate.valid &&
-                                            candidate.roi_index == crop_roi_index) {
-                                            matched = di;
-                                            matched_keypoint_selection = std::move(candidate);
-                                            break;
-                                        }
+                                    if (edit_result.stale_eye_mask_runs > 0) {
+                                        status << " stale_eye_masks="
+                                               << edit_result
+                                                      .stale_eye_mask_runs;
                                     }
-                                }
-                                if (matched != SIZE_MAX && matched < det.headings_deg.size() &&
-                                    matched < det.heading_valid.size() && det.heading_valid[matched]) {
-                                    float heading = det.headings_deg[matched];
-                                    stored_heading_deg = heading;
-                                    stored_heading_valid = true;
-                                    float angle = -heading;
-                                    int w = static_cast<int>(crop_view.width);
-                                    int h = static_cast<int>(crop_view.height);
-                                    cv::Point2f center(w / 2.0f, h / 2.0f);
-                                    cv::Mat rot_mat = cv::getRotationMatrix2D(center, angle, 1.0);
-                                    cv::Rect2f bbox = cv::RotatedRect(center, cv::Size2f(static_cast<float>(w), static_cast<float>(h)), angle)
-                                                          .boundingRect2f();
-                                    rot_mat.at<double>(0, 2) += bbox.width / 2.0 - center.x;
-                                    rot_mat.at<double>(1, 2) += bbox.height / 2.0 - center.y;
-                                    int new_w = static_cast<int>(std::ceil(bbox.width));
-                                    int new_h = static_cast<int>(std::ceil(bbox.height));
-                                    cv::Mat src(h, w, CV_8UC4, crop_rgba_buffer.data());
-                                    cv::Mat dst;
-                                    cv::warpAffine(src, dst, rot_mat, cv::Size(new_w, new_h),
-                                                    cv::INTER_LINEAR, cv::BORDER_CONSTANT,
-                                                    cv::Scalar(0, 0, 0, 0));
-                                    // Apply circular mask: radius = half the smaller original dimension
-                                    float radius = std::min(w, h) / 2.0f;
-                                    cv::Point2f new_center(new_w / 2.0f, new_h / 2.0f);
-                                    for (int row = 0; row < new_h; ++row) {
-                                        uint8_t* ptr = dst.ptr<uint8_t>(row);
-                                        for (int col = 0; col < new_w; ++col) {
-                                            float dx = col + 0.5f - new_center.x;
-                                            float dy = row + 0.5f - new_center.y;
-                                            if (dx * dx + dy * dy > radius * radius) {
-                                                ptr[col * 4 + 0] = 0;
-                                                ptr[col * 4 + 1] = 0;
-                                                ptr[col * 4 + 2] = 0;
-                                                ptr[col * 4 + 3] = 0;
-                                            }
-                                        }
-                                    }
-                                    // Crop to circle's bounding square so canvas size is
-                                    // constant regardless of rotation angle.
-                                    int crop_side = std::min(w, h);
-                                    int cx = new_w / 2 - crop_side / 2;
-                                    int cy = new_h / 2 - crop_side / 2;
-                                    dst = dst(cv::Rect(cx, cy, crop_side, crop_side)).clone();
-                                    new_w = crop_side;
-                                    new_h = crop_side;
-                                    rotated_rgba_buffer.assign(dst.data, dst.data + dst.total() * 4);
-                                    rotated_width = new_w;
-                                    rotated_height = new_h;
-                                    if (rotated_crop_texture == 0) create_texture(&rotated_crop_texture);
-                                    upload_texture(&rotated_crop_texture, rotated_rgba_buffer.data(),
-                                                   rotated_width, rotated_height);
-                                    rotated_valid = true;
-
-                                    // Transform keypoints into rotated-crop-local coords
-                                    rotated_kp_positions.clear();
-                                    rotated_kp_labels.clear();
-                                    rotated_kp_edges = det.skeleton_edges;
-                                    crop_kp_edges = det.skeleton_edges;
-                                    if (det.has_keypoints && matched < det.keypoints_pixels.size()) {
-                                        const auto& kps = det.keypoints_pixels[matched];
-                                        float off_x = NAN;
-                                        float off_y = NAN;
-                                        if (matched < det.eye_masks.size() &&
-                                            std::isfinite(det.eye_masks[matched].offset_x) &&
-                                            std::isfinite(det.eye_masks[matched].offset_y)) {
-                                            off_x = det.eye_masks[matched].offset_x;
-                                            off_y = det.eye_masks[matched].offset_y;
-                                        } else if (matched_keypoint_selection.has_value() &&
-                                                   matched_keypoint_selection->roi_metadata
-                                                       .has_crop_metadata) {
-                                            off_x =
-                                                matched_keypoint_selection->roi_metadata.offset_x;
-                                            off_y =
-                                                matched_keypoint_selection->roi_metadata.offset_y;
-                                        }
-                                        if (std::isfinite(off_x) && std::isfinite(off_y)) {
-                                            double r0 = rot_mat.at<double>(0, 0);
-                                            double r1 = rot_mat.at<double>(0, 1);
-                                            double r2 = rot_mat.at<double>(0, 2);
-                                            double r3 = rot_mat.at<double>(1, 0);
-                                            double r4 = rot_mat.at<double>(1, 1);
-                                            double r5 = rot_mat.at<double>(1, 2);
-                                            for (size_t ki = 0; ki < kps.size(); ++ki) {
-                                                if (!std::isfinite(kps[ki][0]) ||
-                                                    !std::isfinite(kps[ki][1])) {
-                                                    crop_kp_positions.push_back({NAN, NAN});
-                                                    rotated_kp_positions.push_back({NAN, NAN});
-                                                } else {
-                                                    float px = kps[ki][0] - off_x;
-                                                    float py = kps[ki][1] - off_y;
-                                                    crop_kp_positions.push_back({px, py});
-                                                    float rx = static_cast<float>(r0 * px + r1 * py + r2) - cx;
-                                                    float ry = static_cast<float>(r3 * px + r4 * py + r5) - cy;
-                                                    rotated_kp_positions.push_back({rx, ry});
-                                                }
-                                                crop_kp_labels.push_back(
-                                                    ki < det.keypoint_labels.size()
-                                                        ? det.keypoint_labels[ki] : "");
-                                                rotated_kp_labels.push_back(
-                                                    ki < det.keypoint_labels.size()
-                                                        ? det.keypoint_labels[ki] : "");
-                                            }
-                                            // Compute arrow origin: midpoint between eye keypoints
-                                            arrow_origin_valid = false;
-                                            float left_x = NAN, left_y = NAN;
-                                            float right_x = NAN, right_y = NAN;
-                                            float left_rx = NAN, left_ry = NAN;
-                                            float right_rx = NAN, right_ry = NAN;
-                                            for (size_t ki = 0; ki < kps.size(); ++ki) {
-                                                const std::string& lbl =
-                                                    ki < det.keypoint_labels.size()
-                                                        ? det.keypoint_labels[ki] : "";
-                                                bool is_left = lbl.find("left") != std::string::npos;
-                                                bool is_right = lbl.find("right") != std::string::npos;
-                                                if ((is_left || is_right) &&
-                                                    std::isfinite(kps[ki][0]) && std::isfinite(kps[ki][1])) {
-                                                    float px = kps[ki][0] - off_x;
-                                                    float py = kps[ki][1] - off_y;
-                                                    if (is_left)  { left_x = px; left_y = py; }
-                                                    if (is_right) { right_x = px; right_y = py; }
-                                                    if (ki < rotated_kp_positions.size()) {
-                                                        if (is_left) { left_rx = rotated_kp_positions[ki][0]; left_ry = rotated_kp_positions[ki][1]; }
-                                                        if (is_right) { right_rx = rotated_kp_positions[ki][0]; right_ry = rotated_kp_positions[ki][1]; }
-                                                    }
-                                                }
-                                            }
-                                            if (std::isfinite(left_x) && std::isfinite(right_x)) {
-                                                arrow_origin_crop = {(left_x + right_x) / 2.0f,
-                                                                     (left_y + right_y) / 2.0f};
-                                                arrow_origin_rotated = {(left_rx + right_rx) / 2.0f,
-                                                                        (left_ry + right_ry) / 2.0f};
-                                                arrow_origin_valid = true;
-                                            }
-                                        }
-                                    }
+                                    refined_keypoint_review_window_state
+                                        .panel_state
+                                        .manual_write_status = status.str();
                                 } else {
-                                    crop_kp_positions.clear();
-                                    crop_kp_labels.clear();
-                                    crop_kp_edges.clear();
+                                    refined_keypoint_review_window_state
+                                        .panel_state
+                                        .manual_write_status =
+                                        "Keypoint edit saved but reload failed: " +
+                                        reload_error;
                                 }
                             }
                         }
-
-                        crop_preview_available =
-                            crop_texture != 0 && displayed_crop_roi_index >= 0 &&
-                            last_width > 0 && last_height > 0;
-                        if (crop_preview_available) {
-                            CropKeypointEditorContext
-                                crop_keypoint_editor_context;
-                            crop_keypoint_editor_context.selection =
-                                selected_keypoint_selection.has_value()
-                                    ? &*selected_keypoint_selection
-                                    : nullptr;
-                            crop_keypoint_editor_context
-                                .displayed_crop_roi_index =
-                                displayed_crop_roi_index;
-                            crop_keypoint_editor_context
-                                .displayed_crop_source_frame =
-                                displayed_crop_source_frame;
-                            crop_keypoint_editor_context
-                                .displayed_crop_source_label =
-                                &displayed_crop_source_label;
-                            crop_keypoint_editor_context.rotated_valid =
-                                rotated_valid;
-                            crop_keypoint_editor_context.stored_heading_valid =
-                                stored_heading_valid;
-                            crop_keypoint_editor_context.stored_heading_deg =
-                                stored_heading_deg;
-                            crop_keypoint_editor_context.source_positions =
-                                &crop_kp_positions;
-                            crop_keypoint_editor_context.labels =
-                                &crop_kp_labels;
-                            crop_keypoint_editor_context.edges =
-                                &crop_kp_edges;
-                            crop_keypoint_editor_context.base_arrow_origin =
-                                arrow_origin_crop;
-                            crop_keypoint_editor_context
-                                .base_arrow_origin_valid = arrow_origin_valid;
-                            crop_keypoint_editor_context.status_message =
-                                &refined_keypoint_review_window_state
-                                     .panel_state
-                                     .manual_write_status;
-
-                            CropKeypointPreviewPanelContext
-                                crop_keypoint_preview_context;
-                            crop_keypoint_preview_context.crop_texture_id =
-                                crop_texture;
-                            crop_keypoint_preview_context.crop_width =
-                                last_width;
-                            crop_keypoint_preview_context.crop_height =
-                                last_height;
-                            crop_keypoint_preview_context
-                                .displayed_crop_roi_index =
-                                displayed_crop_roi_index;
-                            crop_keypoint_preview_context
-                                .displayed_crop_source_frame =
-                                displayed_crop_source_frame;
-                            crop_keypoint_preview_context.current_frame_num =
-                                current_frame_num;
-                            crop_keypoint_preview_context
-                                .displayed_crop_source_label =
-                                &displayed_crop_source_label;
-                            crop_keypoint_preview_context.play_video =
-                                ps.play_video;
-                            crop_keypoint_preview_context.editor_context =
-                                crop_keypoint_editor_context;
-                            crop_keypoint_preview_context.rotated.valid =
-                                rotated_valid;
-                            crop_keypoint_preview_context.rotated.texture_id =
-                                rotated_crop_texture;
-                            crop_keypoint_preview_context.rotated.width =
-                                rotated_width;
-                            crop_keypoint_preview_context.rotated.height =
-                                rotated_height;
-                            crop_keypoint_preview_context.rotated.positions =
-                                &rotated_kp_positions;
-                            crop_keypoint_preview_context.rotated.labels =
-                                &rotated_kp_labels;
-                            crop_keypoint_preview_context.rotated.edges =
-                                &rotated_kp_edges;
-                            crop_keypoint_preview_context.rotated.arrow_origin =
-                                arrow_origin_rotated;
-                            crop_keypoint_preview_context.rotated
-                                .arrow_origin_valid = arrow_origin_valid;
-
-                            const auto crop_keypoint_preview_result =
-                                drawCropKeypointPreviewPanel(
-                                    crop_keypoint_preview_context,
-                                    crop_keypoint_preview_ui_state,
-                                    crop_keypoint_editor_state);
-                            applyCropKeypointEditorAction(
-                                crop_keypoint_preview_result.editor_action);
-                        }
-                    } else {
-                        ImGui::TextUnformatted("No crop available for current frame.");
-                        last_roi_index = -1;
-                        displayed_crop_roi_index = -1;
-                        displayed_crop_source_frame = -1;
-                        displayed_crop_source_label.clear();
-                        crop_kp_positions.clear();
-                        crop_kp_labels.clear();
-                        crop_kp_edges.clear();
-                        resetCropKeypointEditorState(crop_keypoint_editor_state);
+                        break;
                     }
-                } else {
-                    ImGui::TextUnformatted("No crop available for current frame.");
-                    last_roi_index = -1;
-                    displayed_crop_roi_index = -1;
-                    displayed_crop_source_frame = -1;
-                    displayed_crop_source_label.clear();
-                    crop_kp_positions.clear();
-                    crop_kp_labels.clear();
-                    crop_kp_edges.clear();
-                    resetCropKeypointEditorState(crop_keypoint_editor_state);
-                }
-            }
-            ImGui::End();
+                    case CropKeypointEditorActionType::MarkNoKeypoints: {
+                        if (selection.has_value()) {
+                            RefinedKeypointEditResult edit_result;
+                            std::string write_error;
+                            if (!refined_keypoint_repo.markFishPresentNoKeypoints(
+                                    *selection, write_error, &edit_result)) {
+                                refined_keypoint_review_window_state
+                                    .panel_state
+                                    .manual_write_status =
+                                    "Mark no keypoints failed: " +
+                                    write_error;
+                            } else {
+                                std::string reload_error;
+                                resetCropKeypointEditorState(
+                                    crop_preview_window_state.editor_state);
+                                if (reloadActiveZarrPreserveDataset(
+                                        reload_error)) {
+                                    std::ostringstream status;
+                                    status << "Marked fish_present_no_keypoints: roi="
+                                           << selection->roi_index;
+                                    if (edit_result.summary_updated) {
+                                        status << " summary=updated";
+                                    }
+                                    if (edit_result.stale_eye_mask_runs > 0) {
+                                        status << " stale_eye_masks="
+                                               << edit_result
+                                                      .stale_eye_mask_runs;
+                                    }
+                                    refined_keypoint_review_window_state
+                                        .panel_state
+                                        .manual_write_status = status.str();
+                                } else {
+                                    refined_keypoint_review_window_state
+                                        .panel_state
+                                        .manual_write_status =
+                                        "Marked fish_present_no_keypoints but reload failed: " +
+                                        reload_error;
+                                }
+                            }
+                        }
+                        break;
+                    }
+                    case CropKeypointEditorActionType::MarkDetectionIssue: {
+                        if (selection.has_value()) {
+                            RefinedKeypointEditResult edit_result;
+                            std::string write_error;
+                            if (!refined_keypoint_repo.markDetectionIssue(
+                                    *selection, write_error, &edit_result)) {
+                                refined_keypoint_review_window_state
+                                    .panel_state
+                                    .manual_write_status =
+                                    "Mark detection issue failed: " +
+                                    write_error;
+                            } else {
+                                std::string reload_error;
+                                resetCropKeypointEditorState(
+                                    crop_preview_window_state.editor_state);
+                                if (reloadActiveZarrPreserveDataset(
+                                        reload_error)) {
+                                    std::ostringstream status;
+                                    status << "Marked detection_issue: roi="
+                                           << selection->roi_index;
+                                    if (edit_result.summary_updated) {
+                                        status << " summary=updated";
+                                    }
+                                    if (edit_result.stale_eye_mask_runs > 0) {
+                                        status << " stale_eye_masks="
+                                               << edit_result
+                                                      .stale_eye_mask_runs;
+                                    }
+                                    refined_keypoint_review_window_state
+                                        .panel_state
+                                        .manual_write_status = status.str();
+                                } else {
+                                    refined_keypoint_review_window_state
+                                        .panel_state
+                                        .manual_write_status =
+                                        "Marked detection_issue but reload failed: " +
+                                        reload_error;
+                                }
+                            }
+                        }
+                        break;
+                    }
+                    case CropKeypointEditorActionType::Reset:
+                    case CropKeypointEditorActionType::None:
+                    default:
+                        break;
+                    }
+                };
+            applyCropKeypointEditorAction(
+                crop_preview_result.editor_action,
+                crop_preview_result.selected_keypoint_selection);
             frame_crop_preview_ui_ms +=
                 durationMs(std::chrono::steady_clock::now() - crop_preview_ui_start);
         }

@@ -9,6 +9,11 @@ Document a practical plan for:
 1. replacing the current point-scatter eye-mask overlay with a texture-backed overlay in Crimson, and
 2. preparing for future direct mask painting/editing against refined eye-mask runs without breaking the canonical run contract.
 
+For the broader runtime direction that full-frame editing should be first-class
+and Crop Preview should become a derived view instead of the primary runtime
+surface, see
+[crimson_live_crops_and_full_frame_editing_plan.md](./crimson_live_crops_and_full_frame_editing_plan.md).
+
 ## Current State
 
 Crimson currently renders eye-mask pixels by:

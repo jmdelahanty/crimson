@@ -14,6 +14,11 @@ For the UI/workflow layer that should replace the old `Labeling Tool` feel
 while staying Zarr-native, see
 [crimson_zarr_keypoint_review_window_plan.md](./crimson_zarr_keypoint_review_window_plan.md).
 
+For the runtime direction that full-frame editing should be primary and crop
+views should be derived from the full frame rather than persisted crop images,
+see
+[crimson_live_crops_and_full_frame_editing_plan.md](./crimson_live_crops_and_full_frame_editing_plan.md).
+
 ## Core Conclusion
 
 Crimson currently has two different keypoint workflows:

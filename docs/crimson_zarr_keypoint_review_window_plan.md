@@ -15,6 +15,10 @@ This plan is intentionally UI- and workflow-focused. The lower-level refined
 Zarr write behavior is already covered in
 [crimson_zarr_keypoint_editor_plan.md](./crimson_zarr_keypoint_editor_plan.md).
 
+For the runtime direction that full-frame editing should be first-class and
+Crop Preview should become a derived view, see
+[crimson_live_crops_and_full_frame_editing_plan.md](./crimson_live_crops_and_full_frame_editing_plan.md).
+
 ## Problem
 
 Crimson currently has three different keypoint-related UI surfaces:
