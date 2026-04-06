@@ -72,6 +72,17 @@ function Require-ExistingCandidate {
     throw "$Label not found. Checked: $($Candidates -join ', ')"
 }
 
+function Assert-MissingPath {
+    param(
+        [string]$PathValue,
+        [string]$Label
+    )
+
+    if (Test-Path -LiteralPath $PathValue) {
+        throw "$Label should not exist: $PathValue`nClean the install prefix and rerun the install so the Windows staged layout stays under bin\\."
+    }
+}
+
 $setRootsScript = Join-Path $PSScriptRoot "set_windows_dependency_roots.ps1"
 $checkPrereqsScript = Join-Path $PSScriptRoot "check_windows_prereqs.ps1"
 
@@ -149,11 +160,10 @@ if ($RunInstall) {
         }
     }
 
-    $stagedExeCandidates = @(
-        (Join-Path $RepoRoot (Join-Path $InstallPrefix "bin/redgui.exe")),
-        (Join-Path $RepoRoot (Join-Path $InstallPrefix "redgui.exe"))
+    $stagedExe = Require-ExistingCandidate -Label "Installed redgui.exe" -Candidates @(
+        (Join-Path $RepoRoot (Join-Path $InstallPrefix "bin/redgui.exe"))
     )
-    $stagedExe = Require-ExistingCandidate -Label "Installed redgui.exe" -Candidates $stagedExeCandidates
+    Assert-MissingPath -PathValue (Join-Path $RepoRoot (Join-Path $InstallPrefix "redgui.exe")) -Label "Legacy installed redgui.exe"
 }
 
 Write-Host ""

@@ -339,12 +339,11 @@ Suggested note for the first successful Windows staging pass:
   in the same PowerShell session
 - the first observed staged launch path was `dist/Crimson/bin/redgui.exe`
 
-Suggested follow-up note for the flattening work:
+Suggested follow-up note for the staged app layout:
 
-- re-test the Windows install tree in a clean `dist/Crimson` directory
-- verify whether `redgui.exe` is expected at the install root or under `bin/`
-- if flattening does not validate cleanly, keep the staged-path expectation as
-  `dist/Crimson/bin/redgui.exe` for the first Windows release candidate
+- keep the Windows staged runtime layout under `dist/Crimson/bin/`
+- treat a root-level `dist/Crimson/redgui.exe` as stale legacy output
+- keep fonts and config under `dist/Crimson/share/crimson/...`
 
 ---
 
