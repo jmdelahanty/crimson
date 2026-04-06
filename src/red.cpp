@@ -64,8 +64,10 @@ std::vector<unsigned char *> yolo_input_frames_rgba(MAX_VIEWS);
 std::unordered_map<std::string, std::atomic<bool>> window_need_decoding;
 std::unordered_map<std::string, std::atomic<int>> latest_decoded_frame;
 std::unordered_map<std::string, std::shared_ptr<DecoderPerfSample>> decoder_perf_samples;
+std::unordered_map<std::string, std::string> g_decoder_error_messages;
 std::mutex g_seek_info_mutex;
 std::mutex g_decoder_perf_mutex;
+std::mutex g_decoder_error_mutex;
 
 // Global variables
 bool show_interpolation_debug = false;
@@ -336,6 +338,27 @@ AppUpdateStatus loadAppUpdateStatus(const std::filesystem::path& argv0_path) {
                                ? "A newer Crimson app drop is available."
                                : "Crimson is up to date.";
     return status;
+}
+
+std::vector<std::pair<std::string, std::string>> snapshotDecoderErrors() {
+    std::lock_guard<std::mutex> lock(g_decoder_error_mutex);
+    std::vector<std::pair<std::string, std::string>> errors;
+    errors.reserve(g_decoder_error_messages.size());
+    for (const auto& [stream_name, message] : g_decoder_error_messages) {
+        if (!message.empty()) {
+            errors.emplace_back(stream_name, message);
+        }
+    }
+    std::sort(errors.begin(), errors.end(),
+              [](const auto& lhs, const auto& rhs) {
+                  return lhs.first < rhs.first;
+              });
+    return errors;
+}
+
+void clearDecoderErrors() {
+    std::lock_guard<std::mutex> lock(g_decoder_error_mutex);
+    g_decoder_error_messages.clear();
 }
 
 struct PerfLogWriter {
@@ -2378,6 +2401,20 @@ int main(int argc, char **argv) {
                 }
                 if (ImGui::SmallButton("Refresh Update Check")) {
                     app_update_status = loadAppUpdateStatus(argv0_path);
+                }
+            }
+            auto decoder_errors = snapshotDecoderErrors();
+            if (!decoder_errors.empty()) {
+                ImGui::TextColored(
+                    ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                    "Decoder errors detected:");
+                for (const auto& [stream_name, message] : decoder_errors) {
+                    ImGui::TextWrapped("%s: %s",
+                                       stream_name.c_str(),
+                                       message.c_str());
+                }
+                if (ImGui::SmallButton("Clear Decoder Errors")) {
+                    clearDecoderErrors();
                 }
             }
             {

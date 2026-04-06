@@ -5,7 +5,32 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <memory>
+
+namespace {
+
+void clear_decoder_error_message(const std::string& cam_name) {
+    std::lock_guard<std::mutex> lock(g_decoder_error_mutex);
+    g_decoder_error_messages.erase(cam_name);
+}
+
+void record_decoder_error_message(const std::string& cam_name,
+                                  const std::string& message) {
+    {
+        std::lock_guard<std::mutex> lock(g_decoder_error_mutex);
+        g_decoder_error_messages[cam_name] = message;
+    }
+    auto need_it = window_need_decoding.find(cam_name);
+    if (need_it != window_need_decoding.end()) {
+        need_it->second.store(false);
+    }
+    latest_decoded_frame[cam_name].store(-1);
+    std::cerr << "[Decoder] Fatal error in " << cam_name << ": "
+              << message << std::endl;
+}
+
+} // namespace
 
 inline double decoder_duration_ms(std::chrono::steady_clock::duration duration) {
     return std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
@@ -70,127 +95,131 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                      int size_of_buffer, SeekInfo *seek_info,
                      bool use_cpu_buffer) {
     CUdeviceptr pTmpImage = 0;
-    ck(cuInit(0));
-    CUcontext cuContext = NULL;
-    createCudaContext(&cuContext, dc_context->gpu_index, 0);
-    size_t nVideoBytes = 0;
-    PacketData pktinfo;
-
-    const cudaVideoCodec codec_id = FFmpeg2NvCodecId(demuxer->GetVideoCodec());
-    auto make_decoder = [&]() {
-        return std::make_unique<NvDecoder>(cuContext, true, codec_id);
-    };
-    std::unique_ptr<NvDecoder> dec = make_decoder();
-    auto decoder_perf = [&]() -> std::shared_ptr<DecoderPerfSample> {
-        std::lock_guard<std::mutex> lock(g_decoder_perf_mutex);
-        auto &sample = decoder_perf_samples[cam_name];
-        if (!sample) {
-            sample = std::make_shared<DecoderPerfSample>();
+    clear_decoder_error_message(cam_name);
+    auto cleanup_decoder_resources = [&]() {
+        if (pTmpImage) {
+            cuMemFree(pTmpImage);
+            pTmpImage = 0;
         }
-        return sample;
-    }();
-    const bool recreate_decoder_on_seek = []() {
-        const char *env = std::getenv("CRIMSON_RECREATE_DECODER_ON_SEEK");
-        if (!env) {
-            return false;
-        }
-        return std::strcmp(env, "0") != 0;
-    }();
-    const bool allow_boundary_fallback = false;
-    std::cout << "[Decoder] " << cam_name
-              << " recreate_decoder_on_seek="
-              << (recreate_decoder_on_seek ? "true" : "false")
-              << " boundary_fallback="
-              << (allow_boundary_fallback ? "true" : "false") << std::endl;
-    int nWidth = 0, nHeight = 0;
-
-    int nFrameReturned = 0, nFrame = 0, iMatrix = 0;
-    uint8_t *pVideo = nullptr;
-    uint8_t *pFrame;
-
-    int buffer_head = 0;
-    bool pending_seek_done = false;
-    bool pending_seek_was_accurate = false;
-    uint64_t pending_seek_id = 0;
-
-    bool seek_success_flag;
-    bool demux_success;
-
-    double video_length = demuxer->GetDuration();
-    double frame_rate = demuxer->GetFramerate();
-    std::cout << "Video framerate: " << frame_rate << std::endl;
-    std::cout << "Video length: " << video_length << std::endl;
-
-    if (demuxer->GetNumFrames() == 0) {
-        dc_context->estimated_num_frames = int(video_length * frame_rate);
-    } else {
-        dc_context->estimated_num_frames = demuxer->GetNumFrames() - 1;
-    }
-
-    std::cout << "estimated_num_frames:" << dc_context->estimated_num_frames
-              << std::endl;
-    int size_in_bytes;
-    bool skip_first_decode_after_seek = false;
-    int seek_debug_frames_to_log = 0;
-    uint64_t seek_discard_count = 0;
-    const bool buffer_requires_rgba =
-        use_cpu_buffer || (size_of_buffer > 0 &&
-                           display_buffer[0].format ==
-                               PictureBufferFormat::RGBA32);
-    auto seek_requested = [&]() -> bool {
-        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
-        return seek_info->use_seek;
     };
-    uint64_t active_seek_id = 0;
-    auto mark_seek_done = [&](uint64_t settled_frame) -> bool {
-        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
-        // If a newer request arrived while we processed this one, do not
-        // overwrite it with stale completion state.
-        if (seek_info->use_seek) {
-            return false;
-        }
-        seek_info->seek_frame = settled_frame;
-        seek_info->settled_seek_id = active_seek_id;
-        seek_info->seek_done = true;
-        return true;
-    };
-    auto mapTimestampToFrameNumber = [&](int64_t timestamp,
-                                         int64_t fallback_frame) -> int64_t {
-        if (timestamp >= 0) {
-            const int64_t frame_from_ts = demuxer->FrameNumberFromTs(timestamp);
-            if (frame_from_ts >= 0) {
-                return frame_from_ts;
+    try {
+        ck(cuInit(0));
+        CUcontext cuContext = NULL;
+        createCudaContext(&cuContext, dc_context->gpu_index, 0);
+        size_t nVideoBytes = 0;
+        PacketData pktinfo;
+
+        const cudaVideoCodec codec_id = FFmpeg2NvCodecId(demuxer->GetVideoCodec());
+        auto make_decoder = [&]() {
+            return std::make_unique<NvDecoder>(cuContext, true, codec_id);
+        };
+        std::unique_ptr<NvDecoder> dec = make_decoder();
+        auto decoder_perf = [&]() -> std::shared_ptr<DecoderPerfSample> {
+            std::lock_guard<std::mutex> lock(g_decoder_perf_mutex);
+            auto &sample = decoder_perf_samples[cam_name];
+            if (!sample) {
+                sample = std::make_shared<DecoderPerfSample>();
             }
-        }
-        return fallback_frame;
-    };
-    auto discard_decoded_frames_until =
-        [&](uint64_t &decode_frame_cursor, uint64_t target_frame) -> bool {
-        while (nFrameReturned > 0) {
-            if (decode_frame_cursor >= target_frame) {
-                // Keep target frame (or nearest frame past it) in decoder
-                // output queue for the normal write path.  Using >= instead
-                // of == guards against the cursor overshooting the target by
-                // one due to timestamp-to-frame rounding in FrameNumberFromTs
-                // (AV_ROUND_NEAR_INF).  Without this, the loop would never
-                // match the target and decode through the rest of the file.
-                skip_first_decode_after_seek = true;
-                return true;
+            return sample;
+        }();
+        const bool recreate_decoder_on_seek = []() {
+            const char *env = std::getenv("CRIMSON_RECREATE_DECODER_ON_SEEK");
+            if (!env) {
+                return false;
             }
-            int64_t discarded_timestamp = 0;
-            dec->GetFrame(&discarded_timestamp);
-            nFrameReturned--;
-            ++seek_discard_count;
-            const int64_t fallback_frame =
-                static_cast<int64_t>(decode_frame_cursor);
-            const int64_t mapped_frame =
-                mapTimestampToFrameNumber(discarded_timestamp, fallback_frame);
-            const int64_t next_frame = std::max(mapped_frame + 1, fallback_frame + 1);
-            decode_frame_cursor = static_cast<uint64_t>(std::max<int64_t>(0, next_frame));
+            return std::strcmp(env, "0") != 0;
+        }();
+        const bool allow_boundary_fallback = false;
+        std::cout << "[Decoder] " << cam_name
+                  << " recreate_decoder_on_seek="
+                  << (recreate_decoder_on_seek ? "true" : "false")
+                  << " boundary_fallback="
+                  << (allow_boundary_fallback ? "true" : "false") << std::endl;
+        int nWidth = 0, nHeight = 0;
+
+        int nFrameReturned = 0, nFrame = 0, iMatrix = 0;
+        uint8_t *pVideo = nullptr;
+        uint8_t *pFrame;
+
+        int buffer_head = 0;
+        bool pending_seek_done = false;
+        bool pending_seek_was_accurate = false;
+        uint64_t pending_seek_id = 0;
+
+        bool seek_success_flag;
+        bool demux_success;
+
+        double video_length = demuxer->GetDuration();
+        double frame_rate = demuxer->GetFramerate();
+        std::cout << "Video framerate: " << frame_rate << std::endl;
+        std::cout << "Video length: " << video_length << std::endl;
+
+        if (demuxer->GetNumFrames() == 0) {
+            dc_context->estimated_num_frames = int(video_length * frame_rate);
+        } else {
+            dc_context->estimated_num_frames = demuxer->GetNumFrames() - 1;
         }
-        return false;
-    };
-    do {
+
+        std::cout << "estimated_num_frames:" << dc_context->estimated_num_frames
+                  << std::endl;
+        int size_in_bytes;
+        bool skip_first_decode_after_seek = false;
+        int seek_debug_frames_to_log = 0;
+        uint64_t seek_discard_count = 0;
+        const bool buffer_requires_rgba =
+            use_cpu_buffer || (size_of_buffer > 0 &&
+                               display_buffer[0].format ==
+                                   PictureBufferFormat::RGBA32);
+        auto seek_requested = [&]() -> bool {
+            std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+            return seek_info->use_seek;
+        };
+        uint64_t active_seek_id = 0;
+        auto mark_seek_done = [&](uint64_t settled_frame) -> bool {
+            std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+            // If a newer request arrived while we processed this one, do not
+            // overwrite it with stale completion state.
+            if (seek_info->use_seek) {
+                return false;
+            }
+            seek_info->seek_frame = settled_frame;
+            seek_info->settled_seek_id = active_seek_id;
+            seek_info->seek_done = true;
+            return true;
+        };
+        auto mapTimestampToFrameNumber = [&](int64_t timestamp,
+                                             int64_t fallback_frame) -> int64_t {
+            if (timestamp >= 0) {
+                const int64_t frame_from_ts = demuxer->FrameNumberFromTs(timestamp);
+                if (frame_from_ts >= 0) {
+                    return frame_from_ts;
+                }
+            }
+            return fallback_frame;
+        };
+        auto discard_decoded_frames_until =
+            [&](uint64_t &decode_frame_cursor, uint64_t target_frame) -> bool {
+            while (nFrameReturned > 0) {
+                if (decode_frame_cursor >= target_frame) {
+                    // Keep target frame (or nearest frame past it) in decoder
+                    // output queue for the normal write path.
+                    skip_first_decode_after_seek = true;
+                    return true;
+                }
+                int64_t discarded_timestamp = 0;
+                dec->GetFrame(&discarded_timestamp);
+                nFrameReturned--;
+                ++seek_discard_count;
+                const int64_t fallback_frame =
+                    static_cast<int64_t>(decode_frame_cursor);
+                const int64_t mapped_frame =
+                    mapTimestampToFrameNumber(discarded_timestamp, fallback_frame);
+                const int64_t next_frame = std::max(mapped_frame + 1, fallback_frame + 1);
+                decode_frame_cursor = static_cast<uint64_t>(std::max<int64_t>(0, next_frame));
+            }
+            return false;
+        };
+        do {
         bool has_seek_request = false;
         uint64_t requested_frame = 0;
         bool seek_accurate = false;
@@ -725,9 +754,15 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
         }
-    } while (!(dc_context->stop_flag));
-    if (pTmpImage) {
-        ck(cuMemFree(pTmpImage));
+        } while (!(dc_context->stop_flag));
+        cleanup_decoder_resources();
+    } catch (const std::exception& e) {
+        cleanup_decoder_resources();
+        record_decoder_error_message(cam_name, e.what());
+    } catch (...) {
+        cleanup_decoder_resources();
+        record_decoder_error_message(cam_name,
+                                     "Unknown non-standard decoder exception");
     }
 }
 
@@ -736,6 +771,8 @@ void image_loader(DecoderContext *dc_context,
                   PictureBuffer *display_buffer, int size_of_buffer,
                   SeekInfo *seek_info, bool use_cpu_buffer,
                   std::string cam_name, std::string root_dir) {
+    clear_decoder_error_message(cam_name);
+    try {
     int buffer_head = 0;
     int frame_number = 0;
     dc_context->total_num_frame = img_list_vector.size();
@@ -835,5 +872,11 @@ void image_loader(DecoderContext *dc_context,
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
         }
+    }
+    } catch (const std::exception& e) {
+        record_decoder_error_message(cam_name, e.what());
+    } catch (...) {
+        record_decoder_error_message(cam_name,
+                                     "Unknown non-standard image loader exception");
     }
 }
