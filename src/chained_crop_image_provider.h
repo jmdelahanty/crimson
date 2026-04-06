@@ -8,6 +8,14 @@ public:
                              const CropImageProvider& fallback)
         : primary_(primary), fallback_(fallback) {}
 
+    bool getCropTextureForIndex(int32_t roi_index,
+                                CropTextureView& out_view) const override {
+        if (primary_.getCropTextureForIndex(roi_index, out_view)) {
+            return true;
+        }
+        return fallback_.getCropTextureForIndex(roi_index, out_view);
+    }
+
     bool getCropImageForIndex(int32_t roi_index,
                               CropImageView& out_view) const override {
         if (primary_.getCropImageForIndex(roi_index, out_view)) {

@@ -291,7 +291,7 @@ static void presentNv12PboToTexture(const CameraResources &camera,
 
     float yuv_to_rgb[9];
     fillNv12YuvToRgbMatrix(color_matrix, yuv_to_rgb);
-    glUniformMatrix3fv(presenter->yuv_matrix_location, 1, GL_FALSE,
+    glUniformMatrix3fv(presenter->yuv_matrix_location, 1, GL_TRUE,
                        yuv_to_rgb);
 
     glUniform1i(presenter->luma_texture_location, 0);
@@ -5961,17 +5961,42 @@ struct StateOverlay {
             const auto crop_preview_ui_start = std::chrono::steady_clock::now();
             RefinedKeypointRepository refined_keypoint_repo(zarr_loader);
             CropFrameSource live_crop_frame_source;
+            int crop_preview_frame_num = current_frame_num;
             if (video_loaded) {
                 const int visible_idx = getVisibleCameraIndex();
                 if (visible_idx >= 0 && scene->size_of_buffer > 0) {
+                    const auto& camera = scene->cameras[visible_idx];
+                    if (ps.play_video && camera.texture_has_valid_frame &&
+                        camera.last_uploaded_frame >= 0) {
+                        crop_preview_frame_num = camera.last_uploaded_frame;
+                    }
                     const int preferred_slot = ps.read_head % scene->size_of_buffer;
                     const int slot_index = findDisplaySlotForFrame(
-                        visible_idx, current_frame_num, preferred_slot);
+                        visible_idx, crop_preview_frame_num, preferred_slot);
+                    if (camera.texture_has_valid_frame &&
+                        camera.last_uploaded_frame == crop_preview_frame_num &&
+                        camera.image_texture != 0) {
+                        live_crop_frame_source.frame_number = crop_preview_frame_num;
+                        live_crop_frame_source.width =
+                            static_cast<int>(camera.image_width);
+                        live_crop_frame_source.height =
+                            static_cast<int>(camera.image_height);
+                        live_crop_frame_source.texture_id = camera.image_texture;
+                        live_crop_frame_source.texture_width =
+                            camera.display_texture_width > 0
+                                ? camera.display_texture_width
+                                : static_cast<int>(camera.image_width);
+                        live_crop_frame_source.texture_height =
+                            camera.display_texture_height > 0
+                                ? camera.display_texture_height
+                                : static_cast<int>(camera.image_height);
+                        live_crop_frame_source.texture_frame_number =
+                            camera.last_uploaded_frame;
+                    }
                     if (slot_index >= 0) {
-                        const auto& camera = scene->cameras[visible_idx];
                         const auto& slot = camera.display_buffer[slot_index];
                         if (!slot.available_to_write &&
-                            slot.frame_number == current_frame_num &&
+                            slot.frame_number == crop_preview_frame_num &&
                             slot.frame != nullptr) {
                             live_crop_frame_source.frame = slot.frame;
                             live_crop_frame_source.frame_number =
@@ -6010,7 +6035,7 @@ struct StateOverlay {
                 crop_image_provider,
                 zarr_loader,
                 refined_keypoint_repo,
-                current_frame_num,
+                crop_preview_frame_num,
                 g_zarr_bbox_edit_state.selected_frame,
                 g_zarr_bbox_edit_state.selected_box,
                 ps.play_video,

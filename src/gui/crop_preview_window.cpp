@@ -1,7 +1,6 @@
 #include "gui/crop_preview_window.h"
 
 #include "imgui.h"
-#include "opencv2/imgproc.hpp"
 #include "render.h"
 
 #include <algorithm>
@@ -11,14 +10,667 @@
 
 namespace {
 
-constexpr auto kCropPreviewPlaybackRefreshInterval =
-    std::chrono::milliseconds(100);
-
 struct ResolvedCropPreviewSelection {
     int32_t crop_roi_index = -1;
     std::string crop_roi_source;
     std::optional<RefinedKeypointSelection> selected_keypoint_selection;
 };
+
+struct CropTexturePresenter {
+    GLuint program = 0;
+    GLuint vao = 0;
+    GLuint vbo = 0;
+    GLuint fbo = 0;
+    GLint src_texture_location = -1;
+    GLint src_size_location = -1;
+    GLint dst_size_location = -1;
+    GLint src_rect_location = -1;
+    GLint dst_rect_location = -1;
+};
+
+struct RotatedCropPresenter {
+    GLuint program = 0;
+    GLuint vao = 0;
+    GLuint vbo = 0;
+    GLuint fbo = 0;
+    GLint src_texture_location = -1;
+    GLint src_size_location = -1;
+    GLint dst_size_location = -1;
+    GLint rotation_location = -1;
+};
+
+struct SourceRotatedCropPresenter {
+    GLuint program = 0;
+    GLuint vao = 0;
+    GLuint vbo = 0;
+    GLuint fbo = 0;
+    GLint src_texture_location = -1;
+    GLint src_size_location = -1;
+    GLint crop_size_location = -1;
+    GLint dst_size_location = -1;
+    GLint src_rect_location = -1;
+    GLint dst_rect_location = -1;
+    GLint rotation_location = -1;
+};
+
+GLuint compileCropShader(GLenum shader_type, const char* source) {
+    GLuint shader = glCreateShader(shader_type);
+    glShaderSource(shader, 1, &source, nullptr);
+    glCompileShader(shader);
+    GLint compile_status = GL_FALSE;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &compile_status);
+    if (compile_status != GL_TRUE) {
+        GLint log_length = 0;
+        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &log_length);
+        std::string log(static_cast<size_t>(std::max(log_length, 1)), '\0');
+        glGetShaderInfoLog(shader, log_length, nullptr, log.data());
+        std::cerr << "Crop preview shader compilation failed: " << log
+                  << std::endl;
+    }
+    return shader;
+}
+
+void ensureCropTexturePresenter(CropTexturePresenter* presenter) {
+    if (presenter == nullptr || presenter->program != 0) {
+        return;
+    }
+
+    static const char* kVertexShader = R"GLSL(
+        #version 130
+        attribute vec2 aPos;
+        attribute vec2 aUV;
+        varying vec2 vUV;
+
+        void main() {
+            vUV = aUV;
+            gl_Position = vec4(aPos, 0.0, 1.0);
+        }
+    )GLSL";
+
+    static const char* kFragmentShader = R"GLSL(
+        #version 130
+        uniform sampler2D uSrcTex;
+        uniform vec2 uSrcSize;
+        uniform vec2 uDstSize;
+        uniform vec4 uSrcRect;
+        uniform vec4 uDstRect;
+        varying vec2 vUV;
+
+        void main() {
+            vec2 dstPx = vUV * uDstSize;
+            if (dstPx.x < uDstRect.x || dstPx.y < uDstRect.y ||
+                dstPx.x >= (uDstRect.x + uDstRect.z) ||
+                dstPx.y >= (uDstRect.y + uDstRect.w)) {
+                gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+                return;
+            }
+
+            vec2 localUv = (dstPx - uDstRect.xy) / uDstRect.zw;
+            vec2 srcPx = uSrcRect.xy + localUv * uSrcRect.zw;
+            vec2 srcUv = (srcPx + vec2(0.5, 0.5)) / uSrcSize;
+            gl_FragColor = texture2D(uSrcTex, srcUv);
+        }
+    )GLSL";
+
+    GLuint vertex_shader = compileCropShader(GL_VERTEX_SHADER, kVertexShader);
+    GLuint fragment_shader =
+        compileCropShader(GL_FRAGMENT_SHADER, kFragmentShader);
+
+    presenter->program = glCreateProgram();
+    glAttachShader(presenter->program, vertex_shader);
+    glAttachShader(presenter->program, fragment_shader);
+    glBindAttribLocation(presenter->program, 0, "aPos");
+    glBindAttribLocation(presenter->program, 1, "aUV");
+    glLinkProgram(presenter->program);
+
+    glDeleteShader(vertex_shader);
+    glDeleteShader(fragment_shader);
+
+    presenter->src_texture_location =
+        glGetUniformLocation(presenter->program, "uSrcTex");
+    presenter->src_size_location =
+        glGetUniformLocation(presenter->program, "uSrcSize");
+    presenter->dst_size_location =
+        glGetUniformLocation(presenter->program, "uDstSize");
+    presenter->src_rect_location =
+        glGetUniformLocation(presenter->program, "uSrcRect");
+    presenter->dst_rect_location =
+        glGetUniformLocation(presenter->program, "uDstRect");
+
+    const float quad_vertices[] = {
+        -1.0f, -1.0f, 0.0f, 0.0f,
+         1.0f, -1.0f, 1.0f, 0.0f,
+        -1.0f,  1.0f, 0.0f, 1.0f,
+         1.0f,  1.0f, 1.0f, 1.0f,
+    };
+
+    glGenVertexArrays(1, &presenter->vao);
+    glBindVertexArray(presenter->vao);
+    glGenBuffers(1, &presenter->vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, presenter->vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quad_vertices), quad_vertices,
+                 GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                          reinterpret_cast<void*>(0));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                          reinterpret_cast<void*>(2 * sizeof(float)));
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+
+    glGenFramebuffers(1, &presenter->fbo);
+}
+
+void ensureRotatedCropPresenter(RotatedCropPresenter* presenter) {
+    if (presenter == nullptr || presenter->program != 0) {
+        return;
+    }
+
+    static const char* kVertexShader = R"GLSL(
+        #version 130
+        attribute vec2 aPos;
+        attribute vec2 aUV;
+        varying vec2 vUV;
+
+        void main() {
+            vUV = aUV;
+            gl_Position = vec4(aPos, 0.0, 1.0);
+        }
+    )GLSL";
+
+    static const char* kFragmentShader = R"GLSL(
+        #version 130
+        uniform sampler2D uSrcTex;
+        uniform vec2 uSrcSize;
+        uniform vec2 uDstSize;
+        uniform vec2 uRotation;
+        varying vec2 vUV;
+
+        void main() {
+            vec2 dstPx = vUV * uDstSize;
+            vec2 dstCenter = uDstSize * 0.5;
+            vec2 delta = dstPx - dstCenter;
+            float radius = min(uDstSize.x, uDstSize.y) * 0.5;
+            if (dot(delta, delta) > radius * radius) {
+                gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+                return;
+            }
+
+            float c = uRotation.x;
+            float s = uRotation.y;
+            vec2 srcCenter = uSrcSize * 0.5;
+            vec2 srcDelta = vec2(c * delta.x - s * delta.y,
+                                 s * delta.x + c * delta.y);
+            vec2 srcPx = srcCenter + srcDelta;
+            if (srcPx.x < 0.0 || srcPx.y < 0.0 ||
+                srcPx.x >= uSrcSize.x || srcPx.y >= uSrcSize.y) {
+                gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+                return;
+            }
+
+            vec2 srcUv = (srcPx + vec2(0.5, 0.5)) / uSrcSize;
+            gl_FragColor = texture2D(uSrcTex, srcUv);
+        }
+    )GLSL";
+
+    GLuint vertex_shader = compileCropShader(GL_VERTEX_SHADER, kVertexShader);
+    GLuint fragment_shader =
+        compileCropShader(GL_FRAGMENT_SHADER, kFragmentShader);
+
+    presenter->program = glCreateProgram();
+    glAttachShader(presenter->program, vertex_shader);
+    glAttachShader(presenter->program, fragment_shader);
+    glBindAttribLocation(presenter->program, 0, "aPos");
+    glBindAttribLocation(presenter->program, 1, "aUV");
+    glLinkProgram(presenter->program);
+
+    glDeleteShader(vertex_shader);
+    glDeleteShader(fragment_shader);
+
+    presenter->src_texture_location =
+        glGetUniformLocation(presenter->program, "uSrcTex");
+    presenter->src_size_location =
+        glGetUniformLocation(presenter->program, "uSrcSize");
+    presenter->dst_size_location =
+        glGetUniformLocation(presenter->program, "uDstSize");
+    presenter->rotation_location =
+        glGetUniformLocation(presenter->program, "uRotation");
+
+    const float quad_vertices[] = {
+        -1.0f, -1.0f, 0.0f, 0.0f,
+         1.0f, -1.0f, 1.0f, 0.0f,
+        -1.0f,  1.0f, 0.0f, 1.0f,
+         1.0f,  1.0f, 1.0f, 1.0f,
+    };
+
+    glGenVertexArrays(1, &presenter->vao);
+    glBindVertexArray(presenter->vao);
+    glGenBuffers(1, &presenter->vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, presenter->vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quad_vertices), quad_vertices,
+                 GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                          reinterpret_cast<void*>(0));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                          reinterpret_cast<void*>(2 * sizeof(float)));
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+
+    glGenFramebuffers(1, &presenter->fbo);
+}
+
+void ensureSourceRotatedCropPresenter(SourceRotatedCropPresenter* presenter) {
+    if (presenter == nullptr || presenter->program != 0) {
+        return;
+    }
+
+    static const char* kVertexShader = R"GLSL(
+        #version 130
+        attribute vec2 aPos;
+        attribute vec2 aUV;
+        varying vec2 vUV;
+
+        void main() {
+            vUV = aUV;
+            gl_Position = vec4(aPos, 0.0, 1.0);
+        }
+    )GLSL";
+
+    static const char* kFragmentShader = R"GLSL(
+        #version 130
+        uniform sampler2D uSrcTex;
+        uniform vec2 uSrcSize;
+        uniform vec2 uCropSize;
+        uniform vec2 uDstSize;
+        uniform vec4 uSrcRect;
+        uniform vec4 uDstRect;
+        uniform vec2 uRotation;
+        varying vec2 vUV;
+
+        void main() {
+            vec2 dstPx = vUV * uDstSize;
+            vec2 dstCenter = uDstSize * 0.5;
+            vec2 delta = dstPx - dstCenter;
+            float radius = min(uDstSize.x, uDstSize.y) * 0.5;
+            if (dot(delta, delta) > radius * radius) {
+                gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+                return;
+            }
+
+            float c = uRotation.x;
+            float s = uRotation.y;
+            vec2 cropCenter = uCropSize * 0.5;
+            vec2 cropPx = cropCenter + vec2(c * delta.x - s * delta.y,
+                                            s * delta.x + c * delta.y);
+
+            if (cropPx.x < uDstRect.x || cropPx.y < uDstRect.y ||
+                cropPx.x >= (uDstRect.x + uDstRect.z) ||
+                cropPx.y >= (uDstRect.y + uDstRect.w)) {
+                gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+                return;
+            }
+
+            vec2 localUv = (cropPx - uDstRect.xy) / uDstRect.zw;
+            vec2 srcPx = uSrcRect.xy + localUv * uSrcRect.zw;
+            vec2 srcUv = (srcPx + vec2(0.5, 0.5)) / uSrcSize;
+            gl_FragColor = texture2D(uSrcTex, srcUv);
+        }
+    )GLSL";
+
+    GLuint vertex_shader = compileCropShader(GL_VERTEX_SHADER, kVertexShader);
+    GLuint fragment_shader =
+        compileCropShader(GL_FRAGMENT_SHADER, kFragmentShader);
+
+    presenter->program = glCreateProgram();
+    glAttachShader(presenter->program, vertex_shader);
+    glAttachShader(presenter->program, fragment_shader);
+    glBindAttribLocation(presenter->program, 0, "aPos");
+    glBindAttribLocation(presenter->program, 1, "aUV");
+    glLinkProgram(presenter->program);
+
+    glDeleteShader(vertex_shader);
+    glDeleteShader(fragment_shader);
+
+    presenter->src_texture_location =
+        glGetUniformLocation(presenter->program, "uSrcTex");
+    presenter->src_size_location =
+        glGetUniformLocation(presenter->program, "uSrcSize");
+    presenter->crop_size_location =
+        glGetUniformLocation(presenter->program, "uCropSize");
+    presenter->dst_size_location =
+        glGetUniformLocation(presenter->program, "uDstSize");
+    presenter->src_rect_location =
+        glGetUniformLocation(presenter->program, "uSrcRect");
+    presenter->dst_rect_location =
+        glGetUniformLocation(presenter->program, "uDstRect");
+    presenter->rotation_location =
+        glGetUniformLocation(presenter->program, "uRotation");
+
+    const float quad_vertices[] = {
+        -1.0f, -1.0f, 0.0f, 0.0f,
+         1.0f, -1.0f, 1.0f, 0.0f,
+        -1.0f,  1.0f, 0.0f, 1.0f,
+         1.0f,  1.0f, 1.0f, 1.0f,
+    };
+
+    glGenVertexArrays(1, &presenter->vao);
+    glBindVertexArray(presenter->vao);
+    glGenBuffers(1, &presenter->vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, presenter->vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quad_vertices), quad_vertices,
+                 GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                          reinterpret_cast<void*>(0));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                          reinterpret_cast<void*>(2 * sizeof(float)));
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+
+    glGenFramebuffers(1, &presenter->fbo);
+}
+
+void ensureCropTexture(CropPreviewWindowState& state,
+                       unsigned int width,
+                       unsigned int height) {
+    if (state.crop_texture == 0) {
+        create_texture(&state.crop_texture);
+    }
+    if (state.last_width == width && state.last_height == height &&
+        state.last_channels == 4) {
+        return;
+    }
+    bind_texture(&state.crop_texture);
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,
+                 GL_RGBA,
+                 static_cast<GLsizei>(width),
+                 static_cast<GLsizei>(height),
+                 0,
+                 GL_RGBA,
+                 GL_UNSIGNED_BYTE,
+                 nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    unbind_texture();
+}
+
+void ensureRotatedCropTexture(CropPreviewWindowState& state,
+                              unsigned int side) {
+    if (state.rotated_crop_texture == 0) {
+        create_texture(&state.rotated_crop_texture);
+        state.rotated_width = 0;
+        state.rotated_height = 0;
+    }
+    if (state.rotated_width == side && state.rotated_height == side) {
+        return;
+    }
+    bind_texture(&state.rotated_crop_texture);
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,
+                 GL_RGBA,
+                 static_cast<GLsizei>(side),
+                 static_cast<GLsizei>(side),
+                 0,
+                 GL_RGBA,
+                 GL_UNSIGNED_BYTE,
+                 nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    unbind_texture();
+    state.rotated_width = side;
+    state.rotated_height = side;
+}
+
+bool renderCropTexture(CropPreviewWindowState& state,
+                       const CropTextureView& crop_texture_view) {
+    if (!crop_texture_view.valid()) {
+        return false;
+    }
+
+    static CropTexturePresenter presenter;
+    ensureCropTexturePresenter(&presenter);
+    ensureCropTexture(state,
+                      static_cast<unsigned int>(crop_texture_view.output_width),
+                      static_cast<unsigned int>(crop_texture_view.output_height));
+
+    GLint previous_framebuffer = 0;
+    GLint previous_program = 0;
+    GLint previous_vertex_array = 0;
+    GLint previous_array_buffer = 0;
+    GLint previous_active_texture = 0;
+    GLint previous_texture0 = 0;
+    GLint previous_viewport[4] = {0, 0, 0, 0};
+    GLfloat previous_clear_color[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous_framebuffer);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &previous_program);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &previous_vertex_array);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &previous_array_buffer);
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &previous_active_texture);
+    glGetFloatv(GL_COLOR_CLEAR_VALUE, previous_clear_color);
+    glGetIntegerv(GL_VIEWPORT, previous_viewport);
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture0);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, presenter.fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,
+                           GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D,
+                           state.crop_texture,
+                           0);
+    glViewport(0, 0, crop_texture_view.output_width, crop_texture_view.output_height);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glUseProgram(presenter.program);
+    glUniform1i(presenter.src_texture_location, 0);
+    glUniform2f(presenter.src_size_location,
+                static_cast<float>(crop_texture_view.source_texture_width),
+                static_cast<float>(crop_texture_view.source_texture_height));
+    glUniform2f(presenter.dst_size_location,
+                static_cast<float>(crop_texture_view.output_width),
+                static_cast<float>(crop_texture_view.output_height));
+    glUniform4f(presenter.src_rect_location,
+                static_cast<float>(crop_texture_view.source_rect.x),
+                static_cast<float>(crop_texture_view.source_rect.y),
+                static_cast<float>(crop_texture_view.source_rect.width),
+                static_cast<float>(crop_texture_view.source_rect.height));
+    glUniform4f(presenter.dst_rect_location,
+                static_cast<float>(crop_texture_view.destination_rect.x),
+                static_cast<float>(crop_texture_view.destination_rect.y),
+                static_cast<float>(crop_texture_view.destination_rect.width),
+                static_cast<float>(crop_texture_view.destination_rect.height));
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, crop_texture_view.source_texture_id);
+    glBindVertexArray(presenter.vao);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    glBindVertexArray(previous_vertex_array);
+    glBindBuffer(GL_ARRAY_BUFFER, previous_array_buffer);
+    glUseProgram(previous_program);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, previous_texture0);
+    glActiveTexture(previous_active_texture);
+    glBindFramebuffer(GL_FRAMEBUFFER, previous_framebuffer);
+    glViewport(previous_viewport[0], previous_viewport[1], previous_viewport[2],
+               previous_viewport[3]);
+    glClearColor(previous_clear_color[0],
+                 previous_clear_color[1],
+                 previous_clear_color[2],
+                 previous_clear_color[3]);
+    return true;
+}
+
+bool renderRotatedCropTexture(CropPreviewWindowState& state,
+                              float angle_degrees) {
+    if (state.crop_texture == 0 || state.last_width == 0 || state.last_height == 0) {
+        return false;
+    }
+
+    const unsigned int output_side =
+        static_cast<unsigned int>(std::min(state.last_width, state.last_height));
+    if (output_side == 0) {
+        return false;
+    }
+
+    static RotatedCropPresenter presenter;
+    ensureRotatedCropPresenter(&presenter);
+    ensureRotatedCropTexture(state, output_side);
+
+    const float radians = angle_degrees * (3.14159265f / 180.0f);
+    const float c = std::cos(radians);
+    const float s = std::sin(radians);
+
+    GLint previous_framebuffer = 0;
+    GLint previous_program = 0;
+    GLint previous_vertex_array = 0;
+    GLint previous_array_buffer = 0;
+    GLint previous_active_texture = 0;
+    GLint previous_texture0 = 0;
+    GLint previous_viewport[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous_framebuffer);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &previous_program);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &previous_vertex_array);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &previous_array_buffer);
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &previous_active_texture);
+    glGetIntegerv(GL_VIEWPORT, previous_viewport);
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture0);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, presenter.fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,
+                           GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D,
+                           state.rotated_crop_texture,
+                           0);
+    glViewport(0, 0, static_cast<GLsizei>(output_side),
+               static_cast<GLsizei>(output_side));
+    glUseProgram(presenter.program);
+    glUniform1i(presenter.src_texture_location, 0);
+    glUniform2f(presenter.src_size_location,
+                static_cast<float>(state.last_width),
+                static_cast<float>(state.last_height));
+    glUniform2f(presenter.dst_size_location,
+                static_cast<float>(output_side),
+                static_cast<float>(output_side));
+    glUniform2f(presenter.rotation_location, c, s);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, state.crop_texture);
+    glBindVertexArray(presenter.vao);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    glBindVertexArray(previous_vertex_array);
+    glBindBuffer(GL_ARRAY_BUFFER, previous_array_buffer);
+    glUseProgram(previous_program);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, previous_texture0);
+    glActiveTexture(previous_active_texture);
+    glBindFramebuffer(GL_FRAMEBUFFER, previous_framebuffer);
+    glViewport(previous_viewport[0], previous_viewport[1], previous_viewport[2],
+               previous_viewport[3]);
+    return true;
+}
+
+bool renderRotatedCropTextureFromSource(CropPreviewWindowState& state,
+                                        const CropTextureView& crop_texture_view,
+                                        float angle_degrees) {
+    if (!crop_texture_view.valid()) {
+        return false;
+    }
+
+    const unsigned int output_side = static_cast<unsigned int>(
+        std::min(crop_texture_view.output_width, crop_texture_view.output_height));
+    if (output_side == 0) {
+        return false;
+    }
+
+    static SourceRotatedCropPresenter presenter;
+    ensureSourceRotatedCropPresenter(&presenter);
+    ensureRotatedCropTexture(state, output_side);
+
+    const float radians = angle_degrees * (3.14159265f / 180.0f);
+    const float c = std::cos(radians);
+    const float s = std::sin(radians);
+
+    GLint previous_framebuffer = 0;
+    GLint previous_program = 0;
+    GLint previous_vertex_array = 0;
+    GLint previous_array_buffer = 0;
+    GLint previous_active_texture = 0;
+    GLint previous_texture0 = 0;
+    GLint previous_viewport[4] = {0, 0, 0, 0};
+    GLfloat previous_clear_color[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous_framebuffer);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &previous_program);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &previous_vertex_array);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &previous_array_buffer);
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &previous_active_texture);
+    glGetFloatv(GL_COLOR_CLEAR_VALUE, previous_clear_color);
+    glGetIntegerv(GL_VIEWPORT, previous_viewport);
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture0);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, presenter.fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,
+                           GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D,
+                           state.rotated_crop_texture,
+                           0);
+    glViewport(0, 0, static_cast<GLsizei>(output_side),
+               static_cast<GLsizei>(output_side));
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glUseProgram(presenter.program);
+    glUniform1i(presenter.src_texture_location, 0);
+    glUniform2f(presenter.src_size_location,
+                static_cast<float>(crop_texture_view.source_texture_width),
+                static_cast<float>(crop_texture_view.source_texture_height));
+    glUniform2f(presenter.crop_size_location,
+                static_cast<float>(crop_texture_view.output_width),
+                static_cast<float>(crop_texture_view.output_height));
+    glUniform2f(presenter.dst_size_location,
+                static_cast<float>(output_side),
+                static_cast<float>(output_side));
+    glUniform4f(presenter.src_rect_location,
+                static_cast<float>(crop_texture_view.source_rect.x),
+                static_cast<float>(crop_texture_view.source_rect.y),
+                static_cast<float>(crop_texture_view.source_rect.width),
+                static_cast<float>(crop_texture_view.source_rect.height));
+    glUniform4f(presenter.dst_rect_location,
+                static_cast<float>(crop_texture_view.destination_rect.x),
+                static_cast<float>(crop_texture_view.destination_rect.y),
+                static_cast<float>(crop_texture_view.destination_rect.width),
+                static_cast<float>(crop_texture_view.destination_rect.height));
+    glUniform2f(presenter.rotation_location, c, s);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, crop_texture_view.source_texture_id);
+    glBindVertexArray(presenter.vao);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    glBindVertexArray(previous_vertex_array);
+    glBindBuffer(GL_ARRAY_BUFFER, previous_array_buffer);
+    glUseProgram(previous_program);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, previous_texture0);
+    glActiveTexture(previous_active_texture);
+    glBindFramebuffer(GL_FRAMEBUFFER, previous_framebuffer);
+    glViewport(previous_viewport[0], previous_viewport[1], previous_viewport[2],
+               previous_viewport[3]);
+    glClearColor(previous_clear_color[0],
+                 previous_clear_color[1],
+                 previous_clear_color[2],
+                 previous_clear_color[3]);
+    return true;
+}
 
 const char* cropImageOriginLabel(CropImageView::Origin origin) {
     switch (origin) {
@@ -135,7 +787,9 @@ ResolvedCropPreviewSelection resolveCropPreviewSelection(
 
 void buildRotatedCropPreview(const CropPreviewWindowContext& context,
                              CropPreviewWindowState& state,
-                             const CropImageView& crop_view,
+                             size_t crop_width,
+                             size_t crop_height,
+                             const CropTextureView* crop_texture_view,
                              int32_t crop_roi_index,
                              const std::optional<RefinedKeypointSelection>&
                                  selected_keypoint_selection) {
@@ -198,64 +852,17 @@ void buildRotatedCropPreview(const CropPreviewWindowContext& context,
     state.stored_heading_valid = true;
 
     const float angle = -state.stored_heading_deg;
-    const int width = static_cast<int>(crop_view.width);
-    const int height = static_cast<int>(crop_view.height);
-    cv::Point2f center(width / 2.0f, height / 2.0f);
-    cv::Mat rot_mat = cv::getRotationMatrix2D(center, angle, 1.0);
-    cv::Rect2f bbox =
-        cv::RotatedRect(center,
-                        cv::Size2f(static_cast<float>(width),
-                                   static_cast<float>(height)),
-                        angle)
-            .boundingRect2f();
-    rot_mat.at<double>(0, 2) += bbox.width / 2.0 - center.x;
-    rot_mat.at<double>(1, 2) += bbox.height / 2.0 - center.y;
-    int new_width = static_cast<int>(std::ceil(bbox.width));
-    int new_height = static_cast<int>(std::ceil(bbox.height));
-
-    cv::Mat src(height, width, CV_8UC4, state.crop_rgba_buffer.data());
-    cv::Mat dst;
-    cv::warpAffine(src,
-                   dst,
-                   rot_mat,
-                   cv::Size(new_width, new_height),
-                   cv::INTER_LINEAR,
-                   cv::BORDER_CONSTANT,
-                   cv::Scalar(0, 0, 0, 0));
-
-    const float radius = std::min(width, height) / 2.0f;
-    cv::Point2f new_center(new_width / 2.0f, new_height / 2.0f);
-    for (int row = 0; row < new_height; ++row) {
-        uint8_t* ptr = dst.ptr<uint8_t>(row);
-        for (int col = 0; col < new_width; ++col) {
-            const float dx = col + 0.5f - new_center.x;
-            const float dy = row + 0.5f - new_center.y;
-            if (dx * dx + dy * dy > radius * radius) {
-                ptr[col * 4 + 0] = 0;
-                ptr[col * 4 + 1] = 0;
-                ptr[col * 4 + 2] = 0;
-                ptr[col * 4 + 3] = 0;
-            }
-        }
-    }
-
+    const int width = static_cast<int>(crop_width);
+    const int height = static_cast<int>(crop_height);
     const int crop_side = std::min(width, height);
-    const int crop_x = new_width / 2 - crop_side / 2;
-    const int crop_y = new_height / 2 - crop_side / 2;
-    dst = dst(cv::Rect(crop_x, crop_y, crop_side, crop_side)).clone();
-    new_width = crop_side;
-    new_height = crop_side;
-
-    state.rotated_rgba_buffer.assign(dst.data, dst.data + dst.total() * 4);
-    state.rotated_width = static_cast<unsigned int>(new_width);
-    state.rotated_height = static_cast<unsigned int>(new_height);
-    if (state.rotated_crop_texture == 0) {
-        create_texture(&state.rotated_crop_texture);
+    const bool rotated_rendered =
+        crop_side > 0 &&
+        ((crop_texture_view != nullptr &&
+          renderRotatedCropTextureFromSource(state, *crop_texture_view, angle)) ||
+         renderRotatedCropTexture(state, angle));
+    if (!rotated_rendered) {
+        return;
     }
-    upload_texture(&state.rotated_crop_texture,
-                   state.rotated_rgba_buffer.data(),
-                   state.rotated_width,
-                   state.rotated_height);
     state.rotated_valid = true;
 
     state.rotated_kp_edges = det.skeleton_edges;
@@ -281,12 +888,12 @@ void buildRotatedCropPreview(const CropPreviewWindowContext& context,
         return;
     }
 
-    const double r0 = rot_mat.at<double>(0, 0);
-    const double r1 = rot_mat.at<double>(0, 1);
-    const double r2 = rot_mat.at<double>(0, 2);
-    const double r3 = rot_mat.at<double>(1, 0);
-    const double r4 = rot_mat.at<double>(1, 1);
-    const double r5 = rot_mat.at<double>(1, 2);
+    const float radians = angle * (3.14159265f / 180.0f);
+    const float c = std::cos(radians);
+    const float s = std::sin(radians);
+    const float crop_center_x = width * 0.5f;
+    const float crop_center_y = height * 0.5f;
+    const float output_center = crop_side * 0.5f;
 
     float left_x = NAN;
     float left_y = NAN;
@@ -305,8 +912,10 @@ void buildRotatedCropPreview(const CropPreviewWindowContext& context,
             const float px = keypoints[ki][0] - offset_x;
             const float py = keypoints[ki][1] - offset_y;
             state.crop_kp_positions.push_back({px, py});
-            const float rx = static_cast<float>(r0 * px + r1 * py + r2) - crop_x;
-            const float ry = static_cast<float>(r3 * px + r4 * py + r5) - crop_y;
+            const float dx = px - crop_center_x;
+            const float dy = py - crop_center_y;
+            const float rx = c * dx + s * dy + output_center;
+            const float ry = -s * dx + c * dy + output_center;
             state.rotated_kp_positions.push_back({rx, ry});
         }
 
@@ -355,18 +964,51 @@ bool refreshCropPreview(const CropPreviewWindowContext& context,
                         const std::string& crop_roi_source,
                         const std::optional<RefinedKeypointSelection>&
                             selected_keypoint_selection) {
-    const auto now_steady = std::chrono::steady_clock::now();
-    const bool playback_refresh_due =
-        !context.play_video ||
-        state.last_crop_preview_refresh_time ==
-            std::chrono::steady_clock::time_point{} ||
-        (now_steady - state.last_crop_preview_refresh_time) >=
-            kCropPreviewPlaybackRefreshInterval;
     const bool frame_changed =
         context.current_frame_num != state.last_crop_preview_source_frame;
-    const bool should_refresh_preview =
-        !context.play_video || !frame_changed || playback_refresh_due;
-    if (!should_refresh_preview) {
+    const bool roi_changed = crop_roi_index != state.last_roi_index;
+    const bool rotated_requested = state.preview_ui_state.show_rotated_crop;
+    const bool need_rotated_refresh =
+        rotated_requested && (!state.rotated_valid || frame_changed || roi_changed);
+    if (!frame_changed && !roi_changed && !need_rotated_refresh) {
+        return state.crop_texture != 0 && state.displayed_crop_roi_index >= 0 &&
+               state.last_width > 0 && state.last_height > 0;
+    }
+
+    CropTextureView crop_texture_view;
+    if (context.crop_image_provider.getCropTextureForIndex(crop_roi_index,
+                                                           crop_texture_view)) {
+        const bool needs_render =
+            state.crop_texture == 0 || crop_roi_index != state.last_roi_index ||
+            static_cast<size_t>(crop_texture_view.output_width) != state.last_width ||
+            static_cast<size_t>(crop_texture_view.output_height) !=
+                state.last_height ||
+            frame_changed;
+        if (needs_render && !renderCropTexture(state, crop_texture_view)) {
+            return false;
+        }
+
+        state.last_roi_index = crop_roi_index;
+        state.last_width = static_cast<size_t>(crop_texture_view.output_width);
+        state.last_height = static_cast<size_t>(crop_texture_view.output_height);
+        state.last_channels = 4;
+        state.displayed_crop_roi_index = crop_roi_index;
+        state.displayed_crop_source_frame = context.current_frame_num;
+        state.displayed_crop_source_label =
+            crop_roi_source + " | live frame texture crop";
+        state.last_crop_preview_source_frame = context.current_frame_num;
+
+        if (rotated_requested) {
+            buildRotatedCropPreview(context,
+                                    state,
+                                    state.last_width,
+                                    state.last_height,
+                                    &crop_texture_view,
+                                    crop_roi_index,
+                                    selected_keypoint_selection);
+        } else {
+            state.rotated_valid = false;
+        }
         return state.crop_texture != 0 && state.displayed_crop_roi_index >= 0 &&
                state.last_width > 0 && state.last_height > 0;
     }
@@ -424,10 +1066,26 @@ bool refreshCropPreview(const CropPreviewWindowContext& context,
         state.displayed_crop_source_label =
             crop_roi_source + " | " + cropImageOriginLabel(crop_view.origin);
         state.last_crop_preview_source_frame = context.current_frame_num;
-        state.last_crop_preview_refresh_time = now_steady;
 
-        buildRotatedCropPreview(
-            context, state, crop_view, crop_roi_index, selected_keypoint_selection);
+        if (rotated_requested) {
+            buildRotatedCropPreview(context,
+                                    state,
+                                    crop_view.width,
+                                    crop_view.height,
+                                    nullptr,
+                                    crop_roi_index,
+                                    selected_keypoint_selection);
+        } else {
+            state.rotated_valid = false;
+        }
+    } else if (need_rotated_refresh) {
+        buildRotatedCropPreview(context,
+                                state,
+                                crop_view.width,
+                                crop_view.height,
+                                nullptr,
+                                crop_roi_index,
+                                selected_keypoint_selection);
     }
 
     return state.crop_texture != 0 && state.displayed_crop_roi_index >= 0 &&

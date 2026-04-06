@@ -430,9 +430,6 @@ CropKeypointPreviewPanelResult drawCropKeypointPreviewPanel(
     ImGui::Checkbox("Rotated", &ui_state.show_rotated_crop);
     ImGui::SameLine();
     ImGui::Checkbox("Heading", &ui_state.show_heading_arrow);
-    if (context.play_video) {
-        ImGui::TextDisabled("Playback preview throttled to 10 Hz");
-    }
 
     ImVec2 image_size(static_cast<float>(context.crop_width),
                       static_cast<float>(context.crop_height));
@@ -500,7 +497,7 @@ CropKeypointPreviewPanelResult drawCropKeypointPreviewPanel(
         }
         drawHeadingArrowAt(ui_state.show_heading_arrow,
                            context.editor_context.stored_heading_valid,
-                           context.editor_context.stored_heading_deg,
+                           0.0f,
                            context.rotated.arrow_origin,
                            context.rotated.arrow_origin_valid,
                            rotated_top_left,
