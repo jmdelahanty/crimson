@@ -9,10 +9,6 @@
 
 namespace {
 
-int roundToPixel(float value) {
-    return static_cast<int>(std::lround(static_cast<double>(value)));
-}
-
 }  // namespace
 
 LiveCropImageProvider::LiveCropImageProvider(const ZarrDetectionLoader& loader,
@@ -84,16 +80,35 @@ bool LiveCropImageProvider::ensureFrameRgba() const {
     return true;
 }
 
+bool LiveCropImageProvider::resolveCropSpec(int32_t roi_index,
+                                            CropSpec& out_spec) const {
+    out_spec = {};
+    const auto metadata = loader_.getCropRoiMetadataForRoiIndex(roi_index);
+    if (!metadata.valid || !metadata.has_crop_metadata) {
+        return false;
+    }
+    out_spec.roi_index = roi_index;
+    out_spec.offset_x = metadata.offset_x;
+    out_spec.offset_y = metadata.offset_y;
+    out_spec.width_px = metadata.roi_width;
+    out_spec.height_px = metadata.roi_height;
+    out_spec.valid = true;
+    return true;
+}
+
 bool LiveCropImageProvider::getCropImageForIndex(int32_t roi_index,
                                                  CropImageView& out_view) const {
     out_view = {};
-    if (!frame_source_.valid() ||
-        frame_source_.frame_number < 0) {
+    if (!frame_source_.valid() || frame_source_.frame_number < 0) {
         return false;
     }
 
-    const auto metadata = loader_.getCropRoiMetadataForRoiIndex(roi_index);
-    if (!metadata.valid || !metadata.has_crop_metadata) {
+    CropSpec crop_spec;
+    if (!resolveCropSpec(roi_index, crop_spec)) {
+        return false;
+    }
+    const CropRect crop_rect = crop_spec.toPixelRect();
+    if (!crop_rect.valid()) {
         return false;
     }
 
@@ -109,12 +124,9 @@ bool LiveCropImageProvider::getCropImageForIndex(int32_t roi_index,
         return false;
     }
 
-    const int crop_x = roundToPixel(metadata.offset_x);
-    const int crop_y = roundToPixel(metadata.offset_y);
-    const int crop_width = std::max(1, roundToPixel(metadata.roi_width));
-    const int crop_height = std::max(1, roundToPixel(metadata.roi_height));
     const size_t crop_bytes =
-        static_cast<size_t>(crop_width) * static_cast<size_t>(crop_height) * 4;
+        static_cast<size_t>(crop_rect.width) *
+        static_cast<size_t>(crop_rect.height) * 4;
     crop_rgba_buffer_.assign(crop_bytes, 0);
 
     const int frame_stride =
@@ -123,36 +135,40 @@ bool LiveCropImageProvider::getCropImageForIndex(int32_t roi_index,
                                              : frame_source_.width * 4)
             : frame_source_.width * 4;
 
-    const int copy_x0 = std::max(0, crop_x);
-    const int copy_y0 = std::max(0, crop_y);
-    const int copy_x1 = std::min(frame_source_.width, crop_x + crop_width);
-    const int copy_y1 = std::min(frame_source_.height, crop_y + crop_height);
+    const int copy_x0 = std::max(0, crop_rect.x);
+    const int copy_y0 = std::max(0, crop_rect.y);
+    const int copy_x1 =
+        std::min(frame_source_.width, crop_rect.x + crop_rect.width);
+    const int copy_y1 =
+        std::min(frame_source_.height, crop_rect.y + crop_rect.height);
     if (copy_x0 >= copy_x1 || copy_y0 >= copy_y1) {
         out_view.data = crop_rgba_buffer_.data();
-        out_view.width = static_cast<size_t>(crop_width);
-        out_view.height = static_cast<size_t>(crop_height);
+        out_view.width = static_cast<size_t>(crop_rect.width);
+        out_view.height = static_cast<size_t>(crop_rect.height);
         out_view.channels = 4;
+        out_view.origin = CropImageView::Origin::LiveFrame;
         return true;
     }
 
     const int copy_width = copy_x1 - copy_x0;
     for (int row = copy_y0; row < copy_y1; ++row) {
         const int src_row = row;
-        const int dst_row = row - crop_y;
-        const int dst_x = copy_x0 - crop_x;
+        const int dst_row = row - crop_rect.y;
+        const int dst_x = copy_x0 - crop_rect.x;
         const uint8_t* src =
             frame_rgba + static_cast<size_t>(src_row) * frame_stride +
             static_cast<size_t>(copy_x0) * 4;
         uint8_t* dst = crop_rgba_buffer_.data() +
-                       static_cast<size_t>(dst_row) * crop_width * 4 +
+                       static_cast<size_t>(dst_row) * crop_rect.width * 4 +
                        static_cast<size_t>(dst_x) * 4;
         std::memcpy(dst, src, static_cast<size_t>(copy_width) * 4);
     }
 
     out_view.data = crop_rgba_buffer_.data();
-    out_view.width = static_cast<size_t>(crop_width);
-    out_view.height = static_cast<size_t>(crop_height);
+    out_view.width = static_cast<size_t>(crop_rect.width);
+    out_view.height = static_cast<size_t>(crop_rect.height);
     out_view.channels = 4;
+    out_view.origin = CropImageView::Origin::LiveFrame;
     return true;
 }
 

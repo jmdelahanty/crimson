@@ -20,6 +20,18 @@ struct ResolvedCropPreviewSelection {
     std::optional<RefinedKeypointSelection> selected_keypoint_selection;
 };
 
+const char* cropImageOriginLabel(CropImageView::Origin origin) {
+    switch (origin) {
+    case CropImageView::Origin::LiveFrame:
+        return "live frame crop";
+    case CropImageView::Origin::PersistedZarr:
+        return "persisted zarr crop";
+    case CropImageView::Origin::Unknown:
+    default:
+        return "crop source unresolved";
+    }
+}
+
 void clearCropPreviewState(CropPreviewWindowState& state) {
     state.last_roi_index = -1;
     state.displayed_crop_roi_index = -1;
@@ -75,6 +87,37 @@ ResolvedCropPreviewSelection resolveCropPreviewSelection(
                 resolved.crop_roi_source = "movement ROI";
                 return resolved;
             }
+        }
+    }
+
+    auto frame_detections =
+        context.zarr_loader.getRawDetections(
+            static_cast<size_t>(context.current_frame_num), false, true);
+    const size_t detection_count = frame_detections.boxes.size();
+    for (size_t detection_idx = 0; detection_idx < detection_count; ++detection_idx) {
+        auto selection =
+            context.refined_keypoint_repo.resolveFrameDetectionSelection(
+                static_cast<size_t>(context.current_frame_num), detection_idx, false);
+        if (selection.roi_metadata.valid && selection.roi_metadata.has_crop_metadata) {
+            resolved.crop_roi_index = selection.roi_index;
+            resolved.crop_roi_source =
+                selection.editable ? "frame refined keypoint ROI"
+                                   : "frame keypoint ROI";
+            if (selection.valid) {
+                resolved.selected_keypoint_selection = selection;
+            }
+            return resolved;
+        }
+    }
+    for (const auto& eye_mask : frame_detections.eye_masks) {
+        if (eye_mask.roi_index >= 0 &&
+            std::isfinite(eye_mask.offset_x) &&
+            std::isfinite(eye_mask.offset_y) &&
+            eye_mask.roi_width > 0.0f &&
+            eye_mask.roi_height > 0.0f) {
+            resolved.crop_roi_index = eye_mask.roi_index;
+            resolved.crop_roi_source = "frame eye-mask ROI";
+            return resolved;
         }
     }
 
@@ -378,7 +421,8 @@ bool refreshCropPreview(const CropPreviewWindowContext& context,
         state.last_channels = crop_view.channels;
         state.displayed_crop_roi_index = crop_roi_index;
         state.displayed_crop_source_frame = context.current_frame_num;
-        state.displayed_crop_source_label = crop_roi_source;
+        state.displayed_crop_source_label =
+            crop_roi_source + " | " + cropImageOriginLabel(crop_view.origin);
         state.last_crop_preview_source_frame = context.current_frame_num;
         state.last_crop_preview_refresh_time = now_steady;
 

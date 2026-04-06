@@ -13,6 +13,7 @@ bool ZarrPersistedCropProvider::getCropImageForIndex(
     out_view.width = loader_view.width;
     out_view.height = loader_view.height;
     out_view.channels = loader_view.channels;
+    out_view.origin = CropImageView::Origin::PersistedZarr;
     return true;
 }
 

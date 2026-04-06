@@ -17,6 +17,7 @@ public:
 
 private:
     bool ensureFrameRgba() const;
+    bool resolveCropSpec(int32_t roi_index, CropSpec& out_spec) const;
 
     const ZarrDetectionLoader& loader_;
     CropFrameSource frame_source_;
