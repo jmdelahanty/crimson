@@ -11,6 +11,7 @@ Preferred:
 
 Or from PowerShell:
 - run `install_crimson.ps1`
+- add `-CreateDesktopShortcut` if you want the installer to create a Desktop shortcut
 
 Default install location:
 - `%LOCALAPPDATA%\Crimson`
@@ -39,6 +40,12 @@ PowerShell:
 
 Double-click:
 - run `install_crimson.cmd`
+
+Desktop shortcut
+----------------
+
+- `install_crimson.cmd` does not create a Desktop shortcut by default
+- use `install_crimson.ps1 -CreateDesktopShortcut` if you want one created automatically
 
 Notes
 -----
