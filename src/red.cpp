@@ -40,9 +40,11 @@
 #include <cstdlib>
 #include <fstream>
 #include "perf_logging.h"
+#include "manual_detect_payload_preview.h"
 #include "chained_crop_image_provider.h"
 #include "live_crop_image_provider.h"
 #include "refined_keypoint_repository.h"
+#include "review_frame_index.h"
 #include "zarr_persisted_crop_provider.h"
 #include "zarr_loader.h"
 #include "gui/file_browser_window.h"
@@ -899,24 +901,6 @@ int main(int argc, char **argv) {
         static_cast<uint32_t>(
             std::chrono::high_resolution_clock::now().time_since_epoch().count()));
 
-    struct ManualDetectPayloadPreview {
-        size_t total_frames = 0;
-        size_t total_detections = 0;
-        size_t clean_rows = 0;
-        size_t interpolated_rows = 0;
-        size_t manual_rows = 0;
-        bool valid = false;
-        std::string error;
-        std::vector<int32_t> frame_indices;
-        std::vector<std::array<double, 4>> bbox_norm_coords;
-        std::vector<float> scores;
-        std::vector<int32_t> class_ids;
-        std::vector<int32_t> frame_counts;
-        std::vector<int32_t> n_detections;
-        std::vector<int32_t> frame_mapping;
-        std::vector<int8_t> detection_source;
-        std::vector<std::string> reason;
-    };
     std::optional<ManualDetectPayloadPreview> manual_payload_preview;
     static int manual_write_intended_use = 0;  // 0 = full_recording, 1 = training
     static int manual_write_review_state = 0;  // 0 = approved, 1 = needs_review, 2 = pending, 3 = rejected
@@ -941,232 +925,6 @@ int main(int argc, char **argv) {
             }
         }
         return value;
-    };
-
-    auto buildManualDetectPayloadPreview = [&]() -> ManualDetectPayloadPreview {
-        ManualDetectPayloadPreview preview;
-        if (!zarr_loaded || !zarr_loader.hasDetectionData()) {
-            preview.error = "No active Zarr detection dataset.";
-            return preview;
-        }
-        preview.total_frames = zarr_loader.getTotalFrames();
-        if (preview.total_frames == 0) {
-            preview.error = "Active dataset has zero frames.";
-            return preview;
-        }
-
-        int image_width = zarr_loader.getImageWidth();
-        int image_height = zarr_loader.getImageHeight();
-        if (image_width <= 0 || image_height <= 0) {
-            if (scene->num_cams > 0) {
-                image_width = static_cast<int>(scene->cameras[0].image_width);
-                image_height = static_cast<int>(scene->cameras[0].image_height);
-            }
-        }
-        if (image_width <= 0 || image_height <= 0) {
-            preview.error = "Could not resolve image dimensions for bbox normalization.";
-            return preview;
-        }
-
-        auto toNormalizedCxCyWh = [&](float x_min,
-                                      float y_min,
-                                      float width,
-                                      float height) -> std::array<double, 4> {
-            const double max_w = static_cast<double>(image_width);
-            const double max_h = static_cast<double>(image_height);
-            const double clamped_x_min =
-                std::clamp(static_cast<double>(x_min), 0.0, max_w);
-            const double clamped_y_min =
-                std::clamp(static_cast<double>(y_min), 0.0, max_h);
-            const double clamped_width = std::clamp(
-                static_cast<double>(width), 0.0, std::max(0.0, max_w - clamped_x_min));
-            const double clamped_height = std::clamp(
-                static_cast<double>(height), 0.0, std::max(0.0, max_h - clamped_y_min));
-            const double cx = (clamped_x_min + 0.5 * clamped_width) / max_w;
-            const double cy = (clamped_y_min + 0.5 * clamped_height) / max_h;
-            const double w = clamped_width / max_w;
-            const double h = clamped_height / max_h;
-            return {
-                std::clamp(cx, 0.0, 1.0),
-                std::clamp(cy, 0.0, 1.0),
-                std::clamp(w, 0.0, 1.0),
-                std::clamp(h, 0.0, 1.0)};
-        };
-
-        auto resolveReasonAndSource = [&](bool force_manual,
-                                          uint8_t source_flag,
-                                          const std::string& source_reason)
-            -> std::pair<int8_t, std::string> {
-            if (force_manual) {
-                return {0, "manual"};
-            }
-            const std::string lowered = ToLowerCopy(source_reason);
-            if (!lowered.empty()) {
-                if (lowered == "manual" ||
-                    lowered.find("manual") != std::string::npos) {
-                    return {0, "manual"};
-                }
-                if (lowered == "interpolated" ||
-                    lowered.find("interp") != std::string::npos) {
-                    return {1, "interpolated"};
-                }
-                if (lowered == "clean") {
-                    return {0, "clean"};
-                }
-            }
-            return {source_flag != 0 ? 1 : 0, source_flag != 0 ? "interpolated" : "clean"};
-        };
-
-        auto countReason = [&](const std::string& reason) {
-            if (reason == "manual") {
-                ++preview.manual_rows;
-            } else if (reason == "interpolated") {
-                ++preview.interpolated_rows;
-            } else {
-                ++preview.clean_rows;
-            }
-        };
-
-        preview.frame_counts.reserve(preview.total_frames);
-        for (size_t frame_id = 0; frame_id < preview.total_frames; ++frame_id) {
-            int32_t frame_count = 0;
-            const bool has_override =
-                g_zarr_bbox_edit_state.hasFrameOverride(static_cast<int>(frame_id));
-            auto base_detections = zarr_loader.getRawDetections(frame_id, false, false);
-
-            if (!has_override) {
-                for (size_t det_idx = 0; det_idx < base_detections.boxes.size(); ++det_idx) {
-                    const auto& box = base_detections.boxes[det_idx];
-                    const float x_min = box[0];
-                    const float y_min = box[1];
-                    const float width = std::max(0.0f, box[2] - box[0]);
-                    const float height = std::max(0.0f, box[3] - box[1]);
-
-                    preview.frame_indices.push_back(static_cast<int32_t>(frame_id));
-                    preview.bbox_norm_coords.push_back(
-                        toNormalizedCxCyWh(x_min, y_min, width, height));
-                    preview.scores.push_back(
-                        det_idx < base_detections.scores.size()
-                            ? base_detections.scores[det_idx]
-                            : 1.0f);
-                    preview.class_ids.push_back(
-                        det_idx < base_detections.class_ids.size()
-                            ? base_detections.class_ids[det_idx]
-                            : 0);
-                    const uint8_t source_flag =
-                        det_idx < base_detections.detection_source.size()
-                            ? base_detections.detection_source[det_idx]
-                            : 0;
-                    const std::string source_reason =
-                        det_idx < base_detections.detection_reason.size()
-                            ? base_detections.detection_reason[det_idx]
-                            : std::string{};
-                    auto [resolved_source, resolved_reason] =
-                        resolveReasonAndSource(false, source_flag, source_reason);
-                    preview.detection_source.push_back(resolved_source);
-                    preview.reason.push_back(resolved_reason);
-                    countReason(resolved_reason);
-                    ++frame_count;
-                }
-            } else {
-                auto override_it =
-                    g_zarr_bbox_edit_state.frame_overrides.find(static_cast<int>(frame_id));
-                if (override_it == g_zarr_bbox_edit_state.frame_overrides.end()) {
-                    preview.error = "Dirty frame override state is inconsistent.";
-                    return preview;
-                }
-                const auto& boxes = override_it->second;
-                const auto* added_flags = [&]() -> const std::vector<uint8_t>* {
-                    auto it = g_zarr_bbox_edit_state.frame_added_flags.find(
-                        static_cast<int>(frame_id));
-                    return (it != g_zarr_bbox_edit_state.frame_added_flags.end())
-                               ? &it->second
-                               : nullptr;
-                }();
-                const auto* manual_flags = [&]() -> const std::vector<uint8_t>* {
-                    auto it = g_zarr_bbox_edit_state.frame_manual_flags.find(
-                        static_cast<int>(frame_id));
-                    return (it != g_zarr_bbox_edit_state.frame_manual_flags.end())
-                               ? &it->second
-                               : nullptr;
-                }();
-                const auto* source_detection = [&]() -> const std::vector<uint8_t>* {
-                    auto it = g_zarr_bbox_edit_state.frame_source_detection_source.find(
-                        static_cast<int>(frame_id));
-                    return (it != g_zarr_bbox_edit_state.frame_source_detection_source.end())
-                               ? &it->second
-                               : nullptr;
-                }();
-                const auto* source_reason = [&]() -> const std::vector<std::string>* {
-                    auto it = g_zarr_bbox_edit_state.frame_source_reason.find(
-                        static_cast<int>(frame_id));
-                    return (it != g_zarr_bbox_edit_state.frame_source_reason.end())
-                               ? &it->second
-                               : nullptr;
-                }();
-
-                for (size_t box_idx = 0; box_idx < boxes.size(); ++box_idx) {
-                    const auto& box = boxes[box_idx];
-                    preview.frame_indices.push_back(static_cast<int32_t>(frame_id));
-                    preview.bbox_norm_coords.push_back(toNormalizedCxCyWh(
-                        box.x_min, box.y_min, box.width, box.height));
-                    preview.scores.push_back(
-                        std::isfinite(box.confidence) ? box.confidence : 1.0f);
-                    preview.class_ids.push_back(static_cast<int32_t>(box.class_id));
-
-                    const bool is_added = added_flags && box_idx < added_flags->size() &&
-                                          (*added_flags)[box_idx] != 0;
-                    const bool is_manual = manual_flags && box_idx < manual_flags->size() &&
-                                           (*manual_flags)[box_idx] != 0;
-                    const uint8_t src_flag =
-                        (source_detection && box_idx < source_detection->size())
-                            ? (*source_detection)[box_idx]
-                            : 0;
-                    const std::string src_reason =
-                        (source_reason && box_idx < source_reason->size())
-                            ? (*source_reason)[box_idx]
-                            : std::string{};
-
-                    auto [resolved_source, resolved_reason] =
-                        resolveReasonAndSource(is_added || is_manual,
-                                               src_flag,
-                                               src_reason);
-                    preview.detection_source.push_back(resolved_source);
-                    preview.reason.push_back(resolved_reason);
-                    countReason(resolved_reason);
-                    ++frame_count;
-                }
-            }
-
-            preview.frame_counts.push_back(frame_count);
-        }
-
-        preview.n_detections = preview.frame_counts;
-        preview.frame_mapping = preview.frame_indices;
-        preview.total_detections = preview.frame_indices.size();
-
-        const size_t total_rows = preview.total_detections;
-        const bool lengths_match =
-            preview.bbox_norm_coords.size() == total_rows &&
-            preview.scores.size() == total_rows &&
-            preview.class_ids.size() == total_rows &&
-            preview.frame_mapping.size() == total_rows &&
-            preview.detection_source.size() == total_rows &&
-            preview.reason.size() == total_rows;
-        if (!lengths_match) {
-            preview.error = "Payload arrays have inconsistent detection-level lengths.";
-            return preview;
-        }
-
-        const int64_t frame_sum = std::accumulate(
-            preview.frame_counts.begin(), preview.frame_counts.end(), int64_t{0});
-        if (frame_sum != static_cast<int64_t>(total_rows)) {
-            preview.error = "sum(frame_counts) does not equal detection row count.";
-            return preview;
-        }
-
-        preview.valid = true;
-        return preview;
     };
 
     auto dumpDecodeBuffersToVideos = [&](const std::string& tag) -> std::optional<std::filesystem::path> {
@@ -1489,148 +1247,6 @@ int main(int argc, char **argv) {
         }
     };
 
-    auto invalidateReviewFrameCache = [&]() {
-        review_frame_cache.valid = false;
-        review_frame_cache.frames.clear();
-    };
-
-    auto frameHasNonCleanDetections = [&](int frame_id) -> bool {
-        if (frame_id < 0) {
-            return false;
-        }
-        if (zarr_loader.getDetectionsForFrame(static_cast<size_t>(frame_id)) <= 0) {
-            return false;
-        }
-
-        auto detections =
-            zarr_loader.getRawDetections(static_cast<size_t>(frame_id), false);
-        const size_t detection_count = detections.boxes.size();
-        for (size_t det_idx = 0; det_idx < detection_count; ++det_idx) {
-            bool is_interp_source = false;
-            if (det_idx < detections.detection_source.size()) {
-                is_interp_source = detections.detection_source[det_idx] != 0;
-            }
-
-            if (det_idx < detections.detection_reason.size()) {
-                std::string reason =
-                    ToLowerCopy(detections.detection_reason[det_idx]);
-                if (!reason.empty() && reason != "clean") {
-                    return true;
-                }
-                if (!reason.empty()) {
-                    if (is_interp_source) {
-                        return true;
-                    }
-                    continue;
-                }
-            }
-
-            if (is_interp_source) {
-                return true;
-            }
-        }
-        return false;
-    };
-
-    auto ensureReviewFrameIndex = [&]() {
-        const bool has_filters =
-            review_frame_filters.include_interpolated ||
-            review_frame_filters.include_non_clean ||
-            review_frame_filters.include_empty;
-        if (!zarr_loaded || !zarr_loader.hasDetectionData() || !has_filters) {
-            review_frame_cache.valid = true;
-            review_frame_cache.archive_path = zarr_loader.getArchivePath();
-            review_frame_cache.dataset = zarr_loader.getActiveDetectionDataset();
-            review_frame_cache.total_frames = zarr_loader.getTotalFrames();
-            review_frame_cache.filters = review_frame_filters;
-            review_frame_cache.frames.clear();
-            return;
-        }
-
-        const auto current_dataset = zarr_loader.getActiveDetectionDataset();
-        const size_t total_frames = zarr_loader.getTotalFrames();
-        const std::string current_archive_path = zarr_loader.getArchivePath();
-
-        if (review_frame_cache.valid &&
-            review_frame_cache.archive_path == current_archive_path &&
-            review_frame_cache.dataset == current_dataset &&
-            review_frame_cache.total_frames == total_frames &&
-            review_frame_cache.filters.include_interpolated ==
-                review_frame_filters.include_interpolated &&
-            review_frame_cache.filters.include_non_clean ==
-                review_frame_filters.include_non_clean &&
-            review_frame_cache.filters.include_empty ==
-                review_frame_filters.include_empty) {
-            return;
-        }
-
-        review_frame_cache.valid = true;
-        review_frame_cache.archive_path = current_archive_path;
-        review_frame_cache.dataset = current_dataset;
-        review_frame_cache.total_frames = total_frames;
-        review_frame_cache.filters = review_frame_filters;
-        review_frame_cache.frames.clear();
-        const bool non_clean_possible =
-            current_dataset != ZarrDetectionLoader::DetectionDataset::RawDetect;
-
-        for (size_t frame_idx = 0; frame_idx < total_frames; ++frame_idx) {
-            bool matches = false;
-            const int32_t det_count = zarr_loader.getDetectionsForFrame(frame_idx);
-
-            if (review_frame_filters.include_empty && det_count <= 0) {
-                matches = true;
-            }
-            if (!matches && review_frame_filters.include_interpolated &&
-                zarr_loader.isFrameInterpolated(frame_idx)) {
-                matches = true;
-            }
-            if (!matches && review_frame_filters.include_non_clean &&
-                non_clean_possible && det_count > 0 &&
-                frameHasNonCleanDetections(static_cast<int>(frame_idx))) {
-                matches = true;
-            }
-
-            if (matches) {
-                review_frame_cache.frames.push_back(static_cast<int>(frame_idx));
-            }
-        }
-    };
-
-    auto jumpToReviewFrame = [&](bool forward) -> bool {
-        ensureReviewFrameIndex();
-        if (review_frame_cache.frames.empty()) {
-            review_frame_status =
-                "No frames match the selected review filters.";
-            return false;
-        }
-
-        const auto& review_frames = review_frame_cache.frames;
-        int target_frame = current_frame_num;
-        if (forward) {
-            auto it = std::upper_bound(review_frames.begin(),
-                                       review_frames.end(),
-                                       current_frame_num);
-            if (it == review_frames.end()) {
-                it = review_frames.begin();
-            }
-            target_frame = *it;
-        } else {
-            auto it = std::lower_bound(review_frames.begin(),
-                                       review_frames.end(),
-                                       current_frame_num);
-            if (it == review_frames.begin()) {
-                target_frame = review_frames.back();
-            } else {
-                --it;
-                target_frame = *it;
-            }
-        }
-
-        review_frame_status.clear();
-        seekToFrame(target_frame, true);
-        return true;
-    };
-
     auto reloadActiveZarrPreserveDataset =
         [&](std::string& reload_error,
             std::optional<ZarrDetectionLoader::DetectionDataset>
@@ -1654,7 +1270,7 @@ int main(int argc, char **argv) {
                 (void)zarr_loader.setActiveDetectionDataset(dataset_to_restore);
             }
             refreshDetectionDatasetOptions(zarr_loader);
-            invalidateReviewFrameCache();
+            invalidateReviewFrameCache(review_frame_cache);
             review_frame_status.clear();
             if (zarr_loader.getTotalFrames() > 0 &&
                 current_frame_num >=
@@ -2110,7 +1726,7 @@ int main(int argc, char **argv) {
                     frame_debug_result.requested_detection_dataset_index;
                 refreshDetectionDatasetOptions(zarr_loader);
                 g_zarr_bbox_edit_state.clearAll();
-                invalidateReviewFrameCache();
+                invalidateReviewFrameCache(review_frame_cache);
                 review_frame_status.clear();
                 if (zarr_loader.getTotalFrames() > 0 &&
                     current_frame_num >=
@@ -2123,14 +1739,26 @@ int main(int argc, char **argv) {
             if (frame_debug_result.review_filters_changed) {
                 review_frame_filters =
                     frame_debug_result.review_frame_filters;
-                invalidateReviewFrameCache();
+                invalidateReviewFrameCache(review_frame_cache);
                 review_frame_status.clear();
             }
             if (frame_debug_result.request_prev_review_frame) {
-                jumpToReviewFrame(false);
+                auto jump_result = computeReviewFrameJump(
+                    zarr_loaded, zarr_loader, review_frame_filters,
+                    review_frame_cache, current_frame_num, false);
+                review_frame_status = std::move(jump_result.status);
+                if (jump_result.target_frame.has_value()) {
+                    seekToFrame(*jump_result.target_frame, true);
+                }
             }
             if (frame_debug_result.request_next_review_frame) {
-                jumpToReviewFrame(true);
+                auto jump_result = computeReviewFrameJump(
+                    zarr_loaded, zarr_loader, review_frame_filters,
+                    review_frame_cache, current_frame_num, true);
+                review_frame_status = std::move(jump_result.status);
+                if (jump_result.target_frame.has_value()) {
+                    seekToFrame(*jump_result.target_frame, true);
+                }
             }
             if (frame_debug_result.request_dump_decode_buffers) {
                 dumpDecodeBuffersToVideos("manual_dump");
@@ -2145,30 +1773,33 @@ int main(int argc, char **argv) {
                 g_zarr_bbox_edit_state.clearSelection();
             }
             if (frame_debug_result.request_build_manual_payload_preview) {
-                manual_payload_preview = buildManualDetectPayloadPreview();
+                manual_payload_preview = buildManualDetectPayloadPreview(
+                    zarr_loaded, zarr_loader, g_zarr_bbox_edit_state,
+                    scene->num_cams > 0
+                        ? static_cast<int>(scene->cameras[0].image_width)
+                        : 0,
+                    scene->num_cams > 0
+                        ? static_cast<int>(scene->cameras[0].image_height)
+                        : 0);
                 if (!manual_payload_preview->valid) {
                     bbox_payload_status =
                         "Manual payload preview failed: " +
                         manual_payload_preview->error;
                 } else {
-                    std::ostringstream payload_msg;
-                    payload_msg << "Manual payload preview: frames="
-                                << manual_payload_preview->total_frames
-                                << " detections="
-                                << manual_payload_preview->total_detections
-                                << " clean="
-                                << manual_payload_preview->clean_rows
-                                << " interpolated="
-                                << manual_payload_preview->interpolated_rows
-                                << " manual="
-                                << manual_payload_preview->manual_rows
-                                << " dirty_frames="
-                                << g_zarr_bbox_edit_state.dirtyFrameCount();
-                    bbox_payload_status = payload_msg.str();
+                    bbox_payload_status = summarizeManualDetectPayloadPreview(
+                        *manual_payload_preview,
+                        g_zarr_bbox_edit_state.dirtyFrameCount());
                 }
             }
             if (frame_debug_result.request_write_manual_payload) {
-                manual_payload_preview = buildManualDetectPayloadPreview();
+                manual_payload_preview = buildManualDetectPayloadPreview(
+                    zarr_loaded, zarr_loader, g_zarr_bbox_edit_state,
+                    scene->num_cams > 0
+                        ? static_cast<int>(scene->cameras[0].image_width)
+                        : 0,
+                    scene->num_cams > 0
+                        ? static_cast<int>(scene->cameras[0].image_height)
+                        : 0);
                 if (!manual_payload_preview->valid) {
                     bbox_payload_status =
                         "Manual write failed: payload preview invalid: " +
@@ -2230,7 +1861,7 @@ int main(int argc, char **argv) {
                             refreshDetectionDatasetOptions(zarr_loader);
                             g_zarr_bbox_edit_state.clearAll();
                             manual_payload_preview.reset();
-                            invalidateReviewFrameCache();
+                            invalidateReviewFrameCache(review_frame_cache);
                             review_frame_status.clear();
                             if (zarr_loader.getTotalFrames() > 0 &&
                                 current_frame_num >= static_cast<int>(
@@ -2411,7 +2042,7 @@ int main(int argc, char **argv) {
                     zarr_loaded = true;
                     refreshDetectionDatasetOptions(zarr_loader);
                     g_zarr_bbox_edit_state.clearAll();
-                    invalidateReviewFrameCache();
+                    invalidateReviewFrameCache(review_frame_cache);
                     review_frame_status.clear();
                     std::cout << "Loaded Zarr archive override: "
                               << zarr_loader.getArchivePath() << std::endl;
@@ -2420,7 +2051,7 @@ int main(int argc, char **argv) {
                 } else {
                     zarr_loaded = false;
                     g_zarr_bbox_edit_state.clearAll();
-                    invalidateReviewFrameCache();
+                    invalidateReviewFrameCache(review_frame_cache);
                     review_frame_status.clear();
                     std::cout << "Failed to load Zarr archive override: " << zarr_error << std::endl;
                     detection_dataset_ids.clear();
