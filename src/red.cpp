@@ -38,7 +38,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <fstream>
-#include <nlohmann/json.hpp>
+#include "perf_logging.h"
 #include "chained_crop_image_provider.h"
 #include "live_crop_image_provider.h"
 #include "refined_keypoint_repository.h"
@@ -370,143 +370,11 @@ static StimulusPlayback stimulus_player;
 
 namespace {
 
-using json = nlohmann::json;
-
 double durationMs(std::chrono::steady_clock::duration duration) {
     return std::chrono::duration<double, std::milli>(duration).count();
 }
 
-std::filesystem::path makeAutoAppendedPerfPath(
-    const std::filesystem::path& requested_path) {
-    std::error_code ec;
-    if (!std::filesystem::exists(requested_path, ec) || ec) {
-        return requested_path;
-    }
 
-    const auto now = std::chrono::system_clock::now();
-    const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
-    std::tm local_tm{};
-#ifdef _WIN32
-    localtime_s(&local_tm, &now_time);
-#else
-    localtime_r(&now_time, &local_tm);
-#endif
-    std::ostringstream timestamp_stream;
-    timestamp_stream << std::put_time(&local_tm, "%Y%m%d-%H%M%S");
-
-    const std::filesystem::path parent = requested_path.parent_path();
-    const std::string stem = requested_path.stem().string();
-    const std::string extension = requested_path.extension().string();
-
-    for (int attempt = 0; attempt < 1000; ++attempt) {
-        std::ostringstream candidate_name;
-        candidate_name << stem << "-" << timestamp_stream.str();
-        if (attempt > 0) {
-            candidate_name << "-" << attempt;
-        }
-        candidate_name << extension;
-        const std::filesystem::path candidate = parent / candidate_name.str();
-        std::error_code candidate_ec;
-        if (!std::filesystem::exists(candidate, candidate_ec) || candidate_ec) {
-            return candidate;
-        }
-    }
-
-    return requested_path;
-}
-
-struct PerfLogWriter {
-    std::ofstream stream;
-    std::filesystem::path csv_path;
-    std::filesystem::path metadata_path;
-    std::chrono::steady_clock::time_point start_steady{};
-    std::chrono::steady_clock::time_point last_sample_steady{};
-
-    bool open(const std::filesystem::path& output_path) {
-        if (output_path.empty()) {
-            return false;
-        }
-        csv_path = makeAutoAppendedPerfPath(output_path);
-        metadata_path = csv_path;
-        metadata_path.replace_extension(".meta.json");
-        std::error_code ec;
-        if (csv_path.has_parent_path()) {
-            std::filesystem::create_directories(csv_path.parent_path(), ec);
-            if (ec) {
-                std::cerr << "[PerfLog] Failed to create parent directory for "
-                          << csv_path << ": " << ec.message() << std::endl;
-                return false;
-            }
-        }
-        stream.open(csv_path, std::ios::out | std::ios::trunc);
-        if (!stream.is_open()) {
-            std::cerr << "[PerfLog] Failed to open " << csv_path
-                      << " for writing" << std::endl;
-            return false;
-        }
-        start_steady = std::chrono::steady_clock::now();
-        last_sample_steady = start_steady;
-        stream << std::fixed << std::setprecision(3);
-        stream
-            << "elapsed_s,wall_epoch_ms,play_video,set_playback_speed,inst_speed,"
-            << "video_fps,requested_camera_frame,displayed_camera_frame,current_frame_num,"
-            << "min_decoded_camera_frame,camera_decode_gap_frames,"
-            << "camera_decode_convert_ms,camera_decode_wait_ms,"
-            << "camera_decode_write_ms,camera_decode_pipeline_ms,"
-            << "visible_camera_count,"
-            << "main_buffer_mode,playback_preview_scale,playback_preview_active,"
-            << "playback_renderer_mode,"
-            << "camera_viewport_width_px,camera_viewport_height_px,"
-            << "camera_view_x_min,camera_view_x_max,"
-            << "camera_view_y_min,camera_view_y_max,"
-            << "camera_view_visible_fraction,camera_view_zoomed_in,"
-            << "camera_upload_count,camera_upload_ms,camera_texture_resize_ms,"
-            << "camera_preview_resize_ms,camera_display_convert_ms,"
-            << "camera_pbo_copy_ms,camera_texture_upload_ms,"
-            << "camera_playback_front_path_ms,"
-            << "camera_playback_stage_total_ms,"
-            << "camera_playback_stage_upload_ms,"
-            << "camera_playback_swap_ms,"
-            << "camera_plot_image_ui_ms,camera_overlay_ui_ms,camera_scene_ui_ms,"
-            << "file_browser_ui_ms,frame_debug_ui_ms,buffer_window_ui_ms,"
-            << "crop_preview_ui_ms,stimulus_buffer_window_ui_ms,"
-            << "keypoints_window_ui_ms,labeling_tool_ui_ms,"
-            << "stimulus_window_ui_ms,stimulus_timeline_ui_ms,movement_timeline_ui_ms,"
-            << "help_menu_ui_ms,"
-            << "gl_draw_ms,swap_ms,frame_loop_ms,ui_build_ms,imgui_render_ms,"
-            << "imgui_draw_cmd_count,imgui_draw_list_count,imgui_total_vtx_count,"
-            << "imgui_total_idx_count,"
-            << "stimulus_loaded,stimulus_decode_backend,"
-            << "stimulus_buffer_mode,stimulus_target_frame,stimulus_latest_decoded,"
-            << "stimulus_last_displayed,stimulus_buffered_frames,"
-            << "stimulus_progress_gap_frames\n";
-        stream.flush();
-        if (csv_path != output_path) {
-            std::cout << "[PerfLog] Requested path exists; auto-appended to "
-                      << csv_path << std::endl;
-        }
-        std::cout << "[PerfLog] Writing CSV samples to " << csv_path
-                  << std::endl;
-        std::cout << "[PerfLog] Writing metadata sidecar to " << metadata_path
-                  << std::endl;
-        return true;
-    }
-
-    bool enabled() const { return stream.is_open(); }
-
-    void writeMetadata(const json& payload) const {
-        if (metadata_path.empty()) {
-            return;
-        }
-        std::ofstream meta_stream(metadata_path, std::ios::out | std::ios::trunc);
-        if (!meta_stream.is_open()) {
-            std::cerr << "[PerfLog] Failed to write metadata sidecar "
-                      << metadata_path << std::endl;
-            return;
-        }
-        meta_stream << payload.dump(2) << "\n";
-    }
-};
 
 }  // namespace
 
@@ -4959,243 +4827,82 @@ int main(int argc, char **argv) {
             }
         }
 
-        if (perf_log_writer.enabled()) {
-            const auto now_steady = std::chrono::steady_clock::now();
-            if (now_steady - perf_log_writer.last_sample_steady >=
-                kPerfLogSamplePeriod) {
-                perf_log_writer.last_sample_steady = now_steady;
-                const auto now_system = std::chrono::system_clock::now();
-                const auto wall_epoch_ms =
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        now_system.time_since_epoch())
-                        .count();
-                int visible_camera_count = 0;
-                for (const auto& cam_name : camera_names) {
-                    auto it = window_need_decoding.find(cam_name);
-                    if (it != window_need_decoding.end() && it->second.load()) {
-                        visible_camera_count++;
-                    }
-                }
-                const int displayed_camera_frame = ps.to_display_frame_number;
-                const int camera_decode_gap_frames =
-                    (perf_requested_camera_frame >= 0 &&
-                     perf_min_decoded_camera_frame >= 0)
-                        ? (perf_requested_camera_frame -
-                           perf_min_decoded_camera_frame)
-                        : -1;
-                double perf_camera_decode_convert_ms =
-                    std::numeric_limits<double>::quiet_NaN();
-                double perf_camera_decode_wait_ms =
-                    std::numeric_limits<double>::quiet_NaN();
-                double perf_camera_decode_write_ms =
-                    std::numeric_limits<double>::quiet_NaN();
-                double perf_camera_decode_pipeline_ms =
-                    std::numeric_limits<double>::quiet_NaN();
-                auto updateMaxFinite = [](double& dst, double value) {
-                    if (!std::isfinite(value)) {
-                        return;
-                    }
-                    if (!std::isfinite(dst) || value > dst) {
-                        dst = value;
-                    }
-                };
-                {
-                    std::lock_guard<std::mutex> lock(g_decoder_perf_mutex);
-                    for (const auto& cam_name : camera_names) {
-                        auto need_it = window_need_decoding.find(cam_name);
-                        if (need_it == window_need_decoding.end() ||
-                            !need_it->second.load()) {
-                            continue;
-                        }
-                        auto perf_it = decoder_perf_samples.find(cam_name);
-                        if (perf_it == decoder_perf_samples.end() ||
-                            !perf_it->second) {
-                            continue;
-                        }
-                        const auto& perf = perf_it->second;
-                        updateMaxFinite(
-                            perf_camera_decode_convert_ms,
-                            perf->nv12_to_rgba_ms.load());
-                        updateMaxFinite(
-                            perf_camera_decode_wait_ms,
-                            perf->buffer_wait_ms.load());
-                        updateMaxFinite(
-                            perf_camera_decode_write_ms,
-                            perf->frame_write_ms.load());
-                        updateMaxFinite(
-                            perf_camera_decode_pipeline_ms,
-                            perf->frame_total_ms.load());
-                    }
-                }
-                const int stimulus_latest_decoded =
-                    latest_decoded_frame[stimulus_player.window_name].load();
-                const int stimulus_last_displayed =
-                    stimulus_player.last_displayed_frame;
-                const int stimulus_progress_frame =
-                    std::max(stimulus_latest_decoded, stimulus_last_displayed);
-                const int stimulus_target_frame = ps.current_stimulus_frame;
-                const int stimulus_progress_gap_frames =
-                    (stimulus_target_frame >= 0 && stimulus_progress_frame >= 0)
-                        ? (stimulus_target_frame - stimulus_progress_frame)
-                        : -1;
-                const int stimulus_buffered_frames =
-                    stimulus_player.loaded
-                        ? countBufferedStimulusFrames(stimulus_player)
-                        : 0;
-                const double elapsed_s =
-                    std::chrono::duration<double>(
-                        now_steady - perf_log_writer.start_steady)
-                        .count();
-                const double frame_loop_ms =
-                    durationMs(now_steady - frame_loop_start);
-                perf_log_writer.stream
-                    << elapsed_s << "," << wall_epoch_ms << ","
-                    << (ps.play_video ? 1 : 0) << "," << set_playback_speed
-                    << "," << inst_speed << "," << video_fps << ","
-                    << perf_requested_camera_frame << ","
-                    << displayed_camera_frame << "," << current_frame_num << ","
-                    << perf_min_decoded_camera_frame << ","
-                    << camera_decode_gap_frames << ","
-                    << perf_camera_decode_convert_ms << ","
-                    << perf_camera_decode_wait_ms << ","
-                    << perf_camera_decode_write_ms << ","
-                    << perf_camera_decode_pipeline_ms << ","
-                    << visible_camera_count
-                    << "," << (scene->use_cpu_buffer ? "cpu" : "gpu") << ","
-                    << playbackPreviewScaleLabel() << ","
-                    << (playbackPreviewIsActive() ? 1 : 0) << ","
-                    << playbackRendererModeLabel() << ","
-                    << perf_camera_viewport_width_px << ","
-                    << perf_camera_viewport_height_px << ","
-                    << perf_camera_view_x_min << ","
-                    << perf_camera_view_x_max << ","
-                    << perf_camera_view_y_min << ","
-                    << perf_camera_view_y_max << ","
-                    << perf_camera_view_visible_fraction << ","
-                    << perf_camera_view_zoomed_in << ","
-                    << frame_camera_upload_count << ","
-                    << frame_camera_upload_ms << ","
-                    << frame_camera_texture_resize_ms << ","
-                    << frame_camera_preview_resize_ms << ","
-                    << frame_camera_display_convert_ms << ","
-                    << frame_camera_pbo_copy_ms << ","
-                    << frame_camera_texture_upload_ms << ","
-                    << frame_camera_playback_front_path_ms << ","
-                    << frame_camera_playback_stage_total_ms << ","
-                    << frame_camera_playback_stage_upload_ms << ","
-                    << frame_camera_playback_swap_ms << ","
-                    << frame_camera_plot_image_ui_ms << ","
-                    << frame_camera_overlay_ui_ms << ","
-                    << frame_camera_scene_ui_ms << ","
-                    << frame_file_browser_ui_ms << ","
-                    << frame_frame_debug_ui_ms << ","
-                    << frame_buffer_window_ui_ms << ","
-                    << frame_crop_preview_ui_ms << ","
-                    << frame_stimulus_buffer_window_ui_ms << ","
-                    << frame_keypoints_window_ui_ms << ","
-                    << frame_labeling_tool_ui_ms << ","
-                    << frame_stimulus_window_ui_ms << ","
-                    << frame_stimulus_timeline_ui_ms << ","
-                    << frame_movement_timeline_ui_ms << ","
-                    << frame_help_menu_ui_ms << ","
-                    << frame_gl_draw_ms << ","
-                    << frame_swap_ms << "," << frame_loop_ms << ","
-                    << frame_ui_build_ms << ","
-                    << frame_imgui_render_ms << ","
-                    << frame_imgui_draw_cmd_count << ","
-                    << frame_imgui_draw_list_count << ","
-                    << frame_imgui_total_vtx_count << ","
-                    << frame_imgui_total_idx_count << ","
-                    << (stimulus_player.loaded ? 1 : 0) << ","
-                    << ((stimulus_player.loaded
-                             ? stimulus_player.use_software_decode
-                             : stimulus_use_software_decode)
-                            ? "software"
-                            : "gpu")
-                    << ","
-                    << ((stimulus_player.loaded ? stimulus_player.use_cpu_buffer
-                                                : stimulus_use_cpu_buffer)
-                            ? "cpu"
-                            : "gpu")
-                    << "," << stimulus_target_frame << ","
-                    << stimulus_latest_decoded << ","
-                    << stimulus_last_displayed << ","
-                    << stimulus_buffered_frames << ","
-                    << stimulus_progress_gap_frames << "\n";
-                perf_log_writer.stream.flush();
-
-                json metadata = {
-                    {"format", "crimson_perf_metadata_v1"},
-                    {"generated_wall_epoch_ms", wall_epoch_ms},
-                    {"perf_csv_path", perf_log_writer.csv_path.string()},
-                    {"cwd", cwd.string()},
-                    {"argv0_path", argv0_path.string()},
-                    {"recording_path",
-                     cli_recording_path.empty() ? json(nullptr)
-                                                : json(cli_recording_path)},
-                    {"zarr_override_path",
-                     cli_zarr_override_path.empty()
-                         ? json(nullptr)
-                         : json(cli_zarr_override_path)},
-                    {"window",
-                     {{"swap_interval", window->swap_interval},
-                      {"width", window->width},
-                      {"height", window->height}}},
-                    {"main_video",
-                     {{"loaded", video_loaded},
-                      {"fps", video_fps},
-                      {"buffer_mode", scene->use_cpu_buffer ? "cpu" : "gpu"},
-                      {"buffer_storage_format",
-                       scene->use_cpu_buffer ? "rgba32" : "nv12"},
-                      {"playback_preview_scale", playbackPreviewScaleLabel()},
-                      {"playback_preview_active", playbackPreviewIsActive()},
-                      {"playback_renderer_mode", playbackRendererModeLabel()},
-                      {"viewport_width_px", perf_camera_viewport_width_px},
-                      {"viewport_height_px", perf_camera_viewport_height_px},
-                      {"view_x_min", perf_camera_view_x_min},
-                      {"view_x_max", perf_camera_view_x_max},
-                      {"view_y_min", perf_camera_view_y_min},
-                      {"view_y_max", perf_camera_view_y_max},
-                      {"view_visible_fraction",
-                       perf_camera_view_visible_fraction},
-                      {"view_zoomed_in", perf_camera_view_zoomed_in},
-                      {"buffer_size",
-                       video_loaded ? static_cast<int>(scene->size_of_buffer)
-                                    : label_buffer_size},
-                      {"requested_playback_speed", set_playback_speed},
-                      {"measured_playback_speed", inst_speed},
-                      {"requested_camera_frame", perf_requested_camera_frame},
-                      {"displayed_camera_frame", displayed_camera_frame},
-                      {"current_frame_num", current_frame_num},
-                      {"min_decoded_camera_frame", perf_min_decoded_camera_frame},
-                      {"camera_decode_gap_frames", camera_decode_gap_frames},
-                      {"visible_camera_count", visible_camera_count},
-                      {"camera_names", camera_names}}},
-                    {"stimulus",
-                     {{"loaded", stimulus_player.loaded},
-                      {"decode_backend",
-                       ((stimulus_player.loaded
-                             ? stimulus_player.use_software_decode
-                             : stimulus_use_software_decode)
-                            ? "software"
-                            : "gpu")},
-                      {"buffer_mode",
-                       ((stimulus_player.loaded ? stimulus_player.use_cpu_buffer
-                                                : stimulus_use_cpu_buffer)
-                            ? "cpu"
-                            : "gpu")},
-                      {"buffer_size",
-                       stimulus_player.loaded ? stimulus_player.buffer_size
-                                              : stimulus_buffer_size},
-                      {"target_frame", stimulus_target_frame},
-                      {"latest_decoded_frame", stimulus_latest_decoded},
-                      {"last_displayed_frame", stimulus_last_displayed},
-                      {"buffered_frames", stimulus_buffered_frames},
-                      {"progress_gap_frames", stimulus_progress_gap_frames}}}
-                };
-                perf_log_writer.writeMetadata(metadata);
-            }
-        }
+        maybeWritePerfLogSample(
+            perf_log_writer,
+            PerfLogFrameContext{
+                camera_names,
+                cwd,
+                argv0_path,
+                cli_recording_path,
+                cli_zarr_override_path,
+                ps.play_video,
+                set_playback_speed,
+                inst_speed,
+                video_fps,
+                perf_requested_camera_frame,
+                ps.to_display_frame_number,
+                current_frame_num,
+                perf_min_decoded_camera_frame,
+                scene->use_cpu_buffer,
+                static_cast<int>(scene->size_of_buffer),
+                label_buffer_size,
+                video_loaded,
+                playbackPreviewScaleLabel(),
+                playbackPreviewIsActive(),
+                playbackRendererModeLabel(),
+                static_cast<int>(perf_camera_viewport_width_px),
+                static_cast<int>(perf_camera_viewport_height_px),
+                perf_camera_view_x_min,
+                perf_camera_view_x_max,
+                perf_camera_view_y_min,
+                perf_camera_view_y_max,
+                perf_camera_view_visible_fraction,
+                perf_camera_view_zoomed_in,
+                frame_camera_upload_count,
+                frame_camera_upload_ms,
+                frame_camera_texture_resize_ms,
+                frame_camera_preview_resize_ms,
+                frame_camera_display_convert_ms,
+                frame_camera_pbo_copy_ms,
+                frame_camera_texture_upload_ms,
+                frame_camera_playback_front_path_ms,
+                frame_camera_playback_stage_total_ms,
+                frame_camera_playback_stage_upload_ms,
+                frame_camera_playback_swap_ms,
+                frame_camera_plot_image_ui_ms,
+                frame_camera_overlay_ui_ms,
+                frame_camera_scene_ui_ms,
+                frame_file_browser_ui_ms,
+                frame_frame_debug_ui_ms,
+                frame_buffer_window_ui_ms,
+                frame_crop_preview_ui_ms,
+                frame_stimulus_buffer_window_ui_ms,
+                frame_keypoints_window_ui_ms,
+                frame_labeling_tool_ui_ms,
+                frame_stimulus_window_ui_ms,
+                frame_stimulus_timeline_ui_ms,
+                frame_movement_timeline_ui_ms,
+                frame_help_menu_ui_ms,
+                frame_gl_draw_ms,
+                frame_swap_ms,
+                frame_ui_build_ms,
+                frame_imgui_render_ms,
+                frame_imgui_draw_cmd_count,
+                frame_imgui_draw_list_count,
+                frame_imgui_total_vtx_count,
+                frame_imgui_total_idx_count,
+                &stimulus_player,
+                stimulus_use_software_decode,
+                stimulus_use_cpu_buffer,
+                stimulus_buffer_size,
+                ps.current_stimulus_frame,
+                latest_decoded_frame[stimulus_player.window_name].load(),
+                static_cast<int>(window->swap_interval),
+                static_cast<int>(window->width),
+                static_cast<int>(window->height),
+                frame_loop_start,
+            },
+            kPerfLogSamplePeriod);
     }
 
     // Cleanup
