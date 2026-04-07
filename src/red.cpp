@@ -51,6 +51,7 @@
 #include "gui/keypoints_window.h"
 #include "gui/labeling_tool_window.h"
 #include "gui/refined_keypoint_review_window.h"
+#include "gui/camera_view_manual_keypoint_input.h"
 #include "gui/camera_view_transport_controls.h"
 #include "gui_interpolation.h"
 #include "gui/movement_timeline_window.h"
@@ -5464,110 +5465,24 @@ struct StateOverlay {
                         }
 
                         if (plot_keypoints_flag) {
-                            // plot arena for testing camera parameters
-                            // gui_plot_perimeter(&camera_params[j],
-                            // scene->cameras[j].image_height); if (scene->num_cams > 1)
-                            // {
-                            //     gui_plot_world_coordinates(&camera_params[j],
-                            //     j, scene->cameras[j].image_height);
-                            // }
-
-                            // labeling
-                            if (ImPlot::IsPlotHovered()) {
-                                is_view_focused[j] = true;
-
-                                if (ImGui::IsKeyPressed(ImGuiKey_C, false)) {
-                                    // create keypoints
-                                    if (!keypoints_find) {
-                                        // not found
-                                        KeyPoints *keypoints =
-                                            (KeyPoints *)malloc(
-                                                sizeof(KeyPoints));
-                                        allocate_keypoints(keypoints, scene,
-                                                           skeleton.get());
-                                        keypoints_map[current_frame_num] =
-                                            keypoints;
-                                    }
-                                }
-
-                                if (keypoints_find) {
-                                    u32 *kp = &(keypoints_map[current_frame_num]
-                                                    ->active_id[j]);
-                                    if (ImGui::IsKeyPressed(ImGuiKey_W,
-                                                            false)) {
-                                        // labeling sequentially each view
-                                        ImPlotPoint mouse =
-                                            ImPlot::GetPlotMousePos();
-                                        keypoints_map[current_frame_num]
-                                            ->keypoints2d[j][*kp]
-                                            .position = {mouse.x, mouse.y};
-                                        keypoints_map[current_frame_num]
-                                            ->keypoints2d[j][*kp]
-                                            .is_labeled = true;
-                                        keypoints_map[current_frame_num]
-                                            ->keypoints2d[j][*kp]
-                                            .is_triangulated = false;
-                                        if (*kp < (skeleton->num_nodes - 1)) {
-                                            (*kp)++;
-                                        }
-                                    }
-
-                                    if (ImGui::IsKeyPressed(ImGuiKey_A, true)) {
-                                        if (*kp <= 0) {
-                                            *kp = 0;
-                                        } else
-                                            (*kp)--;
-                                    }
-
-                                    if (ImGui::IsKeyPressed(ImGuiKey_D, true)) {
-                                        if (*kp >= skeleton->num_nodes - 1) {
-                                            *kp = skeleton->num_nodes - 1;
-                                        } else
-                                            (*kp)++;
-                                    }
-
-                                    if (ImGui::IsKeyPressed(
-                                            ImGuiKey_E,
-                                            false)) // skip to the last keypoint
-                                    {
-                                        *kp = skeleton->num_nodes - 1;
-                                    }
-
-                                    if (ImGui::IsKeyPressed(
-                                            ImGuiKey_Q,
-                                            false)) // go to the first keypoint
-                                    {
-                                        *kp = 0;
-                                    }
-
-                                    // delete all keypoint on a frame
-                                    if (ImGui::IsKeyPressed(ImGuiKey_Backspace,
-                                                            false)) {
-                                        free_keypoints(
-                                            keypoints_map[current_frame_num],
-                                            scene);
-                                        keypoints_map.erase(current_frame_num);
-                                        keypoints_find = false;
-                                    }
-                                }
-                            } else {
-                                is_view_focused[j] = false;
-                            }
-
-                            if (keypoints_find) {
-                                gui_plot_keypoints(
-                                    keypoints_map.at(current_frame_num),
-                                    skeleton.get(), j, scene->num_cams);
-                                // think more general solution of multiple sets
-                                // of keypoints
-                                if (skeleton->name == "Rat4Box" ||
-                                    skeleton->name == "Rat4Box3Ball") {
-                                    gui_plot_bbox_from_keypoints(
-                                        keypoints_map.at(current_frame_num),
-                                        skeleton.get(), j, 4, 5);
-                                }
-                            }
-                        }     
+                            const CameraViewManualKeypointInputContext
+                                keypoint_input_context{
+                                    scene,
+                                    skeleton.get(),
+                                    &keypoints_map,
+                                    current_frame_num,
+                                    j,
+                                    keypoints_find,
+                                    ImPlot::IsPlotHovered(),
+                                };
+                            const CameraViewManualKeypointInputResult
+                                keypoint_input_result =
+                                    processCameraViewManualKeypointInput(
+                                        keypoint_input_context);
+                            keypoints_find = keypoint_input_result.keypoints_find;
+                            is_view_focused[j] =
+                                keypoint_input_result.view_focused;
+                        }
                         ImPlot::EndPlot();
                         if (swap_playback_surface_after_draw) {
                             auto &camera = scene->cameras[j];
