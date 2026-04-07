@@ -40,6 +40,7 @@
 #include <cstdlib>
 #include <fstream>
 #include "perf_logging.h"
+#include "playback_session_controller.h"
 #include "decode_debug_workflow.h"
 #include "manual_detect_payload_preview.h"
 #include "chained_crop_image_provider.h"
@@ -600,299 +601,6 @@ int main(int argc, char **argv) {
         }
     }
 
-    auto getVisibleCameraIndex = [&]() -> int {
-        if (scene->num_cams <= 0 || scene->size_of_buffer <= 0) {
-            return -1;
-        }
-        for (int i = 0; i < scene->num_cams && i < static_cast<int>(camera_names.size()); ++i) {
-            auto it = window_was_decoding.find(camera_names[i]);
-            if (it != window_was_decoding.end() && it->second) {
-                return i;
-            }
-        }
-        return 0;
-    };
-
-    auto setCameraDecodeRequests = [&](bool enabled) {
-        for (const auto& camera_name : camera_names) {
-            auto it = window_need_decoding.find(camera_name);
-            if (it != window_need_decoding.end()) {
-                it->second.store(enabled);
-            }
-        }
-    };
-
-    auto countBufferedStimulusFrames = [&](const StimulusPlayback& stim) -> int {
-        if (!stim.display_buffer || stim.buffer_size <= 0) {
-            return 0;
-        }
-        int valid = 0;
-        for (int i = 0; i < stim.buffer_size; ++i) {
-            const auto& slot = stim.display_buffer[i];
-            if (!slot.available_to_write && slot.frame_number >= 0) {
-                ++valid;
-            }
-        }
-        return valid;
-    };
-
-    auto playbackPreviewScaleFactor = [&]() -> double {
-        switch (playback_preview_scale_mode) {
-        case 1:
-            return 0.5;
-        case 2:
-            return 0.25;
-        default:
-            return 1.0;
-        }
-    };
-
-    auto playbackPreviewScaleLabel = [&]() -> const char* {
-        switch (playback_preview_scale_mode) {
-        case 1:
-            return "1/2";
-        case 2:
-            return "1/4";
-        default:
-            return "1x";
-        }
-    };
-
-    auto playbackPreviewIsActive = [&]() -> bool {
-        return ps.play_video && !yolo_detection &&
-               playbackPreviewScaleFactor() < 1.0;
-    };
-
-    auto playbackRendererModeLabel = [&]() -> const char* {
-        switch (playback_renderer_mode) {
-        case 1:
-            return "lightweight";
-        default:
-            return "standard";
-        }
-    };
-
-    auto playbackLightweightRendererIsActive = [&]() -> bool {
-        return ps.play_video && playback_renderer_mode == 1;
-    };
-
-    auto stepPausedFrameFromBuffer = [&](int target_frame) -> bool {
-        if (ps.play_video || scene->num_cams <= 0 || scene->size_of_buffer <= 0) {
-            return false;
-        }
-        const int visible_idx = getVisibleCameraIndex();
-        if (visible_idx < 0) {
-            return false;
-        }
-
-        int matched_slot = -1;
-        for (int i = 0; i < scene->size_of_buffer; ++i) {
-            const auto& slot = scene->cameras[visible_idx].display_buffer[i];
-            if (!slot.available_to_write && slot.frame_number == target_frame) {
-                matched_slot = i;
-                break;
-            }
-        }
-
-        if (matched_slot < 0) {
-            return false;
-        }
-
-        ps.read_head = matched_slot;
-        ps.pause_selected = 0;
-        ps.to_display_frame_number = target_frame;
-        ps.slider_frame_number = target_frame;
-        current_frame_num = target_frame;
-        ps.pause_seeked = true;
-        return true;
-    };
-
-    auto findNearestPausedBufferSlot = [&](int visible_idx,
-                                           int target_frame) -> int {
-        if (ps.play_video || scene->num_cams <= 0 || scene->size_of_buffer <= 0 ||
-            visible_idx < 0) {
-            return -1;
-        }
-
-        int best_slot = -1;
-        int best_distance = std::numeric_limits<int>::max();
-        int best_frame = -1;
-        for (int i = 0; i < scene->size_of_buffer; ++i) {
-            const auto& slot = scene->cameras[visible_idx].display_buffer[i];
-            if (slot.available_to_write || slot.frame_number < 0) {
-                continue;
-            }
-            const int distance = std::abs(slot.frame_number - target_frame);
-            if (distance < best_distance ||
-                (distance == best_distance && slot.frame_number > best_frame)) {
-                best_distance = distance;
-                best_frame = slot.frame_number;
-                best_slot = i;
-            }
-        }
-        return best_slot;
-    };
-
-    auto findDisplaySlotForFrame = [&](int cam_idx,
-                                       int target_frame,
-                                       int preferred_slot) -> int {
-        return findCameraDisplaySlotForFrame(*scene, cam_idx, target_frame,
-                                             preferred_slot);
-    };
-
-    auto seekToFrame = [&](int target_frame, bool prefer_buffer_when_paused,
-                           bool force_inaccurate = false) {
-        if (scene->num_cams <= 0) {
-            return;
-        }
-
-        const int max_frame = std::max(0, dc_context->total_num_frame - 1);
-        const int clamped_frame = std::clamp(target_frame, 0, max_frame);
-        const bool seek_accurate = !force_inaccurate && !ps.play_video;
-
-        // Drop duplicate requests while an equivalent seek is still in flight.
-        const bool seek_in_flight =
-            (seek_progress.state == SeekState::WaitingCameras ||
-             seek_progress.state == SeekState::WaitingStimulus);
-        if (seek_in_flight &&
-            seek_progress.requested_camera_frame == clamped_frame &&
-            seek_progress.accurate == seek_accurate) {
-            if (crimson_seek_debug_logs_enabled()) std::cout << "[Seek] dedupe: dropping duplicate request frame="
-                      << clamped_frame
-                      << " accurate=" << (seek_accurate ? "true" : "false")
-                      << " state=" << seekStateName(seek_progress.state)
-                      << std::endl;
-            return;
-        }
-
-        // Fast path: frame already in buffer (paused only)
-        if (prefer_buffer_when_paused && stepPausedFrameFromBuffer(clamped_frame)) {
-            // Still need stimulus seek for this frame
-            if (stimulus_player.loaded && zarr_loader.hasStimulusAlignment()) {
-                auto stim_frame = zarr_loader.getStimulusFrameForCameraFrame(clamped_frame);
-                if (stim_frame && *stim_frame >= 0) {
-                    ps.current_stimulus_frame = *stim_frame;
-                    seek_progress.seek_id++;
-                    seek_progress.state = SeekState::WaitingStimulus;
-                    seek_progress.requested_camera_frame = clamped_frame;
-                    seek_progress.target_camera_frame = clamped_frame;
-                    seek_progress.target_stimulus_frame = *stim_frame;
-                    seek_progress.accurate = !force_inaccurate && !ps.play_video;
-                    seek_progress.cameras_settled = scene->num_cams;
-                    seek_progress.cameras_total = scene->num_cams;
-                    seek_progress.deadline =
-                        std::chrono::steady_clock::now() + std::chrono::seconds(5);
-                    {
-                        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
-                        stimulus_player.seek.seek_frame = static_cast<uint64_t>(*stim_frame);
-                        stimulus_player.seek.seek_id = seek_progress.seek_id;
-                        stimulus_player.seek.use_seek = true;
-                        stimulus_player.seek.seek_done = false;
-                        stimulus_player.seek.seek_accurate = seek_progress.accurate;
-                    }
-                    stimulus_player.last_displayed_frame = -1;
-                    window_need_decoding[stimulus_player.window_name].store(true);
-                    if (crimson_seek_debug_logs_enabled()) std::cout << "[Seek] id=" << seek_progress.seek_id
-                              << " buffer-hit camera=" << clamped_frame
-                              << " -> stimulus=" << *stim_frame << std::endl;
-                }
-            }
-            return;
-        }
-
-        // Full decoder seek path (non-blocking)
-        if (!ps.play_video) {
-            ps.pause_seeked = false;
-            setCameraDecodeRequests(true);
-        }
-
-        seek_progress.seek_id++;
-        seek_progress.state = SeekState::WaitingCameras;
-        seek_progress.requested_camera_frame = clamped_frame;
-        seek_progress.target_camera_frame = clamped_frame;
-        seek_progress.target_stimulus_frame = -1;
-        seek_progress.accurate = seek_accurate;
-        seek_progress.cameras_settled = 0;
-        seek_progress.cameras_total = scene->num_cams;
-        seek_progress.deadline =
-            std::chrono::steady_clock::now() + std::chrono::seconds(5);
-
-        // Update playback state immediately (same as old seek_all_cameras)
-        ps.to_display_frame_number = clamped_frame;
-        ps.read_head = 0;
-        ps.just_seeked = true;
-        ps.slider_frame_number = clamped_frame;
-        ps.accumulated_play_time = clamped_frame / video_fps;
-        ps.last_play_time_start = std::chrono::steady_clock::now();
-        ps.last_frame_num_playspeed = clamped_frame;
-        ps.last_wall_time_playspeed = std::chrono::steady_clock::now();
-
-        // Resolve stimulus target frame now (for state tracking)
-        if (stimulus_player.loaded && zarr_loader.hasStimulusAlignment()) {
-            auto stim_frame = zarr_loader.getStimulusFrameForCameraFrame(clamped_frame);
-            if (stim_frame && *stim_frame >= 0) {
-                ps.current_stimulus_frame = *stim_frame;
-                seek_progress.target_stimulus_frame = *stim_frame;
-            }
-        }
-
-        // Fire camera seeks (returns immediately)
-        initiate_camera_seeks(scene, clamped_frame, seek_progress.seek_id, seek_accurate);
-
-        if (crimson_seek_debug_logs_enabled()) std::cout << "[Seek] id=" << seek_progress.seek_id
-                  << " initiated cameras=" << scene->num_cams
-                  << " frame=" << clamped_frame
-                  << " accurate=" << (seek_accurate ? "true" : "false")
-                  << std::endl;
-    };
-
-    auto syncPlaybackStartToCurrentFrame = [&]() {
-        const double fps_for_clock = (video_fps > 0.0) ? video_fps : 30.0;
-        const int clamped_frame = std::max(0, ps.to_display_frame_number);
-        ps.accumulated_play_time =
-            static_cast<double>(clamped_frame) / fps_for_clock;
-        const auto now_tp = std::chrono::steady_clock::now();
-        ps.last_play_time_start = now_tp;
-        ps.last_frame_num_playspeed = clamped_frame;
-        ps.last_wall_time_playspeed = now_tp;
-
-        const int visible_idx = getVisibleCameraIndex();
-        if (visible_idx >= 0 && scene->size_of_buffer > 0) {
-            const int preferred_slot = ps.read_head % scene->size_of_buffer;
-            const int target_slot = findDisplaySlotForFrame(
-                visible_idx, clamped_frame, preferred_slot);
-            if (target_slot >= 0) {
-                ps.read_head = target_slot;
-            }
-        }
-
-        if (stimulus_player.loaded) {
-            // Clear throttle state when playback resumes so stimulus decode
-            // can restart immediately if the queue had been throttled.
-            stimulus_player.throttled = false;
-            stimulus_player.throttle_resume_frame = -1;
-            window_need_decoding[stimulus_player.window_name].store(true);
-        }
-    };
-
-    auto stepFrames = [&](int delta_frames) {
-        seekToFrame(current_frame_num + delta_frames, true);
-    };
-
-    auto applyPlaybackToggle = [&]() {
-        ps.play_video = !ps.play_video;
-        if (ps.play_video) {
-            ps.pause_seeked = false;
-            setCameraDecodeRequests(true);
-            if (stimulus_player.loaded) {
-                window_need_decoding[stimulus_player.window_name].store(true);
-            }
-            syncPlaybackStartToCurrentFrame();
-        } else {
-            ps.pause_selected = 0;
-        }
-    };
-
     ReviewFrameFilters review_frame_filters;
     ReviewFrameCache review_frame_cache;
     std::string review_frame_status;
@@ -910,6 +618,20 @@ int main(int argc, char **argv) {
     CropPreviewWindowState crop_preview_window_state;
     LabelingToolWindowState labeling_tool_window_state;
     FrameDebugWindowState frame_debug_window_state;
+    PlaybackSessionController playback_session_controller(
+        PlaybackSessionControllerContext{
+            scene,
+            dc_context,
+            &zarr_loader,
+            &stimulus_player,
+            &ps,
+            &seek_progress,
+            &current_frame_num,
+            &video_fps,
+            &camera_names,
+            &window_was_decoding,
+            &window_need_decoding,
+        });
 
     auto makeDecodeDebugDumpContext = [&]() {
         return DecodeDebugDumpContext{
@@ -1020,145 +742,7 @@ int main(int argc, char **argv) {
         ImGui::NewFrame();
         const auto ui_build_start = std::chrono::steady_clock::now();
 
-        // --- Seek state machine polling ---
-        if (seek_progress.state == SeekState::WaitingCameras) {
-            int settled = poll_camera_seeks(scene, seek_progress.seek_id);
-            seek_progress.cameras_settled = settled;
-            if (settled >= seek_progress.cameras_total) {
-                int settled_camera_frame = seek_progress.target_camera_frame;
-                int settled_camera_index = getVisibleCameraIndex();
-                if (settled_camera_index < 0 || settled_camera_index >= scene->num_cams) {
-                    settled_camera_index = 0;
-                }
-                {
-                    std::lock_guard<std::mutex> lock(g_seek_info_mutex);
-                    if (scene->num_cams > 0) {
-                        const auto& settled_ctx =
-                            scene->cameras[settled_camera_index].seek_context;
-                        if (settled_ctx.seek_done &&
-                            settled_ctx.settled_seek_id == seek_progress.seek_id) {
-                            settled_camera_frame =
-                                static_cast<int>(settled_ctx.seek_frame);
-                        }
-                    }
-                }
-
-                if (settled_camera_frame != seek_progress.target_camera_frame) {
-                    if (crimson_seek_debug_logs_enabled()) std::cout << "[Seek] id=" << seek_progress.seek_id
-                              << " camera settled to " << settled_camera_frame
-                              << " (requested " << seek_progress.target_camera_frame
-                              << ")" << std::endl;
-                }
-                seek_progress.target_camera_frame = settled_camera_frame;
-                ps.to_display_frame_number = settled_camera_frame;
-                ps.slider_frame_number = settled_camera_frame;
-
-                // All cameras settled — try to stabilize display from buffer
-                if (!ps.play_video) {
-                    stepPausedFrameFromBuffer(settled_camera_frame);
-                }
-
-                // Recompute stimulus target from the camera frame we actually settled on.
-                int remapped_stimulus_frame = -1;
-                if (stimulus_player.loaded && zarr_loader.hasStimulusAlignment()) {
-                    auto stim_frame =
-                        zarr_loader.getStimulusFrameForCameraFrame(settled_camera_frame);
-                    if (stim_frame && *stim_frame >= 0) {
-                        remapped_stimulus_frame = *stim_frame;
-                    }
-                }
-                seek_progress.target_stimulus_frame = remapped_stimulus_frame;
-                ps.current_stimulus_frame = remapped_stimulus_frame;
-
-                // Transition to stimulus if needed
-                if (stimulus_player.loaded && remapped_stimulus_frame >= 0) {
-                    seek_progress.state = SeekState::WaitingStimulus;
-                    seek_progress.deadline =
-                        std::chrono::steady_clock::now() + std::chrono::seconds(5);
-                    {
-                        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
-                        stimulus_player.seek.seek_frame =
-                            static_cast<uint64_t>(remapped_stimulus_frame);
-                        stimulus_player.seek.seek_id = seek_progress.seek_id;
-                        stimulus_player.seek.use_seek = true;
-                        stimulus_player.seek.seek_done = false;
-                        stimulus_player.seek.seek_accurate = seek_progress.accurate;
-                    }
-                    stimulus_player.last_displayed_frame = -1;
-                    window_need_decoding[stimulus_player.window_name].store(true);
-                    if (crimson_seek_debug_logs_enabled()) std::cout << "[Seek] id=" << seek_progress.seek_id
-                              << " issuing stimulus seek camera="
-                              << settled_camera_frame << " -> stimulus="
-                              << remapped_stimulus_frame
-                              << " buffered_before="
-                              << countBufferedStimulusFrames(stimulus_player)
-                              << " newest_before="
-                              << getNewestStimulusFrame(stimulus_player)
-                              << std::endl;
-                } else {
-                    // No stimulus — seek is complete
-                    seek_progress.state = SeekState::Ready;
-                    if (crimson_seek_debug_logs_enabled()) std::cout << "[Seek] id=" << seek_progress.seek_id
-                              << " complete (no stimulus mapping)" << std::endl;
-                }
-            } else if (std::chrono::steady_clock::now() >= seek_progress.deadline) {
-                std::cerr << "[Seek] id=" << seek_progress.seek_id
-                          << " TIMEOUT in WaitingCameras ("
-                          << settled << "/" << seek_progress.cameras_total
-                          << " settled)" << std::endl;
-                seek_progress.state = SeekState::TimedOut;
-            }
-        }
-        if (seek_progress.state == SeekState::WaitingStimulus) {
-            bool stim_done = false;
-            int settled_stimulus_frame = -1;
-            {
-                std::lock_guard<std::mutex> lock(g_seek_info_mutex);
-                stim_done = stimulus_player.seek.seek_done &&
-                            stimulus_player.seek.settled_seek_id == seek_progress.seek_id;
-                if (stim_done) {
-                    settled_stimulus_frame =
-                        static_cast<int>(stimulus_player.seek.seek_frame);
-                }
-            }
-            if (stim_done) {
-                if (settled_stimulus_frame >= 0 &&
-                    settled_stimulus_frame != seek_progress.target_stimulus_frame) {
-                    if (crimson_seek_debug_logs_enabled()) std::cout << "[Seek] id=" << seek_progress.seek_id
-                              << " stimulus settled to " << settled_stimulus_frame
-                              << " (requested " << seek_progress.target_stimulus_frame
-                              << ")" << std::endl;
-                    seek_progress.target_stimulus_frame = settled_stimulus_frame;
-                    ps.current_stimulus_frame = settled_stimulus_frame;
-                }
-                seek_progress.state = SeekState::Ready;
-                if (crimson_seek_debug_logs_enabled()) std::cout << "[Seek] id=" << seek_progress.seek_id
-                          << " stimulus settled buffered_after="
-                          << countBufferedStimulusFrames(stimulus_player)
-                          << " newest_after=" << getNewestStimulusFrame(stimulus_player)
-                          << std::endl;
-            } else if (std::chrono::steady_clock::now() >= seek_progress.deadline) {
-                std::cerr << "[Seek] id=" << seek_progress.seek_id
-                          << " TIMEOUT in WaitingStimulus"
-                          << " target_stimulus_frame="
-                          << seek_progress.target_stimulus_frame
-                          << " buffered_now="
-                          << countBufferedStimulusFrames(stimulus_player)
-                          << " newest_now=" << getNewestStimulusFrame(stimulus_player)
-                          << std::endl;
-                seek_progress.state = SeekState::TimedOut;
-            }
-            // Keep stimulus decoder alive regardless of pause_seeked
-            window_need_decoding[stimulus_player.window_name].store(true);
-        }
-        if (seek_progress.state == SeekState::Ready ||
-            seek_progress.state == SeekState::TimedOut) {
-            if (!ps.play_video && !ps.pause_seeked) {
-                // Try once more to grab the frame from buffer
-                stepPausedFrameFromBuffer(seek_progress.target_camera_frame);
-            }
-            seek_progress.state = SeekState::Idle;
-        }
+        playback_session_controller.pollSeekState();
 
         // --- Update playback time ---
         auto now = std::chrono::steady_clock::now();
@@ -1295,7 +879,8 @@ int main(int argc, char **argv) {
             break;
         }
         if (file_browser_result.accurate_seek_target_frame.has_value()) {
-            seekToFrame(*file_browser_result.accurate_seek_target_frame, false);
+            playback_session_controller.seekToFrame(
+                *file_browser_result.accurate_seek_target_frame, false);
         }
         frame_file_browser_ui_ms +=
             durationMs(std::chrono::steady_clock::now() - file_browser_ui_start);
@@ -1424,7 +1009,8 @@ int main(int argc, char **argv) {
                     review_frame_cache, current_frame_num, false);
                 review_frame_status = std::move(jump_result.status);
                 if (jump_result.target_frame.has_value()) {
-                    seekToFrame(*jump_result.target_frame, true);
+                    playback_session_controller.seekToFrame(
+                        *jump_result.target_frame, true);
                 }
             }
             if (frame_debug_result.request_next_review_frame) {
@@ -1433,7 +1019,8 @@ int main(int argc, char **argv) {
                     review_frame_cache, current_frame_num, true);
                 review_frame_status = std::move(jump_result.status);
                 if (jump_result.target_frame.has_value()) {
-                    seekToFrame(*jump_result.target_frame, true);
+                    playback_session_controller.seekToFrame(
+                        *jump_result.target_frame, true);
                 }
             }
             if (frame_debug_result.request_dump_decode_buffers) {
@@ -1447,9 +1034,13 @@ int main(int argc, char **argv) {
                         dc_context,
                         &debug_rng,
                         [&](int target_frame, bool prefer_buffer_when_paused) {
-                            seekToFrame(target_frame, prefer_buffer_when_paused);
+                            playback_session_controller.seekToFrame(
+                                target_frame, prefer_buffer_when_paused);
                         },
-                        [&](bool enabled) { setCameraDecodeRequests(enabled); },
+                        [&](bool enabled) {
+                            playback_session_controller.setCameraDecodeRequests(
+                                enabled);
+                        },
                     },
                     decode_debug_status);
             }
@@ -1860,7 +1451,7 @@ int main(int argc, char **argv) {
                 if (exact_slot >= 0) {
                     return exact_slot;
                 }
-                return findNearestPausedBufferSlot(
+                return playback_session_controller.findNearestPausedBufferSlot(
                     visible_idx, std::max(0, ps.to_display_frame_number));
             };
 
@@ -1968,7 +1559,10 @@ int main(int argc, char **argv) {
             } else {
                 ps.current_stimulus_frame = -1;
             }
-            const int paused_visible_idx = ps.play_video ? -1 : getVisibleCameraIndex();
+            const int paused_visible_idx =
+                ps.play_video ? -1
+                              : playback_session_controller
+                                    .getVisibleCameraIndex();
             for (int j = 0; j < scene->num_cams; j++) {
                 const std::string &win_name = camera_names[j];
 
@@ -2011,13 +1605,15 @@ int main(int argc, char **argv) {
                 if (!window_was_decoding[win_name] && is_visible &&
                     ps.play_video) {
                     // seek if visibility has changed
-                    seekToFrame(current_frame_num, true);
+                    playback_session_controller.seekToFrame(current_frame_num,
+                                                            true);
                 }
 
                 if (!window_was_decoding[win_name] && is_visible &&
                     !ps.play_video && !ps.pause_seeked) {
                     // seek if visibility has changed
-                    seekToFrame(current_frame_num, true);
+                    playback_session_controller.seekToFrame(current_frame_num,
+                                                            true);
                     for (auto &[key, value] : window_need_decoding) {
                         value.store(true);
                     }
@@ -2038,9 +1634,13 @@ int main(int argc, char **argv) {
                         ps.play_video,
                         ps.pause_seeked,
                         yolo_detection,
-                        playbackLightweightRendererIsActive(),
-                        playbackPreviewIsActive(),
-                        playbackPreviewScaleFactor(),
+                        playbackLightweightRendererIsActive(
+                            ps.play_video, playback_renderer_mode),
+                        playbackPreviewIsActive(
+                            ps.play_video, yolo_detection,
+                            playback_preview_scale_mode),
+                        playbackPreviewScaleFactor(
+                            playback_preview_scale_mode),
                         playback_preview_scale_mode,
                     };
                     const CameraViewPresenterResult camera_view_presenter_result =
@@ -2441,7 +2041,8 @@ int main(int argc, char **argv) {
                         presented_frame,
                         swap_playback_surface_after_draw,
                         ps.play_video,
-                        playbackLightweightRendererIsActive(),
+                        playbackLightweightRendererIsActive(
+                            ps.play_video, playback_renderer_mode),
                         use_legacy_manual_keypoint_tools,
                         &legacy_labeling_state,
                         zarr_loaded,
@@ -2683,13 +2284,14 @@ int main(int argc, char **argv) {
                     ps.slider_just_changed =
                         camera_transport_result.slider_just_changed;
                     if (camera_transport_result.toggle_playback) {
-                        applyPlaybackToggle();
+                        playback_session_controller.applyPlaybackToggle();
                     }
                     if (camera_transport_result.step_delta != 0) {
-                        stepFrames(camera_transport_result.step_delta);
+                        playback_session_controller.stepFrames(
+                            camera_transport_result.step_delta);
                     }
                     if (camera_transport_result.seek_target_frame.has_value()) {
-                        seekToFrame(
+                        playback_session_controller.seekToFrame(
                             *camera_transport_result.seek_target_frame, true,
                             camera_transport_result.force_inaccurate_seek);
                     }
@@ -2700,10 +2302,11 @@ int main(int argc, char **argv) {
             const CameraViewPlaybackShortcutsResult playback_shortcuts =
                 handleCameraViewPlaybackShortcuts();
             if (playback_shortcuts.toggle_playback) {
-                applyPlaybackToggle();
+                playback_session_controller.applyPlaybackToggle();
             }
             if (playback_shortcuts.step_delta != 0) {
-                stepFrames(playback_shortcuts.step_delta);
+                playback_session_controller.stepFrames(
+                    playback_shortcuts.step_delta);
             }
 
             for (const auto &[name, flag] : window_need_decoding) {
@@ -2719,7 +2322,8 @@ int main(int argc, char **argv) {
             CropFrameSource live_crop_frame_source;
             int crop_preview_frame_num = current_frame_num;
             if (video_loaded) {
-                const int visible_idx = getVisibleCameraIndex();
+                const int visible_idx =
+                    playback_session_controller.getVisibleCameraIndex();
                 if (visible_idx >= 0 && scene->size_of_buffer > 0) {
                     const auto& camera = scene->cameras[visible_idx];
                     if (ps.play_video && camera.texture_has_valid_frame &&
@@ -2727,8 +2331,9 @@ int main(int argc, char **argv) {
                         crop_preview_frame_num = camera.last_uploaded_frame;
                     }
                     const int preferred_slot = ps.read_head % scene->size_of_buffer;
-                    const int slot_index = findDisplaySlotForFrame(
-                        visible_idx, crop_preview_frame_num, preferred_slot);
+                    const int slot_index = findCameraDisplaySlotForFrame(
+                        *scene, visible_idx, crop_preview_frame_num,
+                        preferred_slot);
                     if (camera.texture_has_valid_frame &&
                         camera.last_uploaded_frame == crop_preview_frame_num &&
                         camera.image_texture != 0) {
@@ -2958,8 +2563,8 @@ int main(int argc, char **argv) {
                                                labeling_tool_workflow_context);
 
             if (labeling_tool_workflow_result.jump_target_frame.has_value()) {
-                seekToFrame(*labeling_tool_workflow_result.jump_target_frame,
-                            true);
+                playback_session_controller.seekToFrame(
+                    *labeling_tool_workflow_result.jump_target_frame, true);
             }
 
             frame_labeling_tool_ui_ms += durationMs(
@@ -2984,7 +2589,8 @@ int main(int argc, char **argv) {
                 drawStimulusEventTimelineWindow(stimulus_timeline_context,
                                                stimulus_timeline_window_state);
             if (stimulus_timeline_result.seek_target_frame.has_value()) {
-                seekToFrame(*stimulus_timeline_result.seek_target_frame, true);
+                playback_session_controller.seekToFrame(
+                    *stimulus_timeline_result.seek_target_frame, true);
             }
             frame_stimulus_timeline_ui_ms += durationMs(
                 std::chrono::steady_clock::now() - stimulus_timeline_ui_start);
@@ -3169,9 +2775,10 @@ int main(int argc, char **argv) {
                 static_cast<int>(scene->size_of_buffer),
                 label_buffer_size,
                 video_loaded,
-                playbackPreviewScaleLabel(),
-                playbackPreviewIsActive(),
-                playbackRendererModeLabel(),
+                playbackPreviewScaleLabel(playback_preview_scale_mode),
+                playbackPreviewIsActive(ps.play_video, yolo_detection,
+                                        playback_preview_scale_mode),
+                playbackRendererModeLabel(playback_renderer_mode),
                 static_cast<int>(perf_camera_viewport_width_px),
                 static_cast<int>(perf_camera_viewport_height_px),
                 perf_camera_view_x_min,
