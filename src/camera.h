@@ -39,10 +39,11 @@ struct CameraParams {
     bool has_valid_homography = false;
 };
 
-bool camera_load_calibration_from_h5_enhanced(const H5SessionData& h5_data,
-                                              const std::string& camera_id_str,
-                                              CameraParams& camera_params,
-                                              std::string& error_message) {
+inline bool camera_load_calibration_from_h5_enhanced(
+    const H5SessionData& h5_data,
+    const std::string& camera_id_str,
+    CameraParams& camera_params,
+    std::string& error_message) {
     error_message.clear();
     
     try {
@@ -137,10 +138,11 @@ bool camera_load_calibration_from_h5_enhanced(const H5SessionData& h5_data,
 }
 
 // Keep the original function for backward compatibility but have it call the enhanced version
-bool camera_load_calibration_from_h5_json(const std::string& arena_config_json,
-                                          const std::string& camera_id_str,
-                                          CameraParams& camera_params,
-                                          std::string& error_message) {
+inline bool camera_load_calibration_from_h5_json(
+    const std::string& arena_config_json,
+    const std::string& camera_id_str,
+    CameraParams& camera_params,
+    std::string& error_message) {
     // Create a temporary H5SessionData with just the JSON
     H5SessionData temp_data;
     temp_data.arena_config_json = arena_config_json;
@@ -150,7 +152,8 @@ bool camera_load_calibration_from_h5_json(const std::string& arena_config_json,
 }
 
 // Debug function to print calibration details
-void camera_print_calibration_details(const CameraParams& params, const std::string& camera_id) {
+inline void camera_print_calibration_details(const CameraParams& params,
+                                             const std::string& camera_id) {
     std::cout << "\n=== Calibration Details for Camera: " << camera_id << " ===" << std::endl;
     
     if (params.has_valid_homography) {
@@ -192,7 +195,7 @@ void camera_print_calibration_details(const CameraParams& params, const std::str
 }
 
 
-void camera_print_parameters(CameraParams *cvp) {
+inline void camera_print_parameters(CameraParams *cvp) {
     std::cout << "k = " << std::endl
               << cv::format(cvp->k, cv::Formatter::FMT_PYTHON) << std::endl
               << std::endl;
@@ -237,9 +240,9 @@ static inline void camera_projection_from_krt(const cv::Mat& k,
     projection_mat = k64 * rt;
 }
 
-bool camera_load_params_from_yaml(const std::string &calibration_file,
-                                  CameraParams &camera_params,
-                                  std::string &error_message) {
+inline bool camera_load_params_from_yaml(const std::string &calibration_file,
+                                         CameraParams &camera_params,
+                                         std::string &error_message) {
     error_message.clear();
 
     if (!std::filesystem::exists(calibration_file)) {
@@ -271,8 +274,8 @@ bool camera_load_params_from_yaml(const std::string &calibration_file,
     return true;
 }
 
-CameraParams camera_load_params_from_csv(std::string csv_filename,
-                                         int cam_idx) {
+inline CameraParams camera_load_params_from_csv(std::string csv_filename,
+                                                int cam_idx) {
     std::cout << csv_filename << std::endl;
     CameraParams cvp;
 
