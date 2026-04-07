@@ -2,6 +2,11 @@
 
 Date anchored: 2026-04-07.
 
+Related docs:
+
+- `docs/crimson_contiguous_playback_window_design.md`
+- `docs/crimson_live_playback_bidirectional_buffer_todo.md`
+
 ## Problem Summary
 
 When playback is paused, Crimson lets the user browse already-decoded camera
@@ -25,6 +30,11 @@ The root issue is architectural:
 - playback resume needs a **canonical session resume point**
 
 Those are not the same thing.
+
+This resume design should now be read as a follow-on to
+`crimson_contiguous_playback_window_design.md`: buffered frame resume is one
+consumer of the larger playback-window/staging-window model, not a standalone
+slot-management fix.
 
 ## Current Architecture
 

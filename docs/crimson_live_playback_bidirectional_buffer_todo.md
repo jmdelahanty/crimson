@@ -2,9 +2,22 @@
 
 Date anchored: 2026-02-10.
 
+Related docs:
+
+- `docs/crimson_contiguous_playback_window_design.md`
+- `docs/crimson_buffered_frame_resume_design.md`
+
 ## Problem Summary
 
 Current live playback uses a forward-consumption ring buffer. As playback advances, old slots are immediately released, so users cannot reliably scrub or step a short distance backward without triggering a seek/decode refill.
+
+This TODO focuses on making playback retain a small asymmetric history/lookahead
+window. It should now be read together with
+`crimson_contiguous_playback_window_design.md`, which distinguishes:
+
+- the active contiguous playback window
+- a staging window for seek/resume
+- sparse paused-buffer browsing as a separate inspection path
 
 Goal: support a stable asymmetric window around the current playback frame:
 

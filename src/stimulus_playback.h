@@ -39,6 +39,8 @@ struct SeekProgress {
 
 struct PlaybackState {
     int pause_selected = 0;
+    int paused_frame_on_toggle = -1;
+    bool buffer_browsed_since_pause = false;
     bool slider_just_changed = false;
     bool play_video = false;
     int to_display_frame_number = 0;

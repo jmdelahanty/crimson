@@ -358,15 +358,35 @@ void PlaybackSessionController::applyPlaybackToggle() const {
     }
     context_.playback_state->play_video = !context_.playback_state->play_video;
     if (context_.playback_state->play_video) {
+        const int resume_frame =
+            std::max(0, context_.playback_state->to_display_frame_number);
+        const bool browsed_since_pause =
+            context_.playback_state->buffer_browsed_since_pause &&
+            context_.playback_state->paused_frame_on_toggle >= 0 &&
+            resume_frame != context_.playback_state->paused_frame_on_toggle;
         context_.playback_state->pause_seeked = false;
         setCameraDecodeRequests(true);
         if (context_.stimulus_player->loaded) {
             (*context_.window_need_decoding)[context_.stimulus_player->window_name]
                 .store(true);
         }
-        syncPlaybackStartToCurrentFrame();
+        if (browsed_since_pause) {
+            seekToFrame(resume_frame, false, true);
+        } else {
+            syncPlaybackStartToCurrentFrame();
+        }
+        context_.playback_state->buffer_browsed_since_pause = false;
     } else {
         context_.playback_state->pause_selected = 0;
+        const int paused_frame =
+            (context_.current_frame_num != nullptr)
+                ? std::max(0, *context_.current_frame_num)
+                : std::max(0, context_.playback_state->to_display_frame_number);
+        context_.playback_state->paused_frame_on_toggle = paused_frame;
+        context_.playback_state->buffer_browsed_since_pause = false;
+        context_.playback_state->to_display_frame_number = paused_frame;
+        context_.playback_state->slider_frame_number = paused_frame;
+        stepPausedFrameFromBuffer(paused_frame);
     }
 }
 

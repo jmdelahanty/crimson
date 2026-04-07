@@ -1253,6 +1253,13 @@ int main(int argc, char **argv) {
             if (ImGui::Begin("Frames in the buffer")) {
                 ImGui::Text("Valid frames: %zu / %u",
                             paused_buffer_items.size(), scene->size_of_buffer);
+                if (ps.paused_frame_on_toggle >= 0) {
+                    ImGui::Text("Pause origin frame: %d, resume mode: %s",
+                                ps.paused_frame_on_toggle,
+                                ps.buffer_browsed_since_pause
+                                    ? "seek from browsed frame"
+                                    : "smooth resume from pause frame");
+                }
                 if (!paused_buffer_items.empty()) {
                     const int oldest_buffered_frame =
                         paused_buffer_items.front().frame;
@@ -1363,6 +1370,9 @@ int main(int argc, char **argv) {
                                 ps.to_display_frame_number = item.frame;
                                 ps.slider_frame_number = item.frame;
                                 ps.pause_seeked = true;
+                                ps.buffer_browsed_since_pause =
+                                    (ps.paused_frame_on_toggle >= 0 &&
+                                     item.frame != ps.paused_frame_on_toggle);
                             }
                             ImGui::PopID();
                         }
@@ -1377,6 +1387,10 @@ int main(int argc, char **argv) {
                             paused_buffer_items[selected_item].frame;
                         ps.slider_frame_number = ps.to_display_frame_number;
                         ps.pause_seeked = true;
+                        ps.buffer_browsed_since_pause =
+                            (ps.paused_frame_on_toggle >= 0 &&
+                             ps.to_display_frame_number !=
+                                 ps.paused_frame_on_toggle);
                     }
                 };
 
@@ -1388,6 +1402,10 @@ int main(int argc, char **argv) {
                             paused_buffer_items[selected_item].frame;
                         ps.slider_frame_number = ps.to_display_frame_number;
                         ps.pause_seeked = true;
+                        ps.buffer_browsed_since_pause =
+                            (ps.paused_frame_on_toggle >= 0 &&
+                             ps.to_display_frame_number !=
+                                 ps.paused_frame_on_toggle);
                     }
                 };
             }
