@@ -1,5 +1,6 @@
 #pragma once
 
+#include "camera.h"
 #include "gui/full_frame_rect_edit_overlay.h"
 #include "zarr_bbox_edit.h"
 
@@ -27,6 +28,13 @@ void drawCameraViewEyeMaskOverlay(
     const ZarrDetectionLoader::FrameDetections& mask_details,
     float image_height_px,
     const std::string& smoothing_run_id);
+
+void drawCameraViewChaserOverlay(
+    std::vector<ZarrDetectionLoader::ChaserBoundingBox> chaser_bboxes,
+    const std::vector<ZarrDetectionLoader::ChaserState>& chaser_states,
+    const CameraParams& camera_params,
+    int image_width_px,
+    int image_height_px);
 
 void drawCameraViewStimulusEventOverlay(
     int view_idx,
