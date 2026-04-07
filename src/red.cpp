@@ -2199,6 +2199,7 @@ int main(int argc, char **argv) {
             skeleton_dir,
             video_loaded,
             !has_active_zarr_keypoint_review,
+            legacy_labeling_state.manual_label_mode,
             legacy_labeling_state.skeleton_chosen,
             active_skeleton_name,
             legacy_labeling_state.skeleton_map,

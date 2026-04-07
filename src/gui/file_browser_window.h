@@ -25,6 +25,7 @@ struct FileBrowserSkeletonSelection {
 
 struct FileBrowserWindowState {
     int seek_accurate_frame_num = 0;
+    bool enable_legacy_manual_labeling = false;
 };
 
 struct FileBrowserWindowContext {
@@ -33,7 +34,8 @@ struct FileBrowserWindowContext {
     const std::string& root_dir;
     const std::string& skeleton_dir;
     bool video_loaded = false;
-    bool show_legacy_skeleton_menu = true;
+    bool can_offer_legacy_manual_labeling = true;
+    bool legacy_manual_mode_active = false;
     bool skeleton_chosen = false;
     const std::string& active_skeleton_name;
     const std::map<std::string, SkeletonPrimitive>& skeleton_map;

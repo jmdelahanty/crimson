@@ -91,31 +91,64 @@ FileBrowserWindowResult drawFileBrowserWindow(const FileBrowserWindowContext& co
             ImGui::EndMenu();
         }
 
-        if (context.video_loaded && context.show_legacy_skeleton_menu) {
-            if (ImGui::BeginMenu("Legacy Skeleton")) {
-                for (const auto& element : context.skeleton_map) {
-                    if (ImGui::MenuItem(element.first.c_str(),
+        if (context.video_loaded && context.can_offer_legacy_manual_labeling) {
+            if (ImGui::BeginMenu("Legacy Manual Labeling")) {
+                ImGui::TextDisabled("Legacy CSV/manual labeling workflow");
+                ImGui::Separator();
+
+                const bool legacy_tools_enabled =
+                    state.enable_legacy_manual_labeling ||
+                    context.legacy_manual_mode_active;
+                if (!context.legacy_manual_mode_active) {
+                    if (ImGui::MenuItem("Enable legacy manual labeling tools",
                                         nullptr,
-                                        context.active_skeleton_name ==
-                                            element.first,
-                                        !context.skeleton_chosen)) {
-                        if (element.second == SP_LOAD) {
-                            IGFD::FileDialogConfig config;
-                            config.countSelectionMax = 1;
-                            config.path = context.skeleton_dir;
-                            config.flags = ImGuiFileDialogFlags_Modal;
-                            ImGuiFileDialog::Instance()->OpenDialog(
-                                "ChooseSkeleton",
-                                "Choose Skeleton",
-                                ".json",
-                                config);
-                        } else {
-                            result.skeleton_selection =
-                                FileBrowserSkeletonSelection{element.first,
-                                                             element.second};
-                        }
+                                        legacy_tools_enabled)) {
+                        state.enable_legacy_manual_labeling =
+                            !state.enable_legacy_manual_labeling;
                     }
+                } else {
+                    ImGui::TextDisabled("Legacy manual labeling mode is active.");
                 }
+
+                if (!context.active_skeleton_name.empty()) {
+                    ImGui::Text("Active skeleton: %s",
+                                context.active_skeleton_name.c_str());
+                }
+
+                if (legacy_tools_enabled) {
+                    if (ImGui::BeginMenu("Skeleton")) {
+                        for (const auto& element : context.skeleton_map) {
+                            if (ImGui::MenuItem(
+                                    element.first.c_str(),
+                                    nullptr,
+                                    context.active_skeleton_name ==
+                                        element.first,
+                                    !context.skeleton_chosen)) {
+                                if (element.second == SP_LOAD) {
+                                    IGFD::FileDialogConfig config;
+                                    config.countSelectionMax = 1;
+                                    config.path = context.skeleton_dir;
+                                    config.flags = ImGuiFileDialogFlags_Modal;
+                                    ImGuiFileDialog::Instance()->OpenDialog(
+                                        "ChooseSkeleton",
+                                        "Choose Skeleton",
+                                        ".json",
+                                        config);
+                                } else {
+                                    result.skeleton_selection =
+                                        FileBrowserSkeletonSelection{
+                                            element.first, element.second};
+                                }
+                            }
+                        }
+                        ImGui::EndMenu();
+                    }
+                } else {
+                    ImGui::TextDisabled(
+                        "Enable this menu to access the legacy manual "
+                        "labeling tools.");
+                }
+
                 ImGui::EndMenu();
             }
 
