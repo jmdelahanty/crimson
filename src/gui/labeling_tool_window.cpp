@@ -8,17 +8,20 @@
 namespace {
 
 bool allCurrentKeypointsTriangulated(const LabelingToolWindowContext& context) {
-    if (!context.legacy_manual_keypoints_find || context.skeleton == nullptr) {
+    if (!context.legacy_state.keypoints_find ||
+        context.legacy_state.skeleton == nullptr) {
         return false;
     }
-    auto frame_it = context.keypoints_map.find(context.current_frame_num);
-    if (frame_it == context.keypoints_map.end() || frame_it->second == nullptr) {
+    auto frame_it =
+        context.legacy_state.keypoints_map.find(context.current_frame_num);
+    if (frame_it == context.legacy_state.keypoints_map.end() ||
+        frame_it->second == nullptr) {
         return false;
     }
 
     KeyPoints* frame_keypoints = frame_it->second;
     for (int cam_idx = 0; cam_idx < context.num_cams; ++cam_idx) {
-        for (int node_idx = 0; node_idx < context.skeleton->num_nodes;
+        for (int node_idx = 0; node_idx < context.legacy_state.skeleton->num_nodes;
              ++node_idx) {
             if (!frame_keypoints->keypoints2d[cam_idx][node_idx]
                      .is_triangulated) {
@@ -44,11 +47,11 @@ LabelingToolWindowResult drawLabelingToolWindow(
     ImGui::TextDisabled("Legacy CSV/manual labeling workflow");
     ImGui::Separator();
 
-    const bool keypoint_triangulated_all =
+        const bool keypoint_triangulated_all =
         allCurrentKeypointsTriangulated(context);
     if (context.num_cams > 1) {
         const bool enabled =
-            context.legacy_manual_keypoints_find &&
+            context.legacy_state.keypoints_find &&
             context.triangulation_supported;
         const bool apply_color = context.triangulation_supported &&
                                  !keypoint_triangulated_all && enabled;
@@ -92,15 +95,15 @@ LabelingToolWindowResult drawLabelingToolWindow(
                                                 config);
     }
     ImGui::SameLine();
-    ImGui::Text("%s", context.keypoints_root_folder.c_str());
+    ImGui::Text("%s", context.legacy_state.keypoints_root_folder.c_str());
 
     if (ImGui::Button("Save Labeled Data") ||
         (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false))) {
         result.request_save = true;
     }
-    if (context.last_saved != static_cast<std::time_t>(-1)) {
+    if (context.legacy_state.last_saved != static_cast<std::time_t>(-1)) {
         ImGui::SameLine();
-        ImGui::Text("Last saved: %s", ctime(&context.last_saved));
+        ImGui::Text("Last saved: %s", ctime(&context.legacy_state.last_saved));
     }
 
     if (ImGui::Button("Load Most Recent Labels")) {
@@ -113,7 +116,7 @@ LabelingToolWindowResult drawLabelingToolWindow(
     if (ImGui::Button("Load From Selected")) {
         IGFD::FileDialogConfig config;
         config.countSelectionMax = 1;
-        config.path = context.keypoints_root_folder;
+        config.path = context.legacy_state.keypoints_root_folder;
         config.flags = ImGuiFileDialogFlags_Modal;
         ImGuiFileDialog::Instance()->OpenDialog("LoadFromSelected",
                                                 "Load from selected",
@@ -122,7 +125,7 @@ LabelingToolWindowResult drawLabelingToolWindow(
     }
 
     ImGui::Separator();
-    if (context.has_labeled_frames) {
+    if (context.legacy_state.hasLabeledFrames()) {
         ImGui::Text("Next labeled frame : %d", context.next_labeled_frame);
         if (ImGui::Button("Jump to Next Labeled Frame")) {
             result.jump_target_frame = context.next_labeled_frame;
@@ -133,13 +136,14 @@ LabelingToolWindowResult drawLabelingToolWindow(
         ImGui::Button("Jump to Next Labeled Frame");
         ImGui::EndDisabled();
     }
-    ImGui::Text("Total labeled frames : %zu", context.total_labeled_frames);
+    ImGui::Text("Total labeled frames : %zu",
+                context.legacy_state.keypoints_map.size());
 
     ImGui::End();
 
     if (ImGuiFileDialog::Instance()->Display("ChooseKeypointsFolder")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
-            context.keypoints_root_folder =
+            context.legacy_state.keypoints_root_folder =
                 ImGuiFileDialog::Instance()->GetCurrentPath();
         }
         ImGuiFileDialog::Instance()->Close();

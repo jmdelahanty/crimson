@@ -2,11 +2,8 @@
 
 #include <fstream>
 
-#include "render.h"
-#include "skeleton.h"
+#include "legacy_labeling_state.h"
 
-#include <ctime>
-#include <map>
 #include <optional>
 #include <string>
 
@@ -16,17 +13,11 @@ struct LabelingToolWindowState {
 
 struct LabelingToolWindowContext {
     const std::string& root_dir;
-    std::string& keypoints_root_folder;
+    LegacyLabelingState& legacy_state;
     int num_cams = 0;
-    const SkeletonContext* skeleton = nullptr;
-    const std::map<u32, KeyPoints*>& keypoints_map;
     int current_frame_num = 0;
-    bool legacy_manual_keypoints_find = false;
     bool triangulation_supported = false;
-    std::time_t last_saved = static_cast<std::time_t>(-1);
-    bool has_labeled_frames = false;
     int next_labeled_frame = -1;
-    size_t total_labeled_frames = 0;
 };
 
 struct LabelingToolWindowResult {

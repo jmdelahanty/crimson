@@ -8,14 +8,18 @@ void drawKeypointsWindow(const KeypointsWindowContext& context) {
         return;
     }
 
+    const SkeletonContext* skeleton = context.legacy_state.skeleton.get();
+
     const float text_base_height = ImGui::GetTextLineHeightWithSpacing();
     const int rows_count = context.num_cams;
     const int columns_count =
-        (context.skeleton != nullptr) ? context.skeleton->num_nodes + 1 : 1;
+        (skeleton != nullptr) ? skeleton->num_nodes + 1 : 1;
 
-    auto frame_it = context.keypoints_map.find(context.current_frame_num);
+    auto frame_it = context.legacy_state.keypoints_map.find(
+        context.current_frame_num);
     KeyPoints* frame_keypoints =
-        (frame_it != context.keypoints_map.end()) ? frame_it->second : nullptr;
+        (frame_it != context.legacy_state.keypoints_map.end()) ? frame_it->second
+                                                               : nullptr;
 
     static ImGuiTableFlags table_flags =
         ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY |
@@ -30,10 +34,10 @@ void drawKeypointsWindow(const KeypointsWindowContext& context) {
         ImGui::TableSetupColumn("Name",
                                 ImGuiTableColumnFlags_NoHide |
                                     ImGuiTableColumnFlags_NoReorder);
-        if (context.skeleton != nullptr) {
+        if (skeleton != nullptr) {
             for (int column = 1; column < columns_count; column++) {
                 ImGui::TableSetupColumn(
-                    context.skeleton->node_names[column - 1].c_str(),
+                    skeleton->node_names[column - 1].c_str(),
                     ImGuiTableColumnFlags_AngledHeader |
                         ImGuiTableColumnFlags_WidthFixed);
             }
@@ -46,7 +50,7 @@ void drawKeypointsWindow(const KeypointsWindowContext& context) {
             ImGui::PushID(row);
             ImGui::TableNextRow();
 
-            if (context.legacy_manual_keypoints_find &&
+            if (context.legacy_state.keypoints_find &&
                 row < static_cast<int>(context.is_view_focused.size()) &&
                 context.is_view_focused[row]) {
                 ImU32 row_bg_color =
@@ -66,9 +70,9 @@ void drawKeypointsWindow(const KeypointsWindowContext& context) {
                 if (!ImGui::TableSetColumnIndex(column)) {
                     continue;
                 }
-                if (!context.legacy_manual_keypoints_find ||
+                if (!context.legacy_state.keypoints_find ||
                     frame_keypoints == nullptr ||
-                    context.skeleton == nullptr) {
+                    skeleton == nullptr) {
                     continue;
                 }
 
@@ -77,7 +81,7 @@ void drawKeypointsWindow(const KeypointsWindowContext& context) {
                     node_color = (ImVec4)ImColor::HSV(0.8f, 1.0f, 1.0f);
                 } else if (frame_keypoints->keypoints2d[row][column - 1]
                                .is_labeled) {
-                    node_color = context.skeleton->node_colors[column - 1];
+                    node_color = skeleton->node_colors[column - 1];
                     node_color.w = 0.9f;
                 }
 

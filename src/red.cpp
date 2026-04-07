@@ -4,6 +4,7 @@
 #include "filesystem"
 #include "global.h"
 #include "gui.h"
+#include "legacy_labeling_state.h"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
@@ -464,15 +465,12 @@ int main(int argc, char **argv) {
     dc_context->seek_interval = 250;
 
     // gui states, todo: bundle this later
-    std::time_t last_saved = static_cast<std::time_t>(-1);
     bool video_loaded = false;
     bool cpu_buffer_toggle = true;
-    bool legacy_manual_label_mode = false;
     bool show_keypoint_markers = true;
     bool show_heading_arrows = true;
     bool show_eye_masks = false;
     int current_frame_num = 0;
-    bool skeleton_chosen = false;
     std::vector<std::string> imgs_names;
 
     constexpr bool kHeadingDebugLoggingEnabled = false;
@@ -526,10 +524,7 @@ int main(int argc, char **argv) {
     };
 
     // for labeling
-    std::unique_ptr<SkeletonContext> skeleton;
-    std::map<u32, KeyPoints *> keypoints_map;
-    bool legacy_manual_keypoints_find = false;
-    std::map<std::string, SkeletonPrimitive> skeleton_map;
+    LegacyLabelingState legacy_labeling_state;
 
     // others
     UiPathConfig ui_path_config = LoadUiPathConfig(cwd, argv0_path);
@@ -556,7 +551,6 @@ int main(int argc, char **argv) {
     bool yolo_detection = false;
     std::vector<std::thread> yolo_threads;
     yolo_param yolo_setting = yolo_param();
-    std::string keypoints_root_folder;
     int label_buffer_size = 100;
     int playback_preview_scale_mode = 0;
     int playback_renderer_mode = 1;
@@ -2191,16 +2185,11 @@ int main(int argc, char **argv) {
         double playback_time_now = ps.accumulated_play_time;
 
         const auto file_browser_ui_start = std::chrono::steady_clock::now();
-        if (video_loaded && !skeleton_chosen) {
-            if (!skeleton) {
-                skeleton = std::make_unique<SkeletonContext>();
-            }
-            if (skeleton_map.empty()) {
-                skeleton_map = skeleton_get_all();
-            }
+        if (video_loaded && !legacy_labeling_state.skeleton_chosen) {
+            legacy_labeling_state.ensureSkeletonResources();
         }
         const std::string active_skeleton_name =
-            skeleton ? skeleton->name : std::string();
+            legacy_labeling_state.activeSkeletonName();
         const bool has_active_zarr_keypoint_review =
             zarr_loaded && zarr_loader.hasKeypointData();
         FileBrowserWindowContext file_browser_context{
@@ -2210,9 +2199,9 @@ int main(int argc, char **argv) {
             skeleton_dir,
             video_loaded,
             !has_active_zarr_keypoint_review,
-            skeleton_chosen,
+            legacy_labeling_state.skeleton_chosen,
             active_skeleton_name,
-            skeleton_map,
+            legacy_labeling_state.skeleton_map,
             cpu_buffer_toggle,
             scene->use_cpu_buffer,
             label_buffer_size,
@@ -2267,13 +2256,9 @@ int main(int argc, char **argv) {
             if (load_calibration) {
                 skeleton_initialize(selection.name,
                                     root_dir,
-                                    skeleton.get(),
+                                    legacy_labeling_state.skeleton.get(),
                                     selection.primitive);
-                legacy_manual_label_mode = true;
-                legacy_manual_keypoints_find = false;
-                keypoints_root_folder = root_dir + "/labeled_data/";
-                std::filesystem::create_directory(keypoints_root_folder);
-                skeleton_chosen = true;
+                legacy_labeling_state.activateManualMode(root_dir);
             }
         }
         switch (file_browser_result.detection_action) {
@@ -2327,12 +2312,13 @@ int main(int argc, char **argv) {
             durationMs(std::chrono::steady_clock::now() - file_browser_ui_start);
 
         const bool use_legacy_manual_keypoint_tools =
-            legacy_manual_label_mode && !has_active_zarr_keypoint_review;
+            legacy_labeling_state.toolsEnabled(
+                has_active_zarr_keypoint_review);
 
         if (video_loaded) {
             const auto frame_debug_ui_start = std::chrono::steady_clock::now();
             if (!use_legacy_manual_keypoint_tools) {
-                legacy_manual_keypoints_find = false;
+                legacy_labeling_state.keypoints_find = false;
             }
             std::vector<LoggedBoundingBox> zarr_boxes;
             bool frame_is_interpolated = false;
@@ -2389,7 +2375,7 @@ int main(int argc, char **argv) {
                 frame_sync_debug_line,
                 use_legacy_manual_keypoint_tools,
                 use_legacy_manual_keypoint_tools &&
-                    (keypoints_map.count(current_frame_num) != 0),
+                    legacy_labeling_state.hasFrameKeypoints(current_frame_num),
                 zarr_loaded,
                 zarr_loader,
                 detection_dataset_labels,
@@ -2802,14 +2788,12 @@ int main(int argc, char **argv) {
                     }
 
                         if (load_calibration) {
-                            skeleton_dir =
-                                ImGuiFileDialog::Instance()->GetCurrentPath();
-                            skeleton_initialize("", skeleton_file.begin()->second,
-                                                skeleton.get(), SP_LOAD);
-                        legacy_manual_label_mode = true;
-                        legacy_manual_keypoints_find = false;
-                        keypoints_root_folder = root_dir + "/labeled_data/";
-                        skeleton_chosen = true;
+                        skeleton_dir =
+                            ImGuiFileDialog::Instance()->GetCurrentPath();
+                        skeleton_initialize("", skeleton_file.begin()->second,
+                                            legacy_labeling_state.skeleton.get(),
+                                            SP_LOAD);
+                        legacy_labeling_state.activateManualMode(root_dir);
                     }
                 }
             }
@@ -3518,12 +3502,12 @@ int main(int argc, char **argv) {
                     // ImGui::Image((void*)(intptr_t)image_texture[j],
                     // avail_size);
                     //
-                        if (use_legacy_manual_keypoint_tools) {
-                            if (keypoints_map.find(current_frame_num) ==
-                                keypoints_map.end()) {
-                            legacy_manual_keypoints_find = false;
+                    if (use_legacy_manual_keypoint_tools) {
+                        if (!legacy_labeling_state.hasFrameKeypoints(
+                                current_frame_num)) {
+                            legacy_labeling_state.keypoints_find = false;
                         } else {
-                            legacy_manual_keypoints_find = true;
+                            legacy_labeling_state.keypoints_find = true;
                         }
                     }
 
@@ -4240,18 +4224,16 @@ int main(int argc, char **argv) {
                             const CameraViewManualKeypointInputContext
                                 keypoint_input_context{
                                     scene,
-                                    skeleton.get(),
-                                    &keypoints_map,
+                                    &legacy_labeling_state,
                                     current_frame_num,
                                     j,
-                                    legacy_manual_keypoints_find,
                                     ImPlot::IsPlotHovered(),
                                 };
                             const CameraViewManualKeypointInputResult
                                 keypoint_input_result =
                                     processCameraViewManualKeypointInput(
                                         keypoint_input_context);
-                            legacy_manual_keypoints_find =
+                            legacy_labeling_state.keypoints_find =
                                 keypoint_input_result
                                     .legacy_manual_keypoints_find;
                             is_view_focused[j] =
@@ -4554,12 +4536,10 @@ int main(int argc, char **argv) {
                 std::chrono::steady_clock::now();
             const KeypointsWindowContext keypoints_window_context{
                 static_cast<int>(scene->num_cams),
-                skeleton.get(),
-                keypoints_map,
+                legacy_labeling_state,
                 current_frame_num,
                 camera_names,
                 is_view_focused,
-                legacy_manual_keypoints_find,
             };
             drawKeypointsWindow(keypoints_window_context);
             frame_keypoints_window_ui_ms += durationMs(
@@ -4569,15 +4549,6 @@ int main(int argc, char **argv) {
         if (use_legacy_manual_keypoint_tools) {
             const auto labeling_tool_ui_start =
                 std::chrono::steady_clock::now();
-            bool has_labeled_frames = !keypoints_map.empty();
-            int next_labeled_frame = -1;
-            if (has_labeled_frames) {
-                auto upper_it = keypoints_map.upper_bound(current_frame_num);
-                if (upper_it == keypoints_map.end()) {
-                    upper_it = keypoints_map.begin();
-                }
-                next_labeled_frame = upper_it->first;
-            }
 #if CRIMSON_ENABLE_SFM
             constexpr bool triangulation_supported = true;
 #else
@@ -4585,28 +4556,25 @@ int main(int argc, char **argv) {
 #endif
             const LabelingToolWindowContext labeling_tool_context{
                 root_dir,
-                keypoints_root_folder,
+                legacy_labeling_state,
                 static_cast<int>(scene->num_cams),
-                skeleton.get(),
-                keypoints_map,
                 current_frame_num,
-                legacy_manual_keypoints_find,
                 triangulation_supported,
-                last_saved,
-                has_labeled_frames,
-                next_labeled_frame,
-                keypoints_map.size(),
+                legacy_labeling_state.nextLabeledFrameAfter(current_frame_num),
             };
             const LabelingToolWindowResult labeling_tool_result =
                 drawLabelingToolWindow(labeling_tool_context,
                                        labeling_tool_window_state);
             const LabelingToolWorkflowContext labeling_tool_workflow_context{
-                keypoints_map,       skeleton.get(),
-                current_frame_num,   camera_params,
-                scene,               keypoints_root_folder,
-                camera_names,        &input_is_imgs,
-                imgs_names,          last_saved,
-                error_message,       show_error,
+                legacy_labeling_state,
+                current_frame_num,
+                camera_params,
+                scene,
+                camera_names,
+                &input_is_imgs,
+                imgs_names,
+                error_message,
+                show_error,
             };
             const LabelingToolWorkflowResult labeling_tool_workflow_result =
                 applyLabelingToolWindowActions(labeling_tool_result,

@@ -8,13 +8,14 @@
 
 namespace {
 
-KeyPoints* findFrameKeypoints(std::map<u32, KeyPoints*>* keypoints_map,
+KeyPoints* findFrameKeypoints(LegacyLabelingState* legacy_state,
                               int current_frame_num) {
-    if (keypoints_map == nullptr || current_frame_num < 0) {
+    if (legacy_state == nullptr || current_frame_num < 0) {
         return nullptr;
     }
-    auto it = keypoints_map->find(static_cast<u32>(current_frame_num));
-    if (it == keypoints_map->end()) {
+    auto it =
+        legacy_state->keypoints_map.find(static_cast<u32>(current_frame_num));
+    if (it == legacy_state->keypoints_map.end()) {
         return nullptr;
     }
     return it->second;
@@ -25,17 +26,19 @@ KeyPoints* findFrameKeypoints(std::map<u32, KeyPoints*>* keypoints_map,
 CameraViewManualKeypointInputResult processCameraViewManualKeypointInput(
     const CameraViewManualKeypointInputContext& context) {
     CameraViewManualKeypointInputResult result;
-    result.legacy_manual_keypoints_find =
-        context.legacy_manual_keypoints_find;
+    if (context.legacy_state != nullptr) {
+        result.legacy_manual_keypoints_find =
+            context.legacy_state->keypoints_find;
+    }
 
-    if (context.scene == nullptr || context.skeleton == nullptr ||
-        context.keypoints_map == nullptr || context.view_idx < 0 ||
+    if (context.scene == nullptr || context.legacy_state == nullptr ||
+        context.legacy_state->skeleton == nullptr || context.view_idx < 0 ||
         context.view_idx >= static_cast<int>(context.scene->num_cams)) {
         return result;
     }
 
     KeyPoints* frame_keypoints =
-        findFrameKeypoints(context.keypoints_map, context.current_frame_num);
+        findFrameKeypoints(context.legacy_state, context.current_frame_num);
     result.legacy_manual_keypoints_find = (frame_keypoints != nullptr);
 
     if (context.plot_hovered) {
@@ -45,8 +48,10 @@ CameraViewManualKeypointInputResult processCameraViewManualKeypointInput(
             !result.legacy_manual_keypoints_find) {
             KeyPoints* keypoints =
                 static_cast<KeyPoints*>(malloc(sizeof(KeyPoints)));
-            allocate_keypoints(keypoints, context.scene, context.skeleton);
-            (*context.keypoints_map)[static_cast<u32>(context.current_frame_num)] =
+            allocate_keypoints(keypoints, context.scene,
+                               context.legacy_state->skeleton.get());
+            context.legacy_state
+                ->keypoints_map[static_cast<u32>(context.current_frame_num)] =
                 keypoints;
             frame_keypoints = keypoints;
             result.legacy_manual_keypoints_find = true;
@@ -64,7 +69,8 @@ CameraViewManualKeypointInputResult processCameraViewManualKeypointInput(
                 frame_keypoints->keypoints2d[context.view_idx][*active_keypoint]
                     .is_triangulated = false;
                 if (*active_keypoint <
-                    static_cast<u32>(context.skeleton->num_nodes - 1)) {
+                    static_cast<u32>(
+                        context.legacy_state->skeleton->num_nodes - 1)) {
                     (*active_keypoint)++;
                 }
             }
@@ -79,9 +85,11 @@ CameraViewManualKeypointInputResult processCameraViewManualKeypointInput(
 
             if (ImGui::IsKeyPressed(ImGuiKey_D, true)) {
                 if (*active_keypoint >=
-                    static_cast<u32>(context.skeleton->num_nodes - 1)) {
+                    static_cast<u32>(
+                        context.legacy_state->skeleton->num_nodes - 1)) {
                     *active_keypoint =
-                        static_cast<u32>(context.skeleton->num_nodes - 1);
+                        static_cast<u32>(
+                            context.legacy_state->skeleton->num_nodes - 1);
                 } else {
                     (*active_keypoint)++;
                 }
@@ -89,7 +97,8 @@ CameraViewManualKeypointInputResult processCameraViewManualKeypointInput(
 
             if (ImGui::IsKeyPressed(ImGuiKey_E, false)) {
                 *active_keypoint =
-                    static_cast<u32>(context.skeleton->num_nodes - 1);
+                    static_cast<u32>(
+                        context.legacy_state->skeleton->num_nodes - 1);
             }
 
             if (ImGui::IsKeyPressed(ImGuiKey_Q, false)) {
@@ -98,7 +107,7 @@ CameraViewManualKeypointInputResult processCameraViewManualKeypointInput(
 
             if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) {
                 free_keypoints(frame_keypoints, context.scene);
-                context.keypoints_map->erase(
+                context.legacy_state->keypoints_map.erase(
                     static_cast<u32>(context.current_frame_num));
                 frame_keypoints = nullptr;
                 result.legacy_manual_keypoints_find = false;
@@ -107,11 +116,13 @@ CameraViewManualKeypointInputResult processCameraViewManualKeypointInput(
     }
 
     if (frame_keypoints != nullptr) {
-        gui_plot_keypoints(frame_keypoints, context.skeleton, context.view_idx,
+        gui_plot_keypoints(frame_keypoints, context.legacy_state->skeleton.get(),
+                           context.view_idx,
                            context.scene->num_cams);
-        if (context.skeleton->name == "Rat4Box" ||
-            context.skeleton->name == "Rat4Box3Ball") {
-            gui_plot_bbox_from_keypoints(frame_keypoints, context.skeleton,
+        if (context.legacy_state->skeleton->name == "Rat4Box" ||
+            context.legacy_state->skeleton->name == "Rat4Box3Ball") {
+            gui_plot_bbox_from_keypoints(frame_keypoints,
+                                         context.legacy_state->skeleton.get(),
                                          context.view_idx, 4, 5);
         }
     }
