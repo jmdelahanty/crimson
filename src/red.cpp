@@ -40,6 +40,7 @@
 #include <cstdlib>
 #include <fstream>
 #include "perf_logging.h"
+#include "media_session_loader.h"
 #include "playback_session_controller.h"
 #include "decode_debug_workflow.h"
 #include "manual_detect_payload_preview.h"
@@ -339,267 +340,40 @@ int main(int argc, char **argv) {
     window_need_decoding[stimulus_player.window_name].store(false);
     latest_decoded_frame[stimulus_player.window_name].store(-1);
     window_was_decoding[stimulus_player.window_name] = false;
+    MediaSessionLoader media_session_loader(
+        MediaSessionLoaderContext{
+            scene,
+            dc_context,
+            &zarr_loader,
+            &stimulus_player,
+            &ps,
+            &root_dir,
+            &skeleton_dir,
+            &camera_names,
+            &camera_params,
+            &decoder_threads,
+            &demuxers,
+            &is_view_focused,
+            &window_need_decoding,
+            &window_was_decoding,
+            &video_loaded,
+            &zarr_loaded,
+            &input_is_imgs,
+            &show_error,
+            &error_message,
+            &label_buffer_size,
+            &stimulus_buffer_size,
+            &stimulus_use_cpu_buffer,
+            &stimulus_use_software_decode,
+            &video_fps,
+            kCudaDeviceIndex,
+        });
 
-    auto loadCameraCalibrationsForCurrentMedia = [&]() {
-        if (!video_loaded) {
-            return;
-        }
-        camera_params.resize(scene->num_cams);
-        std::cout << "\n=== Loading Camera Calibrations from YAML ===" << std::endl;
-        for (size_t i = 0; i < camera_names.size(); ++i) {
-            std::cout << "\nProcessing camera " << i << ": " << camera_names[i] << std::endl;
-            std::string yaml_file = root_dir + "/calibration/" + camera_names[i] + ".yaml";
-            if (std::filesystem::exists(yaml_file)) {
-                std::cout << "Loading homography from YAML for camera: " << camera_names[i]
-                          << std::endl;
-                if (!camera_load_params_from_yaml(yaml_file, camera_params[i], error_message)) {
-                    std::cerr << "Error: Failed to load calibration from YAML: "
-                              << error_message << std::endl;
-                    show_error = true;
-                    break;
-                }
-                camera_print_calibration_details(camera_params[i], camera_names[i]);
-            } else {
-                std::cerr << "Warning: No calibration YAML file found at: "
-                          << yaml_file << std::endl;
-            }
-        }
-    };
-
-    auto tryAutoLoadAffiliatedVideoFromZarr = [&](const char* trigger_label) {
-        if (!zarr_loaded) {
-            return;
-        }
-        if (video_loaded || !decoder_threads.empty()) {
-            std::cout << "[Zarr] Skipping affiliated video auto-load (" << trigger_label
-                      << "): media already loaded" << std::endl;
-            return;
-        }
-
-        const std::string source_hint = zarr_loader.getSourceVideoPath();
-        if (source_hint.empty()) {
-            std::cout << "[Zarr] Archive did not provide source video metadata; "
-                      << "skipping affiliated video auto-load" << std::endl;
-            return;
-        }
-
-        auto resolved_video_opt =
-            ResolveAffiliatedVideoPath(source_hint, zarr_loader.getArchivePath());
-        if (!resolved_video_opt.has_value()) {
-            std::cout << "[Zarr] Could not resolve affiliated source video path from metadata: "
-                      << source_hint << std::endl;
-            return;
-        }
-
-        const std::filesystem::path resolved_video = *resolved_video_opt;
-        std::string camera_name = resolved_video.stem().string();
-        if (camera_name.empty()) {
-            camera_name = resolved_video.filename().string();
-        }
-
-        try {
-            input_is_imgs = false;
-            camera_names.clear();
-            demuxers.clear();
-            is_view_focused.clear();
-
-            camera_names.push_back(camera_name);
-            window_need_decoding[camera_name].store(true);
-            window_was_decoding[camera_name] = true;
-
-            std::map<std::string, std::string> ffmpeg_options;
-            demuxers.push_back(
-                std::make_unique<FFmpegDemuxer>(resolved_video.string().c_str(), ffmpeg_options));
-
-            dc_context->seek_interval =
-                static_cast<int>(demuxers[0]->FindKeyFrameInterval());
-            video_fps = demuxers[0]->GetFramerate();
-            scene->num_cams = 1;
-            scene->cameras.resize(scene->num_cams);
-            scene->cameras[0].image_width = demuxers[0]->GetWidth();
-            scene->cameras[0].image_height = demuxers[0]->GetHeight();
-            render_allocate_scene_memory(scene, label_buffer_size);
-
-            decoder_threads.push_back(std::thread(
-                &decoder_process, dc_context, demuxers[0].get(), camera_names[0],
-                scene->cameras[0].display_buffer, scene->size_of_buffer, &scene->cameras[0].seek_context,
-                scene->use_cpu_buffer));
-            is_view_focused.push_back(false);
-            video_loaded = true;
-
-            int initial_frame = std::max(0, ps.to_display_frame_number);
-            double seek_fps = (video_fps > 0.0) ? video_fps : 30.0;
-            seek_all_cameras(scene, initial_frame, seek_fps, ps, true,
-                             &zarr_loader, &stimulus_player);
-
-            std::filesystem::path inferred_root =
-                InferRecordingRootPath(resolved_video, zarr_loader.getArchivePath());
-            if (!inferred_root.empty()) {
-                root_dir = inferred_root.string();
-                skeleton_dir = root_dir;
-            }
-
-            std::cout << "[Zarr] Auto-loaded affiliated video (" << trigger_label
-                      << "): " << resolved_video.string() << std::endl;
-            loadCameraCalibrationsForCurrentMedia();
-        } catch (const std::exception& e) {
-            std::cerr << "[Zarr] Failed to auto-load affiliated video (" << trigger_label
-                      << "): " << e.what() << std::endl;
-        }
-    };
-
-    auto tryAutoLoadStimulusVideo = [&](const char* trigger_label) {
-        if (!zarr_loaded) return;
-        if (stimulus_player.loaded) return;
-        if (!zarr_loader.hasStimulusAlignment()) return;
-
-        auto resolved = ResolveStimulusVideoPath(
-            zarr_loader.getStimulusVideoPath(),
-            zarr_loader.getStimulusSourceH5(),
-            zarr_loader.getArchivePath(),
-            root_dir);
-        if (!resolved.has_value()) {
-            std::cout << "[Stimulus] Could not auto-discover stimulus video ("
-                      << trigger_label << ")" << std::endl;
-            return;
-        }
-
-        int stim_buf_size = std::max(1, stimulus_buffer_size);
-        if (!initializeStimulusPlayback(stimulus_player, resolved->string(),
-                                         stim_buf_size, stimulus_use_cpu_buffer,
-                                         stimulus_use_software_decode,
-                                         kCudaDeviceIndex)) {
-            std::cerr << "[Stimulus] Failed to auto-load stimulus video: "
-                      << resolved->string() << std::endl;
-            return;
-        }
-
-        window_was_decoding[stimulus_player.window_name] = false;
-        window_need_decoding[stimulus_player.window_name].store(false);
-
-        if (video_loaded) {
-            scheduleStimulusSeek(stimulus_player, &zarr_loader,
-                                 ps.to_display_frame_number, !ps.play_video);
-        }
-
-        std::cout << "[Stimulus] Auto-loaded stimulus video (" << trigger_label
-                  << "): " << resolved->string() << std::endl;
-    };
-
-    if (!cli_zarr_override_path.empty()) {
-        std::string zarr_error;
-        if (loadZarrDetectionFromPath(cli_zarr_override_path, zarr_loader, zarr_error)) {
-            zarr_loaded = true;
-            refreshDetectionDatasetOptions(zarr_loader);
-            g_zarr_bbox_edit_state.clearAll();
-            std::cout << "Loaded Zarr archive from --zarr: "
-                      << zarr_loader.getArchivePath() << std::endl;
-            tryAutoLoadAffiliatedVideoFromZarr("--zarr");
-            tryAutoLoadStimulusVideo("--zarr");
-        } else {
-            g_zarr_bbox_edit_state.clearAll();
-            std::cerr << "Failed to load --zarr archive: " << zarr_error << std::endl;
-        }
-    }
-
-    if (!cli_recording_path.empty()) {
-        root_dir = cli_recording_path;
-        skeleton_dir = root_dir;
-
-        std::string zarr_error;
-        if (loadZarrDetectionFromDirectory(root_dir, zarr_loader, zarr_error)) {
-            zarr_loaded = true;
-            refreshDetectionDatasetOptions(zarr_loader);
-            g_zarr_bbox_edit_state.clearAll();
-            std::cout << "Loaded Zarr archive from --recording: "
-                      << zarr_loader.getArchivePath() << std::endl;
-            tryAutoLoadAffiliatedVideoFromZarr("--recording");
-            tryAutoLoadStimulusVideo("--recording");
-        } else {
-            g_zarr_bbox_edit_state.clearAll();
-            std::cout << "[--recording] No zarr archive found (optional): "
-                      << zarr_error << std::endl;
-
-            // Fallback: find first .mp4 in cams/ or root
-            namespace fs = std::filesystem;
-            std::string found_video;
-            std::vector<fs::path> search_dirs;
-            fs::path cams_dir = fs::path(root_dir) / "cams";
-            if (IsDirectoryNoThrow(cams_dir)) {
-                search_dirs.push_back(cams_dir);
-            }
-            search_dirs.push_back(fs::path(root_dir));
-
-            for (const auto& search_dir : search_dirs) {
-                if (!found_video.empty()) break;
-                std::error_code ec;
-                for (auto it = fs::directory_iterator(search_dir, ec);
-                     it != fs::directory_iterator(); it.increment(ec)) {
-                    if (ec) break;
-                    if (it->is_regular_file(ec) && !ec &&
-                        IsSupportedVideoPath(it->path())) {
-                        found_video = it->path().string();
-                        break;
-                    }
-                }
-            }
-
-            if (!found_video.empty()) {
-                try {
-                    fs::path video_path(found_video);
-                    std::string camera_name = video_path.stem().string();
-                    if (camera_name.empty()) {
-                        camera_name = video_path.filename().string();
-                    }
-
-                    input_is_imgs = false;
-                    camera_names.clear();
-                    demuxers.clear();
-                    is_view_focused.clear();
-
-                    camera_names.push_back(camera_name);
-                    window_need_decoding[camera_name].store(true);
-                    window_was_decoding[camera_name] = true;
-
-                    std::map<std::string, std::string> ffmpeg_options;
-                    demuxers.push_back(
-                        std::make_unique<FFmpegDemuxer>(found_video.c_str(), ffmpeg_options));
-
-                    dc_context->seek_interval =
-                        static_cast<int>(demuxers[0]->FindKeyFrameInterval());
-                    video_fps = demuxers[0]->GetFramerate();
-                    scene->num_cams = 1;
-                    scene->cameras.resize(scene->num_cams);
-                    scene->cameras[0].image_width = demuxers[0]->GetWidth();
-                    scene->cameras[0].image_height = demuxers[0]->GetHeight();
-                    render_allocate_scene_memory(scene, label_buffer_size);
-
-                    decoder_threads.push_back(std::thread(
-                        &decoder_process, dc_context, demuxers[0].get(), camera_names[0],
-                        scene->cameras[0].display_buffer, scene->size_of_buffer, &scene->cameras[0].seek_context,
-                        scene->use_cpu_buffer));
-                    is_view_focused.push_back(false);
-                    video_loaded = true;
-
-                    int initial_frame = std::max(0, ps.to_display_frame_number);
-                    double seek_fps = (video_fps > 0.0) ? video_fps : 30.0;
-                    seek_all_cameras(scene, initial_frame, seek_fps, ps, true,
-                                     &zarr_loader, &stimulus_player);
-
-                    std::cout << "[--recording] Auto-loaded video: "
-                              << found_video << std::endl;
-                    loadCameraCalibrationsForCurrentMedia();
-                    tryAutoLoadStimulusVideo("--recording-fallback");
-                } catch (const std::exception& e) {
-                    std::cerr << "[--recording] Failed to load video: "
-                              << e.what() << std::endl;
-                }
-            } else {
-                std::cout << "[--recording] No video files found in "
-                          << root_dir << std::endl;
-            }
-        }
-    }
+    media_session_loader.bootstrapFromCli(
+        cli_zarr_override_path,
+        cli_recording_path,
+        [&]() { refreshDetectionDatasetOptions(zarr_loader); },
+        [&]() { g_zarr_bbox_edit_state.clearAll(); });
 
     ReviewFrameFilters review_frame_filters;
     ReviewFrameCache review_frame_cache;
@@ -1293,7 +1067,7 @@ int main(int argc, char **argv) {
                     video_loaded = true;
                 }
 
-                loadCameraCalibrationsForCurrentMedia();
+                media_session_loader.loadCameraCalibrationsForCurrentMedia();
                 if (video_loaded && !input_is_imgs) {
                     int initial_frame = std::max(0, ps.to_display_frame_number);
                     double seek_fps = (video_fps > 0.0) ? video_fps : 30.0;
@@ -1324,8 +1098,10 @@ int main(int argc, char **argv) {
                     review_frame_status.clear();
                     std::cout << "Loaded Zarr archive override: "
                               << zarr_loader.getArchivePath() << std::endl;
-                    tryAutoLoadAffiliatedVideoFromZarr("Load Zarr Archive");
-                    tryAutoLoadStimulusVideo("file-dialog");
+                    media_session_loader.tryAutoLoadAffiliatedVideoFromZarr(
+                        "Load Zarr Archive");
+                    media_session_loader.tryAutoLoadStimulusVideo(
+                        "file-dialog");
                 } else {
                     zarr_loaded = false;
                     g_zarr_bbox_edit_state.clearAll();
