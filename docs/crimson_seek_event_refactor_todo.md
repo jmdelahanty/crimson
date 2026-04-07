@@ -2,6 +2,10 @@
 
 Date anchored: 2026-02-11.
 
+Related follow-on design note:
+
+- `docs/crimson_buffered_frame_resume_design.md`
+
 ## Observed Problem
 
 After seeking the camera video (slider release, keyboard step, event click),
