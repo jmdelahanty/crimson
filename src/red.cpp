@@ -2407,13 +2407,13 @@ int main(int argc, char **argv) {
             if (!decoder_errors.empty()) {
                 ImGui::TextColored(
                     ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
-                    "Decoder errors detected:");
+                    "Background worker errors detected:");
                 for (const auto& [stream_name, message] : decoder_errors) {
                     ImGui::TextWrapped("%s: %s",
                                        stream_name.c_str(),
                                        message.c_str());
                 }
-                if (ImGui::SmallButton("Clear Decoder Errors")) {
+                if (ImGui::SmallButton("Clear Worker Errors")) {
                     clearDecoderErrors();
                 }
             }
