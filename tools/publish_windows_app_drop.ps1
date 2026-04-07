@@ -46,13 +46,13 @@ function Copy-AppTree {
     )
 
     if ($CleanTarget -and (Test-Path -LiteralPath $TargetRoot)) {
-        Write-Host "Removing existing $Label:"
+        Write-Host "Removing existing ${Label}:"
         Write-Host "  $TargetRoot"
         Remove-Item -LiteralPath $TargetRoot -Recurse -Force
     }
 
     New-Item -ItemType Directory -Force -Path $TargetRoot | Out-Null
-    Write-Host "Copying $Label:"
+    Write-Host "Copying ${Label}:"
     Write-Host "  from: $SourceRoot"
     Write-Host "  to:   $TargetRoot"
     Copy-Item -Path (Join-Path $SourceRoot "*") -Destination $TargetRoot -Recurse -Force
