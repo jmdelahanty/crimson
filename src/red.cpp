@@ -53,6 +53,7 @@
 #include "gui/camera_view_overlay_renderer.h"
 #include "gui/refined_keypoint_review_window.h"
 #include "gui/refined_keypoint_write_workflow.h"
+#include "gui/labeling_tool_workflow.h"
 #include "gui/auxiliary_windows.h"
 #include "gui/camera_view_manual_keypoint_input.h"
 #include "gui/stimulus_playback_windows.h"
@@ -4585,59 +4586,21 @@ int main(int argc, char **argv) {
             const LabelingToolWindowResult labeling_tool_result =
                 drawLabelingToolWindow(labeling_tool_context,
                                        labeling_tool_window_state);
+            const LabelingToolWorkflowContext labeling_tool_workflow_context{
+                keypoints_map,       skeleton.get(),
+                current_frame_num,   camera_params,
+                scene,               keypoints_root_folder,
+                camera_names,        &input_is_imgs,
+                imgs_names,          last_saved,
+                error_message,       show_error,
+            };
+            const LabelingToolWorkflowResult labeling_tool_workflow_result =
+                applyLabelingToolWindowActions(labeling_tool_result,
+                                               labeling_tool_workflow_context);
 
-            if (labeling_tool_result.request_triangulate) {
-                auto keypoint_it = keypoints_map.find(current_frame_num);
-                if (keypoint_it != keypoints_map.end()) {
-                    reprojection(keypoint_it->second, skeleton.get(),
-                                 camera_params, scene);
-                }
-            }
-
-            if (labeling_tool_result.request_save) {
-                save_keypoints(keypoints_map, skeleton.get(),
-                               keypoints_root_folder, scene->num_cams,
-                               camera_names, &input_is_imgs, imgs_names);
-                last_saved = time(NULL);
-            }
-
-            if (labeling_tool_result.request_load_most_recent) {
-                free_all_keypoints(keypoints_map, scene);
-                if (labeling_tool_result.load_old_format) {
-                    if (load_keypoints_depreciated(keypoints_map, skeleton.get(),
-                                                   keypoints_root_folder, scene,
-                                                   camera_names,
-                                                   error_message)) {
-                        free_all_keypoints(keypoints_map, scene);
-                        show_error = true;
-                    }
-                } else {
-                    std::string most_recent_folder;
-                    if (find_most_recent_labels(keypoints_root_folder,
-                                                most_recent_folder,
-                                                error_message)) {
-                        show_error = true;
-                    } else if (load_keypoints(most_recent_folder, keypoints_map,
-                                              skeleton.get(), scene,
-                                              camera_names, error_message)) {
-                        free_all_keypoints(keypoints_map, scene);
-                        show_error = true;
-                    }
-                }
-            }
-
-            if (labeling_tool_result.selected_load_folder.has_value()) {
-                free_all_keypoints(keypoints_map, scene);
-                if (load_keypoints(*labeling_tool_result.selected_load_folder,
-                                   keypoints_map, skeleton.get(), scene,
-                                   camera_names, error_message)) {
-                    free_all_keypoints(keypoints_map, scene);
-                    show_error = true;
-                }
-            }
-
-            if (labeling_tool_result.jump_target_frame.has_value()) {
-                seekToFrame(*labeling_tool_result.jump_target_frame, true);
+            if (labeling_tool_workflow_result.jump_target_frame.has_value()) {
+                seekToFrame(*labeling_tool_workflow_result.jump_target_frame,
+                            true);
             }
 
             frame_labeling_tool_ui_ms += durationMs(
