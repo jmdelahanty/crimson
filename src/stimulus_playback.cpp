@@ -1,6 +1,7 @@
 #include "stimulus_playback.h"
 #include "debug_flags.h"
 #include <atomic>
+#include <exception>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
 
@@ -22,6 +23,26 @@ bool markStimulusSeekDone(SeekInfo *seek_info, uint64_t seek_id,
     return true;
 }
 
+void clearStimulusErrorMessage(const std::string& window_name) {
+    std::lock_guard<std::mutex> lock(g_decoder_error_mutex);
+    g_decoder_error_messages.erase(window_name);
+}
+
+void recordStimulusErrorMessage(const std::string& window_name,
+                                const std::string& message) {
+    {
+        std::lock_guard<std::mutex> lock(g_decoder_error_mutex);
+        g_decoder_error_messages[window_name] = message;
+    }
+    auto need_it = window_need_decoding.find(window_name);
+    if (need_it != window_need_decoding.end()) {
+        need_it->second.store(false);
+    }
+    latest_decoded_frame[window_name].store(-1);
+    std::cerr << "[Stimulus] Fatal error in " << window_name << ": "
+              << message << std::endl;
+}
+
 void stimulus_software_decode_process(DecoderContext *dc_context,
                                       const std::string &video_path,
                                       std::string window_name,
@@ -29,133 +50,141 @@ void stimulus_software_decode_process(DecoderContext *dc_context,
                                       int size_of_buffer, SeekInfo *seek_info,
                                       int width, int height,
                                       bool use_cpu_buffer) {
-    cv::VideoCapture capture(video_path, cv::CAP_FFMPEG);
-    if (!capture.isOpened()) {
-        std::cerr << "[Stimulus] Failed to open software decoder for "
-                  << video_path << std::endl;
-        return;
-    }
-
-    const size_t frame_bytes =
-        static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
-    const int reported_frames =
-        static_cast<int>(capture.get(cv::CAP_PROP_FRAME_COUNT));
-    if (reported_frames > 0) {
-        dc_context->total_num_frame = reported_frames;
-        dc_context->estimated_num_frames = reported_frames;
-    }
-
-    int buffer_head = 0;
-    int frame_number = 0;
-    bool pending_seek_done = false;
-    uint64_t pending_seek_id = 0;
-
-    auto seek_requested = [&]() -> bool {
-        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
-        return seek_info->use_seek;
-    };
-
-    while (!(dc_context->stop_flag)) {
-        bool has_seek_request = false;
-        uint64_t requested_frame = 0;
-        uint64_t active_seek_id = 0;
-        {
-            std::lock_guard<std::mutex> lock(g_seek_info_mutex);
-            if (seek_info->use_seek) {
-                has_seek_request = true;
-                requested_frame = seek_info->seek_frame;
-                active_seek_id = seek_info->seek_id;
-                seek_info->use_seek = false;
-                seek_info->seek_done = false;
-            }
+    clearStimulusErrorMessage(window_name);
+    try {
+        cv::VideoCapture capture(video_path, cv::CAP_FFMPEG);
+        if (!capture.isOpened()) {
+            std::cerr << "[Stimulus] Failed to open software decoder for "
+                      << video_path << std::endl;
+            return;
         }
 
-        if (has_seek_request) {
-            for (int i = 0; i < size_of_buffer; ++i) {
-                display_buffer[i].available_to_write = true;
-                display_buffer[i].frame_number = -1;
-            }
-            buffer_head = 0;
-            frame_number = static_cast<int>(requested_frame);
-            latest_decoded_frame[window_name].store(-1);
+        const size_t frame_bytes =
+            static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
+        const int reported_frames =
+            static_cast<int>(capture.get(cv::CAP_PROP_FRAME_COUNT));
+        if (reported_frames > 0) {
+            dc_context->total_num_frame = reported_frames;
+            dc_context->estimated_num_frames = reported_frames;
+        }
 
-            const bool seek_ok =
-                capture.set(cv::CAP_PROP_POS_FRAMES, static_cast<double>(requested_frame));
-            if (!seek_ok) {
-                (void)markStimulusSeekDone(seek_info, active_seek_id, requested_frame);
-                pending_seek_done = false;
+        int buffer_head = 0;
+        int frame_number = 0;
+        bool pending_seek_done = false;
+        uint64_t pending_seek_id = 0;
+
+        auto seek_requested = [&]() -> bool {
+            std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+            return seek_info->use_seek;
+        };
+
+        while (!(dc_context->stop_flag)) {
+            bool has_seek_request = false;
+            uint64_t requested_frame = 0;
+            uint64_t active_seek_id = 0;
+            {
+                std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+                if (seek_info->use_seek) {
+                    has_seek_request = true;
+                    requested_frame = seek_info->seek_frame;
+                    active_seek_id = seek_info->seek_id;
+                    seek_info->use_seek = false;
+                    seek_info->seek_done = false;
+                }
+            }
+
+            if (has_seek_request) {
+                for (int i = 0; i < size_of_buffer; ++i) {
+                    display_buffer[i].available_to_write = true;
+                    display_buffer[i].frame_number = -1;
+                }
+                buffer_head = 0;
+                frame_number = static_cast<int>(requested_frame);
+                latest_decoded_frame[window_name].store(-1);
+
+                const bool seek_ok =
+                    capture.set(cv::CAP_PROP_POS_FRAMES, static_cast<double>(requested_frame));
+                if (!seek_ok) {
+                    (void)markStimulusSeekDone(seek_info, active_seek_id, requested_frame);
+                    pending_seek_done = false;
+                    continue;
+                }
+
+                pending_seek_done = true;
+                pending_seek_id = active_seek_id;
                 continue;
             }
 
-            pending_seek_done = true;
-            pending_seek_id = active_seek_id;
-            continue;
-        }
+            if (!window_need_decoding[window_name].load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                continue;
+            }
 
-        if (!window_need_decoding[window_name].load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-            continue;
-        }
+            while (!display_buffer[buffer_head].available_to_write &&
+                   !(dc_context->stop_flag) && !seek_requested()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            if (dc_context->stop_flag || seek_requested()) {
+                continue;
+            }
 
-        while (!display_buffer[buffer_head].available_to_write &&
-               !(dc_context->stop_flag) && !seek_requested()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-        if (dc_context->stop_flag || seek_requested()) {
-            continue;
-        }
+            cv::Mat frame_bgr;
+            if (!capture.read(frame_bgr) || frame_bgr.empty()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
 
-        cv::Mat frame_bgr;
-        if (!capture.read(frame_bgr) || frame_bgr.empty()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            continue;
+            cv::Mat frame_rgba;
+            switch (frame_bgr.channels()) {
+            case 4:
+                cv::cvtColor(frame_bgr, frame_rgba, cv::COLOR_BGRA2RGBA);
+                break;
+            case 3:
+                cv::cvtColor(frame_bgr, frame_rgba, cv::COLOR_BGR2RGBA);
+                break;
+            case 1:
+                cv::cvtColor(frame_bgr, frame_rgba, cv::COLOR_GRAY2RGBA);
+                break;
+            default:
+                std::cerr << "[Stimulus] Unsupported channel count in software decode: "
+                          << frame_bgr.channels() << std::endl;
+                continue;
+            }
+
+            if (frame_rgba.cols != width || frame_rgba.rows != height) {
+                cv::resize(frame_rgba, frame_rgba, cv::Size(width, height),
+                           0.0, 0.0, cv::INTER_LINEAR);
+            }
+
+            if (use_cpu_buffer) {
+                std::memcpy(display_buffer[buffer_head].frame, frame_rgba.data, frame_bytes);
+            } else {
+                checkCudaStatus(
+                    cudaMemcpy(display_buffer[buffer_head].frame, frame_rgba.data,
+                               frame_bytes, cudaMemcpyHostToDevice),
+                    "Stimulus software decode cudaMemcpy failed");
+            }
+
+            display_buffer[buffer_head].available_to_write = false;
+            display_buffer[buffer_head].frame_number = frame_number;
+            display_buffer[buffer_head].color_matrix = ColorSpaceStandard_BT709;
+            latest_decoded_frame[window_name].store(frame_number);
+            dc_context->decoding_flag = true;
+
+            if (pending_seek_done) {
+                (void)markStimulusSeekDone(seek_info, pending_seek_id,
+                                           static_cast<uint64_t>(frame_number));
+                pending_seek_done = false;
+            }
+
+            ++frame_number;
+            buffer_head = (buffer_head + 1) % size_of_buffer;
         }
-
-        cv::Mat frame_rgba;
-        switch (frame_bgr.channels()) {
-        case 4:
-            cv::cvtColor(frame_bgr, frame_rgba, cv::COLOR_BGRA2RGBA);
-            break;
-        case 3:
-            cv::cvtColor(frame_bgr, frame_rgba, cv::COLOR_BGR2RGBA);
-            break;
-        case 1:
-            cv::cvtColor(frame_bgr, frame_rgba, cv::COLOR_GRAY2RGBA);
-            break;
-        default:
-            std::cerr << "[Stimulus] Unsupported channel count in software decode: "
-                      << frame_bgr.channels() << std::endl;
-            continue;
-        }
-
-        if (frame_rgba.cols != width || frame_rgba.rows != height) {
-            cv::resize(frame_rgba, frame_rgba, cv::Size(width, height),
-                       0.0, 0.0, cv::INTER_LINEAR);
-        }
-
-        if (use_cpu_buffer) {
-            std::memcpy(display_buffer[buffer_head].frame, frame_rgba.data, frame_bytes);
-        } else {
-            checkCudaStatus(
-                cudaMemcpy(display_buffer[buffer_head].frame, frame_rgba.data,
-                           frame_bytes, cudaMemcpyHostToDevice),
-                "Stimulus software decode cudaMemcpy failed");
-        }
-
-        display_buffer[buffer_head].available_to_write = false;
-        display_buffer[buffer_head].frame_number = frame_number;
-        display_buffer[buffer_head].color_matrix = ColorSpaceStandard_BT709;
-        latest_decoded_frame[window_name].store(frame_number);
-        dc_context->decoding_flag = true;
-
-        if (pending_seek_done) {
-            (void)markStimulusSeekDone(seek_info, pending_seek_id,
-                                       static_cast<uint64_t>(frame_number));
-            pending_seek_done = false;
-        }
-
-        ++frame_number;
-        buffer_head = (buffer_head + 1) % size_of_buffer;
+    } catch (const std::exception& e) {
+        recordStimulusErrorMessage(window_name, e.what());
+    } catch (...) {
+        recordStimulusErrorMessage(window_name,
+                                   "Unknown non-standard stimulus software decode exception");
     }
 }
 }  // namespace
@@ -274,6 +303,7 @@ bool initializeStimulusPlayback(StimulusPlayback &stim,
                                 bool use_software_decode,
                                 int cuda_device_index) {
     destroyStimulusPlayback(stim);
+    clearStimulusErrorMessage(stim.window_name);
 
     stim.video_path = video_path;
     stim.buffer_size = std::max(1, buffer_size);

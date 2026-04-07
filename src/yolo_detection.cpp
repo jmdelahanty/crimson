@@ -1,5 +1,39 @@
 #include "yolo_detection.h"
 #include "kernel.cuh"
+#include <cstdlib>
+#include <memory>
+
+namespace {
+
+std::string makeYoloWorkerName(const char* worker_kind, int camera_id) {
+    return std::string(worker_kind) + " cam " + std::to_string(camera_id);
+}
+
+void clearYoloErrorMessage(const std::string& worker_name) {
+    std::lock_guard<std::mutex> lock(g_decoder_error_mutex);
+    g_decoder_error_messages.erase(worker_name);
+}
+
+void recordYoloErrorMessage(const std::string& worker_name,
+                            int camera_id,
+                            const std::string& message) {
+    {
+        std::lock_guard<std::mutex> lock(g_decoder_error_mutex);
+        g_decoder_error_messages[worker_name] = message;
+    }
+    if (camera_id >= 0 && camera_id < static_cast<int>(g_ready.size())) {
+        g_ready[camera_id] = false;
+    }
+    if (camera_id >= 0 && camera_id < static_cast<int>(yolo_boxes.size())) {
+        yolo_boxes[camera_id].clear();
+        yolo_labels[camera_id].clear();
+        yolo_classid[camera_id].clear();
+    }
+    std::cerr << "[YOLO] Fatal error in " << worker_name << ": "
+              << message << std::endl;
+}
+
+} // namespace
 
 void read_yolo_labels(std::string label_names_file, yolo_param* post_setting)
 {
@@ -95,94 +129,157 @@ void yolo_detection(cv::dnn::Net yolo_net, yolo_param* post_setting, unsigned ch
 
 void yolo_process(std::string onnx_file, yolo_param* post_setting, int camera_id)
 {
-    // load models 
-    cv::dnn::Net yolo_net;
-    yolo_net = cv::dnn::readNet(onnx_file);
-    yolo_net.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
-    yolo_net.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
-    std::cout << "model loaded" << std::endl;
+    const std::string worker_name = makeYoloWorkerName("YOLO", camera_id);
+    clearYoloErrorMessage(worker_name);
+    try {
+        cv::dnn::Net yolo_net;
+        yolo_net = cv::dnn::readNet(onnx_file);
+        yolo_net.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
+        yolo_net.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
+        std::cout << "model loaded" << std::endl;
 
-    int no_frame_proc = 0;
-    unsigned char* yolo_input_frame = (unsigned char*)malloc(3208 * 2200 * 3 * sizeof(uint8_t) + 4);
-    while (true) {
-        std::unique_lock<std::mutex> ul(g_mutexes[camera_id]);
-        g_cvs[camera_id].wait(ul, [&]() {return g_ready[camera_id];});
-        yolo_detection(yolo_net, post_setting, yolo_input_frame, camera_id);
-        g_ready[camera_id] = false;
+        auto yolo_input_frame = std::unique_ptr<unsigned char, decltype(&std::free)>(
+            static_cast<unsigned char*>(std::malloc(3208 * 2200 * 3 * sizeof(uint8_t) + 4)),
+            &std::free);
+        if (!yolo_input_frame) {
+            throw std::runtime_error("Failed to allocate YOLO input frame buffer");
+        }
+
+        while (true) {
+            std::unique_lock<std::mutex> ul(g_mutexes[camera_id]);
+            g_cvs[camera_id].wait(ul, [&]() {return g_ready[camera_id];});
+            yolo_detection(yolo_net, post_setting, yolo_input_frame.get(), camera_id);
+            g_ready[camera_id] = false;
+        }
+    } catch (const std::exception& e) {
+        recordYoloErrorMessage(worker_name, camera_id, e.what());
+    } catch (...) {
+        recordYoloErrorMessage(worker_name, camera_id,
+                               "Unknown non-standard YOLO worker exception");
     }
 }
 
 void yolo_process_v8pose(std::string engine_file, int camera_id, int width, int height)
 {
-    // load models
-    unsigned char *d_convert;
-    CHECK(cudaMalloc((void **)&d_convert, width * height * 3));
-    float *d_points;
-    unsigned int *d_skeleton; 
-    unsigned int skeleton[8] = {0, 2, 1, 2, 2, 3};
+    const std::string worker_name = makeYoloWorkerName("YOLOv8Pose", camera_id);
+    clearYoloErrorMessage(worker_name);
+    unsigned char *d_convert = nullptr;
+    float *d_points = nullptr;
+    unsigned int *d_skeleton = nullptr;
+    YOLOv8_pose* yolov8_pose = nullptr;
+    auto cleanup = [&]() {
+        if (d_convert) {
+            cudaFree(d_convert);
+            d_convert = nullptr;
+        }
+        if (d_points) {
+            cudaFree(d_points);
+            d_points = nullptr;
+        }
+        if (d_skeleton) {
+            cudaFree(d_skeleton);
+            d_skeleton = nullptr;
+        }
+        delete yolov8_pose;
+        yolov8_pose = nullptr;
+    };
+    try {
+        unsigned int skeleton[8] = {0, 2, 1, 2, 2, 3};
 
-    YOLOv8_pose* yolov8_pose = new YOLOv8_pose(engine_file, width, height);
-    yolov8_pose->make_pipe(true);
+        CHECK(cudaMalloc((void **)&d_convert, width * height * 3));
+        yolov8_pose = new YOLOv8_pose(engine_file, width, height);
+        yolov8_pose->make_pipe(true);
 
-    cudaMalloc((void **)&d_points, sizeof(float) * 8);
-    cudaMalloc((void **)&d_skeleton, sizeof(unsigned int) * 8);
-    CHECK(cudaMemcpy(d_skeleton, skeleton, sizeof(unsigned int) * 8, cudaMemcpyHostToDevice));
+        cudaMalloc((void **)&d_points, sizeof(float) * 8);
+        cudaMalloc((void **)&d_skeleton, sizeof(unsigned int) * 8);
+        CHECK(cudaMemcpy(d_skeleton, skeleton, sizeof(unsigned int) * 8, cudaMemcpyHostToDevice));
 
-    std::vector<Object> objs;
-    float    score_thres = 0.3f;
-    float    iou_thres   = 0.5f;
-    int      topk        = 1;
+        std::vector<Object> objs;
+        float    score_thres = 0.3f;
+        float    iou_thres   = 0.5f;
+        int      topk        = 1;
 
+        while (true) {
+            std::unique_lock<std::mutex> ul(g_mutexes[camera_id]);
+            g_cvs[camera_id].wait(ul, [&]() {return g_ready[camera_id];});
 
-    while (true) {
-        std::unique_lock<std::mutex> ul(g_mutexes[camera_id]);
-        g_cvs[camera_id].wait(ul, [&]() {return g_ready[camera_id];});
-
-        // model detection here, assume frame on gpu 
-        rgba2rgb_convert(d_convert, yolo_input_frames_rgba[camera_id], width, height, 0);
-        yolov8_pose->preprocess_gpu(d_convert);
-        yolov8_pose->infer();
-        yolov8_pose->postprocess(objs, score_thres, iou_thres, topk);
-        yolov8_pose->copy_keypoints_gpu(d_points, objs);
-        gpu_draw_rat_pose(yolo_input_frames_rgba[camera_id], width, height, d_points, d_skeleton, yolov8_pose->stream);        
-        g_ready[camera_id] = false;
+            rgba2rgb_convert(d_convert, yolo_input_frames_rgba[camera_id], width, height, 0);
+            yolov8_pose->preprocess_gpu(d_convert);
+            yolov8_pose->infer();
+            yolov8_pose->postprocess(objs, score_thres, iou_thres, topk);
+            yolov8_pose->copy_keypoints_gpu(d_points, objs);
+            gpu_draw_rat_pose(yolo_input_frames_rgba[camera_id], width, height, d_points, d_skeleton, yolov8_pose->stream);
+            g_ready[camera_id] = false;
+        }
+    } catch (const std::exception& e) {
+        cleanup();
+        recordYoloErrorMessage(worker_name, camera_id, e.what());
+    } catch (...) {
+        cleanup();
+        recordYoloErrorMessage(worker_name, camera_id,
+                               "Unknown non-standard YOLOv8Pose worker exception");
     }
 }
 
 
 void yolo_process_trt(std::string engine_file, int camera_id, int width, int height)
 {
-    // load models
-    unsigned char *d_convert;
-    CHECK(cudaMalloc((void **)&d_convert, width * height * 3));
-    float *d_points;
-    unsigned int *d_skeleton; 
-    unsigned int skeleton[8] = {0, 1, 1, 2, 2, 3, 3, 0}; // box
+    const std::string worker_name = makeYoloWorkerName("YOLOv8TRT", camera_id);
+    clearYoloErrorMessage(worker_name);
+    unsigned char *d_convert = nullptr;
+    float *d_points = nullptr;
+    unsigned int *d_skeleton = nullptr;
+    YOLOv8* yolov8 = nullptr;
+    auto cleanup = [&]() {
+        if (d_convert) {
+            cudaFree(d_convert);
+            d_convert = nullptr;
+        }
+        if (d_points) {
+            cudaFree(d_points);
+            d_points = nullptr;
+        }
+        if (d_skeleton) {
+            cudaFree(d_skeleton);
+            d_skeleton = nullptr;
+        }
+        delete yolov8;
+        yolov8 = nullptr;
+    };
+    try {
+        unsigned int skeleton[8] = {0, 1, 1, 2, 2, 3, 3, 0};
 
-    YOLOv8* yolov8 = new YOLOv8(engine_file, width, height);
-    yolov8->make_pipe(true);
+        CHECK(cudaMalloc((void **)&d_convert, width * height * 3));
+        yolov8 = new YOLOv8(engine_file, width, height);
+        yolov8->make_pipe(true);
 
-    cudaMalloc((void **)&d_points, sizeof(float) * 8);
-    cudaMalloc((void **)&d_skeleton, sizeof(unsigned int) * 8);
-    CHECK(cudaMemcpy(d_skeleton, skeleton, sizeof(unsigned int) * 8, cudaMemcpyHostToDevice));
+        cudaMalloc((void **)&d_points, sizeof(float) * 8);
+        cudaMalloc((void **)&d_skeleton, sizeof(unsigned int) * 8);
+        CHECK(cudaMemcpy(d_skeleton, skeleton, sizeof(unsigned int) * 8, cudaMemcpyHostToDevice));
 
-    std::vector<Object> objs;
-    float    score_thres = 0.3f;
-    float    iou_thres   = 0.5f;
-    int      topk        = 1;
+        std::vector<Object> objs;
+        float    score_thres = 0.3f;
+        float    iou_thres   = 0.5f;
+        int      topk        = 1;
 
-    while (true) {
-        std::unique_lock<std::mutex> ul(g_mutexes[camera_id]);
-        g_cvs[camera_id].wait(ul, [&]() {return g_ready[camera_id];});
-        // std::cout << "camera_yolo_thread" <<  camera_id << ": acquire lock" << std::endl; 
+        while (true) {
+            std::unique_lock<std::mutex> ul(g_mutexes[camera_id]);
+            g_cvs[camera_id].wait(ul, [&]() {return g_ready[camera_id];});
 
-        // model detection here, assume frame on gpu 
-        rgba2rgb_convert(d_convert, yolo_input_frames_rgba[camera_id], width, height, yolov8->stream);
-        yolov8->preprocess_gpu(d_convert);
-        yolov8->infer();
-        yolov8->postprocess(objs);
-        yolov8->copy_keypoints_gpu(d_points, objs);
-        gpu_draw_rat_pose(yolo_input_frames_rgba[camera_id], width, height, d_points, d_skeleton, yolov8->stream);        
-        g_ready[camera_id] = false;
+            rgba2rgb_convert(d_convert, yolo_input_frames_rgba[camera_id], width, height, yolov8->stream);
+            yolov8->preprocess_gpu(d_convert);
+            yolov8->infer();
+            yolov8->postprocess(objs);
+            yolov8->copy_keypoints_gpu(d_points, objs);
+            gpu_draw_rat_pose(yolo_input_frames_rgba[camera_id], width, height, d_points, d_skeleton, yolov8->stream);
+            g_ready[camera_id] = false;
+        }
+    } catch (const std::exception& e) {
+        cleanup();
+        recordYoloErrorMessage(worker_name, camera_id, e.what());
+    } catch (...) {
+        cleanup();
+        recordYoloErrorMessage(worker_name, camera_id,
+                               "Unknown non-standard YOLOv8 TRT worker exception");
     }
 }

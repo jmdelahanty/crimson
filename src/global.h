@@ -29,6 +29,8 @@ extern std::vector<unsigned char *> yolo_input_frames_rgba;
 extern std::unordered_map<std::string, std::atomic<bool>> window_need_decoding;
 extern std::unordered_map<std::string, std::atomic<int>> latest_decoded_frame;
 extern std::unordered_map<std::string, std::shared_ptr<DecoderPerfSample>> decoder_perf_samples;
+extern std::unordered_map<std::string, std::string> g_decoder_error_messages;
 extern std::mutex g_seek_info_mutex;
 extern std::mutex g_decoder_perf_mutex;
+extern std::mutex g_decoder_error_mutex;
 #endif

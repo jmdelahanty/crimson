@@ -47,6 +47,21 @@ Your current dependency-share folder can map to:
 \\YOUR-SERVER\crimson\windows-deps
 ```
 
+Recommended app-drop layout:
+
+```text
+\\YOUR-SERVER\crimson\windows-app\
+  current\
+  releases\
+    2026-04-06_154500\
+    2026-04-07_101200\
+```
+
+Use:
+
+- `releases\...` for immutable published versions
+- `current\` for the stable path that run-only users install from
+
 ---
 
 ## Publish The Dependency Share
@@ -139,7 +154,43 @@ cmake --build --preset build-windows-trt10-cuda12.4-no-sfm-release
 cmake --install build/windows-trt10-cuda12.4-no-sfm --config Release --prefix dist/Crimson
 ```
 
-Then publish that staged tree:
+Then publish that staged tree.
+
+Recommended versioned-release flow:
+
+```powershell
+$releaseName = Get-Date -Format "yyyy-MM-dd_HHmmss"
+
+powershell -ExecutionPolicy Bypass -File .\tools\publish_windows_app_drop.ps1 `
+  -StageRoot C:\src\crimson\dist\Crimson `
+  -ShareRoot "\\YOUR-SERVER\crimson\windows-app" `
+  -ReleaseName $releaseName `
+  -ArchiveExistingCurrent `
+  -PublishCurrent
+```
+
+Mapped-drive example:
+
+```powershell
+$releaseName = Get-Date -Format "yyyy-MM-dd_HHmmss"
+
+powershell -ExecutionPolicy Bypass -File .\tools\publish_windows_app_drop.ps1 `
+  -StageRoot C:\src\crimson\dist\Crimson `
+  -ShareRoot "Z:\crimson\windows-app" `
+  -ReleaseName $releaseName `
+  -ArchiveExistingCurrent `
+  -PublishCurrent
+```
+
+What that does:
+
+- publishes the new staged app under `releases\<timestamp>`
+- copies the previous `current\` to `releases\current-before-<timestamp>` if it exists
+- refreshes `current\` from the new versioned release
+- writes `release.json` into the published app root
+- writes `latest.json` at the share root
+
+Legacy direct-publish flow is still available if you really want a one-off drop:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\publish_windows_app_drop.ps1 `
@@ -149,7 +200,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\publish_windows_app_drop.ps1 `
   -CleanDestination
 ```
 
-Mapped-drive example:
+Mapped-drive legacy direct-publish example:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\publish_windows_app_drop.ps1 `
@@ -168,6 +219,7 @@ What it does:
   - `bin\redgui.exe` plus runtime `.dll` files
   - `install_crimson.ps1` and `install_crimson.cmd` at the app-drop root
   - `README.txt` at the app-drop root
+  - `release.json` at the app-drop root
   - `share\crimson\...` assets
 
 That is the right thing to publish for run-only users. Do not publish random
@@ -213,5 +265,6 @@ Do not publish:
 
 - treat the dependency share and the app drop as separate artifacts
 - only publish from scripts, not from ad hoc Explorer copies
+- prefer immutable `releases\...` plus a refreshed `current\` over editing one folder in place
 - if the dependency archives change, rerun the dependency-share publish script
 - if the app changes, rerun the app-drop publish script

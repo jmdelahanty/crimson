@@ -11,6 +11,7 @@
 #include "render.h"
 #include "skeleton.h"
 #include "utils.h"
+#include "windows_crash_dump.h"
 #include "debug_flags.h"
 #include "yolo_detection.h"
 #include <ImGuiFileDialog.h>
@@ -64,8 +65,10 @@ std::vector<unsigned char *> yolo_input_frames_rgba(MAX_VIEWS);
 std::unordered_map<std::string, std::atomic<bool>> window_need_decoding;
 std::unordered_map<std::string, std::atomic<int>> latest_decoded_frame;
 std::unordered_map<std::string, std::shared_ptr<DecoderPerfSample>> decoder_perf_samples;
+std::unordered_map<std::string, std::string> g_decoder_error_messages;
 std::mutex g_seek_info_mutex;
 std::mutex g_decoder_perf_mutex;
+std::mutex g_decoder_error_mutex;
 
 // Global variables
 bool show_interpolation_debug = false;
@@ -213,6 +216,152 @@ std::filesystem::path makeAutoAppendedPerfPath(
     return requested_path;
 }
 
+std::optional<json> readJsonFileNoThrow(const std::filesystem::path& path) {
+    if (path.empty()) {
+        return std::nullopt;
+    }
+
+    std::ifstream stream(path);
+    if (!stream.is_open()) {
+        return std::nullopt;
+    }
+
+    try {
+        json payload;
+        stream >> payload;
+        return payload;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+std::string jsonStringOrEmpty(const json& payload, const char* key) {
+    auto it = payload.find(key);
+    if (it == payload.end() || !it->is_string()) {
+        return "";
+    }
+    return it->get<std::string>();
+}
+
+struct AppUpdateStatus {
+    bool install_metadata_found = false;
+    bool latest_manifest_found = false;
+    bool update_available = false;
+    std::string install_root;
+    std::string installed_release_name;
+    std::string latest_release_name;
+    std::string latest_manifest_path;
+    std::string current_root;
+    std::string status_detail;
+};
+
+std::optional<std::filesystem::path> getInstalledAppRoot(
+    const std::filesystem::path& argv0_path) {
+    auto executable_path = ResolveExecutablePath(argv0_path);
+    if (!executable_path) {
+        return std::nullopt;
+    }
+
+    const auto executable_dir = executable_path->parent_path();
+    if (executable_dir.filename() != "bin") {
+        return std::nullopt;
+    }
+
+    const auto install_root = executable_dir.parent_path();
+    if (install_root.empty()) {
+        return std::nullopt;
+    }
+
+    return install_root;
+}
+
+AppUpdateStatus loadAppUpdateStatus(const std::filesystem::path& argv0_path) {
+    AppUpdateStatus status;
+
+    auto install_root = getInstalledAppRoot(argv0_path);
+    if (!install_root) {
+        return status;
+    }
+
+    status.install_root = install_root->string();
+
+    const auto install_metadata_path = *install_root / "install_metadata.json";
+    auto install_metadata = readJsonFileNoThrow(install_metadata_path);
+    if (!install_metadata) {
+        status.status_detail =
+            "No install_metadata.json found; update checks are unavailable.";
+        return status;
+    }
+
+    status.install_metadata_found = true;
+    status.installed_release_name =
+        jsonStringOrEmpty(*install_metadata, "installed_release_name");
+    status.latest_manifest_path =
+        jsonStringOrEmpty(*install_metadata, "latest_manifest_path");
+    status.current_root = jsonStringOrEmpty(*install_metadata, "current_root");
+
+    if (status.installed_release_name.empty()) {
+        const auto release_metadata_path = *install_root / "release.json";
+        if (auto release_metadata = readJsonFileNoThrow(release_metadata_path)) {
+            status.installed_release_name =
+                jsonStringOrEmpty(*release_metadata, "release_name");
+        }
+    }
+
+    if (status.latest_manifest_path.empty()) {
+        status.status_detail =
+            "Install metadata does not specify latest.json; update checks are unavailable.";
+        return status;
+    }
+
+    auto latest_manifest =
+        readJsonFileNoThrow(std::filesystem::path(status.latest_manifest_path));
+    if (!latest_manifest) {
+        status.status_detail =
+            "Could not read latest.json from the configured share path.";
+        return status;
+    }
+
+    status.latest_manifest_found = true;
+    status.latest_release_name =
+        jsonStringOrEmpty(*latest_manifest, "release_name");
+
+    if (status.installed_release_name.empty() ||
+        status.latest_release_name.empty()) {
+        status.status_detail =
+            "Release metadata is incomplete; update status is unavailable.";
+        return status;
+    }
+
+    status.update_available =
+        status.installed_release_name != status.latest_release_name;
+    status.status_detail = status.update_available
+                               ? "A newer Crimson app drop is available."
+                               : "Crimson is up to date.";
+    return status;
+}
+
+std::vector<std::pair<std::string, std::string>> snapshotDecoderErrors() {
+    std::lock_guard<std::mutex> lock(g_decoder_error_mutex);
+    std::vector<std::pair<std::string, std::string>> errors;
+    errors.reserve(g_decoder_error_messages.size());
+    for (const auto& [stream_name, message] : g_decoder_error_messages) {
+        if (!message.empty()) {
+            errors.emplace_back(stream_name, message);
+        }
+    }
+    std::sort(errors.begin(), errors.end(),
+              [](const auto& lhs, const auto& rhs) {
+                  return lhs.first < rhs.first;
+              });
+    return errors;
+}
+
+void clearDecoderErrors() {
+    std::lock_guard<std::mutex> lock(g_decoder_error_mutex);
+    g_decoder_error_messages.clear();
+}
+
 struct PerfLogWriter {
     std::ofstream stream;
     std::filesystem::path csv_path;
@@ -316,6 +465,9 @@ int main(int argc, char **argv) {
     const std::filesystem::path argv0_path = (argc > 0) ? argv[0] : "";
     std::error_code cwd_error;
     const std::filesystem::path cwd = std::filesystem::current_path(cwd_error);
+
+    InstallWindowsCrashHandler(argv0_path);
+
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--zarr") {
@@ -369,6 +521,7 @@ int main(int argc, char **argv) {
 
     constexpr int kCudaDeviceIndex = 0;
     render_initialize_target(window, kCudaDeviceIndex, argv0_path);
+    AppUpdateStatus app_update_status = loadAppUpdateStatus(argv0_path);
 
     render_scene *scene = new render_scene();
 
@@ -2229,6 +2382,45 @@ int main(int argc, char **argv) {
             ImGui::Text("Application average %.3f ms/frame (%.1f FPS)",
                         1000.0f / ImGui::GetIO().Framerate,
                         ImGui::GetIO().Framerate);
+            if (app_update_status.install_metadata_found) {
+                if (app_update_status.update_available) {
+                    ImGui::TextColored(
+                        ImVec4(1.0f, 0.82f, 0.2f, 1.0f),
+                        "Update available: %s -> %s",
+                        app_update_status.installed_release_name.c_str(),
+                        app_update_status.latest_release_name.c_str());
+                    if (!app_update_status.current_root.empty()) {
+                        ImGui::TextWrapped(
+                            "To update, rerun install_crimson.ps1 from %s",
+                            app_update_status.current_root.c_str());
+                    }
+                } else if (app_update_status.latest_manifest_found) {
+                    ImGui::TextDisabled(
+                        "Update status: up to date (%s)",
+                        app_update_status.installed_release_name.c_str());
+                } else if (!app_update_status.status_detail.empty()) {
+                    ImGui::TextDisabled(
+                        "Update status: %s",
+                        app_update_status.status_detail.c_str());
+                }
+                if (ImGui::SmallButton("Refresh Update Check")) {
+                    app_update_status = loadAppUpdateStatus(argv0_path);
+                }
+            }
+            auto decoder_errors = snapshotDecoderErrors();
+            if (!decoder_errors.empty()) {
+                ImGui::TextColored(
+                    ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                    "Background worker errors detected:");
+                for (const auto& [stream_name, message] : decoder_errors) {
+                    ImGui::TextWrapped("%s: %s",
+                                       stream_name.c_str(),
+                                       message.c_str());
+                }
+                if (ImGui::SmallButton("Clear Worker Errors")) {
+                    clearDecoderErrors();
+                }
+            }
             {
                 bool vsync_enabled = window->swap_interval != 0;
                 if (ImGui::Checkbox("VSync", &vsync_enabled)) {
