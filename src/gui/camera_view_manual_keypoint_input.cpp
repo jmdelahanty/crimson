@@ -25,7 +25,8 @@ KeyPoints* findFrameKeypoints(std::map<u32, KeyPoints*>* keypoints_map,
 CameraViewManualKeypointInputResult processCameraViewManualKeypointInput(
     const CameraViewManualKeypointInputContext& context) {
     CameraViewManualKeypointInputResult result;
-    result.keypoints_find = context.keypoints_find;
+    result.legacy_manual_keypoints_find =
+        context.legacy_manual_keypoints_find;
 
     if (context.scene == nullptr || context.skeleton == nullptr ||
         context.keypoints_map == nullptr || context.view_idx < 0 ||
@@ -35,19 +36,20 @@ CameraViewManualKeypointInputResult processCameraViewManualKeypointInput(
 
     KeyPoints* frame_keypoints =
         findFrameKeypoints(context.keypoints_map, context.current_frame_num);
-    result.keypoints_find = (frame_keypoints != nullptr);
+    result.legacy_manual_keypoints_find = (frame_keypoints != nullptr);
 
     if (context.plot_hovered) {
         result.view_focused = true;
 
-        if (ImGui::IsKeyPressed(ImGuiKey_C, false) && !result.keypoints_find) {
+        if (ImGui::IsKeyPressed(ImGuiKey_C, false) &&
+            !result.legacy_manual_keypoints_find) {
             KeyPoints* keypoints =
                 static_cast<KeyPoints*>(malloc(sizeof(KeyPoints)));
             allocate_keypoints(keypoints, context.scene, context.skeleton);
             (*context.keypoints_map)[static_cast<u32>(context.current_frame_num)] =
                 keypoints;
             frame_keypoints = keypoints;
-            result.keypoints_find = true;
+            result.legacy_manual_keypoints_find = true;
         }
 
         if (frame_keypoints != nullptr) {
@@ -99,7 +101,7 @@ CameraViewManualKeypointInputResult processCameraViewManualKeypointInput(
                 context.keypoints_map->erase(
                     static_cast<u32>(context.current_frame_num));
                 frame_keypoints = nullptr;
-                result.keypoints_find = false;
+                result.legacy_manual_keypoints_find = false;
             }
         }
     }

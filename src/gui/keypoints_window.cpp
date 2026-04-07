@@ -46,7 +46,8 @@ void drawKeypointsWindow(const KeypointsWindowContext& context) {
             ImGui::PushID(row);
             ImGui::TableNextRow();
 
-            if (context.keypoints_find && row < static_cast<int>(context.is_view_focused.size()) &&
+            if (context.legacy_manual_keypoints_find &&
+                row < static_cast<int>(context.is_view_focused.size()) &&
                 context.is_view_focused[row]) {
                 ImU32 row_bg_color =
                     ImGui::GetColorU32(ImVec4(0.7f, 0.3f, 0.3f, 0.65f));
@@ -65,7 +66,8 @@ void drawKeypointsWindow(const KeypointsWindowContext& context) {
                 if (!ImGui::TableSetColumnIndex(column)) {
                     continue;
                 }
-                if (!context.keypoints_find || frame_keypoints == nullptr ||
+                if (!context.legacy_manual_keypoints_find ||
+                    frame_keypoints == nullptr ||
                     context.skeleton == nullptr) {
                     continue;
                 }

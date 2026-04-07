@@ -33,6 +33,7 @@ struct FileBrowserWindowContext {
     const std::string& root_dir;
     const std::string& skeleton_dir;
     bool video_loaded = false;
+    bool show_legacy_skeleton_menu = true;
     bool skeleton_chosen = false;
     const std::string& active_skeleton_name;
     const std::map<std::string, SkeletonPrimitive>& skeleton_map;

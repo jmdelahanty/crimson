@@ -91,8 +91,8 @@ FileBrowserWindowResult drawFileBrowserWindow(const FileBrowserWindowContext& co
             ImGui::EndMenu();
         }
 
-        if (context.video_loaded) {
-            if (ImGui::BeginMenu("Skeleton")) {
+        if (context.video_loaded && context.show_legacy_skeleton_menu) {
+            if (ImGui::BeginMenu("Legacy Skeleton")) {
                 for (const auto& element : context.skeleton_map) {
                     if (ImGui::MenuItem(element.first.c_str(),
                                         nullptr,

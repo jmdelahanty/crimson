@@ -11,12 +11,12 @@ struct CameraViewManualKeypointInputContext {
     std::map<u32, KeyPoints*>* keypoints_map = nullptr;
     int current_frame_num = 0;
     int view_idx = 0;
-    bool keypoints_find = false;
+    bool legacy_manual_keypoints_find = false;
     bool plot_hovered = false;
 };
 
 struct CameraViewManualKeypointInputResult {
-    bool keypoints_find = false;
+    bool legacy_manual_keypoints_find = false;
     bool view_focused = false;
 };
 

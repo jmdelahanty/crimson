@@ -21,7 +21,7 @@ struct LabelingToolWindowContext {
     const SkeletonContext* skeleton = nullptr;
     const std::map<u32, KeyPoints*>& keypoints_map;
     int current_frame_num = 0;
-    bool keypoints_find = false;
+    bool legacy_manual_keypoints_find = false;
     bool triangulation_supported = false;
     std::time_t last_saved = static_cast<std::time_t>(-1);
     bool has_labeled_frames = false;

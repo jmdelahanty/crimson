@@ -467,7 +467,7 @@ int main(int argc, char **argv) {
     std::time_t last_saved = static_cast<std::time_t>(-1);
     bool video_loaded = false;
     bool cpu_buffer_toggle = true;
-    bool plot_keypoints_flag = false;
+    bool legacy_manual_label_mode = false;
     bool show_keypoint_markers = true;
     bool show_heading_arrows = true;
     bool show_eye_masks = false;
@@ -528,7 +528,7 @@ int main(int argc, char **argv) {
     // for labeling
     std::unique_ptr<SkeletonContext> skeleton;
     std::map<u32, KeyPoints *> keypoints_map;
-    bool keypoints_find = false;
+    bool legacy_manual_keypoints_find = false;
     std::map<std::string, SkeletonPrimitive> skeleton_map;
 
     // others
@@ -2201,12 +2201,15 @@ int main(int argc, char **argv) {
         }
         const std::string active_skeleton_name =
             skeleton ? skeleton->name : std::string();
+        const bool has_active_zarr_keypoint_review =
+            zarr_loaded && zarr_loader.hasKeypointData();
         FileBrowserWindowContext file_browser_context{
             ui_path_config,
             start_folder_name,
             root_dir,
             skeleton_dir,
             video_loaded,
+            !has_active_zarr_keypoint_review,
             skeleton_chosen,
             active_skeleton_name,
             skeleton_map,
@@ -2266,7 +2269,8 @@ int main(int argc, char **argv) {
                                     root_dir,
                                     skeleton.get(),
                                     selection.primitive);
-                plot_keypoints_flag = true;
+                legacy_manual_label_mode = true;
+                legacy_manual_keypoints_find = false;
                 keypoints_root_folder = root_dir + "/labeled_data/";
                 std::filesystem::create_directory(keypoints_root_folder);
                 skeleton_chosen = true;
@@ -2323,13 +2327,12 @@ int main(int argc, char **argv) {
             durationMs(std::chrono::steady_clock::now() - file_browser_ui_start);
 
         const bool use_legacy_manual_keypoint_tools =
-            plot_keypoints_flag &&
-            !(zarr_loaded && zarr_loader.hasKeypointData());
+            legacy_manual_label_mode && !has_active_zarr_keypoint_review;
 
         if (video_loaded) {
             const auto frame_debug_ui_start = std::chrono::steady_clock::now();
             if (!use_legacy_manual_keypoint_tools) {
-                keypoints_find = false;
+                legacy_manual_keypoints_find = false;
             }
             std::vector<LoggedBoundingBox> zarr_boxes;
             bool frame_is_interpolated = false;
@@ -2798,12 +2801,13 @@ int main(int argc, char **argv) {
                         }
                     }
 
-                    if (load_calibration) {
-                        skeleton_dir =
-                            ImGuiFileDialog::Instance()->GetCurrentPath();
-                        skeleton_initialize("", skeleton_file.begin()->second,
-                                            skeleton.get(), SP_LOAD);
-                        plot_keypoints_flag = true;
+                        if (load_calibration) {
+                            skeleton_dir =
+                                ImGuiFileDialog::Instance()->GetCurrentPath();
+                            skeleton_initialize("", skeleton_file.begin()->second,
+                                                skeleton.get(), SP_LOAD);
+                        legacy_manual_label_mode = true;
+                        legacy_manual_keypoints_find = false;
                         keypoints_root_folder = root_dir + "/labeled_data/";
                         skeleton_chosen = true;
                     }
@@ -3514,12 +3518,12 @@ int main(int argc, char **argv) {
                     // ImGui::Image((void*)(intptr_t)image_texture[j],
                     // avail_size);
                     //
-                    if (use_legacy_manual_keypoint_tools) {
-                        if (keypoints_map.find(current_frame_num) ==
-                            keypoints_map.end()) {
-                            keypoints_find = false;
+                        if (use_legacy_manual_keypoint_tools) {
+                            if (keypoints_map.find(current_frame_num) ==
+                                keypoints_map.end()) {
+                            legacy_manual_keypoints_find = false;
                         } else {
-                            keypoints_find = true;
+                            legacy_manual_keypoints_find = true;
                         }
                     }
 
@@ -4240,14 +4244,16 @@ int main(int argc, char **argv) {
                                     &keypoints_map,
                                     current_frame_num,
                                     j,
-                                    keypoints_find,
+                                    legacy_manual_keypoints_find,
                                     ImPlot::IsPlotHovered(),
                                 };
                             const CameraViewManualKeypointInputResult
                                 keypoint_input_result =
                                     processCameraViewManualKeypointInput(
                                         keypoint_input_context);
-                            keypoints_find = keypoint_input_result.keypoints_find;
+                            legacy_manual_keypoints_find =
+                                keypoint_input_result
+                                    .legacy_manual_keypoints_find;
                             is_view_focused[j] =
                                 keypoint_input_result.view_focused;
                         }
@@ -4553,7 +4559,7 @@ int main(int argc, char **argv) {
                 current_frame_num,
                 camera_names,
                 is_view_focused,
-                keypoints_find,
+                legacy_manual_keypoints_find,
             };
             drawKeypointsWindow(keypoints_window_context);
             frame_keypoints_window_ui_ms += durationMs(
@@ -4584,7 +4590,7 @@ int main(int argc, char **argv) {
                 skeleton.get(),
                 keypoints_map,
                 current_frame_num,
-                keypoints_find,
+                legacy_manual_keypoints_find,
                 triangulation_supported,
                 last_saved,
                 has_labeled_frames,

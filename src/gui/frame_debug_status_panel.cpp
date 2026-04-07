@@ -30,7 +30,7 @@ void drawFrameOverviewSection(const FrameDebugWindowContext& context) {
     }
     ImGui::Separator();
 
-    if (context.plot_keypoints_flag) {
+    if (context.legacy_manual_label_mode) {
         if (context.manual_keypoints_present) {
             ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f),
                                "[Legacy Manual] Keypoints:   Found");

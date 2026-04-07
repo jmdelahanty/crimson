@@ -8,7 +8,7 @@
 namespace {
 
 bool allCurrentKeypointsTriangulated(const LabelingToolWindowContext& context) {
-    if (!context.keypoints_find || context.skeleton == nullptr) {
+    if (!context.legacy_manual_keypoints_find || context.skeleton == nullptr) {
         return false;
     }
     auto frame_it = context.keypoints_map.find(context.current_frame_num);
@@ -48,7 +48,8 @@ LabelingToolWindowResult drawLabelingToolWindow(
         allCurrentKeypointsTriangulated(context);
     if (context.num_cams > 1) {
         const bool enabled =
-            context.keypoints_find && context.triangulation_supported;
+            context.legacy_manual_keypoints_find &&
+            context.triangulation_supported;
         const bool apply_color = context.triangulation_supported &&
                                  !keypoint_triangulated_all && enabled;
         if (apply_color) {

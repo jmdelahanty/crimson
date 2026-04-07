@@ -16,7 +16,7 @@ struct KeypointsWindowContext {
     int current_frame_num = 0;
     const std::vector<std::string>& camera_names;
     const std::vector<bool>& is_view_focused;
-    bool keypoints_find = false;
+    bool legacy_manual_keypoints_find = false;
 };
 
 void drawKeypointsWindow(const KeypointsWindowContext& context);
