@@ -51,6 +51,7 @@
 #include "gui/keypoints_window.h"
 #include "gui/labeling_tool_window.h"
 #include "gui/refined_keypoint_review_window.h"
+#include "gui/camera_view_transport_controls.h"
 #include "gui_interpolation.h"
 #include "gui/movement_timeline_window.h"
 #include "gui/stimulus_event_timeline_window.h"
@@ -1380,6 +1381,20 @@ int main(int argc, char **argv) {
 
     auto stepFrames = [&](int delta_frames) {
         seekToFrame(current_frame_num + delta_frames, true);
+    };
+
+    auto applyPlaybackToggle = [&]() {
+        ps.play_video = !ps.play_video;
+        if (ps.play_video) {
+            ps.pause_seeked = false;
+            setCameraDecodeRequests(true);
+            if (stimulus_player.loaded) {
+                window_need_decoding[stimulus_player.window_name].store(true);
+            }
+            syncPlaybackStartToCurrentFrame();
+        } else {
+            ps.pause_selected = 0;
+        }
     };
 
     ReviewFrameFilters review_frame_filters;
@@ -5597,95 +5612,33 @@ struct StateOverlay {
 
                     ImGui::EndChild();
 
-                    float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
-                    if (ImGui::Button(ICON_FK_FAST_BACKWARD)) {
-                        stepFrames(-10);
+                    const CameraViewTransportControlsContext
+                        camera_transport_context{
+                            ps.to_display_frame_number,
+                            dc_context->total_num_frame,
+                            dc_context->estimated_num_frames,
+                            video_fps,
+                            ps.play_video,
+                            ps.slider_frame_number,
+                        };
+                    const CameraViewTransportControlsResult
+                        camera_transport_result =
+                            drawCameraViewTransportControls(
+                                camera_transport_context);
+                    ps.slider_frame_number =
+                        camera_transport_result.slider_frame_number;
+                    ps.slider_just_changed =
+                        camera_transport_result.slider_just_changed;
+                    if (camera_transport_result.toggle_playback) {
+                        applyPlaybackToggle();
                     }
-                    ImGui::SameLine(0.0f, spacing);
-                    if (ImGui::Button(ICON_FK_STEP_BACKWARD)) {
-                        stepFrames(-1);
+                    if (camera_transport_result.step_delta != 0) {
+                        stepFrames(camera_transport_result.step_delta);
                     }
-                    ImGui::SameLine(0.0f, spacing);
-
-                    if (ps.to_display_frame_number ==
-                        (dc_context->total_num_frame - 1)) {
-                        ImVec4 repeat_normal = ImVec4(1.0f, 1.0f, 0.2f, 1.0f);
-                        ImVec4 repeat_hover = ImVec4(1.0f, 1.0f, 0.4f, 1.0f);
-                        ImVec4 repeat_active = ImVec4(1.0f, 0.9f, 0.1f, 1.0f);
-                        ImGui::PushStyleColor(ImGuiCol_Button, repeat_normal);
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                                              repeat_hover);
-                        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-                                              repeat_active);
-
-                        if (ImGui::Button(ICON_FK_REPEAT)) {
-                            // seek to zero
-                            seekToFrame(0, true);
-                        }
-                        ImGui::PopStyleColor(3);
-                    } else {
-                        ImVec4 normal, hover, active;
-                        if (ps.play_video) {
-                            normal = ImVec4(0.8f, 0.3f, 0.3f, 1.0f);
-                            hover = ImVec4(0.9f, 0.4f, 0.4f, 1.0f);
-                            active = ImVec4(0.7f, 0.2f, 0.2f, 1.0f);
-                        } else {
-                            // green
-                            normal = ImVec4(0.2f, 0.6f, 0.2f, 1.0f);
-                            hover = ImVec4(0.4f, 0.9f, 0.4f, 1.0f);
-                            active = ImVec4(0.3f, 0.75f, 0.3f, 1.0f);
-                        }
-                        ImGui::PushStyleColor(ImGuiCol_Button, normal);
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hover);
-                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, active);
-                        if (ImGui::Button(ps.play_video ? ICON_FK_PAUSE
-                                                        : ICON_FK_PLAY)) {
-                            ps.play_video = !ps.play_video;
-                            if (ps.play_video) {
-                                ps.pause_seeked = false;
-                                setCameraDecodeRequests(true);
-                                if (stimulus_player.loaded) {
-                                    window_need_decoding[stimulus_player.window_name].store(true);
-                                }
-                                syncPlaybackStartToCurrentFrame();
-                            } else {
-                                ps.pause_selected = 0;
-                            }
-                        }
-                        ImGui::PopStyleColor(3);
-                    }
-
-                    ImGui::SameLine(0.0f, spacing);
-                    if (ImGui::Button(ICON_FK_STEP_FORWARD)) {
-                        stepFrames(1);
-                    }
-                    ImGui::SameLine(0.0f, spacing);
-                    if (ImGui::Button(ICON_FK_FAST_FORWARD)) {
-                        stepFrames(10);
-                    }
-                    ImGui::SameLine();
-                    ps.slider_just_changed = ImGui::SliderInt(
-                        "##frame count", &ps.slider_frame_number, 0,
-                        dc_context->estimated_num_frames);
-                    const bool slider_active = ImGui::IsItemActive();
-                    const bool slider_released = ImGui::IsItemDeactivatedAfterEdit();
-                    ImGui::SameLine();
-                    float current_time_sec = ps.slider_frame_number / video_fps;
-                    float total_time_sec =
-                        dc_context->estimated_num_frames / video_fps;
-
-                    std::string current_str = format_time(current_time_sec);
-                    std::string total_str = format_time(total_time_sec);
-                    ImGui::Text("%s / %s", current_str.c_str(),
-                                total_str.c_str());
-
-                    if (ps.slider_just_changed && slider_active) {
-                        // Dragging — fast keyframe-only seek
-                        seekToFrame(ps.slider_frame_number, true, /*force_inaccurate=*/true);
-                    }
-                    if (slider_released) {
-                        // Released — one final accurate seek for exact frame
-                        seekToFrame(ps.slider_frame_number, true, /*force_inaccurate=*/false);
+                    if (camera_transport_result.seek_target_frame.has_value()) {
+                        seekToFrame(
+                            *camera_transport_result.seek_target_frame, true,
+                            camera_transport_result.force_inaccurate_seek);
                     }
 
                     ImGui::EndGroup();
@@ -5696,34 +5649,13 @@ struct StateOverlay {
                 ImGui::End();
             }
 
-            if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
-                ps.play_video = !ps.play_video;
-                if (ps.play_video) {
-                    ps.pause_seeked = false;
-                    setCameraDecodeRequests(true);
-                    if (stimulus_player.loaded) {
-                        window_need_decoding[stimulus_player.window_name].store(true);
-                    }
-                    syncPlaybackStartToCurrentFrame();
-                } else {
-                    ps.pause_selected = 0;
-                }
+            const CameraViewPlaybackShortcutsResult playback_shortcuts =
+                handleCameraViewPlaybackShortcuts();
+            if (playback_shortcuts.toggle_playback) {
+                applyPlaybackToggle();
             }
-
-            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false)) {
-                if (ImGui::GetIO().KeyShift) {
-                    stepFrames(-10);
-                } else {
-                    stepFrames(-1);
-                }
-            }
-
-            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)) {
-                if (ImGui::GetIO().KeyShift) {
-                    stepFrames(10);
-                } else {
-                    stepFrames(1);
-                }
+            if (playback_shortcuts.step_delta != 0) {
+                stepFrames(playback_shortcuts.step_delta);
             }
 
             for (const auto &[name, flag] : window_need_decoding) {
