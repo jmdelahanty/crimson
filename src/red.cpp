@@ -11,6 +11,7 @@
 #include "render.h"
 #include "skeleton.h"
 #include "utils.h"
+#include "windows_crash_dump.h"
 #include "debug_flags.h"
 #include "yolo_detection.h"
 #include <ImGuiFileDialog.h>
@@ -464,6 +465,9 @@ int main(int argc, char **argv) {
     const std::filesystem::path argv0_path = (argc > 0) ? argv[0] : "";
     std::error_code cwd_error;
     const std::filesystem::path cwd = std::filesystem::current_path(cwd_error);
+
+    InstallWindowsCrashHandler(argv0_path);
+
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--zarr") {

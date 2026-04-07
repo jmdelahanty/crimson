@@ -578,6 +578,10 @@ target_link_libraries(redgui PRIVATE
     Threads::Threads
 )
 
+if(WIN32)
+    target_link_libraries(redgui PRIVATE Dbghelp)
+endif()
+
 # Add NVML if enabled
 if(ENABLE_NVML)
     if(NVML_LIBRARY)

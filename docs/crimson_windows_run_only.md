@@ -197,3 +197,14 @@ If the app does not launch:
 - confirm the machine has a current NVIDIA driver
 
 If Windows reports a missing `.dll`, report the exact filename.
+
+If Crimson hard-crashes after launch, look in:
+
+```text
+C:\Users\<your-user>\AppData\Local\Crimson\CrashDumps
+```
+
+Report both:
+
+- the `.dmp` file
+- the matching `.txt` sidecar

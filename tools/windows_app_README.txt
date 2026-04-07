@@ -54,3 +54,5 @@ Notes
 - Do not copy only `redgui.exe`.
 - Do not move files out of this folder by hand.
 - If Windows reports a missing `.dll`, report the exact filename.
+- If Crimson hard-crashes, check `%LOCALAPPDATA%\Crimson\CrashDumps` for a
+  `.dmp` file and matching `.txt` sidecar.
