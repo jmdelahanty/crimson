@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -212,9 +213,14 @@ CameraViewWindowResult drawCameraViewWindowContents(
                 if (context.latest_decoded_frame < 0) {
                     recording_remaining = context.total_recording_frames;
                 } else {
-                    recording_remaining = std::max(
-                        0, context.total_recording_frames -
-                               (context.latest_decoded_frame + 1));
+                    const int64_t total_recording_frames =
+                        static_cast<int64_t>(context.total_recording_frames);
+                    const int64_t decoded_through_frame =
+                        static_cast<int64_t>(context.latest_decoded_frame) + 1;
+                    const int64_t remaining_frames =
+                        total_recording_frames - decoded_through_frame;
+                    recording_remaining = static_cast<int>(std::max<int64_t>(
+                        0, remaining_frames));
                 }
             }
 

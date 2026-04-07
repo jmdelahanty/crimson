@@ -387,6 +387,234 @@ staging windows are implemented:
 
 But none of that is needed for this incremental step.
 
+## Update: Why Soft Resume Stalls at the Old Frontier
+
+Date: 2026-04-07. After implementing `resumeFromBufferedFrame()`.
+
+### The stall mechanism
+
+The `resumeFromBufferedFrame()` fix removed jitter and the stimulus race. But
+playback can still stop at the old decode frontier. Here is the exact chain:
+
+1. **Decoder is a sequential producer.** In `decoder.cpp`, the decoder thread
+   writes frames sequentially into the ring via `buffer_head`, incrementing
+   `nFrame` after each frame (line ~675: `nFrame = assigned_frame_num + 1`).
+   It advances `buffer_head = (buffer_head + 1) % size_of_buffer` (line ~676).
+   It publishes `latest_decoded_frame[cam_name].store(assigned_frame_num)`.
+
+2. **Decoder blocks when the ring is full.** At line ~618, the decoder spins
+   waiting for `display_buffer[buffer_head].available_to_write`. If the slot
+   is occupied, the decoder sleeps 1ms and retries.
+
+3. **Playback releases slots only forward from read_head.** At `red.cpp:2626`,
+   when `frame_delta > 0`, playback marks intermediate slots
+   `available_to_write = true` and advances `read_head`. This is the ONLY
+   place camera ring slots are freed during active playback.
+
+4. **Playback is clamped to `min_decoded_frame`.** At `red.cpp:2604`:
+
+   ```cpp
+   frame_to_show = std::min(frame_to_show, min_decoded_frame);
+   ```
+
+   Playback cannot advance past what the decoder has produced.
+
+5. **After `resumeFromBufferedFrame()`, the decoder's position has not
+   changed.** The decoder was paused (no decode requests while `!play_video`).
+   When decode resumes, it picks up from its last `nFrame` and `buffer_head`.
+   Those are internal to the decoder thread — `resumeFromBufferedFrame()` has
+   no access to them.
+
+### The stall scenario
+
+User pauses at frame 15588 (the decode frontier). Buffer contains sparse
+islands: 15489..15492 and 15588. User browses to frame 15490. Presses play.
+
+- `resumeFromBufferedFrame(15490)` sets:
+  - `to_display_frame_number = 15490`
+  - `accumulated_play_time` → corresponds to frame 15490
+  - `read_head` → slot containing frame 15490
+
+- Playback clock starts ticking from 15490. The clock quickly wants frame
+  15491, 15492, then 15493...
+
+- But `latest_decoded_frame` is still 15588. Decode resumes from `nFrame =
+  15589`. The decoder writes frame 15589 into its `buffer_head` slot.
+
+- At `red.cpp:2604`, `frame_to_show = min(clock_frame, 15589)`. For the first
+  few ticks while clock is < 15589, this seems fine.
+
+- **The problem:** playback at line 2626 requires `frame_delta > 0` to free
+  slots. `frame_delta = frame_to_show - ps.to_display_frame_number`. When the
+  clock reaches frame 15493 (the start of the gap), there is no frame 15493
+  in the ring buffer. But `to_display_frame_number` can still advance if the
+  ring slot at `read_head` happens to contain a frame (the playback loop
+  reads from the ring at line 1432, not from a frame index).
+
+  Actually, the real issue is simpler: `read_head` walks sequentially through
+  ring slots. The frames 15489..15492 and 15588 are in non-contiguous slots.
+  When `read_head` advances past the slot holding 15492 to the next slot, that
+  slot might hold garbage, be empty, or hold 15588. If it holds 15588,
+  playback jumps from 15492 to 15588 in one tick. If it is empty
+  (`available_to_write = true`), `live_frame` at line 1432 reads -1, and
+  `current_frame_num` falls back to `to_display_frame_number`.
+
+  Meanwhile the decoder is at `buffer_head` pointing to some slot, writing
+  frames starting from 15589. The decoder will eventually circle `buffer_head`
+  around the ring, overwriting the old sparse islands. But until it wraps,
+  playback's `read_head` is walking through stale or empty slots.
+
+### The core issue
+
+The ring buffer has no frame-indexed lookup for playback. Playback advances
+`read_head` sequentially through slot indices, assuming the decoder filled
+them in order from a nearby starting point. After a soft resume to a different
+position, that assumption breaks — `read_head` is positioned at a slot in a
+sparse island, but the decoder is producing frames far ahead.
+
+Playback hits the end of the sparse island and either:
+- jumps to whatever frame happens to be in the next slot (stutter)
+- reads an empty slot and stalls
+
+### Why full seekToFrame does not have this problem
+
+`seekToFrame` calls `initiate_camera_seeks()` which triggers decoder
+recreation. The decoder starts fresh from the seek target, writes sequentially
+from frame N into `buffer_head = 0`, and playback's `read_head` (also reset
+to 0) walks through freshly-decoded sequential frames. No sparse gap problem.
+
+### What this tells us about the two-case split
+
+Your proposed split is correct:
+
+1. **Soft resume** — only valid when the browsed frame is in a span that the
+   decoder can naturally continue from. The decoder is sitting at `nFrame`
+   beyond the newest buffered frame. If the browsed frame is in the newest
+   contiguous span (the one that ends at or near `latest_decoded_frame`),
+   playback's `read_head` can walk through those sequential slots and the
+   decoder will keep filling ahead of it.
+
+2. **Camera re-anchor** — needed when the browsed frame is in an older sparse
+   island that the decoder has moved past. The decoder needs to be told to
+   produce frames from a new starting point.
+
+## Answers to Your Three Questions
+
+### Q1: Is "inside newest contiguous span" the right criterion, or a minimum forward-lookahead?
+
+**"Inside newest contiguous span" is the right criterion, but define it
+precisely: the span must be contiguous AND end at or near
+`latest_decoded_frame`.**
+
+Here is why forward-lookahead alone is not enough:
+
+Consider buffer state: spans [15489..15492] and [15585..15588], with
+`latest_decoded_frame = 15588`. If you use a forward-lookahead threshold of
+say 8 frames, and the user browses to frame 15585, that passes (15588 - 15585
+= 3 frames of lookahead). But it also passes for frame 15490 (15588 - 15490 =
+98 frames of lookahead), even though 15490 is in a disconnected island.
+
+The criterion should be:
+
+```
+soft_resume_ok =
+    selected_frame is inside a contiguous span S, AND
+    S.last_frame >= latest_decoded_frame - small_tolerance
+```
+
+Where `small_tolerance` accounts for the ring possibly having advanced
+`buffer_head` a few frames past `latest_decoded_frame` without the value
+being visible yet. A tolerance of 1-2 frames is enough.
+
+This can be computed from the span data you already build in the paused buffer
+browser UI (`paused_buffer_spans` in `red.cpp:1217-1232`). You already have
+the spans sorted by frame number. Check whether the selected frame's span has
+a `last_frame` that is at or near the `latest_decoded_frame`.
+
+### Q2: Is "camera-only inaccurate seek, no hard stimulus seek" the right intermediate step?
+
+**Yes. This is the right intermediate step.** Here is the reasoning:
+
+The camera re-anchor needs `initiate_camera_seeks()` because the decoder must
+start producing frames from a new position. That is unavoidable — only the
+full camera seek path resets the decoder's internal `nFrame` and
+`buffer_head`.
+
+But stimulus does NOT need a hard seek for a buffered resume. The per-tick
+alignment at `red.cpp:1443` will recompute `current_stimulus_frame` from the
+new camera frame on the very next tick after cameras settle. The stimulus
+decoder, if it is already near the right frame, will converge through normal
+decode. The stimulus hard seek is only needed when the stimulus decoder is
+very far from the target — and for a short buffer browse (typically tens to
+low hundreds of camera frames), the corresponding stimulus frame is probably
+close to what stimulus already has buffered.
+
+**Implementation sketch for the camera re-anchor path:**
+
+Use `seekToFrame` but with a modification: skip the stimulus hard seek. The
+cleanest incremental approach is to add an option to `seekToFrame` that says
+"cameras only, let stimulus follow naturally":
+
+```cpp
+// In seekToFrame, after cameras settle in pollSeekState, instead of
+// entering SeekState::WaitingStimulus:
+if (skip_stimulus_seek) {
+    // Just update current_stimulus_frame from alignment
+    // and go straight to SeekState::Ready
+    context_.seek_progress->state = SeekState::Ready;
+}
+```
+
+Or, since you might not want to add another parameter to `seekToFrame`, you
+could set a flag on `seek_progress` like `skip_stimulus_hard_seek` that
+`pollSeekState` checks when it would normally transition to
+`WaitingStimulus`.
+
+Either way the key is: the camera re-anchor path should go through the
+SeekState machine for cameras (because it needs decoder recreation and settle
+tracking), but skip the stimulus seek phase.
+
+**One thing to watch for:** after the camera seek settles, the per-tick
+stimulus lookup at `red.cpp:1443` needs to not be frozen. Your paused-browse
+freeze guard uses `!ps.play_video && ps.pause_seeked && ps.buffer_browsed_since_pause`.
+Since the re-anchor happens after `play_video = true`, the freeze guard will
+not fire. Good — stimulus alignment will update naturally.
+
+### Q3: Any cleaner way to express this using active-window vs sparse-browse semantics?
+
+**Yes — and this is where the two-case split maps directly onto the
+contiguous playback window design.**
+
+What you are discovering empirically is the same distinction the design doc
+makes between:
+
+- **Active playback window** — the contiguous span that the decoder can
+  naturally extend from its current position
+- **Sparse browse cache** — everything else in the ring buffer
+
+The soft resume / re-anchor split maps to:
+
+| User browsed to... | Maps to... | Action |
+|---------------------|------------|--------|
+| Frame inside the active playback window (newest contiguous span touching the decode frontier) | Resume within active window | `resumeFromBufferedFrame()` — clock reset, slot hint, no seek |
+| Frame in a sparse island outside the active window | Staging a new window | Camera re-anchor seek (no stimulus hard seek), then playback picks up from the newly staged position |
+
+You do not need the full `ActivePlaybackWindow` / `PlaybackStagingWindow`
+structs to express this. What you need right now is one predicate:
+
+```cpp
+bool isInsideActivePlaybackSpan(int frame, int latest_decoded) const;
+```
+
+That returns true if `frame` is in a contiguous buffered span whose highest
+frame is at or near `latest_decoded`. Everything else is a sparse browse
+frame that requires re-anchoring.
+
+This predicate is the seed of the active playback window concept. Later, when
+you add explicit window tracking with history/lookahead, this function becomes
+`activeWindow.contains(frame)`. But for now it can be a simple scan of the
+ring buffer, or you can pass the already-computed span data from the UI.
+
 ## Risk Assessment
 
 | Change | Risk | Reason |

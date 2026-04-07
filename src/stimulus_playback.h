@@ -13,6 +13,13 @@
 #include <thread>
 
 enum class SeekState { Idle, WaitingCameras, WaitingStimulus, Ready, TimedOut };
+enum class ResumePath {
+    None,
+    SmoothPause,
+    BufferedSoft,
+    CameraReanchor,
+    HardSeekFallback,
+};
 
 inline const char *seekStateName(SeekState s) {
     switch (s) {
@@ -25,6 +32,17 @@ inline const char *seekStateName(SeekState s) {
     return "Unknown";
 }
 
+inline const char* resumePathName(ResumePath p) {
+    switch (p) {
+    case ResumePath::None: return "none";
+    case ResumePath::SmoothPause: return "smooth resume from pause frame";
+    case ResumePath::BufferedSoft: return "soft resume from active buffered span";
+    case ResumePath::CameraReanchor: return "camera re-anchor from browsed frame";
+    case ResumePath::HardSeekFallback: return "hard seek fallback";
+    }
+    return "Unknown";
+}
+
 struct SeekProgress {
     SeekState state = SeekState::Idle;
     uint64_t  seek_id = 0;           // monotonic generation counter
@@ -32,6 +50,7 @@ struct SeekProgress {
     int       target_camera_frame = 0;
     int       target_stimulus_frame = -1;
     bool      accurate = false;
+    bool      skip_stimulus_hard_seek = false;
     int       cameras_settled = 0;
     int       cameras_total = 0;
     std::chrono::steady_clock::time_point deadline;
@@ -41,6 +60,8 @@ struct PlaybackState {
     int pause_selected = 0;
     int paused_frame_on_toggle = -1;
     bool buffer_browsed_since_pause = false;
+    ResumePath last_resume_path = ResumePath::None;
+    int last_resume_target_frame = -1;
     bool slider_just_changed = false;
     bool play_video = false;
     int to_display_frame_number = 0;

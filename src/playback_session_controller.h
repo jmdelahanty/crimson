@@ -46,7 +46,8 @@ class PlaybackSessionController {
     bool stepPausedFrameFromBuffer(int target_frame) const;
     void seekToFrame(int target_frame,
                      bool prefer_buffer_when_paused,
-                     bool force_inaccurate = false) const;
+                     bool force_inaccurate = false,
+                     bool skip_stimulus_hard_seek = false) const;
     void syncPlaybackStartToCurrentFrame() const;
     void stepFrames(int delta_frames) const;
     void applyPlaybackToggle() const;
@@ -56,6 +57,9 @@ class PlaybackSessionController {
     int findDisplaySlotForFrame(int cam_idx,
                                 int target_frame,
                                 int preferred_slot) const;
+    void releaseBufferedHistoryBeforeFrame(int cam_idx, int frame) const;
+    bool resumeFromBufferedFrame(int resume_frame) const;
+    bool isWithinNewestContiguousBufferedSpan(int frame) const;
 
     const PlaybackSessionControllerContext context_;
 };

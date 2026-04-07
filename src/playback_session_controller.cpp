@@ -180,7 +180,8 @@ int PlaybackSessionController::findDisplaySlotForFrame(int cam_idx,
 
 void PlaybackSessionController::seekToFrame(int target_frame,
                                             bool prefer_buffer_when_paused,
-                                            bool force_inaccurate) const {
+                                            bool force_inaccurate,
+                                            bool skip_stimulus_hard_seek) const {
     if (context_.scene == nullptr || context_.decoder_context == nullptr ||
         context_.playback_state == nullptr || context_.seek_progress == nullptr ||
         context_.stimulus_player == nullptr || context_.zarr_loader == nullptr ||
@@ -202,7 +203,9 @@ void PlaybackSessionController::seekToFrame(int target_frame,
          context_.seek_progress->state == SeekState::WaitingStimulus);
     if (seek_in_flight &&
         context_.seek_progress->requested_camera_frame == clamped_frame &&
-        context_.seek_progress->accurate == seek_accurate) {
+        context_.seek_progress->accurate == seek_accurate &&
+        context_.seek_progress->skip_stimulus_hard_seek ==
+            skip_stimulus_hard_seek) {
         if (crimson_seek_debug_logs_enabled()) {
             std::cout << "[Seek] dedupe: dropping duplicate request frame="
                       << clamped_frame
@@ -228,6 +231,7 @@ void PlaybackSessionController::seekToFrame(int target_frame,
                 context_.seek_progress->target_camera_frame = clamped_frame;
                 context_.seek_progress->target_stimulus_frame = *stim_frame;
                 context_.seek_progress->accurate = seek_accurate;
+                context_.seek_progress->skip_stimulus_hard_seek = false;
                 context_.seek_progress->cameras_settled =
                     context_.scene->num_cams;
                 context_.seek_progress->cameras_total =
@@ -270,6 +274,7 @@ void PlaybackSessionController::seekToFrame(int target_frame,
     context_.seek_progress->target_camera_frame = clamped_frame;
     context_.seek_progress->target_stimulus_frame = -1;
     context_.seek_progress->accurate = seek_accurate;
+    context_.seek_progress->skip_stimulus_hard_seek = skip_stimulus_hard_seek;
     context_.seek_progress->cameras_settled = 0;
     context_.seek_progress->cameras_total = context_.scene->num_cams;
     context_.seek_progress->deadline =
@@ -287,7 +292,7 @@ void PlaybackSessionController::seekToFrame(int target_frame,
     context_.playback_state->last_wall_time_playspeed =
         std::chrono::steady_clock::now();
 
-    if (context_.stimulus_player->loaded &&
+    if (!skip_stimulus_hard_seek && context_.stimulus_player->loaded &&
         context_.zarr_loader->hasStimulusAlignment()) {
         auto stim_frame =
             context_.zarr_loader->getStimulusFrameForCameraFrame(clamped_frame);
@@ -304,6 +309,8 @@ void PlaybackSessionController::seekToFrame(int target_frame,
         std::cout << "[Seek] id=" << context_.seek_progress->seek_id
                   << " initiated cameras=" << context_.scene->num_cams
                   << " frame=" << clamped_frame
+                  << " skip_stimulus_hard_seek="
+                  << (skip_stimulus_hard_seek ? "true" : "false")
                   << " accurate=" << (seek_accurate ? "true" : "false")
                   << std::endl;
     }
@@ -345,6 +352,126 @@ void PlaybackSessionController::syncPlaybackStartToCurrentFrame() const {
     }
 }
 
+bool PlaybackSessionController::resumeFromBufferedFrame(int resume_frame) const {
+    if (context_.playback_state == nullptr || context_.scene == nullptr ||
+        context_.current_frame_num == nullptr || context_.video_fps == nullptr ||
+        context_.stimulus_player == nullptr) {
+        return false;
+    }
+    if (context_.scene->num_cams <= 0 || context_.scene->size_of_buffer <= 0) {
+        return false;
+    }
+
+    const int clamped_frame = std::max(0, resume_frame);
+    const int visible_idx = getVisibleCameraIndex();
+    if (visible_idx < 0) {
+        return false;
+    }
+
+    const int preferred_slot =
+        context_.playback_state->read_head % context_.scene->size_of_buffer;
+    const int target_slot = findDisplaySlotForFrame(
+        visible_idx, clamped_frame, preferred_slot);
+    if (target_slot < 0) {
+        return false;
+    }
+
+    releaseBufferedHistoryBeforeFrame(visible_idx, clamped_frame);
+
+    const double fps_for_clock =
+        (*context_.video_fps > 0.0) ? *context_.video_fps : 30.0;
+    const auto now_tp = std::chrono::steady_clock::now();
+    context_.playback_state->to_display_frame_number = clamped_frame;
+    context_.playback_state->slider_frame_number = clamped_frame;
+    context_.playback_state->read_head = target_slot;
+    context_.playback_state->accumulated_play_time =
+        static_cast<double>(clamped_frame) / fps_for_clock;
+    context_.playback_state->last_play_time_start = now_tp;
+    context_.playback_state->last_frame_num_playspeed = clamped_frame;
+    context_.playback_state->last_wall_time_playspeed = now_tp;
+    *context_.current_frame_num = clamped_frame;
+
+    if (context_.stimulus_player->loaded) {
+        context_.stimulus_player->throttled = false;
+        context_.stimulus_player->throttle_resume_frame = -1;
+        (*context_.window_need_decoding)[context_.stimulus_player->window_name]
+            .store(true);
+        if (context_.zarr_loader != nullptr &&
+            context_.zarr_loader->hasStimulusAlignment()) {
+            auto stim_frame =
+                context_.zarr_loader->getStimulusFrameForCameraFrame(
+                    clamped_frame);
+            context_.playback_state->current_stimulus_frame =
+                (stim_frame && *stim_frame >= 0) ? *stim_frame : -1;
+        }
+    }
+
+    return true;
+}
+
+void PlaybackSessionController::releaseBufferedHistoryBeforeFrame(
+    int cam_idx, int frame) const {
+    if (context_.scene == nullptr || cam_idx < 0 ||
+        cam_idx >= context_.scene->num_cams) {
+        return;
+    }
+
+    for (int slot_idx = 0; slot_idx < context_.scene->size_of_buffer;
+         ++slot_idx) {
+        const auto& visible_slot =
+            context_.scene->cameras[cam_idx].display_buffer[slot_idx];
+        if (visible_slot.available_to_write || visible_slot.frame_number < 0 ||
+            visible_slot.frame_number >= frame) {
+            continue;
+        }
+        for (int camera_idx = 0; camera_idx < context_.scene->num_cams;
+             ++camera_idx) {
+            context_.scene->cameras[camera_idx]
+                .display_buffer[slot_idx]
+                .available_to_write = true;
+        }
+    }
+}
+
+bool PlaybackSessionController::isWithinNewestContiguousBufferedSpan(
+    int frame) const {
+    if (context_.scene == nullptr || context_.playback_state == nullptr ||
+        context_.scene->num_cams <= 0 || context_.scene->size_of_buffer <= 0) {
+        return false;
+    }
+
+    const int visible_idx = getVisibleCameraIndex();
+    if (visible_idx < 0) {
+        return false;
+    }
+
+    std::vector<int> buffered_frames;
+    buffered_frames.reserve(context_.scene->size_of_buffer);
+    for (int i = 0; i < context_.scene->size_of_buffer; ++i) {
+        const auto& slot =
+            context_.scene->cameras[visible_idx].display_buffer[i];
+        if (slot.available_to_write || slot.frame_number < 0) {
+            continue;
+        }
+        buffered_frames.push_back(slot.frame_number);
+    }
+    if (buffered_frames.empty()) {
+        return false;
+    }
+
+    std::sort(buffered_frames.begin(), buffered_frames.end());
+    const int newest_frame = buffered_frames.back();
+    int span_start = newest_frame;
+    for (int i = static_cast<int>(buffered_frames.size()) - 2; i >= 0; --i) {
+        if (buffered_frames[i] + 1 == span_start) {
+            span_start = buffered_frames[i];
+            continue;
+        }
+        break;
+    }
+    return frame >= span_start && frame <= newest_frame;
+}
+
 void PlaybackSessionController::stepFrames(int delta_frames) const {
     if (context_.current_frame_num == nullptr) {
         return;
@@ -364,6 +491,7 @@ void PlaybackSessionController::applyPlaybackToggle() const {
             context_.playback_state->buffer_browsed_since_pause &&
             context_.playback_state->paused_frame_on_toggle >= 0 &&
             resume_frame != context_.playback_state->paused_frame_on_toggle;
+        context_.playback_state->last_resume_target_frame = resume_frame;
         context_.playback_state->pause_seeked = false;
         setCameraDecodeRequests(true);
         if (context_.stimulus_player->loaded) {
@@ -371,8 +499,22 @@ void PlaybackSessionController::applyPlaybackToggle() const {
                 .store(true);
         }
         if (browsed_since_pause) {
-            seekToFrame(resume_frame, false, true);
+            if (isWithinNewestContiguousBufferedSpan(resume_frame)) {
+                if (resumeFromBufferedFrame(resume_frame)) {
+                    context_.playback_state->last_resume_path =
+                        ResumePath::BufferedSoft;
+                } else {
+                    context_.playback_state->last_resume_path =
+                        ResumePath::HardSeekFallback;
+                    seekToFrame(resume_frame, false, true);
+                }
+            } else {
+                context_.playback_state->last_resume_path =
+                    ResumePath::CameraReanchor;
+                seekToFrame(resume_frame, false, true, true);
+            }
         } else {
+            context_.playback_state->last_resume_path = ResumePath::SmoothPause;
             syncPlaybackStartToCurrentFrame();
         }
         context_.playback_state->buffer_browsed_since_pause = false;
@@ -460,7 +602,8 @@ void PlaybackSessionController::pollSeekState() const {
                 remapped_stimulus_frame;
 
             if (context_.stimulus_player->loaded &&
-                remapped_stimulus_frame >= 0) {
+                remapped_stimulus_frame >= 0 &&
+                !context_.seek_progress->skip_stimulus_hard_seek) {
                 context_.seek_progress->state = SeekState::WaitingStimulus;
                 context_.seek_progress->deadline =
                     std::chrono::steady_clock::now() +
@@ -496,7 +639,9 @@ void PlaybackSessionController::pollSeekState() const {
                 context_.seek_progress->state = SeekState::Ready;
                 if (crimson_seek_debug_logs_enabled()) {
                     std::cout << "[Seek] id=" << context_.seek_progress->seek_id
-                              << " complete (no stimulus mapping)"
+                              << (context_.seek_progress->skip_stimulus_hard_seek
+                                      ? " complete (camera-only re-anchor)"
+                                      : " complete (no stimulus mapping)")
                               << std::endl;
                 }
             }

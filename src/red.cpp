@@ -1257,8 +1257,13 @@ int main(int argc, char **argv) {
                     ImGui::Text("Pause origin frame: %d, resume mode: %s",
                                 ps.paused_frame_on_toggle,
                                 ps.buffer_browsed_since_pause
-                                    ? "seek from browsed frame"
+                                    ? "buffered resume / camera re-anchor"
                                     : "smooth resume from pause frame");
+                }
+                if (ps.last_resume_path != ResumePath::None) {
+                    ImGui::Text("Last resume: %s (target %d)",
+                                resumePathName(ps.last_resume_path),
+                                ps.last_resume_target_frame);
                 }
                 if (!paused_buffer_items.empty()) {
                     const int oldest_buffered_frame =
@@ -1436,13 +1441,21 @@ int main(int argc, char **argv) {
                     current_frame_num = ps.to_display_frame_number;
                 }
             }
+            const bool freeze_stimulus_during_paused_browse =
+                !ps.play_video && ps.pause_seeked && ps.buffer_browsed_since_pause;
+            const bool freeze_stimulus_during_seek =
+                seek_progress.state == SeekState::WaitingCameras ||
+                seek_progress.state == SeekState::WaitingStimulus;
             if (zarr_loaded && zarr_loader.hasStimulusAlignment()) {
-                int stim_source_frame = ps.play_video ? current_frame_num
-                                                      : ps.to_display_frame_number;
-                if (auto stim_frame = zarr_loader.getStimulusFrameForCameraFrame(stim_source_frame)) {
-                    ps.current_stimulus_frame = *stim_frame;
-                } else {
-                    ps.current_stimulus_frame = -1;
+                if (!freeze_stimulus_during_paused_browse &&
+                    !freeze_stimulus_during_seek) {
+                    int stim_source_frame = ps.play_video ? current_frame_num
+                                                          : ps.to_display_frame_number;
+                    if (auto stim_frame = zarr_loader.getStimulusFrameForCameraFrame(stim_source_frame)) {
+                        ps.current_stimulus_frame = *stim_frame;
+                    } else {
+                        ps.current_stimulus_frame = -1;
+                    }
                 }
             } else {
                 ps.current_stimulus_frame = -1;
