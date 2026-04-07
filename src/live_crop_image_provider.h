@@ -11,8 +11,12 @@ public:
                           const CropFrameSource& frame_source);
     ~LiveCropImageProvider();
 
+    bool getCropTextureForSpec(const CropSpec& crop_spec,
+                               CropTextureView& out_view) const override;
     bool getCropTextureForIndex(int32_t roi_index,
                                 CropTextureView& out_view) const override;
+    bool getCropImageForSpec(const CropSpec& crop_spec,
+                            CropImageView& out_view) const override;
     bool getCropImageForIndex(int32_t roi_index,
                               CropImageView& out_view) const override;
     const std::vector<int32_t>& getCropFrameIndices() const override;

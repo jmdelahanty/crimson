@@ -14,6 +14,7 @@ struct CropPreviewWindowState {
     unsigned int crop_texture = 0;
     std::vector<uint8_t> crop_rgba_buffer;
     int last_roi_index = -1;
+    CropRect last_crop_rect;
     size_t last_width = 0;
     size_t last_height = 0;
     size_t last_channels = 0;
@@ -51,6 +52,8 @@ struct CropPreviewWindowContext {
     int current_frame_num = 0;
     int selected_frame = -1;
     int selected_box = -1;
+    int selected_detection_index = -1;
+    std::optional<CropSpec> selected_crop_spec;
     bool play_video = false;
     std::string* manual_write_status = nullptr;
 };

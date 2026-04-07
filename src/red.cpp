@@ -5807,6 +5807,49 @@ struct StateOverlay {
                 zarr_loader, live_crop_frame_source);
             ChainedCropImageProvider crop_image_provider(
                 live_crop_image_provider, persisted_crop_image_provider);
+            std::optional<CropSpec> selected_crop_spec;
+            int selected_detection_index = -1;
+            if (g_zarr_bbox_edit_state.selected_frame == crop_preview_frame_num &&
+                g_zarr_bbox_edit_state.selected_box >= 0 &&
+                zarr_loader.hasDetectionData()) {
+                const auto loaded_crop_boxes =
+                    zarr_loader.getBoundingBoxesForFrame(crop_preview_frame_num);
+                const auto resolved_crop_boxes =
+                    g_zarr_bbox_edit_state.resolveFrameBoxes(crop_preview_frame_num,
+                                                             loaded_crop_boxes);
+                if (g_zarr_bbox_edit_state.selected_box <
+                    static_cast<int>(resolved_crop_boxes.size())) {
+                    const auto& selected_box =
+                        resolved_crop_boxes[static_cast<size_t>(
+                            g_zarr_bbox_edit_state.selected_box)];
+                    CropSpec crop_spec;
+                    crop_spec.offset_x = selected_box.x_min;
+                    crop_spec.offset_y = selected_box.y_min;
+                    crop_spec.width_px = selected_box.width;
+                    crop_spec.height_px = selected_box.height;
+                    crop_spec.valid = selected_box.width > 0.0f &&
+                                      selected_box.height > 0.0f;
+                    if (crop_spec.valid) {
+                        selected_crop_spec = crop_spec;
+                    }
+
+                    auto source_it =
+                        g_zarr_bbox_edit_state.frame_source_indices.find(
+                            crop_preview_frame_num);
+                    if (source_it !=
+                            g_zarr_bbox_edit_state.frame_source_indices.end() &&
+                        g_zarr_bbox_edit_state.selected_box <
+                            static_cast<int>(source_it->second.size())) {
+                        selected_detection_index =
+                            source_it->second[static_cast<size_t>(
+                                g_zarr_bbox_edit_state.selected_box)];
+                    } else if (g_zarr_bbox_edit_state.selected_box <
+                               static_cast<int>(loaded_crop_boxes.size())) {
+                        selected_detection_index =
+                            g_zarr_bbox_edit_state.selected_box;
+                    }
+                }
+            }
             const CropPreviewWindowContext crop_preview_context{
                 crop_image_provider,
                 zarr_loader,
@@ -5814,6 +5857,8 @@ struct StateOverlay {
                 crop_preview_frame_num,
                 g_zarr_bbox_edit_state.selected_frame,
                 g_zarr_bbox_edit_state.selected_box,
+                selected_detection_index,
+                selected_crop_spec,
                 ps.play_video,
                 &refined_keypoint_review_window_state.panel_state
                      .manual_write_status,

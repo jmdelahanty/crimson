@@ -459,7 +459,11 @@ CropKeypointPreviewPanelResult drawCropKeypointPreviewPanel(
     result.editor_display =
         drawCropKeypointEditorOverlay(editor_context, editor_state);
 
-    ImGui::Text("ROI #%d", context.displayed_crop_roi_index);
+    if (context.displayed_crop_roi_index >= 0) {
+        ImGui::Text("ROI #%d", context.displayed_crop_roi_index);
+    } else {
+        ImGui::TextUnformatted("BBox-driven crop");
+    }
     if (context.displayed_crop_source_label != nullptr &&
         !context.displayed_crop_source_label->empty()) {
         ImGui::TextDisabled("%s",

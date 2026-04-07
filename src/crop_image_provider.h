@@ -102,8 +102,18 @@ class CropImageProvider {
 public:
     virtual ~CropImageProvider() = default;
 
+    virtual bool getCropTextureForSpec(const CropSpec& crop_spec,
+                                       CropTextureView& out_view) const {
+        out_view = {};
+        return false;
+    }
     virtual bool getCropTextureForIndex(int32_t roi_index,
                                         CropTextureView& out_view) const {
+        out_view = {};
+        return false;
+    }
+    virtual bool getCropImageForSpec(const CropSpec& crop_spec,
+                                     CropImageView& out_view) const {
         out_view = {};
         return false;
     }

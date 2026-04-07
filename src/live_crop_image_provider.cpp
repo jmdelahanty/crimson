@@ -94,16 +94,11 @@ bool LiveCropImageProvider::resolveCropSpec(int32_t roi_index,
     return true;
 }
 
-bool LiveCropImageProvider::getCropTextureForIndex(
-    int32_t roi_index,
+bool LiveCropImageProvider::getCropTextureForSpec(
+    const CropSpec& crop_spec,
     CropTextureView& out_view) const {
     out_view = {};
     if (!frame_source_.textureValid()) {
-        return false;
-    }
-
-    CropSpec crop_spec;
-    if (!resolveCropSpec(roi_index, crop_spec)) {
         return false;
     }
     const CropRect crop_rect = crop_spec.toPixelRect();
@@ -156,6 +151,17 @@ bool LiveCropImageProvider::getCropTextureForIndex(
     out_view.output_height = crop_rect.height;
     out_view.origin = CropImageView::Origin::LiveFrame;
     return out_view.valid();
+}
+
+bool LiveCropImageProvider::getCropTextureForIndex(
+    int32_t roi_index,
+    CropTextureView& out_view) const {
+    CropSpec crop_spec;
+    if (!resolveCropSpec(roi_index, crop_spec)) {
+        out_view = {};
+        return false;
+    }
+    return getCropTextureForSpec(crop_spec, out_view);
 }
 
 bool LiveCropImageProvider::fillCropFromHostRgba(
@@ -343,6 +349,16 @@ bool LiveCropImageProvider::getCropImageForIndex(int32_t roi_index,
     if (!resolveCropSpec(roi_index, crop_spec)) {
         return false;
     }
+    return getCropImageForSpec(crop_spec, out_view);
+}
+
+bool LiveCropImageProvider::getCropImageForSpec(const CropSpec& crop_spec,
+                                                CropImageView& out_view) const {
+    out_view = {};
+    if (!frame_source_.valid() || frame_source_.frame_number < 0) {
+        return false;
+    }
+
     const CropRect crop_rect = crop_spec.toPixelRect();
     if (!crop_rect.valid()) {
         return false;
