@@ -1214,6 +1214,23 @@ int main(int argc, char **argv) {
                           return a.frame < b.frame;
                       });
 
+            struct PausedBufferSpan {
+                int start_index = -1;
+                int end_index = -1;
+            };
+            std::vector<PausedBufferSpan> paused_buffer_spans;
+            paused_buffer_spans.reserve(paused_buffer_items.size());
+            for (int i = 0; i < static_cast<int>(paused_buffer_items.size()); ++i) {
+                if (paused_buffer_spans.empty() ||
+                    paused_buffer_items[i].frame !=
+                        paused_buffer_items[paused_buffer_spans.back().end_index]
+                            .frame + 1) {
+                    paused_buffer_spans.push_back({i, i});
+                } else {
+                    paused_buffer_spans.back().end_index = i;
+                }
+            }
+
             auto getPreferredPausedSlot = [&]() -> int {
                 int exact_slot = -1;
                 for (int i = 0; i < scene->size_of_buffer; ++i) {
@@ -1236,6 +1253,35 @@ int main(int argc, char **argv) {
             if (ImGui::Begin("Frames in the buffer")) {
                 ImGui::Text("Valid frames: %zu / %u",
                             paused_buffer_items.size(), scene->size_of_buffer);
+                if (!paused_buffer_items.empty()) {
+                    const int oldest_buffered_frame =
+                        paused_buffer_items.front().frame;
+                    const int newest_buffered_frame =
+                        paused_buffer_items.back().frame;
+                    int largest_gap = 0;
+                    for (int span_idx = 1;
+                         span_idx < static_cast<int>(paused_buffer_spans.size());
+                         ++span_idx) {
+                        const auto& previous_last_item =
+                            paused_buffer_items[paused_buffer_spans[span_idx - 1]
+                                                    .end_index];
+                        const auto& current_first_item =
+                            paused_buffer_items[paused_buffer_spans[span_idx]
+                                                    .start_index];
+                        largest_gap = std::max(
+                            largest_gap,
+                            current_first_item.frame - previous_last_item.frame - 1);
+                    }
+                    ImGui::Text("Selected/displayed frame: %d",
+                                ps.to_display_frame_number);
+                    ImGui::Text("Buffered spans: %zu, oldest: %d, newest: %d, largest gap: %d",
+                                paused_buffer_spans.size(),
+                                oldest_buffered_frame,
+                                newest_buffered_frame,
+                                largest_gap);
+                    ImGui::Text("Newest buffered frame: %d",
+                                newest_buffered_frame);
+                }
                 int selected_item = -1;
                 int best_distance = std::numeric_limits<int>::max();
                 int best_frame = std::numeric_limits<int>::min();
@@ -1258,20 +1304,68 @@ int main(int argc, char **argv) {
                 if (paused_buffer_items.empty()) {
                     ImGui::TextDisabled("No decoded frames currently buffered.");
                 } else {
-                    for (int i = 0; i < static_cast<int>(paused_buffer_items.size()); ++i) {
-                        const auto& item = paused_buffer_items[i];
-                        char label[96];
-                        const int delta = item.frame - ps.to_display_frame_number;
-                        snprintf(label, sizeof(label), "Frame %d (slot %d, delta %+d)",
-                                 item.frame, item.slot, delta);
-                        ImGui::PushID(i);
-                        if (ImGui::Selectable(label, selected_item == i)) {
-                            selected_item = i;
-                            ps.to_display_frame_number = item.frame;
-                            ps.slider_frame_number = item.frame;
-                            ps.pause_seeked = true;
+                    const int newest_buffered_frame =
+                        paused_buffer_items.back().frame;
+                    for (int span_idx = 0;
+                         span_idx < static_cast<int>(paused_buffer_spans.size());
+                         ++span_idx) {
+                        const auto& span = paused_buffer_spans[span_idx];
+                        const auto& first_item =
+                            paused_buffer_items[span.start_index];
+                        const auto& last_item =
+                            paused_buffer_items[span.end_index];
+
+                        if (span_idx > 0) {
+                            const auto& previous_last_item =
+                                paused_buffer_items[paused_buffer_spans[span_idx - 1]
+                                                        .end_index];
+                            const int missing_frames =
+                                first_item.frame - previous_last_item.frame - 1;
+                            if (missing_frames > 0) {
+                                const int missing_start =
+                                    previous_last_item.frame + 1;
+                                const int missing_end =
+                                    first_item.frame - 1;
+                                ImGui::Separator();
+                                ImGui::TextDisabled(
+                                    "Gap: %d missing frames (%d..%d)",
+                                    missing_frames, missing_start,
+                                    missing_end);
+                            }
                         }
-                        ImGui::PopID();
+
+                        char span_label[192];
+                        snprintf(span_label, sizeof(span_label),
+                                 "Span %d-%d (%d frames, slots %d-%d, selected %+d..%+d, newest %+d..%+d)",
+                                 first_item.frame, last_item.frame,
+                                 span.end_index - span.start_index + 1,
+                                 first_item.slot, last_item.slot,
+                                 first_item.frame - ps.to_display_frame_number,
+                                 last_item.frame - ps.to_display_frame_number,
+                                 first_item.frame - newest_buffered_frame,
+                                 last_item.frame - newest_buffered_frame);
+                        ImGui::TextDisabled("%s", span_label);
+
+                        for (int i = span.start_index; i <= span.end_index; ++i) {
+                            const auto& item = paused_buffer_items[i];
+                            char label[128];
+                            const int selected_delta =
+                                item.frame - ps.to_display_frame_number;
+                            const int newest_delta =
+                                item.frame - newest_buffered_frame;
+                            snprintf(label, sizeof(label),
+                                     "Frame %d (slot %d, selected %+d, newest %+d)",
+                                     item.frame, item.slot, selected_delta,
+                                     newest_delta);
+                            ImGui::PushID(i);
+                            if (ImGui::Selectable(label, selected_item == i)) {
+                                selected_item = i;
+                                ps.to_display_frame_number = item.frame;
+                                ps.slider_frame_number = item.frame;
+                                ps.pause_seeked = true;
+                            }
+                            ImGui::PopID();
+                        }
                     }
                 }
 
