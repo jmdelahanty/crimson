@@ -57,6 +57,7 @@
 #include "gui/labeling_tool_workflow.h"
 #include "gui/auxiliary_windows.h"
 #include "gui/camera_view_manual_keypoint_input.h"
+#include "gui/camera_view_window.h"
 #include "gui/stimulus_playback_windows.h"
 #include "gui/camera_view_transport_controls.h"
 #include "gui_interpolation.h"
@@ -3488,812 +3489,596 @@ int main(int argc, char **argv) {
                         g_cvs[j].notify_one();
                     }
 
-                    const auto scene_ui_build_start =
-                        std::chrono::steady_clock::now();
-                    ImGui::BeginGroup();
-                    std::string scene_name = "scene view" + std::to_string(j);
-                    ImGui::BeginChild(
-                        scene_name.c_str(),
-                        ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));
-                    ImVec2 avail_size = ImGui::GetContentRegionAvail();
-
-                    // ImGui::Image((void*)(intptr_t)image_texture[j],
-                    // avail_size);
-                    //
-                    if (use_legacy_manual_keypoint_tools) {
-                        if (!legacy_labeling_state.hasFrameKeypoints(
-                                current_frame_num)) {
-                            legacy_labeling_state.keypoints_find = false;
-                        } else {
-                            legacy_labeling_state.keypoints_find = true;
-                        }
+                    ZarrDetectionLoader::FrameDetections detection_details;
+                    const int zarr_bbox_query_frame = current_frame_num;
+                    const bool is_zarr_interpolated =
+                        zarr_loaded && zarr_loader.hasInterpolation() &&
+                        zarr_loader.isFrameInterpolated(zarr_bbox_query_frame);
+                    const bool active_dataset_is_raw_detect =
+                        zarr_loaded && zarr_loader.hasDetectionData() &&
+                        (zarr_loader.getActiveDetectionDataset() ==
+                         ZarrDetectionLoader::DetectionDataset::RawDetect);
+                    const bool dataset_allows_bbox_edit =
+                        zarr_loaded && zarr_loader.hasDetectionData() &&
+                        !active_dataset_is_raw_detect;
+                    if (zarr_loaded && !dataset_allows_bbox_edit) {
+                        g_zarr_bbox_edit_state.draw_mode = false;
+                        g_zarr_bbox_edit_state.cancelDraw();
+                        g_zarr_bbox_edit_state.clearSelection();
                     }
-
-                    ImPlotInputMap& plot_input_map = ImPlot::GetInputMap();
-                    const int previous_plot_pan_mod = plot_input_map.PanMod;
-                    bool restore_plot_pan_mod = false;
-                    bool suppress_crosshairs = false;
+                    const bool can_modify_boxes =
+                        dataset_allows_bbox_edit &&
+                        g_zarr_bbox_edit_state.enabled &&
+                        (g_zarr_bbox_edit_state.allow_edit_while_playing ||
+                         !ps.play_video);
+                    std::vector<LoggedBoundingBox> loaded_zarr_boxes;
+                    std::vector<LoggedBoundingBox> zarr_boxes;
                     if (zarr_loaded) {
-                        const bool active_dataset_is_raw_detect_for_input =
-                            zarr_loader.hasDetectionData() &&
-                            (zarr_loader.getActiveDetectionDataset() ==
-                             ZarrDetectionLoader::DetectionDataset::RawDetect);
-                        const bool dataset_allows_bbox_edit_for_input =
-                            zarr_loader.hasDetectionData() && !active_dataset_is_raw_detect_for_input;
-                        const bool draw_mode_active_for_current_frame =
-                            g_zarr_bbox_edit_state.draw_mode;
-                        const bool has_bbox_selection_for_current_frame =
-                            (g_zarr_bbox_edit_state.selected_frame == current_frame_num) &&
-                            (g_zarr_bbox_edit_state.selected_box >= 0);
-                        if (dataset_allows_bbox_edit_for_input &&
-                            g_zarr_bbox_edit_state.enabled &&
-                            (draw_mode_active_for_current_frame ||
-                             has_bbox_selection_for_current_frame)) {
-                            // While editing (move or draw), require Shift+drag to pan so
-                            // Ctrl+left-drag can be used for bbox manipulation.
-                            plot_input_map.PanMod = ImGuiMod_Shift;
-                            restore_plot_pan_mod = true;
-                            suppress_crosshairs = true;
-                        }
+                        loaded_zarr_boxes =
+                            zarr_loader.getBoundingBoxesForFrame(
+                                zarr_bbox_query_frame);
+                        zarr_boxes = g_zarr_bbox_edit_state.resolveFrameBoxes(
+                            zarr_bbox_query_frame, loaded_zarr_boxes);
+                        detection_details =
+                            zarr_loader.getRawDetections(zarr_bbox_query_frame,
+                                                         false);
                     }
 
-                    const bool lightweight_playback_renderer_active =
-                        playbackLightweightRendererIsActive();
-                    ImPlotFlags scene_plot_flags = ImPlotFlags_Equal;
-                    if (!suppress_crosshairs &&
-                        !lightweight_playback_renderer_active) {
-                        scene_plot_flags |= ImPlotFlags_Crosshairs;
-                    }
-                    if (lightweight_playback_renderer_active) {
-                        scene_plot_flags |=
-                            ImPlotFlags_CanvasOnly | ImPlotFlags_NoFrame;
-                    } else {
-                        scene_plot_flags |= ImPlotAxisFlags_AutoFit;
-                    }
-                    int scene_plot_style_var_count = 0;
-                    int scene_plot_style_color_count = 0;
-                    if (lightweight_playback_renderer_active) {
-                        ImPlot::PushStyleVar(ImPlotStyleVar_PlotPadding,
-                                             ImVec2(0.0f, 0.0f));
-                        scene_plot_style_var_count++;
-                        ImPlot::PushStyleVar(ImPlotStyleVar_FitPadding,
-                                             ImVec2(0.0f, 0.0f));
-                        scene_plot_style_var_count++;
-                        ImPlot::PushStyleColor(ImPlotCol_PlotBg,
-                                               ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-                        scene_plot_style_color_count++;
-                        ImPlot::PushStyleColor(
-                            ImPlotCol_PlotBorder,
-                            ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-                        scene_plot_style_color_count++;
-                    } else {
-                        ImPlot::PushStyleVar(ImPlotStyleVar_LegendPadding,
-                                             ImVec2(12.0f, 12.0f));
-                        scene_plot_style_var_count++;
-                    }
-                    const auto camera_plot_image_ui_start =
-                        std::chrono::steady_clock::now();
-                    if (ImPlot::BeginPlot("##no_plot_name", avail_size, scene_plot_flags)) {
-                        if (lightweight_playback_renderer_active) {
-                            constexpr ImPlotAxisFlags kPlaybackAxisFlags =
-                                ImPlotAxisFlags_NoDecorations |
-                                ImPlotAxisFlags_NoMenus |
-                                ImPlotAxisFlags_NoHighlight |
-                                ImPlotAxisFlags_NoSideSwitch;
-                            ImPlot::SetupAxes(nullptr, nullptr,
-                                              kPlaybackAxisFlags,
-                                              kPlaybackAxisFlags);
-                            ImPlot::SetupAxesLimits(
-                                0,
-                                static_cast<double>(scene->cameras[j].image_width),
-                                0,
-                                static_cast<double>(scene->cameras[j].image_height),
-                                ImGuiCond_Once);
+                    auto deleteSelectedBoxOnCurrentFrame = [&]() -> bool {
+                        if (!can_modify_boxes) {
+                            return false;
+                        }
+                        if (g_zarr_bbox_edit_state.selected_frame != current_frame_num ||
+                            g_zarr_bbox_edit_state.selected_box < 0) {
+                            return false;
+                        }
+                        auto& editable_boxes =
+                            g_zarr_bbox_edit_state.ensureFrameOverride(
+                                current_frame_num, loaded_zarr_boxes,
+                                &detection_details);
+                        auto& added_flags =
+                            g_zarr_bbox_edit_state.ensureAddedFlags(
+                                current_frame_num, editable_boxes.size());
+                        auto& manual_flags =
+                            g_zarr_bbox_edit_state.ensureManualFlags(
+                                current_frame_num, editable_boxes.size());
+                        g_zarr_bbox_edit_state.ensureSourceMetadata(
+                            current_frame_num, editable_boxes.size());
+                        auto& source_indices =
+                            g_zarr_bbox_edit_state
+                                .frame_source_indices[current_frame_num];
+                        auto& source_detection_source =
+                            g_zarr_bbox_edit_state
+                                .frame_source_detection_source[current_frame_num];
+                        auto& source_reason =
+                            g_zarr_bbox_edit_state
+                                .frame_source_reason[current_frame_num];
+                        const int selected_idx =
+                            g_zarr_bbox_edit_state.selected_box;
+                        if (selected_idx < 0 ||
+                            selected_idx >=
+                                static_cast<int>(editable_boxes.size())) {
+                            g_zarr_bbox_edit_state.clearSelection();
+                            return false;
+                        }
+                        editable_boxes.erase(editable_boxes.begin() +
+                                             selected_idx);
+                        if (selected_idx <
+                            static_cast<int>(added_flags.size())) {
+                            added_flags.erase(added_flags.begin() +
+                                              selected_idx);
                         } else {
-                            ImPlot::SetupLegend(ImPlotLocation_SouthWest,
-                                                ImPlotLegendFlags_None);
+                            added_flags.assign(editable_boxes.size(), 0);
                         }
-                        ImPlot::PlotImage(
-                            "##no_image_name",
-                            (ImTextureID)(intptr_t)scene->cameras[j].image_texture,
-                            ImVec2(0, 0),
-                            ImVec2(scene->cameras[j].image_width,
-                                scene->cameras[j].image_height));
-                        {
-                            const ImPlotRect plot_limits =
-                                ImPlot::GetPlotLimits();
-                            const ImVec2 plot_size = ImPlot::GetPlotSize();
-                            const double image_width =
-                                static_cast<double>(
-                                    scene->cameras[j].image_width);
-                            const double image_height =
-                                static_cast<double>(
-                                    scene->cameras[j].image_height);
-                            const double clamped_x_min = std::clamp(
-                                plot_limits.X.Min, 0.0, image_width);
-                            const double clamped_x_max = std::clamp(
-                                plot_limits.X.Max, 0.0, image_width);
-                            const double clamped_y_min = std::clamp(
-                                plot_limits.Y.Min, 0.0, image_height);
-                            const double clamped_y_max = std::clamp(
-                                plot_limits.Y.Max, 0.0, image_height);
-                            const double visible_width = std::max(
-                                0.0, clamped_x_max - clamped_x_min);
-                            const double visible_height = std::max(
-                                0.0, clamped_y_max - clamped_y_min);
-                            const double total_area = image_width * image_height;
-                            const double visible_area =
-                                visible_width * visible_height;
-                            const double visible_fraction =
-                                total_area > 0.0
-                                    ? std::clamp(visible_area / total_area,
-                                                 0.0, 1.0)
-                                    : std::numeric_limits<double>::quiet_NaN();
-                            const bool zoomed_in =
-                                visible_width < (image_width - 1.0) ||
-                                visible_height < (image_height - 1.0);
-                            perf_camera_viewport_width_px =
-                                static_cast<double>(plot_size.x);
-                            perf_camera_viewport_height_px =
-                                static_cast<double>(plot_size.y);
-                            perf_camera_view_x_min = clamped_x_min;
-                            perf_camera_view_x_max = clamped_x_max;
-                            perf_camera_view_y_min = clamped_y_min;
-                            perf_camera_view_y_max = clamped_y_max;
-                            perf_camera_view_visible_fraction =
-                                visible_fraction;
-                            perf_camera_view_zoomed_in =
-                                zoomed_in ? 1 : 0;
+                        if (selected_idx <
+                            static_cast<int>(manual_flags.size())) {
+                            manual_flags.erase(manual_flags.begin() +
+                                               selected_idx);
+                        } else {
+                            manual_flags.assign(editable_boxes.size(), 0);
                         }
-                        frame_camera_plot_image_ui_ms += durationMs(
-                            std::chrono::steady_clock::now() -
-                            camera_plot_image_ui_start);
-                        const auto camera_overlay_ui_start =
-                            std::chrono::steady_clock::now();
-
-                        if (yolo_detection) {
-                            draw_cv_contours(
-                                yolo_boxes.at(j), yolo_labels.at(j),
-                                yolo_classid.at(j), scene->cameras[j].image_height);
+                        if (selected_idx <
+                            static_cast<int>(source_indices.size())) {
+                            source_indices.erase(source_indices.begin() +
+                                                 selected_idx);
+                        } else {
+                            source_indices.assign(editable_boxes.size(), -1);
                         }
-
-                        // === ZARR BOUNDING BOX RENDERING === //
-                        if (zarr_loaded) {
-                            const int zarr_bbox_query_frame = current_frame_num;
-                            // Check interpolation status for this frame
-                            bool is_zarr_interpolated = zarr_loader.hasInterpolation() &&
-                                                        zarr_loader.isFrameInterpolated(zarr_bbox_query_frame);
-                            
-                            // Get bounding boxes from the active dataset
-                            std::vector<LoggedBoundingBox> loaded_zarr_boxes =
-                                zarr_loader.getBoundingBoxesForFrame(zarr_bbox_query_frame);
-                            std::vector<LoggedBoundingBox> zarr_boxes =
-                                g_zarr_bbox_edit_state.resolveFrameBoxes(zarr_bbox_query_frame,
-                                                                         loaded_zarr_boxes);
-                            ZarrDetectionLoader::FrameDetections detection_details =
-                                zarr_loader.getRawDetections(zarr_bbox_query_frame, false);
-                            {
-                                int valid_slots = 0;
-                                for (int slot_idx = 0; slot_idx < scene->size_of_buffer; ++slot_idx) {
-                                    const auto& slot = scene->cameras[j].display_buffer[slot_idx];
-                                    if (!slot.available_to_write && slot.frame_number >= 0) {
-                                        ++valid_slots;
-                                    }
-                                }
-                                const int total_slots = static_cast<int>(scene->size_of_buffer);
-                                const int empty_slots = std::max(0, total_slots - valid_slots);
-                                frame_sync_valid_slots = valid_slots;
-                                frame_sync_empty_slots = empty_slots;
-                                int latest_decoded = -1;
-                                const auto latest_it = latest_decoded_frame.find(win_name);
-                                if (latest_it != latest_decoded_frame.end()) {
-                                    latest_decoded = latest_it->second.load();
-                                }
-                                const int total_recording_frames =
-                                    std::max(dc_context->total_num_frame,
-                                             dc_context->estimated_num_frames);
-                                int recording_remaining = -1;
-                                if (total_recording_frames > 0) {
-                                    if (latest_decoded < 0) {
-                                        recording_remaining = total_recording_frames;
-                                    } else {
-                                        recording_remaining = std::max(
-                                            0, total_recording_frames - (latest_decoded + 1));
-                                    }
-                                }
-                                frame_sync_latest_decoded = latest_decoded;
-                                frame_sync_recording_remaining = recording_remaining;
-                                frame_sync_recording_total = total_recording_frames;
-
-                                std::ostringstream sync_debug;
-                                sync_debug << "cam=" << win_name
-                                           << " mode=" << (ps.play_video ? "play" : "pause")
-                                           << " slot=" << presented_slot
-                                           << " displayed=" << presented_frame
-                                           << " current=" << current_frame_num
-                                           << " target=" << ps.to_display_frame_number
-                                           << " slider=" << ps.slider_frame_number
-                                           << " bbox_query=" << zarr_bbox_query_frame
-                                           << " empty_remaining=" << empty_slots
-                                           << " recording_remaining=" << recording_remaining
-                                           << " latest_decoded="
-                                           << latest_decoded;
-                                frame_sync_debug_line = sync_debug.str();
-                            }
-                            const float image_width_px =
-                                static_cast<float>(scene->cameras[j].image_width);
-                            const float image_height_px =
-                                static_cast<float>(scene->cameras[j].image_height);
-                            const bool plot_hovered = ImPlot::IsPlotHovered();
-                            const bool active_dataset_is_raw_detect =
-                                zarr_loader.hasDetectionData() &&
-                                (zarr_loader.getActiveDetectionDataset() ==
-                                 ZarrDetectionLoader::DetectionDataset::RawDetect);
-                            const bool dataset_allows_bbox_edit =
-                                zarr_loader.hasDetectionData() && !active_dataset_is_raw_detect;
-                            if (!dataset_allows_bbox_edit) {
-                                g_zarr_bbox_edit_state.draw_mode = false;
-                                g_zarr_bbox_edit_state.cancelDraw();
-                                g_zarr_bbox_edit_state.clearSelection();
-                            }
-                            const bool can_modify_boxes =
-                                dataset_allows_bbox_edit &&
-                                g_zarr_bbox_edit_state.enabled &&
-                                (g_zarr_bbox_edit_state.allow_edit_while_playing ||
-                                 !ps.play_video);
-
-                            auto deleteSelectedBoxOnCurrentFrame = [&]() -> bool {
-                                if (!can_modify_boxes) {
-                                    return false;
-                                }
-                                if (g_zarr_bbox_edit_state.selected_frame != current_frame_num ||
-                                    g_zarr_bbox_edit_state.selected_box < 0) {
-                                    return false;
-                                }
-                                auto& editable_boxes =
-                                    g_zarr_bbox_edit_state.ensureFrameOverride(
-                                        current_frame_num,
-                                        loaded_zarr_boxes,
-                                        &detection_details);
-                                auto& added_flags =
-                                    g_zarr_bbox_edit_state.ensureAddedFlags(
-                                        current_frame_num,
-                                        editable_boxes.size());
-                                auto& manual_flags =
-                                    g_zarr_bbox_edit_state.ensureManualFlags(
-                                        current_frame_num,
-                                        editable_boxes.size());
-                                g_zarr_bbox_edit_state.ensureSourceMetadata(
-                                    current_frame_num,
-                                    editable_boxes.size());
-                                auto& source_indices =
-                                    g_zarr_bbox_edit_state
-                                        .frame_source_indices[current_frame_num];
-                                auto& source_detection_source =
-                                    g_zarr_bbox_edit_state
-                                        .frame_source_detection_source[current_frame_num];
-                                auto& source_reason =
-                                    g_zarr_bbox_edit_state
-                                        .frame_source_reason[current_frame_num];
-                                const int selected_idx = g_zarr_bbox_edit_state.selected_box;
-                                if (selected_idx < 0 ||
-                                    selected_idx >= static_cast<int>(editable_boxes.size())) {
-                                    g_zarr_bbox_edit_state.clearSelection();
-                                    return false;
-                                }
-                                editable_boxes.erase(
-                                    editable_boxes.begin() + selected_idx);
-                                if (selected_idx < static_cast<int>(added_flags.size())) {
-                                    added_flags.erase(added_flags.begin() + selected_idx);
-                                } else {
-                                    added_flags.assign(editable_boxes.size(), 0);
-                                }
-                                if (selected_idx < static_cast<int>(manual_flags.size())) {
-                                    manual_flags.erase(manual_flags.begin() + selected_idx);
-                                } else {
-                                    manual_flags.assign(editable_boxes.size(), 0);
-                                }
-                                if (selected_idx < static_cast<int>(source_indices.size())) {
-                                    source_indices.erase(source_indices.begin() + selected_idx);
-                                } else {
-                                    source_indices.assign(editable_boxes.size(), -1);
-                                }
-                                if (selected_idx < static_cast<int>(source_detection_source.size())) {
-                                    source_detection_source.erase(
-                                        source_detection_source.begin() + selected_idx);
-                                } else {
-                                    source_detection_source.assign(
-                                        editable_boxes.size(), 0);
-                                }
-                                if (selected_idx < static_cast<int>(source_reason.size())) {
-                                    source_reason.erase(source_reason.begin() + selected_idx);
-                                } else {
-                                    source_reason.assign(editable_boxes.size(), std::string{});
-                                }
-                                g_zarr_bbox_edit_state.dirty_frames.insert(current_frame_num);
-                                g_zarr_bbox_edit_state.drag_active = false;
-                                g_zarr_bbox_edit_state.drag_mouse_button = -1;
-                                if (editable_boxes.empty()) {
-                                    g_zarr_bbox_edit_state.clearSelection();
-                                } else {
-                                    g_zarr_bbox_edit_state.selected_frame = current_frame_num;
-                                    g_zarr_bbox_edit_state.selected_box =
-                                        std::min(selected_idx,
-                                                 static_cast<int>(editable_boxes.size() - 1));
-                                }
-                                zarr_boxes = editable_boxes;
-                                return true;
-                            };
-
-                            std::vector<FullFrameRect> editable_rects;
-                            editable_rects.reserve(zarr_boxes.size());
-                            for (const auto& box : zarr_boxes) {
-                                editable_rects.push_back(
-                                    {box.x_min, box.y_min, box.width, box.height});
-                            }
-
-                            FullFrameRectEditStateView full_frame_edit_state;
-                            full_frame_edit_state.selected_frame =
-                                g_zarr_bbox_edit_state.selected_frame;
-                            full_frame_edit_state.selected_box =
-                                g_zarr_bbox_edit_state.selected_box;
-                            full_frame_edit_state.drag_active =
-                                g_zarr_bbox_edit_state.drag_active;
-                            full_frame_edit_state.drag_mouse_button =
-                                g_zarr_bbox_edit_state.drag_mouse_button;
-                            full_frame_edit_state.drag_offset_x =
-                                g_zarr_bbox_edit_state.drag_offset_x;
-                            full_frame_edit_state.drag_offset_y =
-                                g_zarr_bbox_edit_state.drag_offset_y;
-                            full_frame_edit_state.draw_mode =
-                                g_zarr_bbox_edit_state.draw_mode;
-                            full_frame_edit_state.draw_active =
-                                g_zarr_bbox_edit_state.draw_active;
-                            full_frame_edit_state.draw_frame =
-                                g_zarr_bbox_edit_state.draw_frame;
-                            full_frame_edit_state.draw_anchor_x =
-                                g_zarr_bbox_edit_state.draw_anchor_x;
-                            full_frame_edit_state.draw_anchor_y =
-                                g_zarr_bbox_edit_state.draw_anchor_y;
-                            full_frame_edit_state.draw_current_x =
-                                g_zarr_bbox_edit_state.draw_current_x;
-                            full_frame_edit_state.draw_current_y =
-                                g_zarr_bbox_edit_state.draw_current_y;
-
-                            const FullFrameRectEditContext full_frame_edit_context{
-                                current_frame_num,
-                                image_width_px,
-                                image_height_px,
-                                plot_hovered,
-                                dataset_allows_bbox_edit,
-                                can_modify_boxes,
-                                &editable_rects,
-                                6.0f,
-                            };
-                            const auto full_frame_edit_result =
-                                processFullFrameRectEditInput(
-                                    full_frame_edit_context, full_frame_edit_state);
-
+                        if (selected_idx < static_cast<int>(
+                                               source_detection_source.size())) {
+                            source_detection_source.erase(
+                                source_detection_source.begin() + selected_idx);
+                        } else {
+                            source_detection_source.assign(editable_boxes.size(),
+                                                          0);
+                        }
+                        if (selected_idx <
+                            static_cast<int>(source_reason.size())) {
+                            source_reason.erase(source_reason.begin() +
+                                                selected_idx);
+                        } else {
+                            source_reason.assign(editable_boxes.size(),
+                                                 std::string{});
+                        }
+                        g_zarr_bbox_edit_state.dirty_frames.insert(
+                            current_frame_num);
+                        g_zarr_bbox_edit_state.drag_active = false;
+                        g_zarr_bbox_edit_state.drag_mouse_button = -1;
+                        if (editable_boxes.empty()) {
+                            g_zarr_bbox_edit_state.clearSelection();
+                        } else {
                             g_zarr_bbox_edit_state.selected_frame =
-                                full_frame_edit_result.state.selected_frame;
-                            g_zarr_bbox_edit_state.selected_box =
-                                full_frame_edit_result.state.selected_box;
-                            g_zarr_bbox_edit_state.drag_active =
-                                full_frame_edit_result.state.drag_active;
-                            g_zarr_bbox_edit_state.drag_mouse_button =
-                                full_frame_edit_result.state.drag_mouse_button;
-                            g_zarr_bbox_edit_state.drag_offset_x =
-                                full_frame_edit_result.state.drag_offset_x;
-                            g_zarr_bbox_edit_state.drag_offset_y =
-                                full_frame_edit_result.state.drag_offset_y;
-                            g_zarr_bbox_edit_state.draw_mode =
-                                full_frame_edit_result.state.draw_mode;
-                            g_zarr_bbox_edit_state.draw_active =
-                                full_frame_edit_result.state.draw_active;
-                            g_zarr_bbox_edit_state.draw_frame =
-                                full_frame_edit_result.state.draw_frame;
-                            g_zarr_bbox_edit_state.draw_anchor_x =
-                                full_frame_edit_result.state.draw_anchor_x;
-                            g_zarr_bbox_edit_state.draw_anchor_y =
-                                full_frame_edit_result.state.draw_anchor_y;
-                            g_zarr_bbox_edit_state.draw_current_x =
-                                full_frame_edit_result.state.draw_current_x;
-                            g_zarr_bbox_edit_state.draw_current_y =
-                                full_frame_edit_result.state.draw_current_y;
+                                current_frame_num;
+                            g_zarr_bbox_edit_state.selected_box = std::min(
+                                selected_idx,
+                                static_cast<int>(editable_boxes.size() - 1));
+                        }
+                        zarr_boxes = editable_boxes;
+                        return true;
+                    };
 
-                            if (full_frame_edit_result.request_reset_frame) {
-                                g_zarr_bbox_edit_state.clearFrameEdits(current_frame_num);
-                                zarr_boxes = loaded_zarr_boxes;
-                            }
-                            if (full_frame_edit_result.request_delete_selected) {
-                                deleteSelectedBoxOnCurrentFrame();
-                            }
-                            if (full_frame_edit_result.request_add_rect) {
-                                auto& editable_boxes =
-                                    g_zarr_bbox_edit_state.ensureFrameOverride(
-                                        current_frame_num,
-                                        loaded_zarr_boxes,
-                                        &detection_details);
-                                auto& added_flags =
-                                    g_zarr_bbox_edit_state.ensureAddedFlags(
-                                        current_frame_num,
-                                        editable_boxes.size());
-                                auto& manual_flags =
-                                    g_zarr_bbox_edit_state.ensureManualFlags(
-                                        current_frame_num,
-                                        editable_boxes.size());
-                                g_zarr_bbox_edit_state.ensureSourceMetadata(
-                                    current_frame_num,
-                                    editable_boxes.size());
-                                auto& source_indices =
-                                    g_zarr_bbox_edit_state
-                                        .frame_source_indices[current_frame_num];
-                                auto& source_detection_source =
-                                    g_zarr_bbox_edit_state
-                                        .frame_source_detection_source[current_frame_num];
-                                auto& source_reason =
-                                    g_zarr_bbox_edit_state
-                                        .frame_source_reason[current_frame_num];
+                    FullFrameRectEditStateView full_frame_edit_state;
+                    full_frame_edit_state.selected_frame =
+                        g_zarr_bbox_edit_state.selected_frame;
+                    full_frame_edit_state.selected_box =
+                        g_zarr_bbox_edit_state.selected_box;
+                    full_frame_edit_state.drag_active =
+                        g_zarr_bbox_edit_state.drag_active;
+                    full_frame_edit_state.drag_mouse_button =
+                        g_zarr_bbox_edit_state.drag_mouse_button;
+                    full_frame_edit_state.drag_offset_x =
+                        g_zarr_bbox_edit_state.drag_offset_x;
+                    full_frame_edit_state.drag_offset_y =
+                        g_zarr_bbox_edit_state.drag_offset_y;
+                    full_frame_edit_state.draw_mode =
+                        g_zarr_bbox_edit_state.draw_mode;
+                    full_frame_edit_state.draw_active =
+                        g_zarr_bbox_edit_state.draw_active;
+                    full_frame_edit_state.draw_frame =
+                        g_zarr_bbox_edit_state.draw_frame;
+                    full_frame_edit_state.draw_anchor_x =
+                        g_zarr_bbox_edit_state.draw_anchor_x;
+                    full_frame_edit_state.draw_anchor_y =
+                        g_zarr_bbox_edit_state.draw_anchor_y;
+                    full_frame_edit_state.draw_current_x =
+                        g_zarr_bbox_edit_state.draw_current_x;
+                    full_frame_edit_state.draw_current_y =
+                        g_zarr_bbox_edit_state.draw_current_y;
 
-                                uint16_t new_class_id = 0;
-                                float new_confidence = 1.0f;
-                                if (g_zarr_bbox_edit_state.selected_frame ==
-                                        current_frame_num &&
-                                    g_zarr_bbox_edit_state.selected_box >= 0 &&
-                                    g_zarr_bbox_edit_state.selected_box <
-                                        static_cast<int>(zarr_boxes.size())) {
-                                    const auto& selected_box =
-                                        zarr_boxes[g_zarr_bbox_edit_state.selected_box];
-                                    new_class_id = selected_box.class_id;
-                                    new_confidence = selected_box.confidence;
-                                } else if (!zarr_boxes.empty()) {
-                                    new_class_id = zarr_boxes.front().class_id;
-                                    new_confidence = zarr_boxes.front().confidence;
-                                }
-
-                                LoggedBoundingBox new_box{};
-                                new_box.payload_timestamp_ns_epoch = 0;
-                                new_box.received_timestamp_ns_epoch = 0;
-                                new_box.payload_frame_id = static_cast<uint64_t>(
-                                    std::max(0, current_frame_num));
-                                new_box.payload_camera_id = 0;
-                                new_box.box_index_in_payload =
-                                    static_cast<uint8_t>(editable_boxes.size());
-                                new_box.x_min =
-                                    full_frame_edit_result.new_rect.x_min;
-                                new_box.y_min =
-                                    full_frame_edit_result.new_rect.y_min;
-                                new_box.width =
-                                    full_frame_edit_result.new_rect.width;
-                                new_box.height =
-                                    full_frame_edit_result.new_rect.height;
-                                new_box.class_id = new_class_id;
-                                new_box.confidence =
-                                    std::isfinite(new_confidence)
-                                        ? new_confidence
-                                        : 1.0f;
-
-                                editable_boxes.push_back(new_box);
-                                added_flags.push_back(1);
-                                manual_flags.push_back(1);
-                                source_indices.push_back(-1);
-                                source_detection_source.push_back(0);
-                                source_reason.emplace_back("manual");
-                                g_zarr_bbox_edit_state.dirty_frames.insert(
+                    std::vector<ZarrDetectionLoader::ChaserBoundingBox>
+                        chaser_bboxes;
+                    std::vector<ZarrDetectionLoader::ChaserState> chaser_states;
+                    if (zarr_loaded) {
+                        chaser_bboxes =
+                            zarr_loader.getChaserBoundingBoxesForFrame(
+                                current_frame_num);
+                        chaser_states =
+                            zarr_loader.getChaserInterpolatedStatesForCameraFrame(
+                                current_frame_num);
+                        if (chaser_states.empty() &&
+                            ps.current_stimulus_frame >= 0 &&
+                            zarr_loader.hasStimulusFrameMapping()) {
+                            chaser_states =
+                                zarr_loader.getChaserStatesForStimulusFrame(
+                                    ps.current_stimulus_frame);
+                        }
+                        if (chaser_states.empty()) {
+                            chaser_states =
+                                zarr_loader.getChaserStatesForFrame(
                                     current_frame_num);
-                                g_zarr_bbox_edit_state.selected_frame =
-                                    current_frame_num;
-                                g_zarr_bbox_edit_state.selected_box =
-                                    static_cast<int>(editable_boxes.size() - 1);
-                                zarr_boxes = editable_boxes;
-                            }
-                            if (full_frame_edit_result.request_move_selected) {
-                                auto& editable_boxes =
-                                    g_zarr_bbox_edit_state.ensureFrameOverride(
-                                        current_frame_num,
-                                        loaded_zarr_boxes,
-                                        &detection_details);
-                                auto& manual_flags =
-                                    g_zarr_bbox_edit_state.ensureManualFlags(
-                                        current_frame_num,
-                                        editable_boxes.size());
-                                const int selected_idx =
-                                    full_frame_edit_result.move_box_index;
-                                if (selected_idx >= 0 &&
-                                    selected_idx <
-                                        static_cast<int>(editable_boxes.size())) {
-                                    LoggedBoundingBox& moving_box =
-                                        editable_boxes[selected_idx];
-                                    const float max_x = std::max(
-                                        0.0f, image_width_px - moving_box.width);
-                                    const float max_y = std::max(
-                                        0.0f, image_height_px - moving_box.height);
-                                    moving_box.x_min = std::clamp(
-                                        full_frame_edit_result.move_target_x,
-                                        0.0f,
-                                        max_x);
-                                    moving_box.y_min = std::clamp(
-                                        full_frame_edit_result.move_target_y,
-                                        0.0f,
-                                        max_y);
-                                    if (selected_idx >= 0 &&
-                                        selected_idx <
-                                            static_cast<int>(manual_flags.size())) {
-                                        manual_flags[selected_idx] = 1;
-                                    }
-                                    g_zarr_bbox_edit_state.dirty_frames.insert(
-                                        current_frame_num);
-                                    zarr_boxes = editable_boxes;
-                                } else {
-                                    g_zarr_bbox_edit_state.clearSelection();
-                                }
-                            }
-
-                            const bool frame_has_bbox_edits =
-                                g_zarr_bbox_edit_state.isFrameDirty(current_frame_num);
-
-                            if (!zarr_boxes.empty()) {
-                                std::vector<FullFrameRectOverlayItem> overlay_items =
-                                    buildCameraViewBoundingBoxOverlayItems(
-                                        zarr_boxes,
-                                        detection_details,
-                                        g_zarr_bbox_edit_state,
-                                        current_frame_num,
-                                        frame_has_bbox_edits,
-                                        zarr_loader.activeDatasetHasSyntheticDetections(),
-                                        is_zarr_interpolated);
-                                drawFullFrameRectOverlays(overlay_items, image_height_px);
-                            }
-
-                            const std::string draft_label_suffix =
-                                std::to_string(j);
-                            drawFullFrameRectDraftOverlay(
-                                full_frame_edit_result.state,
-                                current_frame_num,
-                                image_height_px,
-                                draft_label_suffix.c_str());
-
-                            // Draw chaser bounding boxes and target positions
-                            if (zarr_loaded) {
-                                auto chaser_bboxes = zarr_loader.getChaserBoundingBoxesForFrame(current_frame_num);
-                                auto chaser_states =
-                                    zarr_loader.getChaserInterpolatedStatesForCameraFrame(current_frame_num);
-                                if (chaser_states.empty()) {
-                                    if (ps.current_stimulus_frame >= 0 &&
-                                        zarr_loader.hasStimulusFrameMapping()) {
-                                        chaser_states =
-                                            zarr_loader.getChaserStatesForStimulusFrame(ps.current_stimulus_frame);
-                                    }
-                                }
-                                if (chaser_states.empty()) {
-                                    chaser_states = zarr_loader.getChaserStatesForFrame(current_frame_num);
-                                }
-
-                                #if defined(CRIMSON_CHASER_DEBUG_LOGS)
-                                // Debug: Print what we found
-                                static bool debug_printed = false;
-                                static int frames_with_data = 0;
-                                if (chaser_bboxes.size() > 0 || chaser_states.size() > 0) {
-                                    frames_with_data++;
-                                    if (!debug_printed) {
-                                        std::cout << "\n=== CHASER DATA DEBUG ===" << std::endl;
-                                        std::cout << "Camera frame " << current_frame_num << ": Found " << chaser_bboxes.size()
-                                                  << " chaser bboxes, " << chaser_states.size() << " chaser states" << std::endl;
-
-                                        if (chaser_bboxes.size() > 0) {
-                                            std::cout << "  First bbox: fish_id=" << chaser_bboxes[0].fish_id
-                                                      << ", x=" << chaser_bboxes[0].x_px << ", y=" << chaser_bboxes[0].y_px
-                                                      << ", w=" << chaser_bboxes[0].width_px << ", h=" << chaser_bboxes[0].height_px << std::endl;
-                                        }
-
-                                        if (chaser_states.size() > 0) {
-                                            std::cout << "  First state: stimulus_frame=" << chaser_states[0].stimulus_frame_num
-                                                      << ", camera_frame=" << chaser_states[0].camera_frame_id << std::endl;
-                                            std::cout << "    chaser=(" << chaser_states[0].chaser_pos_x << "," << chaser_states[0].chaser_pos_y << ")"
-                                                      << " target=(" << chaser_states[0].target_pos_x << "," << chaser_states[0].target_pos_y << ")" << std::endl;
-                                            std::cout << "  Camera params: has_homography=" << camera_params[j].has_valid_homography
-                                                      << ", offsetX=" << camera_params[j].stimulus_offset_x
-                                                      << ", offsetY=" << camera_params[j].stimulus_offset_y << std::endl;
-                                        }
-                                        debug_printed = true;
-                                    }
-                                }
-
-                                // Print summary after a while
-                                static int last_frame_checked = -1;
-                                if (current_frame_num > last_frame_checked + 1000) {
-                                    std::cout << "Frames " << (last_frame_checked + 1) << "-" << current_frame_num
-                                              << ": " << frames_with_data << " frames had chaser data" << std::endl;
-                                    frames_with_data = 0;
-                                    last_frame_checked = current_frame_num;
-                                }
-                                #endif
-                                drawCameraViewChaserOverlay(
-                                    chaser_bboxes,
-                                    chaser_states,
-                                    camera_params[j],
-                                    static_cast<int>(scene->cameras[j].image_width),
-                                    static_cast<int>(scene->cameras[j].image_height));
-                            }
-
-                            const bool heading_overlay_enabled = show_heading_arrows;
-                            const bool heading_data_available = zarr_loader.hasHeadingData();
-                            const bool eye_mask_overlay_enabled = show_eye_masks;
-                            const bool eye_mask_data_available = zarr_loader.hasEyeMasks();
-                            const bool can_draw_headings =
-                                heading_overlay_enabled && heading_data_available;
-                            const bool can_draw_eye_masks =
-                                eye_mask_overlay_enabled && eye_mask_data_available;
-                            const float scene_height_f =
-                                static_cast<float>(scene->cameras[j].image_height);
-
-                            if (kHeadingDebugLoggingEnabled) {
-                                if (!heading_overlay_enabled) {
-                                    if (!heading_debug_logged_toggle_disabled) {
-                                        headingDebugLog("Heading overlay disabled via UI toggle; skipping arrow drawing.");
-                                        heading_debug_logged_toggle_disabled = true;
-                                    }
-                                } else {
-                                    if (heading_debug_logged_toggle_disabled) {
-                                        headingDebugLog("Heading overlay toggle enabled; attempting to draw arrows.");
-                                        heading_debug_logged_toggle_disabled = false;
-                                    }
-
-                                    if (!heading_data_available) {
-                                        if (!heading_debug_logged_no_data) {
-                                            headingDebugLog("Zarr loader reports no heading data; arrows will not be drawn.");
-                                            heading_debug_logged_no_data = true;
-                                        }
-                                    } else if (heading_debug_logged_no_data) {
-                                        headingDebugLog("Heading data detected; resuming arrow attempts.");
-                                        heading_debug_logged_no_data = false;
-                                    }
-
-                                    if (zarr_loader.activeDatasetHasSyntheticDetections()) {
-                                        if (!heading_debug_logged_interpolated) {
-                                            headingDebugLog("Dataset contains synthetic detections; headings render only for real boxes.");
-                                            heading_debug_logged_interpolated = true;
-                                        }
-                                    } else if (heading_debug_logged_interpolated) {
-                                        headingDebugLog("Dataset now fully real; headings may render for all boxes.");
-                                        heading_debug_logged_interpolated = false;
-                                    }
-                                }
-                            }
-
-                            if (kEyeMaskDebugLoggingEnabled) {
-                                if (!show_eye_masks) {
-                                    if (!eye_mask_debug_logged_toggle_disabled) {
-                                        eyeMaskDebugLog("Eye mask overlay disabled via UI toggle; skipping mask drawing.");
-                                        eye_mask_debug_logged_toggle_disabled = true;
-                                    }
-                                } else if (eye_mask_debug_logged_toggle_disabled) {
-                                    eyeMaskDebugLog("Eye mask overlay toggle enabled; attempting to draw masks.");
-                                    eye_mask_debug_logged_toggle_disabled = false;
-                                }
-
-                                if (!zarr_loader.hasEyeMasks()) {
-                                    if (!eye_mask_debug_logged_no_data) {
-                                        eyeMaskDebugLog("Zarr loader reports no eye mask data.");
-                                        eye_mask_debug_logged_no_data = true;
-                                    }
-                                } else if (eye_mask_debug_logged_no_data) {
-                                    eyeMaskDebugLog("Eye mask data detected; masks may render.");
-                                    eye_mask_debug_logged_no_data = false;
-                                }
-                            }
-
-                            if (can_draw_headings) {
-                                ZarrDetectionLoader::FrameDetections heading_details =
-                                    zarr_loader.getRawDetections(
-                                        current_frame_num,
-                                        /*use_interpolated=*/false,
-                                        /*include_eye_masks=*/false);
-                                drawCameraViewHeadingOverlay(
-                                    heading_details,
-                                    scene_height_f);
-                            }
-
-                            if (can_draw_eye_masks) {
-                                ZarrDetectionLoader::FrameDetections mask_details =
-                                    zarr_loader.getRawDetections(
-                                        current_frame_num,
-                                        /*use_interpolated=*/false,
-                                        /*include_eye_masks=*/true);
-                                drawCameraViewEyeMaskOverlay(
-                                    mask_details,
-                                    scene_height_f,
-                                    zarr_loader.getEyeMaskRunName() + "|" +
-                                        zarr_loader.getEyeAngleRunName());
-                            }
-                            drawCameraViewDetectionKeypointMarkers(
-                                detection_details,
-                                show_keypoint_markers,
-                                image_height_px);
                         }
-
-                        if (zarr_loaded && zarr_loader.hasStimulusEvents()) {
-                            auto frame_events = zarr_loader.getStimulusEventsForFrame(current_frame_num);
-                            drawCameraViewStimulusEventOverlay(
-                                j, current_frame_num, frame_events);
+#if defined(CRIMSON_CHASER_DEBUG_LOGS)
+                        static bool debug_printed = false;
+                        static int frames_with_data = 0;
+                        if (!chaser_bboxes.empty() || !chaser_states.empty()) {
+                            frames_with_data++;
+                            if (!debug_printed) {
+                                std::cout << "\n=== CHASER DATA DEBUG ==="
+                                          << std::endl;
+                                std::cout
+                                    << "Camera frame " << current_frame_num
+                                    << ": Found " << chaser_bboxes.size()
+                                    << " chaser bboxes, "
+                                    << chaser_states.size()
+                                    << " chaser states" << std::endl;
+                                if (!chaser_bboxes.empty()) {
+                                    std::cout
+                                        << "  First bbox: fish_id="
+                                        << chaser_bboxes[0].fish_id
+                                        << ", x=" << chaser_bboxes[0].x_px
+                                        << ", y=" << chaser_bboxes[0].y_px
+                                        << ", w="
+                                        << chaser_bboxes[0].width_px
+                                        << ", h="
+                                        << chaser_bboxes[0].height_px
+                                        << std::endl;
+                                }
+                                if (!chaser_states.empty()) {
+                                    std::cout
+                                        << "  First state: stimulus_frame="
+                                        << chaser_states[0].stimulus_frame_num
+                                        << ", camera_frame="
+                                        << chaser_states[0].camera_frame_id
+                                        << std::endl;
+                                    std::cout
+                                        << "    chaser=("
+                                        << chaser_states[0].chaser_pos_x
+                                        << ","
+                                        << chaser_states[0].chaser_pos_y
+                                        << ") target=("
+                                        << chaser_states[0].target_pos_x
+                                        << ","
+                                        << chaser_states[0].target_pos_y
+                                        << ")" << std::endl;
+                                    std::cout
+                                        << "  Camera params: has_homography="
+                                        << camera_params[j].has_valid_homography
+                                        << ", offsetX="
+                                        << camera_params[j].stimulus_offset_x
+                                        << ", offsetY="
+                                        << camera_params[j].stimulus_offset_y
+                                        << std::endl;
+                                }
+                                debug_printed = true;
+                            }
                         }
-
-                        if (use_legacy_manual_keypoint_tools) {
-                            const CameraViewManualKeypointInputContext
-                                keypoint_input_context{
-                                    scene,
-                                    &legacy_labeling_state,
-                                    current_frame_num,
-                                    j,
-                                    ImPlot::IsPlotHovered(),
-                                };
-                            const CameraViewManualKeypointInputResult
-                                keypoint_input_result =
-                                    processCameraViewManualKeypointInput(
-                                        keypoint_input_context);
-                            legacy_labeling_state.keypoints_find =
-                                keypoint_input_result
-                                    .legacy_manual_keypoints_find;
-                            is_view_focused[j] =
-                                keypoint_input_result.view_focused;
+                        static int last_frame_checked = -1;
+                        if (current_frame_num > last_frame_checked + 1000) {
+                            std::cout << "Frames " << (last_frame_checked + 1)
+                                      << "-" << current_frame_num << ": "
+                                      << frames_with_data
+                                      << " frames had chaser data"
+                                      << std::endl;
+                            frames_with_data = 0;
+                            last_frame_checked = current_frame_num;
                         }
-                        ImPlot::EndPlot();
-                        if (swap_playback_surface_after_draw) {
-                            auto &camera = scene->cameras[j];
-                            const auto swap_start =
-                                std::chrono::steady_clock::now();
-                            std::swap(camera.image_texture,
-                                      camera.playback_staging_texture);
-                            std::swap(camera.pbo_cuda,
-                                      camera.playback_staging_pbo);
-                            std::swap(camera.applied_preview_sampling_mode,
-                                      camera.playback_staging_preview_sampling_mode);
-                            const int previous_front_frame =
-                                camera.last_uploaded_frame;
-                            const bool previous_front_valid =
-                                camera.texture_has_valid_frame;
-                            camera.last_uploaded_frame =
-                                camera.playback_staging_frame;
-                            camera.texture_has_valid_frame =
-                                camera.playback_staging_valid;
-                            camera.playback_staging_frame =
-                                previous_front_frame;
-                            camera.playback_staging_valid =
-                                previous_front_valid;
-                            swap_playback_surface_after_draw = false;
-                            frame_camera_playback_swap_ms += durationMs(
-                                std::chrono::steady_clock::now() -
-                                swap_start);
-                        }
-                        frame_camera_overlay_ui_ms += durationMs(
-                            std::chrono::steady_clock::now() -
-                            camera_overlay_ui_start);
-                    }
-                    if (restore_plot_pan_mod) {
-                        plot_input_map.PanMod = previous_plot_pan_mod;
-                    }
-                    if (scene_plot_style_color_count > 0) {
-                        ImPlot::PopStyleColor(scene_plot_style_color_count);
-                    }
-                    if (scene_plot_style_var_count > 0) {
-                        ImPlot::PopStyleVar(scene_plot_style_var_count);
+#endif
                     }
 
-                    ImGui::EndChild();
+                    const bool heading_overlay_enabled = show_heading_arrows;
+                    const bool heading_data_available =
+                        zarr_loaded && zarr_loader.hasHeadingData();
+                    const bool eye_mask_overlay_enabled = show_eye_masks;
+                    const bool eye_mask_data_available =
+                        zarr_loaded && zarr_loader.hasEyeMasks();
+                    const bool can_draw_headings =
+                        heading_overlay_enabled && heading_data_available;
+                    const bool can_draw_eye_masks =
+                        eye_mask_overlay_enabled && eye_mask_data_available;
 
-                    const CameraViewTransportControlsContext
-                        camera_transport_context{
+                    if (kHeadingDebugLoggingEnabled) {
+                        if (!heading_overlay_enabled) {
+                            if (!heading_debug_logged_toggle_disabled) {
+                                headingDebugLog("Heading overlay disabled via UI toggle; skipping arrow drawing.");
+                                heading_debug_logged_toggle_disabled = true;
+                            }
+                        } else {
+                            if (heading_debug_logged_toggle_disabled) {
+                                headingDebugLog("Heading overlay toggle enabled; attempting to draw arrows.");
+                                heading_debug_logged_toggle_disabled = false;
+                            }
+                            if (!heading_data_available) {
+                                if (!heading_debug_logged_no_data) {
+                                    headingDebugLog("Zarr loader reports no heading data; arrows will not be drawn.");
+                                    heading_debug_logged_no_data = true;
+                                }
+                            } else if (heading_debug_logged_no_data) {
+                                headingDebugLog("Heading data detected; resuming arrow attempts.");
+                                heading_debug_logged_no_data = false;
+                            }
+                            if (zarr_loaded &&
+                                zarr_loader.activeDatasetHasSyntheticDetections()) {
+                                if (!heading_debug_logged_interpolated) {
+                                    headingDebugLog("Dataset contains synthetic detections; headings render only for real boxes.");
+                                    heading_debug_logged_interpolated = true;
+                                }
+                            } else if (heading_debug_logged_interpolated) {
+                                headingDebugLog("Dataset now fully real; headings may render for all boxes.");
+                                heading_debug_logged_interpolated = false;
+                            }
+                        }
+                    }
+
+                    if (kEyeMaskDebugLoggingEnabled) {
+                        if (!show_eye_masks) {
+                            if (!eye_mask_debug_logged_toggle_disabled) {
+                                eyeMaskDebugLog("Eye mask overlay disabled via UI toggle; skipping mask drawing.");
+                                eye_mask_debug_logged_toggle_disabled = true;
+                            }
+                        } else if (eye_mask_debug_logged_toggle_disabled) {
+                            eyeMaskDebugLog("Eye mask overlay toggle enabled; attempting to draw masks.");
+                            eye_mask_debug_logged_toggle_disabled = false;
+                        }
+                        if (!(zarr_loaded && zarr_loader.hasEyeMasks())) {
+                            if (!eye_mask_debug_logged_no_data) {
+                                eyeMaskDebugLog("Zarr loader reports no eye mask data.");
+                                eye_mask_debug_logged_no_data = true;
+                            }
+                        } else if (eye_mask_debug_logged_no_data) {
+                            eyeMaskDebugLog("Eye mask data detected; masks may render.");
+                            eye_mask_debug_logged_no_data = false;
+                        }
+                    }
+
+                    std::optional<ZarrDetectionLoader::FrameDetections>
+                        heading_details;
+                    std::optional<ZarrDetectionLoader::FrameDetections>
+                        mask_details;
+                    if (can_draw_headings) {
+                        heading_details = zarr_loader.getRawDetections(
+                            current_frame_num,
+                            /*use_interpolated=*/false,
+                            /*include_eye_masks=*/false);
+                    }
+                    if (can_draw_eye_masks) {
+                        mask_details = zarr_loader.getRawDetections(
+                            current_frame_num,
+                            /*use_interpolated=*/false,
+                            /*include_eye_masks=*/true);
+                    }
+
+                    std::vector<std::string> frame_events;
+                    if (zarr_loaded && zarr_loader.hasStimulusEvents()) {
+                        frame_events =
+                            zarr_loader.getStimulusEventsForFrame(
+                                current_frame_num);
+                    }
+
+                    int latest_decoded = -1;
+                    const auto latest_it = latest_decoded_frame.find(win_name);
+                    if (latest_it != latest_decoded_frame.end()) {
+                        latest_decoded = latest_it->second.load();
+                    }
+                    const int total_recording_frames =
+                        std::max(dc_context->total_num_frame,
+                                 dc_context->estimated_num_frames);
+
+                    const CameraViewWindowContext camera_view_context{
+                        scene,
+                        j,
+                        win_name,
+                        current_frame_num,
+                        presented_slot,
+                        presented_frame,
+                        swap_playback_surface_after_draw,
+                        ps.play_video,
+                        playbackLightweightRendererIsActive(),
+                        use_legacy_manual_keypoint_tools,
+                        &legacy_labeling_state,
+                        zarr_loaded,
+                        dataset_allows_bbox_edit,
+                        g_zarr_bbox_edit_state.enabled,
+                        g_zarr_bbox_edit_state.allow_edit_while_playing,
+                        &g_zarr_bbox_edit_state,
+                        full_frame_edit_state,
+                        zarr_loaded ? &zarr_boxes : nullptr,
+                        zarr_loaded ? &detection_details : nullptr,
+                        zarr_loaded &&
+                            zarr_loader.activeDatasetHasSyntheticDetections(),
+                        is_zarr_interpolated,
+                        latest_decoded,
+                        total_recording_frames,
+                        yolo_detection,
+                        yolo_detection ? &yolo_boxes.at(j) : nullptr,
+                        yolo_detection ? &yolo_labels.at(j) : nullptr,
+                        yolo_detection ? &yolo_classid.at(j) : nullptr,
+                        show_keypoint_markers,
+                        can_draw_headings,
+                        can_draw_eye_masks,
+                        heading_details ? &*heading_details : nullptr,
+                        mask_details ? &*mask_details : nullptr,
+                        zarr_loaded
+                            ? (zarr_loader.getEyeMaskRunName() + "|" +
+                               zarr_loader.getEyeAngleRunName())
+                            : std::string{},
+                        zarr_loaded ? &chaser_bboxes : nullptr,
+                        zarr_loaded ? &chaser_states : nullptr,
+                        &camera_params[j],
+                        !frame_events.empty() ? &frame_events : nullptr,
+                        CameraViewTransportControlsContext{
                             ps.to_display_frame_number,
                             dc_context->total_num_frame,
                             dc_context->estimated_num_frames,
                             video_fps,
                             ps.play_video,
                             ps.slider_frame_number,
-                        };
-                    const CameraViewTransportControlsResult
+                        },
+                    };
+                    const CameraViewWindowResult camera_view_result =
+                        drawCameraViewWindowContents(camera_view_context);
+
+                    perf_camera_viewport_width_px =
+                        camera_view_result.perf.viewport_width_px;
+                    perf_camera_viewport_height_px =
+                        camera_view_result.perf.viewport_height_px;
+                    perf_camera_view_x_min =
+                        camera_view_result.perf.view_x_min;
+                    perf_camera_view_x_max =
+                        camera_view_result.perf.view_x_max;
+                    perf_camera_view_y_min =
+                        camera_view_result.perf.view_y_min;
+                    perf_camera_view_y_max =
+                        camera_view_result.perf.view_y_max;
+                    perf_camera_view_visible_fraction =
+                        camera_view_result.perf.visible_fraction;
+                    perf_camera_view_zoomed_in =
+                        camera_view_result.perf.zoomed_in;
+                    frame_camera_plot_image_ui_ms +=
+                        camera_view_result.perf.plot_image_ui_ms;
+                    frame_camera_overlay_ui_ms +=
+                        camera_view_result.perf.overlay_ui_ms;
+                    frame_camera_playback_swap_ms +=
+                        camera_view_result.perf.playback_swap_ms;
+                    frame_camera_scene_ui_ms +=
+                        camera_view_result.perf.scene_ui_ms;
+                    frame_sync_valid_slots =
+                        camera_view_result.frame_sync.valid_slots;
+                    frame_sync_empty_slots =
+                        camera_view_result.frame_sync.empty_slots;
+                    frame_sync_latest_decoded =
+                        camera_view_result.frame_sync.latest_decoded;
+                    frame_sync_recording_remaining =
+                        camera_view_result.frame_sync.recording_remaining;
+                    frame_sync_recording_total =
+                        camera_view_result.frame_sync.recording_total;
+                    frame_sync_debug_line =
+                        camera_view_result.frame_sync.debug_line;
+
+                    const FullFrameRectEditResult& full_frame_edit_result =
+                        camera_view_result.full_frame_edit_result;
+
+                    g_zarr_bbox_edit_state.selected_frame =
+                        full_frame_edit_result.state.selected_frame;
+                    g_zarr_bbox_edit_state.selected_box =
+                        full_frame_edit_result.state.selected_box;
+                    g_zarr_bbox_edit_state.drag_active =
+                        full_frame_edit_result.state.drag_active;
+                    g_zarr_bbox_edit_state.drag_mouse_button =
+                        full_frame_edit_result.state.drag_mouse_button;
+                    g_zarr_bbox_edit_state.drag_offset_x =
+                        full_frame_edit_result.state.drag_offset_x;
+                    g_zarr_bbox_edit_state.drag_offset_y =
+                        full_frame_edit_result.state.drag_offset_y;
+                    g_zarr_bbox_edit_state.draw_mode =
+                        full_frame_edit_result.state.draw_mode;
+                    g_zarr_bbox_edit_state.draw_active =
+                        full_frame_edit_result.state.draw_active;
+                    g_zarr_bbox_edit_state.draw_frame =
+                        full_frame_edit_result.state.draw_frame;
+                    g_zarr_bbox_edit_state.draw_anchor_x =
+                        full_frame_edit_result.state.draw_anchor_x;
+                    g_zarr_bbox_edit_state.draw_anchor_y =
+                        full_frame_edit_result.state.draw_anchor_y;
+                    g_zarr_bbox_edit_state.draw_current_x =
+                        full_frame_edit_result.state.draw_current_x;
+                    g_zarr_bbox_edit_state.draw_current_y =
+                        full_frame_edit_result.state.draw_current_y;
+
+                    if (full_frame_edit_result.request_reset_frame) {
+                        g_zarr_bbox_edit_state.clearFrameEdits(
+                            current_frame_num);
+                        zarr_boxes = loaded_zarr_boxes;
+                    }
+                    if (full_frame_edit_result.request_delete_selected) {
+                        deleteSelectedBoxOnCurrentFrame();
+                    }
+                    if (full_frame_edit_result.request_add_rect) {
+                        auto& editable_boxes =
+                            g_zarr_bbox_edit_state.ensureFrameOverride(
+                                current_frame_num, loaded_zarr_boxes,
+                                &detection_details);
+                        auto& added_flags =
+                            g_zarr_bbox_edit_state.ensureAddedFlags(
+                                current_frame_num, editable_boxes.size());
+                        auto& manual_flags =
+                            g_zarr_bbox_edit_state.ensureManualFlags(
+                                current_frame_num, editable_boxes.size());
+                        g_zarr_bbox_edit_state.ensureSourceMetadata(
+                            current_frame_num, editable_boxes.size());
+                        auto& source_indices =
+                            g_zarr_bbox_edit_state
+                                .frame_source_indices[current_frame_num];
+                        auto& source_detection_source =
+                            g_zarr_bbox_edit_state
+                                .frame_source_detection_source[current_frame_num];
+                        auto& source_reason =
+                            g_zarr_bbox_edit_state
+                                .frame_source_reason[current_frame_num];
+
+                        uint16_t new_class_id = 0;
+                        float new_confidence = 1.0f;
+                        if (g_zarr_bbox_edit_state.selected_frame ==
+                                current_frame_num &&
+                            g_zarr_bbox_edit_state.selected_box >= 0 &&
+                            g_zarr_bbox_edit_state.selected_box <
+                                static_cast<int>(zarr_boxes.size())) {
+                            const auto& selected_box =
+                                zarr_boxes[g_zarr_bbox_edit_state.selected_box];
+                            new_class_id = selected_box.class_id;
+                            new_confidence = selected_box.confidence;
+                        } else if (!zarr_boxes.empty()) {
+                            new_class_id = zarr_boxes.front().class_id;
+                            new_confidence = zarr_boxes.front().confidence;
+                        }
+
+                        LoggedBoundingBox new_box{};
+                        new_box.payload_timestamp_ns_epoch = 0;
+                        new_box.received_timestamp_ns_epoch = 0;
+                        new_box.payload_frame_id = static_cast<uint64_t>(
+                            std::max(0, current_frame_num));
+                        new_box.payload_camera_id = 0;
+                        new_box.box_index_in_payload =
+                            static_cast<uint8_t>(editable_boxes.size());
+                        new_box.x_min = full_frame_edit_result.new_rect.x_min;
+                        new_box.y_min = full_frame_edit_result.new_rect.y_min;
+                        new_box.width = full_frame_edit_result.new_rect.width;
+                        new_box.height = full_frame_edit_result.new_rect.height;
+                        new_box.class_id = new_class_id;
+                        new_box.confidence =
+                            std::isfinite(new_confidence) ? new_confidence
+                                                          : 1.0f;
+
+                        editable_boxes.push_back(new_box);
+                        added_flags.push_back(1);
+                        manual_flags.push_back(1);
+                        source_indices.push_back(-1);
+                        source_detection_source.push_back(0);
+                        source_reason.emplace_back("manual");
+                        g_zarr_bbox_edit_state.dirty_frames.insert(
+                            current_frame_num);
+                        g_zarr_bbox_edit_state.selected_frame =
+                            current_frame_num;
+                        g_zarr_bbox_edit_state.selected_box =
+                            static_cast<int>(editable_boxes.size() - 1);
+                    }
+                    if (full_frame_edit_result.request_move_selected) {
+                        auto& editable_boxes =
+                            g_zarr_bbox_edit_state.ensureFrameOverride(
+                                current_frame_num, loaded_zarr_boxes,
+                                &detection_details);
+                        auto& manual_flags =
+                            g_zarr_bbox_edit_state.ensureManualFlags(
+                                current_frame_num, editable_boxes.size());
+                        const int selected_idx =
+                            full_frame_edit_result.move_box_index;
+                        if (selected_idx >= 0 &&
+                            selected_idx <
+                                static_cast<int>(editable_boxes.size())) {
+                            LoggedBoundingBox& moving_box =
+                                editable_boxes[selected_idx];
+                            const float max_x = std::max(
+                                0.0f,
+                                static_cast<float>(scene->cameras[j].image_width) -
+                                    moving_box.width);
+                            const float max_y = std::max(
+                                0.0f,
+                                static_cast<float>(scene->cameras[j].image_height) -
+                                    moving_box.height);
+                            moving_box.x_min = std::clamp(
+                                full_frame_edit_result.move_target_x, 0.0f,
+                                max_x);
+                            moving_box.y_min = std::clamp(
+                                full_frame_edit_result.move_target_y, 0.0f,
+                                max_y);
+                            if (selected_idx <
+                                static_cast<int>(manual_flags.size())) {
+                                manual_flags[selected_idx] = 1;
+                            }
+                            g_zarr_bbox_edit_state.dirty_frames.insert(
+                                current_frame_num);
+                        } else {
+                            g_zarr_bbox_edit_state.clearSelection();
+                        }
+                    }
+
+                    if (use_legacy_manual_keypoint_tools) {
+                        legacy_labeling_state.keypoints_find =
+                            camera_view_result.legacy_manual_keypoints_find;
+                        is_view_focused[j] = camera_view_result.view_focused;
+                    }
+                    const CameraViewTransportControlsResult&
                         camera_transport_result =
-                            drawCameraViewTransportControls(
-                                camera_transport_context);
+                            camera_view_result.transport_result;
                     ps.slider_frame_number =
                         camera_transport_result.slider_frame_number;
                     ps.slider_just_changed =
@@ -4309,11 +4094,6 @@ int main(int argc, char **argv) {
                             *camera_transport_result.seek_target_frame, true,
                             camera_transport_result.force_inaccurate_seek);
                     }
-
-                    ImGui::EndGroup();
-                    frame_camera_scene_ui_ms += durationMs(
-                        std::chrono::steady_clock::now() -
-                        scene_ui_build_start);
                 }
                 ImGui::End();
             }
