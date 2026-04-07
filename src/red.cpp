@@ -2374,9 +2374,6 @@ int main(int argc, char **argv) {
                 frame_sync_recording_total,
                 frame_sync_latest_decoded,
                 frame_sync_debug_line,
-                use_legacy_manual_keypoint_tools,
-                use_legacy_manual_keypoint_tools &&
-                    legacy_labeling_state.hasFrameKeypoints(current_frame_num),
                 zarr_loaded,
                 zarr_loader,
                 detection_dataset_labels,

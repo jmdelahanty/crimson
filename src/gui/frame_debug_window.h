@@ -23,9 +23,6 @@ struct FrameDebugWindowContext {
     int frame_sync_latest_decoded = -1;
     const std::string& frame_sync_debug_line;
 
-    bool legacy_manual_label_mode = false;
-    bool manual_keypoints_present = false;
-
     bool zarr_loaded = false;
     ZarrDetectionLoader& zarr_loader;
     const std::vector<std::string>& detection_dataset_labels;
