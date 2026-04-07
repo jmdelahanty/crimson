@@ -50,6 +50,7 @@
 #include "gui/full_frame_rect_edit_overlay.h"
 #include "gui/keypoints_window.h"
 #include "gui/labeling_tool_window.h"
+#include "gui/camera_view_overlay_renderer.h"
 #include "gui/refined_keypoint_review_window.h"
 #include "gui/camera_view_manual_keypoint_input.h"
 #include "gui/camera_view_transport_controls.h"
@@ -3924,199 +3925,6 @@ int main(int argc, char **argv) {
                                            << latest_decoded;
                                 frame_sync_debug_line = sync_debug.str();
                             }
-                            auto draw_keypoint_markers = [&]() {
-                                if (!(show_keypoint_markers &&
-                                      detection_details.has_keypoints &&
-                                      !detection_details.keypoints_pixels.empty() &&
-                                      detection_details.keypoints_per_detection > 0)) {
-                                    return;
-                                }
-
-                                const size_t kp_per_det = detection_details.keypoints_per_detection;
-                                std::vector<std::string> lowered_labels(kp_per_det);
-                                for (size_t kp_idx = 0; kp_idx < kp_per_det; ++kp_idx) {
-                                    if (kp_idx < detection_details.keypoint_labels.size()) {
-                                        lowered_labels[kp_idx] = detection_details.keypoint_labels[kp_idx];
-                                        std::transform(lowered_labels[kp_idx].begin(),
-                                                       lowered_labels[kp_idx].end(),
-                                                       lowered_labels[kp_idx].begin(),
-                                                       [](unsigned char c) {
-                                                           return static_cast<char>(std::tolower(c));
-                                                       });
-                                    } else {
-                                        lowered_labels[kp_idx].clear();
-                                    }
-                                }
-
-                                auto chooseColor = [&](size_t kp_idx) -> ImVec4 {
-                                    const std::string& label = lowered_labels[kp_idx];
-                                    if (label.find("swim") != std::string::npos ||
-                                        label.find("bladder") != std::string::npos) {
-                                        return ImVec4(1.0f, 0.85f, 0.15f, 1.0f);
-                                    }
-                                    if (label.find("left") != std::string::npos) {
-                                        return ImVec4(0.3f, 0.95f, 0.4f, 1.0f);
-                                    }
-                                    if (label.find("right") != std::string::npos) {
-                                        return ImVec4(0.75f, 0.4f, 0.95f, 1.0f);
-                                    }
-                                    static const ImVec4 fallback_colors[] = {
-                                        ImVec4(0.95f, 0.6f, 0.2f, 1.0f),
-                                        ImVec4(0.35f, 0.85f, 0.55f, 1.0f),
-                                        ImVec4(0.6f, 0.5f, 0.95f, 1.0f),
-                                        ImVec4(0.95f, 0.4f, 0.4f, 1.0f),
-                                        ImVec4(0.4f, 0.75f, 0.95f, 1.0f)
-                                    };
-                                    return fallback_colors[kp_idx % (sizeof(fallback_colors) / sizeof(fallback_colors[0]))];
-                                };
-
-                                auto chooseMarker = [&](size_t kp_idx) -> ImPlotMarker {
-                                    const std::string& label = lowered_labels[kp_idx];
-                                    if (label.find("swim") != std::string::npos ||
-                                        label.find("bladder") != std::string::npos) {
-                                        return ImPlotMarker_Circle;
-                                    }
-                                    if (label.find("left") != std::string::npos) {
-                                        return ImPlotMarker_Square;
-                                    }
-                                    if (label.find("right") != std::string::npos) {
-                                        return ImPlotMarker_Diamond;
-                                    }
-                                    static const ImPlotMarker fallback_markers[] = {
-                                        ImPlotMarker_Circle,
-                                        ImPlotMarker_Square,
-                                        ImPlotMarker_Diamond,
-                                        ImPlotMarker_Cross,
-                                        ImPlotMarker_Plus,
-                                        ImPlotMarker_Up,
-                                        ImPlotMarker_Down
-                                    };
-                                    return fallback_markers[kp_idx % (sizeof(fallback_markers) / sizeof(fallback_markers[0]))];
-                                };
-
-                                auto chooseSize = [&](size_t kp_idx) -> float {
-                                    const std::string& label = lowered_labels[kp_idx];
-                                    if (label.find("swim") != std::string::npos ||
-                                        label.find("bladder") != std::string::npos) {
-                                        return 4.5f;
-                                    }
-                                    if (label.find("left") != std::string::npos ||
-                                        label.find("right") != std::string::npos) {
-                                        return 4.5f;
-                                    }
-                                    return 7.0f;
-                                };
-
-                                size_t detection_count = std::min(detection_details.keypoints_pixels.size(),
-                                                                  detection_details.boxes.size());
-                                const double img_h = static_cast<double>(scene->cameras[j].image_height);
-                                // Draw skeleton edges before markers so markers render on top
-                                if (!detection_details.skeleton_edges.empty()) {
-                                    ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(1.0f, 1.0f, 1.0f, 0.63f));
-                                    for (size_t det_idx = 0; det_idx < detection_count; ++det_idx) {
-                                        const auto& keypoints = detection_details.keypoints_pixels[det_idx];
-                                        if (keypoints.size() != kp_per_det) continue;
-                                        for (const auto& edge : detection_details.skeleton_edges) {
-                                            size_t a = edge[0], b = edge[1];
-                                            if (a >= kp_per_det || b >= kp_per_det) continue;
-                                            float ax = keypoints[a][0], ay = keypoints[a][1];
-                                            float bx = keypoints[b][0], by = keypoints[b][1];
-                                            if (!std::isfinite(ax) || !std::isfinite(ay) ||
-                                                !std::isfinite(bx) || !std::isfinite(by)) continue;
-                                            double xs[2] = {static_cast<double>(ax), static_cast<double>(bx)};
-                                            double ys[2] = {img_h - static_cast<double>(ay),
-                                                            img_h - static_cast<double>(by)};
-                                            std::string lbl = "##edge_" + std::to_string(det_idx) + "_" +
-                                                              std::to_string(a) + "_" + std::to_string(b);
-                                            ImPlot::PlotLine(lbl.c_str(), xs, ys, 2);
-                                        }
-                                    }
-                                    ImPlot::PopStyleColor();
-                                }
-                                for (size_t det_idx = 0; det_idx < detection_count; ++det_idx) {
-                                    const auto& keypoints = detection_details.keypoints_pixels[det_idx];
-                                    if (keypoints.size() != kp_per_det) {
-                                        continue;
-                                    }
-                                    bool detection_is_interp = false;
-                                    if (!detection_details.detection_source.empty() &&
-                                        det_idx < detection_details.detection_source.size()) {
-                                        detection_is_interp = detection_details.detection_source[det_idx] != 0;
-                                    }
-                                    uint8_t heading_valid_flag = 1;
-                                    if (!detection_details.heading_valid.empty() &&
-                                        det_idx < detection_details.heading_valid.size()) {
-                                        heading_valid_flag = detection_details.heading_valid[det_idx];
-                                    }
-
-                                    for (size_t kp_idx = 0; kp_idx < kp_per_det; ++kp_idx) {
-                                        const auto& kp = keypoints[kp_idx];
-                                        float kp_x = kp[0];
-                                        float kp_y = kp[1];
-                                        if (!std::isfinite(kp_x) || !std::isfinite(kp_y)) {
-                                            continue;
-                                        }
-
-                                        double plot_x = static_cast<double>(kp_x);
-                                        double plot_y = img_h - static_cast<double>(kp_y);
-
-                                        ImVec4 base_color = chooseColor(kp_idx);
-                                        float alpha_scale = 1.0f;
-                                        if (heading_valid_flag == 0) {
-                                            alpha_scale *= 0.4f;
-                                        }
-                                        if (detection_is_interp) {
-                                            alpha_scale *= 0.65f;
-                                        }
-
-                                        // Refined keypoint quality-based dimming
-                                        bool kp_unusable = false;
-                                        bool kp_flip_corrected = false;
-                                        bool kp_det_source_interp = false;
-                                        if (detection_details.is_refined_keypoints) {
-                                            if (det_idx < detection_details.keypoint_usable.size() &&
-                                                detection_details.keypoint_usable[det_idx] == 0) {
-                                                alpha_scale *= 0.35f;
-                                                kp_unusable = true;
-                                            }
-                                            if (det_idx < detection_details.keypoint_detection_source.size() &&
-                                                detection_details.keypoint_detection_source[det_idx] != 0) {
-                                                alpha_scale *= 0.65f;
-                                                kp_det_source_interp = true;
-                                            }
-                                            if (det_idx < detection_details.keypoint_flip_corrected.size() &&
-                                                detection_details.keypoint_flip_corrected[det_idx] != 0) {
-                                                kp_flip_corrected = true;
-                                            }
-                                        }
-
-                                        alpha_scale = std::clamp(alpha_scale, 0.25f, 1.0f);
-
-                                        ImVec4 fill_color = base_color;
-                                        fill_color.w *= alpha_scale;
-                                        ImVec4 outline_color = base_color;
-                                        outline_color.w = std::max(alpha_scale, 0.6f);
-
-                                        // Quality-based outline color overrides
-                                        if (kp_flip_corrected) {
-                                            outline_color = ImVec4(0.0f, 0.9f, 0.9f, outline_color.w);
-                                        }
-                                        if (kp_unusable) {
-                                            outline_color = ImVec4(0.95f, 0.3f, 0.3f, outline_color.w);
-                                        }
-
-                                        ImPlot::SetNextMarkerStyle(chooseMarker(kp_idx),
-                                                                   chooseSize(kp_idx),
-                                                                   fill_color,
-                                                                   2.0f,
-                                                                   outline_color);
-                                        std::string label = "##kp_" + std::to_string(det_idx) + "_" +
-                                                            std::to_string(kp_idx);
-                                        ImPlot::PlotScatter(label.c_str(), &plot_x, &plot_y, 1);
-                                    }
-                                }
-                            };
-                            
                             const float image_width_px =
                                 static_cast<float>(scene->cameras[j].image_width);
                             const float image_height_px =
@@ -4429,116 +4237,16 @@ int main(int argc, char **argv) {
                             const bool frame_has_bbox_edits =
                                 g_zarr_bbox_edit_state.isFrameDirty(current_frame_num);
 
-                            // Draw the boxes
                             if (!zarr_boxes.empty()) {
-                                enum class BoxProvenance {
-                                    Clean = 0,
-                                    Interpolated = 1,
-                                    Manual = 2
-                                };
-                                auto classify_box_provenance =
-                                    [&](size_t box_idx) -> BoxProvenance {
-                                    if (!detection_details.detection_reason.empty() &&
-                                        box_idx < detection_details.detection_reason.size()) {
-                                        std::string reason = ToLowerCopy(
-                                            detection_details.detection_reason[box_idx]);
-                                        if (reason == "manual" ||
-                                            reason.find("manual") != std::string::npos) {
-                                            return BoxProvenance::Manual;
-                                        }
-                                        if (reason == "interpolated" ||
-                                            reason.find("interp") != std::string::npos) {
-                                            return BoxProvenance::Interpolated;
-                                        }
-                                        if (reason == "clean") {
-                                            return BoxProvenance::Clean;
-                                        }
-                                    }
-
-                                    bool detection_is_interp =
-                                        zarr_loader.activeDatasetHasSyntheticDetections();
-                                    if (!detection_details.detection_source.empty()) {
-                                        if (box_idx < detection_details.detection_source.size()) {
-                                            detection_is_interp =
-                                                detection_details.detection_source[box_idx] != 0;
-                                        } else {
-                                            detection_is_interp = false;
-                                        }
-                                    }
-                                    if (is_zarr_interpolated &&
-                                        zarr_loader.activeDatasetHasSyntheticDetections() &&
-                                        detection_details.detection_source.empty()) {
-                                        detection_is_interp = true;
-                                    }
-                                    return detection_is_interp ? BoxProvenance::Interpolated
-                                                               : BoxProvenance::Clean;
-                                };
-
-                                std::vector<FullFrameRectOverlayItem> overlay_items;
-                                overlay_items.reserve(zarr_boxes.size());
-                                for (size_t box_idx = 0; box_idx < zarr_boxes.size(); ++box_idx) {
-                                    const auto& box = zarr_boxes[box_idx];
-                                    BoxProvenance box_provenance =
-                                        classify_box_provenance(box_idx);
-                                    ImVec4 box_color = ImVec4(0.2f, 0.6f, 1.0f, 1.0f);  // clean
-                                    float line_width = 2.0f;
-                                    if (box_provenance == BoxProvenance::Interpolated) {
-                                        box_color = ImVec4(1.0f, 0.7f, 0.0f, 0.9f);
-                                        line_width = 2.5f;
-                                    } else if (box_provenance == BoxProvenance::Manual) {
-                                        box_color = ImVec4(0.0f, 0.85f, 0.65f, 1.0f);
-                                        line_width = 2.75f;
-                                    }
-
-                                    const bool box_selected =
-                                        (g_zarr_bbox_edit_state.selected_frame ==
-                                             current_frame_num) &&
-                                        (g_zarr_bbox_edit_state.selected_box ==
-                                         static_cast<int>(box_idx));
-                                    const bool box_is_added =
-                                        g_zarr_bbox_edit_state.isAddedBox(
-                                            current_frame_num,
-                                            static_cast<int>(box_idx));
-                                    const bool box_is_manual =
-                                        g_zarr_bbox_edit_state.isManualBox(
-                                            current_frame_num,
-                                            static_cast<int>(box_idx));
-                                    if (box_is_manual) {
-                                        box_provenance = BoxProvenance::Manual;
-                                    }
-                                    if (box_selected) {
-                                        box_color = ImVec4(1.0f, 0.25f, 0.95f, 1.0f);
-                                        line_width = 3.5f;
-                                    } else if (box_is_added) {
-                                        box_color = ImVec4(0.95f, 0.35f, 0.15f, 1.0f);
-                                        line_width = std::max(line_width, 3.0f);
-                                    } else if (frame_has_bbox_edits) {
-                                        line_width = std::max(line_width, 2.5f);
-                                    }
-                                    
-                                    ImPlot::SetNextLineStyle(box_color, line_width);
-                                    
-                                    std::string label = "Zarr_" + std::to_string(box.class_id);
-                                    if (box_provenance == BoxProvenance::Interpolated) {
-                                        label += " [I]";
-                                    } else if (box_provenance == BoxProvenance::Manual) {
-                                        label += " [MAN]";
-                                    }
-                                    if (box_is_added) {
-                                        label += " [A]";
-                                    }
-                                    if (box_selected) {
-                                        label += " [S]";
-                                    } else if (frame_has_bbox_edits) {
-                                        label += " [M]";
-                                    }
-
-                                    overlay_items.push_back(
-                                        {{box.x_min, box.y_min, box.width, box.height},
-                                         box_color,
-                                         line_width,
-                                         std::move(label)});
-                                }
+                                std::vector<FullFrameRectOverlayItem> overlay_items =
+                                    buildCameraViewBoundingBoxOverlayItems(
+                                        zarr_boxes,
+                                        detection_details,
+                                        g_zarr_bbox_edit_state,
+                                        current_frame_num,
+                                        frame_has_bbox_edits,
+                                        zarr_loader.activeDatasetHasSyntheticDetections(),
+                                        is_zarr_interpolated);
                                 drawFullFrameRectOverlays(overlay_items, image_height_px);
                             }
 
@@ -4953,172 +4661,14 @@ struct StateOverlay {
                             }
 
                             if (can_draw_headings) {
-                                if (kHeadingDebugLoggingEnabled &&
-                                    heading_debug_entry_log_count < 200 &&
-                                    heading_debug_last_frame_logged != current_frame_num) {
-                                    headingDebugLog("Frame " + std::to_string(current_frame_num) +
-                                                    ": entering heading draw path (overlay_enabled=" +
-                                                    (heading_overlay_enabled ? "1" : "0") +
-                                                    ", heading_data=" +
-                                                    (heading_data_available ? "1" : "0") +
-                                                    ", dataset_interp=" +
-                                                    (zarr_loader.activeDatasetHasSyntheticDetections() ? "1" : "0") + ").");
-                                    heading_debug_last_frame_logged = current_frame_num;
-                                    heading_debug_entry_log_count++;
-                                }
-
                                 ZarrDetectionLoader::FrameDetections heading_details =
                                     zarr_loader.getRawDetections(
                                         current_frame_num,
                                         /*use_interpolated=*/false,
                                         /*include_eye_masks=*/false);
-
-                                const size_t det_count = heading_details.boxes.size();
-                                const size_t valid_count = heading_details.heading_valid.size();
-                                const size_t heading_count = heading_details.headings_deg.size();
-                                const size_t swim_bladder_count = heading_details.swim_bladder_pixels.size();
-
-                                if (det_count > 0 &&
-                                    valid_count == det_count &&
-                                    heading_count == det_count) {
-                                    if (kHeadingDebugLoggingEnabled) {
-                                        headingDebugLog("Frame " + std::to_string(current_frame_num) +
-                                                        ": processing " + std::to_string(det_count) +
-                                                        " detections (heading_valid=" + std::to_string(valid_count) +
-                                                        ", headings_deg=" + std::to_string(heading_count) +
-                                                        ", swim_bladder=" + std::to_string(swim_bladder_count) + ").");
-                                    }
-
-                                    ImDrawList* plot_draw_list = ImPlot::GetPlotDrawList();
-                                    const ImU32 arrow_color =
-                                        ImGui::GetColorU32(ImVec4(1.0f, 0.25f, 0.1f, 0.95f));
-                                    const float arrow_thickness = 2.0f;
-
-                                    for (size_t det_idx = 0; det_idx < det_count; ++det_idx) {
-                                        if (heading_details.heading_valid[det_idx] == 0) {
-                                            if (kHeadingDebugLoggingEnabled && heading_debug_draw_log_count < 80) {
-                                                headingDebugLog("Frame " + std::to_string(current_frame_num) +
-                                                                ": detection " + std::to_string(det_idx) +
-                                                                " skipped (heading_valid == 0).");
-                                                heading_debug_draw_log_count++;
-                                            }
-                                            continue;
-                                        }
-
-                                        if (!heading_details.detection_source.empty() &&
-                                            det_idx < heading_details.detection_source.size() &&
-                                            heading_details.detection_source[det_idx] != 0) {
-                                            if (kHeadingDebugLoggingEnabled && heading_debug_draw_log_count < 80) {
-                                                headingDebugLog("Frame " + std::to_string(current_frame_num) +
-                                                                ": detection " + std::to_string(det_idx) +
-                                                                " skipped (synthetic detection). ");
-                                                heading_debug_draw_log_count++;
-                                            }
-                                            continue;
-                                        }
-
-                                        const auto& box = heading_details.boxes[det_idx];
-                                        if (det_idx >= heading_details.swim_bladder_pixels.size()) {
-                                            if (kHeadingDebugLoggingEnabled && heading_debug_draw_log_count < 80) {
-                                                headingDebugLog("Frame " + std::to_string(current_frame_num) +
-                                                                ": detection " + std::to_string(det_idx) +
-                                                                " lacks swim bladder pixel data (available=" +
-                                                                std::to_string(swim_bladder_count) + ").");
-                                                heading_debug_draw_log_count++;
-                                            }
-                                            continue;
-                                        }
-
-                                        float box_width = std::max(0.0f, box[2] - box[0]);
-                                        float box_height = std::max(0.0f, box[3] - box[1]);
-                                        float base_x = heading_details.swim_bladder_pixels[det_idx][0];
-                                        float base_y = heading_details.swim_bladder_pixels[det_idx][1];
-
-                                        if (!std::isfinite(base_x) || !std::isfinite(base_y)) {
-                                            float fallback_x = 0.5f * (box[0] + box[2]);
-                                            float fallback_y = 0.5f * (box[1] + box[3]);
-                                            if (kHeadingDebugLoggingEnabled && heading_debug_draw_log_count < 120) {
-                                                headingDebugLog("Frame " + std::to_string(current_frame_num) +
-                                                                ": detection " + std::to_string(det_idx) +
-                                                                " had invalid swim bladder coords (" +
-                                                                std::to_string(base_x) + ", " +
-                                                                std::to_string(base_y) +
-                                                                "); using bounding box center (" +
-                                                                std::to_string(fallback_x) + ", " +
-                                                                std::to_string(fallback_y) + ").");
-                                                heading_debug_draw_log_count++;
-                                            }
-                                            base_x = fallback_x;
-                                            base_y = fallback_y;
-                                        }
-
-                                        if (kHeadingDebugLoggingEnabled &&
-                                            heading_debug_draw_log_count < 120) {
-                                            headingDebugLog("Frame " + std::to_string(current_frame_num) +
-                                                            ": detection " + std::to_string(det_idx) +
-                                                            " bbox=[" + std::to_string(box[0]) + ", " +
-                                                            std::to_string(box[1]) + ", " +
-                                                            std::to_string(box[2]) + ", " +
-                                                            std::to_string(box[3]) + "] base=(" +
-                                                            std::to_string(base_x) + ", " +
-                                                            std::to_string(base_y) + ").");
-                                            heading_debug_draw_log_count++;
-                                        }
-
-                                        float heading_deg = heading_details.headings_deg[det_idx];
-                                        float heading_rad =
-                                            heading_deg * static_cast<float>(M_PI) / 180.0f;
-
-                                        float bbox_scale =
-                                            std::max(box_width, box_height) * 1.25f;
-                                        float frame_scale = scene_height_f * 0.02f;
-                                        float arrow_len =
-                                            std::max(60.0f, std::max(bbox_scale, frame_scale));
-                                        float end_x = base_x + std::cos(heading_rad) * arrow_len;
-                                        float end_y = base_y - std::sin(heading_rad) * arrow_len;
-
-                                        if (kHeadingDebugLoggingEnabled && heading_debug_draw_log_count < 80) {
-                                            headingDebugLog("Frame " + std::to_string(current_frame_num) +
-                                                            ": drawing heading arrow det " +
-                                                            std::to_string(det_idx) + " base=(" +
-                                                            std::to_string(base_x) + ", " +
-                                                            std::to_string(base_y) + ") heading_deg=" +
-                                                            std::to_string(heading_deg) + " arrow_len=" +
-                                                            std::to_string(arrow_len) + " end=(" +
-                                                            std::to_string(end_x) + ", " +
-                                                            std::to_string(end_y) + ").");
-                                            heading_debug_draw_log_count++;
-                                        }
-
-                                        ImPlotPoint plot_start(base_x, scene_height_f - base_y);
-                                        ImPlotPoint plot_end(end_x, scene_height_f - end_y);
-                                        ImVec2 p0 = ImPlot::PlotToPixels(plot_start);
-                                        ImVec2 p1 = ImPlot::PlotToPixels(plot_end);
-
-                                        plot_draw_list->AddLine(p0, p1, arrow_color, arrow_thickness);
-
-                                        ImVec2 dir = ImVec2(p0.x - p1.x, p0.y - p1.y);
-                                        float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
-                                        if (len > 1e-3f) {
-                                            dir.x /= len;
-                                            dir.y /= len;
-                                            float head_size = 8.0f;
-                                            ImVec2 left = ImVec2(
-                                                p1.x + dir.x * head_size + dir.y * head_size * 0.5f,
-                                                p1.y + dir.y * head_size - dir.x * head_size * 0.5f);
-                                            ImVec2 right = ImVec2(
-                                                p1.x + dir.x * head_size - dir.y * head_size * 0.5f,
-                                                p1.y + dir.y * head_size + dir.x * head_size * 0.5f);
-                                            plot_draw_list->AddTriangleFilled(p1, left, right, arrow_color);
-                                        }
-                                    }
-                                } else if (kHeadingDebugLoggingEnabled && can_draw_headings) {
-                                    headingDebugLog("Frame " + std::to_string(current_frame_num) +
-                                                    ": heading data mismatch (boxes=" + std::to_string(det_count) +
-                                                    ", heading_valid=" + std::to_string(valid_count) +
-                                                    ", headings_deg=" + std::to_string(heading_count) +
-                                                    ", swim_bladder=" + std::to_string(swim_bladder_count) + ").");
-                                }
+                                drawCameraViewHeadingOverlay(
+                                    heading_details,
+                                    scene_height_f);
                             }
 
                             if (can_draw_eye_masks) {
@@ -5421,47 +4971,16 @@ struct StateOverlay {
                                                     ": eye mask data unavailable in detection results.");
                                 }
                             }
-                            draw_keypoint_markers();
+                            drawCameraViewDetectionKeypointMarkers(
+                                detection_details,
+                                show_keypoint_markers,
+                                image_height_px);
                         }
 
                         if (zarr_loaded && zarr_loader.hasStimulusEvents()) {
-                            struct StimulusOverlayState {
-                                std::string text;
-                                int last_event_frame = std::numeric_limits<int>::min();
-                            };
-                            static std::array<StimulusOverlayState, MAX_VIEWS> s_overlay_cache;
-
                             auto frame_events = zarr_loader.getStimulusEventsForFrame(current_frame_num);
-                            if (!frame_events.empty()) {
-                                std::string events_text;
-                                for (size_t i = 0; i < frame_events.size(); ++i) {
-                                    if (i > 0) {
-                                        events_text += "\n";
-                                    }
-                                    events_text += frame_events[i];
-                                }
-                                s_overlay_cache[j].text = std::move(events_text);
-                                s_overlay_cache[j].last_event_frame = current_frame_num;
-                            }
-
-                            if (!s_overlay_cache[j].text.empty() &&
-                                current_frame_num >= s_overlay_cache[j].last_event_frame) {
-                                ImVec2 plot_pos = ImPlot::GetPlotPos();
-                                ImDrawList* draw_list = ImPlot::GetPlotDrawList();
-                                ImVec2 overlay_origin = ImVec2(plot_pos.x + 12.0f, plot_pos.y + 12.0f);
-                                ImVec2 text_size = ImGui::CalcTextSize(s_overlay_cache[j].text.c_str(), nullptr, false, -1.0f);
-                                ImVec2 box_min = overlay_origin;
-                                ImVec2 box_max = ImVec2(box_min.x + text_size.x + 12.0f,
-                                                        box_min.y + text_size.y + 8.0f);
-
-                                draw_list->AddRectFilled(box_min, box_max,
-                                                         IM_COL32(0, 0, 0, 180), 4.0f);
-                                draw_list->AddRect(box_min, box_max,
-                                                   IM_COL32(80, 180, 255, 220), 4.0f);
-                                draw_list->AddText(ImVec2(box_min.x + 6.0f, box_min.y + 4.0f),
-                                                   IM_COL32(200, 220, 255, 255),
-                                                   s_overlay_cache[j].text.c_str());
-                            }
+                            drawCameraViewStimulusEventOverlay(
+                                j, current_frame_num, frame_events);
                         }
 
                         if (plot_keypoints_flag) {
