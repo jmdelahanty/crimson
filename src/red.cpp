@@ -52,6 +52,7 @@
 #include "gui/labeling_tool_window.h"
 #include "gui/camera_view_overlay_renderer.h"
 #include "gui/refined_keypoint_review_window.h"
+#include "gui/refined_keypoint_write_workflow.h"
 #include "gui/camera_view_manual_keypoint_input.h"
 #include "gui/camera_view_transport_controls.h"
 #include "gui_interpolation.h"
@@ -4601,150 +4602,14 @@ int main(int argc, char **argv) {
             const auto crop_preview_result = drawCropPreviewWindow(
                 crop_preview_context, crop_preview_window_state);
 
-            auto applyCropKeypointEditorAction =
-                [&](const CropKeypointEditorAction& action,
-                    const std::optional<RefinedKeypointSelection>& selection) {
-                    switch (action.type) {
-                    case CropKeypointEditorActionType::Save: {
-                        if (selection.has_value()) {
-                            RefinedKeypointEditResult edit_result;
-                            std::string write_error;
-                            if (!refined_keypoint_repo.writeManualCorrection(
-                                    *selection,
-                                    action.keypoints_roi,
-                                    write_error,
-                                    &edit_result)) {
-                                refined_keypoint_review_window_state
-                                    .panel_state
-                                    .manual_write_status =
-                                    "Keypoint edit failed: " + write_error;
-                            } else {
-                                std::string reload_error;
-                                resetCropKeypointEditorState(
-                                    crop_preview_window_state.editor_state);
-                                if (reloadActiveZarrPreserveDataset(
-                                        reload_error)) {
-                                    std::ostringstream status;
-                                    status
-                                        << (edit_result.changed
-                                                ? "Keypoint edit saved"
-                                                : "Keypoint edit was a no-op")
-                                        << ": roi=" << selection->roi_index;
-                                    if (edit_result.summary_updated) {
-                                        status << " summary=updated";
-                                    }
-                                    if (edit_result.stale_eye_mask_runs > 0) {
-                                        status << " stale_eye_masks="
-                                               << edit_result
-                                                      .stale_eye_mask_runs;
-                                    }
-                                    refined_keypoint_review_window_state
-                                        .panel_state
-                                        .manual_write_status = status.str();
-                                } else {
-                                    refined_keypoint_review_window_state
-                                        .panel_state
-                                        .manual_write_status =
-                                        "Keypoint edit saved but reload failed: " +
-                                        reload_error;
-                                }
-                            }
-                        }
-                        break;
-                    }
-                    case CropKeypointEditorActionType::MarkNoKeypoints: {
-                        if (selection.has_value()) {
-                            RefinedKeypointEditResult edit_result;
-                            std::string write_error;
-                            if (!refined_keypoint_repo.markFishPresentNoKeypoints(
-                                    *selection, write_error, &edit_result)) {
-                                refined_keypoint_review_window_state
-                                    .panel_state
-                                    .manual_write_status =
-                                    "Mark no keypoints failed: " +
-                                    write_error;
-                            } else {
-                                std::string reload_error;
-                                resetCropKeypointEditorState(
-                                    crop_preview_window_state.editor_state);
-                                if (reloadActiveZarrPreserveDataset(
-                                        reload_error)) {
-                                    std::ostringstream status;
-                                    status << "Marked fish_present_no_keypoints: roi="
-                                           << selection->roi_index;
-                                    if (edit_result.summary_updated) {
-                                        status << " summary=updated";
-                                    }
-                                    if (edit_result.stale_eye_mask_runs > 0) {
-                                        status << " stale_eye_masks="
-                                               << edit_result
-                                                      .stale_eye_mask_runs;
-                                    }
-                                    refined_keypoint_review_window_state
-                                        .panel_state
-                                        .manual_write_status = status.str();
-                                } else {
-                                    refined_keypoint_review_window_state
-                                        .panel_state
-                                        .manual_write_status =
-                                        "Marked fish_present_no_keypoints but reload failed: " +
-                                        reload_error;
-                                }
-                            }
-                        }
-                        break;
-                    }
-                    case CropKeypointEditorActionType::MarkDetectionIssue: {
-                        if (selection.has_value()) {
-                            RefinedKeypointEditResult edit_result;
-                            std::string write_error;
-                            if (!refined_keypoint_repo.markDetectionIssue(
-                                    *selection, write_error, &edit_result)) {
-                                refined_keypoint_review_window_state
-                                    .panel_state
-                                    .manual_write_status =
-                                    "Mark detection issue failed: " +
-                                    write_error;
-                            } else {
-                                std::string reload_error;
-                                resetCropKeypointEditorState(
-                                    crop_preview_window_state.editor_state);
-                                if (reloadActiveZarrPreserveDataset(
-                                        reload_error)) {
-                                    std::ostringstream status;
-                                    status << "Marked detection_issue: roi="
-                                           << selection->roi_index;
-                                    if (edit_result.summary_updated) {
-                                        status << " summary=updated";
-                                    }
-                                    if (edit_result.stale_eye_mask_runs > 0) {
-                                        status << " stale_eye_masks="
-                                               << edit_result
-                                                      .stale_eye_mask_runs;
-                                    }
-                                    refined_keypoint_review_window_state
-                                        .panel_state
-                                        .manual_write_status = status.str();
-                                } else {
-                                    refined_keypoint_review_window_state
-                                        .panel_state
-                                        .manual_write_status =
-                                        "Marked detection_issue but reload failed: " +
-                                        reload_error;
-                                }
-                            }
-                        }
-                        break;
-                    }
-                    case CropKeypointEditorActionType::Reset:
-                    case CropKeypointEditorActionType::None:
-                    default:
-                        break;
-                    }
-                };
-            applyCropKeypointEditorAction(
+            applyCropPreviewKeypointWriteAction(
+                refined_keypoint_repo,
                 crop_preview_result.editor_action,
-                crop_preview_result.selected_keypoint_selection);
+                crop_preview_result.selected_keypoint_selection,
+                crop_preview_window_state.editor_state,
+                refined_keypoint_review_window_state.panel_state
+                    .manual_write_status,
+                reloadActiveZarrPreserveDataset);
             frame_crop_preview_ui_ms +=
                 durationMs(std::chrono::steady_clock::now() - crop_preview_ui_start);
         }
@@ -4762,39 +4627,15 @@ int main(int argc, char **argv) {
                     refined_keypoint_review_window_state);
             if (keypoint_review_window_result.request_review_write) {
                 RefinedKeypointRepository refined_keypoint_repo(zarr_loader);
-                std::string write_error;
-                std::string resolved_run_name;
-                if (!refined_keypoint_repo.writeReviewStatus(
-                        keypoint_review_window_result.review_options,
-                        write_error,
-                        &resolved_run_name)) {
-                    refined_keypoint_review_window_state.panel_state
-                        .review_write_status =
-                        "Keypoint review write failed: " + write_error;
-                } else {
-                    std::string reload_error;
-                    if (reloadActiveZarrPreserveDataset(reload_error)) {
-                        std::ostringstream status;
-                        status << "Keypoint review status updated: run="
-                               << (resolved_run_name.empty() ? "<latest>"
-                                                             : resolved_run_name)
-                               << " state="
-                               << keypoint_review_window_result.review_options.state
-                               << " use="
-                               << keypoint_review_window_result.review_options
-                                      .intended_use
-                               << " method="
-                               << keypoint_review_window_result.review_options
-                                      .method;
+                const RefinedKeypointReviewWriteWorkflowResult
+                    review_write_result = applyRefinedKeypointReviewWrite(
+                        refined_keypoint_repo,
+                        keypoint_review_window_result,
                         refined_keypoint_review_window_state.panel_state
-                            .review_write_status = status.str();
-                    } else {
-                        zarr_loaded = false;
-                        refined_keypoint_review_window_state.panel_state
-                            .review_write_status =
-                            "Keypoint review write succeeded but reload failed: " +
-                            reload_error;
-                    }
+                            .review_write_status,
+                        reloadActiveZarrPreserveDataset);
+                if (review_write_result.should_clear_zarr_loaded) {
+                    zarr_loaded = false;
                 }
             }
         }
