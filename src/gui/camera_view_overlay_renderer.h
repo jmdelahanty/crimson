@@ -23,6 +23,11 @@ void drawCameraViewHeadingOverlay(
     const ZarrDetectionLoader::FrameDetections& heading_details,
     float image_height_px);
 
+void drawCameraViewEyeMaskOverlay(
+    const ZarrDetectionLoader::FrameDetections& mask_details,
+    float image_height_px,
+    const std::string& smoothing_run_id);
+
 void drawCameraViewStimulusEventOverlay(
     int view_idx,
     int current_frame_num,
