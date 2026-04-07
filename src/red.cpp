@@ -2322,8 +2322,15 @@ int main(int argc, char **argv) {
         frame_file_browser_ui_ms +=
             durationMs(std::chrono::steady_clock::now() - file_browser_ui_start);
 
+        const bool use_legacy_manual_keypoint_tools =
+            plot_keypoints_flag &&
+            !(zarr_loaded && zarr_loader.hasKeypointData());
+
         if (video_loaded) {
             const auto frame_debug_ui_start = std::chrono::steady_clock::now();
+            if (!use_legacy_manual_keypoint_tools) {
+                keypoints_find = false;
+            }
             std::vector<LoggedBoundingBox> zarr_boxes;
             bool frame_is_interpolated = false;
             const bool frame_has_bbox_edits =
@@ -2377,8 +2384,9 @@ int main(int argc, char **argv) {
                 frame_sync_recording_total,
                 frame_sync_latest_decoded,
                 frame_sync_debug_line,
-                plot_keypoints_flag,
-                keypoints_map.count(current_frame_num) != 0,
+                use_legacy_manual_keypoint_tools,
+                use_legacy_manual_keypoint_tools &&
+                    (keypoints_map.count(current_frame_num) != 0),
                 zarr_loaded,
                 zarr_loader,
                 detection_dataset_labels,
@@ -3506,7 +3514,7 @@ int main(int argc, char **argv) {
                     // ImGui::Image((void*)(intptr_t)image_texture[j],
                     // avail_size);
                     //
-                    if (plot_keypoints_flag) {
+                    if (use_legacy_manual_keypoint_tools) {
                         if (keypoints_map.find(current_frame_num) ==
                             keypoints_map.end()) {
                             keypoints_find = false;
@@ -4224,7 +4232,7 @@ int main(int argc, char **argv) {
                                 j, current_frame_num, frame_events);
                         }
 
-                        if (plot_keypoints_flag) {
+                        if (use_legacy_manual_keypoint_tools) {
                             const CameraViewManualKeypointInputContext
                                 keypoint_input_context{
                                     scene,
@@ -4535,7 +4543,7 @@ int main(int argc, char **argv) {
                 stimulus_playback_windows_result.stimulus_buffer_window_ui_ms;
         }
 
-        if (plot_keypoints_flag) {
+        if (use_legacy_manual_keypoint_tools) {
             const auto keypoints_window_ui_start =
                 std::chrono::steady_clock::now();
             const KeypointsWindowContext keypoints_window_context{
@@ -4552,7 +4560,7 @@ int main(int argc, char **argv) {
                 std::chrono::steady_clock::now() - keypoints_window_ui_start);
         }
 
-        if (plot_keypoints_flag) {
+        if (use_legacy_manual_keypoint_tools) {
             const auto labeling_tool_ui_start =
                 std::chrono::steady_clock::now();
             bool has_labeled_frames = !keypoints_map.empty();

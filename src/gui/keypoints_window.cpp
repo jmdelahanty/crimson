@@ -3,7 +3,7 @@
 #include "imgui.h"
 
 void drawKeypointsWindow(const KeypointsWindowContext& context) {
-    if (!ImGui::Begin("Keypoints")) {
+    if (!ImGui::Begin("Legacy Keypoints")) {
         ImGui::End();
         return;
     }

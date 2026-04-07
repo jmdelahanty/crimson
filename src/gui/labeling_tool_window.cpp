@@ -36,10 +36,13 @@ LabelingToolWindowResult drawLabelingToolWindow(
     LabelingToolWindowState& state) {
     LabelingToolWindowResult result;
 
-    if (!ImGui::Begin("Labeling Tool")) {
+    if (!ImGui::Begin("Legacy Labeling Tool")) {
         ImGui::End();
         return result;
     }
+
+    ImGui::TextDisabled("Legacy CSV/manual labeling workflow");
+    ImGui::Separator();
 
     const bool keypoint_triangulated_all =
         allCurrentKeypointsTriangulated(context);

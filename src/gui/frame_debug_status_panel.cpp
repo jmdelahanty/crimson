@@ -33,10 +33,10 @@ void drawFrameOverviewSection(const FrameDebugWindowContext& context) {
     if (context.plot_keypoints_flag) {
         if (context.manual_keypoints_present) {
             ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f),
-                               "[Manual] Keypoints:   Found");
+                               "[Legacy Manual] Keypoints:   Found");
         } else {
             ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f),
-                               "[Manual] Keypoints:   None");
+                               "[Legacy Manual] Keypoints:   None");
         }
     }
 }
