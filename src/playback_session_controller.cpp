@@ -526,6 +526,8 @@ void PlaybackSessionController::applyPlaybackToggle() const {
                 : std::max(0, context_.playback_state->to_display_frame_number);
         context_.playback_state->paused_frame_on_toggle = paused_frame;
         context_.playback_state->buffer_browsed_since_pause = false;
+        context_.playback_state->last_resume_path = ResumePath::None;
+        context_.playback_state->last_resume_target_frame = -1;
         context_.playback_state->to_display_frame_number = paused_frame;
         context_.playback_state->slider_frame_number = paused_frame;
         stepPausedFrameFromBuffer(paused_frame);

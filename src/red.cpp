@@ -1929,9 +1929,17 @@ int main(int argc, char **argv) {
                     if (latest_it != latest_decoded_frame.end()) {
                         latest_decoded = latest_it->second.load();
                     }
-                    const int total_recording_frames =
-                        std::max(dc_context->total_num_frame,
-                                 dc_context->estimated_num_frames);
+                    int total_recording_frames = -1;
+                    if (dc_context->estimated_num_frames > 0) {
+                        total_recording_frames = dc_context->estimated_num_frames;
+                    }
+                    if (dc_context->total_num_frame > 0 &&
+                        dc_context->total_num_frame !=
+                            std::numeric_limits<int>::max()) {
+                        total_recording_frames = std::max(
+                            total_recording_frames,
+                            dc_context->total_num_frame);
+                    }
 
                     const CameraViewWindowContext camera_view_context{
                         scene,
