@@ -172,6 +172,9 @@ static EyeOrientationSmoother g_eye_orientation_smoother;
 namespace {
 
 using json = nlohmann::json;
+constexpr const char* kMediaFileDialogFilters =
+    ".mp4,.avi,.mov,.mkv,.tiff,.jpeg,.jpg,.png";
+constexpr const char* kVideoFileDialogFilters = ".mp4,.avi,.mov,.mkv";
 
 double durationMs(std::chrono::steady_clock::duration duration) {
     return std::chrono::duration<double, std::milli>(duration).count();
@@ -2229,7 +2232,7 @@ int main(int argc, char **argv) {
                         config.flags = ImGuiFileDialogFlags_Modal;
                         ImGuiFileDialog::Instance()->OpenDialog(
                             "ChooseMedia", "Choose Media",
-                            ".mp4,.tiff,.jpeg,.jpg,.png", config);
+                            kMediaFileDialogFilters, config);
                     };
                     if (ImGui::MenuItem("Load Zarr Archive")) {
                         IGFD::FileDialogConfig config;
@@ -2248,7 +2251,7 @@ int main(int argc, char **argv) {
                             config.flags = ImGuiFileDialogFlags_Modal;
                             ImGuiFileDialog::Instance()->OpenDialog(
                                 "ChooseStimulus", "Choose Stimulus Video",
-                                ".mp4", config);
+                                kVideoFileDialogFilters, config);
                         }
                     }
                     if (!ui_path_config.preferred_roots.empty() &&
@@ -3160,20 +3163,12 @@ int main(int argc, char **argv) {
                     detection_dataset_choice = 0;
                 }
 
-                // check if it is mp4, if it is mp4 files
                 auto first_selection =
                     *selected_files.begin(); // Dereferencing iterator
-                if (string_ends_with(first_selection.first, ".mp4")) {
+                if (IsSupportedVideoPath(std::filesystem::path(first_selection.second))) {
                     for (const auto &elem : selected_files) {
-                        std::string cam_string_full = elem.first;
-                        std::size_t last_slash = cam_string_full.find_last_of("/\\");
-                        if (last_slash != std::string::npos) {
-                            cam_string_full = cam_string_full.substr(last_slash + 1);
-                        }
-                        std::size_t cam_string_mp4_position =
-                            cam_string_full.find(".mp4");
                         std::string cam_string =
-                            cam_string_full.substr(0, cam_string_mp4_position);
+                            std::filesystem::path(elem.second).stem().string();
                         camera_names.push_back(cam_string);
                         std::cout << "camera names: " << cam_string
                                   << std::endl;
