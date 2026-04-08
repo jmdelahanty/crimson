@@ -7,6 +7,7 @@
 #include <cstring>
 #include <exception>
 #include <memory>
+#include <sstream>
 
 namespace {
 
@@ -109,7 +110,15 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
         size_t nVideoBytes = 0;
         PacketData pktinfo;
 
-        const cudaVideoCodec codec_id = FFmpeg2NvCodecId(demuxer->GetVideoCodec());
+        const AVCodecID ffmpeg_codec_id = demuxer->GetVideoCodec();
+        const cudaVideoCodec codec_id = FFmpeg2NvCodecId(ffmpeg_codec_id);
+        if (codec_id == cudaVideoCodec_NumCodecs) {
+            std::ostringstream codec_error;
+            codec_error << "Unsupported video codec for NVIDIA hardware decode: "
+                        << avcodec_get_name(ffmpeg_codec_id)
+                        << ". Crimson currently expects NVDEC-supported codecs such as H.264, HEVC, VP8, VP9, or MJPEG.";
+            throw std::runtime_error(codec_error.str());
+        }
         auto make_decoder = [&]() {
             return std::make_unique<NvDecoder>(cuContext, true, codec_id);
         };

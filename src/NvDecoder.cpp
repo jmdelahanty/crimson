@@ -192,8 +192,27 @@ int NvDecoder::HandleVideoSequence(CUVIDEOFORMAT *pVideoFormat)
     decodecaps.nBitDepthMinus8 = pVideoFormat->bit_depth_luma_minus8;
 
     CUDA_DRVAPI_CALL(cuCtxPushCurrent(m_cuContext));
-    NVDEC_API_CALL(cuvidGetDecoderCaps(&decodecaps));
+    CUresult decoder_caps_result = cuvidGetDecoderCaps(&decodecaps);
     CUDA_DRVAPI_CALL(cuCtxPopCurrent(NULL));
+    if (decoder_caps_result != CUDA_SUCCESS) {
+        const char *decoder_caps_error_name = NULL;
+        cuGetErrorName(decoder_caps_result, &decoder_caps_error_name);
+        std::ostringstream errorLog;
+        errorLog << "cuvidGetDecoderCaps failed for codec "
+                 << GetVideoCodecString(pVideoFormat->codec)
+                 << ", chroma "
+                 << GetVideoChromaFormatString(pVideoFormat->chroma_format)
+                 << ", bit depth "
+                 << (pVideoFormat->bit_depth_luma_minus8 + 8)
+                 << ", coded size "
+                 << pVideoFormat->coded_width << "x" << pVideoFormat->coded_height
+                 << ". CUDA error "
+                 << (decoder_caps_error_name ? decoder_caps_error_name : "<unknown>")
+                 << " (" << decoder_caps_result << ")"
+                 << ". This usually indicates a GPU/driver/NVDEC availability problem rather than a normal unsupported-resolution check.";
+        throw NVDECException::makeNVDECException(
+            errorLog.str(), decoder_caps_result, __FUNCTION__, __FILE__, __LINE__);
+    }
 
     if(!decodecaps.bIsSupported){
         NVDEC_THROW_ERROR("Codec not supported on this GPU", CUDA_ERROR_NOT_SUPPORTED);
