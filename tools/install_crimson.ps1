@@ -4,7 +4,10 @@ param(
     [string]$InstallRoot,
     [switch]$ReplaceExisting,
     [switch]$CreateDesktopShortcut,
-    [switch]$Launch
+    [switch]$Launch,
+    [switch]$SkipPreflightCheck,
+    [switch]$SkipPostInstallCheck,
+    [switch]$RequireNvidiaSmi
 )
 
 $ErrorActionPreference = "Stop"
@@ -112,12 +115,39 @@ function Get-SourceUpdateInfo {
     return $null
 }
 
+function Invoke-RuntimeCheck {
+    param(
+        [string]$AppRoot,
+        [string]$Label
+    )
+
+    $runtimeCheckScript = Join-Path $AppRoot "check_crimson_runtime.ps1"
+    if (-not (Test-Path -LiteralPath $runtimeCheckScript)) {
+        Write-Host ""
+        Write-Host "Skipping Crimson runtime check ($Label):"
+        Write-Host "  missing: $runtimeCheckScript"
+        return
+    }
+
+    Write-Host ""
+    Write-Host "Running Crimson runtime check ($Label)..."
+    if ($RequireNvidiaSmi) {
+        & $runtimeCheckScript -AppRoot $AppRoot -RequireNvidiaSmi
+    } else {
+        & $runtimeCheckScript -AppRoot $AppRoot
+    }
+}
+
 $sourceExe = Require-Path -PathValue (Join-Path $SourceRoot "bin/redgui.exe") -Label "Source redgui.exe"
 $sourceFonts = Require-Path -PathValue (Join-Path $SourceRoot "share/crimson/fonts") -Label "Source fonts directory"
 $sourceConfig = Require-Path -PathValue (Join-Path $SourceRoot "share/crimson/config") -Label "Source config directory"
 $sourceReleaseMetadataPath = Join-Path $SourceRoot "release.json"
 $sourceReleaseMetadata = Read-JsonFile -PathValue $sourceReleaseMetadataPath
 $sourceUpdateInfo = Get-SourceUpdateInfo -ResolvedSourceRoot $SourceRoot
+
+if (-not $SkipPreflightCheck) {
+    Invoke-RuntimeCheck -AppRoot $SourceRoot -Label "source app drop"
+}
 
 if (Test-Path -LiteralPath $InstallRoot) {
     if ($ReplaceExisting) {
@@ -180,6 +210,10 @@ $installMetadata = [ordered]@{
 }
 $installMetadataPath = Join-Path $InstallRoot "install_metadata.json"
 Write-JsonFile -PathValue $installMetadataPath -Data $installMetadata
+
+if (-not $SkipPostInstallCheck) {
+    Invoke-RuntimeCheck -AppRoot $InstallRoot -Label "installed app"
+}
 
 if ($CreateDesktopShortcut) {
     $desktopDir = [Environment]::GetFolderPath("Desktop")

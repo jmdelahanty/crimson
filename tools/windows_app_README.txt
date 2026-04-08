@@ -13,6 +13,10 @@ Or from PowerShell:
 - run `install_crimson.ps1`
 - add `-CreateDesktopShortcut` if you want the installer to create a Desktop shortcut
 
+Quick runtime check:
+- run `check_crimson_runtime.cmd`
+- or run `check_crimson_runtime.ps1`
+
 Default install location:
 - `%LOCALAPPDATA%\Crimson`
 
@@ -46,6 +50,12 @@ Desktop shortcut
 
 - `install_crimson.cmd` does not create a Desktop shortcut by default
 - use `install_crimson.ps1 -CreateDesktopShortcut` if you want one created automatically
+
+Checks
+------
+
+- `install_crimson.ps1` runs cheap preflight and postinstall runtime checks by default
+- use `check_crimson_runtime.cmd` later if you want to re-check the install or driver visibility
 
 Notes
 -----

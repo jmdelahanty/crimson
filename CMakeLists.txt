@@ -643,6 +643,8 @@ if(WIN32)
     install(PROGRAMS
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/install_crimson.ps1
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/install_crimson.cmd
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_crimson_runtime.ps1
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_crimson_runtime.cmd
         DESTINATION .
         COMPONENT core
     )

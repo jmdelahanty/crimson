@@ -14,6 +14,9 @@ When installed from the published app drop, Crimson also writes a local
 `install_metadata.json` and can show an in-app "update available" notice when
 the share publishes a newer `latest.json`.
 
+The published app drop also includes a cheap runtime verification script:
+- [tools/check_crimson_runtime.ps1](/home/delahantyj@hhmi.org/gitrepos/crimson/tools/check_crimson_runtime.ps1)
+
 Related docs:
 
 - [docs/crimson_windows_internal_publish_workflow.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_internal_publish_workflow.md)
@@ -99,6 +102,12 @@ Double-click alternative:
 1. Open `Z:\crimson\windows-app\current`
 2. Run `install_crimson.cmd`
 
+Optional runtime check:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "Z:\crimson\windows-app\current\check_crimson_runtime.ps1"
+```
+
 ### UNC Example
 
 Preferred:
@@ -115,6 +124,12 @@ Double-click alternative:
 
 1. Open `\\YOUR-SERVER\crimson\windows-app\current`
 2. Run `install_crimson.cmd`
+
+Optional runtime check:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "\\YOUR-SERVER\crimson\windows-app\current\check_crimson_runtime.ps1"
+```
 
 Default install location:
 
@@ -170,6 +185,9 @@ When a new internal app drop is published:
 
 Do not mix files from two different app drops in the same folder.
 
+The installer now runs cheap preflight and postinstall runtime checks by
+default.
+
 ---
 
 ## What Not To Do
@@ -208,3 +226,9 @@ Report both:
 
 - the `.dmp` file
 - the matching `.txt` sidecar
+
+If you want to re-check the install and NVIDIA driver visibility manually, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "C:\Users\<your-user>\AppData\Local\Crimson\check_crimson_runtime.ps1"
+```
