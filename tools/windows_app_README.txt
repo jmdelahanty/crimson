@@ -20,6 +20,11 @@ Quick runtime check:
 Default install location:
 - `%LOCALAPPDATA%\Crimson`
 
+Multi-GPU note:
+- on machines with multiple CUDA GPUs, Crimson may prompt on first launch for
+  which GPU to use
+- the selection is remembered in `%LOCALAPPDATA%\Crimson\config\cuda_device.json`
+
 What gets installed
 -------------------
 

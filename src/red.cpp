@@ -258,6 +258,15 @@ struct AppUpdateStatus {
     std::string status_detail;
 };
 
+struct CudaDeviceInfo {
+    int index = -1;
+    std::string name;
+    size_t total_global_mem = 0;
+    int compute_major = 0;
+    int compute_minor = 0;
+    bool matches_gl_renderer = false;
+};
+
 std::optional<std::filesystem::path> getInstalledAppRoot(
     const std::filesystem::path& argv0_path) {
     auto executable_path = ResolveExecutablePath(argv0_path);
@@ -342,6 +351,357 @@ AppUpdateStatus loadAppUpdateStatus(const std::filesystem::path& argv0_path) {
                                ? "A newer Crimson app drop is available."
                                : "Crimson is up to date.";
     return status;
+}
+
+std::string getGlRendererString() {
+    const GLubyte* renderer = glGetString(GL_RENDERER);
+    if (!renderer) {
+        return "";
+    }
+    return reinterpret_cast<const char*>(renderer);
+}
+
+std::string normalizeGpuMatchString(std::string value) {
+    std::string normalized;
+    normalized.reserve(value.size());
+    for (unsigned char c : value) {
+        if (std::isalnum(c)) {
+            normalized.push_back(
+                static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        }
+    }
+    return normalized;
+}
+
+bool cudaDeviceMatchesGlRenderer(const std::string& device_name,
+                                 const std::string& gl_renderer) {
+    if (device_name.empty() || gl_renderer.empty()) {
+        return false;
+    }
+    const std::string normalized_device = normalizeGpuMatchString(device_name);
+    const std::string normalized_renderer =
+        normalizeGpuMatchString(gl_renderer);
+    if (normalized_device.empty() || normalized_renderer.empty()) {
+        return false;
+    }
+    return normalized_renderer.find(normalized_device) != std::string::npos;
+}
+
+std::string formatGiB(size_t bytes) {
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(1)
+           << (static_cast<double>(bytes) /
+               static_cast<double>(1024ull * 1024ull * 1024ull))
+           << " GiB";
+    return stream.str();
+}
+
+std::vector<CudaDeviceInfo> enumerateCudaDevices(const std::string& gl_renderer,
+                                                 std::string& error_message) {
+    std::vector<CudaDeviceInfo> devices;
+    error_message.clear();
+
+    int device_count = 0;
+    const cudaError_t count_status = cudaGetDeviceCount(&device_count);
+    if (count_status != cudaSuccess) {
+        std::ostringstream stream;
+        stream << "cudaGetDeviceCount failed: "
+               << cudaGetErrorString(count_status);
+        error_message = stream.str();
+        return devices;
+    }
+
+    for (int device_index = 0; device_index < device_count; ++device_index) {
+        cudaDeviceProp props{};
+        const cudaError_t props_status =
+            cudaGetDeviceProperties(&props, device_index);
+        if (props_status != cudaSuccess) {
+            std::ostringstream stream;
+            stream << "cudaGetDeviceProperties(" << device_index
+                   << ") failed: " << cudaGetErrorString(props_status);
+            error_message = stream.str();
+            devices.clear();
+            return devices;
+        }
+
+        CudaDeviceInfo info;
+        info.index = device_index;
+        info.name = props.name;
+        info.total_global_mem = props.totalGlobalMem;
+        info.compute_major = props.major;
+        info.compute_minor = props.minor;
+        info.matches_gl_renderer =
+            cudaDeviceMatchesGlRenderer(info.name, gl_renderer);
+        devices.push_back(std::move(info));
+    }
+
+    return devices;
+}
+
+const CudaDeviceInfo* findCudaDeviceInfo(const std::vector<CudaDeviceInfo>& devices,
+                                         int device_index) {
+    for (const auto& device : devices) {
+        if (device.index == device_index) {
+            return &device;
+        }
+    }
+    return nullptr;
+}
+
+int recommendCudaDeviceIndex(const std::vector<CudaDeviceInfo>& devices) {
+    if (devices.empty()) {
+        return -1;
+    }
+
+    const auto best_it = std::max_element(
+        devices.begin(), devices.end(),
+        [](const CudaDeviceInfo& lhs, const CudaDeviceInfo& rhs) {
+            if (lhs.matches_gl_renderer != rhs.matches_gl_renderer) {
+                return !lhs.matches_gl_renderer && rhs.matches_gl_renderer;
+            }
+            if (lhs.compute_major != rhs.compute_major) {
+                return lhs.compute_major < rhs.compute_major;
+            }
+            if (lhs.compute_minor != rhs.compute_minor) {
+                return lhs.compute_minor < rhs.compute_minor;
+            }
+            if (lhs.total_global_mem != rhs.total_global_mem) {
+                return lhs.total_global_mem < rhs.total_global_mem;
+            }
+            return lhs.index > rhs.index;
+        });
+    return best_it->index;
+}
+
+std::optional<std::filesystem::path> getCudaDeviceConfigPath() {
+    if (const char* explicit_path = std::getenv("CRIMSON_CUDA_DEVICE_CONFIG");
+        explicit_path && *explicit_path != '\0') {
+        return std::filesystem::path(explicit_path);
+    }
+#ifdef _WIN32
+    if (const char* localappdata = std::getenv("LOCALAPPDATA");
+        localappdata && *localappdata != '\0') {
+        return std::filesystem::path(localappdata) / "Crimson" / "config" /
+               "cuda_device.json";
+    }
+    if (const char* appdata = std::getenv("APPDATA");
+        appdata && *appdata != '\0') {
+        return std::filesystem::path(appdata) / "crimson" / "cuda_device.json";
+    }
+#else
+    if (const char* xdg_config_home = std::getenv("XDG_CONFIG_HOME");
+        xdg_config_home && *xdg_config_home != '\0') {
+        return std::filesystem::path(xdg_config_home) / "crimson" /
+               "cuda_device.json";
+    }
+#endif
+    if (const char* home = std::getenv("HOME"); home && *home != '\0') {
+        return std::filesystem::path(home) / ".config" / "crimson" /
+               "cuda_device.json";
+    }
+    return std::nullopt;
+}
+
+std::optional<int> parseCudaDeviceIndexString(const std::string& value) {
+    if (value.empty()) {
+        return std::nullopt;
+    }
+    try {
+        size_t consumed = 0;
+        const int parsed = std::stoi(value, &consumed);
+        if (consumed != value.size() || parsed < 0) {
+            return std::nullopt;
+        }
+        return parsed;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+std::optional<int> loadSavedCudaDeviceIndex(
+    const std::filesystem::path& config_path,
+    std::string& source_description) {
+    auto payload = readJsonFileNoThrow(config_path);
+    if (!payload) {
+        return std::nullopt;
+    }
+    auto selected_index = payload->find("selected_cuda_device_index");
+    if (selected_index == payload->end() || !selected_index->is_number_integer()) {
+        return std::nullopt;
+    }
+    source_description = config_path.string();
+    return selected_index->get<int>();
+}
+
+void saveCudaDeviceSelection(const std::filesystem::path& config_path,
+                             const CudaDeviceInfo& device,
+                             const std::string& gl_renderer) {
+    if (config_path.empty()) {
+        return;
+    }
+
+    std::error_code ec;
+    std::filesystem::create_directories(config_path.parent_path(), ec);
+    if (ec) {
+        std::cerr << "[CudaDevice] Failed to create config directory for "
+                  << config_path << ": " << ec.message() << std::endl;
+        return;
+    }
+
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+    std::tm utc_tm{};
+#ifdef _WIN32
+    gmtime_s(&utc_tm, &now_time);
+#else
+    gmtime_r(&now_time, &utc_tm);
+#endif
+    std::ostringstream saved_time;
+    saved_time << std::put_time(&utc_tm, "%Y-%m-%dT%H:%M:%SZ");
+
+    json payload = {
+        {"schema_version", 1},
+        {"selected_cuda_device_index", device.index},
+        {"selected_cuda_device_name", device.name},
+        {"selected_cuda_device_memory_bytes", device.total_global_mem},
+        {"selected_cuda_device_compute_capability",
+         {{"major", device.compute_major}, {"minor", device.compute_minor}}},
+        {"opengl_renderer", gl_renderer},
+        {"saved_at_utc", saved_time.str()},
+    };
+
+    std::ofstream out(config_path, std::ios::out | std::ios::trunc);
+    if (!out.is_open()) {
+        std::cerr << "[CudaDevice] Failed to write " << config_path
+                  << std::endl;
+        return;
+    }
+    out << payload.dump(2) << "\n";
+}
+
+bool runCudaDeviceSelectionDialog(
+    gx_context* window,
+    const std::vector<CudaDeviceInfo>& devices,
+    const std::string& gl_renderer,
+    int recommended_device_index,
+    int initial_selected_device_index,
+    const std::optional<std::filesystem::path>& config_path,
+    const std::string& initial_error_message,
+    int& selected_device_index,
+    bool& remember_choice) {
+    selected_device_index = initial_selected_device_index;
+    remember_choice = config_path.has_value();
+    std::string bind_error = initial_error_message;
+
+    while (!glfwWindowShouldClose(window->render_target)) {
+        glfwPollEvents();
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always,
+                                ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(760.0f, 0.0f), ImGuiCond_Always);
+
+        ImGuiWindowFlags window_flags =
+            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize;
+        ImGui::Begin("Select CUDA GPU", nullptr, window_flags);
+
+        ImGui::TextWrapped(
+            "Crimson detected multiple CUDA devices. Choose the GPU to use for "
+            "video decode and rendering before startup.");
+        if (!gl_renderer.empty()) {
+            ImGui::SeparatorText("OpenGL Renderer");
+            ImGui::TextWrapped("%s", gl_renderer.c_str());
+        }
+
+        ImGui::SeparatorText("Available CUDA Devices");
+        for (const auto& device : devices) {
+            std::ostringstream label;
+            label << "GPU " << device.index << " | " << device.name;
+            if (device.index == recommended_device_index) {
+                label << "  [Recommended]";
+            }
+            if (device.matches_gl_renderer) {
+                label << "  [Matches OpenGL]";
+            }
+            if (ImGui::RadioButton(label.str().c_str(),
+                                   selected_device_index == device.index)) {
+                selected_device_index = device.index;
+                bind_error.clear();
+            }
+            ImGui::Indent();
+            ImGui::TextDisabled("Compute %d.%d | %s",
+                                device.compute_major,
+                                device.compute_minor,
+                                formatGiB(device.total_global_mem).c_str());
+            ImGui::Unindent();
+        }
+
+        if (const CudaDeviceInfo* selected_device =
+                findCudaDeviceInfo(devices, selected_device_index)) {
+            if (!selected_device->matches_gl_renderer && !gl_renderer.empty()) {
+                ImGui::Spacing();
+                ImGui::TextColored(
+                    ImVec4(1.0f, 0.85f, 0.3f, 1.0f),
+                    "Warning: the selected CUDA device name does not match the "
+                    "current OpenGL renderer. CUDA/GL interop is most reliable "
+                    "when they refer to the same GPU.");
+            }
+        }
+
+        if (config_path.has_value()) {
+            ImGui::Spacing();
+            ImGui::Checkbox("Remember this CUDA GPU for future launches",
+                            &remember_choice);
+        }
+
+        if (!bind_error.empty()) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f),
+                               "CUDA bind failed:");
+            ImGui::TextWrapped("%s", bind_error.c_str());
+        }
+
+        ImGui::Spacing();
+        if (ImGui::Button("Use Selected GPU")) {
+            std::string error_message;
+            if (render_try_bind_cuda_device(selected_device_index,
+                                            error_message)) {
+                if (remember_choice && config_path.has_value()) {
+                    if (const CudaDeviceInfo* selected_device =
+                            findCudaDeviceInfo(devices, selected_device_index)) {
+                        saveCudaDeviceSelection(*config_path, *selected_device,
+                                                gl_renderer);
+                    }
+                }
+                ImGui::End();
+                ImGui::Render();
+                return true;
+            }
+            bind_error = error_message;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Quit")) {
+            ImGui::End();
+            return false;
+        }
+
+        ImGui::End();
+
+        ImGui::Render();
+        int display_w = 0;
+        int display_h = 0;
+        glfwGetFramebufferSize(window->render_target, &display_w, &display_h);
+        glViewport(0, 0, display_w, display_h);
+        glClearColor(0.08f, 0.08f, 0.08f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        glfwSwapBuffers(window->render_target);
+    }
+
+    return false;
 }
 
 std::vector<std::pair<std::string, std::string>> snapshotDecoderErrors() {
@@ -465,6 +825,7 @@ int main(int argc, char **argv) {
     std::string cli_zarr_override_path;
     std::string cli_recording_path;
     std::filesystem::path cli_perf_log_path;
+    std::optional<int> cli_cuda_device_index;
     const std::filesystem::path argv0_path = (argc > 0) ? argv[0] : "";
     std::error_code cwd_error;
     const std::filesystem::path cwd = std::filesystem::current_path(cwd_error);
@@ -497,6 +858,21 @@ int main(int argc, char **argv) {
             cli_perf_log_path = argv[++i];
             continue;
         }
+        if (arg == "--cuda-device") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value for --cuda-device" << std::endl;
+                return 1;
+            }
+            std::string value = argv[++i];
+            auto parsed = parseCudaDeviceIndexString(value);
+            if (!parsed.has_value()) {
+                std::cerr << "Invalid value for --cuda-device: " << value
+                          << std::endl;
+                return 1;
+            }
+            cli_cuda_device_index = *parsed;
+            continue;
+        }
         std::cerr << "Ignoring unknown argument: " << arg << std::endl;
     }
 
@@ -522,8 +898,107 @@ int main(int argc, char **argv) {
     window->render_target_title = (char *)malloc(100);  // window title
     window->glsl_version = (char *)malloc(100);
 
-    constexpr int kCudaDeviceIndex = 0;
-    render_initialize_target(window, kCudaDeviceIndex, argv0_path);
+    render_initialize_target_without_cuda(window, argv0_path);
+    const std::string gl_renderer = getGlRendererString();
+    std::string cuda_device_enum_error;
+    const std::vector<CudaDeviceInfo> cuda_devices =
+        enumerateCudaDevices(gl_renderer, cuda_device_enum_error);
+    if (!cuda_device_enum_error.empty()) {
+        std::cerr << "[CudaDevice] " << cuda_device_enum_error << std::endl;
+    }
+    if (cuda_devices.empty()) {
+        std::cerr << "[CudaDevice] No CUDA devices available." << std::endl;
+        return 1;
+    }
+
+    const std::optional<std::filesystem::path> cuda_device_config_path =
+        getCudaDeviceConfigPath();
+    std::optional<int> env_cuda_device_index;
+    if (const char* env_device = std::getenv("CRIMSON_CUDA_DEVICE_INDEX");
+        env_device && *env_device != '\0') {
+        env_cuda_device_index =
+            parseCudaDeviceIndexString(std::string(env_device));
+        if (!env_cuda_device_index.has_value()) {
+            std::cerr << "[CudaDevice] Ignoring invalid "
+                         "CRIMSON_CUDA_DEVICE_INDEX="
+                      << env_device << std::endl;
+        }
+    }
+    std::string saved_cuda_device_source;
+    std::optional<int> saved_cuda_device_index;
+    if (cuda_device_config_path.has_value()) {
+        saved_cuda_device_index =
+            loadSavedCudaDeviceIndex(*cuda_device_config_path,
+                                     saved_cuda_device_source);
+    }
+
+    const int recommended_cuda_device_index =
+        recommendCudaDeviceIndex(cuda_devices);
+    int selected_cuda_device_index = recommended_cuda_device_index;
+    std::string cuda_device_selection_source = "recommended";
+    std::string initial_bind_error;
+
+    auto choose_if_valid = [&](const std::optional<int>& candidate,
+                               const char* source_label) -> bool {
+        if (!candidate.has_value()) {
+            return false;
+        }
+        if (findCudaDeviceInfo(cuda_devices, *candidate) == nullptr) {
+            std::cerr << "[CudaDevice] Ignoring unavailable device index from "
+                      << source_label << ": " << *candidate << std::endl;
+            return false;
+        }
+        selected_cuda_device_index = *candidate;
+        cuda_device_selection_source = source_label;
+        return true;
+    };
+
+    bool should_prompt_for_cuda_device = cuda_devices.size() > 1;
+    if (choose_if_valid(cli_cuda_device_index, "cli")) {
+        should_prompt_for_cuda_device = false;
+    } else if (choose_if_valid(env_cuda_device_index, "env")) {
+        should_prompt_for_cuda_device = false;
+    } else if (choose_if_valid(saved_cuda_device_index, "saved")) {
+        should_prompt_for_cuda_device = false;
+    }
+
+    bool remember_cuda_device_choice = false;
+    if (!should_prompt_for_cuda_device) {
+        if (!render_try_bind_cuda_device(selected_cuda_device_index,
+                                         initial_bind_error)) {
+            std::cerr << "[CudaDevice] Failed to bind device "
+                      << selected_cuda_device_index << ": "
+                      << initial_bind_error << std::endl;
+            should_prompt_for_cuda_device = true;
+            selected_cuda_device_index = recommended_cuda_device_index;
+            cuda_device_selection_source = "interactive";
+        }
+    }
+
+    if (should_prompt_for_cuda_device) {
+        if (!runCudaDeviceSelectionDialog(
+                window, cuda_devices, gl_renderer, recommended_cuda_device_index,
+                selected_cuda_device_index, cuda_device_config_path,
+                initial_bind_error, selected_cuda_device_index,
+                remember_cuda_device_choice)) {
+            return 0;
+        }
+        cuda_device_selection_source =
+            remember_cuda_device_choice ? "interactive_saved" : "interactive";
+    }
+
+    const CudaDeviceInfo* selected_cuda_device =
+        findCudaDeviceInfo(cuda_devices, selected_cuda_device_index);
+    if (selected_cuda_device != nullptr) {
+        std::cout << "[CudaDevice] Using GPU " << selected_cuda_device->index
+                  << ": " << selected_cuda_device->name << " | compute "
+                  << selected_cuda_device->compute_major << "."
+                  << selected_cuda_device->compute_minor << " | "
+                  << formatGiB(selected_cuda_device->total_global_mem)
+                  << " | source=" << cuda_device_selection_source
+                  << std::endl;
+    }
+
     AppUpdateStatus app_update_status = loadAppUpdateStatus(argv0_path);
 
     render_scene *scene = new render_scene();
@@ -545,7 +1020,7 @@ int main(int argc, char **argv) {
     dc_context->stop_flag = false;
     dc_context->total_num_frame = int(INT_MAX);
     dc_context->estimated_num_frames = 0;
-    dc_context->gpu_index = kCudaDeviceIndex;
+    dc_context->gpu_index = selected_cuda_device_index;
     dc_context->seek_interval = 250;
 
     // gui states, todo: bundle this later
@@ -808,7 +1283,7 @@ int main(int argc, char **argv) {
         if (!initializeStimulusPlayback(stimulus_player, resolved->string(),
                                          stim_buf_size, stimulus_use_cpu_buffer,
                                          stimulus_use_software_decode,
-                                         kCudaDeviceIndex)) {
+                                         selected_cuda_device_index)) {
             std::cerr << "[Stimulus] Failed to auto-load stimulus video: "
                       << resolved->string() << std::endl;
             return;
@@ -3306,7 +3781,7 @@ int main(int argc, char **argv) {
                                                     selected_stimulus_buffer_size,
                                                     stimulus_use_cpu_buffer,
                                                     stimulus_use_software_decode,
-                                                    kCudaDeviceIndex)) {
+                                                    selected_cuda_device_index)) {
                         show_error = true;
                         error_message = "Failed to load stimulus video: " + stimulus_path;
                     } else {
@@ -9128,6 +9603,34 @@ struct StateOverlay {
                      {{"swap_interval", window->swap_interval},
                       {"width", window->width},
                       {"height", window->height}}},
+                    {"cuda",
+                     {{"device_index", selected_cuda_device_index},
+                      {"device_name",
+                       selected_cuda_device ? json(selected_cuda_device->name)
+                                            : json(nullptr)},
+                      {"device_memory_bytes",
+                       selected_cuda_device
+                           ? json(selected_cuda_device->total_global_mem)
+                           : json(nullptr)},
+                      {"compute_capability",
+                       selected_cuda_device
+                           ? json{{"major",
+                                   selected_cuda_device->compute_major},
+                                  {"minor",
+                                   selected_cuda_device->compute_minor}}
+                           : json(nullptr)},
+                      {"selection_source", cuda_device_selection_source},
+                      {"config_path",
+                       cuda_device_config_path
+                           ? json(cuda_device_config_path->string())
+                           : json(nullptr)},
+                      {"saved_selection_source",
+                       saved_cuda_device_source.empty()
+                           ? json(nullptr)
+                           : json(saved_cuda_device_source)},
+                      {"opengl_renderer",
+                       gl_renderer.empty() ? json(nullptr)
+                                           : json(gl_renderer)}}},
                     {"main_video",
                      {{"loaded", video_loaded},
                       {"fps", video_fps},

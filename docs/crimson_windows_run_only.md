@@ -137,6 +137,13 @@ Default install location:
 C:\Users\<your-user>\AppData\Local\Crimson
 ```
 
+On machines with multiple CUDA GPUs, Crimson may prompt on first launch for
+which GPU to use for video decode and rendering. The selection is remembered in:
+
+```text
+C:\Users\<your-user>\AppData\Local\Crimson\config\cuda_device.json
+```
+
 To update an existing install:
 
 ```powershell

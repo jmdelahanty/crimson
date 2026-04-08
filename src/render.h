@@ -4,6 +4,8 @@
 #include "decoder.h"
 #include <cuda_runtime_api.h>
 #include <cstdlib>
+#include <sstream>
+#include <string>
 #include <vector>
 
 
@@ -50,24 +52,60 @@ inline void checkCudaStatus(cudaError_t status, const char* message) {
     }
 }
 
+inline bool render_try_bind_cuda_device(int cuda_device_index,
+                                        std::string& error_message) {
+    cudaError_t status = cudaGLSetGLDevice(cuda_device_index);
+    if (status != cudaSuccess) {
+        std::ostringstream stream;
+        stream << "cudaGLSetGLDevice(" << cuda_device_index
+               << ") failed: " << cudaGetErrorString(status);
+        error_message = stream.str();
+        return false;
+    }
+
+    status = cudaSetDevice(cuda_device_index);
+    if (status != cudaSuccess) {
+        std::ostringstream stream;
+        stream << "cudaSetDevice(" << cuda_device_index
+               << ") failed: " << cudaGetErrorString(status);
+        error_message = stream.str();
+        return false;
+    }
+
+    error_message.clear();
+    return true;
+}
+
+inline void render_bind_cuda_device_or_die(int cuda_device_index) {
+    std::string error_message;
+    if (!render_try_bind_cuda_device(cuda_device_index, error_message)) {
+        fprintf(stderr, "%s\n", error_message.c_str());
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+inline void render_initialize_target_without_cuda(
+    gx_context *context,
+    const std::filesystem::path& argv0_path)
+{
+    GLFWwindow *render_target = gx_glfw_init_render_target(
+        3, 3, context->width, context->height, "Red", context->glsl_version);
+    gx_init(context, render_target);
+    gx_imgui_init(context, argv0_path);
+}
+
 inline void render_initialize_target(gx_context *context, int cuda_device_index)
 {
-    GLFWwindow *render_target = gx_glfw_init_render_target(3, 3, context->width, context->height, "Red", context->glsl_version);
-    gx_init(context, render_target);
-    checkCudaStatus(cudaGLSetGLDevice(cuda_device_index), "cudaGLSetGLDevice failed");
-    checkCudaStatus(cudaSetDevice(cuda_device_index), "cudaSetDevice failed");
-    gx_imgui_init(context, std::filesystem::path());
+    render_initialize_target_without_cuda(context, std::filesystem::path());
+    render_bind_cuda_device_or_die(cuda_device_index);
 }
 
 inline void render_initialize_target(gx_context *context,
                                      int cuda_device_index,
                                      const std::filesystem::path& argv0_path)
 {
-    GLFWwindow *render_target = gx_glfw_init_render_target(3, 3, context->width, context->height, "Red", context->glsl_version);
-    gx_init(context, render_target);
-    checkCudaStatus(cudaGLSetGLDevice(cuda_device_index), "cudaGLSetGLDevice failed");
-    checkCudaStatus(cudaSetDevice(cuda_device_index), "cudaSetDevice failed");
-    gx_imgui_init(context, argv0_path);
+    render_initialize_target_without_cuda(context, argv0_path);
+    render_bind_cuda_device_or_die(cuda_device_index);
 }
 
 static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer)
