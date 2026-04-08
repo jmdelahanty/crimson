@@ -7,7 +7,8 @@ param(
     [switch]$Launch,
     [switch]$SkipPreflightCheck,
     [switch]$SkipPostInstallCheck,
-    [switch]$RequireNvidiaSmi
+    [switch]$RequireNvidiaSmi,
+    [switch]$SkipCudaDevicePrompt
 )
 
 $ErrorActionPreference = "Stop"
@@ -86,6 +87,196 @@ function Get-UtcTimestampString {
     return (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 }
 
+function Find-NvidiaSmiPath {
+    $command = Get-Command "nvidia-smi" -ErrorAction SilentlyContinue
+    if ($command -and -not [string]::IsNullOrWhiteSpace($command.Source)) {
+        return $command.Source
+    }
+
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:SystemRoot)) {
+        $candidates += (Join-Path $env:SystemRoot "System32/nvidia-smi.exe")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:ProgramFiles)) {
+        $candidates += (Join-Path $env:ProgramFiles "NVIDIA Corporation/NVSMI/nvidia-smi.exe")
+    }
+    if (-not [string]::IsNullOrWhiteSpace(${env:ProgramFiles(x86)})) {
+        $candidates += (Join-Path ${env:ProgramFiles(x86)} "NVIDIA Corporation/NVSMI/nvidia-smi.exe")
+    }
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
+function Get-CudaDeviceConfigPath {
+    if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        return $null
+    }
+    return Join-Path $env:LOCALAPPDATA "Crimson\config\cuda_device.json"
+}
+
+function Get-NvidiaSmiDevices {
+    param(
+        [string]$NvidiaSmiPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($NvidiaSmiPath)) {
+        return @()
+    }
+
+    $lines = & $NvidiaSmiPath `
+        "--query-gpu=index,name,memory.total,driver_version" `
+        "--format=csv,noheader,nounits" 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $lines) {
+        return @()
+    }
+
+    $devices = @()
+    foreach ($line in $lines) {
+        $text = $line.ToString().Trim()
+        if ([string]::IsNullOrWhiteSpace($text)) {
+            continue
+        }
+        $parts = $text.Split(",")
+        if ($parts.Count -lt 4) {
+            continue
+        }
+
+        $index = 0
+        $memoryMb = 0
+        if (-not [int]::TryParse($parts[0].Trim(), [ref]$index)) {
+            continue
+        }
+        [void][int]::TryParse($parts[2].Trim(), [ref]$memoryMb)
+
+        $devices += [PSCustomObject]@{
+            index = $index
+            name = $parts[1].Trim()
+            memory_mb = $memoryMb
+            driver_version = $parts[3].Trim()
+        }
+    }
+
+    return @($devices | Sort-Object index)
+}
+
+function Write-CudaDevicePreference {
+    param(
+        [string]$ConfigPath,
+        [object]$Device
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ConfigPath) -or $null -eq $Device) {
+        return
+    }
+
+    $payload = [ordered]@{
+        schema_version = 1
+        selected_cuda_device_index = [int]$Device.index
+        selected_cuda_device_name = [string]$Device.name
+        selected_cuda_device_memory_bytes = ([int64]$Device.memory_mb * 1MB)
+        selected_cuda_device_memory_mb = [int]$Device.memory_mb
+        driver_version = [string]$Device.driver_version
+        saved_at_utc = Get-UtcTimestampString
+        saved_by = "install_crimson.ps1"
+    }
+
+    Write-JsonFile -PathValue $ConfigPath -Data $payload
+}
+
+function MaybeConfigureCudaDevicePreference {
+    if ($SkipCudaDevicePrompt) {
+        return
+    }
+
+    $configPath = Get-CudaDeviceConfigPath
+    if ([string]::IsNullOrWhiteSpace($configPath)) {
+        return
+    }
+
+    $nvidiaSmiPath = Find-NvidiaSmiPath
+    if ([string]::IsNullOrWhiteSpace($nvidiaSmiPath)) {
+        Write-Host ""
+        Write-Host "Skipping CUDA GPU selection:"
+        Write-Host "  nvidia-smi.exe was not found."
+        return
+    }
+
+    $devices = Get-NvidiaSmiDevices -NvidiaSmiPath $nvidiaSmiPath
+    if ($devices.Count -le 1) {
+        return
+    }
+
+    $existingPreference = Read-JsonFile -PathValue $configPath
+    if ($existingPreference -and
+        $existingPreference.PSObject.Properties["selected_cuda_device_index"]) {
+        $existingIndex = [int]$existingPreference.selected_cuda_device_index
+        $existingDevice = $devices | Where-Object { $_.index -eq $existingIndex } |
+            Select-Object -First 1
+        if ($existingDevice) {
+            Write-Host ""
+            Write-Host "Existing saved CUDA GPU preference detected:"
+            Write-Host ("  GPU {0} | {1} | {2} MiB" -f `
+                $existingDevice.index, $existingDevice.name, $existingDevice.memory_mb)
+            Write-Host "Keeping that preference. Delete the saved config or rerun with a different choice later if needed."
+            return
+        }
+    }
+
+    $recommendedDevice = $devices | Sort-Object memory_mb, index -Descending |
+        Select-Object -First 1
+
+    Write-Host ""
+    Write-Host "Multiple NVIDIA GPUs detected."
+    Write-Host "Select the CUDA GPU Crimson should prefer for video decode and rendering."
+    Write-Host "If the selected GPU does not match the display/OpenGL GPU, Crimson may ask again on first launch."
+    Write-Host ""
+    foreach ($device in $devices) {
+        $recommendedSuffix = if ($recommendedDevice -and $device.index -eq $recommendedDevice.index) {
+            " [Suggested stronger GPU]"
+        } else {
+            ""
+        }
+        Write-Host ("  GPU {0} | {1} | {2} MiB | driver {3}{4}" -f `
+            $device.index, $device.name, $device.memory_mb, $device.driver_version, $recommendedSuffix)
+    }
+    Write-Host ""
+
+    while ($true) {
+        $prompt = "Enter CUDA GPU index to remember for Crimson, or press Enter to skip and let Crimson ask on first launch"
+        $response = Read-Host $prompt
+        if ([string]::IsNullOrWhiteSpace($response)) {
+            Write-Host "Skipping saved CUDA GPU preference."
+            return
+        }
+
+        $parsedIndex = 0
+        if (-not [int]::TryParse($response.Trim(), [ref]$parsedIndex)) {
+            Write-Host "Invalid GPU index: $response"
+            continue
+        }
+
+        $selectedDevice = $devices | Where-Object { $_.index -eq $parsedIndex } |
+            Select-Object -First 1
+        if (-not $selectedDevice) {
+            Write-Host "No detected NVIDIA GPU uses index $parsedIndex."
+            continue
+        }
+
+        Write-CudaDevicePreference -ConfigPath $configPath -Device $selectedDevice
+        Write-Host ""
+        Write-Host "Saved Crimson CUDA GPU preference:"
+        Write-Host ("  GPU {0} | {1}" -f $selectedDevice.index, $selectedDevice.name)
+        Write-Host "  config: $configPath"
+        return
+    }
+}
+
 function Get-SourceUpdateInfo {
     param(
         [string]$ResolvedSourceRoot
@@ -148,6 +339,8 @@ $sourceUpdateInfo = Get-SourceUpdateInfo -ResolvedSourceRoot $SourceRoot
 if (-not $SkipPreflightCheck) {
     Invoke-RuntimeCheck -AppRoot $SourceRoot -Label "source app drop"
 }
+
+MaybeConfigureCudaDevicePreference
 
 if (Test-Path -LiteralPath $InstallRoot) {
     if ($ReplaceExisting) {

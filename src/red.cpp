@@ -963,6 +963,26 @@ int main(int argc, char **argv) {
     }
 
     bool remember_cuda_device_choice = false;
+    const bool any_gl_matching_cuda_device =
+        std::any_of(cuda_devices.begin(), cuda_devices.end(),
+                    [](const CudaDeviceInfo& device) {
+                        return device.matches_gl_renderer;
+                    });
+    if (!should_prompt_for_cuda_device &&
+        cuda_device_selection_source == "saved" &&
+        any_gl_matching_cuda_device) {
+        const CudaDeviceInfo* saved_device =
+            findCudaDeviceInfo(cuda_devices, selected_cuda_device_index);
+        if (saved_device != nullptr && !saved_device->matches_gl_renderer) {
+            should_prompt_for_cuda_device = true;
+            initial_bind_error =
+                "The saved CUDA GPU preference does not match the current "
+                "OpenGL renderer. This often happens when the display/monitor "
+                "path or active GPU has changed. Choose the GPU to use for "
+                "this machine and display.";
+        }
+    }
+
     if (!should_prompt_for_cuda_device) {
         if (!render_try_bind_cuda_device(selected_cuda_device_index,
                                          initial_bind_error)) {
