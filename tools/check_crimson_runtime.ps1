@@ -130,6 +130,8 @@ $releaseMetadataPath = Join-Path $AppRoot "release.json"
 $installMetadataPath = Join-Path $AppRoot "install_metadata.json"
 $installScriptPath = Join-Path $AppRoot "install_crimson.ps1"
 $runtimeCheckScriptPath = Join-Path $AppRoot "check_crimson_runtime.ps1"
+$cudaDeviceScriptPath = Join-Path $AppRoot "set_crimson_cuda_device.ps1"
+$cudaDeviceWrapperPath = Join-Path $AppRoot "set_crimson_cuda_device.cmd"
 
 if ($appRootExists) {
     Test-RequiredPath -Category "app" -Name "Crimson executable" -PathValue $exePath | Out-Null
@@ -155,6 +157,18 @@ if ($appRootExists) {
         Add-Ok -Category "app" -Name "Runtime check script" -Details $runtimeCheckScriptPath
     } else {
         Add-Warn -Category "app" -Name "Runtime check script" -Details "missing: $runtimeCheckScriptPath"
+    }
+
+    if (Test-Path -LiteralPath $cudaDeviceScriptPath) {
+        Add-Ok -Category "app" -Name "CUDA device script" -Details $cudaDeviceScriptPath
+    } else {
+        Add-Warn -Category "app" -Name "CUDA device script" -Details "missing: $cudaDeviceScriptPath"
+    }
+
+    if (Test-Path -LiteralPath $cudaDeviceWrapperPath) {
+        Add-Ok -Category "app" -Name "CUDA device wrapper" -Details $cudaDeviceWrapperPath
+    } else {
+        Add-Warn -Category "app" -Name "CUDA device wrapper" -Details "missing: $cudaDeviceWrapperPath"
     }
 }
 

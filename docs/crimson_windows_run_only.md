@@ -17,6 +17,10 @@ the share publishes a newer `latest.json`.
 The published app drop also includes a cheap runtime verification script:
 - [tools/check_crimson_runtime.ps1](/home/delahantyj@hhmi.org/gitrepos/crimson/tools/check_crimson_runtime.ps1)
 
+The published app drop also includes a small CUDA device preference tool for
+multi-GPU machines:
+- [tools/set_crimson_cuda_device.ps1](/home/delahantyj@hhmi.org/gitrepos/crimson/tools/set_crimson_cuda_device.ps1)
+
 Related docs:
 
 - [docs/crimson_windows_internal_publish_workflow.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_internal_publish_workflow.md)
@@ -108,6 +112,12 @@ Optional runtime check:
 powershell -ExecutionPolicy Bypass -File "Z:\crimson\windows-app\current\check_crimson_runtime.ps1"
 ```
 
+Optional CUDA GPU selection tool:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "Z:\crimson\windows-app\current\set_crimson_cuda_device.ps1"
+```
+
 ### UNC Example
 
 Preferred:
@@ -131,6 +141,12 @@ Optional runtime check:
 powershell -ExecutionPolicy Bypass -File "\\YOUR-SERVER\crimson\windows-app\current\check_crimson_runtime.ps1"
 ```
 
+Optional CUDA GPU selection tool:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "\\YOUR-SERVER\crimson\windows-app\current\set_crimson_cuda_device.ps1"
+```
+
 Default install location:
 
 ```text
@@ -144,6 +160,12 @@ launch. The selection is remembered in:
 
 ```text
 C:\Users\<your-user>\AppData\Local\Crimson\config\cuda_device.json
+```
+
+To change that saved GPU choice later without reinstalling, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "C:\Users\<your-user>\AppData\Local\Crimson\set_crimson_cuda_device.ps1"
 ```
 
 To update an existing install:

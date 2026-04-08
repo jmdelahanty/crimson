@@ -17,6 +17,11 @@ Quick runtime check:
 - run `check_crimson_runtime.cmd`
 - or run `check_crimson_runtime.ps1`
 
+Change the saved CUDA GPU later:
+- run `set_crimson_cuda_device.cmd`
+- or run `set_crimson_cuda_device.ps1`
+- use this if you want to change Crimson's saved GPU preference without reinstalling
+
 Default install location:
 - `%LOCALAPPDATA%\Crimson`
 
@@ -26,6 +31,7 @@ Multi-GPU note:
 - if the saved choice no longer matches the active display/OpenGL GPU, Crimson
   may ask again on first launch
 - the selection is remembered in `%LOCALAPPDATA%\Crimson\config\cuda_device.json`
+- you can change the saved preference later with `set_crimson_cuda_device.cmd`
 
 What gets installed
 -------------------

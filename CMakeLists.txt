@@ -645,6 +645,8 @@ if(WIN32)
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/install_crimson.cmd
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_crimson_runtime.ps1
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_crimson_runtime.cmd
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/set_crimson_cuda_device.ps1
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/set_crimson_cuda_device.cmd
         DESTINATION .
         COMPONENT core
     )
