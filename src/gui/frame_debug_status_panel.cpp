@@ -8,6 +8,15 @@ namespace {
 
 void drawFrameOverviewSection(const FrameDebugWindowContext& context) {
     ImGui::Text("Inspecting Frame: %d", context.current_frame_num);
+    if (context.zarr_loader.hasStimulusAlignment()) {
+        if (auto current_stimulus_frame =
+                context.zarr_loader.getStimulusFrameForCameraFrame(
+                    context.current_frame_num)) {
+            ImGui::Text("Stimulus frame: %d", *current_stimulus_frame);
+        } else {
+            ImGui::TextDisabled("Stimulus frame: not mapped");
+        }
+    }
     ImGui::Separator();
 }
 
@@ -84,49 +93,6 @@ void drawReviewStatusSection(const FrameDebugWindowContext& context) {
             ImGui::Text("  Notes: %s",
                         artifact.review_notes.c_str());
         }
-    }
-}
-
-void drawStimulusAlignmentSection(const FrameDebugWindowContext& context) {
-    if (!context.zarr_loader.hasStimulusAlignment()) {
-        return;
-    }
-
-    ImGui::Separator();
-    ImGui::Text("Stimulus Alignment:");
-    if (context.zarr_loader.hasStimulusFrameMapping()) {
-        ImGui::Text("  Mapping variant: %s",
-                    context.zarr_loader.hasCorrectedStimulusFrameMapping()
-                        ? "corrected"
-                        : "legacy");
-        if (auto current_stimulus_frame = context.zarr_loader
-                                              .getStimulusFrameForCameraFrame(
-                                                  context.current_frame_num)) {
-            ImGui::Text("  Current stimulus frame: %d", *current_stimulus_frame);
-        } else {
-            ImGui::Text("  Current stimulus frame: (not mapped)");
-        }
-        if (auto metadata_index =
-                context.zarr_loader.getStimulusMetadataIndexForCameraFrame(
-                    context.current_frame_num)) {
-            ImGui::Text("  Frame metadata index: %d", *metadata_index);
-        }
-        if (auto first_cam =
-                context.zarr_loader.getFirstCameraFrameWithStimulus()) {
-            if (auto first_stim =
-                    context.zarr_loader.getFirstStimulusFrameNumber()) {
-                ImGui::Text("  First mapped camera frame: %d -> Stim %d",
-                            *first_cam,
-                            *first_stim);
-            } else {
-                ImGui::Text("  First mapped camera frame: %d", *first_cam);
-            }
-        }
-        ImGui::Text("  Camera frame offset: %lld",
-                    static_cast<long long>(
-                        context.zarr_loader.getStimulusCameraFrameOffset()));
-    } else {
-        ImGui::Text("  Mapping data not available");
     }
 }
 
@@ -213,6 +179,5 @@ void drawFrameDebugStatusPanel(const FrameDebugWindowContext& context,
     drawFrameOverviewSection(context);
     drawDatasetSelectionSection(context, result);
     drawReviewStatusSection(context);
-    drawStimulusAlignmentSection(context);
     drawDetectionSummarySection(context);
 }

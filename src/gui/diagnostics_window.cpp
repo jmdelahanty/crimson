@@ -33,6 +33,38 @@ DiagnosticsWindowResult drawDiagnosticsWindow(
                            context.frame_sync_debug_line.c_str());
     }
 
+    if (context.zarr_loader.hasStimulusAlignment()) {
+        ImGui::Separator();
+        ImGui::Text("Stimulus Alignment:");
+        if (context.zarr_loader.hasStimulusFrameMapping()) {
+            ImGui::Text("Mapping variant: %s",
+                        context.zarr_loader.hasCorrectedStimulusFrameMapping()
+                            ? "corrected"
+                            : "legacy");
+            if (auto metadata_index =
+                    context.zarr_loader.getStimulusMetadataIndexForCameraFrame(
+                        context.current_frame_num)) {
+                ImGui::Text("Frame metadata index: %d", *metadata_index);
+            }
+            if (auto first_cam =
+                    context.zarr_loader.getFirstCameraFrameWithStimulus()) {
+                if (auto first_stim =
+                        context.zarr_loader.getFirstStimulusFrameNumber()) {
+                    ImGui::Text("First mapped camera frame: %d -> Stim %d",
+                                *first_cam,
+                                *first_stim);
+                } else {
+                    ImGui::Text("First mapped camera frame: %d", *first_cam);
+                }
+            }
+            ImGui::Text("Camera frame offset: %lld",
+                        static_cast<long long>(
+                            context.zarr_loader.getStimulusCameraFrameOffset()));
+        } else {
+            ImGui::Text("Mapping data not available");
+        }
+    }
+
     ImGui::Separator();
     ImGui::Text("Decode Debug:");
     if (ImGui::Button("Dump Decode Buffers")) {
