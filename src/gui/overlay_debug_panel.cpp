@@ -148,13 +148,17 @@ void drawEyeMaskSection(const FrameDebugWindowContext& context,
 
 }  // namespace
 
-void drawOverlayDebugPanel(const FrameDebugWindowContext& context,
-                           FrameDebugWindowResult& result) {
+void drawKeypointHeadingOverlayPanel(const FrameDebugWindowContext& context,
+                                     FrameDebugWindowResult& result) {
     result.show_keypoint_markers = context.show_keypoint_markers;
     result.show_heading_arrows = context.show_heading_arrows;
-    result.show_eye_masks = context.show_eye_masks;
 
     drawKeypointHeadingOverlaySection(context, result);
     drawInterpolationSection(context);
+}
+
+void drawEyeMaskOverlayPanel(const FrameDebugWindowContext& context,
+                             FrameDebugWindowResult& result) {
+    result.show_eye_masks = context.show_eye_masks;
     drawEyeMaskSection(context, result);
 }

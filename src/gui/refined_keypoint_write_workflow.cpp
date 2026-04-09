@@ -116,7 +116,7 @@ void applyCropPreviewKeypointWriteAction(
 
 RefinedKeypointReviewWriteWorkflowResult applyRefinedKeypointReviewWrite(
     RefinedKeypointRepository& refined_keypoint_repo,
-    const RefinedKeypointReviewWindowResult& review_result,
+    const RefinedKeypointReviewPanelResult& review_result,
     std::string& status_out,
     const std::function<bool(std::string&)>& reload_active_zarr) {
     RefinedKeypointReviewWriteWorkflowResult result;

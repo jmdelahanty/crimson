@@ -1,14 +1,23 @@
 #pragma once
 
+#include "gui/refined_keypoint_review_panel.h"
+#include "gui/review_metadata_editor.h"
 #include "review_frame_state.h"
 #include "zarr_bbox_edit.h"
 
 #include <string>
 #include <vector>
 
+enum class FrameInspectTab {
+    Detect = 0,
+    Keypoints,
+    EyeMasks,
+};
+
 struct FrameDebugWindowState {
-    int manual_write_intended_use = 0;
-    int manual_write_review_state = 0;
+    ReviewMetadataEditorState manual_write_review;
+    RefinedKeypointReviewPanelState keypoint_review_panel;
+    FrameInspectTab active_tab = FrameInspectTab::Detect;
 };
 
 struct FrameDebugWindowContext {
@@ -61,6 +70,9 @@ struct FrameDebugWindowResult {
     bool request_clear_bbox_selection = false;
     bool request_build_manual_payload_preview = false;
     bool request_write_manual_payload = false;
+    std::optional<RefinedKeypointSelection> selected_keypoint_selection;
+    bool request_keypoint_review_write = false;
+    RefinedKeypointReviewStatusWriteOptions keypoint_review_options;
     bool show_keypoint_markers = false;
     bool show_heading_arrows = false;
     bool show_eye_masks = false;

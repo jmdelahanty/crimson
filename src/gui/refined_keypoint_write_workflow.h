@@ -1,7 +1,7 @@
 #pragma once
 
 #include "gui/crop_keypoint_editor.h"
-#include "gui/refined_keypoint_review_window.h"
+#include "gui/refined_keypoint_review_panel.h"
 #include "refined_keypoint_repository.h"
 
 #include <functional>
@@ -22,6 +22,6 @@ struct RefinedKeypointReviewWriteWorkflowResult {
 
 RefinedKeypointReviewWriteWorkflowResult applyRefinedKeypointReviewWrite(
     RefinedKeypointRepository& refined_keypoint_repo,
-    const RefinedKeypointReviewWindowResult& review_result,
+    const RefinedKeypointReviewPanelResult& review_result,
     std::string& status_out,
     const std::function<bool(std::string&)>& reload_active_zarr);

@@ -2,5 +2,7 @@
 
 #include "gui/frame_debug_window.h"
 
-void drawOverlayDebugPanel(const FrameDebugWindowContext& context,
-                           FrameDebugWindowResult& result);
+void drawKeypointHeadingOverlayPanel(const FrameDebugWindowContext& context,
+                                     FrameDebugWindowResult& result);
+void drawEyeMaskOverlayPanel(const FrameDebugWindowContext& context,
+                             FrameDebugWindowResult& result);

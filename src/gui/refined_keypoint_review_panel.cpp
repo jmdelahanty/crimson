@@ -1,17 +1,8 @@
 #include "gui/refined_keypoint_review_panel.h"
 
+#include "gui/review_metadata_editor.h"
 #include "imgui.h"
 #include "zarr_loader.h"
-
-namespace {
-
-constexpr const char* kKeypointReviewUseItems[] = {"full_recording", "training"};
-constexpr const char* kKeypointReviewStateItems[] = {
-    "approved", "needs_review", "pending", "rejected"};
-constexpr const char* kKeypointReviewMethodItems[] = {
-    "manual", "algorithmic", "hybrid", "spotcheck"};
-
-}  // namespace
 
 RefinedKeypointReviewPanelResult drawRefinedKeypointReviewPanel(
     const RefinedKeypointReviewPanelContext& context,
@@ -61,34 +52,16 @@ RefinedKeypointReviewPanelResult drawRefinedKeypointReviewPanel(
     }
 
     ImGui::BeginDisabled(!can_write_kp_review);
-    ImGui::Combo("KP Intended Use##write",
-                 &state.intended_use,
-                 kKeypointReviewUseItems,
-                 IM_ARRAYSIZE(kKeypointReviewUseItems));
-    ImGui::Combo("KP Review State##write",
-                 &state.review_state,
-                 kKeypointReviewStateItems,
-                 IM_ARRAYSIZE(kKeypointReviewStateItems));
-    ImGui::Combo("KP Review Method##write",
-                 &state.method,
-                 kKeypointReviewMethodItems,
-                 IM_ARRAYSIZE(kKeypointReviewMethodItems));
-    ImGui::InputText("KP Reviewer##write",
-                     state.reviewer.data(),
-                     state.reviewer.size());
-    ImGui::InputText("KP Notes##write",
-                     state.notes.data(),
-                     state.notes.size());
+    drawReviewMetadataEditor("kp_review_write", state.review_metadata);
     if (ImGui::Button("Write Keypoint Review Status")) {
+        const auto metadata =
+            resolveReviewMetadataValues(state.review_metadata);
         result.request_review_write = true;
-        result.review_options.intended_use =
-            kKeypointReviewUseItems[state.intended_use];
-        result.review_options.state =
-            kKeypointReviewStateItems[state.review_state];
-        result.review_options.method =
-            kKeypointReviewMethodItems[state.method];
-        result.review_options.reviewer = state.reviewer.data();
-        result.review_options.notes = state.notes.data();
+        result.review_options.intended_use = metadata.intended_use;
+        result.review_options.state = metadata.review_state;
+        result.review_options.method = metadata.method;
+        result.review_options.reviewer = metadata.reviewer;
+        result.review_options.notes = metadata.notes;
     }
     ImGui::EndDisabled();
 

@@ -382,6 +382,9 @@ CropKeypointEditorAction drawCropKeypointEditorPanel(
                         "Keypoint edit failed: expected 3 editable crop keypoints.";
                 }
             } else {
+                if (context.status_message != nullptr) {
+                    context.status_message->clear();
+                }
                 action.type = CropKeypointEditorActionType::Save;
                 for (size_t i = 0; i < kManualCropKeypointCount; ++i) {
                     action.keypoints_roi[i][0] = state.positions[i][0];
@@ -391,10 +394,16 @@ CropKeypointEditorAction drawCropKeypointEditorPanel(
         }
         ImGui::SameLine();
         if (ImGui::Button("Mark No Keypoints")) {
+            if (context.status_message != nullptr) {
+                context.status_message->clear();
+            }
             action.type = CropKeypointEditorActionType::MarkNoKeypoints;
         }
         ImGui::SameLine();
         if (ImGui::Button("Mark Detection Issue")) {
+            if (context.status_message != nullptr) {
+                context.status_message->clear();
+            }
             action.type = CropKeypointEditorActionType::MarkDetectionIssue;
         }
         ImGui::SameLine();

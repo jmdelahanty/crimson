@@ -386,10 +386,6 @@ int main(int argc, char **argv) {
             std::chrono::high_resolution_clock::now().time_since_epoch().count()));
 
     std::optional<ManualDetectPayloadPreview> manual_payload_preview;
-    static int manual_write_intended_use = 0;  // 0 = full_recording, 1 = training
-    static int manual_write_review_state = 0;  // 0 = approved, 1 = needs_review, 2 = pending, 3 = rejected
-    static RefinedKeypointReviewWindowState
-        refined_keypoint_review_window_state;
     CropPreviewWindowState crop_preview_window_state;
     LabelingToolWindowState labeling_tool_window_state;
     FrameDebugWindowState frame_debug_window_state;
@@ -703,10 +699,13 @@ int main(int argc, char **argv) {
                 const bool need_details =
                     zarr_loader.hasScores() ||
                     zarr_loader.hasHeadingData() ||
-                    zarr_loader.hasKeypointData() || dataset_has_synthetic_boxes;
+                    zarr_loader.hasKeypointData() ||
+                    zarr_loader.hasEyeMasks() || dataset_has_synthetic_boxes;
                 if (need_details) {
                     detection_details =
-                        zarr_loader.getRawDetections(current_frame_num, false);
+                        zarr_loader.getRawDetections(current_frame_num,
+                                                     false,
+                                                     zarr_loader.hasEyeMasks());
                     detection_details_ptr = &detection_details;
                 }
             }
@@ -869,16 +868,14 @@ int main(int argc, char **argv) {
                     std::string write_error;
                     std::string resolved_refined_run;
                     ManualWriteReviewOptions review_opts;
-                    const char* intended_use_items[] = {"full_recording",
-                                                        "training"};
-                    const char* review_state_items[] = {
-                        "approved", "needs_review", "pending", "rejected"};
+                    const auto review_metadata = resolveReviewMetadataValues(
+                        frame_debug_window_state.manual_write_review);
                     review_opts.intended_use =
-                        intended_use_items
-                            [frame_debug_window_state.manual_write_intended_use];
-                    review_opts.state =
-                        review_state_items
-                            [frame_debug_window_state.manual_write_review_state];
+                        review_metadata.intended_use;
+                    review_opts.state = review_metadata.review_state;
+                    review_opts.method = review_metadata.method;
+                    review_opts.reviewer = review_metadata.reviewer;
+                    review_opts.notes = review_metadata.notes;
                     const bool write_ok =
                         zarr_loader.writeManualRefinedDetections(
                             manual_payload_preview->frame_indices,
@@ -943,6 +940,23 @@ int main(int argc, char **argv) {
                                 reload_error;
                         }
                     }
+                }
+            }
+            if (frame_debug_result.request_keypoint_review_write) {
+                RefinedKeypointRepository refined_keypoint_repo(zarr_loader);
+                const RefinedKeypointReviewWriteWorkflowResult
+                    review_write_result = applyRefinedKeypointReviewWrite(
+                        refined_keypoint_repo,
+                        RefinedKeypointReviewPanelResult{
+                            frame_debug_result.selected_keypoint_selection,
+                            frame_debug_result.request_keypoint_review_write,
+                            frame_debug_result.keypoint_review_options,
+                        },
+                        frame_debug_window_state.keypoint_review_panel
+                            .review_write_status,
+                        reloadActiveZarrPreserveDataset);
+                if (review_write_result.should_clear_zarr_loaded) {
+                    zarr_loaded = false;
                 }
             }
             frame_frame_debug_ui_ms +=
@@ -2357,8 +2371,6 @@ int main(int argc, char **argv) {
                 selected_detection_index,
                 selected_crop_spec,
                 ps.play_video,
-                &refined_keypoint_review_window_state.panel_state
-                     .manual_write_status,
             };
             const auto crop_preview_result = drawCropPreviewWindow(
                 crop_preview_context, crop_preview_window_state);
@@ -2368,37 +2380,11 @@ int main(int argc, char **argv) {
                 crop_preview_result.editor_action,
                 crop_preview_result.selected_keypoint_selection,
                 crop_preview_window_state.editor_state,
-                refined_keypoint_review_window_state.panel_state
+                frame_debug_window_state.keypoint_review_panel
                     .manual_write_status,
                 reloadActiveZarrPreserveDataset);
             frame_crop_preview_ui_ms +=
                 durationMs(std::chrono::steady_clock::now() - crop_preview_ui_start);
-        }
-
-        if (zarr_loaded && zarr_loader.hasKeypointData()) {
-            const RefinedKeypointReviewWindowContext keypoint_review_window_context{
-                zarr_loader,
-                current_frame_num,
-                g_zarr_bbox_edit_state.selected_frame,
-                g_zarr_bbox_edit_state.selected_box,
-            };
-            const auto keypoint_review_window_result =
-                drawRefinedKeypointReviewWindow(
-                    keypoint_review_window_context,
-                    refined_keypoint_review_window_state);
-            if (keypoint_review_window_result.request_review_write) {
-                RefinedKeypointRepository refined_keypoint_repo(zarr_loader);
-                const RefinedKeypointReviewWriteWorkflowResult
-                    review_write_result = applyRefinedKeypointReviewWrite(
-                        refined_keypoint_repo,
-                        keypoint_review_window_result,
-                        refined_keypoint_review_window_state.panel_state
-                            .review_write_status,
-                        reloadActiveZarrPreserveDataset);
-                if (review_write_result.should_clear_zarr_loaded) {
-                    zarr_loaded = false;
-                }
-            }
         }
 
         static StimulusPlaybackWindowsState stimulus_playback_windows_state;

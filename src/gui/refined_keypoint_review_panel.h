@@ -1,21 +1,19 @@
 #pragma once
 
+#include "gui/review_metadata_editor.h"
 #include "refined_keypoint_repository.h"
 
-#include <array>
 #include <optional>
 #include <string>
 
 class ZarrDetectionLoader;
 
 struct RefinedKeypointReviewPanelState {
-    int intended_use = 1;
-    int review_state = 0;
-    int method = 0;
-    std::array<char, 64> reviewer{};
-    std::array<char, 256> notes{};
+    ReviewMetadataEditorState review_metadata{};
     std::string review_write_status;
     std::string manual_write_status;
+
+    RefinedKeypointReviewPanelState() { review_metadata.intended_use = 1; }
 };
 
 struct RefinedKeypointReviewPanelContext {

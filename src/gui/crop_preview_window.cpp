@@ -1208,7 +1208,7 @@ CropPreviewWindowResult drawCropPreviewWindow(const CropPreviewWindowContext& co
     editor_context.edges = &state.crop_kp_edges;
     editor_context.base_arrow_origin = state.arrow_origin_crop;
     editor_context.base_arrow_origin_valid = state.arrow_origin_valid;
-    editor_context.status_message = context.manual_write_status;
+    editor_context.status_message = &state.local_status_message;
 
     CropKeypointPreviewPanelContext preview_context;
     preview_context.crop_texture_id = state.crop_texture;

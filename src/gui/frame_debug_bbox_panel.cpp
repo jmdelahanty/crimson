@@ -1,4 +1,5 @@
 #include "gui/frame_debug_bbox_panel.h"
+#include "gui/review_metadata_editor.h"
 
 #include "imgui.h"
 
@@ -50,17 +51,9 @@ void drawFrameDebugBBoxPanel(const FrameDebugWindowContext& context,
     if (ImGui::Button("Build Manual Payload Preview")) {
         result.request_build_manual_payload_preview = true;
     }
-    const char* intended_use_items[] = {"full_recording", "training"};
-    ImGui::Combo("Intended Use##manual_write",
-                 &state.manual_write_intended_use,
-                 intended_use_items,
-                 IM_ARRAYSIZE(intended_use_items));
-    const char* review_state_items[] = {
-        "approved", "needs_review", "pending", "rejected"};
-    ImGui::Combo("Review State##manual_write",
-                 &state.manual_write_review_state,
-                 review_state_items,
-                 IM_ARRAYSIZE(review_state_items));
+    ImGui::Separator();
+    ImGui::Text("Detection Review Write:");
+    drawReviewMetadataEditor("detect_review_write", state.manual_write_review);
     if (ImGui::Button("Write Manual Payload to Zarr")) {
         result.request_write_manual_payload = true;
     }

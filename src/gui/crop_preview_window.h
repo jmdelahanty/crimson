@@ -43,6 +43,7 @@ struct CropPreviewWindowState {
 
     CropKeypointPreviewUiState preview_ui_state;
     CropKeypointEditorState editor_state;
+    std::string local_status_message;
 };
 
 struct CropPreviewWindowContext {
@@ -55,7 +56,6 @@ struct CropPreviewWindowContext {
     int selected_detection_index = -1;
     std::optional<CropSpec> selected_crop_spec;
     bool play_video = false;
-    std::string* manual_write_status = nullptr;
 };
 
 struct CropPreviewWindowResult {
