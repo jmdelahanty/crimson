@@ -351,6 +351,25 @@ struct ManualWriteReviewOptions {
 
 class ZarrDetectionLoader {
 public:
+    enum class ReviewArtifactKind {
+        Detection,
+        Keypoint,
+        EyeMask,
+    };
+
+    struct ReviewArtifactSummary {
+        ReviewArtifactKind kind = ReviewArtifactKind::Detection;
+        std::string label;
+        std::string run_name;
+        std::string review_state;
+        std::string review_method;
+        std::string review_intended_use;
+        std::string review_timestamp;
+        std::string review_reviewer;
+        std::string review_notes;
+        bool has_review_status = false;
+    };
+
     ZarrDetectionLoader();
     ~ZarrDetectionLoader();
     static constexpr size_t kEyeMaskChunkCacheCapacity = 3;
@@ -473,6 +492,56 @@ public:
     std::string getReviewTimestamp() const { return data_.review_timestamp; }
     std::string getReviewReviewer() const { return data_.review_reviewer; }
     std::string getReviewNotes() const { return data_.review_notes; }
+    std::vector<ReviewArtifactSummary> getAvailableReviewArtifacts() const {
+        std::vector<ReviewArtifactSummary> artifacts;
+
+        if (!data_.detect_run_name.empty() || data_.has_review_status) {
+            artifacts.push_back(ReviewArtifactSummary{
+                ReviewArtifactKind::Detection,
+                "Detection Review",
+                data_.detect_run_name,
+                data_.review_state,
+                data_.review_method,
+                data_.review_intended_use,
+                data_.review_timestamp,
+                data_.review_reviewer,
+                data_.review_notes,
+                data_.has_review_status,
+            });
+        }
+
+        if (!data_.keypoints_run_name.empty() || data_.has_kp_review_status) {
+            artifacts.push_back(ReviewArtifactSummary{
+                ReviewArtifactKind::Keypoint,
+                "Keypoint Review",
+                data_.keypoints_run_name,
+                data_.kp_review_state,
+                data_.kp_review_method,
+                data_.kp_review_intended_use,
+                data_.kp_review_timestamp,
+                data_.kp_review_reviewer,
+                data_.kp_review_notes,
+                data_.has_kp_review_status,
+            });
+        }
+
+        if (!data_.eye_masks_run_name.empty()) {
+            artifacts.push_back(ReviewArtifactSummary{
+                ReviewArtifactKind::EyeMask,
+                "Eye Mask Review",
+                data_.eye_masks_run_name,
+                std::string{},
+                std::string{},
+                std::string{},
+                std::string{},
+                std::string{},
+                std::string{},
+                false,
+            });
+        }
+
+        return artifacts;
+    }
     std::string getStimulusRunName() const {
         return data_.has_interpolation ? data_.latest_interpolation.stimulus_run_name : "";
     }

@@ -8,28 +8,7 @@ namespace {
 
 void drawFrameOverviewSection(const FrameDebugWindowContext& context) {
     ImGui::Text("Inspecting Frame: %d", context.current_frame_num);
-    ImGui::Text("Display target frame: %d", context.display_target_frame);
-    ImGui::Text("Slider frame: %d", context.slider_frame);
-    if (context.frame_sync_valid_slots >= 0 &&
-        context.frame_sync_empty_slots >= 0) {
-        ImGui::Text("Buffer frames: valid=%d empty_remaining=%d total=%u",
-                    context.frame_sync_valid_slots,
-                    context.frame_sync_empty_slots,
-                    context.scene_buffer_size);
-    }
-    if (context.frame_sync_recording_remaining >= 0 &&
-        context.frame_sync_recording_total > 0) {
-        ImGui::Text("Recording decode: latest=%d remaining=%d total=%d",
-                    context.frame_sync_latest_decoded,
-                    context.frame_sync_recording_remaining,
-                    context.frame_sync_recording_total);
-    }
-    if (!context.frame_sync_debug_line.empty()) {
-        ImGui::TextWrapped("Frame sync: %s",
-                           context.frame_sync_debug_line.c_str());
-    }
     ImGui::Separator();
-
 }
 
 void drawDatasetSelectionSection(const FrameDebugWindowContext& context,
@@ -62,32 +41,49 @@ void drawDatasetSelectionSection(const FrameDebugWindowContext& context,
 }
 
 void drawReviewStatusSection(const FrameDebugWindowContext& context) {
-    if (!context.zarr_loader.hasReviewStatus()) {
+    const auto review_artifacts = context.zarr_loader.getAvailableReviewArtifacts();
+    if (review_artifacts.empty()) {
         return;
     }
 
-    const auto& review_state = context.zarr_loader.getReviewState();
-    ImVec4 status_color = (review_state == "approved")
-                              ? ImVec4(0.2f, 0.9f, 0.2f, 1.0f)
-                          : (review_state == "rejected")
-                              ? ImVec4(1.0f, 0.3f, 0.3f, 1.0f)
-                              : ImVec4(1.0f, 0.85f, 0.3f, 1.0f);
-    ImGui::TextColored(status_color, "Review: %s", review_state.c_str());
-    ImGui::SameLine();
-    ImGui::Text("| Use: %s | Method: %s",
-                context.zarr_loader.getReviewIntendedUse().c_str(),
-                context.zarr_loader.getReviewMethod().c_str());
-    if (!context.zarr_loader.getReviewTimestamp().empty()) {
-        ImGui::Text("  Reviewed: %s",
-                    context.zarr_loader.getReviewTimestamp().c_str());
-    }
-    if (!context.zarr_loader.getReviewReviewer().empty()) {
-        ImGui::Text("  Reviewer: %s",
-                    context.zarr_loader.getReviewReviewer().c_str());
-    }
-    if (!context.zarr_loader.getReviewNotes().empty()) {
-        ImGui::Text("  Notes: %s",
-                    context.zarr_loader.getReviewNotes().c_str());
+    ImGui::Separator();
+    ImGui::Text("Review Artifacts:");
+    for (const auto& artifact : review_artifacts) {
+        ImGui::Text("%s", artifact.label.c_str());
+        if (!artifact.run_name.empty()) {
+            ImGui::Text("  Run: %s", artifact.run_name.c_str());
+        }
+        if (!artifact.has_review_status) {
+            ImGui::TextDisabled("  Review metadata unavailable");
+            continue;
+        }
+
+        const auto& review_state = artifact.review_state;
+        ImVec4 status_color = (review_state == "approved")
+                                  ? ImVec4(0.2f, 0.9f, 0.2f, 1.0f)
+                              : (review_state == "rejected")
+                                  ? ImVec4(1.0f, 0.3f, 0.3f, 1.0f)
+                                  : ImVec4(1.0f, 0.85f, 0.3f, 1.0f);
+        ImGui::TextColored(status_color, "  Review: %s",
+                           review_state.c_str());
+        if (!artifact.review_intended_use.empty() ||
+            !artifact.review_method.empty()) {
+            ImGui::Text("  Use: %s | Method: %s",
+                        artifact.review_intended_use.c_str(),
+                        artifact.review_method.c_str());
+        }
+        if (!artifact.review_timestamp.empty()) {
+            ImGui::Text("  Reviewed: %s",
+                        artifact.review_timestamp.c_str());
+        }
+        if (!artifact.review_reviewer.empty()) {
+            ImGui::Text("  Reviewer: %s",
+                        artifact.review_reviewer.c_str());
+        }
+        if (!artifact.review_notes.empty()) {
+            ImGui::Text("  Notes: %s",
+                        artifact.review_notes.c_str());
+        }
     }
 }
 

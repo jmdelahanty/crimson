@@ -57,8 +57,6 @@ struct FrameDebugWindowResult {
     ReviewFrameFilters review_frame_filters;
     bool request_prev_review_frame = false;
     bool request_next_review_frame = false;
-    bool request_dump_decode_buffers = false;
-    bool request_random_seek_dump = false;
     bool request_reset_frame_bbox_edits = false;
     bool request_clear_bbox_selection = false;
     bool request_build_manual_payload_preview = false;

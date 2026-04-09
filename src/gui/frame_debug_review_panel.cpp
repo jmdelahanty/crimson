@@ -52,32 +52,9 @@ void drawReviewNavigationSection(const FrameDebugWindowContext& context,
     }
 }
 
-void drawDecodeDebugSection(const FrameDebugWindowContext& context,
-                            FrameDebugWindowResult& result) {
-    ImGui::Separator();
-    ImGui::Text("Decode Debug:");
-    if (ImGui::Button("Dump Decode Buffers")) {
-        result.request_dump_decode_buffers = true;
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Random Seek + Dump")) {
-        result.request_random_seek_dump = true;
-    }
-    ImGui::TextWrapped("  Output dir: CRIMSON_BUFFER_DUMP_DIR (default %s)",
-                       context.default_buffer_dump_root.c_str());
-    if (!context.decode_debug_status.empty()) {
-        ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f),
-                           "%s",
-                           context.decode_debug_status.c_str());
-    }
-    ImGui::TextWrapped(
-        "  Box colors: clean=blue, interpolated=orange, manual=teal");
-}
-
 }  // namespace
 
 void drawFrameDebugReviewPanel(const FrameDebugWindowContext& context,
                                FrameDebugWindowResult& result) {
     drawReviewNavigationSection(context, result);
-    drawDecodeDebugSection(context, result);
 }

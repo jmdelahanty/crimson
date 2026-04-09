@@ -14,7 +14,7 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
     result.show_heading_arrows = context.show_heading_arrows;
     result.show_eye_masks = context.show_eye_masks;
 
-    if (!ImGui::Begin("Frame Debug")) {
+    if (!ImGui::Begin("Frame Inspect")) {
         ImGui::End();
         return result;
     }

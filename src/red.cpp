@@ -52,6 +52,7 @@
 #include "zarr_loader.h"
 #include "gui/file_browser_window.h"
 #include "gui/crop_preview_window.h"
+#include "gui/diagnostics_window.h"
 #include "gui/frame_debug_window.h"
 #include "gui/full_frame_rect_edit_overlay.h"
 #include "gui/keypoints_window.h"
@@ -746,6 +747,8 @@ int main(int argc, char **argv) {
             };
             const FrameDebugWindowResult frame_debug_result =
                 drawFrameDebugWindow(frame_debug_context, frame_debug_window_state);
+            const DiagnosticsWindowResult diagnostics_result =
+                drawDiagnosticsWindow(frame_debug_context);
 
             show_keypoint_markers = frame_debug_result.show_keypoint_markers;
             show_heading_arrows = frame_debug_result.show_heading_arrows;
@@ -797,11 +800,11 @@ int main(int argc, char **argv) {
                         *jump_result.target_frame, true);
                 }
             }
-            if (frame_debug_result.request_dump_decode_buffers) {
+            if (diagnostics_result.request_dump_decode_buffers) {
                 dumpDecodeBuffersToVideos(makeDecodeDebugDumpContext(),
                                          "manual_dump", decode_debug_status);
             }
-            if (frame_debug_result.request_random_seek_dump) {
+            if (diagnostics_result.request_random_seek_dump) {
                 randomSeekAndDumpBuffers(
                     RandomSeekDumpContext{
                         makeDecodeDebugDumpContext(),
