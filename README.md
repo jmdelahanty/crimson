@@ -135,6 +135,22 @@ For repeat use on the validated Windows stack, prefer the helper script:
 It sets the `CRIMSON_*` dependency roots and prepends the common runtime DLL
 directories to `PATH` for the current PowerShell session.
 
+### Windows Run-Only App Drop
+
+For internal run-only Windows users, the published app drop includes:
+
+- `install_crimson.ps1` / `install_crimson.cmd`
+- `check_crimson_runtime.ps1` / `check_crimson_runtime.cmd`
+- `set_crimson_cuda_device.ps1` / `set_crimson_cuda_device.cmd`
+
+The CUDA-device tool is intended for multi-GPU machines where a user may need
+to change Crimson's saved NVIDIA/CUDA GPU preference later without reinstalling.
+It updates the saved preference file under `%LOCALAPPDATA%\Crimson\config\`.
+
+For the short run-only install path, update flow, and mapped-drive / UNC
+examples, see
+[docs/crimson_windows_run_only.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_run_only.md).
+
 ### Local User Presets
 
 If you do not want to export environment variables every time, create a local

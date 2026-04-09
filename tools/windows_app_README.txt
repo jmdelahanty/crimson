@@ -21,6 +21,12 @@ Change the saved CUDA GPU later:
 - run `set_crimson_cuda_device.cmd`
 - or run `set_crimson_cuda_device.ps1`
 - use this if you want to change Crimson's saved GPU preference without reinstalling
+- example:
+  `powershell -ExecutionPolicy Bypass -File ".\set_crimson_cuda_device.ps1"`
+- to force a specific GPU index:
+  `powershell -ExecutionPolicy Bypass -File ".\set_crimson_cuda_device.ps1" -DeviceIndex 1`
+- to clear the saved choice:
+  `powershell -ExecutionPolicy Bypass -File ".\set_crimson_cuda_device.ps1" -ClearSavedChoice`
 
 Default install location:
 - `%LOCALAPPDATA%\Crimson`
