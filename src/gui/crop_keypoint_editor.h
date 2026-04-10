@@ -1,5 +1,6 @@
 #pragma once
 
+#include "keypoint_heading_utils.h"
 #include "refined_keypoint_repository.h"
 
 #include <array>
@@ -51,6 +52,7 @@ struct CropKeypointEditorContext {
     const std::vector<std::array<float, 2>>* source_positions = nullptr;
     const std::vector<std::string>* labels = nullptr;
     const std::vector<std::array<size_t, 2>>* edges = nullptr;
+    const KeypointHeadingComputationSpec* heading_spec = nullptr;
     std::array<float, 2> base_arrow_origin = {0.0f, 0.0f};
     bool base_arrow_origin_valid = false;
     std::string* status_message = nullptr;
@@ -61,6 +63,8 @@ struct CropKeypointEditorDisplay {
     std::array<float, 2> arrow_origin = {0.0f, 0.0f};
     bool arrow_origin_valid = false;
     bool selection_editable = false;
+    bool candidate_heading_valid = false;
+    float candidate_heading_deg = 0.0f;
 };
 
 struct CropKeypointPreviewUiState {

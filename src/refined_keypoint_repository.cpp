@@ -229,18 +229,14 @@ KeypointGeometryMetrics computeGeometryMetrics(
 }
 
 double computeHeadingFromPoints(
+    const KeypointHeadingComputationSpec& heading_spec,
     const std::array<std::array<double, 2>, kManualKeypointCount>& points) {
-    const double eye_mean_x = (points[1][0] + points[2][0]) * 0.5;
-    const double eye_mean_y = (points[1][1] + points[2][1]) * 0.5;
-    const double head_vec_x = eye_mean_x - points[0][0];
-    const double head_vec_y = eye_mean_y - points[0][1];
-    if (!std::isfinite(head_vec_x) || !std::isfinite(head_vec_y)) {
+    std::vector<std::array<double, 2>> positions(points.begin(), points.end());
+    double heading_deg = std::numeric_limits<double>::quiet_NaN();
+    if (!evaluateKeypointHeadingDegrees(heading_spec, positions, heading_deg)) {
         return std::numeric_limits<double>::quiet_NaN();
     }
-    if (std::hypot(head_vec_x, head_vec_y) == 0.0) {
-        return std::numeric_limits<double>::quiet_NaN();
-    }
-    return std::atan2(-head_vec_y, head_vec_x) * 180.0 / M_PI;
+    return heading_deg;
 }
 
 bool jsonScalarEqual(const json& lhs, const json& rhs) {
@@ -1395,9 +1391,11 @@ bool applyKeypointEdit(const ZarrDetectionLoader& loader,
         }
     }
 
+    const KeypointHeadingComputationSpec& heading_spec =
+        loader.getHeadingComputationSpec();
     const double heading_value =
         mode == KeypointEditMode::ManualCorrection
-            ? computeHeadingFromPoints(points_roi)
+            ? computeHeadingFromPoints(heading_spec, points_roi)
             : std::numeric_limits<double>::quiet_NaN();
     const KeypointGeometryMetrics geometry =
         mode == KeypointEditMode::ManualCorrection

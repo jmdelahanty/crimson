@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gui/crop_keypoint_editor.h"
+#include "keypoint_heading_utils.h"
 #include "refined_keypoint_repository.h"
 #include "zarr_loader.h"
 
@@ -21,6 +22,7 @@ struct FullFrameKeypointEditState {
 struct FullFrameKeypointEditContext {
     const RefinedKeypointSelection* selection = nullptr;
     const ZarrDetectionLoader::FrameDetections* detection_details = nullptr;
+    const KeypointHeadingComputationSpec* heading_spec = nullptr;
     float image_width_px = 0.0f;
     float image_height_px = 0.0f;
     bool plot_hovered = false;

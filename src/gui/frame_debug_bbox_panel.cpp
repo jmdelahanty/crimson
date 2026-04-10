@@ -58,7 +58,7 @@ void drawFrameDebugBBoxPanel(const FrameDebugWindowContext& context,
         result.request_write_manual_payload = true;
     }
     ImGui::TextWrapped(
-        "  Writes refined_detect_runs/<latest>/manual and updates manual pointers/status.");
+        "  Writes refined_detect_runs/<latest>/instances and updates refined detect review status.");
     ImGui::EndDisabled();
 
     if (!context.bbox_payload_status.empty()) {

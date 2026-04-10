@@ -75,7 +75,18 @@ void syncCropKeypointEditorState(const CropKeypointEditorContext& context,
 bool computeArrowOriginForPositions(
     const std::vector<std::array<float, 2>>& positions,
     const std::vector<std::string>& labels,
+    const KeypointHeadingComputationSpec* heading_spec,
     std::array<float, 2>& out_origin) {
+    if (heading_spec != nullptr && heading_spec->available &&
+        heading_spec->enabled) {
+        const auto positions_d = convertKeypointPositionsToDouble(positions);
+        std::array<double, 2> origin_d{};
+        if (evaluateKeypointHeadingOrigin(*heading_spec, positions_d, origin_d)) {
+            out_origin = {static_cast<float>(origin_d[0]),
+                          static_cast<float>(origin_d[1])};
+            return true;
+        }
+    }
     float left_x = NAN;
     float left_y = NAN;
     float right_x = NAN;
@@ -100,6 +111,33 @@ bool computeArrowOriginForPositions(
         return false;
     }
     out_origin = {(left_x + right_x) * 0.5f, (left_y + right_y) * 0.5f};
+    return true;
+}
+
+bool computeCandidateHeading(
+    const CropKeypointEditorContext& context,
+    const CropKeypointEditorState& state,
+    float& out_heading_deg) {
+    if (!(state.dirty && context.heading_spec != nullptr &&
+          context.heading_spec->available && context.heading_spec->enabled &&
+          context.source_positions != nullptr)) {
+        return false;
+    }
+    const std::vector<int> edited_indices = collectEditedKeypointIndices(
+        *context.source_positions, state.positions);
+    if (!headingComputationDependsOnEditedIndices(*context.heading_spec,
+                                                  edited_indices)) {
+        return false;
+    }
+
+    const auto positions_d = convertKeypointPositionsToDouble(state.positions);
+    double heading_deg = std::numeric_limits<double>::quiet_NaN();
+    if (!evaluateKeypointHeadingDegrees(*context.heading_spec,
+                                        positions_d,
+                                        heading_deg)) {
+        return false;
+    }
+    out_heading_deg = static_cast<float>(heading_deg);
     return true;
 }
 
@@ -187,6 +225,8 @@ void drawKeypointOverlay(const CropKeypointEditorContext& context,
 void drawHeadingArrowAt(bool show_heading_arrow,
                         bool stored_heading_valid,
                         float stored_heading_deg,
+                        bool candidate_heading_valid,
+                        float candidate_heading_deg,
                         const std::array<float, 2>& arrow_origin,
                         bool arrow_origin_valid,
                         ImVec2 image_top_left,
@@ -212,14 +252,45 @@ void drawHeadingArrowAt(bool show_heading_arrow,
     ImVec2 h2(tip.x + head_len * std::cos(rad - head_angle),
               tip.y - head_len * std::sin(rad - head_angle));
     draw_list->AddTriangleFilled(tip, h1, h2, IM_COL32(255, 50, 50, 220));
+
+    if (!candidate_heading_valid) {
+        return;
+    }
+
+    const float candidate_rad = candidate_heading_deg * (3.14159265f / 180.0f);
+    const float candidate_dx = std::cos(candidate_rad) * arrow_len;
+    const float candidate_dy = -std::sin(candidate_rad) * arrow_len;
+    ImVec2 candidate_tip(center.x + candidate_dx, center.y + candidate_dy);
+    const ImU32 candidate_color = IM_COL32(255, 210, 80, 240);
+    const int dash_count = 8;
+    for (int dash_idx = 0; dash_idx < dash_count; ++dash_idx) {
+        const float start_t = static_cast<float>(dash_idx) / dash_count;
+        const float end_t =
+            std::min(1.0f, start_t + 0.065f);
+        ImVec2 seg_a(center.x + candidate_dx * start_t,
+                     center.y + candidate_dy * start_t);
+        ImVec2 seg_b(center.x + candidate_dx * end_t,
+                     center.y + candidate_dy * end_t);
+        draw_list->AddLine(seg_a, seg_b, candidate_color, 2.0f);
+    }
+    ImVec2 ch1(candidate_tip.x + head_len * std::cos(candidate_rad + head_angle),
+               candidate_tip.y - head_len * std::sin(candidate_rad + head_angle));
+    ImVec2 ch2(candidate_tip.x + head_len * std::cos(candidate_rad - head_angle),
+               candidate_tip.y - head_len * std::sin(candidate_rad - head_angle));
+    draw_list->AddLine(candidate_tip, ch1, candidate_color, 2.0f);
+    draw_list->AddLine(candidate_tip, ch2, candidate_color, 2.0f);
 }
 
 void drawHeadingArrow(const CropKeypointEditorContext& context,
                       const std::array<float, 2>& arrow_origin,
-                      bool arrow_origin_valid) {
+                      bool arrow_origin_valid,
+                      bool candidate_heading_valid,
+                      float candidate_heading_deg) {
     drawHeadingArrowAt(context.show_heading_arrow,
                        context.stored_heading_valid,
                        context.stored_heading_deg,
+                       candidate_heading_valid,
+                       candidate_heading_deg,
                        arrow_origin,
                        arrow_origin_valid,
                        context.image_top_left,
@@ -257,6 +328,7 @@ CropKeypointEditorDisplay drawCropKeypointEditorOverlay(
     if (display.positions != nullptr && context.labels != nullptr &&
         computeArrowOriginForPositions(*display.positions,
                                        *context.labels,
+                                       context.heading_spec,
                                        display.arrow_origin)) {
         display.arrow_origin_valid = true;
     } else {
@@ -314,7 +386,10 @@ CropKeypointEditorDisplay drawCropKeypointEditorOverlay(
                     point = {local_x, local_y};
                     state.dirty = true;
                     display.arrow_origin_valid = computeArrowOriginForPositions(
-                        state.positions, *context.labels, display.arrow_origin);
+                        state.positions,
+                        *context.labels,
+                        context.heading_spec,
+                        display.arrow_origin);
                 }
             } else {
                 state.active_handle = -1;
@@ -327,7 +402,13 @@ CropKeypointEditorDisplay drawCropKeypointEditorOverlay(
     if (display.positions != nullptr) {
         drawKeypointOverlay(context, *display.positions);
     }
-    drawHeadingArrow(context, display.arrow_origin, display.arrow_origin_valid);
+    display.candidate_heading_valid =
+        computeCandidateHeading(context, state, display.candidate_heading_deg);
+    drawHeadingArrow(context,
+                     display.arrow_origin,
+                     display.arrow_origin_valid,
+                     display.candidate_heading_valid,
+                     display.candidate_heading_deg);
     return display;
 }
 
@@ -510,6 +591,8 @@ CropKeypointPreviewPanelResult drawCropKeypointPreviewPanel(
         }
         drawHeadingArrowAt(ui_state.show_heading_arrow,
                            context.editor_context.stored_heading_valid,
+                           0.0f,
+                           false,
                            0.0f,
                            context.rotated.arrow_origin,
                            context.rotated.arrow_origin_valid,

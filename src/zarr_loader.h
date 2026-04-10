@@ -20,6 +20,7 @@
 #include <unordered_map>
 #include <nlohmann/json.hpp>
 #include "h5_loader.h"  // For LoggedBoundingBox structure compatibility
+#include "keypoint_heading_utils.h"
 
 namespace ts = tensorstore;
 using json = nlohmann::json;
@@ -137,7 +138,7 @@ struct ZarrDetectionData {
 
     // Optional heading / keypoint data aligned with detections
     std::vector<float> flat_headings_deg;               // heading angle per detection
-    std::vector<std::array<float, 2>> flat_swim_bladder_px;  // swim bladder anchor in pixel coords
+    std::vector<std::array<float, 2>> flat_swim_bladder_px;  // resolved heading origin in pixel coords
     std::vector<uint8_t> flat_heading_valid;            // 1 if heading data valid
     bool has_heading_data = false;
     bool has_keypoints = false;
@@ -148,6 +149,7 @@ struct ZarrDetectionData {
     size_t keypoints_per_detection = 0;
     std::vector<std::string> keypoint_labels;
     std::vector<std::array<size_t, 2>> skeleton_edges;  // from pose_schema.edges
+    KeypointHeadingComputationSpec heading_computation_spec;
 
     // Refined keypoint quality metadata (detection-aligned, same indexing as flat_keypoints_px)
     bool is_refined_keypoints = false;
@@ -778,6 +780,12 @@ public:
 
     bool hasHeadingData() const { return data_.has_heading_data; }
     bool hasKeypointData() const { return data_.has_keypoints; }
+    const std::vector<std::string>& getKeypointLabels() const {
+        return data_.keypoint_labels;
+    }
+    const KeypointHeadingComputationSpec& getHeadingComputationSpec() const {
+        return data_.heading_computation_spec;
+    }
     bool hasDetectionData() const {
         return data_.has_raw_detection_dataset ||
                !data_.frame_offsets.empty() ||

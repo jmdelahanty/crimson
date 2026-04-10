@@ -916,10 +916,10 @@ int main(int argc, char **argv) {
                             zarr_loaded = true;
                             if (zarr_loader.isDatasetAvailable(
                                     ZarrDetectionLoader::DetectionDataset::
-                                        RefinedManual)) {
+                                        RefinedRoot)) {
                                 (void)zarr_loader.setActiveDetectionDataset(
                                     ZarrDetectionLoader::DetectionDataset::
-                                        RefinedManual);
+                                        RefinedRoot);
                             }
                             refreshDetectionDatasetOptions(zarr_loader);
                             g_zarr_bbox_edit_state.clearAll();
@@ -940,7 +940,8 @@ int main(int argc, char **argv) {
                                 << "Manual write complete: run="
                                 << (resolved_refined_run.empty() ? "<latest>"
                                                                 : resolved_refined_run)
-                                << " group=manual"
+                                << " surface=instances"
+                                << " resolved_group=refined"
                                 << " detections=" << written_detections;
                             bbox_payload_status = payload_msg.str();
                         } else {
@@ -2006,6 +2007,8 @@ int main(int argc, char **argv) {
                         full_frame_edit_state,
                         zarr_loaded ? &zarr_boxes : nullptr,
                         zarr_loaded ? &detection_details : nullptr,
+                        zarr_loaded ? &zarr_loader.getHeadingComputationSpec()
+                                    : nullptr,
                         zarr_loaded &&
                             zarr_loader.activeDatasetHasSyntheticDetections(),
                         is_zarr_interpolated,

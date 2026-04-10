@@ -263,6 +263,7 @@ CameraViewWindowResult drawCameraViewWindowContents(
                     const FullFrameKeypointEditContext keypoint_edit_context{
                         context.selected_keypoint_selection,
                         context.detection_details,
+                        context.heading_spec,
                         static_cast<float>(camera.image_width),
                         image_height_px,
                         plot_hovered,

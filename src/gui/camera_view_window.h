@@ -62,6 +62,7 @@ struct CameraViewWindowContext {
     FullFrameRectEditStateView full_frame_edit_state;
     const std::vector<LoggedBoundingBox>* zarr_boxes = nullptr;
     const ZarrDetectionLoader::FrameDetections* detection_details = nullptr;
+    const KeypointHeadingComputationSpec* heading_spec = nullptr;
     bool active_dataset_has_synthetic_detections = false;
     bool frame_is_interpolated = false;
     int latest_decoded_frame = -1;

@@ -11,6 +11,7 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     data_.flat_keypoints_px.clear();
     data_.keypoint_roi_indices.clear();
     data_.keypoint_labels.clear();
+    data_.heading_computation_spec = KeypointHeadingComputationSpec{};
     data_.keypoints_per_detection = 0;
     data_.has_keypoints = false;
     data_.mask_roi_indices.clear();
@@ -215,8 +216,6 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     }
 
     auto run_attrs = readAttrsAny(store, run_base);
-    size_t swim_index = 0;
-    bool swim_label_found = false;
     std::vector<std::string> keypoint_labels_loaded;
     if (run_attrs.has_value() &&
         run_attrs->contains("keypoint_labels") &&
@@ -229,18 +228,6 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
             }
             std::string label = labels[i].get<std::string>();
             keypoint_labels_loaded.push_back(label);
-            if (!swim_label_found) {
-                std::string lowered = label;
-                std::transform(lowered.begin(), lowered.end(), lowered.begin(),
-                               [](unsigned char c) {
-                                   return static_cast<char>(std::tolower(c));
-                               });
-                if (lowered.find("bladder") != std::string::npos ||
-                    lowered.find("swim") != std::string::npos) {
-                    swim_index = keypoint_labels_loaded.size() - 1;
-                    swim_label_found = true;
-                }
-            }
         }
     }
 
@@ -290,13 +277,14 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
                 }
             }
         }
-        if (swim_index >= num_keypoints) {
-            swim_index = 0;
-        }
     } else {
         data_.keypoint_labels.clear();
-        swim_index = 0;
     }
+
+    data_.heading_computation_spec =
+        resolveKeypointHeadingComputationSpec(
+            run_attrs.has_value() ? &*run_attrs : nullptr,
+            data_.keypoint_labels);
 
     std::vector<std::string> crop_candidates;
     auto addCandidate = [&](const std::string& candidate) {
@@ -543,6 +531,11 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
         float assigned_y = nan_value;
         float raw_anchor_x = nan_value;
         float raw_anchor_y = nan_value;
+        std::vector<std::array<double, 2>> converted_positions;
+        converted_positions.assign(num_keypoints,
+                                   std::array<double, 2>{
+                                       std::numeric_limits<double>::quiet_NaN(),
+                                       std::numeric_limits<double>::quiet_NaN()});
 
         if (!kp_values.empty() && num_keypoints > 0 && coord_dim >= 2) {
             size_t stride = num_keypoints * coord_dim;
@@ -627,17 +620,36 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
                     data_.flat_keypoints_px[flat_base + kp_idx * 2 + 0] = converted[0];
                     data_.flat_keypoints_px[flat_base + kp_idx * 2 + 1] = converted[1];
                 }
-                if (kp_idx == swim_index) {
-                    raw_anchor_x = raw_x;
-                    raw_anchor_y = raw_y;
-                    if (std::isfinite(converted[0]) && std::isfinite(converted[1])) {
-                        assigned_x = converted[0];
-                        assigned_y = converted[1];
-                        assigned_anchor = true;
-                    }
-                }
+                converted_positions[kp_idx] = {
+                    static_cast<double>(converted[0]),
+                    static_cast<double>(converted[1])};
                 if (can_store_flat && std::isfinite(converted[0]) && std::isfinite(converted[1])) {
                     finite_keypoint_count++;
+                }
+            }
+        }
+
+        if (data_.heading_computation_spec.available &&
+            data_.heading_computation_spec.enabled) {
+            std::array<double, 2> resolved_origin{};
+            if (evaluateKeypointHeadingOrigin(data_.heading_computation_spec,
+                                              converted_positions,
+                                              resolved_origin)) {
+                assigned_x = static_cast<float>(resolved_origin[0]);
+                assigned_y = static_cast<float>(resolved_origin[1]);
+                assigned_anchor = true;
+            }
+            if (data_.heading_computation_spec.direction_from.indices.size() == 1) {
+                const int raw_anchor_idx =
+                    data_.heading_computation_spec.direction_from.indices[0];
+                if (raw_anchor_idx >= 0 &&
+                    static_cast<size_t>(raw_anchor_idx) < num_keypoints) {
+                    size_t kp_base = roi_index * num_keypoints * coord_dim +
+                                     static_cast<size_t>(raw_anchor_idx) * coord_dim;
+                    if (kp_base + 1 < kp_values.size()) {
+                        raw_anchor_x = kp_values[kp_base + 0];
+                        raw_anchor_y = kp_values[kp_base + 1];
+                    }
                 }
             }
         }

@@ -920,15 +920,8 @@ void buildRotatedCropPreview(const CropPreviewWindowContext& context,
     const float crop_center_x = width * 0.5f;
     const float crop_center_y = height * 0.5f;
     const float output_center = crop_side * 0.5f;
-
-    float left_x = NAN;
-    float left_y = NAN;
-    float right_x = NAN;
-    float right_y = NAN;
-    float left_rx = NAN;
-    float left_ry = NAN;
-    float right_rx = NAN;
-    float right_ry = NAN;
+    const KeypointHeadingComputationSpec& heading_spec =
+        context.zarr_loader.getHeadingComputationSpec();
 
     for (size_t ki = 0; ki < keypoints.size(); ++ki) {
         if (!std::isfinite(keypoints[ki][0]) || !std::isfinite(keypoints[ki][1])) {
@@ -949,39 +942,27 @@ void buildRotatedCropPreview(const CropPreviewWindowContext& context,
             ki < det.keypoint_labels.size() ? det.keypoint_labels[ki] : "";
         state.crop_kp_labels.push_back(label);
         state.rotated_kp_labels.push_back(label);
-
-        const bool is_left = label.find("left") != std::string::npos;
-        const bool is_right = label.find("right") != std::string::npos;
-        if ((is_left || is_right) &&
-            std::isfinite(keypoints[ki][0]) && std::isfinite(keypoints[ki][1])) {
-            const float px = keypoints[ki][0] - offset_x;
-            const float py = keypoints[ki][1] - offset_y;
-            if (is_left) {
-                left_x = px;
-                left_y = py;
-                if (ki < state.rotated_kp_positions.size()) {
-                    left_rx = state.rotated_kp_positions[ki][0];
-                    left_ry = state.rotated_kp_positions[ki][1];
-                }
-            }
-            if (is_right) {
-                right_x = px;
-                right_y = py;
-                if (ki < state.rotated_kp_positions.size()) {
-                    right_rx = state.rotated_kp_positions[ki][0];
-                    right_ry = state.rotated_kp_positions[ki][1];
-                }
-            }
-        }
     }
 
-    if (std::isfinite(left_x) && std::isfinite(right_x)) {
-        state.arrow_origin_crop = {(left_x + right_x) / 2.0f,
-                                   (left_y + right_y) / 2.0f};
-        state.arrow_origin_rotated = {(left_rx + right_rx) / 2.0f,
-                                      (left_ry + right_ry) / 2.0f};
-        state.arrow_origin_valid = true;
+    const auto crop_positions_d =
+        convertKeypointPositionsToDouble(state.crop_kp_positions);
+    const auto rotated_positions_d =
+        convertKeypointPositionsToDouble(state.rotated_kp_positions);
+    std::array<double, 2> crop_origin{};
+    std::array<double, 2> rotated_origin{};
+    const bool crop_origin_valid = evaluateKeypointHeadingOrigin(
+        heading_spec, crop_positions_d, crop_origin);
+    const bool rotated_origin_valid = evaluateKeypointHeadingOrigin(
+        heading_spec, rotated_positions_d, rotated_origin);
+    if (crop_origin_valid) {
+        state.arrow_origin_crop = {static_cast<float>(crop_origin[0]),
+                                   static_cast<float>(crop_origin[1])};
     }
+    if (rotated_origin_valid) {
+        state.arrow_origin_rotated = {static_cast<float>(rotated_origin[0]),
+                                      static_cast<float>(rotated_origin[1])};
+    }
+    state.arrow_origin_valid = crop_origin_valid && rotated_origin_valid;
 }
 
 bool refreshCropPreview(const CropPreviewWindowContext& context,
@@ -1206,6 +1187,7 @@ CropPreviewWindowResult drawCropPreviewWindow(const CropPreviewWindowContext& co
     editor_context.source_positions = &state.crop_kp_positions;
     editor_context.labels = &state.crop_kp_labels;
     editor_context.edges = &state.crop_kp_edges;
+    editor_context.heading_spec = &context.zarr_loader.getHeadingComputationSpec();
     editor_context.base_arrow_origin = state.arrow_origin_crop;
     editor_context.base_arrow_origin_valid = state.arrow_origin_valid;
     editor_context.status_message = &state.local_status_message;

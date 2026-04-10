@@ -17,6 +17,7 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
     std::string* resolved_refined_run,
     const ManualWriteReviewOptions& review_options) {
     error_message.clear();
+    (void)manual_group;
 
     if (root_path_.empty()) {
         error_message = "No loaded Zarr archive to write into.";
@@ -57,21 +58,11 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
         return false;
     }
     if (review_options.method != "manual" && review_options.method != "algorithmic" &&
-        review_options.method != "hybrid" && review_options.method != "spotcheck") {
-        error_message = "review_options.method must be one of manual|algorithmic|hybrid|spotcheck, got \"" +
+        review_options.method != "hybrid" && review_options.method != "spotcheck" &&
+        review_options.method != "retune") {
+        error_message = "review_options.method must be one of manual|algorithmic|hybrid|spotcheck|retune, got \"" +
                         review_options.method + "\".";
         return false;
-    }
-
-    std::string manual_group_name = manual_group;
-    while (!manual_group_name.empty() && manual_group_name.front() == '/') {
-        manual_group_name.erase(manual_group_name.begin());
-    }
-    while (!manual_group_name.empty() && manual_group_name.back() == '/') {
-        manual_group_name.pop_back();
-    }
-    if (manual_group_name.empty()) {
-        manual_group_name = "manual";
     }
 
     std::vector<int32_t> frame_counts_sanitized = frame_counts;
@@ -112,16 +103,48 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
         }
     }
 
+    if (data_.image_width <= 0 || data_.image_height <= 0) {
+        error_message = "Image dimensions are unavailable for bbox_img_xyxy writes.";
+        return false;
+    }
+
     std::vector<double> bbox_flat;
+    std::vector<double> bbox_img_xyxy_flat;
     bbox_flat.reserve(n_detections * 4);
+    bbox_img_xyxy_flat.reserve(n_detections * 4);
     for (const auto& row : bbox_norm_coords) {
-        for (double value : row) {
+        const double cx = std::clamp(row[0], 0.0, 1.0);
+        const double cy = std::clamp(row[1], 0.0, 1.0);
+        const double w = std::clamp(row[2], 0.0, 1.0);
+        const double h = std::clamp(row[3], 0.0, 1.0);
+        const double x1 =
+            std::clamp((cx - 0.5 * w) * static_cast<double>(data_.image_width),
+                       0.0,
+                       static_cast<double>(data_.image_width));
+        const double y1 =
+            std::clamp((cy - 0.5 * h) * static_cast<double>(data_.image_height),
+                       0.0,
+                       static_cast<double>(data_.image_height));
+        const double x2 =
+            std::clamp((cx + 0.5 * w) * static_cast<double>(data_.image_width),
+                       0.0,
+                       static_cast<double>(data_.image_width));
+        const double y2 =
+            std::clamp((cy + 0.5 * h) * static_cast<double>(data_.image_height),
+                       0.0,
+                       static_cast<double>(data_.image_height));
+
+        for (double value : {cx, cy, w, h}) {
             if (!std::isfinite(value)) {
                 error_message = "bbox_norm_coords contains non-finite values.";
                 return false;
             }
             bbox_flat.push_back(std::clamp(value, 0.0, 1.0));
         }
+        bbox_img_xyxy_flat.push_back(x1);
+        bbox_img_xyxy_flat.push_back(y1);
+        bbox_img_xyxy_flat.push_back(x2);
+        bbox_img_xyxy_flat.push_back(y2);
     }
 
     std::vector<int8_t> detection_source_sanitized;
@@ -139,6 +162,10 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
     size_t clean_rows = 0;
     size_t interpolated_rows = 0;
     size_t manual_rows = 0;
+    std::vector<int8_t> source_kind_codes;
+    std::vector<bool> manual_edit_flags;
+    source_kind_codes.reserve(n_detections);
+    manual_edit_flags.reserve(n_detections);
     for (size_t i = 0; i < reasons.size(); ++i) {
         std::string lowered = toLowerCopy(reasons[i]);
         if (lowered.empty()) {
@@ -150,14 +177,20 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
             reasons[i] = "manual";
             detection_source_sanitized[i] = 0;
             ++manual_rows;
+            source_kind_codes.push_back(3);
+            manual_edit_flags.push_back(true);
         } else if (lowered.find("interp") != std::string::npos) {
             reasons[i] = "interpolated";
             detection_source_sanitized[i] = 1;
             ++interpolated_rows;
+            source_kind_codes.push_back(2);
+            manual_edit_flags.push_back(false);
         } else {
             reasons[i] = "clean";
             detection_source_sanitized[i] = 0;
             ++clean_rows;
+            source_kind_codes.push_back(1);
+            manual_edit_flags.push_back(false);
         }
     }
 
@@ -176,9 +209,25 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
         reason_bytes[row_offset + copy_len] = 0;
     }
 
-    std::vector<int32_t> frame_mapping = frame_indices;
-    std::vector<int32_t> n_detections_alias = frame_counts_sanitized;
-    std::vector<int32_t> retune_id(n_detections, -1);
+    std::vector<int64_t> frame_offsets;
+    frame_offsets.reserve(frame_counts_sanitized.size() + 1);
+    frame_offsets.push_back(0);
+    int64_t running_offset = 0;
+    for (int32_t count : frame_counts_sanitized) {
+        running_offset += static_cast<int64_t>(count);
+        frame_offsets.push_back(running_offset);
+    }
+
+    std::vector<int64_t> refined_row_ids;
+    refined_row_ids.reserve(n_detections);
+    std::vector<int32_t> source_detect_row_index(n_detections, -1);
+    std::unordered_map<int32_t, int32_t> ordinal_by_frame;
+    for (size_t i = 0; i < n_detections; ++i) {
+        const int32_t frame_id = frame_indices[i];
+        int32_t ordinal = ordinal_by_frame[frame_id]++;
+        refined_row_ids.push_back((static_cast<int64_t>(frame_id) << 32) |
+                                  static_cast<uint32_t>(ordinal));
+    }
 
     const std::string kvstore_path = normalizeKvstoreFileRootPath(root_path_);
     auto kv_spec = ts::kvstore::Spec::FromJson(
@@ -220,19 +269,20 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
 
     std::string source_variant_value = toLowerCopy(source_variant);
     if (source_variant_value != "filtered" &&
-        source_variant_value != "interpolated") {
+        source_variant_value != "interpolated" &&
+        source_variant_value != "refined") {
         source_variant_value = (active_dataset_ == DetectionDataset::RefinedFiltered)
                                    ? "filtered"
-                                   : "interpolated";
+                                   : "refined";
     }
 
-    const std::string manual_group_path = refined_run_path + manual_group_name + "/";
+    const std::string instances_path = refined_run_path + "instances/";
     auto delete_result =
-        ts::kvstore::DeleteRange(store, ts::KeyRange::Prefix(manual_group_path))
+        ts::kvstore::DeleteRange(store, ts::KeyRange::Prefix(instances_path))
             .result();
     if (!delete_result.ok()) {
         error_message =
-            "Failed to clear existing manual subgroup: " +
+            "Failed to clear existing instances subgroup: " +
             delete_result.status().ToString();
         return false;
     }
@@ -245,10 +295,22 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
     const ts::Index reason_width_index =
         static_cast<ts::Index>(reason_bytes_width);
 
+    if (!writeNumericArray1D<int64_t>(
+            store,
+            context_,
+            instances_path + "refined_row_ids",
+            "int64",
+            refined_row_ids,
+            det_chunk,
+            0,
+            true,
+            &error_message)) {
+        return false;
+    }
     if (!writeNumericArray1D<int32_t>(
             store,
             context_,
-            manual_group_path + "frame_indices",
+            instances_path + "frame_indices",
             "int32",
             frame_indices,
             det_chunk,
@@ -257,10 +319,37 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
             &error_message)) {
         return false;
     }
+    if (!writeNumericArray1D<int64_t>(
+            store,
+            context_,
+            instances_path + "frame_offsets",
+            "int64",
+            frame_offsets,
+            frame_chunk,
+            0,
+            true,
+            &error_message)) {
+        return false;
+    }
     if (!writeNumericArray2DFlat<double>(
             store,
             context_,
-            manual_group_path + "bbox_norm_coords",
+            instances_path + "bbox_img_xyxy",
+            "float64",
+            bbox_img_xyxy_flat,
+            static_cast<ts::Index>(n_detections),
+            4,
+            det_chunk,
+            4,
+            0.0,
+            true,
+            &error_message)) {
+        return false;
+    }
+    if (!writeNumericArray2DFlat<double>(
+            store,
+            context_,
+            instances_path + "bbox_norm_coords",
             "float64",
             bbox_flat,
             static_cast<ts::Index>(n_detections),
@@ -275,7 +364,7 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
     if (!writeNumericArray1D<float>(
             store,
             context_,
-            manual_group_path + "scores",
+            instances_path + "confidence_scores",
             "float32",
             scores_sanitized,
             det_chunk,
@@ -287,7 +376,7 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
     if (!writeNumericArray1D<int32_t>(
             store,
             context_,
-            manual_group_path + "class_ids",
+            instances_path + "class_ids",
             "int32",
             class_ids,
             det_chunk,
@@ -299,7 +388,7 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
     if (!writeNumericArray1D<int32_t>(
             store,
             context_,
-            manual_group_path + "frame_counts",
+            instances_path + "frame_counts",
             "int32",
             frame_counts_sanitized,
             frame_chunk,
@@ -308,46 +397,46 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
             &error_message)) {
         return false;
     }
-    if (!writeNumericArray1D<int32_t>(
-            store,
-            context_,
-            manual_group_path + "n_detections",
-            "int32",
-            n_detections_alias,
-            frame_chunk,
-            0,
-            true,
-            &error_message)) {
-        return false;
-    }
-    if (!writeNumericArray1D<int32_t>(
-            store,
-            context_,
-            manual_group_path + "frame_mapping",
-            "int32",
-            frame_mapping,
-            det_chunk,
-            0,
-            true,
-            &error_message)) {
-        return false;
-    }
     if (!writeNumericArray1D<int8_t>(
             store,
             context_,
-            manual_group_path + "detection_source",
+            instances_path + "source_kind_codes",
             "int8",
-            detection_source_sanitized,
+            source_kind_codes,
             det_chunk,
             0,
             false,
             &error_message)) {
         return false;
     }
+    if (!writeNumericArray1D<bool>(
+            store,
+            context_,
+            instances_path + "manual_edit_flags",
+            "bool",
+            manual_edit_flags,
+            det_chunk,
+            false,
+            false,
+            &error_message)) {
+        return false;
+    }
+    if (!writeNumericArray1D<int32_t>(
+            store,
+            context_,
+            instances_path + "source_detect_row_index",
+            "int32",
+            source_detect_row_index,
+            det_chunk,
+            -1,
+            true,
+            &error_message)) {
+        return false;
+    }
     if (!writeNumericArray2DFlat<uint8_t>(
             store,
             context_,
-            manual_group_path + "reason_bytes",
+            instances_path + "reason_bytes",
             "uint8",
             reason_bytes,
             static_cast<ts::Index>(n_detections),
@@ -359,67 +448,86 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
             &error_message)) {
         return false;
     }
-    if (!writeNumericArray1D<int32_t>(
+    if (!writeNumericArray1D<int8_t>(
             store,
             context_,
-            manual_group_path + "retune_id",
-            "int32",
-            retune_id,
+            instances_path + "detection_source",
+            "int8",
+            detection_source_sanitized,
             det_chunk,
-            -1,
-            true,
+            0,
+            false,
             &error_message)) {
         return false;
     }
 
     const std::string timestamp = currentUtcIsoTimestamp();
-    json manual_meta = makeEmptyGroupMetadataV3();
-    auto& manual_attrs = manual_meta["attributes"];
-    manual_attrs["reason_encoding"] = "utf8-null-terminated";
-    manual_attrs["reason_bytes_width"] = static_cast<int64_t>(reason_bytes_width);
-    manual_attrs["reason_bytes_null_terminated"] = true;
-    manual_attrs["reason_fallback_order"] =
+    json instances_meta = makeEmptyGroupMetadataV3();
+    auto& instances_attrs = instances_meta["attributes"];
+    instances_attrs["reason_encoding"] = "utf8-null-terminated";
+    instances_attrs["reason_bytes_width"] = static_cast<int64_t>(reason_bytes_width);
+    instances_attrs["reason_bytes_null_terminated"] = true;
+    instances_attrs["reason_fallback_order"] =
         json::array({"reason_bytes", "reason", "detection_source"});
-    manual_attrs["storage_layout"] = "columnar";
-    const json manual_fields = json::array(
-        {"frame_indices",
+    instances_attrs["storage_layout"] = "sparse_instances_v1";
+    const json instance_fields = json::array(
+        {"refined_row_ids",
+         "frame_indices",
+         "frame_offsets",
+         "bbox_img_xyxy",
          "bbox_norm_coords",
-         "scores",
+         "source_kind_codes",
+         "manual_edit_flags",
+         "source_detect_row_index",
+         "confidence_scores",
          "class_ids",
          "frame_counts",
-         "n_detections",
-         "frame_mapping",
          "detection_source",
-         "reason_bytes",
-         "retune_id"});
-    manual_attrs["column_fields"] = manual_fields;
-    manual_attrs["field_names"] = manual_fields;
-    manual_attrs["total_detections"] = static_cast<int64_t>(n_detections);
-    manual_attrs["clean_detections"] = static_cast<int64_t>(clean_rows);
-    manual_attrs["interpolated_detections"] =
+         "reason_bytes"});
+    instances_attrs["column_fields"] = instance_fields;
+    instances_attrs["field_names"] = instance_fields;
+    instances_attrs["total_detections"] = static_cast<int64_t>(n_detections);
+    instances_attrs["clean_detections"] = static_cast<int64_t>(clean_rows);
+    instances_attrs["interpolated_detections"] =
         static_cast<int64_t>(interpolated_rows);
-    manual_attrs["manual_detections"] = static_cast<int64_t>(manual_rows);
-    manual_attrs["detection_source_type"] = "manual";
-    manual_attrs["detection_source_path"] =
-        "refined_detect_runs/" + refined_run + "/" + manual_group_name;
-    manual_attrs["source_refined_run"] = refined_run;
-    manual_attrs["source_variant"] = source_variant_value;
-    manual_attrs["manual_review_timestamp"] = timestamp;
-    if (!writeNodeMetaV3(store, manual_group_path, manual_meta, &error_message)) {
+    instances_attrs["manual_detections"] = static_cast<int64_t>(manual_rows);
+    instances_attrs["source_refined_run"] = refined_run;
+    instances_attrs["source_variant"] = source_variant_value;
+    instances_attrs["curated_surface"] = "instances";
+    if (!writeNodeMetaV3(store, instances_path, instances_meta, &error_message)) {
         return false;
     }
 
     json run_meta = normalizeGroupMetadataV3(*refined_run_meta);
     auto& run_attrs = run_meta["attributes"];
-    run_attrs["manual_review_latest"] = manual_group_name;
+    run_attrs.erase("manual_review_latest");
+    const json source_kind_code_map = json::object({
+        {"none", 0},
+        {"raw_detect", 1},
+        {"interpolated", 2},
+        {"manual", 3},
+    });
+    run_attrs["refined_storage_semantics"] = "sparse_instances_v1";
+    run_attrs["curated_primary_surface"] = "instances";
+    run_attrs["curated_row_storage"] = "sparse_instances_v1";
+    run_attrs["row_sort_order"] = json::array({"frame_indices", "refined_row_ids"});
+    run_attrs["source_kind_code_map"] = source_kind_code_map;
+    run_attrs["summary_statistics"] = json::object({
+        {"total_detections", static_cast<int64_t>(n_detections)},
+        {"clean_detections", static_cast<int64_t>(clean_rows)},
+        {"interpolated_detections", static_cast<int64_t>(interpolated_rows)},
+        {"manual_detections", static_cast<int64_t>(manual_rows)},
+    });
     json review_status = json{
         {"state", review_options.state},
         {"method", review_options.method},
         {"intended_use", review_options.intended_use},
         {"timestamp", timestamp},
-        {"resolved_group", manual_group_name},
+        {"timestamp_utc", timestamp},
+        {"resolved_group", "refined"},
+        {"target_group", "refined"},
         {"preference_chain",
-         json::array({"manual", "interpolated", "filtered", "raw"})}};
+         json::array({"refined", "manual", "interpolated", "filtered", "raw"})}};
     if (!review_options.reviewer.empty()) {
         review_status["reviewer"] = review_options.reviewer;
     }
@@ -444,4 +552,3 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
 
     return true;
 }
-

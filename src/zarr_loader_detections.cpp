@@ -236,25 +236,25 @@ ZarrDetectionLoader::getAvailableDetectionDatasets() const {
         return fallback;
     };
 
+    if (data_.has_refined_root_dataset) {
+        std::string label = make_label(data_.refined_root_dataset, "Refined");
+        result.emplace_back(DetectionDataset::RefinedRoot, std::move(label));
+    }
     if (data_.has_raw_detection_dataset) {
         std::string label = make_label(data_.raw_detection_dataset, "Detect run");
         result.emplace_back(DetectionDataset::RawDetect, std::move(label));
-    }
-    if (data_.has_refined_manual_dataset) {
-        std::string label = make_label(data_.refined_manual_dataset, "Refined manual");
-        result.emplace_back(DetectionDataset::RefinedManual, std::move(label));
-    }
-    if (data_.has_refined_filtered_dataset) {
-        std::string label = make_label(data_.refined_filtered_dataset, "Refined filtered");
-        result.emplace_back(DetectionDataset::RefinedFiltered, std::move(label));
     }
     if (data_.has_refined_interpolated_dataset) {
         std::string label = make_label(data_.refined_interpolated_dataset, "Refined interpolated");
         result.emplace_back(DetectionDataset::RefinedInterpolated, std::move(label));
     }
-    if (data_.has_refined_root_dataset) {
-        std::string label = make_label(data_.refined_root_dataset, "Refined (root)");
-        result.emplace_back(DetectionDataset::RefinedRoot, std::move(label));
+    if (data_.has_refined_filtered_dataset) {
+        std::string label = make_label(data_.refined_filtered_dataset, "Refined filtered");
+        result.emplace_back(DetectionDataset::RefinedFiltered, std::move(label));
+    }
+    if (data_.has_refined_manual_dataset) {
+        std::string label = make_label(data_.refined_manual_dataset, "Legacy refined manual");
+        result.emplace_back(DetectionDataset::RefinedManual, std::move(label));
     }
     return result;
 }

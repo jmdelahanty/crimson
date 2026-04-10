@@ -151,6 +151,101 @@ void drawEditableKeypointOverlay(const FullFrameKeypointEditContext& context,
     }
 }
 
+void drawCandidateHeadingOverlay(const FullFrameKeypointEditContext& context,
+                                 const FullFrameKeypointEditState& state) {
+    if (!(context.heading_spec != nullptr && context.heading_spec->available &&
+          context.heading_spec->enabled && context.selection != nullptr &&
+          context.detection_details != nullptr && state.dirty &&
+          context.selection->detection_index <
+              context.detection_details->keypoints_pixels.size())) {
+        return;
+    }
+
+    const auto& baseline_positions =
+        context.detection_details
+            ->keypoints_pixels[context.selection->detection_index];
+    if (baseline_positions.size() != state.positions_img.size()) {
+        return;
+    }
+    std::vector<int> edited_indices;
+    edited_indices.reserve(state.positions_img.size());
+    for (size_t i = 0; i < state.positions_img.size(); ++i) {
+        const auto& baseline = baseline_positions[i];
+        const auto& current = state.positions_img[i];
+        const bool baseline_finite =
+            std::isfinite(baseline[0]) && std::isfinite(baseline[1]);
+        const bool current_finite =
+            std::isfinite(current[0]) && std::isfinite(current[1]);
+        if (baseline_finite != current_finite) {
+            edited_indices.push_back(static_cast<int>(i));
+            continue;
+        }
+        if (!baseline_finite) {
+            continue;
+        }
+        if (std::abs(baseline[0] - current[0]) > 0.01f ||
+            std::abs(baseline[1] - current[1]) > 0.01f) {
+            edited_indices.push_back(static_cast<int>(i));
+        }
+    }
+    if (!headingComputationDependsOnEditedIndices(*context.heading_spec,
+                                                  edited_indices)) {
+        return;
+    }
+
+    const auto positions_d = convertKeypointPositionsToDouble(state.positions_img);
+    double heading_deg = std::numeric_limits<double>::quiet_NaN();
+    std::array<double, 2> origin{};
+    if (!evaluateKeypointHeadingDegrees(*context.heading_spec,
+                                        positions_d,
+                                        heading_deg,
+                                        &origin)) {
+        return;
+    }
+
+    const float image_height = context.image_height_px;
+    const float rad = static_cast<float>(heading_deg * M_PI / 180.0);
+    const float arrow_len =
+        std::max(60.0f, std::max(context.image_width_px, context.image_height_px) * 0.07f);
+    const float base_x = static_cast<float>(origin[0]);
+    const float base_y = static_cast<float>(origin[1]);
+    const float end_x = base_x + std::cos(rad) * arrow_len;
+    const float end_y = base_y - std::sin(rad) * arrow_len;
+
+    ImDrawList* plot_draw_list = ImPlot::GetPlotDrawList();
+    const ImVec2 p0 =
+        ImPlot::PlotToPixels(ImPlotPoint(base_x, image_height - base_y));
+    const ImVec2 p1 =
+        ImPlot::PlotToPixels(ImPlotPoint(end_x, image_height - end_y));
+    const ImU32 dashed_color = IM_COL32(255, 210, 80, 240);
+    const int dash_count = 10;
+    for (int dash_idx = 0; dash_idx < dash_count; ++dash_idx) {
+        const float start_t = static_cast<float>(dash_idx) / dash_count;
+        const float end_t = std::min(1.0f, start_t + 0.06f);
+        const ImVec2 seg_a(p0.x + (p1.x - p0.x) * start_t,
+                           p0.y + (p1.y - p0.y) * start_t);
+        const ImVec2 seg_b(p0.x + (p1.x - p0.x) * end_t,
+                           p0.y + (p1.y - p0.y) * end_t);
+        plot_draw_list->AddLine(seg_a, seg_b, dashed_color, 2.0f);
+    }
+
+    ImVec2 dir(p0.x - p1.x, p0.y - p1.y);
+    const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+    if (len > 1e-3f) {
+        dir.x /= len;
+        dir.y /= len;
+        constexpr float head_size = 8.0f;
+        const ImVec2 left(
+            p1.x + dir.x * head_size + dir.y * head_size * 0.5f,
+            p1.y + dir.y * head_size - dir.x * head_size * 0.5f);
+        const ImVec2 right(
+            p1.x + dir.x * head_size - dir.y * head_size * 0.5f,
+            p1.y + dir.y * head_size + dir.x * head_size * 0.5f);
+        plot_draw_list->AddLine(p1, left, dashed_color, 2.0f);
+        plot_draw_list->AddLine(p1, right, dashed_color, 2.0f);
+    }
+}
+
 }  // namespace
 
 void resetFullFrameKeypointEditState(FullFrameKeypointEditState& state) {
@@ -183,6 +278,7 @@ FullFrameKeypointEditOverlayResult processFullFrameKeypointEditOverlay(
     }
 
     drawEditableKeypointOverlay(context, result.state);
+    drawCandidateHeadingOverlay(context, result.state);
 
     if (!context.plot_hovered || context.play_video || result.state.positions_img.empty()) {
         result.state.active_handle = -1;
