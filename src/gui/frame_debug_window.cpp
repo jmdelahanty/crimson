@@ -36,6 +36,7 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
                             context.current_frame_num,
                             context.bbox_edit_state.selected_frame,
                             context.bbox_edit_state.selected_box,
+                            context.play_video,
                         };
                     const auto keypoint_review_panel_result =
                         drawRefinedKeypointReviewPanel(
@@ -43,6 +44,8 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
                             state.keypoint_review_panel);
                     result.selected_keypoint_selection =
                         keypoint_review_panel_result.selected_selection;
+                    result.keypoint_edit_action =
+                        keypoint_review_panel_result.edit_action;
                     result.request_keypoint_review_write =
                         keypoint_review_panel_result.request_review_write;
                     result.keypoint_review_options =

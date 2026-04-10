@@ -379,7 +379,8 @@ std::vector<FullFrameRectOverlayItem> buildCameraViewBoundingBoxOverlayItems(
 void drawCameraViewDetectionKeypointMarkers(
     const ZarrDetectionLoader::FrameDetections& detection_details,
     bool show_keypoint_markers,
-    float image_height_px) {
+    float image_height_px,
+    int skip_detection_index) {
     if (!(show_keypoint_markers && detection_details.has_keypoints &&
           !detection_details.keypoints_pixels.empty() &&
           detection_details.keypoints_per_detection > 0)) {
@@ -438,6 +439,10 @@ void drawCameraViewDetectionKeypointMarkers(
     }
 
     for (size_t det_idx = 0; det_idx < detection_count; ++det_idx) {
+        if (skip_detection_index >= 0 &&
+            det_idx == static_cast<size_t>(skip_detection_index)) {
+            continue;
+        }
         const auto& keypoints = detection_details.keypoints_pixels[det_idx];
         if (keypoints.size() != kp_per_det) {
             continue;

@@ -88,6 +88,12 @@ FullFrameRectEditResult processFullFrameRectEditInput(
         cancelDraw(result.state);
         clearSelection(result.state);
     }
+    if (!context.allow_mouse_rect_interaction) {
+        result.state.draw_mode = false;
+        cancelDraw(result.state);
+        result.state.drag_active = false;
+        result.state.drag_mouse_button = -1;
+    }
 
     if (result.state.selected_frame == context.current_frame_num &&
         (result.state.selected_box < 0 ||
@@ -97,6 +103,7 @@ FullFrameRectEditResult processFullFrameRectEditInput(
 
     if (context.plot_hovered) {
         if (context.dataset_allows_rect_edit &&
+            context.allow_mouse_rect_interaction &&
             ImGui::IsKeyPressed(ImGuiKey_N, false)) {
             result.state.draw_mode = !result.state.draw_mode;
             cancelDraw(result.state);
@@ -182,7 +189,8 @@ FullFrameRectEditResult processFullFrameRectEditInput(
         }
     }
 
-    if (!result.state.draw_mode && !result.state.drag_active &&
+    if (context.allow_mouse_rect_interaction && !result.state.draw_mode &&
+        !result.state.drag_active &&
         context.plot_hovered && context.can_modify_rects &&
         ImGui::GetIO().KeyCtrl && ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
         result.state.selected_frame == context.current_frame_num &&
@@ -208,7 +216,7 @@ FullFrameRectEditResult processFullFrameRectEditInput(
 
     if (result.state.drag_active) {
         const int held_button = result.state.drag_mouse_button;
-        if (held_button < 0 ||
+        if (!context.allow_mouse_rect_interaction || held_button < 0 ||
             !ImGui::IsMouseDown(static_cast<ImGuiMouseButton>(held_button)) ||
             result.state.selected_frame != context.current_frame_num ||
             result.state.selected_box < 0) {
@@ -234,7 +242,8 @@ FullFrameRectEditResult processFullFrameRectEditInput(
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left, false)) {
         click_button = ImGuiMouseButton_Left;
     }
-    if (context.plot_hovered && click_button >= 0) {
+    if (context.allow_mouse_rect_interaction && context.plot_hovered &&
+        click_button >= 0) {
         if (result.state.draw_mode) {
             if (click_button == ImGuiMouseButton_Left && context.can_modify_rects &&
                 ImGui::GetIO().KeyCtrl) {

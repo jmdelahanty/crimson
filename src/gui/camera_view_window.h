@@ -2,9 +2,11 @@
 
 #include "camera.h"
 #include "gui/camera_view_transport_controls.h"
+#include "gui/full_frame_keypoint_edit_overlay.h"
 #include "gui/full_frame_rect_edit_overlay.h"
 #include "legacy_labeling_state.h"
 #include "render.h"
+#include "refined_keypoint_repository.h"
 #include "zarr_bbox_edit.h"
 #include "zarr_loader.h"
 
@@ -71,6 +73,9 @@ struct CameraViewWindowContext {
     const std::vector<int>* yolo_class_ids = nullptr;
 
     bool show_keypoint_markers = false;
+    bool full_frame_keypoint_edit_enabled = false;
+    const RefinedKeypointSelection* selected_keypoint_selection = nullptr;
+    FullFrameKeypointEditState full_frame_keypoint_edit_state;
     bool can_draw_headings = false;
     bool can_draw_eye_masks = false;
     const ZarrDetectionLoader::FrameDetections* heading_details = nullptr;
@@ -89,6 +94,7 @@ struct CameraViewWindowContext {
 
 struct CameraViewWindowResult {
     FullFrameRectEditResult full_frame_edit_result;
+    FullFrameKeypointEditState full_frame_keypoint_edit_state;
     CameraViewTransportControlsResult transport_result;
     bool legacy_manual_keypoints_find = false;
     bool view_focused = false;

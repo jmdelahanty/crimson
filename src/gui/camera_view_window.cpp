@@ -56,6 +56,7 @@ CameraViewWindowResult drawCameraViewWindowContents(
     const CameraViewWindowContext& context) {
     CameraViewWindowResult result;
     result.full_frame_edit_result.state = context.full_frame_edit_state;
+    result.full_frame_keypoint_edit_state = context.full_frame_keypoint_edit_state;
     result.transport_result.slider_frame_number =
         context.transport_controls.slider_frame_number;
 
@@ -98,6 +99,11 @@ CameraViewWindowResult drawCameraViewWindowContents(
             restore_plot_pan_mod = true;
             suppress_crosshairs = true;
         }
+    }
+    if (context.full_frame_keypoint_edit_enabled) {
+        plot_input_map.PanMod = ImGuiMod_Shift;
+        restore_plot_pan_mod = true;
+        suppress_crosshairs = true;
     }
 
     const bool lightweight_playback_renderer_active =
@@ -244,13 +250,37 @@ CameraViewWindowResult drawCameraViewWindowContents(
             result.frame_sync.latest_decoded = context.latest_decoded_frame;
             result.frame_sync.recording_remaining = recording_remaining;
             result.frame_sync.recording_total = context.total_recording_frames;
-            result.frame_sync.debug_line = sync_debug.str();
+                    result.frame_sync.debug_line = sync_debug.str();
 
-            const float image_height_px = static_cast<float>(camera.image_height);
-            const bool plot_hovered = ImPlot::IsPlotHovered();
-            const bool can_modify_boxes =
-                context.dataset_allows_bbox_edit && context.bbox_edit_enabled &&
-                (context.bbox_allow_edit_while_playing || !context.play_video);
+                    const float image_height_px = static_cast<float>(camera.image_height);
+                    const bool plot_hovered = ImPlot::IsPlotHovered();
+                    if (context.full_frame_keypoint_edit_enabled) {
+                        result.full_frame_edit_result.state.draw_mode = false;
+                        result.full_frame_edit_result.state.draw_active = false;
+                        result.full_frame_edit_result.state.drag_active = false;
+                        result.full_frame_edit_result.state.drag_mouse_button = -1;
+                    }
+                    const FullFrameKeypointEditContext keypoint_edit_context{
+                        context.selected_keypoint_selection,
+                        context.detection_details,
+                        static_cast<float>(camera.image_width),
+                        image_height_px,
+                        plot_hovered,
+                        context.play_video,
+                    };
+                    if (context.full_frame_keypoint_edit_enabled) {
+                        const auto keypoint_edit_result =
+                            processFullFrameKeypointEditOverlay(
+                                keypoint_edit_context,
+                                context.full_frame_keypoint_edit_state);
+                        result.full_frame_keypoint_edit_state =
+                            keypoint_edit_result.state;
+                    } else {
+                        result.full_frame_keypoint_edit_state.active_handle = -1;
+                    }
+                    const bool can_modify_boxes =
+                        context.dataset_allows_bbox_edit && context.bbox_edit_enabled &&
+                        (context.bbox_allow_edit_while_playing || !context.play_video);
 
             std::vector<FullFrameRect> editable_rects;
             if (context.zarr_boxes != nullptr) {
@@ -266,6 +296,7 @@ CameraViewWindowResult drawCameraViewWindowContents(
                 static_cast<float>(camera.image_width),
                 image_height_px,
                 plot_hovered,
+                !context.full_frame_keypoint_edit_enabled,
                 context.dataset_allows_bbox_edit,
                 can_modify_boxes,
                 &editable_rects,
@@ -314,9 +345,16 @@ CameraViewWindowResult drawCameraViewWindowContents(
                                              context.eye_mask_smoothing_run_id);
             }
             if (context.detection_details != nullptr) {
+                const int keypoint_skip_detection =
+                    context.full_frame_keypoint_edit_enabled &&
+                            context.selected_keypoint_selection != nullptr &&
+                            context.selected_keypoint_selection->valid
+                        ? static_cast<int>(
+                              context.selected_keypoint_selection->detection_index)
+                        : -1;
                 drawCameraViewDetectionKeypointMarkers(
                     *context.detection_details, context.show_keypoint_markers,
-                    image_height_px);
+                    image_height_px, keypoint_skip_detection);
             }
         }
 

@@ -42,6 +42,7 @@ struct FullFrameRectEditContext {
     float image_width_px = 0.0f;
     float image_height_px = 0.0f;
     bool plot_hovered = false;
+    bool allow_mouse_rect_interaction = true;
     bool dataset_allows_rect_edit = false;
     bool can_modify_rects = false;
     const std::vector<FullFrameRect>* visible_rects = nullptr;

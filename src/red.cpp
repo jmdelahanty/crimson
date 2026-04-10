@@ -659,6 +659,9 @@ int main(int argc, char **argv) {
         const bool use_legacy_manual_keypoint_tools =
             legacy_labeling_state.toolsEnabled(
                 has_active_zarr_keypoint_review);
+        std::optional<RefinedKeypointSelection>
+            active_full_frame_keypoint_selection;
+        bool keypoint_tab_full_frame_edit_enabled = false;
 
         if (video_loaded) {
             const auto frame_debug_ui_start = std::chrono::steady_clock::now();
@@ -752,6 +755,14 @@ int main(int argc, char **argv) {
             show_keypoint_markers = frame_debug_result.show_keypoint_markers;
             show_heading_arrows = frame_debug_result.show_heading_arrows;
             show_eye_masks = frame_debug_result.show_eye_masks;
+            active_full_frame_keypoint_selection =
+                frame_debug_result.selected_keypoint_selection;
+            keypoint_tab_full_frame_edit_enabled =
+                frame_debug_window_state.active_tab ==
+                    FrameInspectTab::Keypoints &&
+                frame_debug_window_state.keypoint_review_panel
+                    .full_frame_edit.enabled &&
+                active_full_frame_keypoint_selection.has_value();
 
             if (frame_debug_result.requested_detection_dataset_index >= 0 &&
                 frame_debug_result.requested_detection_dataset_index <
@@ -949,6 +960,7 @@ int main(int argc, char **argv) {
                         refined_keypoint_repo,
                         RefinedKeypointReviewPanelResult{
                             frame_debug_result.selected_keypoint_selection,
+                            CropKeypointEditorAction{},
                             frame_debug_result.request_keypoint_review_write,
                             frame_debug_result.keypoint_review_options,
                         },
@@ -958,6 +970,19 @@ int main(int argc, char **argv) {
                 if (review_write_result.should_clear_zarr_loaded) {
                     zarr_loaded = false;
                 }
+            }
+            if (frame_debug_result.keypoint_edit_action.type !=
+                CropKeypointEditorActionType::None) {
+                RefinedKeypointRepository refined_keypoint_repo(zarr_loader);
+                applyFullFrameKeypointWriteAction(
+                    refined_keypoint_repo,
+                    frame_debug_result.keypoint_edit_action,
+                    frame_debug_result.selected_keypoint_selection,
+                    frame_debug_window_state.keypoint_review_panel.full_frame_edit,
+                    &crop_preview_window_state.editor_state,
+                    frame_debug_window_state.keypoint_review_panel
+                        .manual_write_status,
+                    reloadActiveZarrPreserveDataset);
             }
             frame_frame_debug_ui_ms +=
                 durationMs(std::chrono::steady_clock::now() - frame_debug_ui_start);
@@ -1957,6 +1982,8 @@ int main(int argc, char **argv) {
                             total_recording_frames,
                             dc_context->total_num_frame);
                     }
+                    const bool full_frame_keypoint_edit_enabled =
+                        zarr_loaded && keypoint_tab_full_frame_edit_enabled;
 
                     const CameraViewWindowContext camera_view_context{
                         scene,
@@ -1989,6 +2016,13 @@ int main(int argc, char **argv) {
                         yolo_detection ? &yolo_labels.at(j) : nullptr,
                         yolo_detection ? &yolo_classid.at(j) : nullptr,
                         show_keypoint_markers,
+                        full_frame_keypoint_edit_enabled &&
+                            j == playback_session_controller.getVisibleCameraIndex(),
+                        active_full_frame_keypoint_selection.has_value()
+                            ? &*active_full_frame_keypoint_selection
+                            : nullptr,
+                        frame_debug_window_state.keypoint_review_panel
+                            .full_frame_edit,
                         can_draw_headings,
                         can_draw_eye_masks,
                         heading_details ? &*heading_details : nullptr,
@@ -2052,6 +2086,8 @@ int main(int argc, char **argv) {
 
                     const FullFrameRectEditResult& full_frame_edit_result =
                         camera_view_result.full_frame_edit_result;
+                    frame_debug_window_state.keypoint_review_panel.full_frame_edit =
+                        camera_view_result.full_frame_keypoint_edit_state;
 
                     g_zarr_bbox_edit_state.selected_frame =
                         full_frame_edit_result.state.selected_frame;
@@ -2380,6 +2416,7 @@ int main(int argc, char **argv) {
                 crop_preview_result.editor_action,
                 crop_preview_result.selected_keypoint_selection,
                 crop_preview_window_state.editor_state,
+                &frame_debug_window_state.keypoint_review_panel.full_frame_edit,
                 frame_debug_window_state.keypoint_review_panel
                     .manual_write_status,
                 reloadActiveZarrPreserveDataset);

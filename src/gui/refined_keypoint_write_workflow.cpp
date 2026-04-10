@@ -51,11 +51,13 @@ std::string buildReloadFailurePrefix(CropKeypointEditorActionType action_type) {
 
 }  // namespace
 
-void applyCropPreviewKeypointWriteAction(
+namespace {
+
+void applyRefinedKeypointEditAction(
     RefinedKeypointRepository& refined_keypoint_repo,
     const CropKeypointEditorAction& action,
     const std::optional<RefinedKeypointSelection>& selection,
-    CropKeypointEditorState& editor_state,
+    const std::function<void()>& reset_editor_state,
     std::string& status_out,
     const std::function<bool(std::string&)>& reload_active_zarr) {
     if (!selection.has_value()) {
@@ -91,7 +93,7 @@ void applyCropPreviewKeypointWriteAction(
     }
 
     std::string reload_error;
-    resetCropKeypointEditorState(editor_state);
+    reset_editor_state();
     if (!reload_active_zarr(reload_error)) {
         status_out = buildReloadFailurePrefix(action.type) + reload_error;
         return;
@@ -112,6 +114,52 @@ void applyCropPreviewKeypointWriteAction(
         status << " stale_eye_masks=" << edit_result.stale_eye_mask_runs;
     }
     status_out = status.str();
+}
+
+}  // namespace
+
+void applyCropPreviewKeypointWriteAction(
+    RefinedKeypointRepository& refined_keypoint_repo,
+    const CropKeypointEditorAction& action,
+    const std::optional<RefinedKeypointSelection>& selection,
+    CropKeypointEditorState& editor_state,
+    FullFrameKeypointEditState* synced_full_frame_state,
+    std::string& status_out,
+    const std::function<bool(std::string&)>& reload_active_zarr) {
+    applyRefinedKeypointEditAction(
+        refined_keypoint_repo,
+        action,
+        selection,
+        [&]() {
+            resetCropKeypointEditorState(editor_state);
+            if (synced_full_frame_state != nullptr) {
+                resetFullFrameKeypointEditState(*synced_full_frame_state);
+            }
+        },
+        status_out,
+        reload_active_zarr);
+}
+
+void applyFullFrameKeypointWriteAction(
+    RefinedKeypointRepository& refined_keypoint_repo,
+    const CropKeypointEditorAction& action,
+    const std::optional<RefinedKeypointSelection>& selection,
+    FullFrameKeypointEditState& editor_state,
+    CropKeypointEditorState* synced_crop_state,
+    std::string& status_out,
+    const std::function<bool(std::string&)>& reload_active_zarr) {
+    applyRefinedKeypointEditAction(
+        refined_keypoint_repo,
+        action,
+        selection,
+        [&]() {
+            resetFullFrameKeypointEditState(editor_state);
+            if (synced_crop_state != nullptr) {
+                resetCropKeypointEditorState(*synced_crop_state);
+            }
+        },
+        status_out,
+        reload_active_zarr);
 }
 
 RefinedKeypointReviewWriteWorkflowResult applyRefinedKeypointReviewWrite(

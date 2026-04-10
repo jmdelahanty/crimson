@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gui/crop_keypoint_editor.h"
 #include "gui/refined_keypoint_review_panel.h"
 #include "gui/review_metadata_editor.h"
 #include "review_frame_state.h"
@@ -71,6 +72,7 @@ struct FrameDebugWindowResult {
     bool request_build_manual_payload_preview = false;
     bool request_write_manual_payload = false;
     std::optional<RefinedKeypointSelection> selected_keypoint_selection;
+    CropKeypointEditorAction keypoint_edit_action;
     bool request_keypoint_review_write = false;
     RefinedKeypointReviewStatusWriteOptions keypoint_review_options;
     bool show_keypoint_markers = false;

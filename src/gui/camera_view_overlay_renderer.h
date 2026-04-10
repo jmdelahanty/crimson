@@ -18,7 +18,8 @@ std::vector<FullFrameRectOverlayItem> buildCameraViewBoundingBoxOverlayItems(
 void drawCameraViewDetectionKeypointMarkers(
     const ZarrDetectionLoader::FrameDetections& detection_details,
     bool show_keypoint_markers,
-    float image_height_px);
+    float image_height_px,
+    int skip_detection_index = -1);
 
 void drawCameraViewHeadingOverlay(
     const ZarrDetectionLoader::FrameDetections& heading_details,
