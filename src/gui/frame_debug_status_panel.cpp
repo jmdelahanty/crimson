@@ -3,6 +3,7 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <sstream>
 
 namespace {
 
@@ -53,6 +54,97 @@ void drawReviewArtifactBlock(
     if (!artifact->review_notes.empty()) {
         ImGui::Text("Notes: %s", artifact->review_notes.c_str());
     }
+}
+
+std::string joinLabels(const std::vector<std::string>& labels) {
+    if (labels.empty()) {
+        return "<none>";
+    }
+    std::ostringstream oss;
+    for (size_t i = 0; i < labels.size(); ++i) {
+        if (i > 0) {
+            oss << ", ";
+        }
+        oss << labels[i];
+    }
+    return oss.str();
+}
+
+const char* headingSourceLabel(const KeypointHeadingComputationSpec& spec) {
+    if (!spec.available) {
+        return "Unavailable";
+    }
+    if (spec.legacy_fallback || spec.source == "legacy_3point") {
+        return "Legacy fallback";
+    }
+    if (spec.source == "run_override") {
+        return "Run override";
+    }
+    if (spec.source == "pose_schema") {
+        return "Pose schema metadata";
+    }
+    if (spec.source == "deprecated_run_alias") {
+        return "Deprecated run alias";
+    }
+    return spec.source.empty() ? "Resolved" : spec.source.c_str();
+}
+
+std::string formatPointSpec(const KeypointHeadingPointSpec& spec) {
+    if (!spec.valid) {
+        return "<invalid>";
+    }
+    if (spec.op == KeypointHeadingPointOp::Keypoint) {
+        if (!spec.labels.empty()) {
+            return "keypoint(" + spec.labels.front() + ")";
+        }
+        return "keypoint(?)";
+    }
+    if (spec.op == KeypointHeadingPointOp::Midpoint) {
+        return "midpoint(" + joinLabels(spec.labels) + ")";
+    }
+    return "<none>";
+}
+
+void drawKeypointSkeletonSection(const FrameDebugWindowContext& context) {
+    const auto& labels = context.zarr_loader.getKeypointLabels();
+    const auto& edges = context.zarr_loader.getSkeletonEdges();
+    ImGui::Text("Skeleton:");
+    ImGui::Text("Keypoint count: %zu", labels.size());
+    ImGui::Text("Edge count: %zu", edges.size());
+    if (!labels.empty()) {
+        ImGui::TextWrapped("Labels: %s", joinLabels(labels).c_str());
+    } else {
+        ImGui::TextDisabled("Labels unavailable");
+    }
+}
+
+void drawHeadingContractSection(const FrameDebugWindowContext& context) {
+    const auto& heading_spec = context.zarr_loader.getHeadingComputationSpec();
+    ImGui::Text("Heading Contract:");
+    ImGui::Text("Source: %s", headingSourceLabel(heading_spec));
+
+    if (!heading_spec.available) {
+        ImGui::TextDisabled("Heading metadata unavailable");
+        return;
+    }
+
+    ImGui::Text("Enabled: %s", heading_spec.enabled ? "Yes" : "No");
+    if (!heading_spec.enabled) {
+        ImGui::TextDisabled("Heading updates are disabled by the resolved contract");
+        return;
+    }
+
+    if (heading_spec.legacy_fallback) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.25f, 1.0f),
+                           "Using legacy fallback inference");
+    }
+    ImGui::TextWrapped("Dependent keypoints: %s",
+                       joinLabels(heading_spec.dependent_labels).c_str());
+    ImGui::TextWrapped("Origin: %s",
+                       formatPointSpec(heading_spec.origin).c_str());
+    ImGui::TextWrapped("Direction: %s -> %s",
+                       formatPointSpec(heading_spec.direction_from).c_str(),
+                       formatPointSpec(heading_spec.direction_to).c_str());
 }
 
 void drawFrameOverviewSection(const FrameDebugWindowContext& context) {
@@ -201,6 +293,10 @@ void drawKeypointTab(
                     context.zarr_loader.getKeypointsRunName().c_str());
         ImGui::Text("Refined keypoints: %s",
                     context.zarr_loader.isRefinedKeypoints() ? "Yes" : "No");
+        ImGui::Separator();
+        drawKeypointSkeletonSection(context);
+        ImGui::Separator();
+        drawHeadingContractSection(context);
 
         if (context.detection_details != nullptr &&
             context.detection_details->has_keypoints) {

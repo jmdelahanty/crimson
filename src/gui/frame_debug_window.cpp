@@ -33,6 +33,7 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
                     const RefinedKeypointReviewPanelContext
                         keypoint_review_panel_context{
                             context.zarr_loader,
+                            context.detection_details,
                             context.current_frame_num,
                             context.bbox_edit_state.selected_frame,
                             context.bbox_edit_state.selected_box,

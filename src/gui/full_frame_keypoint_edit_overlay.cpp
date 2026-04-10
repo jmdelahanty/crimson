@@ -1,4 +1,5 @@
 #include "gui/full_frame_keypoint_edit_overlay.h"
+#include "gui/refined_keypoint_style.h"
 
 #include "imgui.h"
 #include "implot.h"
@@ -49,18 +50,8 @@ std::array<float, 2> defaultFullFrameKeypointPosition(
     return {offset_x + roi_width * 0.50f, offset_y + roi_height * 0.68f};
 }
 
-ImU32 keypointColor(const std::string& label) {
-    if (label.find("swim") != std::string::npos ||
-        label.find("bladder") != std::string::npos) {
-        return IM_COL32(255, 217, 38, 255);
-    }
-    if (label.find("left") != std::string::npos) {
-        return IM_COL32(77, 242, 102, 255);
-    }
-    if (label.find("right") != std::string::npos) {
-        return IM_COL32(191, 102, 242, 255);
-    }
-    return IM_COL32(242, 153, 51, 255);
+ImU32 keypointColor(const std::string& label, size_t kp_idx) {
+    return chooseRefinedKeypointColorU32(label, kp_idx);
 }
 
 void syncState(const FullFrameKeypointEditContext& context,
@@ -145,7 +136,7 @@ void drawEditableKeypointOverlay(const FullFrameKeypointEditContext& context,
             ImPlotPoint(point[0], image_height - point[1]));
         const float radius = state.active_handle == static_cast<int>(i) ? 8.0f
                                                                         : 6.5f;
-        draw_list->AddCircleFilled(center, radius, keypointColor(label));
+        draw_list->AddCircleFilled(center, radius, keypointColor(label, i));
         draw_list->AddCircle(center, radius, IM_COL32(255, 255, 255, 255), 0,
                              2.0f);
     }

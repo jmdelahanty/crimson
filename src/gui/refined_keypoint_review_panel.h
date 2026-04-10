@@ -3,11 +3,10 @@
 #include "gui/full_frame_keypoint_edit_overlay.h"
 #include "gui/review_metadata_editor.h"
 #include "refined_keypoint_repository.h"
+#include "zarr_loader.h"
 
 #include <optional>
 #include <string>
-
-class ZarrDetectionLoader;
 
 struct RefinedKeypointReviewPanelState {
     ReviewMetadataEditorState review_metadata{};
@@ -20,6 +19,7 @@ struct RefinedKeypointReviewPanelState {
 
 struct RefinedKeypointReviewPanelContext {
     ZarrDetectionLoader& zarr_loader;
+    const ZarrDetectionLoader::FrameDetections* detection_details = nullptr;
     int current_frame_num = 0;
     int selected_frame = -1;
     int selected_box = -1;

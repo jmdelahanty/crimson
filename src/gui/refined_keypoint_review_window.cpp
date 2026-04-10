@@ -70,9 +70,11 @@ RefinedKeypointReviewWindowResult drawRefinedKeypointReviewWindow(
 
     const RefinedKeypointReviewPanelContext panel_context{
         context.zarr_loader,
+        nullptr,
         context.current_frame_num,
         context.selected_frame,
         context.selected_box,
+        false,
     };
     const auto panel_result =
         drawRefinedKeypointReviewPanel(panel_context, state.panel_state);

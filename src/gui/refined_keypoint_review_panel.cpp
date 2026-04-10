@@ -1,9 +1,174 @@
 #include "gui/refined_keypoint_review_panel.h"
 
 #include "gui/full_frame_keypoint_edit_overlay.h"
+#include "gui/refined_keypoint_style.h"
 #include "gui/review_metadata_editor.h"
 #include "imgui.h"
-#include "zarr_loader.h"
+#include <algorithm>
+#include <cmath>
+#include <unordered_set>
+
+namespace {
+
+bool sameSelection(const FullFrameKeypointEditState& state,
+                   const RefinedKeypointSelection& selection) {
+    return state.roi_index == selection.roi_index &&
+           state.frame == static_cast<int>(selection.frame_id) &&
+           state.detection_index ==
+               static_cast<int>(selection.detection_index) &&
+           state.run_name == selection.run_name;
+}
+
+bool hasFinitePosition(const std::array<float, 2>& point) {
+    return std::isfinite(point[0]) && std::isfinite(point[1]);
+}
+
+void drawCurrentFrameKeypointStatusMatrix(
+    const RefinedKeypointReviewPanelContext& context,
+    const RefinedKeypointReviewPanelState& state,
+    const std::optional<RefinedKeypointSelection>& selection) {
+    if (context.detection_details == nullptr ||
+        !context.detection_details->has_keypoints ||
+        context.detection_details->keypoint_labels.empty() ||
+        context.detection_details->keypoints_pixels.empty()) {
+        ImGui::TextDisabled("Keypoint status unavailable for current frame.");
+        return;
+    }
+    const auto& detections = *context.detection_details;
+
+    size_t keypoint_count = detections.keypoint_labels.size();
+    for (const auto& positions : detections.keypoints_pixels) {
+        keypoint_count = std::min(keypoint_count, positions.size());
+    }
+    if (keypoint_count == 0) {
+        ImGui::TextDisabled("Keypoint status unavailable for current frame.");
+        return;
+    }
+
+    std::unordered_set<std::string> heading_labels;
+    const auto& heading_spec = context.zarr_loader.getHeadingComputationSpec();
+    if (heading_spec.available && heading_spec.enabled) {
+        heading_labels.insert(heading_spec.dependent_labels.begin(),
+                              heading_spec.dependent_labels.end());
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Keypoint Status:");
+
+    static ImGuiTableFlags table_flags =
+        ImGuiTableFlags_ScrollX | ImGuiTableFlags_SizingFixedFit |
+        ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersInnerH |
+        ImGuiTableFlags_Hideable | ImGuiTableFlags_Resizable |
+        ImGuiTableFlags_HighlightHoveredColumn;
+
+    const int columns_count = static_cast<int>(keypoint_count) + 1;
+    const float text_base_height = ImGui::GetTextLineHeightWithSpacing();
+    if (!ImGui::BeginTable("##selected_refined_keypoint_status",
+                           columns_count,
+                           table_flags,
+                           ImVec2(0.0f, text_base_height * 6.0f))) {
+        return;
+    }
+
+    ImGui::TableSetupColumn("Status",
+                            ImGuiTableColumnFlags_NoHide |
+                                ImGuiTableColumnFlags_NoReorder);
+    for (size_t column = 0; column < keypoint_count; ++column) {
+        ImGui::TableSetupColumn(
+            detections.keypoint_labels[column].c_str(),
+            ImGuiTableColumnFlags_AngledHeader |
+                ImGuiTableColumnFlags_WidthFixed);
+    }
+    ImGui::TableSetupScrollFreeze(1, 2);
+    ImGui::TableAngledHeadersRow();
+    ImGui::TableHeadersRow();
+
+    auto draw_detection_row = [&](size_t det_idx) {
+        const auto& positions = detections.keypoints_pixels[det_idx];
+        const bool row_selected =
+            selection.has_value() && selection->valid &&
+            selection->detection_index == det_idx;
+        const std::vector<std::array<float, 2>>* displayed_positions =
+            &positions;
+        int active_handle = -1;
+        if (row_selected && (state.full_frame_edit.enabled || state.full_frame_edit.dirty) &&
+            sameSelection(state.full_frame_edit, *selection) &&
+            state.full_frame_edit.positions_img.size() == keypoint_count) {
+            displayed_positions = &state.full_frame_edit.positions_img;
+            active_handle = state.full_frame_edit.active_handle;
+        }
+
+        ImGui::TableNextRow();
+        if (row_selected) {
+            ImGui::TableSetBgColor(
+                ImGuiTableBgTarget_RowBg0,
+                ImGui::GetColorU32(ImVec4(0.22f, 0.28f, 0.4f, 0.28f)));
+        }
+        ImGui::TableSetColumnIndex(0);
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("det %zu%s", det_idx, row_selected ? " *" : "");
+
+        for (size_t kp_idx = 0; kp_idx < keypoint_count; ++kp_idx) {
+            if (!ImGui::TableSetColumnIndex(static_cast<int>(kp_idx + 1))) {
+                continue;
+            }
+
+            const bool has_position =
+                kp_idx < displayed_positions->size() &&
+                hasFinitePosition((*displayed_positions)[kp_idx]);
+            const bool is_active = active_handle == static_cast<int>(kp_idx);
+
+            ImVec4 cell_color(0.0f, 0.0f, 0.0f, 0.0f);
+            if (has_position) {
+                cell_color = chooseRefinedKeypointColor(
+                    detections.keypoint_labels[kp_idx], kp_idx);
+                cell_color.w = is_active ? 1.0f : 0.85f;
+            }
+            ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg,
+                                   ImGui::GetColorU32(cell_color));
+
+            if (is_active) {
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "A");
+            }
+        }
+    };
+
+    for (size_t det_idx = 0; det_idx < detections.keypoints_pixels.size();
+         ++det_idx) {
+        draw_detection_row(det_idx);
+    }
+
+    if (!heading_labels.empty()) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Heading deps");
+
+        for (size_t kp_idx = 0; kp_idx < keypoint_count; ++kp_idx) {
+            if (!ImGui::TableSetColumnIndex(static_cast<int>(kp_idx + 1))) {
+                continue;
+            }
+            const bool is_heading_keypoint =
+                heading_labels.find(detections.keypoint_labels[kp_idx]) !=
+                heading_labels.end();
+            ImVec4 cell_color(0.0f, 0.0f, 0.0f, 0.0f);
+            if (is_heading_keypoint) {
+                cell_color = chooseRefinedKeypointColor(
+                    detections.keypoint_labels[kp_idx], kp_idx);
+                cell_color.w = 0.35f;
+            }
+            ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg,
+                                   ImGui::GetColorU32(cell_color));
+            if (is_heading_keypoint) {
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 0.95f), "H");
+            }
+        }
+    }
+
+    ImGui::EndTable();
+}
+
+}  // namespace
 
 RefinedKeypointReviewPanelResult drawRefinedKeypointReviewPanel(
     const RefinedKeypointReviewPanelContext& context,
@@ -44,6 +209,7 @@ RefinedKeypointReviewPanelResult drawRefinedKeypointReviewPanel(
     } else {
         ImGui::TextDisabled("Select a detection to edit refined keypoints.");
     }
+    drawCurrentFrameKeypointStatusMatrix(context, state, result.selected_selection);
 
     ImGui::Separator();
     ImGui::Text("Keypoint Edit:");

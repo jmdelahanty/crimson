@@ -783,6 +783,9 @@ public:
     const std::vector<std::string>& getKeypointLabels() const {
         return data_.keypoint_labels;
     }
+    const std::vector<std::array<size_t, 2>>& getSkeletonEdges() const {
+        return data_.skeleton_edges;
+    }
     const KeypointHeadingComputationSpec& getHeadingComputationSpec() const {
         return data_.heading_computation_spec;
     }

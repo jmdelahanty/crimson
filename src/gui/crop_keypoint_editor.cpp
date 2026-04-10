@@ -1,4 +1,5 @@
 #include "gui/crop_keypoint_editor.h"
+#include "gui/refined_keypoint_style.h"
 
 #include <algorithm>
 #include <cmath>
@@ -141,18 +142,8 @@ bool computeCandidateHeading(
     return true;
 }
 
-ImU32 cropKeypointColor(const std::string& label) {
-    if (label.find("swim") != std::string::npos ||
-        label.find("bladder") != std::string::npos) {
-        return IM_COL32(255, 217, 38, 220);
-    }
-    if (label.find("left") != std::string::npos) {
-        return IM_COL32(77, 242, 102, 220);
-    }
-    if (label.find("right") != std::string::npos) {
-        return IM_COL32(191, 102, 242, 220);
-    }
-    return IM_COL32(242, 153, 51, 220);
+ImU32 cropKeypointColor(const std::string& label, size_t kp_idx) {
+    return chooseRefinedKeypointColorU32(label, kp_idx, 220.0f / 255.0f);
 }
 
 void drawKeypointOverlayAt(
@@ -201,7 +192,7 @@ void drawKeypointOverlayAt(
                       image_top_left.y + y * image_scale);
         draw_list->AddCircleFilled(center,
                                    4.0f * image_scale,
-                                   cropKeypointColor(label));
+                                   cropKeypointColor(label, i));
         draw_list->AddCircle(center,
                              4.0f * image_scale,
                              IM_COL32(255, 255, 255, 180),
