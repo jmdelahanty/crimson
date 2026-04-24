@@ -51,6 +51,8 @@ For the first Windows validation record, see
 [docs/crimson_windows_trt10_cuda12.4_validation_record.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_trt10_cuda12.4_validation_record.md).
 For a step-by-step Windows laptop bring-up guide, see
 [docs/crimson_windows_first_validation_guide.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_first_validation_guide.md).
+For the current Windows checkpoint after packaging, app-drop, crash-capture, and multi-GPU follow-up work, see
+[docs/crimson_windows_status_checkpoint_2026-04-23.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_status_checkpoint_2026-04-23.md).
 For the recommended recording-root layout and Windows launch examples, see
 [docs/crimson_recording_folder_layout.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_recording_folder_layout.md).
 

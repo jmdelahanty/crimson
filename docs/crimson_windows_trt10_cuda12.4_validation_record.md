@@ -16,6 +16,7 @@ Related policy:
 - [docs/crimson_supported_dependency_stack_matrix.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_supported_dependency_stack_matrix.md)
 - [docs/crimson_dependency_stack_promotion_process.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_dependency_stack_promotion_process.md)
 - [docs/crimson_windows_first_validation_guide.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_first_validation_guide.md)
+- [docs/crimson_windows_status_checkpoint_2026-04-23.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_windows_status_checkpoint_2026-04-23.md)
 
 ---
 
