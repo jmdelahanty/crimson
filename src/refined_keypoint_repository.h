@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <string>
+#include <vector>
 #include "zarr_loader.h"
 
 struct RefinedKeypointSelection {
@@ -50,7 +51,7 @@ public:
         std::string* resolved_run_name = nullptr) const;
     bool writeManualCorrection(
         const RefinedKeypointSelection& selection,
-        const std::array<std::array<double, 2>, 3>& keypoints_roi,
+        const std::vector<std::array<double, 2>>& keypoints_roi,
         std::string& error_message,
         RefinedKeypointEditResult* edit_result = nullptr) const;
     bool markFishPresentNoKeypoints(

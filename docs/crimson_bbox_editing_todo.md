@@ -40,6 +40,17 @@ Allow users to select and drag existing detection bounding boxes in Crimson, the
 - Guardrail implemented: source/live detection dataset (`RawDetect`) is read-only in the editor.
 - Remaining work is Phase 2 lifecycle UX, Phase 3 Zarr persistence, and review-acceptance metadata integration.
 
+## Current Sparse-Instances Note (2026-04-24)
+
+The active Crimson UI Monolith writer now targets
+`refined_detect_runs/<latest>/instances/`, not the legacy manual subgroup flow
+described below. Before continuing bbox persistence work, read
+`docs/palette_refined_detect_identity_handoff.md`.
+
+The remaining high-priority gap is preserving Palette `refined_row_ids` and
+`source_detect_row_index` through load/edit/write so add/delete/edit sessions do
+not churn stable refined-detect row identity.
+
 ## Contract Incorporation Plan (From Mirrored Docs)
 
 Source contracts:

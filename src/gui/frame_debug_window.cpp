@@ -15,6 +15,7 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
     result.show_heading_arrows = context.show_heading_arrows;
     result.show_eye_masks = context.show_eye_masks;
 
+    ImGui::SetNextWindowSize(ImVec2(760.0f, 840.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Frame Inspect")) {
         ImGui::End();
         return result;

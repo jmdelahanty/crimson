@@ -63,10 +63,16 @@ void drawCurrentFrameKeypointStatusMatrix(
 
     const int columns_count = static_cast<int>(keypoint_count) + 1;
     const float text_base_height = ImGui::GetTextLineHeightWithSpacing();
+    const float data_row_count =
+        static_cast<float>(detections.keypoints_pixels.size()) +
+        (heading_labels.empty() ? 0.0f : 1.0f);
+    const float table_height = std::max(
+        text_base_height * 9.0f,
+        ImGui::GetFontSize() * 4.5f + text_base_height * (data_row_count + 2.0f));
     if (!ImGui::BeginTable("##selected_refined_keypoint_status",
                            columns_count,
                            table_flags,
-                           ImVec2(0.0f, text_base_height * 6.0f))) {
+                           ImVec2(0.0f, table_height))) {
         return;
     }
 

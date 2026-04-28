@@ -9,8 +9,6 @@
 
 namespace {
 
-constexpr size_t kManualFullFrameKeypointCount = 3;
-
 bool isEditableSelection(const FullFrameKeypointEditContext& context) {
     return context.selection != nullptr && context.selection->valid &&
            context.selection->editable && context.detection_details != nullptr &&
@@ -359,16 +357,17 @@ bool buildFullFrameKeypointEditAction(
         }
         return false;
     }
-    if (state.positions_img.size() != kManualFullFrameKeypointCount) {
+    if (state.positions_img.empty()) {
         if (error_message != nullptr) {
             *error_message =
-                "Full-frame keypoint edit failed: expected 3 editable keypoints.";
+                "Full-frame keypoint edit failed: no editable keypoints are loaded.";
         }
         return false;
     }
 
     action.type = CropKeypointEditorActionType::Save;
-    for (size_t i = 0; i < kManualFullFrameKeypointCount; ++i) {
+    action.keypoints_roi.resize(state.positions_img.size());
+    for (size_t i = 0; i < state.positions_img.size(); ++i) {
         if (!std::isfinite(state.positions_img[i][0]) ||
             !std::isfinite(state.positions_img[i][1])) {
             if (error_message != nullptr) {

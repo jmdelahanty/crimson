@@ -19,7 +19,7 @@ enum class CropKeypointEditorActionType {
 
 struct CropKeypointEditorAction {
     CropKeypointEditorActionType type = CropKeypointEditorActionType::None;
-    std::array<std::array<double, 2>, 3> keypoints_roi{};
+    std::vector<std::array<double, 2>> keypoints_roi;
 };
 
 struct CropKeypointEditorState {

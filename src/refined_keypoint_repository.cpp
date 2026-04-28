@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -22,8 +23,8 @@ namespace {
 
 using json = nlohmann::json;
 
-constexpr size_t kManualKeypointCount = 3;
-constexpr size_t kManualKeypointDims = 2;
+constexpr size_t kLegacyGeometryKeypointCount = 3;
+constexpr size_t kKeypointCoordDims = 2;
 constexpr size_t kMaxStaleIndexHistory = 2048;
 
 enum class KeypointEditMode {
@@ -52,6 +53,8 @@ struct RefinedRunContext {
     std::string run_path;
     json run_meta;
     size_t total_rois = 0;
+    size_t keypoint_count = 0;
+    size_t keypoint_coord_dims = 0;
     int image_width = 0;
     int image_height = 0;
     double confidence_threshold = 0.3;
@@ -67,6 +70,11 @@ struct ReasonLabelsState {
     bool reason_exists = false;
 };
 
+struct GeometryResolution {
+    std::optional<std::array<int, kLegacyGeometryKeypointCount>> indices;
+    bool from_derived_metrics_schema = false;
+};
+
 bool isAllowedValue(const std::string& value,
                     std::initializer_list<const char*> allowed) {
     for (const char* candidate : allowed) {
@@ -75,6 +83,22 @@ bool isAllowedValue(const std::string& value,
         }
     }
     return false;
+}
+
+std::string jsonStringValue(const json& obj,
+                            const char* key,
+                            const std::string& fallback = std::string()) {
+    if (obj.is_object() && obj.contains(key) && obj[key].is_string()) {
+        return obj[key].get<std::string>();
+    }
+    return fallback;
+}
+
+bool jsonBoolValue(const json& obj, const char* key, bool fallback = false) {
+    if (obj.is_object() && obj.contains(key) && obj[key].is_boolean()) {
+        return obj[key].get<bool>();
+    }
+    return fallback;
 }
 
 std::optional<std::string> sha256Hex(const std::string& payload) {
@@ -162,13 +186,13 @@ ts::Result<ts::TensorStore<T, Rank>> openExistingArrayForWrite(
     return ts::Open<T, Rank>(
                spec,
                ts::OpenMode::open,
-               ts::ReadWriteMode::write,
+               ts::ReadWriteMode::read_write,
                context)
         .result();
 }
 
 double triangleArea(
-    const std::array<std::array<double, 2>, kManualKeypointCount>& vertices) {
+    const std::array<std::array<double, 2>, kLegacyGeometryKeypointCount>& vertices) {
     const double v1x = vertices[1][0] - vertices[0][0];
     const double v1y = vertices[1][1] - vertices[0][1];
     const double v2x = vertices[2][0] - vertices[0][0];
@@ -177,7 +201,7 @@ double triangleArea(
 }
 
 std::array<double, 3> edgeLengths(
-    const std::array<std::array<double, 2>, kManualKeypointCount>& vertices) {
+    const std::array<std::array<double, 2>, kLegacyGeometryKeypointCount>& vertices) {
     auto dist = [&](size_t a, size_t b) -> double {
         const double dx = vertices[a][0] - vertices[b][0];
         const double dy = vertices[a][1] - vertices[b][1];
@@ -187,7 +211,7 @@ std::array<double, 3> edgeLengths(
 }
 
 KeypointGeometryMetrics computeGeometryMetrics(
-    const std::array<std::array<double, 2>, kManualKeypointCount>& vertices) {
+    const std::array<std::array<double, 2>, kLegacyGeometryKeypointCount>& vertices) {
     for (const auto& point : vertices) {
         if (!std::isfinite(point[0]) || !std::isfinite(point[1])) {
             return {};
@@ -230,13 +254,544 @@ KeypointGeometryMetrics computeGeometryMetrics(
 
 double computeHeadingFromPoints(
     const KeypointHeadingComputationSpec& heading_spec,
-    const std::array<std::array<double, 2>, kManualKeypointCount>& points) {
-    std::vector<std::array<double, 2>> positions(points.begin(), points.end());
+    const std::vector<std::array<double, 2>>& points) {
     double heading_deg = std::numeric_limits<double>::quiet_NaN();
-    if (!evaluateKeypointHeadingDegrees(heading_spec, positions, heading_deg)) {
+    if (!evaluateKeypointHeadingDegrees(heading_spec, points, heading_deg)) {
         return std::numeric_limits<double>::quiet_NaN();
     }
     return heading_deg;
+}
+
+std::string toLowerCopy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return value;
+}
+
+std::optional<std::array<int, kLegacyGeometryKeypointCount>>
+validateTriangleIndices(const std::vector<int>& indices,
+                        size_t keypoint_count) {
+    if (indices.size() != kLegacyGeometryKeypointCount) {
+        return std::nullopt;
+    }
+    std::array<int, kLegacyGeometryKeypointCount> resolved{};
+    for (size_t i = 0; i < resolved.size(); ++i) {
+        if (indices[i] < 0 ||
+            static_cast<size_t>(indices[i]) >= keypoint_count) {
+            return std::nullopt;
+        }
+        for (size_t j = 0; j < i; ++j) {
+            if (resolved[j] == indices[i]) {
+                return std::nullopt;
+            }
+        }
+        resolved[i] = indices[i];
+    }
+    return resolved;
+}
+
+std::optional<std::array<int, kLegacyGeometryKeypointCount>>
+resolveTriangleSelectors(const json& selectors,
+                         const std::vector<std::string>& keypoint_labels,
+                         size_t keypoint_count) {
+    if (!selectors.is_object()) {
+        return std::nullopt;
+    }
+
+    if (selectors.contains("labels") && selectors["labels"].is_array() &&
+        selectors["labels"].size() == kLegacyGeometryKeypointCount) {
+        std::map<std::string, int> label_to_index;
+        for (size_t i = 0; i < keypoint_labels.size(); ++i) {
+            label_to_index.emplace(keypoint_labels[i], static_cast<int>(i));
+        }
+
+        std::vector<int> indices;
+        indices.reserve(kLegacyGeometryKeypointCount);
+        bool ok = true;
+        for (const auto& label_json : selectors["labels"]) {
+            if (!label_json.is_string()) {
+                ok = false;
+                break;
+            }
+            auto it = label_to_index.find(label_json.get<std::string>());
+            if (it == label_to_index.end()) {
+                ok = false;
+                break;
+            }
+            indices.push_back(it->second);
+        }
+        if (ok) {
+            if (auto resolved = validateTriangleIndices(indices, keypoint_count);
+                resolved.has_value()) {
+                return resolved;
+            }
+        }
+    }
+
+    if (selectors.contains("indices") && selectors["indices"].is_array() &&
+        selectors["indices"].size() == kLegacyGeometryKeypointCount) {
+        std::vector<int> indices;
+        indices.reserve(kLegacyGeometryKeypointCount);
+        for (const auto& index_json : selectors["indices"]) {
+            if (!index_json.is_number_integer() && !index_json.is_number_unsigned()) {
+                return std::nullopt;
+            }
+            indices.push_back(static_cast<int>(index_json.get<int64_t>()));
+        }
+        return validateTriangleIndices(indices, keypoint_count);
+    }
+
+    return std::nullopt;
+}
+
+bool metricDeclaresLegacyTriangleOutputs(const json& metric) {
+    if (!metric.contains("outputs") || !metric["outputs"].is_array()) {
+        return false;
+    }
+    bool has_area = false;
+    bool has_angles = false;
+    bool has_min_angle = false;
+    for (const auto& output : metric["outputs"]) {
+        if (!output.is_object() || !output.contains("array") ||
+            !output["array"].is_string()) {
+            continue;
+        }
+        const std::string array_name = output["array"].get<std::string>();
+        has_area = has_area || array_name == "triangle_area";
+        has_angles = has_angles || array_name == "triangle_angles";
+        has_min_angle = has_min_angle || array_name == "min_angle";
+    }
+    return has_area && has_angles && has_min_angle;
+}
+
+bool isPointXyValueKind(const std::string& value_kind) {
+    return value_kind.empty() ||
+           value_kind == "point_xy" ||
+           value_kind == "points_xy";
+}
+
+const json* metricSelectors(const json& metric, const json& source) {
+    if (metric.contains("selectors")) {
+        return &metric["selectors"];
+    }
+    if (source.contains("selectors")) {
+        return &source["selectors"];
+    }
+    return nullptr;
+}
+
+std::optional<std::array<int, kLegacyGeometryKeypointCount>>
+resolveDerivedGeometryIndices(const json& attrs,
+                              const std::vector<std::string>& keypoint_labels,
+                              size_t keypoint_count) {
+    if (!attrs.contains("derived_metrics_schema") ||
+        !attrs["derived_metrics_schema"].is_object()) {
+        return std::nullopt;
+    }
+    const json& schema = attrs["derived_metrics_schema"];
+    if (schema.contains("schema_version") &&
+        (schema["schema_version"].is_number_integer() ||
+         schema["schema_version"].is_number_unsigned()) &&
+        schema["schema_version"].get<int>() != 1) {
+        return std::nullopt;
+    }
+    const std::string entity_kind = jsonStringValue(schema, "entity_kind");
+    if (!entity_kind.empty() && entity_kind != "keypoint_roi") {
+        return std::nullopt;
+    }
+    if (!schema.contains("metrics") || !schema["metrics"].is_array()) {
+        return std::nullopt;
+    }
+
+    for (const auto& metric : schema["metrics"]) {
+        if (!metric.is_object() ||
+            jsonStringValue(metric, "kind") != "triangle_3pt" ||
+            !metricDeclaresLegacyTriangleOutputs(metric)) {
+            continue;
+        }
+        if (!metric.contains("source") || !metric["source"].is_object()) {
+            continue;
+        }
+        const json& source = metric["source"];
+        if (jsonStringValue(source, "array") != "keypoints_roi") {
+            continue;
+        }
+        const std::string value_kind = jsonStringValue(source, "value_kind");
+        if (!isPointXyValueKind(value_kind)) {
+            continue;
+        }
+        const json* selectors = metricSelectors(metric, source);
+        if (selectors == nullptr) {
+            continue;
+        }
+        if (auto resolved = resolveTriangleSelectors(
+                *selectors, keypoint_labels, keypoint_count);
+            resolved.has_value()) {
+            return resolved;
+        }
+    }
+
+    return std::nullopt;
+}
+
+std::optional<std::array<int, kLegacyGeometryKeypointCount>>
+resolveLegacyGeometryIndices(const KeypointHeadingComputationSpec& heading_spec,
+                             const std::vector<std::string>& keypoint_labels,
+                             size_t keypoint_count) {
+    if (heading_spec.available && heading_spec.enabled) {
+        if (const auto resolved =
+                validateTriangleIndices(heading_spec.dependent_indices,
+                                        keypoint_count);
+            resolved.has_value()) {
+            return resolved;
+        }
+    }
+
+    int swim_index = -1;
+    int left_index = -1;
+    int right_index = -1;
+    for (size_t i = 0; i < keypoint_labels.size(); ++i) {
+        const std::string lowered = toLowerCopy(keypoint_labels[i]);
+        if (swim_index < 0 &&
+            (lowered.find("swim") != std::string::npos ||
+             lowered.find("bladder") != std::string::npos)) {
+            swim_index = static_cast<int>(i);
+        }
+        if (left_index < 0 && lowered.find("left") != std::string::npos) {
+            left_index = static_cast<int>(i);
+        }
+        if (right_index < 0 && lowered.find("right") != std::string::npos) {
+            right_index = static_cast<int>(i);
+        }
+    }
+    if (swim_index >= 0 && left_index >= 0 && right_index >= 0) {
+        return std::array<int, kLegacyGeometryKeypointCount>{
+            swim_index, left_index, right_index};
+    }
+
+    if (keypoint_count == kLegacyGeometryKeypointCount) {
+        return std::array<int, kLegacyGeometryKeypointCount>{0, 1, 2};
+    }
+
+    return std::nullopt;
+}
+
+GeometryResolution resolveGeometryIndices(const json& attrs,
+                                          const KeypointHeadingComputationSpec& heading_spec,
+                                          const std::vector<std::string>& keypoint_labels,
+                                          size_t keypoint_count) {
+    if (auto derived = resolveDerivedGeometryIndices(
+            attrs, keypoint_labels, keypoint_count);
+        derived.has_value()) {
+        return {*derived, true};
+    }
+    return {resolveLegacyGeometryIndices(
+                heading_spec, keypoint_labels, keypoint_count),
+            false};
+}
+
+KeypointGeometryMetrics computeGeometryMetricsForIndices(
+    const std::vector<std::array<double, 2>>& points,
+    const std::optional<std::array<int, kLegacyGeometryKeypointCount>>& indices) {
+    if (!indices.has_value()) {
+        return {};
+    }
+    std::array<std::array<double, 2>, kLegacyGeometryKeypointCount> triad{};
+    for (size_t i = 0; i < triad.size(); ++i) {
+        const int point_index = (*indices)[i];
+        if (point_index < 0 || static_cast<size_t>(point_index) >= points.size()) {
+            return {};
+        }
+        triad[i] = points[static_cast<size_t>(point_index)];
+    }
+    return computeGeometryMetrics(triad);
+}
+
+std::vector<double> buildFlatPointRow(
+    const std::vector<std::array<double, 2>>& points,
+    size_t coord_dims,
+    const std::vector<double>* existing_row,
+    bool preserve_extra_dims) {
+    std::vector<double> flat(points.size() * coord_dims,
+                             std::numeric_limits<double>::quiet_NaN());
+    for (size_t point_idx = 0; point_idx < points.size(); ++point_idx) {
+        const size_t base = point_idx * coord_dims;
+        flat[base + 0] = points[point_idx][0];
+        if (coord_dims > 1) {
+            flat[base + 1] = points[point_idx][1];
+        }
+        if (preserve_extra_dims && existing_row != nullptr &&
+            existing_row->size() == flat.size()) {
+            for (size_t dim = kKeypointCoordDims; dim < coord_dims; ++dim) {
+                flat[base + dim] = (*existing_row)[base + dim];
+            }
+        }
+    }
+    return flat;
+}
+
+const json* findDottedJsonPath(const json& root, const std::string& path) {
+    if (!root.is_object() || path.empty()) {
+        return nullptr;
+    }
+    const json* current = &root;
+    size_t start = 0;
+    while (start <= path.size()) {
+        const size_t dot = path.find('.', start);
+        const std::string key = path.substr(
+            start,
+            dot == std::string::npos ? std::string::npos : dot - start);
+        if (key.empty() || !current->is_object() || !current->contains(key)) {
+            return nullptr;
+        }
+        current = &(*current)[key];
+        if (dot == std::string::npos) {
+            break;
+        }
+        start = dot + 1;
+    }
+    return current;
+}
+
+const json* findThresholdAttrPath(const json& attrs, const std::string& path) {
+    if (const json* direct = findDottedJsonPath(attrs, path);
+        direct != nullptr) {
+        return direct;
+    }
+
+    constexpr std::string_view summary_prefix = "summary_statistics.";
+    if (path.rfind(summary_prefix, 0) == 0) {
+        const std::string suffix = path.substr(summary_prefix.size());
+        if (const json* refine =
+                findDottedJsonPath(attrs, "summary_statistics.refine." + suffix);
+            refine != nullptr) {
+            return refine;
+        }
+        if (const json* parameters =
+                findDottedJsonPath(attrs, "parameters." + suffix);
+            parameters != nullptr) {
+            return parameters;
+        }
+        if (const json* provenance_parameters =
+                findDottedJsonPath(attrs, "provenance.parameters." + suffix);
+            provenance_parameters != nullptr) {
+            return provenance_parameters;
+        }
+    }
+
+    return nullptr;
+}
+
+std::optional<double> geometryMetricValue(const std::string& name,
+                                          const KeypointGeometryMetrics& geometry) {
+    if (name == "triangle_area" || name == "area") {
+        return geometry.area;
+    }
+    if (name == "min_angle") {
+        return geometry.min_angle;
+    }
+    if (name == "max_angle") {
+        return geometry.max_angle;
+    }
+    return std::nullopt;
+}
+
+bool resolveConditionThreshold(const json& attrs,
+                               const json& condition,
+                               double& out_threshold,
+                               bool& out_skip) {
+    out_skip = false;
+    const bool optional = jsonBoolValue(condition, "optional", false) ||
+                          jsonBoolValue(condition, "when_attr_present", false);
+    if (condition.contains("threshold_attr") &&
+        condition["threshold_attr"].is_string()) {
+        const json* threshold_json =
+            findThresholdAttrPath(attrs,
+                                  condition["threshold_attr"].get<std::string>());
+        if (threshold_json != nullptr && threshold_json->is_number()) {
+            out_threshold = threshold_json->get<double>();
+            return true;
+        }
+    }
+    if (condition.contains("default") && condition["default"].is_number()) {
+        out_threshold = condition["default"].get<double>();
+        return true;
+    }
+    if (optional) {
+        out_skip = true;
+        return true;
+    }
+    return false;
+}
+
+std::string geometryConditionValueName(const json& condition) {
+    if (condition.contains("output") && condition["output"].is_string()) {
+        return condition["output"].get<std::string>();
+    }
+    if (condition.contains("output_array") &&
+        condition["output_array"].is_string()) {
+        return condition["output_array"].get<std::string>();
+    }
+    if (condition.contains("array") && condition["array"].is_string()) {
+        return condition["array"].get<std::string>();
+    }
+    if (condition.contains("metric") && condition["metric"].is_string()) {
+        return condition["metric"].get<std::string>();
+    }
+    return {};
+}
+
+std::string normalizeGateOperator(std::string op) {
+    if (op == "is_finite" || op == "finite") {
+        return "isfinite";
+    }
+    if (op == ">=") {
+        return "gte";
+    }
+    if (op == ">") {
+        return "gt";
+    }
+    if (op == "<=") {
+        return "lte";
+    }
+    if (op == "<") {
+        return "lt";
+    }
+    if (op == "==" || op == "=") {
+        return "eq";
+    }
+    if (op == "!=") {
+        return "neq";
+    }
+    return op;
+}
+
+bool evaluateGeometryGateCondition(const json& attrs,
+                                   const json& condition,
+                                   const KeypointGeometryMetrics& geometry,
+                                   bool& out_result,
+                                   bool& out_skip) {
+    out_skip = false;
+    if (!condition.is_object() || !condition.contains("op") ||
+        !condition["op"].is_string()) {
+        return false;
+    }
+
+    const std::string value_name = geometryConditionValueName(condition);
+    if (value_name.empty()) {
+        return false;
+    }
+
+    const auto value = geometryMetricValue(value_name, geometry);
+    if (!value.has_value()) {
+        return false;
+    }
+
+    const std::string op = normalizeGateOperator(condition["op"].get<std::string>());
+    if (op == "isfinite") {
+        out_result = std::isfinite(*value);
+        return true;
+    }
+
+    double threshold = std::numeric_limits<double>::quiet_NaN();
+    if (!resolveConditionThreshold(attrs, condition, threshold, out_skip)) {
+        return false;
+    }
+    if (out_skip) {
+        return true;
+    }
+
+    if (op == "gte") {
+        out_result = std::isfinite(*value) && *value >= threshold;
+    } else if (op == "gt") {
+        out_result = std::isfinite(*value) && *value > threshold;
+    } else if (op == "lte") {
+        out_result = std::isfinite(*value) && *value <= threshold;
+    } else if (op == "lt") {
+        out_result = std::isfinite(*value) && *value < threshold;
+    } else if (op == "eq") {
+        out_result = *value == threshold;
+    } else if (op == "neq") {
+        out_result = *value != threshold;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+bool evaluateDerivedGeometryValidGate(const json& attrs,
+                                      const KeypointGeometryMetrics& geometry,
+                                      bool& out_valid) {
+    if (!attrs.contains("derived_metrics_schema") ||
+        !attrs["derived_metrics_schema"].is_object()) {
+        return false;
+    }
+    const json& schema = attrs["derived_metrics_schema"];
+    if (!schema.contains("quality_gates") ||
+        !schema["quality_gates"].is_array()) {
+        return false;
+    }
+
+    for (const auto& gate : schema["quality_gates"]) {
+        if (!gate.is_object()) {
+            continue;
+        }
+        const bool is_geometry_gate =
+            jsonStringValue(gate, "name") == "geometry_valid" ||
+            jsonStringValue(gate, "output_array") == "geometry_valid" ||
+            (gate.contains("output") &&
+             gate["output"].is_object() &&
+             jsonStringValue(gate["output"], "array") == "geometry_valid");
+        if (!is_geometry_gate ||
+            !gate.contains("conditions") ||
+            !gate["conditions"].is_array()) {
+            continue;
+        }
+
+        std::string combine = jsonStringValue(gate, "combine");
+        if (combine.empty()) {
+            const std::string evaluation = jsonStringValue(gate, "evaluation");
+            if (evaluation == "all_conditions") {
+                combine = "all";
+            } else if (evaluation == "any_conditions") {
+                combine = "any";
+            }
+        }
+        if (combine.empty()) {
+            combine = "all";
+        }
+        if (combine != "all" && combine != "any") {
+            return false;
+        }
+
+        bool saw_condition = false;
+        bool result = combine == "all";
+        for (const auto& condition : gate["conditions"]) {
+            bool condition_result = false;
+            bool skip = false;
+            if (!evaluateGeometryGateCondition(
+                    attrs, condition, geometry, condition_result, skip)) {
+                return false;
+            }
+            if (skip) {
+                continue;
+            }
+            saw_condition = true;
+            if (combine == "all") {
+                result = result && condition_result;
+            } else {
+                result = result || condition_result;
+            }
+        }
+        if (!saw_condition) {
+            return false;
+        }
+        out_valid = result;
+        return true;
+    }
+    return false;
 }
 
 bool jsonScalarEqual(const json& lhs, const json& rhs) {
@@ -313,7 +868,7 @@ bool writeFlatRowIfChangedTyped(
     if (!open_result.ok()) {
         if (error_message != nullptr) {
             *error_message =
-                "Failed to open array '" + path + "' for write: " +
+                "Failed to open array '" + path + "' for read/write: " +
                 open_result.status().ToString();
         }
         return false;
@@ -527,6 +1082,83 @@ bool writeFloat3DRowIfChanged(const RefinedRunContext& ctx,
         ctx.store, ctx.tensorstore_context, path, roi_index, values,
         {1, static_cast<ts::Index>(dim1), static_cast<ts::Index>(dim2)},
         error_message, changed_out);
+}
+
+bool readFloat3DRowAny(const RefinedRunContext& ctx,
+                       const std::string& path,
+                       size_t roi_index,
+                       std::vector<double>& out,
+                       size_t* dim1_out = nullptr,
+                       size_t* dim2_out = nullptr) {
+    const auto meta = readNodeMetaV3(ctx.store, path);
+    if (!meta.has_value()) {
+        return false;
+    }
+    const auto shape = readShapeFromNodeMeta(*meta);
+    if (!shape.has_value() || shape->size() != 3 || (*shape)[0] <= 0 ||
+        roi_index >= static_cast<size_t>((*shape)[0]) ||
+        (*shape)[1] <= 0 || (*shape)[2] <= 0) {
+        return false;
+    }
+
+    const size_t dim1 = static_cast<size_t>((*shape)[1]);
+    const size_t dim2 = static_cast<size_t>((*shape)[2]);
+    const std::string dtype = extractDataTypeName(*meta);
+    auto read_row = [&](auto type_token) -> bool {
+        using T = decltype(type_token);
+        auto store = openArrayAny<T, 3>(ctx.store, path, ctx.tensorstore_context);
+        if (!store.ok()) {
+            return false;
+        }
+        auto slice =
+            store.value() |
+            ts::Dims(0).IndexSlice(static_cast<ts::Index>(roi_index));
+        auto result = ts::Read(slice).result();
+        if (!result.ok()) {
+            return false;
+        }
+        auto array = result.value();
+        const size_t total = dim1 * dim2;
+        out.resize(total);
+        const T* data = static_cast<const T*>(array.data());
+        for (size_t i = 0; i < total; ++i) {
+            out[i] = static_cast<double>(data[i]);
+        }
+        return true;
+    };
+
+    bool ok = false;
+    if (dtype == "float32") {
+        ok = read_row(float{});
+    } else {
+        ok = read_row(double{});
+    }
+    if (!ok) {
+        return false;
+    }
+
+    if (dim1_out != nullptr) {
+        *dim1_out = dim1;
+    }
+    if (dim2_out != nullptr) {
+        *dim2_out = dim2;
+    }
+    return true;
+}
+
+std::optional<size_t> readArrayColumnCount(const RefinedRunContext& ctx,
+                                           const std::string& path,
+                                           size_t expected_rank) {
+    const auto meta = readNodeMetaV3(ctx.store, path);
+    if (!meta.has_value()) {
+        return std::nullopt;
+    }
+    const auto shape = readShapeFromNodeMeta(*meta);
+    if (!shape.has_value() || shape->size() != expected_rank ||
+        (*shape)[1] < 0) {
+        return std::nullopt;
+    }
+    return static_cast<size_t>((*shape)[1]);
 }
 
 bool readStringRowsAsByteMatrix(const ts::kvstore::KvStore& store,
@@ -1145,7 +1777,8 @@ bool openEditableRunContext(const ZarrDetectionLoader& loader,
         return false;
     }
     auto shape = readShapeFromNodeMeta(*keypoints_roi_meta);
-    if (!shape.has_value() || shape->size() != 3 || (*shape)[0] < 0) {
+    if (!shape.has_value() || shape->size() != 3 || (*shape)[0] < 0 ||
+        (*shape)[1] <= 0 || (*shape)[2] < static_cast<ts::Index>(kKeypointCoordDims)) {
         error_message = "Refined run keypoints_roi has invalid shape metadata.";
         return false;
     }
@@ -1157,6 +1790,8 @@ bool openEditableRunContext(const ZarrDetectionLoader& loader,
     out.run_path = run_path;
     out.run_meta = normalizeGroupMetadataV3(*run_meta);
     out.total_rois = static_cast<size_t>((*shape)[0]);
+    out.keypoint_count = static_cast<size_t>((*shape)[1]);
+    out.keypoint_coord_dims = static_cast<size_t>((*shape)[2]);
     out.image_width = loader.getImageWidth();
     out.image_height = loader.getImageHeight();
 
@@ -1309,7 +1944,7 @@ bool validateEditableSelection(const RefinedKeypointSelection& selection,
 bool applyKeypointEdit(const ZarrDetectionLoader& loader,
                        const RefinedKeypointSelection& selection,
                        KeypointEditMode mode,
-                       const std::array<std::array<double, 2>, 3>* manual_points,
+                       const std::vector<std::array<double, 2>>* manual_points,
                        std::string& error_message,
                        RefinedKeypointEditResult* edit_result) {
     error_message.clear();
@@ -1348,10 +1983,17 @@ bool applyKeypointEdit(const ZarrDetectionLoader& loader,
         return false;
     }
 
-    std::array<std::array<double, 2>, kManualKeypointCount> points_roi{};
+    std::vector<std::array<double, 2>> points_roi(ctx.keypoint_count);
     if (mode == KeypointEditMode::ManualCorrection) {
         if (manual_points == nullptr) {
             error_message = "Manual correction points are missing.";
+            return false;
+        }
+        if (manual_points->size() != ctx.keypoint_count) {
+            std::ostringstream oss;
+            oss << "Manual correction point count mismatch: expected "
+                << ctx.keypoint_count << ", got " << manual_points->size() << ".";
+            error_message = oss.str();
             return false;
         }
         points_roi = *manual_points;
@@ -1369,12 +2011,12 @@ bool applyKeypointEdit(const ZarrDetectionLoader& loader,
         }
     }
 
-    std::array<std::array<double, 2>, kManualKeypointCount> points_img{};
-    std::array<std::array<double, 2>, kManualKeypointCount> points_norm{};
+    std::vector<std::array<double, 2>> points_img(ctx.keypoint_count);
+    std::vector<std::array<double, 2>> points_norm(ctx.keypoint_count);
     if (mode == KeypointEditMode::ManualCorrection) {
         const double offset_x = selection.roi_metadata.offset_x;
         const double offset_y = selection.roi_metadata.offset_y;
-        for (size_t i = 0; i < kManualKeypointCount; ++i) {
+        for (size_t i = 0; i < ctx.keypoint_count; ++i) {
             points_img[i][0] = points_roi[i][0] + offset_x;
             points_img[i][1] = points_roi[i][1] + offset_y;
             points_norm[i][0] =
@@ -1383,7 +2025,7 @@ bool applyKeypointEdit(const ZarrDetectionLoader& loader,
                 points_img[i][1] / static_cast<double>(ctx.image_height);
         }
     } else {
-        for (size_t i = 0; i < kManualKeypointCount; ++i) {
+        for (size_t i = 0; i < ctx.keypoint_count; ++i) {
             points_img[i][0] = std::numeric_limits<double>::quiet_NaN();
             points_img[i][1] = std::numeric_limits<double>::quiet_NaN();
             points_norm[i][0] = std::numeric_limits<double>::quiet_NaN();
@@ -1393,13 +2035,16 @@ bool applyKeypointEdit(const ZarrDetectionLoader& loader,
 
     const KeypointHeadingComputationSpec& heading_spec =
         loader.getHeadingComputationSpec();
+    const json& run_attrs = ctx.run_meta["attributes"];
+    const GeometryResolution geometry_resolution = resolveGeometryIndices(
+        run_attrs, heading_spec, loader.getKeypointLabels(), ctx.keypoint_count);
     const double heading_value =
         mode == KeypointEditMode::ManualCorrection
             ? computeHeadingFromPoints(heading_spec, points_roi)
             : std::numeric_limits<double>::quiet_NaN();
     const KeypointGeometryMetrics geometry =
         mode == KeypointEditMode::ManualCorrection
-            ? computeGeometryMetrics(points_roi)
+            ? computeGeometryMetricsForIndices(points_roi, geometry_resolution.indices)
             : KeypointGeometryMetrics{};
 
     bool geometry_ok = false;
@@ -1408,11 +2053,13 @@ bool applyKeypointEdit(const ZarrDetectionLoader& loader,
     bool heading_finite = false;
     bool heading_usable = false;
     double confidence_value = std::numeric_limits<double>::quiet_NaN();
-    std::array<double, 3> keypoint_confidences = {
-        std::numeric_limits<double>::quiet_NaN(),
-        std::numeric_limits<double>::quiet_NaN(),
-        std::numeric_limits<double>::quiet_NaN(),
-    };
+    std::vector<double> keypoint_confidences;
+    if (const auto confidence_cols =
+            readArrayColumnCount(ctx, run_base + "keypoint_confidences", 2);
+        confidence_cols.has_value()) {
+        keypoint_confidences.assign(
+            *confidence_cols, std::numeric_limits<double>::quiet_NaN());
+    }
     if (mode == KeypointEditMode::ManualCorrection) {
         const bool max_ok = !ctx.max_triangle_area.has_value() ||
                             geometry.area <= *ctx.max_triangle_area;
@@ -1422,8 +2069,15 @@ bool applyKeypointEdit(const ZarrDetectionLoader& loader,
             geometry.min_angle >= ctx.min_triangle_angle &&
             geometry.area >= ctx.min_triangle_area &&
             max_ok;
+        if (geometry_resolution.from_derived_metrics_schema) {
+            bool schema_geometry_ok = false;
+            if (evaluateDerivedGeometryValidGate(
+                    run_attrs, geometry, schema_geometry_ok)) {
+                geometry_ok = schema_geometry_ok;
+            }
+        }
         confidence_value = 1.0;
-        keypoint_confidences = {1.0, 1.0, 1.0};
+        std::fill(keypoint_confidences.begin(), keypoint_confidences.end(), 1.0);
         confidence_ok = confidence_value >= ctx.confidence_threshold;
         refined_success = true;
         heading_finite = std::isfinite(heading_value);
@@ -1439,6 +2093,45 @@ bool applyKeypointEdit(const ZarrDetectionLoader& loader,
         }
     }
 
+    const bool preserve_extra_point_dims =
+        mode == KeypointEditMode::ManualCorrection &&
+        ctx.keypoint_coord_dims > kKeypointCoordDims;
+    std::vector<double> existing_points_roi;
+    std::vector<double> existing_points_img;
+    std::vector<double> existing_points_norm;
+    const std::vector<double>* existing_points_roi_ptr = nullptr;
+    const std::vector<double>* existing_points_img_ptr = nullptr;
+    const std::vector<double>* existing_points_norm_ptr = nullptr;
+    if (preserve_extra_point_dims) {
+        if (readFloat3DRowAny(
+                ctx, run_base + "keypoints_roi", roi_index, existing_points_roi)) {
+            existing_points_roi_ptr = &existing_points_roi;
+        }
+        if (readFloat3DRowAny(
+                ctx, run_base + "keypoints_img", roi_index, existing_points_img)) {
+            existing_points_img_ptr = &existing_points_img;
+        }
+        if (readFloat3DRowAny(
+                ctx, run_base + "keypoints_norm", roi_index, existing_points_norm)) {
+            existing_points_norm_ptr = &existing_points_norm;
+        }
+    }
+    const std::vector<double> flat_points_roi = buildFlatPointRow(
+        points_roi,
+        ctx.keypoint_coord_dims,
+        existing_points_roi_ptr,
+        preserve_extra_point_dims);
+    const std::vector<double> flat_points_img = buildFlatPointRow(
+        points_img,
+        ctx.keypoint_coord_dims,
+        existing_points_img_ptr,
+        preserve_extra_point_dims);
+    const std::vector<double> flat_points_norm = buildFlatPointRow(
+        points_norm,
+        ctx.keypoint_coord_dims,
+        existing_points_norm_ptr,
+        preserve_extra_point_dims);
+
     bool any_change = false;
     auto write_change = [&](bool success, bool changed) -> bool {
         if (!success) {
@@ -1448,35 +2141,25 @@ bool applyKeypointEdit(const ZarrDetectionLoader& loader,
         return true;
     };
 
-    auto flatten_points = [](const auto& points) {
-        std::vector<double> flat;
-        flat.reserve(kManualKeypointCount * kManualKeypointDims);
-        for (const auto& point : points) {
-            flat.push_back(point[0]);
-            flat.push_back(point[1]);
-        }
-        return flat;
-    };
-
     bool changed = false;
     if (!write_change(
             writeFloat3DRowIfChanged(
-                ctx, run_base + "keypoints_roi", roi_index, flatten_points(points_roi),
-                kManualKeypointCount, kManualKeypointDims, &error_message, &changed),
+                ctx, run_base + "keypoints_roi", roi_index, flat_points_roi,
+                ctx.keypoint_count, ctx.keypoint_coord_dims, &error_message, &changed),
             changed)) {
         return false;
     }
     if (!write_change(
             writeFloat3DRowIfChanged(
-                ctx, run_base + "keypoints_img", roi_index, flatten_points(points_img),
-                kManualKeypointCount, kManualKeypointDims, &error_message, &changed),
+                ctx, run_base + "keypoints_img", roi_index, flat_points_img,
+                ctx.keypoint_count, ctx.keypoint_coord_dims, &error_message, &changed),
             changed)) {
         return false;
     }
     if (!write_change(
             writeFloat3DRowIfChanged(
-                ctx, run_base + "keypoints_norm", roi_index, flatten_points(points_norm),
-                kManualKeypointCount, kManualKeypointDims, &error_message, &changed),
+                ctx, run_base + "keypoints_norm", roi_index, flat_points_norm,
+                ctx.keypoint_count, ctx.keypoint_coord_dims, &error_message, &changed),
             changed)) {
         return false;
     }
@@ -1493,14 +2176,15 @@ bool applyKeypointEdit(const ZarrDetectionLoader& loader,
             changed)) {
         return false;
     }
-    if (!write_change(
-            writeFloat2DRowIfChanged(
-                ctx, run_base + "keypoint_confidences", roi_index,
-                {keypoint_confidences[0], keypoint_confidences[1],
-                 keypoint_confidences[2]},
-                3, &error_message, &changed),
-            changed)) {
-        return false;
+    if (!keypoint_confidences.empty()) {
+        if (!write_change(
+                writeFloat2DRowIfChanged(
+                    ctx, run_base + "keypoint_confidences", roi_index,
+                    keypoint_confidences,
+                    keypoint_confidences.size(), &error_message, &changed),
+                changed)) {
+            return false;
+        }
     }
     if (!write_change(
             writeFloatScalarRowIfChanged(
@@ -1793,7 +2477,7 @@ bool RefinedKeypointRepository::writeReviewStatus(
 
 bool RefinedKeypointRepository::writeManualCorrection(
     const RefinedKeypointSelection& selection,
-    const std::array<std::array<double, 2>, 3>& keypoints_roi,
+    const std::vector<std::array<double, 2>>& keypoints_roi,
     std::string& error_message,
     RefinedKeypointEditResult* edit_result) const {
     return applyKeypointEdit(

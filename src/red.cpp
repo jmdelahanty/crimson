@@ -21,6 +21,8 @@
 #include <cmath>
 #include <chrono>
 #include <array>
+#include <functional>
+#include <future>
 #include <iomanip>
 #include <limits>
 #include <sstream>
@@ -128,6 +130,251 @@ namespace {
 
 double durationMs(std::chrono::steady_clock::duration duration) {
     return std::chrono::duration<double, std::milli>(duration).count();
+}
+
+struct PendingKeypointWriteResult {
+    CropKeypointEditorActionType action_type = CropKeypointEditorActionType::None;
+    RefinedKeypointSelection selection;
+    RefinedKeypointEditResult edit_result;
+    bool ok = false;
+    std::string error_message;
+    std::string success_status;
+};
+
+struct PendingKeypointWriteState {
+    bool active = false;
+    bool reset_crop_editor = false;
+    bool reset_full_frame_editor = false;
+    std::string archive_path;
+    std::future<PendingKeypointWriteResult> future;
+};
+
+std::string keypointWriteFailurePrefix(CropKeypointEditorActionType action_type) {
+    switch (action_type) {
+    case CropKeypointEditorActionType::Save:
+        return "Keypoint edit failed: ";
+    case CropKeypointEditorActionType::MarkNoKeypoints:
+        return "Mark no keypoints failed: ";
+    case CropKeypointEditorActionType::MarkDetectionIssue:
+        return "Mark detection issue failed: ";
+    case CropKeypointEditorActionType::Reset:
+    case CropKeypointEditorActionType::None:
+    default:
+        return "Keypoint write failed: ";
+    }
+}
+
+std::string keypointWriteReloadFailurePrefix(CropKeypointEditorActionType action_type) {
+    switch (action_type) {
+    case CropKeypointEditorActionType::Save:
+        return "Keypoint edit saved but reload failed: ";
+    case CropKeypointEditorActionType::MarkNoKeypoints:
+        return "Marked fish_present_no_keypoints but reload failed: ";
+    case CropKeypointEditorActionType::MarkDetectionIssue:
+        return "Marked detection_issue but reload failed: ";
+    case CropKeypointEditorActionType::Reset:
+    case CropKeypointEditorActionType::None:
+    default:
+        return "Keypoint write succeeded but reload failed: ";
+    }
+}
+
+std::string keypointWriteStartStatus(CropKeypointEditorActionType action_type,
+                                     const RefinedKeypointSelection& selection) {
+    std::ostringstream status;
+    switch (action_type) {
+    case CropKeypointEditorActionType::Save:
+        status << "Saving keypoint edit";
+        break;
+    case CropKeypointEditorActionType::MarkNoKeypoints:
+        status << "Marking fish_present_no_keypoints";
+        break;
+    case CropKeypointEditorActionType::MarkDetectionIssue:
+        status << "Marking detection_issue";
+        break;
+    case CropKeypointEditorActionType::Reset:
+    case CropKeypointEditorActionType::None:
+    default:
+        status << "Writing keypoint update";
+        break;
+    }
+    status << ": roi=" << selection.roi_index << " ...";
+    return status.str();
+}
+
+std::string keypointWriteSuccessStatus(
+    CropKeypointEditorActionType action_type,
+    const RefinedKeypointSelection& selection,
+    const RefinedKeypointEditResult& edit_result) {
+    std::ostringstream status;
+    if (action_type == CropKeypointEditorActionType::Save) {
+        status << (edit_result.changed ? "Keypoint edit saved"
+                                       : "Keypoint edit was a no-op");
+    } else if (action_type == CropKeypointEditorActionType::MarkNoKeypoints) {
+        status << "Marked fish_present_no_keypoints";
+    } else if (action_type == CropKeypointEditorActionType::MarkDetectionIssue) {
+        status << "Marked detection_issue";
+    } else {
+        status << "Keypoint write";
+    }
+    status << ": roi=" << selection.roi_index;
+    if (edit_result.summary_updated) {
+        status << " summary=updated";
+    }
+    if (edit_result.stale_eye_mask_runs > 0) {
+        status << " stale_eye_masks=" << edit_result.stale_eye_mask_runs;
+    }
+    return status.str();
+}
+
+PendingKeypointWriteResult runKeypointWrite(
+    const ZarrDetectionLoader& loader,
+    const CropKeypointEditorAction& action,
+    const std::optional<RefinedKeypointSelection>& selection) {
+    PendingKeypointWriteResult result;
+    result.action_type = action.type;
+    if (!selection.has_value()) {
+        result.error_message = "Keypoint write failed: No keypoint selection.";
+        return result;
+    }
+    result.selection = *selection;
+
+    RefinedKeypointRepository refined_keypoint_repo(loader);
+    std::string write_error;
+    switch (action.type) {
+    case CropKeypointEditorActionType::Save:
+        result.ok = refined_keypoint_repo.writeManualCorrection(
+            *selection, action.keypoints_roi, write_error, &result.edit_result);
+        break;
+    case CropKeypointEditorActionType::MarkNoKeypoints:
+        result.ok = refined_keypoint_repo.markFishPresentNoKeypoints(
+            *selection, write_error, &result.edit_result);
+        break;
+    case CropKeypointEditorActionType::MarkDetectionIssue:
+        result.ok = refined_keypoint_repo.markDetectionIssue(
+            *selection, write_error, &result.edit_result);
+        break;
+    case CropKeypointEditorActionType::Reset:
+    case CropKeypointEditorActionType::None:
+    default:
+        result.error_message = "Keypoint write failed: No keypoint write action.";
+        return result;
+    }
+
+    if (!result.ok) {
+        result.error_message =
+            keypointWriteFailurePrefix(action.type) + write_error;
+        return result;
+    }
+    result.success_status =
+        keypointWriteSuccessStatus(action.type, *selection, result.edit_result);
+    return result;
+}
+
+PendingKeypointWriteResult runKeypointWriteFromArchive(
+    const std::string& archive_path,
+    const CropKeypointEditorAction& action,
+    const std::optional<RefinedKeypointSelection>& selection) {
+    PendingKeypointWriteResult result;
+    result.action_type = action.type;
+    if (selection.has_value()) {
+        result.selection = *selection;
+    }
+    if (archive_path.empty()) {
+        result.error_message = "Keypoint write failed: No loaded Zarr archive.";
+        return result;
+    }
+
+    ZarrDetectionLoader worker_loader;
+    std::string load_error;
+    if (!worker_loader.loadZarrFile(archive_path, load_error)) {
+        result.error_message =
+            keypointWriteFailurePrefix(action.type) +
+            "Worker failed to load active Zarr: " + load_error;
+        return result;
+    }
+    return runKeypointWrite(worker_loader, action, selection);
+}
+
+void startKeypointWriteIfRequested(
+    PendingKeypointWriteState& pending_write,
+    const ZarrDetectionLoader& loader,
+    const CropKeypointEditorAction& action,
+    const std::optional<RefinedKeypointSelection>& selection,
+    bool reset_crop_editor,
+    bool reset_full_frame_editor,
+    std::string& status_out) {
+    if (action.type == CropKeypointEditorActionType::None) {
+        return;
+    }
+    if (!selection.has_value()) {
+        status_out = "Keypoint write failed: No keypoint selection.";
+        return;
+    }
+    if (pending_write.active) {
+        status_out = "Keypoint write already in progress.";
+        return;
+    }
+
+    const std::string archive_path = loader.getArchivePath();
+    pending_write.active = true;
+    pending_write.reset_crop_editor = reset_crop_editor;
+    pending_write.reset_full_frame_editor = reset_full_frame_editor;
+    pending_write.archive_path = archive_path;
+    status_out = keypointWriteStartStatus(action.type, *selection);
+    pending_write.future = std::async(
+        std::launch::async,
+        [archive_path, action, selection]() {
+            return runKeypointWriteFromArchive(archive_path, action, selection);
+        });
+}
+
+void pollPendingKeypointWrite(
+    PendingKeypointWriteState& pending_write,
+    const ZarrDetectionLoader& loader,
+    CropKeypointEditorState& crop_editor_state,
+    FullFrameKeypointEditState& full_frame_editor_state,
+    std::string& status_out,
+    const std::function<bool(std::string&)>& reload_active_zarr) {
+    if (!pending_write.active || !pending_write.future.valid()) {
+        return;
+    }
+    if (pending_write.future.wait_for(std::chrono::milliseconds(0)) !=
+        std::future_status::ready) {
+        return;
+    }
+
+    PendingKeypointWriteResult result = pending_write.future.get();
+    const bool reset_crop_editor = pending_write.reset_crop_editor;
+    const bool reset_full_frame_editor = pending_write.reset_full_frame_editor;
+    const std::string archive_path = pending_write.archive_path;
+    pending_write = PendingKeypointWriteState{};
+
+    if (!result.ok) {
+        status_out = result.error_message;
+        return;
+    }
+
+    if (loader.getArchivePath() != archive_path) {
+        status_out =
+            result.success_status + " (active Zarr changed; skipped reload)";
+        return;
+    }
+
+    if (reset_crop_editor) {
+        resetCropKeypointEditorState(crop_editor_state);
+    }
+    if (reset_full_frame_editor) {
+        resetFullFrameKeypointEditState(full_frame_editor_state);
+    }
+
+    std::string reload_error;
+    if (!reload_active_zarr(reload_error)) {
+        status_out =
+            keypointWriteReloadFailurePrefix(result.action_type) + reload_error;
+        return;
+    }
+    status_out = result.success_status;
 }
 
 
@@ -389,6 +636,7 @@ int main(int argc, char **argv) {
     CropPreviewWindowState crop_preview_window_state;
     LabelingToolWindowState labeling_tool_window_state;
     FrameDebugWindowState frame_debug_window_state;
+    PendingKeypointWriteState pending_keypoint_write;
     PlaybackSessionController playback_session_controller(
         PlaybackSessionControllerContext{
             scene,
@@ -453,6 +701,13 @@ int main(int argc, char **argv) {
     while (!glfwWindowShouldClose(window->render_target)) {
         static FileBrowserWindowState file_browser_window_state;
         const auto frame_loop_start = std::chrono::steady_clock::now();
+        pollPendingKeypointWrite(
+            pending_keypoint_write,
+            zarr_loader,
+            crop_preview_window_state.editor_state,
+            frame_debug_window_state.keypoint_review_panel.full_frame_edit,
+            frame_debug_window_state.keypoint_review_panel.manual_write_status,
+            reloadActiveZarrPreserveDataset);
         double frame_camera_upload_ms = 0.0;
         int frame_camera_upload_count = 0;
         double frame_camera_texture_resize_ms = 0.0;
@@ -974,16 +1229,15 @@ int main(int argc, char **argv) {
             }
             if (frame_debug_result.keypoint_edit_action.type !=
                 CropKeypointEditorActionType::None) {
-                RefinedKeypointRepository refined_keypoint_repo(zarr_loader);
-                applyFullFrameKeypointWriteAction(
-                    refined_keypoint_repo,
+                startKeypointWriteIfRequested(
+                    pending_keypoint_write,
+                    zarr_loader,
                     frame_debug_result.keypoint_edit_action,
                     frame_debug_result.selected_keypoint_selection,
-                    frame_debug_window_state.keypoint_review_panel.full_frame_edit,
-                    &crop_preview_window_state.editor_state,
+                    true,
+                    true,
                     frame_debug_window_state.keypoint_review_panel
-                        .manual_write_status,
-                    reloadActiveZarrPreserveDataset);
+                        .manual_write_status);
             }
             frame_frame_debug_ui_ms +=
                 durationMs(std::chrono::steady_clock::now() - frame_debug_ui_start);
@@ -2414,15 +2668,15 @@ int main(int argc, char **argv) {
             const auto crop_preview_result = drawCropPreviewWindow(
                 crop_preview_context, crop_preview_window_state);
 
-            applyCropPreviewKeypointWriteAction(
-                refined_keypoint_repo,
+            startKeypointWriteIfRequested(
+                pending_keypoint_write,
+                zarr_loader,
                 crop_preview_result.editor_action,
                 crop_preview_result.selected_keypoint_selection,
-                crop_preview_window_state.editor_state,
-                &frame_debug_window_state.keypoint_review_panel.full_frame_edit,
+                true,
+                true,
                 frame_debug_window_state.keypoint_review_panel
-                    .manual_write_status,
-                reloadActiveZarrPreserveDataset);
+                    .manual_write_status);
             frame_crop_preview_ui_ms +=
                 durationMs(std::chrono::steady_clock::now() - crop_preview_ui_start);
         }

@@ -7,8 +7,6 @@
 
 namespace {
 
-constexpr size_t kManualCropKeypointCount = 3;
-
 bool isEditableSelection(const CropKeypointEditorContext& context) {
     return context.selection != nullptr && context.selection->valid &&
            context.selection->editable &&
@@ -42,10 +40,12 @@ bool sameSelection(const CropKeypointEditorState& state,
 
 void syncCropKeypointEditorState(const CropKeypointEditorContext& context,
                                  CropKeypointEditorState& state) {
+    const size_t editable_keypoint_count =
+        context.source_positions != nullptr ? context.source_positions->size() : 0;
     if (!isEditableSelection(context) || context.source_positions == nullptr ||
         context.labels == nullptr ||
-        context.source_positions->size() != kManualCropKeypointCount ||
-        context.labels->size() != kManualCropKeypointCount) {
+        editable_keypoint_count == 0 ||
+        context.labels->size() != editable_keypoint_count) {
         resetCropKeypointEditorState(state);
         return;
     }
@@ -54,8 +54,8 @@ void syncCropKeypointEditorState(const CropKeypointEditorContext& context,
         return;
     }
 
-    state.positions.resize(kManualCropKeypointCount);
-    for (size_t i = 0; i < kManualCropKeypointCount; ++i) {
+    state.positions.resize(editable_keypoint_count);
+    for (size_t i = 0; i < editable_keypoint_count; ++i) {
         const auto& source = (*context.source_positions)[i];
         if (std::isfinite(source[0]) && std::isfinite(source[1])) {
             state.positions[i] = source;
@@ -310,7 +310,7 @@ CropKeypointEditorDisplay drawCropKeypointEditorOverlay(
     display.selection_editable = isEditableSelection(context);
 
     if (display.selection_editable &&
-        state.positions.size() == kManualCropKeypointCount) {
+        !state.positions.empty()) {
         display.positions = &state.positions;
     } else if (context.source_positions != nullptr) {
         display.positions = context.source_positions;
@@ -448,17 +448,18 @@ CropKeypointEditorAction drawCropKeypointEditorPanel(
 
         ImGui::BeginDisabled(context.play_video);
         if (ImGui::Button("Save Keypoint Edit")) {
-            if (state.positions.size() != kManualCropKeypointCount) {
+            if (state.positions.empty()) {
                 if (context.status_message != nullptr) {
                     *context.status_message =
-                        "Keypoint edit failed: expected 3 editable crop keypoints.";
+                        "Keypoint edit failed: no editable crop keypoints are loaded.";
                 }
             } else {
                 if (context.status_message != nullptr) {
                     context.status_message->clear();
                 }
                 action.type = CropKeypointEditorActionType::Save;
-                for (size_t i = 0; i < kManualCropKeypointCount; ++i) {
+                action.keypoints_roi.resize(state.positions.size());
+                for (size_t i = 0; i < state.positions.size(); ++i) {
                     action.keypoints_roi[i][0] = state.positions[i][0];
                     action.keypoints_roi[i][1] = state.positions[i][1];
                 }
