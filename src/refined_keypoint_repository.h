@@ -31,6 +31,7 @@ struct RefinedKeypointEditResult {
     bool changed = false;
     bool summary_updated = false;
     int stale_eye_mask_runs = 0;
+    ZarrDetectionLoader::RefinedKeypointCacheUpdate cache_update;
 };
 
 // Central seam for refined-keypoint editing. Selection, review-status writes,

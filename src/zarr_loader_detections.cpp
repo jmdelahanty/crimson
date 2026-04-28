@@ -1672,6 +1672,121 @@ int32_t ZarrDetectionLoader::getKeypointRoiIndexForFrameDetection(
         .roi_index;
 }
 
+bool ZarrDetectionLoader::applyRefinedKeypointCacheUpdate(
+    const RefinedKeypointCacheUpdate& update,
+    std::string* error_message) {
+    auto fail = [&](const std::string& message) {
+        if (error_message != nullptr) {
+            *error_message = message;
+        }
+        return false;
+    };
+    if (error_message != nullptr) {
+        error_message->clear();
+    }
+    if (!update.valid) {
+        return fail("Keypoint cache update is empty.");
+    }
+    if (!data_.has_keypoints || !data_.is_refined_keypoints) {
+        return fail("Loaded keypoint cache is not an editable refined run.");
+    }
+    if (update.frame_id >= data_.total_frames ||
+        data_.frame_offsets.empty() ||
+        update.frame_id + 1 >= data_.frame_offsets.size()) {
+        return fail("Edited keypoint frame is outside the loaded cache.");
+    }
+
+    const size_t start = data_.frame_offsets[update.frame_id];
+    const size_t end = data_.frame_offsets[update.frame_id + 1];
+    const size_t frame_detection_count = end >= start ? end - start : 0;
+    if (update.detection_index >= frame_detection_count) {
+        return fail("Edited keypoint detection is outside the loaded frame.");
+    }
+    size_t det_row = start + update.detection_index;
+    if (det_row >= data_.keypoint_roi_indices.size() ||
+        data_.keypoint_roi_indices[det_row] != update.roi_index) {
+        det_row = std::numeric_limits<size_t>::max();
+        for (size_t i = 0; i < data_.keypoint_roi_indices.size(); ++i) {
+            if (data_.keypoint_roi_indices[i] == update.roi_index) {
+                det_row = i;
+                break;
+            }
+        }
+        if (det_row == std::numeric_limits<size_t>::max()) {
+            return fail("Edited keypoint ROI is not present in the loaded cache.");
+        }
+    }
+
+    if (update.keypoints_img.size() != data_.keypoints_per_detection) {
+        return fail("Edited keypoint count does not match the loaded cache.");
+    }
+
+    const size_t total_detections = data_.keypoint_roi_indices.size();
+    const float nan_value = std::numeric_limits<float>::quiet_NaN();
+    auto ensure_float = [&](std::vector<float>& values, float fallback) {
+        if (values.size() < total_detections) {
+            values.resize(total_detections, fallback);
+        }
+    };
+    auto ensure_u8 = [&](std::vector<uint8_t>& values, uint8_t fallback) {
+        if (values.size() < total_detections) {
+            values.resize(total_detections, fallback);
+        }
+    };
+    auto ensure_i32 = [&](std::vector<int32_t>& values, int32_t fallback) {
+        if (values.size() < total_detections) {
+            values.resize(total_detections, fallback);
+        }
+    };
+    auto ensure_string = [&](std::vector<std::string>& values) {
+        if (values.size() < total_detections) {
+            values.resize(total_detections);
+        }
+    };
+    auto ensure_point = [&](
+        std::vector<std::array<float, 2>>& values,
+        std::array<float, 2> fallback) {
+        if (values.size() < total_detections) {
+            values.resize(total_detections, fallback);
+        }
+    };
+
+    const size_t stride = data_.keypoints_per_detection * 2;
+    const size_t flat_base = det_row * stride;
+    if (flat_base + stride > data_.flat_keypoints_px.size()) {
+        return fail("Loaded keypoint coordinate cache is too small.");
+    }
+    for (size_t kp_idx = 0; kp_idx < data_.keypoints_per_detection; ++kp_idx) {
+        data_.flat_keypoints_px[flat_base + kp_idx * 2 + 0] =
+            update.keypoints_img[kp_idx][0];
+        data_.flat_keypoints_px[flat_base + kp_idx * 2 + 1] =
+            update.keypoints_img[kp_idx][1];
+    }
+
+    ensure_float(data_.flat_headings_deg, 0.0f);
+    ensure_point(data_.flat_swim_bladder_px, {nan_value, nan_value});
+    ensure_u8(data_.flat_heading_valid, 0);
+    data_.flat_headings_deg[det_row] = update.heading_deg;
+    data_.flat_swim_bladder_px[det_row] = update.heading_origin_img;
+    data_.flat_heading_valid[det_row] = update.heading_valid ? 1 : 0;
+
+    ensure_i32(data_.flat_keypoint_quality_labels, -1);
+    ensure_string(data_.flat_keypoint_reason);
+    ensure_u8(data_.flat_keypoint_flip_corrected, 0);
+    ensure_u8(data_.flat_keypoint_usable, 0);
+    ensure_u8(data_.flat_keypoint_confidence_valid, 0);
+    ensure_u8(data_.flat_keypoint_geometry_valid, 0);
+    ensure_u8(data_.flat_keypoint_refined_success, 0);
+    data_.flat_keypoint_quality_labels[det_row] = update.quality_label;
+    data_.flat_keypoint_reason[det_row] = update.reason;
+    data_.flat_keypoint_flip_corrected[det_row] = update.flip_corrected;
+    data_.flat_keypoint_usable[det_row] = update.usable;
+    data_.flat_keypoint_confidence_valid[det_row] = update.confidence_valid;
+    data_.flat_keypoint_geometry_valid[det_row] = update.geometry_valid;
+    data_.flat_keypoint_refined_success[det_row] = update.refined_success;
+    return true;
+}
+
 bool ZarrDetectionLoader::getCropImageForIndex(int32_t roi_index,
                                                CropImageView& out_view) const {
     if (!data_.crop_data.loaded || roi_index < 0) {

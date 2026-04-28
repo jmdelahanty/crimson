@@ -2327,6 +2327,33 @@ bool applyKeypointEdit(const ZarrDetectionLoader& loader,
         edit_result->changed = any_change;
         edit_result->summary_updated = summary_changed;
         edit_result->stale_eye_mask_runs = stale_count;
+        auto& cache_update = edit_result->cache_update;
+        cache_update.valid = true;
+        cache_update.frame_id = selection.frame_id;
+        cache_update.detection_index = selection.detection_index;
+        cache_update.roi_index = selection.roi_index;
+        cache_update.keypoints_img.resize(points_img.size());
+        for (size_t i = 0; i < points_img.size(); ++i) {
+            cache_update.keypoints_img[i] = {
+                static_cast<float>(points_img[i][0]),
+                static_cast<float>(points_img[i][1])};
+        }
+        cache_update.heading_deg = static_cast<float>(heading_value);
+        std::array<double, 2> heading_origin{};
+        if (evaluateKeypointHeadingOrigin(
+                heading_spec, points_img, heading_origin)) {
+            cache_update.heading_origin_img = {
+                static_cast<float>(heading_origin[0]),
+                static_cast<float>(heading_origin[1])};
+        }
+        cache_update.heading_valid = heading_usable;
+        cache_update.quality_label = 0;
+        cache_update.reason = new_reason;
+        cache_update.flip_corrected = 0;
+        cache_update.usable = confidence_ok && geometry_ok ? 1 : 0;
+        cache_update.confidence_valid = confidence_ok ? 1 : 0;
+        cache_update.geometry_valid = geometry_ok ? 1 : 0;
+        cache_update.refined_success = refined_success ? 1 : 0;
     }
     return true;
 }

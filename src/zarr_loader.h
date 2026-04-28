@@ -778,6 +778,29 @@ public:
                                                  size_t detection_idx,
                                                  bool use_interpolated = false) const;
 
+    struct RefinedKeypointCacheUpdate {
+        bool valid = false;
+        size_t frame_id = 0;
+        size_t detection_index = 0;
+        int32_t roi_index = -1;
+        std::vector<std::array<float, 2>> keypoints_img;
+        float heading_deg = std::numeric_limits<float>::quiet_NaN();
+        std::array<float, 2> heading_origin_img = {
+            std::numeric_limits<float>::quiet_NaN(),
+            std::numeric_limits<float>::quiet_NaN()};
+        bool heading_valid = false;
+        int32_t quality_label = -1;
+        std::string reason;
+        uint8_t flip_corrected = 0;
+        uint8_t usable = 0;
+        uint8_t confidence_valid = 0;
+        uint8_t geometry_valid = 0;
+        uint8_t refined_success = 0;
+    };
+    bool applyRefinedKeypointCacheUpdate(
+        const RefinedKeypointCacheUpdate& update,
+        std::string* error_message = nullptr);
+
     bool hasHeadingData() const { return data_.has_heading_data; }
     bool hasKeypointData() const { return data_.has_keypoints; }
     const std::vector<std::string>& getKeypointLabels() const {

@@ -331,11 +331,12 @@ void startKeypointWriteIfRequested(
 
 void pollPendingKeypointWrite(
     PendingKeypointWriteState& pending_write,
-    const ZarrDetectionLoader& loader,
+    ZarrDetectionLoader& loader,
     CropKeypointEditorState& crop_editor_state,
     FullFrameKeypointEditState& full_frame_editor_state,
     std::string& status_out,
-    const std::function<bool(std::string&)>& reload_active_zarr) {
+    const std::function<bool(std::string&)>& reload_active_zarr,
+    const std::function<void()>& invalidate_after_write) {
     if (!pending_write.active || !pending_write.future.valid()) {
         return;
     }
@@ -368,11 +369,27 @@ void pollPendingKeypointWrite(
         resetFullFrameKeypointEditState(full_frame_editor_state);
     }
 
-    std::string reload_error;
-    if (!reload_active_zarr(reload_error)) {
+    std::string cache_error;
+    if (!loader.applyRefinedKeypointCacheUpdate(
+            result.edit_result.cache_update, &cache_error)) {
+        std::string reload_error;
+        if (!reload_active_zarr(reload_error)) {
+            status_out =
+                keypointWriteReloadFailurePrefix(result.action_type) +
+                reload_error + " (cache update failed: " + cache_error + ")";
+            return;
+        }
+        if (invalidate_after_write) {
+            invalidate_after_write();
+        }
         status_out =
-            keypointWriteReloadFailurePrefix(result.action_type) + reload_error;
+            result.success_status +
+            " (reloaded; targeted cache update failed: " + cache_error + ")";
         return;
+    }
+
+    if (invalidate_after_write) {
+        invalidate_after_write();
     }
     status_out = result.success_status;
 }
@@ -707,7 +724,15 @@ int main(int argc, char **argv) {
             crop_preview_window_state.editor_state,
             frame_debug_window_state.keypoint_review_panel.full_frame_edit,
             frame_debug_window_state.keypoint_review_panel.manual_write_status,
-            reloadActiveZarrPreserveDataset);
+            reloadActiveZarrPreserveDataset,
+            [&]() {
+                invalidateReviewFrameCache(review_frame_cache);
+                review_frame_status.clear();
+                crop_preview_window_state.last_roi_index =
+                    std::numeric_limits<int>::min();
+                crop_preview_window_state.last_crop_preview_source_frame = -1;
+                crop_preview_window_state.rotated_valid = false;
+            });
         double frame_camera_upload_ms = 0.0;
         int frame_camera_upload_count = 0;
         double frame_camera_texture_resize_ms = 0.0;
