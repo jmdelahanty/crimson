@@ -22,6 +22,10 @@ Palette owns persisted refined subject-mask mutation:
 Crimson should not depend on Paintera code, and production Crimson should not
 depend on a fixed local Palette checkout path.
 
+For the planned brush mechanics, preview-mask mutation, and stroke-level undo
+model, see
+[crimson_subject_mask_painting_plan.md](./crimson_subject_mask_painting_plan.md).
+
 ## Save Boundary
 
 The preferred save boundary is a Palette-owned command or service. The current
