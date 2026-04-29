@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gui/camera_view_overlay_renderer.h"
 #include "gui/crop_keypoint_editor.h"
 #include "gui/refined_keypoint_review_panel.h"
 #include "gui/review_metadata_editor.h"
@@ -68,6 +69,8 @@ struct FrameDebugWindowContext {
     bool show_eye_left_mask = true;
     bool show_eye_right_mask = true;
     bool show_swim_bladder_mask = true;
+    CameraViewMaskOverlayMode mask_overlay_mode =
+        CameraViewMaskOverlayMode::Review;
 };
 
 struct FrameDebugWindowResult {
@@ -91,6 +94,8 @@ struct FrameDebugWindowResult {
     bool show_eye_left_mask = true;
     bool show_eye_right_mask = true;
     bool show_swim_bladder_mask = true;
+    CameraViewMaskOverlayMode mask_overlay_mode =
+        CameraViewMaskOverlayMode::Review;
 };
 
 FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& context,

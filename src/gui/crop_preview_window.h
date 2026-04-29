@@ -2,6 +2,7 @@
 
 #include "crop_image_provider.h"
 #include "gui/crop_keypoint_editor.h"
+#include "gui/crop_preview_perf.h"
 #include "refined_keypoint_repository.h"
 
 #include <array>
@@ -61,6 +62,7 @@ struct CropPreviewWindowContext {
 struct CropPreviewWindowResult {
     CropKeypointEditorAction editor_action;
     std::optional<RefinedKeypointSelection> selected_keypoint_selection;
+    CropPreviewPerfMetrics perf;
 };
 
 CropPreviewWindowResult drawCropPreviewWindow(const CropPreviewWindowContext& context,

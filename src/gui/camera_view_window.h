@@ -22,6 +22,7 @@ struct CameraViewWindowPerfMetrics {
     double plot_image_ui_ms = 0.0;
     double overlay_ui_ms = 0.0;
     double scene_ui_ms = 0.0;
+    CameraViewMaskPerfMetrics mask_overlay;
     double viewport_width_px = std::numeric_limits<double>::quiet_NaN();
     double viewport_height_px = std::numeric_limits<double>::quiet_NaN();
     double view_x_min = std::numeric_limits<double>::quiet_NaN();

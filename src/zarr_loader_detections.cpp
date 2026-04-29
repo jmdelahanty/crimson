@@ -1663,6 +1663,66 @@ ZarrDetectionLoader::getKeypointRoiMetadataForFrameDetection(
     return metadata;
 }
 
+ZarrDetectionLoader::KeypointRoiMetadata
+ZarrDetectionLoader::getMaskRoiMetadataForFrameDetection(
+    size_t frame_id,
+    size_t detection_idx,
+    bool use_interpolated) const {
+    KeypointRoiMetadata metadata;
+
+    // Mask ROI rows are aligned to the non-interpolated detection order.
+    // Synthetic interpolated rows do not have a stable refined-mask row identity.
+    if (use_interpolated) {
+        return metadata;
+    }
+    if (data_.mask_roi_indices.empty()) {
+        return metadata;
+    }
+    if (frame_id >= data_.total_frames) {
+        return metadata;
+    }
+    if (data_.frame_offsets.empty() || frame_id + 1 >= data_.frame_offsets.size()) {
+        return metadata;
+    }
+
+    size_t start = data_.frame_offsets[frame_id];
+    size_t end = data_.frame_offsets[frame_id + 1];
+    size_t frame_detection_count = (end >= start) ? (end - start) : 0;
+    if (detection_idx >= frame_detection_count) {
+        return metadata;
+    }
+
+    size_t det_row = start + detection_idx;
+    if (det_row >= data_.mask_roi_indices.size()) {
+        return metadata;
+    }
+    metadata.roi_index = data_.mask_roi_indices[det_row];
+    metadata.valid = metadata.roi_index >= 0;
+    if (!metadata.valid) {
+        return metadata;
+    }
+
+    if (det_row < data_.roi_offset_x.size()) {
+        metadata.offset_x = data_.roi_offset_x[det_row];
+    }
+    if (det_row < data_.roi_offset_y.size()) {
+        metadata.offset_y = data_.roi_offset_y[det_row];
+    }
+    if (det_row < data_.roi_width_px.size()) {
+        metadata.roi_width = data_.roi_width_px[det_row];
+    }
+    if (det_row < data_.roi_height_px.size()) {
+        metadata.roi_height = data_.roi_height_px[det_row];
+    }
+
+    metadata.has_crop_metadata =
+        std::isfinite(metadata.offset_x) &&
+        std::isfinite(metadata.offset_y) &&
+        metadata.roi_width > 0.0f &&
+        metadata.roi_height > 0.0f;
+    return metadata;
+}
+
 int32_t ZarrDetectionLoader::getKeypointRoiIndexForFrameDetection(
     size_t frame_id,
     size_t detection_idx,

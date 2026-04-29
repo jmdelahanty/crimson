@@ -132,6 +132,34 @@ double durationMs(std::chrono::steady_clock::duration duration) {
     return std::chrono::duration<double, std::milli>(duration).count();
 }
 
+bool parseIntArgument(const char* text, int& out) {
+    if (text == nullptr || *text == '\0') {
+        return false;
+    }
+    char* end = nullptr;
+    long value = std::strtol(text, &end, 10);
+    if (end == text || *end != '\0' ||
+        value < std::numeric_limits<int>::min() ||
+        value > std::numeric_limits<int>::max()) {
+        return false;
+    }
+    out = static_cast<int>(value);
+    return true;
+}
+
+bool parseDoubleArgument(const char* text, double& out) {
+    if (text == nullptr || *text == '\0') {
+        return false;
+    }
+    char* end = nullptr;
+    double value = std::strtod(text, &end);
+    if (end == text || *end != '\0' || !std::isfinite(value)) {
+        return false;
+    }
+    out = value;
+    return true;
+}
+
 struct PendingKeypointWriteResult {
     CropKeypointEditorActionType action_type = CropKeypointEditorActionType::None;
     RefinedKeypointSelection selection;
@@ -402,6 +430,10 @@ int main(int argc, char **argv) {
     std::string cli_zarr_override_path;
     std::string cli_recording_path;
     std::filesystem::path cli_perf_log_path;
+    std::filesystem::path cli_mask_perf_log_path;
+    int cli_swap_interval = 1;
+    double cli_frame_cap_fps = 0.0;
+    bool mask_perf_log_enabled = true;
     const std::filesystem::path argv0_path = (argc > 0) ? argv[0] : "";
     std::error_code cwd_error;
     const std::filesystem::path cwd = std::filesystem::current_path(cwd_error);
@@ -431,7 +463,57 @@ int main(int argc, char **argv) {
             cli_perf_log_path = argv[++i];
             continue;
         }
+        if (arg == "--mask-perf-log") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value for --mask-perf-log" << std::endl;
+                return 1;
+            }
+            cli_mask_perf_log_path = argv[++i];
+            continue;
+        }
+        if (arg == "--no-mask-perf-log") {
+            mask_perf_log_enabled = false;
+            continue;
+        }
+        if (arg == "--swap-interval") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value for --swap-interval" << std::endl;
+                return 1;
+            }
+            int parsed = 0;
+            if (!parseIntArgument(argv[++i], parsed) ||
+                (parsed != 0 && parsed != 1)) {
+                std::cerr << "Invalid --swap-interval value; expected 0 or 1"
+                          << std::endl;
+                return 1;
+            }
+            cli_swap_interval = parsed;
+            continue;
+        }
+        if (arg == "--frame-cap-fps") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value for --frame-cap-fps" << std::endl;
+                return 1;
+            }
+            double parsed = 0.0;
+            if (!parseDoubleArgument(argv[++i], parsed) || parsed < 0.0) {
+                std::cerr << "Invalid --frame-cap-fps value; expected a "
+                             "non-negative number"
+                          << std::endl;
+                return 1;
+            }
+            cli_frame_cap_fps = parsed;
+            continue;
+        }
         std::cerr << "Ignoring unknown argument: " << arg << std::endl;
+    }
+
+    if (cli_swap_interval == 0 && cli_frame_cap_fps <= 0.0) {
+        cli_frame_cap_fps = 60.0;
+        std::cerr << "[FramePacing] --swap-interval 0 requested without "
+                     "--frame-cap-fps; capping at 60 FPS to avoid an "
+                     "uncapped render loop."
+                  << std::endl;
     }
 
     // Mutual exclusion: --recording takes precedence over --zarr
@@ -450,7 +532,7 @@ int main(int argc, char **argv) {
 
     gx_context *window = new gx_context();
     *window = gx_context{};
-    window->swap_interval = 1;  // use vsync
+    window->swap_interval = cli_swap_interval;
     window->width = 1920;
     window->height = 1080;
     window->render_target_title = (char *)malloc(100);  // window title
@@ -491,6 +573,8 @@ int main(int argc, char **argv) {
     bool show_eye_left_mask = true;
     bool show_eye_right_mask = true;
     bool show_swim_bladder_mask = true;
+    CameraViewMaskOverlayMode mask_overlay_mode =
+        CameraViewMaskOverlayMode::Review;
     int current_frame_num = 0;
     std::vector<std::string> imgs_names;
 
@@ -601,9 +685,17 @@ int main(int argc, char **argv) {
     int frame_sync_recording_remaining = -1;
     int frame_sync_recording_total = -1;
     PerfLogWriter perf_log_writer;
+    MaskPerfLogWriter mask_perf_log_writer;
     constexpr auto kPerfLogSamplePeriod = std::chrono::milliseconds(250);
     if (!cli_perf_log_path.empty()) {
         (void)perf_log_writer.open(cli_perf_log_path);
+    }
+    if (mask_perf_log_enabled) {
+        const std::filesystem::path mask_perf_log_path =
+            cli_mask_perf_log_path.empty()
+                ? defaultMaskPerfLogPath(default_buffer_dump_root)
+                : cli_mask_perf_log_path;
+        (void)mask_perf_log_writer.open(mask_perf_log_path);
     }
 
     window_need_decoding[stimulus_player.window_name].store(false);
@@ -755,6 +847,7 @@ int main(int argc, char **argv) {
         double frame_frame_debug_ui_ms = 0.0;
         double frame_buffer_window_ui_ms = 0.0;
         double frame_crop_preview_ui_ms = 0.0;
+        CropPreviewPerfMetrics frame_crop_preview_perf;
         double frame_stimulus_buffer_window_ui_ms = 0.0;
         double frame_keypoints_window_ui_ms = 0.0;
         double frame_labeling_tool_ui_ms = 0.0;
@@ -764,12 +857,15 @@ int main(int argc, char **argv) {
         double frame_help_menu_ui_ms = 0.0;
         double frame_gl_draw_ms = 0.0;
         double frame_swap_ms = 0.0;
+        double frame_cap_sleep_ms = 0.0;
         double frame_ui_build_ms = 0.0;
         double frame_imgui_render_ms = 0.0;
         int frame_imgui_draw_cmd_count = 0;
         int frame_imgui_draw_list_count = 0;
         int frame_imgui_total_vtx_count = 0;
         int frame_imgui_total_idx_count = 0;
+        double frame_mask_data_load_ms = 0.0;
+        CameraViewMaskPerfMetrics frame_mask_overlay_perf;
         double perf_camera_viewport_width_px =
             std::numeric_limits<double>::quiet_NaN();
         double perf_camera_viewport_height_px =
@@ -983,16 +1079,29 @@ int main(int argc, char **argv) {
                     g_zarr_bbox_edit_state.cancelDraw();
                     g_zarr_bbox_edit_state.clearSelection();
                 }
+                const bool include_eye_masks_in_details =
+                    zarr_loader.hasEyeMasks() &&
+                    (show_eye_masks ||
+                     frame_debug_window_state.active_tab ==
+                         FrameInspectTab::EyeMasks);
                 const bool need_details =
                     zarr_loader.hasScores() ||
                     zarr_loader.hasHeadingData() ||
                     zarr_loader.hasKeypointData() ||
-                    zarr_loader.hasEyeMasks() || dataset_has_synthetic_boxes;
+                    include_eye_masks_in_details ||
+                    dataset_has_synthetic_boxes;
                 if (need_details) {
+                    const auto details_load_start =
+                        std::chrono::steady_clock::now();
                     detection_details =
                         zarr_loader.getRawDetections(current_frame_num,
                                                      false,
-                                                     zarr_loader.hasEyeMasks());
+                                                     include_eye_masks_in_details);
+                    if (include_eye_masks_in_details) {
+                        frame_mask_data_load_ms += durationMs(
+                            std::chrono::steady_clock::now() -
+                            details_load_start);
+                    }
                     detection_details_ptr = &detection_details;
                 }
             }
@@ -1034,6 +1143,7 @@ int main(int argc, char **argv) {
                 show_eye_left_mask,
                 show_eye_right_mask,
                 show_swim_bladder_mask,
+                mask_overlay_mode,
             };
             const FrameDebugWindowResult frame_debug_result =
                 drawFrameDebugWindow(frame_debug_context, frame_debug_window_state);
@@ -1049,6 +1159,7 @@ int main(int argc, char **argv) {
             show_eye_right_mask = frame_debug_result.show_eye_right_mask;
             show_swim_bladder_mask =
                 frame_debug_result.show_swim_bladder_mask;
+            mask_overlay_mode = frame_debug_result.mask_overlay_mode;
             active_full_frame_keypoint_selection =
                 frame_debug_result.selected_keypoint_selection;
             keypoint_tab_full_frame_edit_enabled =
@@ -1927,6 +2038,9 @@ int main(int argc, char **argv) {
 
                     ZarrDetectionLoader::FrameDetections detection_details;
                     const int zarr_bbox_query_frame = current_frame_num;
+                    const bool camera_details_include_eye_masks =
+                        zarr_loaded && show_eye_masks &&
+                        zarr_loader.hasEyeMasks();
                     const bool is_zarr_interpolated =
                         zarr_loaded && zarr_loader.hasInterpolation() &&
                         zarr_loader.isFrameInterpolated(zarr_bbox_query_frame);
@@ -1955,9 +2069,17 @@ int main(int argc, char **argv) {
                                 zarr_bbox_query_frame);
                         zarr_boxes = g_zarr_bbox_edit_state.resolveFrameBoxes(
                             zarr_bbox_query_frame, loaded_zarr_boxes);
-                        detection_details =
-                            zarr_loader.getRawDetections(zarr_bbox_query_frame,
-                                                         false);
+                        const auto detection_load_start =
+                            std::chrono::steady_clock::now();
+                        detection_details = zarr_loader.getRawDetections(
+                            zarr_bbox_query_frame,
+                            false,
+                            camera_details_include_eye_masks);
+                        if (camera_details_include_eye_masks) {
+                            frame_mask_data_load_ms += durationMs(
+                                std::chrono::steady_clock::now() -
+                                detection_load_start);
+                        }
                     }
 
                     auto deleteSelectedBoxOnCurrentFrame = [&]() -> bool {
@@ -2237,20 +2359,29 @@ int main(int argc, char **argv) {
                     }
 
                     std::optional<ZarrDetectionLoader::FrameDetections>
-                        heading_details;
-                    std::optional<ZarrDetectionLoader::FrameDetections>
                         mask_details;
+                    const ZarrDetectionLoader::FrameDetections*
+                        heading_details_ptr = nullptr;
+                    const ZarrDetectionLoader::FrameDetections*
+                        mask_details_ptr = nullptr;
                     if (can_draw_headings) {
-                        heading_details = zarr_loader.getRawDetections(
-                            current_frame_num,
-                            /*use_interpolated=*/false,
-                            /*include_eye_masks=*/false);
+                        heading_details_ptr = &detection_details;
                     }
                     if (can_draw_eye_masks) {
-                        mask_details = zarr_loader.getRawDetections(
-                            current_frame_num,
-                            /*use_interpolated=*/false,
-                            /*include_eye_masks=*/true);
+                        if (detection_details.includes_eye_masks) {
+                            mask_details_ptr = &detection_details;
+                        } else {
+                            const auto mask_load_start =
+                                std::chrono::steady_clock::now();
+                            mask_details = zarr_loader.getRawDetections(
+                                current_frame_num,
+                                /*use_interpolated=*/false,
+                                /*include_eye_masks=*/true);
+                            frame_mask_data_load_ms += durationMs(
+                                std::chrono::steady_clock::now() -
+                                mask_load_start);
+                            mask_details_ptr = &*mask_details;
+                        }
                     }
 
                     std::vector<std::string> frame_events;
@@ -2321,8 +2452,8 @@ int main(int argc, char **argv) {
                             .full_frame_edit,
                         can_draw_headings,
                         can_draw_eye_masks,
-                        heading_details ? &*heading_details : nullptr,
-                        mask_details ? &*mask_details : nullptr,
+                        heading_details_ptr,
+                        mask_details_ptr,
                         zarr_loaded
                             ? (zarr_loader.getEyeMaskSourcePath() + "|" +
                                zarr_loader.getEyeAngleRunName())
@@ -2343,7 +2474,8 @@ int main(int argc, char **argv) {
                                 ? frame_debug_window_state
                                       .subject_mask_edit_session.target()
                                       .component_name
-                                : std::string{}},
+                                : std::string{},
+                            mask_overlay_mode},
                         zarr_loaded && can_draw_eye_masks && show_eye_masks &&
                             zarr_loader.eyeMasksUseRefinedSubjectMasks() &&
                             frame_debug_window_state.active_tab ==
@@ -2363,6 +2495,9 @@ int main(int argc, char **argv) {
                     };
                     const CameraViewWindowResult camera_view_result =
                         drawCameraViewWindowContents(camera_view_context);
+                    accumulateCameraViewMaskPerfMetrics(
+                        frame_mask_overlay_perf,
+                        camera_view_result.perf.mask_overlay);
 
                     if (camera_view_result.subject_mask_pick.valid &&
                         zarr_loaded) {
@@ -2763,6 +2898,7 @@ int main(int argc, char **argv) {
             };
             const auto crop_preview_result = drawCropPreviewWindow(
                 crop_preview_context, crop_preview_window_state);
+            frame_crop_preview_perf = crop_preview_result.perf;
 
             startKeypointWriteIfRequested(
                 pending_keypoint_write,
@@ -3043,83 +3179,137 @@ int main(int argc, char **argv) {
             }
         }
 
+        if (cli_frame_cap_fps > 0.0) {
+            const auto target_period =
+                std::chrono::duration<double>(1.0 / cli_frame_cap_fps);
+            const auto target_end =
+                frame_loop_start +
+                std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                    target_period);
+            const auto before_sleep = std::chrono::steady_clock::now();
+            if (before_sleep < target_end) {
+                std::this_thread::sleep_until(target_end);
+                frame_cap_sleep_ms =
+                    durationMs(std::chrono::steady_clock::now() - before_sleep);
+            }
+        }
+
+        const PerfLogFrameContext perf_frame_context{
+            camera_names,
+            cwd,
+            argv0_path,
+            cli_recording_path,
+            cli_zarr_override_path,
+            ps.play_video,
+            set_playback_speed,
+            inst_speed,
+            video_fps,
+            perf_requested_camera_frame,
+            ps.to_display_frame_number,
+            current_frame_num,
+            perf_min_decoded_camera_frame,
+            scene->use_cpu_buffer,
+            static_cast<int>(scene->size_of_buffer),
+            label_buffer_size,
+            video_loaded,
+            playbackPreviewScaleLabel(playback_preview_scale_mode),
+            playbackPreviewIsActive(ps.play_video, yolo_detection,
+                                    playback_preview_scale_mode),
+            playbackRendererModeLabel(playback_renderer_mode),
+            static_cast<int>(perf_camera_viewport_width_px),
+            static_cast<int>(perf_camera_viewport_height_px),
+            perf_camera_view_x_min,
+            perf_camera_view_x_max,
+            perf_camera_view_y_min,
+            perf_camera_view_y_max,
+            perf_camera_view_visible_fraction,
+            perf_camera_view_zoomed_in,
+            frame_camera_upload_count,
+            frame_camera_upload_ms,
+            frame_camera_texture_resize_ms,
+            frame_camera_preview_resize_ms,
+            frame_camera_display_convert_ms,
+            frame_camera_pbo_copy_ms,
+            frame_camera_texture_upload_ms,
+            frame_camera_playback_front_path_ms,
+            frame_camera_playback_stage_total_ms,
+            frame_camera_playback_stage_upload_ms,
+            frame_camera_playback_swap_ms,
+            frame_camera_plot_image_ui_ms,
+            frame_camera_overlay_ui_ms,
+            frame_camera_scene_ui_ms,
+            frame_file_browser_ui_ms,
+            frame_frame_debug_ui_ms,
+            frame_buffer_window_ui_ms,
+            frame_crop_preview_ui_ms,
+            frame_crop_preview_perf,
+            frame_stimulus_buffer_window_ui_ms,
+            frame_keypoints_window_ui_ms,
+            frame_labeling_tool_ui_ms,
+            frame_stimulus_window_ui_ms,
+            frame_stimulus_timeline_ui_ms,
+            frame_movement_timeline_ui_ms,
+            frame_help_menu_ui_ms,
+            frame_gl_draw_ms,
+            frame_swap_ms,
+            frame_cap_sleep_ms,
+            cli_frame_cap_fps,
+            frame_ui_build_ms,
+            frame_imgui_render_ms,
+            frame_imgui_draw_cmd_count,
+            frame_imgui_draw_list_count,
+            frame_imgui_total_vtx_count,
+            frame_imgui_total_idx_count,
+            &stimulus_player,
+            stimulus_use_software_decode,
+            stimulus_use_cpu_buffer,
+            stimulus_buffer_size,
+            ps.current_stimulus_frame,
+            latest_decoded_frame[stimulus_player.window_name].load(),
+            static_cast<int>(window->swap_interval),
+            static_cast<int>(window->width),
+            static_cast<int>(window->height),
+            frame_loop_start,
+        };
         maybeWritePerfLogSample(
             perf_log_writer,
-            PerfLogFrameContext{
-                camera_names,
+            perf_frame_context,
+            kPerfLogSamplePeriod);
+
+        int32_t selected_mask_roi_index = -1;
+        std::string selected_mask_component_name;
+        if (frame_debug_window_state.subject_mask_edit_session.active()) {
+            const auto& target =
+                frame_debug_window_state.subject_mask_edit_session.target();
+            selected_mask_roi_index = target.roi_index;
+            selected_mask_component_name = target.component_name;
+        }
+        writeMaskPerfLogSample(
+            mask_perf_log_writer,
+            MaskPerfLogFrameContext{
                 cwd,
                 argv0_path,
                 cli_recording_path,
                 cli_zarr_override_path,
-                ps.play_video,
-                set_playback_speed,
-                inst_speed,
-                video_fps,
-                perf_requested_camera_frame,
-                ps.to_display_frame_number,
+                zarr_loaded ? zarr_loader.getArchivePath() : std::string{},
                 current_frame_num,
-                perf_min_decoded_camera_frame,
-                scene->use_cpu_buffer,
-                static_cast<int>(scene->size_of_buffer),
-                label_buffer_size,
-                video_loaded,
-                playbackPreviewScaleLabel(playback_preview_scale_mode),
-                playbackPreviewIsActive(ps.play_video, yolo_detection,
-                                        playback_preview_scale_mode),
-                playbackRendererModeLabel(playback_renderer_mode),
-                static_cast<int>(perf_camera_viewport_width_px),
-                static_cast<int>(perf_camera_viewport_height_px),
-                perf_camera_view_x_min,
-                perf_camera_view_x_max,
-                perf_camera_view_y_min,
-                perf_camera_view_y_max,
-                perf_camera_view_visible_fraction,
-                perf_camera_view_zoomed_in,
-                frame_camera_upload_count,
-                frame_camera_upload_ms,
-                frame_camera_texture_resize_ms,
-                frame_camera_preview_resize_ms,
-                frame_camera_display_convert_ms,
-                frame_camera_pbo_copy_ms,
-                frame_camera_texture_upload_ms,
-                frame_camera_playback_front_path_ms,
-                frame_camera_playback_stage_total_ms,
-                frame_camera_playback_stage_upload_ms,
-                frame_camera_playback_swap_ms,
-                frame_camera_plot_image_ui_ms,
-                frame_camera_overlay_ui_ms,
-                frame_camera_scene_ui_ms,
-                frame_file_browser_ui_ms,
-                frame_frame_debug_ui_ms,
-                frame_buffer_window_ui_ms,
-                frame_crop_preview_ui_ms,
-                frame_stimulus_buffer_window_ui_ms,
-                frame_keypoints_window_ui_ms,
-                frame_labeling_tool_ui_ms,
-                frame_stimulus_window_ui_ms,
-                frame_stimulus_timeline_ui_ms,
-                frame_movement_timeline_ui_ms,
-                frame_help_menu_ui_ms,
-                frame_gl_draw_ms,
-                frame_swap_ms,
-                frame_ui_build_ms,
-                frame_imgui_render_ms,
-                frame_imgui_draw_cmd_count,
-                frame_imgui_draw_list_count,
-                frame_imgui_total_vtx_count,
-                frame_imgui_total_idx_count,
-                &stimulus_player,
-                stimulus_use_software_decode,
-                stimulus_use_cpu_buffer,
-                stimulus_buffer_size,
-                ps.current_stimulus_frame,
-                latest_decoded_frame[stimulus_player.window_name].load(),
-                static_cast<int>(window->swap_interval),
-                static_cast<int>(window->width),
-                static_cast<int>(window->height),
+                ps.to_display_frame_number,
+                ps.play_video,
+                zarr_loaded && show_eye_masks && zarr_loader.hasEyeMasks(),
+                zarr_loaded,
+                zarr_loaded ? zarr_loader.getEyeMaskSourceLabel()
+                            : std::string{},
+                zarr_loaded ? zarr_loader.getEyeMaskSourcePath()
+                            : std::string{},
+                zarr_loaded ? zarr_loader.getEyeMaskRunName()
+                            : std::string{},
+                selected_mask_roi_index,
+                selected_mask_component_name,
+                frame_mask_data_load_ms,
+                frame_mask_overlay_perf,
+                &perf_frame_context,
                 frame_loop_start,
-            },
-            kPerfLogSamplePeriod);
+            });
     }
 
     // Cleanup

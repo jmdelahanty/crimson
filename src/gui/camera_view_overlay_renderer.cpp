@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <deque>
@@ -20,6 +21,10 @@
 #include <vector>
 
 namespace {
+
+double durationMs(std::chrono::steady_clock::duration duration) {
+    return std::chrono::duration<double, std::milli>(duration).count();
+}
 
 std::string toLowerCopy(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(),
@@ -53,12 +58,14 @@ public:
                              int rows,
                              int cols,
                              const std::vector<uint32_t>& pixels,
-                             const ImVec4& color) {
+                             const ImVec4& color,
+                             CameraViewMaskPerfMetrics* perf = nullptr) {
         if (rows <= 0 || cols <= 0 || roi_index < 0 || pixels.empty()) {
             return 0;
         }
 
         ++clock_;
+        const auto lookup_start = std::chrono::steady_clock::now();
         for (auto& entry : entries_) {
             if (entry.source_key == source_key &&
                 entry.roi_index == roi_index &&
@@ -67,13 +74,31 @@ public:
                 entry.cols == cols &&
                 entry.pixel_count == pixels.size()) {
                 entry.last_used = clock_;
+                if (perf != nullptr) {
+                    perf->texture_cache_hits++;
+                    perf->texture_lookup_ms += durationMs(
+                        std::chrono::steady_clock::now() - lookup_start);
+                }
                 return entry.texture_id;
             }
         }
+        if (perf != nullptr) {
+            perf->texture_cache_misses++;
+            perf->texture_lookup_ms += durationMs(
+                std::chrono::steady_clock::now() - lookup_start);
+        }
 
+        const auto upload_start = std::chrono::steady_clock::now();
         GLuint texture_id = createTexture(rows, cols, pixels, color);
+        if (perf != nullptr) {
+            perf->texture_upload_ms += durationMs(
+                std::chrono::steady_clock::now() - upload_start);
+        }
         if (texture_id == 0) {
             return 0;
+        }
+        if (perf != nullptr) {
+            perf->texture_uploads++;
         }
 
         evictIfNeeded();
@@ -93,7 +118,8 @@ public:
     GLuint getOrCreate(const std::string& source_key,
                        const ZarrDetectionLoader::FrameDetections::EyeMask& mask,
                        int eye_index,
-                       const ImVec4& color) {
+                       const ImVec4& color,
+                       CameraViewMaskPerfMetrics* perf = nullptr) {
         if (eye_index < 0 ||
             eye_index >= static_cast<int>(mask.pixel_indices.size()) ||
             mask.rows <= 0 || mask.cols <= 0 || mask.roi_index < 0) {
@@ -111,7 +137,8 @@ public:
                                  mask.rows,
                                  mask.cols,
                                  pixels,
-                                 color);
+                                 color,
+                                 perf);
     }
 
     void resetIfSourceChanged(const std::string& source_key) {
@@ -508,6 +535,50 @@ float chooseKeypointSize(const std::string& lowered_label) {
 
 }  // namespace
 
+const char* cameraViewMaskOverlayModeLabel(CameraViewMaskOverlayMode mode) {
+    switch (mode) {
+    case CameraViewMaskOverlayMode::Realtime:
+        return "Realtime";
+    case CameraViewMaskOverlayMode::Review:
+        return "Review";
+    case CameraViewMaskOverlayMode::Debug:
+        return "Debug";
+    }
+    return "Review";
+}
+
+void accumulateCameraViewMaskPerfMetrics(CameraViewMaskPerfMetrics& dst,
+                                         const CameraViewMaskPerfMetrics& src) {
+    dst.attempted = dst.attempted || src.attempted;
+    if (dst.mode.empty()) {
+        dst.mode = src.mode;
+    }
+    dst.roi_count += src.roi_count;
+    dst.visible_roi_count += src.visible_roi_count;
+    dst.component_fill_count += src.component_fill_count;
+    dst.fallback_scatter_count += src.fallback_scatter_count;
+    dst.texture_cache_hits += src.texture_cache_hits;
+    dst.texture_cache_misses += src.texture_cache_misses;
+    dst.texture_uploads += src.texture_uploads;
+    dst.contours_drawn += src.contours_drawn;
+    dst.selected_contours_drawn += src.selected_contours_drawn;
+    dst.contour_points += src.contour_points;
+    dst.axes_drawn += src.axes_drawn;
+    dst.angle_labels_drawn += src.angle_labels_drawn;
+    dst.selected_highlight_drawn =
+        dst.selected_highlight_drawn || src.selected_highlight_drawn;
+    dst.pick_attempted = dst.pick_attempted || src.pick_attempted;
+    dst.pick_hit = dst.pick_hit || src.pick_hit;
+    dst.texture_lookup_ms += src.texture_lookup_ms;
+    dst.texture_upload_ms += src.texture_upload_ms;
+    dst.fill_draw_ms += src.fill_draw_ms;
+    dst.contour_build_ms += src.contour_build_ms;
+    dst.contour_draw_ms += src.contour_draw_ms;
+    dst.axis_draw_ms += src.axis_draw_ms;
+    dst.pick_ms += src.pick_ms;
+    dst.total_draw_ms += src.total_draw_ms;
+}
+
 std::vector<FullFrameRectOverlayItem> buildCameraViewBoundingBoxOverlayItems(
     const std::vector<LoggedBoundingBox>& zarr_boxes,
     const ZarrDetectionLoader::FrameDetections& detection_details,
@@ -842,23 +913,39 @@ void drawCameraViewHeadingOverlay(
     }
 }
 
-void drawCameraViewEyeMaskOverlay(
+CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
     const ZarrDetectionLoader::FrameDetections& mask_details,
     float image_height_px,
     const std::string& smoothing_run_id,
     const CameraViewMaskOverlayOptions& options) {
+    CameraViewMaskPerfMetrics metrics;
+    metrics.attempted = true;
+    metrics.mode = cameraViewMaskOverlayModeLabel(options.mode);
+    const auto total_start = std::chrono::steady_clock::now();
+
+    auto finish = [&]() -> CameraViewMaskPerfMetrics {
+        metrics.total_draw_ms +=
+            durationMs(std::chrono::steady_clock::now() - total_start);
+        return metrics;
+    };
+
     eyeOrientationSmoother().resetIfRunChanged(smoothing_run_id);
     eyeMaskTextureCache().resetIfSourceChanged(smoothing_run_id);
     if (!mask_details.includes_eye_masks) {
-        return;
+        return finish();
     }
 
     const size_t mask_count =
         std::min(mask_details.eye_masks.size(), mask_details.boxes.size());
+    metrics.roi_count = static_cast<int>(mask_count);
     if (mask_count == 0) {
-        return;
+        return finish();
     }
 
+    const bool realtime_mode =
+        options.mode == CameraViewMaskOverlayMode::Realtime;
+    const bool draw_all_contours = !realtime_mode;
+    const bool draw_axes_and_angles = !realtime_mode;
     const float scene_height_f = image_height_px;
     for (size_t det_idx = 0; det_idx < mask_count; ++det_idx) {
         const auto& mask_info = mask_details.eye_masks[det_idx];
@@ -873,6 +960,7 @@ void drawCameraViewEyeMaskOverlay(
             mask_info.cols <= 0) {
             continue;
         }
+        metrics.visible_roi_count++;
 
         const double cell_w =
             mask_info.roi_width / static_cast<double>(mask_info.cols);
@@ -895,6 +983,7 @@ void drawCameraViewEyeMaskOverlay(
                     return;
                 }
 
+                const auto build_start = std::chrono::steady_clock::now();
                 std::vector<double> xs;
                 std::vector<double> ys;
                 xs.reserve(component.contour_xy.size() + 1);
@@ -919,12 +1008,19 @@ void drawCameraViewEyeMaskOverlay(
                     xs.push_back(px);
                     ys.push_back(scene_height_f - py);
                 }
+                metrics.contour_build_ms +=
+                    durationMs(std::chrono::steady_clock::now() - build_start);
 
+                const auto draw_start = std::chrono::steady_clock::now();
                 ImPlot::SetNextLineStyle(color, thickness);
                 ImPlot::PlotLine(label.c_str(),
                                  xs.data(),
                                  ys.data(),
                                  static_cast<int>(xs.size()));
+                metrics.contour_draw_ms +=
+                    durationMs(std::chrono::steady_clock::now() - draw_start);
+                metrics.contours_drawn++;
+                metrics.contour_points += static_cast<int>(xs.size());
             };
         auto draw_roi_selection_border =
             [&](const std::string& label,
@@ -965,13 +1061,15 @@ void drawCameraViewEyeMaskOverlay(
                 mask_info.rows,
                 mask_info.cols,
                 component.pixel_indices,
-                component_color);
+                component_color,
+                &metrics);
             if (texture_id != 0) {
                 const double x_min = mask_info.offset_x;
                 const double x_max = mask_info.offset_x + mask_info.roi_width;
                 const double y_min =
                     scene_height_f - (mask_info.offset_y + mask_info.roi_height);
                 const double y_max = scene_height_f - mask_info.offset_y;
+                const auto fill_draw_start = std::chrono::steady_clock::now();
                 ImPlot::PlotImage(
                     (base_id + "_texture").c_str(),
                     (ImTextureID)(intptr_t)texture_id,
@@ -980,10 +1078,13 @@ void drawCameraViewEyeMaskOverlay(
                     ImVec2(0, 0),
                     ImVec2(1, 1),
                     ImVec4(1, 1, 1, 1));
+                metrics.fill_draw_ms += durationMs(
+                    std::chrono::steady_clock::now() - fill_draw_start);
                 drew_texture = true;
             }
 
             if (!drew_texture) {
+                const auto fill_draw_start = std::chrono::steady_clock::now();
                 std::vector<double> xs;
                 std::vector<double> ys;
                 xs.reserve(component.pixel_indices.size());
@@ -1009,20 +1110,26 @@ void drawCameraViewEyeMaskOverlay(
                                     xs.data(),
                                     ys.data(),
                                     static_cast<int>(xs.size()));
+                metrics.fill_draw_ms += durationMs(
+                    std::chrono::steady_clock::now() - fill_draw_start);
+                metrics.fallback_scatter_count++;
             }
+            metrics.component_fill_count++;
         }
 
-        for (const auto& component : mask_info.subject_mask_components) {
-            if (isEyeMaskComponent(component.label)) {
-                continue;
+        if (draw_all_contours) {
+            for (const auto& component : mask_info.subject_mask_components) {
+                if (isEyeMaskComponent(component.label)) {
+                    continue;
+                }
+                draw_component_contour(
+                    component,
+                    "##subject_mask_" + component.label + "_" +
+                        std::to_string(det_idx) + "_contour",
+                    component.label == "subject_body" ? 1.4f : 1.8f,
+                    subjectMaskContourColor(component.label),
+                    true);
             }
-            draw_component_contour(
-                component,
-                "##subject_mask_" + component.label + "_" +
-                    std::to_string(det_idx) + "_contour",
-                component.label == "subject_body" ? 1.4f : 1.8f,
-                subjectMaskContourColor(component.label),
-                true);
         }
 
         for (int eye = 0; eye < 2; ++eye) {
@@ -1045,13 +1152,15 @@ void drawCameraViewEyeMaskOverlay(
                     smoothing_run_id,
                     mask_info,
                     eye,
-                    base_color);
+                    base_color,
+                    &metrics);
                 if (texture_id != 0) {
                     const double x_min = mask_info.offset_x;
                     const double x_max = mask_info.offset_x + mask_info.roi_width;
                     const double y_min =
                         scene_height_f - (mask_info.offset_y + mask_info.roi_height);
                     const double y_max = scene_height_f - mask_info.offset_y;
+                    const auto fill_draw_start = std::chrono::steady_clock::now();
                     ImPlot::PlotImage(
                         (base_id + "_texture").c_str(),
                         (ImTextureID)(intptr_t)texture_id,
@@ -1060,10 +1169,13 @@ void drawCameraViewEyeMaskOverlay(
                         ImVec2(0, 0),
                         ImVec2(1, 1),
                         ImVec4(1, 1, 1, 1));
+                    metrics.fill_draw_ms += durationMs(
+                        std::chrono::steady_clock::now() - fill_draw_start);
                     drew_texture = true;
                 }
 
                 if (!drew_texture) {
+                    const auto fill_draw_start = std::chrono::steady_clock::now();
                     std::vector<double> xs;
                     std::vector<double> ys;
                     xs.reserve(pixel_indices.size());
@@ -1089,7 +1201,11 @@ void drawCameraViewEyeMaskOverlay(
                                         xs.data(),
                                         ys.data(),
                                         static_cast<int>(xs.size()));
+                    metrics.fill_draw_ms += durationMs(
+                        std::chrono::steady_clock::now() - fill_draw_start);
+                    metrics.fallback_scatter_count++;
                 }
+                metrics.component_fill_count++;
             }
 
             const std::string eye_label = (eye == 0) ? "eye_left" : "eye_right";
@@ -1100,7 +1216,8 @@ void drawCameraViewEyeMaskOverlay(
                         SubjectMaskComponent& component) {
                     return component.label == eye_label;
                 });
-            if (contour_component != mask_info.subject_mask_components.end()) {
+            if (draw_all_contours &&
+                contour_component != mask_info.subject_mask_components.end()) {
                 draw_component_contour(
                     *contour_component,
                     base_id + "_contour",
@@ -1109,7 +1226,9 @@ void drawCameraViewEyeMaskOverlay(
                     true);
             }
 
-            if (mask_info.has_feret_axes && cell_w > 0.0 && cell_h > 0.0) {
+            if (draw_axes_and_angles && mask_info.has_feret_axes &&
+                cell_w > 0.0 && cell_h > 0.0) {
+                const auto axis_start = std::chrono::steady_clock::now();
                 auto roiToWorld = [&](float roi_x,
                                       float roi_y) -> std::pair<double, double> {
                     const double px = mask_info.offset_x +
@@ -1142,6 +1261,7 @@ void drawCameraViewEyeMaskOverlay(
                         const double y_vals[2] = {p0.second, p1.second};
                         ImPlot::SetNextLineStyle(color, thickness);
                         ImPlot::PlotLine(label.c_str(), x_vals, y_vals, 2);
+                        metrics.axes_drawn++;
                     };
 
                 ImVec4 major_color = base_color;
@@ -1181,6 +1301,7 @@ void drawCameraViewEyeMaskOverlay(
                                          center_scene.first,
                                          center_scene.second,
                                          ImVec2(0.0f, -12.0f));
+                        metrics.angle_labels_drawn++;
                     }
 
                     const double det_center_x = 0.5 *
@@ -1279,6 +1400,8 @@ void drawCameraViewEyeMaskOverlay(
                             ImGui::ColorConvertFloat4ToU32(beam_color));
                     }
                 }
+                metrics.axis_draw_ms += durationMs(
+                    std::chrono::steady_clock::now() - axis_start);
             }
         }
 
@@ -1310,6 +1433,9 @@ void drawCameraViewEyeMaskOverlay(
                 drew_selection_contour =
                     selected_component->has_contour &&
                     selected_component->contour_xy.size() > 1;
+                if (drew_selection_contour) {
+                    metrics.selected_contours_drawn++;
+                }
             }
             if (!drew_selection_contour) {
                 draw_roi_selection_border(
@@ -1323,8 +1449,10 @@ void drawCameraViewEyeMaskOverlay(
                 mask_info.offset_x,
                 scene_height_f - mask_info.offset_y,
                 ImVec2(6.0f, 8.0f));
+            metrics.selected_highlight_drawn = true;
         }
     }
+    return finish();
 }
 
 void drawCameraViewChaserOverlay(

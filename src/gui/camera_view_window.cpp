@@ -458,10 +458,14 @@ CameraViewWindowResult drawCameraViewWindowContents(
                                              image_height_px);
             }
             if (context.can_draw_eye_masks && context.mask_details != nullptr) {
-                drawCameraViewEyeMaskOverlay(*context.mask_details,
-                                             image_height_px,
-                                             context.eye_mask_smoothing_run_id,
-                                             context.mask_overlay_options);
+                CameraViewMaskPerfMetrics mask_perf =
+                    drawCameraViewEyeMaskOverlay(
+                        *context.mask_details,
+                        image_height_px,
+                        context.eye_mask_smoothing_run_id,
+                        context.mask_overlay_options);
+                accumulateCameraViewMaskPerfMetrics(
+                    result.perf.mask_overlay, mask_perf);
             }
             if (context.subject_mask_pick_enabled &&
                 context.mask_details != nullptr && plot_hovered &&
@@ -469,11 +473,18 @@ CameraViewWindowResult drawCameraViewWindowContents(
                 !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift &&
                 !ImGui::GetIO().KeyAlt &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left, false)) {
+                const auto pick_start = std::chrono::steady_clock::now();
                 result.subject_mask_pick = pickSubjectMaskAtPlotPoint(
                     *context.mask_details,
                     context.mask_overlay_options,
                     image_height_px,
                     ImPlot::GetPlotMousePos());
+                result.perf.mask_overlay.pick_attempted = true;
+                result.perf.mask_overlay.pick_hit =
+                    result.perf.mask_overlay.pick_hit ||
+                    result.subject_mask_pick.valid;
+                result.perf.mask_overlay.pick_ms += durationMs(
+                    std::chrono::steady_clock::now() - pick_start);
             }
             if (context.detection_details != nullptr) {
                 const int keypoint_skip_detection =

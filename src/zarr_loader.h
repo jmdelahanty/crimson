@@ -17,6 +17,9 @@
 #include <deque>
 #include <filesystem>
 #include <limits>
+#include <memory>
+#include <mutex>
+#include <set>
 #include <unordered_map>
 #include <nlohmann/json.hpp>
 #include "h5_loader.h"  // For LoggedBoundingBox structure compatibility
@@ -226,6 +229,9 @@ struct ZarrDetectionData {
             component_contours_xy;
     };
     mutable std::vector<EyeMaskChunkCacheEntry> mask_chunk_cache;
+    mutable std::shared_ptr<std::mutex> mask_chunk_cache_mutex =
+        std::make_shared<std::mutex>();
+    mutable std::set<size_t> mask_chunk_loads_in_flight;
 
     bool has_eye_angles = false;
     std::string eye_angle_run_name;
@@ -734,6 +740,10 @@ public:
         size_t frame_id,
         size_t detection_idx,
         bool use_interpolated = false) const;
+    KeypointRoiMetadata getMaskRoiMetadataForFrameDetection(
+        size_t frame_id,
+        size_t detection_idx,
+        bool use_interpolated = false) const;
     const std::string& getMovementCategory() const {
         static const std::string kEmpty;
         const auto* series = getSelectedMovementSeries();
@@ -979,6 +989,7 @@ private:
     const ZarrDetectionData::EyeMaskChunkCacheEntry* findEyeMaskChunk(size_t chunk_id) const;
     bool ensureEyeMaskChunk(size_t chunk_id, bool allow_prefetch = true) const;
     void prefetchAdjacentEyeMaskChunks(size_t chunk_id) const;
+    void requestEyeMaskChunkPrefetch(size_t chunk_id) const;
     bool populateEyeMaskEntry(size_t roi_index, FrameDetections::EyeMask& out_mask) const;
     bool loadMovementData(const ts::kvstore::KvStore& store);
     bool loadSpeedRunMovement(const ts::kvstore::KvStore& store);

@@ -4,6 +4,7 @@
 #include "render.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <optional>
@@ -53,6 +54,23 @@ struct SourceRotatedCropPresenter {
     GLint dst_rect_location = -1;
     GLint rotation_location = -1;
 };
+
+double durationMs(std::chrono::steady_clock::duration duration) {
+    return std::chrono::duration<double, std::milli>(duration).count();
+}
+
+const char* cropOriginSourceLabel(CropImageView::Origin origin,
+                                  bool texture_path) {
+    switch (origin) {
+    case CropImageView::Origin::LiveFrame:
+        return texture_path ? "live_texture" : "live_image";
+    case CropImageView::Origin::PersistedZarr:
+        return "persisted_zarr";
+    case CropImageView::Origin::Unknown:
+    default:
+        return "unknown";
+    }
+}
 
 GLuint compileCropShader(GLenum shader_type, const char* source) {
     GLuint shader = glCreateShader(shader_type);
@@ -745,6 +763,16 @@ ResolvedCropPreviewSelection resolveCropPreviewSelection(
             resolved.selected_keypoint_selection = selection;
             return resolved;
         }
+        auto mask_metadata =
+            context.zarr_loader.getMaskRoiMetadataForFrameDetection(
+                static_cast<size_t>(context.current_frame_num),
+                static_cast<size_t>(context.selected_box),
+                false);
+        if (mask_metadata.valid && mask_metadata.has_crop_metadata) {
+            resolved.crop_roi_index = mask_metadata.roi_index;
+            resolved.crop_roi_source = "selected mask ROI";
+            return resolved;
+        }
     }
 
     if (!movement_frames.empty() &&
@@ -765,7 +793,7 @@ ResolvedCropPreviewSelection resolveCropPreviewSelection(
 
     auto frame_detections =
         context.zarr_loader.getRawDetections(
-            static_cast<size_t>(context.current_frame_num), false, true);
+            static_cast<size_t>(context.current_frame_num), false, false);
     const size_t detection_count = frame_detections.boxes.size();
     for (size_t detection_idx = 0; detection_idx < detection_count; ++detection_idx) {
         auto selection =
@@ -781,14 +809,11 @@ ResolvedCropPreviewSelection resolveCropPreviewSelection(
             }
             return resolved;
         }
-    }
-    for (const auto& eye_mask : frame_detections.eye_masks) {
-        if (eye_mask.roi_index >= 0 &&
-            std::isfinite(eye_mask.offset_x) &&
-            std::isfinite(eye_mask.offset_y) &&
-            eye_mask.roi_width > 0.0f &&
-            eye_mask.roi_height > 0.0f) {
-            resolved.crop_roi_index = eye_mask.roi_index;
+        auto mask_metadata =
+            context.zarr_loader.getMaskRoiMetadataForFrameDetection(
+                static_cast<size_t>(context.current_frame_num), detection_idx, false);
+        if (mask_metadata.valid && mask_metadata.has_crop_metadata) {
+            resolved.crop_roi_index = mask_metadata.roi_index;
             resolved.crop_roi_source = "frame mask ROI";
             return resolved;
         }
@@ -814,7 +839,8 @@ void buildRotatedCropPreview(const CropPreviewWindowContext& context,
                              const CropTextureView* crop_texture_view,
                              int32_t crop_roi_index,
                              const std::optional<RefinedKeypointSelection>&
-                                 selected_keypoint_selection) {
+                                 selected_keypoint_selection,
+                             CropPreviewPerfMetrics* perf) {
     state.rotated_valid = false;
     state.stored_heading_valid = false;
     state.crop_kp_positions.clear();
@@ -829,8 +855,13 @@ void buildRotatedCropPreview(const CropPreviewWindowContext& context,
         return;
     }
 
+    const auto detection_start = std::chrono::steady_clock::now();
     auto det = context.zarr_loader.getRawDetections(
-        static_cast<size_t>(context.current_frame_num), false, true);
+        static_cast<size_t>(context.current_frame_num), false, false);
+    if (perf != nullptr) {
+        perf->get_raw_detections_ms +=
+            durationMs(std::chrono::steady_clock::now() - detection_start);
+    }
     size_t matched = SIZE_MAX;
     std::optional<RefinedKeypointSelection> matched_keypoint_selection;
     if (selected_keypoint_selection.has_value() &&
@@ -839,17 +870,6 @@ void buildRotatedCropPreview(const CropPreviewWindowContext& context,
          crop_spec.has_value())) {
         matched = selected_keypoint_selection->detection_index;
         matched_keypoint_selection = selected_keypoint_selection;
-    }
-    if (matched == SIZE_MAX) {
-        for (size_t di = 0; di < det.eye_masks.size(); ++di) {
-            if (det.eye_masks[di].roi_index == crop_roi_index) {
-                matched = di;
-                matched_keypoint_selection =
-                    context.refined_keypoint_repo.resolveFrameDetectionSelection(
-                        static_cast<size_t>(context.current_frame_num), di, false);
-                break;
-            }
-        }
     }
     if (matched == SIZE_MAX && det.has_keypoints) {
         const size_t keypoint_detection_count =
@@ -878,19 +898,32 @@ void buildRotatedCropPreview(const CropPreviewWindowContext& context,
     const int width = static_cast<int>(crop_width);
     const int height = static_cast<int>(crop_height);
     const int crop_side = std::min(width, height);
+    const auto rotated_render_start = std::chrono::steady_clock::now();
     const bool rotated_rendered =
         crop_side > 0 &&
         ((crop_texture_view != nullptr &&
           renderRotatedCropTextureFromSource(state, *crop_texture_view, angle)) ||
          renderRotatedCropTexture(state, angle));
+    if (perf != nullptr) {
+        perf->render_rotated_texture_ms +=
+            durationMs(std::chrono::steady_clock::now() - rotated_render_start);
+    }
     if (!rotated_rendered) {
         return;
     }
     state.rotated_valid = true;
+    if (perf != nullptr) {
+        perf->rotated_valid_after = true;
+    }
 
+    const auto transform_start = std::chrono::steady_clock::now();
     state.rotated_kp_edges = det.skeleton_edges;
     state.crop_kp_edges = det.skeleton_edges;
     if (!det.has_keypoints || matched >= det.keypoints_pixels.size()) {
+        if (perf != nullptr) {
+            perf->keypoint_transform_ms +=
+                durationMs(std::chrono::steady_clock::now() - transform_start);
+        }
         return;
     }
 
@@ -900,17 +933,16 @@ void buildRotatedCropPreview(const CropPreviewWindowContext& context,
     if (crop_spec.has_value() && crop_spec->valid) {
         offset_x = crop_spec->offset_x;
         offset_y = crop_spec->offset_y;
-    } else if (matched < det.eye_masks.size() &&
-               std::isfinite(det.eye_masks[matched].offset_x) &&
-               std::isfinite(det.eye_masks[matched].offset_y)) {
-        offset_x = det.eye_masks[matched].offset_x;
-        offset_y = det.eye_masks[matched].offset_y;
     } else if (matched_keypoint_selection.has_value() &&
                matched_keypoint_selection->roi_metadata.has_crop_metadata) {
         offset_x = matched_keypoint_selection->roi_metadata.offset_x;
         offset_y = matched_keypoint_selection->roi_metadata.offset_y;
     }
     if (!std::isfinite(offset_x) || !std::isfinite(offset_y)) {
+        if (perf != nullptr) {
+            perf->keypoint_transform_ms +=
+                durationMs(std::chrono::steady_clock::now() - transform_start);
+        }
         return;
     }
 
@@ -963,6 +995,10 @@ void buildRotatedCropPreview(const CropPreviewWindowContext& context,
                                       static_cast<float>(rotated_origin[1])};
     }
     state.arrow_origin_valid = crop_origin_valid && rotated_origin_valid;
+    if (perf != nullptr) {
+        perf->keypoint_transform_ms +=
+            durationMs(std::chrono::steady_clock::now() - transform_start);
+    }
 }
 
 bool refreshCropPreview(const CropPreviewWindowContext& context,
@@ -971,7 +1007,19 @@ bool refreshCropPreview(const CropPreviewWindowContext& context,
                         const std::optional<CropSpec>& crop_spec,
                         const std::string& crop_roi_source,
                         const std::optional<RefinedKeypointSelection>&
-                            selected_keypoint_selection) {
+                            selected_keypoint_selection,
+                        CropPreviewPerfMetrics* perf) {
+    const auto refresh_start = std::chrono::steady_clock::now();
+    auto finish = [&](bool ok) -> bool {
+        if (perf != nullptr) {
+            perf->refresh_ms +=
+                durationMs(std::chrono::steady_clock::now() - refresh_start);
+            perf->rotated_valid_after =
+                perf->rotated_valid_after || state.rotated_valid;
+        }
+        return ok;
+    };
+
     const CropRect requested_crop_rect =
         crop_spec.has_value() ? crop_spec->toPixelRect() : CropRect{};
     const bool frame_changed =
@@ -987,13 +1035,40 @@ bool refreshCropPreview(const CropPreviewWindowContext& context,
     const bool need_rotated_refresh =
         rotated_requested &&
         (!state.rotated_valid || frame_changed || roi_changed || crop_rect_changed);
+    if (perf != nullptr) {
+        perf->attempted = true;
+        perf->current_frame_num = context.current_frame_num;
+        perf->crop_roi_index = crop_roi_index;
+        perf->frame_mod32 =
+            context.current_frame_num >= 0 ? context.current_frame_num % 32 : -1;
+        perf->frame_mod64 =
+            context.current_frame_num >= 0 ? context.current_frame_num % 64 : -1;
+        perf->frame_changed = frame_changed;
+        perf->roi_changed = roi_changed;
+        perf->crop_rect_changed = crop_rect_changed;
+        perf->rotated_requested = rotated_requested;
+        perf->rotated_refresh_needed = need_rotated_refresh;
+        perf->crop_source = "none";
+    }
     if (!frame_changed && !roi_changed && !crop_rect_changed && !need_rotated_refresh) {
-        return state.crop_texture != 0 &&
-               state.last_width > 0 && state.last_height > 0;
+        const bool ok = state.crop_texture != 0 &&
+                        state.last_width > 0 && state.last_height > 0;
+        if (perf != nullptr) {
+            perf->cache_hit = ok;
+            perf->refreshed = false;
+            if (ok && state.displayed_crop_source_label.find("live frame texture") !=
+                          std::string::npos) {
+                perf->crop_source = "live_texture_cached";
+            } else if (ok) {
+                perf->crop_source = "cached";
+            }
+        }
+        return finish(ok);
     }
 
     CropTextureView crop_texture_view;
     bool has_texture_crop = false;
+    const auto texture_lookup_start = std::chrono::steady_clock::now();
     if (crop_spec.has_value()) {
         has_texture_crop =
             context.crop_image_provider.getCropTextureForSpec(*crop_spec,
@@ -1006,17 +1081,34 @@ bool refreshCropPreview(const CropPreviewWindowContext& context,
         has_texture_crop = context.crop_image_provider.getCropTextureForIndex(
             crop_roi_index, crop_texture_view);
     }
+    if (perf != nullptr) {
+        perf->provider_texture_lookup_ms +=
+            durationMs(std::chrono::steady_clock::now() - texture_lookup_start);
+    }
     if (has_texture_crop) {
+        if (perf != nullptr) {
+            perf->crop_source = cropOriginSourceLabel(crop_texture_view.origin, true);
+        }
         const bool needs_render =
             state.crop_texture == 0 || crop_roi_index != state.last_roi_index ||
             static_cast<size_t>(crop_texture_view.output_width) != state.last_width ||
             static_cast<size_t>(crop_texture_view.output_height) !=
                 state.last_height ||
             frame_changed || crop_rect_changed;
-        if (needs_render && !renderCropTexture(state, crop_texture_view)) {
-            return false;
+        if (needs_render) {
+            const auto render_start = std::chrono::steady_clock::now();
+            if (!renderCropTexture(state, crop_texture_view)) {
+                return finish(false);
+            }
+            if (perf != nullptr) {
+                perf->render_crop_texture_ms += durationMs(
+                    std::chrono::steady_clock::now() - render_start);
+            }
         }
 
+        if (perf != nullptr) {
+            perf->refreshed = true;
+        }
         state.last_roi_index = crop_roi_index;
         state.last_crop_rect = requested_crop_rect;
         state.last_width = static_cast<size_t>(crop_texture_view.output_width);
@@ -1036,16 +1128,18 @@ bool refreshCropPreview(const CropPreviewWindowContext& context,
                                     crop_spec,
                                     &crop_texture_view,
                                     crop_roi_index,
-                                    selected_keypoint_selection);
+                                    selected_keypoint_selection,
+                                    perf);
         } else {
             state.rotated_valid = false;
         }
-        return state.crop_texture != 0 &&
-               state.last_width > 0 && state.last_height > 0;
+        return finish(state.crop_texture != 0 &&
+                      state.last_width > 0 && state.last_height > 0);
     }
 
     CropImageView crop_view;
     bool has_image_crop = false;
+    const auto image_lookup_start = std::chrono::steady_clock::now();
     if (crop_spec.has_value()) {
         has_image_crop =
             context.crop_image_provider.getCropImageForSpec(*crop_spec, crop_view);
@@ -1058,8 +1152,15 @@ bool refreshCropPreview(const CropPreviewWindowContext& context,
             context.crop_image_provider.getCropImageForIndex(crop_roi_index,
                                                              crop_view);
     }
+    if (perf != nullptr) {
+        perf->provider_image_lookup_ms +=
+            durationMs(std::chrono::steady_clock::now() - image_lookup_start);
+    }
     if (!has_image_crop) {
-        return false;
+        return finish(false);
+    }
+    if (perf != nullptr) {
+        perf->crop_source = cropOriginSourceLabel(crop_view.origin, false);
     }
 
     bool needs_upload = crop_roi_index != state.last_roi_index ||
@@ -1073,6 +1174,7 @@ bool refreshCropPreview(const CropPreviewWindowContext& context,
     }
 
     if (needs_upload) {
+        const auto upload_start = std::chrono::steady_clock::now();
         const size_t pixel_count = crop_view.width * crop_view.height;
         state.crop_rgba_buffer.resize(pixel_count * 4);
         const uint8_t* src = crop_view.data;
@@ -1100,6 +1202,11 @@ bool refreshCropPreview(const CropPreviewWindowContext& context,
                        state.crop_rgba_buffer.data(),
                        static_cast<unsigned int>(crop_view.width),
                        static_cast<unsigned int>(crop_view.height));
+        if (perf != nullptr) {
+            perf->image_upload_ms +=
+                durationMs(std::chrono::steady_clock::now() - upload_start);
+            perf->refreshed = true;
+        }
         state.last_roi_index = crop_roi_index;
         state.last_crop_rect = requested_crop_rect;
         state.last_width = crop_view.width;
@@ -1119,11 +1226,15 @@ bool refreshCropPreview(const CropPreviewWindowContext& context,
                                     crop_spec,
                                     nullptr,
                                     crop_roi_index,
-                                    selected_keypoint_selection);
+                                    selected_keypoint_selection,
+                                    perf);
         } else {
             state.rotated_valid = false;
         }
     } else if (need_rotated_refresh) {
+        if (perf != nullptr) {
+            perf->refreshed = true;
+        }
         buildRotatedCropPreview(context,
                                 state,
                                 crop_view.width,
@@ -1131,11 +1242,12 @@ bool refreshCropPreview(const CropPreviewWindowContext& context,
                                 crop_spec,
                                 nullptr,
                                 crop_roi_index,
-                                selected_keypoint_selection);
+                                selected_keypoint_selection,
+                                perf);
     }
 
-    return state.crop_texture != 0 &&
-           state.last_width > 0 && state.last_height > 0;
+    return finish(state.crop_texture != 0 &&
+                  state.last_width > 0 && state.last_height > 0);
 }
 
 }  // namespace
@@ -1143,22 +1255,47 @@ bool refreshCropPreview(const CropPreviewWindowContext& context,
 CropPreviewWindowResult drawCropPreviewWindow(const CropPreviewWindowContext& context,
                                              CropPreviewWindowState& state) {
     CropPreviewWindowResult result;
+    const auto total_start = std::chrono::steady_clock::now();
+    auto finish = [&]() -> CropPreviewWindowResult {
+        const auto finish_start = std::chrono::steady_clock::now();
+        result.perf.total_window_ms +=
+            durationMs(finish_start - total_start);
+        result.perf.finish_ms +=
+            durationMs(std::chrono::steady_clock::now() - finish_start);
+        return result;
+    };
+    auto endWindow = [&]() {
+        const auto end_start = std::chrono::steady_clock::now();
+        ImGui::End();
+        result.perf.imgui_end_ms +=
+            durationMs(std::chrono::steady_clock::now() - end_start);
+    };
 
+    const auto window_setup_start = std::chrono::steady_clock::now();
     ImGui::SetNextWindowSize(ImVec2(300.0f, 300.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSizeConstraints(ImVec2(120.0f, 120.0f),
                                         ImVec2(420.0f, 700.0f));
-    if (!ImGui::Begin("Crop Preview")) {
-        ImGui::End();
-        return result;
+    result.perf.window_setup_ms +=
+        durationMs(std::chrono::steady_clock::now() - window_setup_start);
+    const auto begin_start = std::chrono::steady_clock::now();
+    const bool window_open = ImGui::Begin("Crop Preview");
+    result.perf.imgui_begin_ms +=
+        durationMs(std::chrono::steady_clock::now() - begin_start);
+    if (!window_open) {
+        endWindow();
+        return finish();
     }
 
+    const auto resolve_start = std::chrono::steady_clock::now();
     const auto resolved = resolveCropPreviewSelection(context);
+    result.perf.resolve_selection_ms +=
+        durationMs(std::chrono::steady_clock::now() - resolve_start);
     result.selected_keypoint_selection = resolved.selected_keypoint_selection;
     if (!resolved.crop_spec.has_value() && resolved.crop_roi_index < 0) {
         ImGui::TextUnformatted("No crop available for current frame.");
         clearCropPreviewState(state);
-        ImGui::End();
-        return result;
+        endWindow();
+        return finish();
     }
 
     if (!refreshCropPreview(context,
@@ -1166,13 +1303,15 @@ CropPreviewWindowResult drawCropPreviewWindow(const CropPreviewWindowContext& co
                             resolved.crop_roi_index,
                             resolved.crop_spec,
                             resolved.crop_roi_source,
-                            resolved.selected_keypoint_selection)) {
+                            resolved.selected_keypoint_selection,
+                            &result.perf)) {
         ImGui::TextUnformatted("No crop available for current frame.");
         clearCropPreviewState(state);
-        ImGui::End();
-        return result;
+        endWindow();
+        return finish();
     }
 
+    const auto context_build_start = std::chrono::steady_clock::now();
     CropKeypointEditorContext editor_context;
     editor_context.selection = resolved.selected_keypoint_selection.has_value()
                                    ? &*resolved.selected_keypoint_selection
@@ -1211,11 +1350,24 @@ CropPreviewWindowResult drawCropPreviewWindow(const CropPreviewWindowContext& co
     preview_context.rotated.edges = &state.rotated_kp_edges;
     preview_context.rotated.arrow_origin = state.arrow_origin_rotated;
     preview_context.rotated.arrow_origin_valid = state.arrow_origin_valid;
+    result.perf.context_build_ms +=
+        durationMs(std::chrono::steady_clock::now() - context_build_start);
 
+    const auto editor_start = std::chrono::steady_clock::now();
     const auto preview_result = drawCropKeypointPreviewPanel(
         preview_context, state.preview_ui_state, state.editor_state);
+    result.perf.editor_panel_ms +=
+        durationMs(std::chrono::steady_clock::now() - editor_start);
+    const auto post_panel_start = std::chrono::steady_clock::now();
+    result.perf.rotated_requested =
+        result.perf.rotated_requested ||
+        state.preview_ui_state.show_rotated_crop;
+    result.perf.rotated_valid_after =
+        result.perf.rotated_valid_after || state.rotated_valid;
     result.editor_action = preview_result.editor_action;
+    result.perf.post_panel_ms +=
+        durationMs(std::chrono::steady_clock::now() - post_panel_start);
 
-    ImGui::End();
-    return result;
+    endWindow();
+    return finish();
 }

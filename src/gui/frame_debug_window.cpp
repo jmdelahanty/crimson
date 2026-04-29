@@ -18,6 +18,7 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
     result.show_eye_left_mask = context.show_eye_left_mask;
     result.show_eye_right_mask = context.show_eye_right_mask;
     result.show_swim_bladder_mask = context.show_swim_bladder_mask;
+    result.mask_overlay_mode = context.mask_overlay_mode;
 
     ImGui::SetNextWindowSize(ImVec2(760.0f, 840.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Frame Inspect")) {

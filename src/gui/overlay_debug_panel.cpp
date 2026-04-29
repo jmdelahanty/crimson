@@ -135,6 +135,7 @@ void drawEyeMaskSection(const FrameDebugWindowContext& context,
     const bool refined_subject_masks =
         context.zarr_loader.eyeMasksUseRefinedSubjectMasks();
     result.show_eye_masks = context.show_eye_masks;
+    result.mask_overlay_mode = context.mask_overlay_mode;
     ImGui::Separator();
     ImGui::Text("%s", refined_subject_masks ? "Subject Mask Overlay:"
                                             : "Eye Mask Overlay:");
@@ -164,6 +165,31 @@ void drawEyeMaskSection(const FrameDebugWindowContext& context,
         result.show_eye_left_mask = context.show_eye_left_mask;
         result.show_eye_right_mask = context.show_eye_right_mask;
         result.show_swim_bladder_mask = context.show_swim_bladder_mask;
+
+        const CameraViewMaskOverlayMode modes[] = {
+            CameraViewMaskOverlayMode::Realtime,
+            CameraViewMaskOverlayMode::Review,
+            CameraViewMaskOverlayMode::Debug,
+        };
+        if (ImGui::BeginCombo("Mode##subject_mask_overlay_mode",
+                              cameraViewMaskOverlayModeLabel(
+                                  result.mask_overlay_mode))) {
+            for (CameraViewMaskOverlayMode mode : modes) {
+                const bool selected = mode == result.mask_overlay_mode;
+                if (ImGui::Selectable(cameraViewMaskOverlayModeLabel(mode),
+                                      selected)) {
+                    result.mask_overlay_mode = mode;
+                }
+                if (selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Realtime draws fills and the selected contour only; Review/Debug draw contours and eye geometry.");
+        }
 
         const auto& labels = context.zarr_loader.getEyeMaskChannelLabels();
         const auto& channels = context.zarr_loader.getEyeMaskChannelIndices();
@@ -229,5 +255,6 @@ void drawEyeMaskOverlayPanel(const FrameDebugWindowContext& context,
     result.show_eye_left_mask = context.show_eye_left_mask;
     result.show_eye_right_mask = context.show_eye_right_mask;
     result.show_swim_bladder_mask = context.show_swim_bladder_mask;
+    result.mask_overlay_mode = context.mask_overlay_mode;
     drawEyeMaskSection(context, result);
 }
