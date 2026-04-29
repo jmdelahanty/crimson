@@ -789,7 +789,7 @@ ResolvedCropPreviewSelection resolveCropPreviewSelection(
             eye_mask.roi_width > 0.0f &&
             eye_mask.roi_height > 0.0f) {
             resolved.crop_roi_index = eye_mask.roi_index;
-            resolved.crop_roi_source = "frame eye-mask ROI";
+            resolved.crop_roi_source = "frame mask ROI";
             return resolved;
         }
     }

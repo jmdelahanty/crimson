@@ -487,6 +487,10 @@ int main(int argc, char **argv) {
     bool show_keypoint_markers = true;
     bool show_heading_arrows = true;
     bool show_eye_masks = false;
+    bool show_subject_body_mask = true;
+    bool show_eye_left_mask = true;
+    bool show_eye_right_mask = true;
+    bool show_swim_bladder_mask = true;
     int current_frame_num = 0;
     std::vector<std::string> imgs_names;
 
@@ -1026,6 +1030,10 @@ int main(int argc, char **argv) {
                 show_keypoint_markers,
                 show_heading_arrows,
                 show_eye_masks,
+                show_subject_body_mask,
+                show_eye_left_mask,
+                show_eye_right_mask,
+                show_swim_bladder_mask,
             };
             const FrameDebugWindowResult frame_debug_result =
                 drawFrameDebugWindow(frame_debug_context, frame_debug_window_state);
@@ -1035,6 +1043,12 @@ int main(int argc, char **argv) {
             show_keypoint_markers = frame_debug_result.show_keypoint_markers;
             show_heading_arrows = frame_debug_result.show_heading_arrows;
             show_eye_masks = frame_debug_result.show_eye_masks;
+            show_subject_body_mask =
+                frame_debug_result.show_subject_body_mask;
+            show_eye_left_mask = frame_debug_result.show_eye_left_mask;
+            show_eye_right_mask = frame_debug_result.show_eye_right_mask;
+            show_swim_bladder_mask =
+                frame_debug_result.show_swim_bladder_mask;
             active_full_frame_keypoint_selection =
                 frame_debug_result.selected_keypoint_selection;
             keypoint_tab_full_frame_edit_enabled =
@@ -2310,9 +2324,30 @@ int main(int argc, char **argv) {
                         heading_details ? &*heading_details : nullptr,
                         mask_details ? &*mask_details : nullptr,
                         zarr_loaded
-                            ? (zarr_loader.getEyeMaskRunName() + "|" +
+                            ? (zarr_loader.getEyeMaskSourcePath() + "|" +
                                zarr_loader.getEyeAngleRunName())
                             : std::string{},
+                        CameraViewMaskOverlayOptions{
+                            show_subject_body_mask,
+                            show_eye_left_mask,
+                            show_eye_right_mask,
+                            show_swim_bladder_mask,
+                            frame_debug_window_state.subject_mask_edit_session
+                                    .active()
+                                ? frame_debug_window_state
+                                      .subject_mask_edit_session.target()
+                                      .roi_index
+                                : -1,
+                            frame_debug_window_state.subject_mask_edit_session
+                                    .active()
+                                ? frame_debug_window_state
+                                      .subject_mask_edit_session.target()
+                                      .component_name
+                                : std::string{}},
+                        zarr_loaded && can_draw_eye_masks && show_eye_masks &&
+                            zarr_loader.eyeMasksUseRefinedSubjectMasks() &&
+                            frame_debug_window_state.active_tab ==
+                                FrameInspectTab::EyeMasks,
                         zarr_loaded ? &chaser_bboxes : nullptr,
                         zarr_loaded ? &chaser_states : nullptr,
                         &camera_params[j],
@@ -2328,6 +2363,42 @@ int main(int argc, char **argv) {
                     };
                     const CameraViewWindowResult camera_view_result =
                         drawCameraViewWindowContents(camera_view_context);
+
+                    if (camera_view_result.subject_mask_pick.valid &&
+                        zarr_loaded) {
+                        const auto& pick =
+                            camera_view_result.subject_mask_pick;
+                        std::string error;
+                        if (frame_debug_window_state.subject_mask_edit_session
+                                .startFromLoadedRow(
+                                    zarr_loader,
+                                    static_cast<size_t>(pick.roi_index),
+                                    pick.component_name,
+                                    &error)) {
+                            frame_debug_window_state
+                                .subject_mask_edit_detection_index =
+                                pick.detection_index;
+                            frame_debug_window_state
+                                .subject_mask_edit_component_name =
+                                pick.component_name;
+                            const auto& target =
+                                frame_debug_window_state
+                                    .subject_mask_edit_session.target();
+                            std::ostringstream status;
+                            status << "Preview loaded from canvas: detection="
+                                   << pick.detection_index
+                                   << " roi=" << target.roi_index
+                                   << " component=" << target.component_name
+                                   << " shape=" << target.rows << "x"
+                                   << target.cols;
+                            frame_debug_window_state
+                                .subject_mask_edit_status = status.str();
+                        } else {
+                            frame_debug_window_state
+                                .subject_mask_edit_status =
+                                "Canvas pick failed: " + error;
+                        }
+                    }
 
                     perf_camera_viewport_width_px =
                         camera_view_result.perf.viewport_width_px;

@@ -4,6 +4,7 @@
 #include "gui/refined_keypoint_review_panel.h"
 #include "gui/review_metadata_editor.h"
 #include "review_frame_state.h"
+#include "subject_mask_edit_session.h"
 #include "zarr_bbox_edit.h"
 
 #include <string>
@@ -18,6 +19,10 @@ enum class FrameInspectTab {
 struct FrameDebugWindowState {
     ReviewMetadataEditorState manual_write_review;
     RefinedKeypointReviewPanelState keypoint_review_panel;
+    SubjectMaskEditSession subject_mask_edit_session;
+    int subject_mask_edit_detection_index = -1;
+    std::string subject_mask_edit_component_name = "subject_body";
+    std::string subject_mask_edit_status;
     FrameInspectTab active_tab = FrameInspectTab::Detect;
 };
 
@@ -59,6 +64,10 @@ struct FrameDebugWindowContext {
     bool show_keypoint_markers = false;
     bool show_heading_arrows = false;
     bool show_eye_masks = false;
+    bool show_subject_body_mask = true;
+    bool show_eye_left_mask = true;
+    bool show_eye_right_mask = true;
+    bool show_swim_bladder_mask = true;
 };
 
 struct FrameDebugWindowResult {
@@ -78,6 +87,10 @@ struct FrameDebugWindowResult {
     bool show_keypoint_markers = false;
     bool show_heading_arrows = false;
     bool show_eye_masks = false;
+    bool show_subject_body_mask = true;
+    bool show_eye_left_mask = true;
+    bool show_eye_right_mask = true;
+    bool show_swim_bladder_mask = true;
 };
 
 FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& context,

@@ -4,7 +4,18 @@
 #include "gui/full_frame_rect_edit_overlay.h"
 #include "zarr_bbox_edit.h"
 
+#include <cstdint>
+#include <string>
 #include <vector>
+
+struct CameraViewMaskOverlayOptions {
+    bool show_subject_body = true;
+    bool show_eye_left = true;
+    bool show_eye_right = true;
+    bool show_swim_bladder = true;
+    int32_t highlighted_roi_index = -1;
+    std::string highlighted_component_name;
+};
 
 std::vector<FullFrameRectOverlayItem> buildCameraViewBoundingBoxOverlayItems(
     const std::vector<LoggedBoundingBox>& zarr_boxes,
@@ -28,7 +39,8 @@ void drawCameraViewHeadingOverlay(
 void drawCameraViewEyeMaskOverlay(
     const ZarrDetectionLoader::FrameDetections& mask_details,
     float image_height_px,
-    const std::string& smoothing_run_id);
+    const std::string& smoothing_run_id,
+    const CameraViewMaskOverlayOptions& options);
 
 void drawCameraViewChaserOverlay(
     std::vector<ZarrDetectionLoader::ChaserBoundingBox> chaser_bboxes,

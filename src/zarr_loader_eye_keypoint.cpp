@@ -1,6 +1,89 @@
 #include "zarr_loader_internal.h"
 #include <iostream>
 
+namespace {
+
+constexpr size_t kInvalidMaskChannel = std::numeric_limits<size_t>::max();
+
+void clearEyeMaskState(ZarrDetectionData& data) {
+    data.eye_masks_run_name.clear();
+    data.eye_masks_source_label.clear();
+    data.eye_masks_source_path.clear();
+    data.eye_masks_warning.clear();
+    data.eye_masks_from_refined_subject_masks = false;
+    data.eye_masks_tolerant_metadata = false;
+    data.eye_masks_loaded = false;
+    data.has_eye_masks = false;
+    data.eye_masks_store = ts::TensorStore<uint8_t, 4>();
+    data.eye_mask_roi_count = 0;
+    data.eye_mask_height = 0;
+    data.eye_mask_width = 0;
+    data.eye_mask_chunk_rows = 0;
+    data.eye_mask_channel_indices = {kInvalidMaskChannel, kInvalidMaskChannel};
+    data.eye_mask_channel_labels = {"eye_left", "eye_right"};
+    data.refined_subject_mask_labels.clear();
+    data.refined_subject_mask_available_channels.clear();
+    data.refined_subject_mask_overlay_components.clear();
+    data.eye_mask_feret_axes_major.clear();
+    data.eye_mask_feret_axes_minor.clear();
+    data.eye_masks_have_feret_axes = false;
+    data.mask_chunk_cache.clear();
+}
+
+std::vector<std::string> extractStringListAttr(const nlohmann::json& attrs,
+                                               const char* key) {
+    std::vector<std::string> values;
+    if (!attrs.contains(key) || !attrs[key].is_array()) {
+        return values;
+    }
+    const auto& array = attrs[key];
+    values.reserve(array.size());
+    for (const auto& item : array) {
+        if (item.is_string()) {
+            values.push_back(item.get<std::string>());
+        }
+    }
+    return values;
+}
+
+std::string joinMaskLabels(const std::vector<std::string>& labels) {
+    std::ostringstream oss;
+    for (size_t i = 0; i < labels.size(); ++i) {
+        if (i > 0) {
+            oss << ", ";
+        }
+        oss << labels[i];
+    }
+    return oss.str();
+}
+
+std::array<float, 4> invalidAxisSegment() {
+    const float nan_value = std::numeric_limits<float>::quiet_NaN();
+    return {nan_value, nan_value, nan_value, nan_value};
+}
+
+std::array<std::array<float, 4>, 2> invalidEyeAxisRow() {
+    return {invalidAxisSegment(), invalidAxisSegment()};
+}
+
+void ensureEyeAxisRows(std::vector<std::array<std::array<float, 4>, 2>>& rows,
+                       size_t roi_dim) {
+    if (rows.size() == roi_dim) {
+        return;
+    }
+    rows.assign(roi_dim, invalidEyeAxisRow());
+}
+
+bool stringAttrMatches(const nlohmann::json& attrs,
+                       const char* key,
+                       const char* expected) {
+    return attrs.contains(key) &&
+           attrs[key].is_string() &&
+           attrs[key].get<std::string>() == expected;
+}
+
+}  // namespace
+
 bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& store) {
     data_.flat_headings_deg.clear();
     data_.flat_swim_bladder_px.clear();
@@ -19,10 +102,7 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     data_.roi_offset_y.clear();
     data_.roi_width_px.clear();
     data_.roi_height_px.clear();
-    data_.eye_mask_feret_axes_major.clear();
-    data_.eye_mask_feret_axes_minor.clear();
-    data_.eye_masks_have_feret_axes = false;
-    data_.has_eye_masks = false;
+    clearEyeMaskState(data_);
     data_.eye_angle_run_name.clear();
     data_.eye_angle_frame_indices.clear();
     data_.eye_angle_valid_mask.clear();
@@ -34,12 +114,6 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     data_.eye_vergence_frame_time_seconds.clear();
     data_.eye_vergence_frame_valid.clear();
     data_.has_eye_vergence_frame = false;
-    data_.eye_masks_loaded = false;
-    data_.eye_masks_run_name.clear();
-    data_.eye_masks_store = ts::TensorStore<uint8_t, 4>();
-    data_.eye_mask_roi_count = 0;
-    data_.eye_mask_height = 0;
-    data_.eye_mask_width = 0;
 
     // Clear refined keypoint quality fields
     data_.is_refined_keypoints = false;
@@ -874,6 +948,9 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     }
 
     if (!data_.has_eye_masks) {
+        loadRefinedSubjectMaskEyeData(store, roi_count);
+    }
+    if (!data_.has_eye_masks) {
         loadRefinedEyeMaskData(store, roi_count);
     }
     if (!data_.has_eye_angles) {
@@ -883,18 +960,439 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     return data_.has_heading_data;
 }
 
+bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
+    const ts::kvstore::KvStore& store,
+    size_t roi_count) {
+    clearEyeMaskState(data_);
+
+    if (data_.layout != ZarrLayoutType::kPaletteRuns) {
+        return false;
+    }
+
+    std::string latest_run;
+    if (auto group_attrs = readAttrsAny(store, "refined_subject_masks_runs")) {
+        latest_run = extractLatestRunName(*group_attrs);
+    }
+
+    if (latest_run.empty() && !root_path_.empty()) {
+        auto fs_candidates = collect_runs_fs(
+            root_path_,
+            "refined_subject_masks_runs",
+            {"masks_roi"});
+        if (!fs_candidates.empty()) {
+            latest_run = fs_candidates.back();
+        }
+    }
+
+    if (latest_run.empty()) {
+        return false;
+    }
+
+    const std::string run_base =
+        "refined_subject_masks_runs/" + latest_run + "/";
+    auto run_attrs = readAttrsAny(store, run_base);
+    if (!run_attrs.has_value()) {
+        std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
+                  << latest_run
+                  << "' has no readable attrs; falling back to legacy eye masks."
+                  << std::endl;
+        return false;
+    }
+
+    std::vector<std::string> mask_labels =
+        extractStringListAttr(*run_attrs, "mask_labels");
+    if (mask_labels.empty()) {
+        std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
+                  << latest_run
+                  << "' missing mask_labels; falling back to legacy eye masks."
+                  << std::endl;
+        return false;
+    }
+
+    auto masks_store_result =
+        openArrayAny<uint8_t, 4>(store, run_base + "masks_roi", context_);
+    if (!masks_store_result.ok()) {
+        std::cout << "[SUBJECT_MASK_WARNING] Failed to open refined subject masks for run '"
+                  << latest_run << "': "
+                  << masks_store_result.status().ToString()
+                  << "; falling back to legacy eye masks." << std::endl;
+        return false;
+    }
+
+    auto domain = masks_store_result.value().domain();
+    auto shape = domain.shape();
+    if (shape.size() != 4) {
+        std::cout << "[SUBJECT_MASK_WARNING] Unexpected masks_roi rank in refined_subject_masks run '"
+                  << latest_run << "' (expected 4, got " << shape.size()
+                  << "); falling back to legacy eye masks." << std::endl;
+        return false;
+    }
+
+    const size_t roi_dim = static_cast<size_t>(shape[0]);
+    const size_t channel_dim = static_cast<size_t>(shape[1]);
+    const size_t mask_rows = static_cast<size_t>(shape[2]);
+    const size_t mask_cols = static_cast<size_t>(shape[3]);
+
+    if (roi_dim == 0 || channel_dim == 0 || mask_rows == 0 || mask_cols == 0) {
+        std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
+                  << latest_run
+                  << "' has empty masks_roi dimensions; falling back to legacy eye masks."
+                  << std::endl;
+        return false;
+    }
+
+    if (roi_count > 0 && roi_dim != roi_count) {
+        std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
+                  << latest_run << "' masks_roi row count (" << roi_dim
+                  << ") does not match keypoint ROI count (" << roi_count
+                  << "); falling back to legacy eye masks." << std::endl;
+        return false;
+    }
+
+    auto find_label = [&](const std::string& label) -> size_t {
+        auto it = std::find(mask_labels.begin(), mask_labels.end(), label);
+        if (it == mask_labels.end()) {
+            return kInvalidMaskChannel;
+        }
+        return static_cast<size_t>(std::distance(mask_labels.begin(), it));
+    };
+
+    const size_t left_channel = find_label("eye_left");
+    const size_t right_channel = find_label("eye_right");
+    if (left_channel == kInvalidMaskChannel &&
+        right_channel == kInvalidMaskChannel) {
+        std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
+                  << latest_run
+                  << "' has no eye_left/eye_right labels; falling back to legacy eye masks."
+                  << std::endl;
+        return false;
+    }
+
+    std::vector<uint8_t> available_channels;
+    bool available_loaded =
+        readBoolArray(store, run_base + "available_channels", available_channels);
+    bool tolerant_metadata = false;
+    std::string warning;
+    if (!available_loaded || available_channels.size() != channel_dim) {
+        const size_t observed_available_count = available_channels.size();
+        available_channels.assign(channel_dim, 1);
+        tolerant_metadata = true;
+        std::ostringstream oss;
+        oss << "available_channels ";
+        if (!available_loaded) {
+            oss << "missing/unreadable";
+        } else {
+            oss << "length " << observed_available_count
+                << " did not match masks_roi channel count " << channel_dim;
+        }
+        oss << "; treating labeled channels as readable for UI inspection.";
+        warning = oss.str();
+    }
+
+    auto channel_is_available = [&](size_t channel) -> bool {
+        if (channel == kInvalidMaskChannel || channel >= channel_dim) {
+            return false;
+        }
+        if (channel >= available_channels.size()) {
+            return tolerant_metadata;
+        }
+        return available_channels[channel] != 0;
+    };
+
+    const bool left_available = channel_is_available(left_channel);
+    const bool right_available = channel_is_available(right_channel);
+    if (!left_available && !right_available) {
+        std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
+                  << latest_run
+                  << "' has eye labels but neither eye channel is available; falling back to legacy eye masks."
+                  << std::endl;
+        return false;
+    }
+
+    data_.mask_chunk_cache.clear();
+    data_.eye_masks_store = masks_store_result.value();
+    data_.eye_masks_run_name = latest_run;
+    data_.eye_masks_source_label = tolerant_metadata
+        ? "Refined subject masks (metadata inferred)"
+        : "Refined subject masks";
+    data_.eye_masks_source_path = run_base + "masks_roi";
+    data_.eye_masks_warning = warning;
+    data_.eye_masks_from_refined_subject_masks = true;
+    data_.eye_masks_tolerant_metadata = tolerant_metadata;
+    data_.eye_masks_loaded = true;
+    data_.has_eye_masks = true;
+    data_.eye_mask_roi_count = roi_dim;
+    data_.eye_mask_height = mask_rows;
+    data_.eye_mask_width = mask_cols;
+    data_.eye_mask_channel_indices = {
+        left_available ? left_channel : kInvalidMaskChannel,
+        right_available ? right_channel : kInvalidMaskChannel};
+    data_.eye_mask_channel_labels = {"eye_left", "eye_right"};
+    data_.refined_subject_mask_labels = mask_labels;
+    data_.refined_subject_mask_available_channels = available_channels;
+    data_.refined_subject_mask_overlay_components.clear();
+    const size_t component_label_count =
+        std::min(mask_labels.size(), channel_dim);
+    for (size_t channel = 0; channel < component_label_count; ++channel) {
+        if (!channel_is_available(channel)) {
+            continue;
+        }
+        data_.refined_subject_mask_overlay_components.push_back(
+            ZarrDetectionData::RefinedSubjectMaskComponentInfo{
+                mask_labels[channel],
+                channel});
+    }
+
+    auto loadComponentContours =
+        [&](ZarrDetectionData::RefinedSubjectMaskComponentInfo& component) {
+            const std::string contour_base =
+                run_base + "components/" + component.label + "/contours/";
+
+            std::vector<int64_t> contour_ptr;
+            std::vector<int32_t> contour_len;
+            if (!readInt64Array(store, contour_base + "ptr", contour_ptr) ||
+                !readInt32Array(store, contour_base + "len", contour_len)) {
+                return;
+            }
+            if (contour_ptr.size() != roi_dim || contour_len.size() != roi_dim) {
+                component.contour_warning =
+                    "contour ptr/len shape does not match masks_roi rows";
+                std::cout << "  [SUBJECT_MASK_WARNING] Refined subject mask component '"
+                          << component.label << "' "
+                          << component.contour_warning << "." << std::endl;
+                return;
+            }
+
+            auto points_store =
+                openArrayAny<float, 2>(store, contour_base + "points_xy", context_);
+            if (!points_store.ok()) {
+                component.contour_warning =
+                    "contour points_xy is missing or unreadable";
+                std::cout << "  [SUBJECT_MASK_WARNING] Refined subject mask component '"
+                          << component.label << "' "
+                          << component.contour_warning << ": "
+                          << points_store.status().ToString()
+                          << std::endl;
+                return;
+            }
+
+            const auto points_shape = points_store.value().domain().shape();
+            if (points_shape.size() != 2 || points_shape[1] < 2) {
+                component.contour_warning =
+                    "contour points_xy shape is not Nx2";
+                std::cout << "  [SUBJECT_MASK_WARNING] Refined subject mask component '"
+                          << component.label << "' "
+                          << component.contour_warning << "." << std::endl;
+                return;
+            }
+
+            bool attrs_compatible = false;
+            if (auto attrs = readAttrsAny(store, contour_base)) {
+                const bool schema_ok =
+                    stringAttrMatches(*attrs, "schema_id", "component_contours_v1") ||
+                    stringAttrMatches(*attrs, "contour_schema_id", "component_contours_v1");
+                const bool coordinate_ok =
+                    !attrs->contains("coordinate_space") ||
+                    stringAttrMatches(*attrs, "coordinate_space", "roi_pixels");
+                const bool order_ok =
+                    !attrs->contains("point_order") ||
+                    stringAttrMatches(*attrs, "point_order", "xy");
+                const bool source_ok =
+                    !attrs->contains("source_component") ||
+                    stringAttrMatches(*attrs,
+                                      "source_component",
+                                      component.label.c_str());
+                attrs_compatible =
+                    schema_ok && coordinate_ok && order_ok && source_ok;
+                if (!attrs_compatible) {
+                    component.contour_warning =
+                        "contour attrs are incomplete or not fully compatible; loading arrays tolerantly";
+                }
+            } else {
+                component.contour_warning =
+                    "contour attrs are missing; loading arrays tolerantly";
+            }
+
+            component.contour_ptr = std::move(contour_ptr);
+            component.contour_len = std::move(contour_len);
+            component.contour_points_store = points_store.value();
+            component.contour_points_count =
+                static_cast<size_t>(points_shape[0]);
+            component.contours_available = true;
+            component.contour_attrs_compatible = attrs_compatible;
+        };
+
+    size_t contour_component_count = 0;
+    for (auto& component : data_.refined_subject_mask_overlay_components) {
+        loadComponentContours(component);
+        if (component.contours_available) {
+            ++contour_component_count;
+        }
+    }
+
+    auto loadEllipseAxes =
+        [&](const std::string& component_label, size_t eye_slot) -> bool {
+        if (eye_slot >= 2) {
+            return false;
+        }
+
+        const std::string geometry_base =
+            run_base + "components/" + component_label + "/geometry/";
+        auto ellipse_store =
+            openArrayAny<float, 2>(store, geometry_base + "ellipse_params", context_);
+        if (!ellipse_store.ok()) {
+            std::cout << "  [SUBJECT_MASK_WARNING] Refined subject mask component '"
+                      << component_label
+                      << "' has no readable ellipse_params; axis overlay unavailable for this eye."
+                      << std::endl;
+            return false;
+        }
+
+        auto ellipse_result = ts::Read(ellipse_store.value()).result();
+        if (!ellipse_result.ok()) {
+            std::cout << "  [SUBJECT_MASK_WARNING] Failed to read ellipse_params for refined subject mask component '"
+                      << component_label << "': "
+                      << ellipse_result.status().ToString()
+                      << std::endl;
+            return false;
+        }
+
+        auto ellipse_array = ellipse_result.value();
+        auto ellipse_shape = ellipse_array.shape();
+        if (ellipse_shape.size() != 2 ||
+            ellipse_shape[0] != static_cast<ts::Index>(roi_dim) ||
+            ellipse_shape[1] < 5) {
+            std::cout << "  [SUBJECT_MASK_WARNING] Unexpected ellipse_params shape for refined subject mask component '"
+                      << component_label << "' (expected " << roi_dim
+                      << "x5, got ";
+            for (size_t i = 0; i < ellipse_shape.size(); ++i) {
+                std::cout << ellipse_shape[i]
+                          << (i + 1 < ellipse_shape.size() ? "x" : "");
+            }
+            std::cout << "); axis overlay unavailable for this eye."
+                      << std::endl;
+            return false;
+        }
+
+        std::vector<uint8_t> ellipse_success;
+        const bool success_loaded =
+            readBoolArray(store, geometry_base + "ellipse_success", ellipse_success);
+        if (!success_loaded) {
+            ellipse_success.assign(roi_dim, 1);
+            std::cout << "  [SUBJECT_MASK_WARNING] Refined subject mask component '"
+                      << component_label
+                      << "' missing ellipse_success; using finite ellipse_params for axis overlay."
+                      << std::endl;
+        } else if (ellipse_success.size() != roi_dim) {
+            std::cout << "  [SUBJECT_MASK_WARNING] ellipse_success length for refined subject mask component '"
+                      << component_label << "' is " << ellipse_success.size()
+                      << " but expected " << roi_dim
+                      << "; missing rows will be treated as invalid."
+                      << std::endl;
+        }
+
+        ensureEyeAxisRows(data_.eye_mask_feret_axes_major, roi_dim);
+        ensureEyeAxisRows(data_.eye_mask_feret_axes_minor, roi_dim);
+
+        constexpr float kPi = 3.14159265358979323846f;
+        size_t valid_axes = 0;
+        for (size_t roi = 0; roi < roi_dim; ++roi) {
+            if (roi >= ellipse_success.size() || ellipse_success[roi] == 0) {
+                continue;
+            }
+
+            const float cx =
+                ellipse_array(static_cast<ts::Index>(roi), static_cast<ts::Index>(0));
+            const float cy =
+                ellipse_array(static_cast<ts::Index>(roi), static_cast<ts::Index>(1));
+            const float major =
+                ellipse_array(static_cast<ts::Index>(roi), static_cast<ts::Index>(2));
+            const float minor =
+                ellipse_array(static_cast<ts::Index>(roi), static_cast<ts::Index>(3));
+            const float angle_deg =
+                ellipse_array(static_cast<ts::Index>(roi), static_cast<ts::Index>(4));
+
+            if (!std::isfinite(cx) || !std::isfinite(cy) ||
+                !std::isfinite(major) || !std::isfinite(minor) ||
+                !std::isfinite(angle_deg) || major <= 1e-5f || minor <= 1e-5f) {
+                continue;
+            }
+
+            const float theta = angle_deg * kPi / 180.0f;
+            const float major_dx = std::cos(theta) * major * 0.5f;
+            const float major_dy = std::sin(theta) * major * 0.5f;
+            const float minor_theta = theta + 0.5f * kPi;
+            const float minor_dx = std::cos(minor_theta) * minor * 0.5f;
+            const float minor_dy = std::sin(minor_theta) * minor * 0.5f;
+
+            data_.eye_mask_feret_axes_major[roi][eye_slot] = {
+                cx - major_dx,
+                cy - major_dy,
+                cx + major_dx,
+                cy + major_dy};
+            data_.eye_mask_feret_axes_minor[roi][eye_slot] = {
+                cx - minor_dx,
+                cy - minor_dy,
+                cx + minor_dx,
+                cy + minor_dy};
+            ++valid_axes;
+        }
+
+        if (valid_axes == 0) {
+            std::cout << "  [SUBJECT_MASK_WARNING] Refined subject mask component '"
+                      << component_label
+                      << "' ellipse geometry contained no valid axis rows."
+                      << std::endl;
+            return false;
+        }
+
+        return true;
+    };
+
+    const bool left_geometry_ok =
+        left_available && loadEllipseAxes("eye_left", 0);
+    const bool right_geometry_ok =
+        right_available && loadEllipseAxes("eye_right", 1);
+    data_.eye_masks_have_feret_axes = left_geometry_ok || right_geometry_ok;
+
+    data_.eye_mask_chunk_rows = 0;
+    auto chunk_layout_result = data_.eye_masks_store.chunk_layout();
+    if (chunk_layout_result.ok()) {
+        const auto& chunk_layout = chunk_layout_result.value();
+        auto chunk_shape = chunk_layout.read_chunk_shape();
+        if (!chunk_shape.empty()) {
+            auto chunk_size = chunk_shape[0];
+            if (chunk_size > 0) {
+                data_.eye_mask_chunk_rows =
+                    static_cast<size_t>(chunk_size);
+            }
+        }
+    }
+    if (data_.eye_mask_chunk_rows == 0) {
+        data_.eye_mask_chunk_rows = std::min<size_t>(roi_dim, 512);
+    }
+
+    std::cout << "  Refined subject mask run '" << latest_run
+              << "' loaded for eye overlay (labels: "
+              << joinMaskLabels(mask_labels) << "; eye_left channel "
+              << (left_available ? std::to_string(left_channel) : "unavailable")
+              << ", eye_right channel "
+              << (right_available ? std::to_string(right_channel) : "unavailable")
+              << "; ellipse axes "
+              << (data_.eye_masks_have_feret_axes ? "loaded" : "unavailable")
+              << "; contours " << contour_component_count << "/"
+              << data_.refined_subject_mask_overlay_components.size()
+              << " components"
+              << ")" << std::endl;
+    if (!warning.empty()) {
+        std::cout << "  [SUBJECT_MASK_WARNING] " << warning << std::endl;
+    }
+    return true;
+}
+
 bool ZarrDetectionLoader::loadRefinedEyeMaskData(const ts::kvstore::KvStore& store,
                                                  size_t roi_count) {
-    data_.eye_masks_run_name.clear();
-    data_.eye_masks_loaded = false;
-    data_.has_eye_masks = false;
-    data_.eye_masks_store = ts::TensorStore<uint8_t, 4>();
-    data_.eye_mask_roi_count = 0;
-    data_.eye_mask_height = 0;
-    data_.eye_mask_width = 0;
-    data_.eye_mask_feret_axes_major.clear();
-    data_.eye_mask_feret_axes_minor.clear();
-    data_.eye_masks_have_feret_axes = false;
+    clearEyeMaskState(data_);
 
     if (data_.layout != ZarrLayoutType::kPaletteRuns) {
         return false;
@@ -966,6 +1464,10 @@ bool ZarrDetectionLoader::loadRefinedEyeMaskData(const ts::kvstore::KvStore& sto
     data_.mask_chunk_cache.clear();
     data_.eye_masks_store = masks_store_result.value();
     data_.eye_masks_run_name = latest_run;
+    data_.eye_masks_source_label = "Legacy refined eye masks";
+    data_.eye_masks_source_path = run_base + "masks_roi";
+    data_.eye_mask_channel_indices = {0, 1};
+    data_.eye_mask_channel_labels = {"left", "right"};
     data_.eye_masks_loaded = true;
     data_.has_eye_masks = true;
     data_.eye_mask_roi_count = roi_dim;
@@ -1306,6 +1808,12 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
     entry.chunk_start = chunk_start;
     entry.chunk_length = chunk_len;
     entry.pixel_indices.resize(chunk_len);
+    const size_t component_count =
+        data_.refined_subject_mask_overlay_components.size();
+    if (component_count > 0) {
+        entry.component_pixel_indices.resize(chunk_len);
+        entry.component_contours_xy.resize(chunk_len);
+    }
 
     const uint8_t* base_ptr =
         static_cast<const uint8_t*>(array.byte_strided_origin_pointer());
@@ -1321,17 +1829,19 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
     const ts::Index stride_row = byte_strides[2];
     const ts::Index stride_col = byte_strides[3];
 
-    for (size_t roi = 0; roi < chunk_len; ++roi) {
-        const auto roi_offset =
-            stride_roi * static_cast<ts::Index>(roi);
-        const uint8_t* roi_ptr = base_ptr + roi_offset;
-        for (size_t channel = 0; channel < std::min<size_t>(channels, 2); ++channel) {
-            auto& indices_vec = entry.pixel_indices[roi][channel];
+    auto collectChannelPixels =
+        [&](const uint8_t* roi_ptr,
+            size_t source_channel,
+            std::vector<uint32_t>& indices_vec) {
             indices_vec.clear();
             indices_vec.reserve(256);
+            if (source_channel == kInvalidMaskChannel ||
+                source_channel >= channels) {
+                return;
+            }
 
             const auto channel_offset =
-                stride_channel * static_cast<ts::Index>(channel);
+                stride_channel * static_cast<ts::Index>(source_channel);
             const uint8_t* channel_ptr = roi_ptr + channel_offset;
             for (size_t r = 0; r < rows; ++r) {
                 const auto row_offset =
@@ -1343,8 +1853,167 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
                     const uint8_t* elem_ptr = row_ptr + col_offset;
                     if (*elem_ptr != 0) {
                         indices_vec.push_back(
-                            static_cast<uint16_t>(r * cols + c));
+                            static_cast<uint32_t>(r * cols + c));
                     }
+                }
+            }
+        };
+
+    for (size_t roi = 0; roi < chunk_len; ++roi) {
+        const auto roi_offset =
+            stride_roi * static_cast<ts::Index>(roi);
+        const uint8_t* roi_ptr = base_ptr + roi_offset;
+
+        if (component_count > 0) {
+            auto& components_for_roi = entry.component_pixel_indices[roi];
+            components_for_roi.resize(component_count);
+            entry.component_contours_xy[roi].resize(component_count);
+            for (size_t component = 0; component < component_count; ++component) {
+                collectChannelPixels(
+                    roi_ptr,
+                    data_.refined_subject_mask_overlay_components[component]
+                        .channel_index,
+                    components_for_roi[component]);
+            }
+
+            for (size_t eye = 0; eye < 2; ++eye) {
+                auto& indices_vec = entry.pixel_indices[roi][eye];
+                const size_t source_channel =
+                    data_.eye_mask_channel_indices[eye];
+                auto component_it = std::find_if(
+                    data_.refined_subject_mask_overlay_components.begin(),
+                    data_.refined_subject_mask_overlay_components.end(),
+                    [&](const ZarrDetectionData::RefinedSubjectMaskComponentInfo&
+                            component) {
+                        return component.channel_index == source_channel;
+                    });
+                if (component_it ==
+                    data_.refined_subject_mask_overlay_components.end()) {
+                    indices_vec.clear();
+                    continue;
+                }
+                const size_t component_index = static_cast<size_t>(
+                    std::distance(
+                        data_.refined_subject_mask_overlay_components.begin(),
+                        component_it));
+                indices_vec = components_for_roi[component_index];
+            }
+            continue;
+        }
+
+        for (size_t eye = 0; eye < 2; ++eye) {
+            auto& indices_vec = entry.pixel_indices[roi][eye];
+            collectChannelPixels(
+                roi_ptr,
+                data_.eye_mask_channel_indices[eye],
+                indices_vec);
+        }
+    }
+
+    for (size_t component = 0; component < component_count; ++component) {
+        const auto& component_info =
+            data_.refined_subject_mask_overlay_components[component];
+        if (!component_info.contours_available ||
+            component_info.contour_ptr.size() < data_.eye_mask_roi_count ||
+            component_info.contour_len.size() < data_.eye_mask_roi_count ||
+            component_info.contour_points_count == 0) {
+            continue;
+        }
+
+        int64_t read_start = std::numeric_limits<int64_t>::max();
+        int64_t read_end = 0;
+        std::vector<uint8_t> row_has_contour(chunk_len, 0);
+        for (size_t local_roi = 0; local_roi < chunk_len; ++local_roi) {
+            const size_t absolute_roi = chunk_start + local_roi;
+            if (absolute_roi >= data_.eye_mask_roi_count ||
+                absolute_roi >= component_info.contour_ptr.size() ||
+                absolute_roi >= component_info.contour_len.size()) {
+                continue;
+            }
+            const int64_t start = component_info.contour_ptr[absolute_roi];
+            const int32_t length = component_info.contour_len[absolute_roi];
+            if (start < 0 || length <= 1) {
+                continue;
+            }
+            const int64_t end = start + static_cast<int64_t>(length);
+            if (end <= start ||
+                static_cast<uint64_t>(end) >
+                    static_cast<uint64_t>(component_info.contour_points_count)) {
+                continue;
+            }
+            row_has_contour[local_roi] = 1;
+            read_start = std::min(read_start, start);
+            read_end = std::max(read_end, end);
+        }
+
+        if (read_start == std::numeric_limits<int64_t>::max() ||
+            read_end <= read_start) {
+            continue;
+        }
+
+        auto contour_slice = component_info.contour_points_store |
+            ts::Dims(0).HalfOpenInterval(
+                static_cast<ts::Index>(read_start),
+                static_cast<ts::Index>(read_end));
+        auto contour_result = ts::Read(contour_slice).result();
+        if (!contour_result.ok()) {
+            std::cerr << "[SUBJECT_MASK_WARNING] Failed to read contour chunk for component '"
+                      << component_info.label << "': "
+                      << contour_result.status().ToString()
+                      << std::endl;
+            continue;
+        }
+
+        auto contour_array = contour_result.value();
+        auto contour_shape = contour_array.shape();
+        auto contour_strides = contour_array.byte_strides();
+        if (contour_shape.size() != 2 || contour_shape[1] < 2 ||
+            contour_strides.size() != 2) {
+            std::cerr << "[SUBJECT_MASK_WARNING] Unexpected contour chunk shape for component '"
+                      << component_info.label << "'" << std::endl;
+            continue;
+        }
+
+        const float* contour_origin =
+            static_cast<const float*>(
+                contour_array.byte_strided_origin_pointer());
+        const uint8_t* contour_base =
+            reinterpret_cast<const uint8_t*>(contour_origin);
+        const ts::Index stride_point = contour_strides[0];
+        const ts::Index stride_xy = contour_strides[1];
+        auto pointValue = [&](size_t local_point, size_t xy) -> float {
+            const uint8_t* ptr = contour_base +
+                stride_point * static_cast<ts::Index>(local_point) +
+                stride_xy * static_cast<ts::Index>(xy);
+            return *reinterpret_cast<const float*>(ptr);
+        };
+
+        for (size_t local_roi = 0; local_roi < chunk_len; ++local_roi) {
+            if (row_has_contour[local_roi] == 0) {
+                continue;
+            }
+            const size_t absolute_roi = chunk_start + local_roi;
+            const int64_t start = component_info.contour_ptr[absolute_roi];
+            const int32_t length = component_info.contour_len[absolute_roi];
+            const int64_t local_start = start - read_start;
+            if (local_start < 0) {
+                continue;
+            }
+
+            auto& contour_points =
+                entry.component_contours_xy[local_roi][component];
+            contour_points.clear();
+            contour_points.reserve(static_cast<size_t>(length));
+            for (int32_t point = 0; point < length; ++point) {
+                const size_t local_point =
+                    static_cast<size_t>(local_start + point);
+                if (local_point >= static_cast<size_t>(contour_shape[0])) {
+                    break;
+                }
+                const float x = pointValue(local_point, 0);
+                const float y = pointValue(local_point, 1);
+                if (std::isfinite(x) && std::isfinite(y)) {
+                    contour_points.push_back({x, y});
                 }
             }
         }
@@ -1370,6 +2039,110 @@ void ZarrDetectionLoader::prefetchAdjacentEyeMaskChunks(size_t chunk_id) const {
     if ((chunk_id + 1) * chunk_rows < data_.eye_mask_roi_count) {
         ensureEyeMaskChunk(chunk_id + 1, /*allow_prefetch=*/false);
     }
+}
+
+bool ZarrDetectionLoader::readRefinedSubjectMaskComponentRow(
+    size_t roi_index,
+    const std::string& component_name,
+    RefinedSubjectMaskComponentRow& out_row,
+    std::string* error_message) const {
+    out_row = RefinedSubjectMaskComponentRow{};
+
+    auto fail = [&](const std::string& message) -> bool {
+        if (error_message != nullptr) {
+            *error_message = message;
+        }
+        return false;
+    };
+
+    if (!data_.eye_masks_loaded || !data_.eye_masks_from_refined_subject_masks) {
+        return fail("Refined subject masks are not the active mask source.");
+    }
+    if (roi_index >= data_.eye_mask_roi_count) {
+        std::ostringstream oss;
+        oss << "ROI row " << roi_index
+            << " is outside refined subject-mask row count "
+            << data_.eye_mask_roi_count << ".";
+        return fail(oss.str());
+    }
+    if (component_name.empty()) {
+        return fail("No refined subject-mask component selected.");
+    }
+
+    auto component_it = std::find_if(
+        data_.refined_subject_mask_overlay_components.begin(),
+        data_.refined_subject_mask_overlay_components.end(),
+        [&](const ZarrDetectionData::RefinedSubjectMaskComponentInfo& component) {
+            return component.label == component_name;
+        });
+    if (component_it == data_.refined_subject_mask_overlay_components.end()) {
+        return fail("Selected refined subject-mask component is unavailable: " +
+                    component_name);
+    }
+
+    const size_t channel_index = component_it->channel_index;
+    if (channel_index == kInvalidMaskChannel ||
+        channel_index >= data_.refined_subject_mask_labels.size()) {
+        return fail("Selected refined subject-mask component has no readable channel: " +
+                    component_name);
+    }
+    if (channel_index >= data_.refined_subject_mask_available_channels.size() ||
+        data_.refined_subject_mask_available_channels[channel_index] == 0) {
+        return fail("Selected refined subject-mask component is not marked available: " +
+                    component_name);
+    }
+
+    auto slice = data_.eye_masks_store |
+                 ts::Dims(0).HalfOpenInterval(
+                     static_cast<ts::Index>(roi_index),
+                     static_cast<ts::Index>(roi_index + 1)) |
+                 ts::Dims(1).HalfOpenInterval(
+                     static_cast<ts::Index>(channel_index),
+                     static_cast<ts::Index>(channel_index + 1));
+    auto read_result = ts::Read(slice).result();
+    if (!read_result.ok()) {
+        return fail("Failed to read refined subject-mask component row: " +
+                    read_result.status().ToString());
+    }
+
+    auto array = read_result.value();
+    auto shape = array.shape();
+    auto byte_strides = array.byte_strides();
+    if (shape.size() != 4 || byte_strides.size() != 4 ||
+        shape[0] != 1 || shape[1] != 1) {
+        return fail("Unexpected refined subject-mask component row shape.");
+    }
+
+    const size_t rows = static_cast<size_t>(shape[2]);
+    const size_t cols = static_cast<size_t>(shape[3]);
+    if (rows == 0 || cols == 0) {
+        return fail("Selected refined subject-mask component row is empty.");
+    }
+
+    std::vector<uint8_t> mask(rows * cols, 0);
+    const uint8_t* origin =
+        static_cast<const uint8_t*>(array.byte_strided_origin_pointer());
+    const ts::Index stride_row = byte_strides[2];
+    const ts::Index stride_col = byte_strides[3];
+    for (size_t row = 0; row < rows; ++row) {
+        const uint8_t* row_ptr =
+            origin + stride_row * static_cast<ts::Index>(row);
+        for (size_t col = 0; col < cols; ++col) {
+            const uint8_t* value_ptr =
+                row_ptr + stride_col * static_cast<ts::Index>(col);
+            mask[row * cols + col] = *value_ptr != 0 ? 1 : 0;
+        }
+    }
+
+    out_row.valid = true;
+    out_row.run_name = data_.eye_masks_run_name;
+    out_row.component_name = component_it->label;
+    out_row.channel_index = channel_index;
+    out_row.roi_index = roi_index;
+    out_row.rows = rows;
+    out_row.cols = cols;
+    out_row.mask = std::move(mask);
+    return true;
 }
 
 bool ZarrDetectionLoader::populateEyeMaskEntry(
@@ -1401,7 +2174,42 @@ bool ZarrDetectionLoader::populateEyeMaskEntry(
     out_mask.feret_minor_angle_deg[1] = angle_nan;
     out_mask.feret_angle_valid = {0, 0};
     out_mask.has_eye_angles = false;
+    out_mask.subject_mask_components.clear();
+    out_mask.has_subject_mask_components = false;
     out_mask.roi_index = static_cast<int32_t>(roi_index);
+
+    if (local_index < entry->component_pixel_indices.size()) {
+        const auto& component_pixels =
+            entry->component_pixel_indices[local_index];
+        const size_t component_count = std::min(
+            component_pixels.size(),
+            data_.refined_subject_mask_overlay_components.size());
+        out_mask.subject_mask_components.reserve(component_count);
+        for (size_t component = 0; component < component_count; ++component) {
+            FrameDetections::EyeMask::SubjectMaskComponent component_entry;
+            component_entry.label =
+                data_.refined_subject_mask_overlay_components[component].label;
+            component_entry.channel_index =
+                data_.refined_subject_mask_overlay_components[component]
+                    .channel_index;
+            component_entry.pixel_indices = component_pixels[component];
+            component_entry.valid = !component_entry.pixel_indices.empty();
+            if (local_index < entry->component_contours_xy.size() &&
+                component < entry->component_contours_xy[local_index].size()) {
+                component_entry.contour_xy =
+                    entry->component_contours_xy[local_index][component];
+                component_entry.has_contour =
+                    component_entry.contour_xy.size() > 1;
+            }
+            if (component_entry.valid) {
+                out_mask.valid = true;
+                out_mask.has_subject_mask_components = true;
+            }
+            out_mask.subject_mask_components.push_back(
+                std::move(component_entry));
+        }
+    }
+
     for (size_t channel = 0; channel < 2; ++channel) {
         out_mask.pixel_indices[channel] =
             entry->pixel_indices[local_index][channel];

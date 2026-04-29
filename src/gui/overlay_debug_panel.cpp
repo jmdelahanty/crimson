@@ -2,6 +2,10 @@
 
 #include "imgui.h"
 
+#include <algorithm>
+#include <limits>
+#include <string>
+
 namespace {
 
 void drawKeypointHeadingOverlaySection(const FrameDebugWindowContext& context,
@@ -128,17 +132,78 @@ void drawEyeMaskSection(const FrameDebugWindowContext& context,
         return;
     }
 
+    const bool refined_subject_masks =
+        context.zarr_loader.eyeMasksUseRefinedSubjectMasks();
     result.show_eye_masks = context.show_eye_masks;
     ImGui::Separator();
-    ImGui::Text("Eye Mask Overlay:");
-    ImGui::Checkbox("Show refined eye masks", &result.show_eye_masks);
+    ImGui::Text("%s", refined_subject_masks ? "Subject Mask Overlay:"
+                                            : "Eye Mask Overlay:");
+    ImGui::Checkbox(refined_subject_masks ? "Show subject masks"
+                                          : "Show eye masks",
+                    &result.show_eye_masks);
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
-            "Visualize refined eye masks as semi-transparent overlays.");
+            refined_subject_masks
+                ? "Visualize refined subject-mask components as semi-transparent overlays."
+                : "Visualize legacy refined eye masks as semi-transparent overlays.");
     }
-    if (!context.zarr_loader.getEyeMaskRunName().empty()) {
-        ImGui::Text("  Eye mask run: %s",
+    if (!context.zarr_loader.getEyeMaskSourceLabel().empty()) {
+        ImGui::Text("  Source: %s",
+                    context.zarr_loader.getEyeMaskSourceLabel().c_str());
+    }
+    if (!context.zarr_loader.getEyeMaskSourcePath().empty()) {
+        ImGui::TextWrapped("  Dataset: %s",
+                           context.zarr_loader.getEyeMaskSourcePath().c_str());
+    } else if (!context.zarr_loader.getEyeMaskRunName().empty()) {
+        ImGui::Text("  %s run: %s",
+                    refined_subject_masks ? "Subject mask" : "Eye mask",
                     context.zarr_loader.getEyeMaskRunName().c_str());
+    }
+    if (refined_subject_masks) {
+        result.show_subject_body_mask = context.show_subject_body_mask;
+        result.show_eye_left_mask = context.show_eye_left_mask;
+        result.show_eye_right_mask = context.show_eye_right_mask;
+        result.show_swim_bladder_mask = context.show_swim_bladder_mask;
+
+        const auto& labels = context.zarr_loader.getEyeMaskChannelLabels();
+        const auto& channels = context.zarr_loader.getEyeMaskChannelIndices();
+        const std::string left_channel =
+            channels[0] == std::numeric_limits<size_t>::max()
+                ? "unavailable"
+                : std::to_string(channels[0]);
+        const std::string right_channel =
+            channels[1] == std::numeric_limits<size_t>::max()
+                ? "unavailable"
+                : std::to_string(channels[1]);
+        ImGui::Text("  Channels: %s=%s, %s=%s",
+                    labels[0].c_str(),
+                    left_channel.c_str(),
+                    labels[1].c_str(),
+                    right_channel.c_str());
+        const auto& components =
+            context.zarr_loader.getRefinedSubjectMaskOverlayComponents();
+        const size_t contour_components = static_cast<size_t>(
+            std::count_if(
+                components.begin(),
+                components.end(),
+                [](const ZarrDetectionData::RefinedSubjectMaskComponentInfo&
+                       component) {
+                    return component.contours_available;
+                }));
+        ImGui::Text("  Contours: %zu/%zu components",
+                    contour_components,
+                    components.size());
+
+        ImGui::Checkbox("Subject body", &result.show_subject_body_mask);
+        ImGui::SameLine();
+        ImGui::Checkbox("Swim bladder", &result.show_swim_bladder_mask);
+        ImGui::Checkbox("Left eye", &result.show_eye_left_mask);
+        ImGui::SameLine();
+        ImGui::Checkbox("Right eye", &result.show_eye_right_mask);
+    }
+    if (!context.zarr_loader.getEyeMaskWarning().empty()) {
+        ImGui::TextWrapped("  Warning: %s",
+                           context.zarr_loader.getEyeMaskWarning().c_str());
     }
     if (context.zarr_loader.activeDatasetHasSyntheticDetections()) {
         ImGui::TextWrapped(
@@ -160,5 +225,9 @@ void drawKeypointHeadingOverlayPanel(const FrameDebugWindowContext& context,
 void drawEyeMaskOverlayPanel(const FrameDebugWindowContext& context,
                              FrameDebugWindowResult& result) {
     result.show_eye_masks = context.show_eye_masks;
+    result.show_subject_body_mask = context.show_subject_body_mask;
+    result.show_eye_left_mask = context.show_eye_left_mask;
+    result.show_eye_right_mask = context.show_eye_right_mask;
+    result.show_swim_bladder_mask = context.show_swim_bladder_mask;
     drawEyeMaskSection(context, result);
 }

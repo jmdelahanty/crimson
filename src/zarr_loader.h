@@ -181,21 +181,51 @@ struct ZarrDetectionData {
     bool has_eye_masks = false;
     bool eye_masks_loaded = false;
     std::string eye_masks_run_name;
+    std::string eye_masks_source_label;
+    std::string eye_masks_source_path;
+    std::string eye_masks_warning;
+    bool eye_masks_from_refined_subject_masks = false;
+    bool eye_masks_tolerant_metadata = false;
     ts::TensorStore<uint8_t, 4> eye_masks_store;
     size_t eye_mask_roi_count = 0;
     size_t eye_mask_height = 0;
     size_t eye_mask_width = 0;
     size_t eye_mask_chunk_rows = 0;
+    std::array<size_t, 2> eye_mask_channel_indices = {
+        std::numeric_limits<size_t>::max(),
+        std::numeric_limits<size_t>::max()};
+    std::array<std::string, 2> eye_mask_channel_labels = {
+        "eye_left",
+        "eye_right"};
+    std::vector<std::string> refined_subject_mask_labels;
+    std::vector<uint8_t> refined_subject_mask_available_channels;
+    struct RefinedSubjectMaskComponentInfo {
+        std::string label;
+        size_t channel_index = std::numeric_limits<size_t>::max();
+        bool contours_available = false;
+        bool contour_attrs_compatible = false;
+        std::string contour_warning;
+        std::vector<int64_t> contour_ptr;
+        std::vector<int32_t> contour_len;
+        ts::TensorStore<float, 2> contour_points_store;
+        size_t contour_points_count = 0;
+    };
+    std::vector<RefinedSubjectMaskComponentInfo>
+        refined_subject_mask_overlay_components;
     std::vector<std::array<std::array<float, 4>, 2>> eye_mask_feret_axes_major;
     std::vector<std::array<std::array<float, 4>, 2>> eye_mask_feret_axes_minor;
-   bool eye_masks_have_feret_axes = false;
-   struct EyeMaskChunkCacheEntry {
-       size_t chunk_id = std::numeric_limits<size_t>::max();
-       size_t chunk_start = 0;
-       size_t chunk_length = 0;
-       std::vector<std::array<std::vector<uint16_t>, 2>> pixel_indices;
-   };
-   mutable std::vector<EyeMaskChunkCacheEntry> mask_chunk_cache;
+    bool eye_masks_have_feret_axes = false;
+    struct EyeMaskChunkCacheEntry {
+        size_t chunk_id = std::numeric_limits<size_t>::max();
+        size_t chunk_start = 0;
+        size_t chunk_length = 0;
+        std::vector<std::array<std::vector<uint32_t>, 2>> pixel_indices;
+        std::vector<std::vector<std::vector<uint32_t>>>
+            component_pixel_indices;
+        std::vector<std::vector<std::vector<std::array<float, 2>>>>
+            component_contours_xy;
+    };
+    mutable std::vector<EyeMaskChunkCacheEntry> mask_chunk_cache;
 
     bool has_eye_angles = false;
     std::string eye_angle_run_name;
@@ -428,6 +458,42 @@ public:
     const std::string& getKeypointReviewNotes() const { return data_.kp_review_notes; }
     bool hasEyeMasks() const { return data_.has_eye_masks; }
     const std::string& getEyeMaskRunName() const { return data_.eye_masks_run_name; }
+    const std::string& getEyeMaskSourceLabel() const { return data_.eye_masks_source_label; }
+    const std::string& getEyeMaskSourcePath() const { return data_.eye_masks_source_path; }
+    const std::string& getEyeMaskWarning() const { return data_.eye_masks_warning; }
+    bool eyeMasksUseRefinedSubjectMasks() const { return data_.eye_masks_from_refined_subject_masks; }
+    bool eyeMasksUseTolerantMetadata() const { return data_.eye_masks_tolerant_metadata; }
+    const std::array<std::string, 2>& getEyeMaskChannelLabels() const {
+        return data_.eye_mask_channel_labels;
+    }
+    const std::array<size_t, 2>& getEyeMaskChannelIndices() const {
+        return data_.eye_mask_channel_indices;
+    }
+    const std::vector<std::string>& getRefinedSubjectMaskLabels() const {
+        return data_.refined_subject_mask_labels;
+    }
+    const std::vector<uint8_t>& getRefinedSubjectMaskAvailableChannels() const {
+        return data_.refined_subject_mask_available_channels;
+    }
+    const std::vector<ZarrDetectionData::RefinedSubjectMaskComponentInfo>&
+    getRefinedSubjectMaskOverlayComponents() const {
+        return data_.refined_subject_mask_overlay_components;
+    }
+    struct RefinedSubjectMaskComponentRow {
+        bool valid = false;
+        std::string run_name;
+        std::string component_name;
+        size_t channel_index = std::numeric_limits<size_t>::max();
+        size_t roi_index = 0;
+        size_t rows = 0;
+        size_t cols = 0;
+        std::vector<uint8_t> mask;
+    };
+    bool readRefinedSubjectMaskComponentRow(
+        size_t roi_index,
+        const std::string& component_name,
+        RefinedSubjectMaskComponentRow& out_row,
+        std::string* error_message = nullptr) const;
     bool hasEyeAngleData() const { return data_.has_eye_angles; }
     const std::string& getEyeAngleRunName() const { return data_.eye_angle_run_name; }
     bool hasEyeVergenceFrame() const { return data_.has_eye_vergence_frame; }
@@ -530,7 +596,9 @@ public:
         if (!data_.eye_masks_run_name.empty()) {
             artifacts.push_back(ReviewArtifactSummary{
                 ReviewArtifactKind::EyeMask,
-                "Eye Mask Review",
+                data_.eye_masks_from_refined_subject_masks
+                    ? "Refined Subject Mask Review"
+                    : "Eye Mask Review",
                 data_.eye_masks_run_name,
                 std::string{},
                 std::string{},
@@ -751,7 +819,7 @@ public:
             float roi_width = 0.0f;
             float roi_height = 0.0f;
             int32_t roi_index = -1;
-            std::array<std::vector<uint16_t>, 2> pixel_indices;
+            std::array<std::vector<uint32_t>, 2> pixel_indices;
             struct AxisSegment {
                 bool valid = false;
                 float x0 = 0.0f;
@@ -767,6 +835,16 @@ public:
                 std::numeric_limits<float>::quiet_NaN()};
             std::array<uint8_t, 2> feret_angle_valid = {0, 0};
             bool has_eye_angles = false;
+            struct SubjectMaskComponent {
+                std::string label;
+                size_t channel_index = std::numeric_limits<size_t>::max();
+                std::vector<uint32_t> pixel_indices;
+                std::vector<std::array<float, 2>> contour_xy;
+                bool valid = false;
+                bool has_contour = false;
+            };
+            std::vector<SubjectMaskComponent> subject_mask_components;
+            bool has_subject_mask_components = false;
         };
         std::vector<EyeMask> eye_masks;
         bool includes_eye_masks = false;
@@ -896,6 +974,7 @@ private:
                                      const std::string& run_name,
                                      const std::string& subgroup);
     bool loadKeypointHeadingData(const ts::kvstore::KvStore& store);
+    bool loadRefinedSubjectMaskEyeData(const ts::kvstore::KvStore& store, size_t roi_count);
     bool loadRefinedEyeMaskData(const ts::kvstore::KvStore& store, size_t roi_count);
     const ZarrDetectionData::EyeMaskChunkCacheEntry* findEyeMaskChunk(size_t chunk_id) const;
     bool ensureEyeMaskChunk(size_t chunk_id, bool allow_prefetch = true) const;

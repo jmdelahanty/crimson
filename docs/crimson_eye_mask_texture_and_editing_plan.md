@@ -14,11 +14,15 @@ and Crop Preview should become a derived view instead of the primary runtime
 surface, see
 [crimson_live_crops_and_full_frame_editing_plan.md](./crimson_live_crops_and_full_frame_editing_plan.md).
 
+For full-frame overlay draw ordering and the performance implications of
+stacking body, eye, swim-bladder, heading, and keypoint overlays, see
+[crimson_overlay_layering_and_mask_rendering_design.md](./crimson_overlay_layering_and_mask_rendering_design.md).
+
 ## Current State
 
 Crimson currently renders eye-mask pixels by:
 
-- loading refined `masks_roi` rows from Palette Zarr,
+- loading `masks_roi` rows from Palette Zarr,
 - expanding nonzero pixels into sparse `pixel_indices`, and
 - drawing them as `ImPlot::PlotScatter(...)` markers in the full-frame overlay.
 
@@ -30,11 +34,54 @@ This works, but it is expensive:
 
 Ellipse overlays are cheap because they only need a small amount of fitted geometry.
 
-## Important Clarification
+## Important Clarifications
 
-`masks_roi` is already the canonical bitmap.
+`masks_roi` is already the canonical bitmap. In modern Palette archives this
+may be:
 
-The current loader converts that canonical bitmap into a sparse render representation (`pixel_indices`) for display. A future texture path should treat `masks_roi` as the source image and avoid introducing a second canonical mask representation.
+- `refined_subject_masks_runs/<run>/masks_roi` with semantic channels such as
+  `subject_body`, `eye_left`, `eye_right`, and `swim_bladder`
+- legacy `refined_eye_masks_runs/<run>/masks_roi` as fallback
+
+The mask arrays are stored as `uint8` with fill value `0`. Crimson should treat
+`0` as background and any nonzero value as foreground unless a future contract
+declares a different encoding.
+
+The current loader converts the canonical bitmap into a sparse render
+representation (`pixel_indices`) for display. A future texture path should treat
+`masks_roi` as the source image and avoid introducing a second canonical mask
+representation.
+
+Some component groups already include contour outputs. In the current feeding
+canary archive, `eye_left` and `eye_right` have
+`components/<component>/contours`; `subject_body` and `swim_bladder` do not.
+Crimson should use existing contour arrays when they are contract-compatible,
+but it still needs a bitmap-derived fallback for components or historical runs
+without contours.
+
+### Feeding Canary Observation
+
+Checked on 2026-04-28 against:
+
+`/nvme1/recordings/2026-01-28T23-15-10Z_arena_2_Feeding/zarr/2026-01-28T23-15-10Z_arena_2_Feeding_analysis.zarr`
+
+Resolved run:
+
+`refined_subject_masks_runs/refined_subject_masks_smart_finalizer_dask_processes48_c64_canary_2026-04-26`
+
+Observed:
+
+- `mask_labels`: `subject_body`, `eye_left`, `eye_right`, `swim_bladder`
+- `masks_roi`: shape `(19235, 4, 512, 512)`, dtype `uint8`
+- sampled ROI/component planes contain only values `[0, 1]`
+- `subject_body`, `eye_left`, `eye_right`, and `swim_bladder` all had positive
+  mask area in sampled ROI 0
+- `components/eye_left/contours` and `components/eye_right/contours` exist
+- `components/subject_body/contours` and `components/swim_bladder/contours` do
+  not exist in this archive
+
+This supports treating current refined subject-mask planes as binary masks for
+display while still implementing the renderer as nonzero-foreground tolerant.
 
 ## Goals
 
@@ -55,26 +102,74 @@ The current loader converts that canonical bitmap into a sparse render represent
 
 For both rendering and future editing:
 
-- read from `refined_eye_masks_runs/<run>/masks_roi`
+- prefer `refined_subject_masks_runs/<run>/masks_roi`
+- map components by `mask_labels`, not channel index
+- use legacy `refined_eye_masks_runs/<run>/masks_roi` only as fallback for
+  left/right eye overlays
 - write back to `masks_roi` when edits are committed
 - treat all other geometry as derived from the bitmap
 
 This is the cleanest long-term model because it aligns render, review, and edit behavior with the actual contract output.
 
-### Decision 2: Replace Scatter Rendering With Texture Overlay
+### Decision 2: Replace Scatter Rendering With Shared Mask Overlay Rendering
 
-For `Show eye mask pixels`, do not draw per-pixel scatter points.
+For mask display, do not draw per-pixel scatter points except as an optional
+debug mode.
 
-Instead:
+Instead, expose a shared renderer that supports:
 
-- read the dense mask plane for each eye,
-- build an alpha/RGBA image for the eye mask,
+- filled texture overlay
+- contour overlay
+- filled texture plus contour
+
+The same renderer should work for `eye_left`, `eye_right`, `subject_body`,
+`swim_bladder`, and future mask components. Source-specific loaders should
+resolve the Zarr layout and semantic channel mapping; the renderer should only
+consume component masks, colors, ROI placement, and source metadata.
+
+### Decision 3: Use Span/RLE As The CPU Display Cache
+
+For CPU-side mask display cache, prefer row spans, a simple RLE form:
+
+- `row`
+- `x_start`
+- `length`
+
+This is smaller than a `uint8` bitmap for sparse or compact masks and is a good
+fit for both filled display and contour generation. It also avoids keeping the
+current scatter-only `pixel_indices` representation as the primary cache.
+
+Recommended internal flow:
+
+- read the dense binary mask plane from Zarr for the needed ROI/component
+- convert foreground pixels into row spans once
+- cache spans by `(source_path, roi_index, component_label, source_version)`
+- generate filled GPU texture or contour geometry from the spans on demand
+
+GPU rendering should still be used for the final display when practical:
+
+- build/upload an alpha or RGBA texture from spans for filled overlay
 - upload it to an OpenGL texture,
 - draw one textured quad over the ROI bounds.
+- draw contours as lightweight line geometry over the same ROI transform
 
 This should cut draw cost substantially and eliminate the `pixel_indices -> xs/ys -> PlotScatter` path.
 
-### Decision 3: Do Not Precompute Render-Only RGBA Bitmaps In Palette Refinement
+### Decision 4: Use Existing Contours Opportunistically
+
+When a component has contract-compatible contour arrays, Crimson should prefer
+those for contour mode because they avoid re-extracting boundaries in the UI.
+
+The renderer still needs bitmap-derived contour fallback because:
+
+- not every component currently has contours
+- historical runs may not have contour arrays
+- manual edit previews need contours before derived arrays are recomputed
+
+Existing contours are derived display/analysis geometry. They should not replace
+`masks_roi` as the canonical source for filled display or editing.
+
+### Decision 5: Do Not Precompute Render-Only RGBA Bitmaps In Palette Refinement
 
 Do not add a new refined-run dataset just to store pre-tinted or OpenGL-ready bitmaps.
 
@@ -87,22 +182,33 @@ Reasons:
 
 If we later need a persistent render cache, it should be optional and clearly derivative, not canonical.
 
-## Texture Overlay Architecture
+## Mask Overlay Architecture
 
 ### Loader Boundary
 
-The eye-mask loader should expose dense per-eye mask planes, not only sparse pixel indices.
+The mask loader should expose component mask data, not only sparse pixel indices.
 
-Preferred shape in memory:
+Source loaders should resolve:
 
-- `rows x cols` byte plane per eye
-- values `0/1` or `0/255`
+- run path and source label
+- ROI count and ROI placement
+- semantic component label
+- `available_channels`
+- channel index in `masks_roi`
+- optional contour paths
+
+Preferred display-cache shape in memory:
+
+- row spans/RLE for CPU cache
+- optional dense byte plane only as a transient decode buffer
+- optional uploaded GPU texture for filled rendering
 
 Possible loader evolution:
 
 - keep existing chunked read path from `masks_roi`
-- cache dense bitmap slices for a small number of recently used ROI chunks
-- derive textures from dense slices on demand
+- cache row spans for a small number of recently used ROI/component chunks
+- derive textures and fallback contours from spans on demand
+- use contract-compatible contour arrays directly where available
 
 Avoid:
 
@@ -110,18 +216,20 @@ Avoid:
 
 ### Renderer Boundary
 
-For each visible eye mask:
+For each visible mask component:
 
 1. resolve ROI placement from eye-mask lineage
-2. obtain the dense bitmap plane
-3. create or reuse a GPU texture for that mask plane
-4. draw it with alpha blending over the ROI rectangle
+2. obtain cached spans or a contour payload
+3. create or reuse a GPU texture when filled mode is enabled
+4. draw filled texture with alpha blending over the ROI rectangle
+5. draw contour lines when contour mode is enabled
 
 Expected rendering model:
 
-- one textured quad per eye
+- one textured quad per component for filled mode
+- one line path set per component for contour mode
 - nearest-neighbor or carefully chosen filtering
-- tint left/right eyes in shader or CPU-side RGBA conversion
+- tint components in shader or CPU-side RGBA conversion
 
 ### Cache Model
 
@@ -129,18 +237,21 @@ Start simple.
 
 Recommended first cache:
 
-- key: `(eye_mask_run_name, roi_index, eye, color_mode)`
-- value: uploaded GL texture + source version metadata
+- key: `(source_path, roi_index, component_label, render_mode, color_mode)`
+- value: row spans, optional uploaded GL texture, optional fallback contour
+  geometry, source version metadata
 
 Eviction:
 
 - small LRU cache
-- clear cache when eye-mask run changes
+- clear cache when mask source path or run changes
 
 Later, if needed:
 
-- cache dense chunk planes separately from textures
-- atlas multiple eye masks into one texture
+- cache dense chunk planes separately from spans/textures
+- atlas multiple component masks into one texture
+- move span-to-texture conversion onto GPU if profiling shows CPU conversion is
+  the bottleneck
 
 ## Future Direct Mask Editing
 
@@ -305,6 +416,21 @@ Definition of done:
 1. `docs/crimson_eye_mask_manual_write_contract.md`
 2. `docs/crimson_eye_mask_texture_overlay_checklist.md`
 3. `docs/crimson_eye_mask_editor_ux_plan.md`
+
+## Implementation Notes
+
+- Crimson now uses the refined-subject `masks_roi` tensor as a shared component
+  source when `refined_subject_masks_runs/<run>` is available.
+- The full-frame overlay renders `subject_body` and `swim_bladder` as
+  texture-backed fills, then renders left/right eye fills and eye axes on top.
+- When available, persisted component contours are read from
+  `components/<component>/contours/{ptr,len,points_xy}` and drawn as optional
+  derived overlays in ROI pixel coordinates. Missing contour caches do not block
+  filled rendering from `masks_roi`.
+- The overlay panel exposes per-component toggles for `subject_body`,
+  `eye_left`, `eye_right`, and `swim_bladder`.
+- Precomputed contours remain optional caches. Crimson treats `masks_roi` as
+  canonical for filled display and future edits.
 
 ## Bottom Line
 

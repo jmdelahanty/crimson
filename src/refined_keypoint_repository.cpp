@@ -1255,6 +1255,18 @@ ReasonLabelsState readReasonLabels(const RefinedRunContext& ctx) {
     return state;
 }
 
+std::vector<std::string> splitReasonTags(const std::string& value) {
+    std::vector<std::string> tags;
+    std::stringstream stream(value);
+    std::string item;
+    while (std::getline(stream, item, '|')) {
+        if (!item.empty()) {
+            tags.push_back(item);
+        }
+    }
+    return tags;
+}
+
 std::vector<uint8_t> encodeReasonBytes(const std::vector<std::string>& labels,
                                        size_t width) {
     std::vector<uint8_t> out(labels.size() * width, 0);
@@ -1270,6 +1282,106 @@ std::vector<uint8_t> encodeReasonBytes(const std::vector<std::string>& labels,
         }
     }
     return out;
+}
+
+std::string compactReasonTagForByteMatrix(const std::string& tag) {
+    if (tag == "manual_correction") {
+        return "manual";
+    }
+    if (tag == "geometry_issue") {
+        return "geom";
+    }
+    if (tag == "fish_present_no_keypoints") {
+        return "fish_no_kp";
+    }
+    if (tag == "detection_failed") {
+        return "detect_failed";
+    }
+    if (tag == "confidence_missing") {
+        return "conf_missing";
+    }
+    return tag;
+}
+
+std::string canonicalReasonTag(const std::string& tag) {
+    if (tag == "manual") {
+        return "manual_correction";
+    }
+    if (tag == "geom") {
+        return "geometry_issue";
+    }
+    if (tag == "fish_no_kp") {
+        return "fish_present_no_keypoints";
+    }
+    if (tag == "detect_failed") {
+        return "detection_failed";
+    }
+    if (tag == "conf_missing") {
+        return "confidence_missing";
+    }
+    return tag;
+}
+
+std::string compactReasonToFitByteWidth(const std::string& value,
+                                        size_t width) {
+    if (width == 0) {
+        return "";
+    }
+    if (value.size() + 1 <= width) {
+        return value;
+    }
+
+    std::vector<std::string> compact_tags;
+    for (const std::string& tag : splitReasonTags(value)) {
+        std::string compact = compactReasonTagForByteMatrix(tag);
+        if (compact.empty()) {
+            continue;
+        }
+        if (std::find(compact_tags.begin(), compact_tags.end(), compact) ==
+            compact_tags.end()) {
+            compact_tags.push_back(std::move(compact));
+        }
+    }
+
+    auto join_tags = [](const std::vector<std::string>& tags) {
+        std::ostringstream joined;
+        for (size_t i = 0; i < tags.size(); ++i) {
+            if (i > 0) {
+                joined << '|';
+            }
+            joined << tags[i];
+        }
+        return joined.str();
+    };
+
+    std::string joined = join_tags(compact_tags);
+    if (!joined.empty() && joined.size() + 1 <= width) {
+        return joined;
+    }
+
+    const std::vector<std::string> priority_tags = {
+        "manual",
+        "fish_no_kp",
+        "detect_failed",
+        "detection_issue",
+        "low_confidence",
+        "conf_missing",
+        "geom",
+    };
+    for (const std::string& priority : priority_tags) {
+        if (std::find(compact_tags.begin(), compact_tags.end(), priority) !=
+                compact_tags.end() &&
+            priority.size() + 1 <= width) {
+            return priority;
+        }
+    }
+    for (const std::string& tag : compact_tags) {
+        if (tag.size() + 1 <= width) {
+            return tag;
+        }
+    }
+
+    return value.substr(0, width - 1);
 }
 
 bool writeReasonBytesRow(const RefinedRunContext& ctx,
@@ -1308,16 +1420,16 @@ bool writeReasonBytesRow(const RefinedRunContext& ctx,
         }
         size_t width = static_cast<size_t>((*shape)[1]);
         width = std::max<size_t>(width, 1);
-        if (value.size() + 1 <= width) {
-            std::vector<uint8_t> row_bytes(width, 0);
-            const size_t copy_len = std::min(value.size(), width - 1);
-            if (copy_len > 0) {
-                std::memcpy(row_bytes.data(), value.data(), copy_len);
-            }
-            return writeFlatRowIfChangedTyped<uint8_t, 2>(
-                ctx.store, ctx.tensorstore_context, path, roi_index, row_bytes,
-                {1, static_cast<ts::Index>(width)}, error_message, changed_out);
+        const std::string encoded_value =
+            compactReasonToFitByteWidth(value, width);
+        std::vector<uint8_t> row_bytes(width, 0);
+        const size_t copy_len = std::min(encoded_value.size(), width - 1);
+        if (copy_len > 0) {
+            std::memcpy(row_bytes.data(), encoded_value.data(), copy_len);
         }
+        return writeFlatRowIfChangedTyped<uint8_t, 2>(
+            ctx.store, ctx.tensorstore_context, path, roi_index, row_bytes,
+            {1, static_cast<ts::Index>(width)}, error_message, changed_out);
     } else if (state.reason_exists && !state.decoded) {
         if (error_message != nullptr) {
             *error_message =
@@ -1353,18 +1465,6 @@ bool writeReasonBytesRow(const RefinedRunContext& ctx,
         *changed_out = true;
     }
     return true;
-}
-
-std::vector<std::string> splitReasonTags(const std::string& value) {
-    std::vector<std::string> tags;
-    std::stringstream stream(value);
-    std::string item;
-    while (std::getline(stream, item, '|')) {
-        if (!item.empty()) {
-            tags.push_back(item);
-        }
-    }
-    return tags;
 }
 
 std::string buildManualReason(const std::string& existing, bool geom_ok) {
@@ -1592,7 +1692,7 @@ json countReasonTags(const std::vector<std::string>& labels) {
     std::map<std::string, int> counts;
     for (const std::string& label : labels) {
         for (const std::string& tag : splitReasonTags(label)) {
-            counts[tag] += 1;
+            counts[canonicalReasonTag(tag)] += 1;
         }
     }
     json out = json::object();

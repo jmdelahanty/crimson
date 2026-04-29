@@ -4,6 +4,7 @@
 #include "gui/camera_view_transport_controls.h"
 #include "gui/full_frame_keypoint_edit_overlay.h"
 #include "gui/full_frame_rect_edit_overlay.h"
+#include "gui/camera_view_overlay_renderer.h"
 #include "legacy_labeling_state.h"
 #include "render.h"
 #include "refined_keypoint_repository.h"
@@ -82,6 +83,8 @@ struct CameraViewWindowContext {
     const ZarrDetectionLoader::FrameDetections* heading_details = nullptr;
     const ZarrDetectionLoader::FrameDetections* mask_details = nullptr;
     std::string eye_mask_smoothing_run_id;
+    CameraViewMaskOverlayOptions mask_overlay_options;
+    bool subject_mask_pick_enabled = false;
 
     const std::vector<ZarrDetectionLoader::ChaserBoundingBox>* chaser_bboxes =
         nullptr;
@@ -93,10 +96,18 @@ struct CameraViewWindowContext {
     CameraViewTransportControlsContext transport_controls;
 };
 
+struct CameraViewSubjectMaskPick {
+    bool valid = false;
+    int detection_index = -1;
+    int32_t roi_index = -1;
+    std::string component_name;
+};
+
 struct CameraViewWindowResult {
     FullFrameRectEditResult full_frame_edit_result;
     FullFrameKeypointEditState full_frame_keypoint_edit_state;
     CameraViewTransportControlsResult transport_result;
+    CameraViewSubjectMaskPick subject_mask_pick;
     bool legacy_manual_keypoints_find = false;
     bool view_focused = false;
     CameraViewFrameSyncSummary frame_sync;

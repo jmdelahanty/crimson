@@ -14,6 +14,10 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
     result.show_keypoint_markers = context.show_keypoint_markers;
     result.show_heading_arrows = context.show_heading_arrows;
     result.show_eye_masks = context.show_eye_masks;
+    result.show_subject_body_mask = context.show_subject_body_mask;
+    result.show_eye_left_mask = context.show_eye_left_mask;
+    result.show_eye_right_mask = context.show_eye_right_mask;
+    result.show_swim_bladder_mask = context.show_swim_bladder_mask;
 
     ImGui::SetNextWindowSize(ImVec2(760.0f, 840.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Frame Inspect")) {

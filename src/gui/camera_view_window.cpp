@@ -50,6 +50,122 @@ void drawCvContours(const std::vector<cv::Rect>& boxes,
     }
 }
 
+bool subjectMaskComponentVisible(const std::string& label,
+                                 const CameraViewMaskOverlayOptions& options) {
+    if (label == "subject_body") {
+        return options.show_subject_body;
+    }
+    if (label == "eye_left") {
+        return options.show_eye_left;
+    }
+    if (label == "eye_right") {
+        return options.show_eye_right;
+    }
+    if (label == "swim_bladder") {
+        return options.show_swim_bladder;
+    }
+    return true;
+}
+
+const ZarrDetectionLoader::FrameDetections::EyeMask::SubjectMaskComponent*
+findSubjectMaskComponent(
+    const ZarrDetectionLoader::FrameDetections::EyeMask& mask,
+    const std::string& label) {
+    auto it = std::find_if(
+        mask.subject_mask_components.begin(),
+        mask.subject_mask_components.end(),
+        [&](const ZarrDetectionLoader::FrameDetections::EyeMask::
+                SubjectMaskComponent& component) {
+            return component.label == label;
+        });
+    return it == mask.subject_mask_components.end() ? nullptr : &*it;
+}
+
+bool componentContainsPixel(
+    const ZarrDetectionLoader::FrameDetections::EyeMask::SubjectMaskComponent&
+        component,
+    uint32_t linear_pixel) {
+    if (!component.valid || component.pixel_indices.empty()) {
+        return false;
+    }
+    return std::binary_search(component.pixel_indices.begin(),
+                              component.pixel_indices.end(),
+                              linear_pixel);
+}
+
+CameraViewSubjectMaskPick pickSubjectMaskAtPlotPoint(
+    const ZarrDetectionLoader::FrameDetections& mask_details,
+    const CameraViewMaskOverlayOptions& options,
+    float image_height_px,
+    const ImPlotPoint& plot_point) {
+    CameraViewSubjectMaskPick pick;
+    if (!mask_details.includes_eye_masks) {
+        return pick;
+    }
+
+    const double image_x = plot_point.x;
+    const double image_y = static_cast<double>(image_height_px) - plot_point.y;
+    constexpr const char* kPriority[] = {
+        "eye_left",
+        "eye_right",
+        "swim_bladder",
+        "subject_body",
+    };
+
+    for (int det_idx = static_cast<int>(mask_details.eye_masks.size()) - 1;
+         det_idx >= 0;
+         --det_idx) {
+        const auto& mask =
+            mask_details.eye_masks[static_cast<size_t>(det_idx)];
+        if (!mask.valid || mask.roi_index < 0 || mask.rows <= 0 ||
+            mask.cols <= 0 || mask.roi_width <= 0.0f ||
+            mask.roi_height <= 0.0f || !std::isfinite(mask.offset_x) ||
+            !std::isfinite(mask.offset_y)) {
+            continue;
+        }
+        if (image_x < mask.offset_x ||
+            image_x >= mask.offset_x + mask.roi_width ||
+            image_y < mask.offset_y ||
+            image_y >= mask.offset_y + mask.roi_height) {
+            continue;
+        }
+
+        const double roi_x =
+            (image_x - mask.offset_x) / mask.roi_width *
+            static_cast<double>(mask.cols);
+        const double roi_y =
+            (image_y - mask.offset_y) / mask.roi_height *
+            static_cast<double>(mask.rows);
+        const int col = static_cast<int>(std::floor(roi_x));
+        const int row = static_cast<int>(std::floor(roi_y));
+        if (row < 0 || col < 0 || row >= mask.rows || col >= mask.cols) {
+            continue;
+        }
+        const uint32_t linear_pixel =
+            static_cast<uint32_t>(row * mask.cols + col);
+
+        for (const char* label : kPriority) {
+            if (!subjectMaskComponentVisible(label, options)) {
+                continue;
+            }
+            const auto* component = findSubjectMaskComponent(mask, label);
+            if (component == nullptr) {
+                continue;
+            }
+            if (!componentContainsPixel(*component, linear_pixel)) {
+                continue;
+            }
+            pick.valid = true;
+            pick.detection_index = det_idx;
+            pick.roi_index = mask.roi_index;
+            pick.component_name = label;
+            return pick;
+        }
+    }
+
+    return pick;
+}
+
 }  // namespace
 
 CameraViewWindowResult drawCameraViewWindowContents(
@@ -297,7 +413,8 @@ CameraViewWindowResult drawCameraViewWindowContents(
                 static_cast<float>(camera.image_width),
                 image_height_px,
                 plot_hovered,
-                !context.full_frame_keypoint_edit_enabled,
+                !context.full_frame_keypoint_edit_enabled &&
+                    !context.subject_mask_pick_enabled,
                 context.dataset_allows_bbox_edit,
                 can_modify_boxes,
                 &editable_rects,
@@ -343,7 +460,20 @@ CameraViewWindowResult drawCameraViewWindowContents(
             if (context.can_draw_eye_masks && context.mask_details != nullptr) {
                 drawCameraViewEyeMaskOverlay(*context.mask_details,
                                              image_height_px,
-                                             context.eye_mask_smoothing_run_id);
+                                             context.eye_mask_smoothing_run_id,
+                                             context.mask_overlay_options);
+            }
+            if (context.subject_mask_pick_enabled &&
+                context.mask_details != nullptr && plot_hovered &&
+                !context.full_frame_keypoint_edit_enabled &&
+                !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift &&
+                !ImGui::GetIO().KeyAlt &&
+                ImGui::IsMouseClicked(ImGuiMouseButton_Left, false)) {
+                result.subject_mask_pick = pickSubjectMaskAtPlotPoint(
+                    *context.mask_details,
+                    context.mask_overlay_options,
+                    image_height_px,
+                    ImPlot::GetPlotMousePos());
             }
             if (context.detection_details != nullptr) {
                 const int keypoint_skip_detection =
