@@ -1183,7 +1183,10 @@ std::vector<LoggedBoundingBox> ZarrDetectionLoader::getBoundingBoxesForFrame(
 }
 
 ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
-    size_t frame_id, bool use_interpolated, bool include_eye_masks) const {
+    size_t frame_id,
+    bool use_interpolated,
+    bool include_eye_masks,
+    bool include_subject_shapes) const {
     
     FrameDetections result;
     result.frame_id = frame_id;
@@ -1229,6 +1232,9 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
         const bool can_use_eye_masks =
             include_eye_masks && !want_interpolated &&
             ((data_.has_eye_masks && data_.eye_masks_loaded) || has_roi_metadata);
+        const bool can_use_subject_shapes =
+            include_subject_shapes && !want_interpolated &&
+            data_.subject_shape.loaded && has_roi_metadata;
         const bool can_use_keypoints =
             data_.has_keypoints && !want_interpolated &&
             data_.keypoints_per_detection > 0 &&
@@ -1249,6 +1255,10 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
         if (can_use_eye_masks) {
             result.eye_masks.reserve(end - start);
             result.includes_eye_masks = true;
+        }
+        if (can_use_subject_shapes) {
+            result.subject_shapes.reserve(end - start);
+            result.includes_subject_shapes = true;
         }
         if (can_use_keypoints) {
             result.keypoints_pixels.reserve(end - start);
@@ -1422,6 +1432,46 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                 }
 
                 result.eye_masks.push_back(std::move(mask_entry));
+            }
+
+            if (can_use_subject_shapes) {
+                FrameDetections::SubjectShape shape_entry;
+                shape_entry.offset_x =
+                    (idx < data_.roi_offset_x.size()) ? data_.roi_offset_x[idx] : nan_value;
+                shape_entry.offset_y =
+                    (idx < data_.roi_offset_y.size()) ? data_.roi_offset_y[idx] : nan_value;
+                shape_entry.roi_width =
+                    (idx < data_.roi_width_px.size()) ? data_.roi_width_px[idx] : 0.0f;
+                shape_entry.roi_height =
+                    (idx < data_.roi_height_px.size()) ? data_.roi_height_px[idx] : 0.0f;
+                shape_entry.coordinate_width =
+                    data_.eye_mask_width > 0
+                        ? static_cast<float>(data_.eye_mask_width)
+                        : (data_.crop_data.width > 0
+                               ? static_cast<float>(data_.crop_data.width)
+                               : shape_entry.roi_width);
+                shape_entry.coordinate_height =
+                    data_.eye_mask_height > 0
+                        ? static_cast<float>(data_.eye_mask_height)
+                        : (data_.crop_data.height > 0
+                               ? static_cast<float>(data_.crop_data.height)
+                               : shape_entry.roi_height);
+
+                const int32_t roi_lookup =
+                    (idx < data_.mask_roi_indices.size()) ? data_.mask_roi_indices[idx] : -1;
+                if (roi_lookup >= 0 &&
+                    std::isfinite(shape_entry.offset_x) &&
+                    std::isfinite(shape_entry.offset_y) &&
+                    shape_entry.roi_width > 0.0f &&
+                    shape_entry.roi_height > 0.0f &&
+                    shape_entry.coordinate_width > 0.0f &&
+                    shape_entry.coordinate_height > 0.0f) {
+                    populateSubjectShapeEntry(static_cast<size_t>(roi_lookup),
+                                              shape_entry);
+                } else {
+                    shape_entry.roi_index = roi_lookup;
+                }
+                result.subject_shapes.push_back(std::move(shape_entry));
             }
         }
 

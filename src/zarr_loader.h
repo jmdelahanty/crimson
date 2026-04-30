@@ -245,6 +245,90 @@ struct ZarrDetectionData {
     std::vector<uint8_t> eye_vergence_frame_valid;
     bool has_eye_vergence_frame = false;
 
+    struct SubjectShapeData {
+        bool loaded = false;
+        std::string run_name;
+        std::string source_refined_subject_masks_run;
+        std::string schema_id;
+        int schema_version = -1;
+        std::string method;
+        int method_version = -1;
+        std::string head_endpoint_semantics;
+        std::string row_axis;
+        std::string warning;
+        size_t row_count = 0;
+        size_t centerline_points = 0;
+        size_t bspline_sample_points = 0;
+        size_t bspline_control_points = 0;
+        size_t tail_sample_count = 0;
+        size_t tail_normal_count = 0;
+        std::vector<int32_t> frame_indices;
+        std::vector<int32_t> row_to_frame;
+
+        std::vector<std::array<float, 2>> body_origin_xy;
+        std::vector<std::array<float, 2>> body_forward_axis_xy;
+        std::vector<std::array<float, 2>> body_left_axis_xy;
+        std::vector<uint8_t> body_frame_valid;
+        std::vector<std::string> body_frame_failure_reason;
+
+        std::vector<std::array<float, 2>> snout_tip_xy;
+        std::vector<uint8_t> snout_tip_valid;
+        std::vector<std::string> snout_tip_failure_reason;
+        std::vector<std::array<float, 2>> tail_base_xy;
+        std::vector<uint8_t> tail_base_valid;
+        std::vector<std::array<float, 2>> tail_tip_xy;
+        std::vector<float> centerline_xy;
+        std::vector<uint8_t> centerline_valid;
+        std::vector<uint8_t> centerline_reaches_snout;
+        std::vector<std::string> centerline_failure_reason;
+        std::vector<float> bspline_sample_xy;
+        std::vector<float> bspline_control_points_xy;
+        std::vector<uint8_t> bspline_valid;
+        std::vector<std::string> bspline_failure_reason;
+        std::vector<float> tail_sample_xy;
+        std::vector<float> tail_normal_xy;
+        std::vector<uint8_t> tail_sample_valid;
+        std::vector<std::string> tail_sample_failure_reason;
+        std::vector<uint8_t> source_mask_qc_severe_failure;
+        std::vector<std::string> source_mask_qc_reason;
+
+        std::vector<std::array<float, 2>> caudal_contour_point_xy;
+        std::vector<uint8_t> caudal_contour_valid;
+    };
+    SubjectShapeData subject_shape;
+
+    struct TailKinematicsData {
+        bool loaded = false;
+        std::string run_name;
+        std::string source_subject_shape_run;
+        std::string source_refined_subject_masks_run;
+        std::string schema_id;
+        int schema_version = -1;
+        std::string method;
+        int method_version = -1;
+        std::string row_axis;
+        std::string warning;
+        size_t row_count = 0;
+        size_t sample_count = 0;
+
+        std::vector<int32_t> frame_index;
+        std::vector<int32_t> row_to_frame;
+        std::vector<uint8_t> valid;
+        std::vector<std::string> failure_reason;
+        std::vector<float> tail_angle_sample_s;
+        std::vector<float> tail_angle_sample_xy;
+        size_t tail_angle_sample_xy_count = 0;
+        std::vector<float> tail_angle_deg;
+        std::vector<float> tail_tip_angle_deg;
+        std::vector<float> max_abs_tail_angle_deg;
+        std::vector<float> tail_angle_rms_deg;
+        std::vector<float> tail_lateral_deflection_px;
+        std::vector<float> tail_tip_lateral_deflection_px;
+        std::vector<float> tail_curvature_px_inv;
+        std::vector<float> max_abs_tail_curvature_px_inv;
+    };
+    TailKinematicsData tail_kinematics;
+
     struct CropImageData {
         bool loaded = false;
         std::string run_name;
@@ -422,6 +506,18 @@ public:
     
     // Main loading function
     bool loadZarrFile(const std::string& filepath, std::string& error_message);
+    void setRequestedSubjectShapeRunName(const std::string& run_name) {
+        requested_subject_shape_run_name_ = run_name;
+    }
+    const std::string& getRequestedSubjectShapeRunName() const {
+        return requested_subject_shape_run_name_;
+    }
+    void setRequestedTailKinematicsRunName(const std::string& run_name) {
+        requested_tail_kinematics_run_name_ = run_name;
+    }
+    const std::string& getRequestedTailKinematicsRunName() const {
+        return requested_tail_kinematics_run_name_;
+    }
     
     // Compatibility interface matching H5SessionLoader
     std::vector<LoggedBoundingBox> getBoundingBoxesForFrame(size_t frame_id) const;
@@ -858,10 +954,106 @@ public:
         };
         std::vector<EyeMask> eye_masks;
         bool includes_eye_masks = false;
+        struct SubjectShape {
+            bool valid = false;
+            int32_t roi_index = -1;
+            float offset_x = std::numeric_limits<float>::quiet_NaN();
+            float offset_y = std::numeric_limits<float>::quiet_NaN();
+            float roi_width = 0.0f;
+            float roi_height = 0.0f;
+            float coordinate_width = 0.0f;
+            float coordinate_height = 0.0f;
+
+            bool body_frame_valid = false;
+            std::array<float, 2> body_origin_xy = {
+                std::numeric_limits<float>::quiet_NaN(),
+                std::numeric_limits<float>::quiet_NaN()};
+            std::array<float, 2> body_forward_axis_xy = {
+                std::numeric_limits<float>::quiet_NaN(),
+                std::numeric_limits<float>::quiet_NaN()};
+            std::array<float, 2> body_left_axis_xy = {
+                std::numeric_limits<float>::quiet_NaN(),
+                std::numeric_limits<float>::quiet_NaN()};
+            std::string body_frame_failure_reason;
+
+            bool snout_tip_valid = false;
+            std::array<float, 2> snout_tip_xy = {
+                std::numeric_limits<float>::quiet_NaN(),
+                std::numeric_limits<float>::quiet_NaN()};
+            std::string snout_tip_failure_reason;
+            bool tail_base_valid = false;
+            std::array<float, 2> tail_base_xy = {
+                std::numeric_limits<float>::quiet_NaN(),
+                std::numeric_limits<float>::quiet_NaN()};
+            std::array<float, 2> tail_tip_xy = {
+                std::numeric_limits<float>::quiet_NaN(),
+                std::numeric_limits<float>::quiet_NaN()};
+            bool centerline_valid = false;
+            bool centerline_reaches_snout = false;
+            std::string centerline_failure_reason;
+            bool bspline_valid = false;
+            std::string bspline_failure_reason;
+            bool tail_sample_valid = false;
+            std::string tail_sample_failure_reason;
+            bool caudal_contour_valid = false;
+            std::array<float, 2> caudal_contour_point_xy = {
+                std::numeric_limits<float>::quiet_NaN(),
+                std::numeric_limits<float>::quiet_NaN()};
+
+            std::vector<std::array<float, 2>> centerline_xy;
+            std::vector<std::array<float, 2>> bspline_sample_xy;
+            std::vector<std::array<float, 2>> bspline_control_points_xy;
+            std::vector<std::array<float, 2>> tail_sample_xy;
+            std::vector<std::array<float, 2>> tail_normal_xy;
+        };
+        std::vector<SubjectShape> subject_shapes;
+        bool includes_subject_shapes = false;
     };
     FrameDetections getRawDetections(size_t frame_id,
                                      bool use_interpolated = true,
-                                     bool include_eye_masks = false) const;
+                                     bool include_eye_masks = false,
+                                     bool include_subject_shapes = false) const;
+
+    struct SubjectShapeQcFilterOptions {
+        bool any_invalid = true;
+        bool source_mask_qc_failure = false;
+        bool body_frame_invalid = false;
+        bool snout_invalid = false;
+        bool centerline_invalid = false;
+        bool centerline_misses_snout = false;
+        bool bspline_invalid = false;
+        bool tail_base_invalid = false;
+        bool tail_sample_invalid = false;
+        std::string reason_substring;
+    };
+    struct SubjectShapeQcJumpResult {
+        std::optional<int> target_frame;
+        size_t match_count = 0;
+        std::string status;
+    };
+    SubjectShapeQcJumpResult computeSubjectShapeQcJump(
+        const SubjectShapeQcFilterOptions& filters,
+        int current_frame_num,
+        bool forward) const;
+
+    struct TailKinematicsQcFilterOptions {
+        bool invalid_rows = true;
+        bool nonfinite_tail_tip_angle = false;
+        bool nonfinite_tail_tip_lateral_deflection = false;
+        std::string reason_substring;
+    };
+    struct TailKinematicsQcJumpResult {
+        std::optional<int> target_frame;
+        std::optional<size_t> target_row;
+        size_t match_count = 0;
+        std::string status;
+    };
+    TailKinematicsQcJumpResult computeTailKinematicsQcJump(
+        const TailKinematicsQcFilterOptions& filters,
+        int current_frame_num,
+        bool forward) const;
+    std::optional<size_t> findTailKinematicsRowForFrame(int frame) const;
+    std::optional<int32_t> getTailKinematicsFrameForRow(size_t row) const;
     int32_t getKeypointRoiIndexForFrameDetection(size_t frame_id,
                                                  size_t detection_idx,
                                                  bool use_interpolated = false) const;
@@ -891,6 +1083,53 @@ public:
 
     bool hasHeadingData() const { return data_.has_heading_data; }
     bool hasKeypointData() const { return data_.has_keypoints; }
+    bool hasSubjectShapeData() const { return data_.subject_shape.loaded; }
+    bool hasTailKinematicsData() const { return data_.tail_kinematics.loaded; }
+    const std::string& getSubjectShapeRunName() const {
+        return data_.subject_shape.run_name;
+    }
+    const std::string& getSubjectShapeSourceRefinedSubjectMasksRun() const {
+        return data_.subject_shape.source_refined_subject_masks_run;
+    }
+    const std::string& getSubjectShapeWarning() const {
+        return data_.subject_shape.warning;
+    }
+    int getSubjectShapeSchemaVersion() const {
+        return data_.subject_shape.schema_version;
+    }
+    int getSubjectShapeMethodVersion() const {
+        return data_.subject_shape.method_version;
+    }
+    const std::string& getSubjectShapeMethod() const {
+        return data_.subject_shape.method;
+    }
+    const std::string& getSubjectShapeHeadEndpointSemantics() const {
+        return data_.subject_shape.head_endpoint_semantics;
+    }
+    size_t getSubjectShapeRowCount() const {
+        return data_.subject_shape.row_count;
+    }
+    const ZarrDetectionData::TailKinematicsData& getTailKinematicsData() const {
+        return data_.tail_kinematics;
+    }
+    const std::string& getTailKinematicsRunName() const {
+        return data_.tail_kinematics.run_name;
+    }
+    const std::string& getTailKinematicsSourceSubjectShapeRun() const {
+        return data_.tail_kinematics.source_subject_shape_run;
+    }
+    const std::string& getTailKinematicsSourceRefinedSubjectMasksRun() const {
+        return data_.tail_kinematics.source_refined_subject_masks_run;
+    }
+    const std::string& getTailKinematicsWarning() const {
+        return data_.tail_kinematics.warning;
+    }
+    size_t getTailKinematicsRowCount() const {
+        return data_.tail_kinematics.row_count;
+    }
+    size_t getTailKinematicsSampleCount() const {
+        return data_.tail_kinematics.sample_count;
+    }
     const std::vector<std::string>& getKeypointLabels() const {
         return data_.keypoint_labels;
     }
@@ -929,6 +1168,8 @@ private:
     ZarrDetectionData data_;
     ts::Context context_;
     std::string root_path_;
+    std::string requested_subject_shape_run_name_;
+    std::string requested_tail_kinematics_run_name_;
     DetectionDataset active_dataset_ = DetectionDataset::RawDetect;
     
     // Loading functions
@@ -984,6 +1225,8 @@ private:
                                      const std::string& run_name,
                                      const std::string& subgroup);
     bool loadKeypointHeadingData(const ts::kvstore::KvStore& store);
+    bool loadSubjectShapeData(const ts::kvstore::KvStore& store);
+    bool loadTailKinematicsData(const ts::kvstore::KvStore& store);
     bool loadRefinedSubjectMaskEyeData(const ts::kvstore::KvStore& store, size_t roi_count);
     bool loadRefinedEyeMaskData(const ts::kvstore::KvStore& store, size_t roi_count);
     const ZarrDetectionData::EyeMaskChunkCacheEntry* findEyeMaskChunk(size_t chunk_id) const;
@@ -991,6 +1234,8 @@ private:
     void prefetchAdjacentEyeMaskChunks(size_t chunk_id) const;
     void requestEyeMaskChunkPrefetch(size_t chunk_id) const;
     bool populateEyeMaskEntry(size_t roi_index, FrameDetections::EyeMask& out_mask) const;
+    bool populateSubjectShapeEntry(size_t roi_index,
+                                   FrameDetections::SubjectShape& out_shape) const;
     bool loadMovementData(const ts::kvstore::KvStore& store);
     bool loadSpeedRunMovement(const ts::kvstore::KvStore& store);
     bool loadLegacyMovementData(const ts::kvstore::KvStore& store);

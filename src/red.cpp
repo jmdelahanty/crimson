@@ -429,9 +429,12 @@ void pollPendingKeypointWrite(
 int main(int argc, char **argv) {
     std::string cli_zarr_override_path;
     std::string cli_recording_path;
+    std::string cli_subject_shape_run;
+    std::string cli_tail_kinematics_run;
     std::filesystem::path cli_perf_log_path;
     std::filesystem::path cli_mask_perf_log_path;
     int cli_swap_interval = 1;
+    int cli_mask_perf_sample_every = 1;
     double cli_frame_cap_fps = 0.0;
     bool mask_perf_log_enabled = true;
     const std::filesystem::path argv0_path = (argc > 0) ? argv[0] : "";
@@ -455,6 +458,24 @@ int main(int argc, char **argv) {
             cli_recording_path = argv[++i];
             continue;
         }
+        if (arg == "--subject-shape-run") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value for --subject-shape-run"
+                          << std::endl;
+                return 1;
+            }
+            cli_subject_shape_run = argv[++i];
+            continue;
+        }
+        if (arg == "--tail-kinematics-run") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value for --tail-kinematics-run"
+                          << std::endl;
+                return 1;
+            }
+            cli_tail_kinematics_run = argv[++i];
+            continue;
+        }
         if (arg == "--perf-log") {
             if (i + 1 >= argc) {
                 std::cerr << "Missing value for --perf-log" << std::endl;
@@ -473,6 +494,22 @@ int main(int argc, char **argv) {
         }
         if (arg == "--no-mask-perf-log") {
             mask_perf_log_enabled = false;
+            continue;
+        }
+        if (arg == "--mask-perf-sample-every") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value for --mask-perf-sample-every"
+                          << std::endl;
+                return 1;
+            }
+            int parsed = 0;
+            if (!parseIntArgument(argv[++i], parsed) || parsed < 1) {
+                std::cerr << "Invalid --mask-perf-sample-every value; "
+                             "expected an integer >= 1"
+                          << std::endl;
+                return 1;
+            }
+            cli_mask_perf_sample_every = parsed;
             continue;
         }
         if (arg == "--swap-interval") {
@@ -552,6 +589,13 @@ int main(int argc, char **argv) {
 
     // Zarr loading
     ZarrDetectionLoader zarr_loader;
+    if (!cli_subject_shape_run.empty()) {
+        zarr_loader.setRequestedSubjectShapeRunName(cli_subject_shape_run);
+    }
+    if (!cli_tail_kinematics_run.empty()) {
+        zarr_loader.setRequestedTailKinematicsRunName(
+            cli_tail_kinematics_run);
+    }
     bool zarr_loaded = false;
 
     DecoderContext *dc_context = new DecoderContext();
@@ -573,8 +617,11 @@ int main(int argc, char **argv) {
     bool show_eye_left_mask = true;
     bool show_eye_right_mask = true;
     bool show_swim_bladder_mask = true;
+    bool show_eye_direction_beams = true;
     CameraViewMaskOverlayMode mask_overlay_mode =
         CameraViewMaskOverlayMode::Review;
+    CameraViewSubjectShapeOverlayOptions subject_shape_overlay_options;
+    CameraViewTailKinematicsOverlayOptions tail_kinematics_overlay_options;
     int current_frame_num = 0;
     std::vector<std::string> imgs_names;
 
@@ -696,7 +743,12 @@ int main(int argc, char **argv) {
                 ? defaultMaskPerfLogPath(default_buffer_dump_root)
                 : cli_mask_perf_log_path;
         (void)mask_perf_log_writer.open(mask_perf_log_path);
+        if (cli_mask_perf_sample_every > 1) {
+            std::cout << "[MaskPerfLog] Sampling every "
+                      << cli_mask_perf_sample_every << " frames" << std::endl;
+        }
     }
+    uint64_t mask_perf_sample_index = 0;
 
     window_need_decoding[stimulus_player.window_name].store(false);
     latest_decoded_frame[stimulus_player.window_name].store(-1);
@@ -842,6 +894,8 @@ int main(int argc, char **argv) {
         double frame_camera_playback_swap_ms = 0.0;
         double frame_camera_plot_image_ui_ms = 0.0;
         double frame_camera_overlay_ui_ms = 0.0;
+        double frame_subject_shape_overlay_ms = 0.0;
+        double frame_tail_kinematics_overlay_ms = 0.0;
         double frame_camera_scene_ui_ms = 0.0;
         double frame_file_browser_ui_ms = 0.0;
         double frame_frame_debug_ui_ms = 0.0;
@@ -1079,9 +1133,21 @@ int main(int argc, char **argv) {
                     g_zarr_bbox_edit_state.cancelDraw();
                     g_zarr_bbox_edit_state.clearSelection();
                 }
+                const bool subject_shape_needs_contours =
+                    subject_shape_overlay_options.show_overlay &&
+                    (subject_shape_overlay_options.show_body_contour ||
+                     subject_shape_overlay_options.show_swim_bladder_contour ||
+                     subject_shape_overlay_options.show_eye_contours);
+                const bool include_subject_shapes_in_details =
+                    zarr_loader.hasSubjectShapeData() &&
+                    (subject_shape_overlay_options.show_overlay ||
+                     (zarr_loader.hasTailKinematicsData() &&
+                      tail_kinematics_overlay_options.show_overlay) ||
+                     frame_debug_window_state.active_tab ==
+                         FrameInspectTab::EyeMasks);
                 const bool include_eye_masks_in_details =
                     zarr_loader.hasEyeMasks() &&
-                    (show_eye_masks ||
+                    (show_eye_masks || subject_shape_needs_contours ||
                      frame_debug_window_state.active_tab ==
                          FrameInspectTab::EyeMasks);
                 const bool need_details =
@@ -1089,6 +1155,7 @@ int main(int argc, char **argv) {
                     zarr_loader.hasHeadingData() ||
                     zarr_loader.hasKeypointData() ||
                     include_eye_masks_in_details ||
+                    include_subject_shapes_in_details ||
                     dataset_has_synthetic_boxes;
                 if (need_details) {
                     const auto details_load_start =
@@ -1096,7 +1163,8 @@ int main(int argc, char **argv) {
                     detection_details =
                         zarr_loader.getRawDetections(current_frame_num,
                                                      false,
-                                                     include_eye_masks_in_details);
+                                                     include_eye_masks_in_details,
+                                                     include_subject_shapes_in_details);
                     if (include_eye_masks_in_details) {
                         frame_mask_data_load_ms += durationMs(
                             std::chrono::steady_clock::now() -
@@ -1143,7 +1211,10 @@ int main(int argc, char **argv) {
                 show_eye_left_mask,
                 show_eye_right_mask,
                 show_swim_bladder_mask,
+                show_eye_direction_beams,
                 mask_overlay_mode,
+                subject_shape_overlay_options,
+                tail_kinematics_overlay_options,
             };
             const FrameDebugWindowResult frame_debug_result =
                 drawFrameDebugWindow(frame_debug_context, frame_debug_window_state);
@@ -1159,7 +1230,13 @@ int main(int argc, char **argv) {
             show_eye_right_mask = frame_debug_result.show_eye_right_mask;
             show_swim_bladder_mask =
                 frame_debug_result.show_swim_bladder_mask;
+            show_eye_direction_beams =
+                frame_debug_result.show_eye_direction_beams;
             mask_overlay_mode = frame_debug_result.mask_overlay_mode;
+            subject_shape_overlay_options =
+                frame_debug_result.subject_shape_overlay_options;
+            tail_kinematics_overlay_options =
+                frame_debug_result.tail_kinematics_overlay_options;
             active_full_frame_keypoint_selection =
                 frame_debug_result.selected_keypoint_selection;
             keypoint_tab_full_frame_edit_enabled =
@@ -1213,6 +1290,80 @@ int main(int argc, char **argv) {
                 if (jump_result.target_frame.has_value()) {
                     playback_session_controller.seekToFrame(
                         *jump_result.target_frame, true);
+                }
+            }
+            if (frame_debug_result.request_prev_subject_shape_qc_frame) {
+                auto jump_result = zarr_loader.computeSubjectShapeQcJump(
+                    frame_debug_window_state.subject_shape_qc_filters,
+                    current_frame_num,
+                    false);
+                frame_debug_window_state.subject_shape_qc_status =
+                    std::move(jump_result.status);
+                if (jump_result.target_frame.has_value()) {
+                    playback_session_controller.seekToFrame(
+                        *jump_result.target_frame, true);
+                }
+            }
+            if (frame_debug_result.request_next_subject_shape_qc_frame) {
+                auto jump_result = zarr_loader.computeSubjectShapeQcJump(
+                    frame_debug_window_state.subject_shape_qc_filters,
+                    current_frame_num,
+                    true);
+                frame_debug_window_state.subject_shape_qc_status =
+                    std::move(jump_result.status);
+                if (jump_result.target_frame.has_value()) {
+                    playback_session_controller.seekToFrame(
+                        *jump_result.target_frame, true);
+                }
+            }
+            if (frame_debug_result.request_prev_tail_kinematics_qc_frame) {
+                auto jump_result = zarr_loader.computeTailKinematicsQcJump(
+                    frame_debug_window_state.tail_kinematics_qc_filters,
+                    current_frame_num,
+                    false);
+                frame_debug_window_state.tail_kinematics_qc_status =
+                    std::move(jump_result.status);
+                if (jump_result.target_row.has_value()) {
+                    frame_debug_window_state.tail_kinematics_selected_row =
+                        static_cast<int>(*jump_result.target_row);
+                }
+                if (jump_result.target_frame.has_value()) {
+                    playback_session_controller.seekToFrame(
+                        *jump_result.target_frame, true);
+                }
+            }
+            if (frame_debug_result.request_next_tail_kinematics_qc_frame) {
+                auto jump_result = zarr_loader.computeTailKinematicsQcJump(
+                    frame_debug_window_state.tail_kinematics_qc_filters,
+                    current_frame_num,
+                    true);
+                frame_debug_window_state.tail_kinematics_qc_status =
+                    std::move(jump_result.status);
+                if (jump_result.target_row.has_value()) {
+                    frame_debug_window_state.tail_kinematics_selected_row =
+                        static_cast<int>(*jump_result.target_row);
+                }
+                if (jump_result.target_frame.has_value()) {
+                    playback_session_controller.seekToFrame(
+                        *jump_result.target_frame, true);
+                }
+            }
+            if (frame_debug_result.request_seek_tail_kinematics_row) {
+                frame_debug_window_state.tail_kinematics_selected_row =
+                    static_cast<int>(
+                        frame_debug_result.requested_tail_kinematics_row);
+                auto frame = zarr_loader.getTailKinematicsFrameForRow(
+                    frame_debug_result.requested_tail_kinematics_row);
+                if (frame.has_value()) {
+                    playback_session_controller.seekToFrame(*frame, true);
+                    frame_debug_window_state.tail_kinematics_qc_status =
+                        "Selected tail row " +
+                        std::to_string(
+                            frame_debug_result.requested_tail_kinematics_row) +
+                        " mapped to frame " + std::to_string(*frame) + ".";
+                } else {
+                    frame_debug_window_state.tail_kinematics_qc_status =
+                        "Selected tail row has no frame mapping.";
                 }
             }
             if (diagnostics_result.request_dump_decode_buffers) {
@@ -2038,8 +2189,21 @@ int main(int argc, char **argv) {
 
                     ZarrDetectionLoader::FrameDetections detection_details;
                     const int zarr_bbox_query_frame = current_frame_num;
+                    const bool camera_subject_shape_needs_contours =
+                        subject_shape_overlay_options.show_overlay &&
+                        (subject_shape_overlay_options.show_body_contour ||
+                         subject_shape_overlay_options
+                             .show_swim_bladder_contour ||
+                         subject_shape_overlay_options.show_eye_contours);
+                    const bool camera_details_include_subject_shapes =
+                        zarr_loaded &&
+                        zarr_loader.hasSubjectShapeData() &&
+                        (subject_shape_overlay_options.show_overlay ||
+                         (zarr_loader.hasTailKinematicsData() &&
+                          tail_kinematics_overlay_options.show_overlay));
                     const bool camera_details_include_eye_masks =
-                        zarr_loaded && show_eye_masks &&
+                        zarr_loaded &&
+                        (show_eye_masks || camera_subject_shape_needs_contours) &&
                         zarr_loader.hasEyeMasks();
                     const bool is_zarr_interpolated =
                         zarr_loaded && zarr_loader.hasInterpolation() &&
@@ -2074,7 +2238,8 @@ int main(int argc, char **argv) {
                         detection_details = zarr_loader.getRawDetections(
                             zarr_bbox_query_frame,
                             false,
-                            camera_details_include_eye_masks);
+                            camera_details_include_eye_masks,
+                            camera_details_include_subject_shapes);
                         if (camera_details_include_eye_masks) {
                             frame_mask_data_load_ms += durationMs(
                                 std::chrono::steady_clock::now() -
@@ -2454,6 +2619,7 @@ int main(int argc, char **argv) {
                         can_draw_eye_masks,
                         heading_details_ptr,
                         mask_details_ptr,
+                        zarr_loaded ? &detection_details : nullptr,
                         zarr_loaded
                             ? (zarr_loader.getEyeMaskSourcePath() + "|" +
                                zarr_loader.getEyeAngleRunName())
@@ -2463,6 +2629,7 @@ int main(int argc, char **argv) {
                             show_eye_left_mask,
                             show_eye_right_mask,
                             show_swim_bladder_mask,
+                            show_eye_direction_beams,
                             frame_debug_window_state.subject_mask_edit_session
                                     .active()
                                 ? frame_debug_window_state
@@ -2476,8 +2643,15 @@ int main(int argc, char **argv) {
                                       .component_name
                                 : std::string{},
                             mask_overlay_mode},
+                        subject_shape_overlay_options,
+                        zarr_loaded && zarr_loader.hasTailKinematicsData()
+                            ? &zarr_loader.getTailKinematicsData()
+                            : nullptr,
+                        tail_kinematics_overlay_options,
                         zarr_loaded && can_draw_eye_masks && show_eye_masks &&
                             zarr_loader.eyeMasksUseRefinedSubjectMasks() &&
+                            frame_debug_window_state
+                                .subject_mask_canvas_pick_enabled &&
                             frame_debug_window_state.active_tab ==
                                 FrameInspectTab::EyeMasks,
                         zarr_loaded ? &chaser_bboxes : nullptr,
@@ -2555,6 +2729,10 @@ int main(int argc, char **argv) {
                         camera_view_result.perf.plot_image_ui_ms;
                     frame_camera_overlay_ui_ms +=
                         camera_view_result.perf.overlay_ui_ms;
+                    frame_subject_shape_overlay_ms +=
+                        camera_view_result.perf.subject_shape_overlay_ms;
+                    frame_tail_kinematics_overlay_ms +=
+                        camera_view_result.perf.tail_kinematics_overlay_ms;
                     frame_camera_playback_swap_ms +=
                         camera_view_result.perf.playback_swap_ms;
                     frame_camera_scene_ui_ms +=
@@ -3237,6 +3415,8 @@ int main(int argc, char **argv) {
             frame_camera_playback_swap_ms,
             frame_camera_plot_image_ui_ms,
             frame_camera_overlay_ui_ms,
+            frame_subject_shape_overlay_ms,
+            frame_tail_kinematics_overlay_ms,
             frame_camera_scene_ui_ms,
             frame_file_browser_ui_ms,
             frame_frame_debug_ui_ms,
@@ -3284,32 +3464,38 @@ int main(int argc, char **argv) {
             selected_mask_roi_index = target.roi_index;
             selected_mask_component_name = target.component_name;
         }
-        writeMaskPerfLogSample(
-            mask_perf_log_writer,
-            MaskPerfLogFrameContext{
-                cwd,
-                argv0_path,
-                cli_recording_path,
-                cli_zarr_override_path,
-                zarr_loaded ? zarr_loader.getArchivePath() : std::string{},
-                current_frame_num,
-                ps.to_display_frame_number,
-                ps.play_video,
-                zarr_loaded && show_eye_masks && zarr_loader.hasEyeMasks(),
-                zarr_loaded,
-                zarr_loaded ? zarr_loader.getEyeMaskSourceLabel()
-                            : std::string{},
-                zarr_loaded ? zarr_loader.getEyeMaskSourcePath()
-                            : std::string{},
-                zarr_loaded ? zarr_loader.getEyeMaskRunName()
-                            : std::string{},
-                selected_mask_roi_index,
-                selected_mask_component_name,
-                frame_mask_data_load_ms,
-                frame_mask_overlay_perf,
-                &perf_frame_context,
-                frame_loop_start,
-            });
+        const bool should_write_mask_perf_sample =
+            (mask_perf_sample_index++ %
+             static_cast<uint64_t>(cli_mask_perf_sample_every)) == 0;
+        if (should_write_mask_perf_sample) {
+            writeMaskPerfLogSample(
+                mask_perf_log_writer,
+                MaskPerfLogFrameContext{
+                    cwd,
+                    argv0_path,
+                    cli_recording_path,
+                    cli_zarr_override_path,
+                    zarr_loaded ? zarr_loader.getArchivePath() : std::string{},
+                    current_frame_num,
+                    ps.to_display_frame_number,
+                    ps.play_video,
+                    zarr_loaded && show_eye_masks && zarr_loader.hasEyeMasks(),
+                    zarr_loaded,
+                    cli_mask_perf_sample_every,
+                    zarr_loaded ? zarr_loader.getEyeMaskSourceLabel()
+                                : std::string{},
+                    zarr_loaded ? zarr_loader.getEyeMaskSourcePath()
+                                : std::string{},
+                    zarr_loaded ? zarr_loader.getEyeMaskRunName()
+                                : std::string{},
+                    selected_mask_roi_index,
+                    selected_mask_component_name,
+                    frame_mask_data_load_ms,
+                    frame_mask_overlay_perf,
+                    &perf_frame_context,
+                    frame_loop_start,
+                });
+        }
     }
 
     // Cleanup

@@ -78,6 +78,8 @@ struct PerfLogFrameContext {
     double frame_camera_playback_swap_ms = 0.0;
     double frame_camera_plot_image_ui_ms = 0.0;
     double frame_camera_overlay_ui_ms = 0.0;
+    double frame_subject_shape_overlay_ms = 0.0;
+    double frame_tail_kinematics_overlay_ms = 0.0;
     double frame_camera_scene_ui_ms = 0.0;
     double frame_file_browser_ui_ms = 0.0;
     double frame_frame_debug_ui_ms = 0.0;
@@ -128,6 +130,7 @@ struct MaskPerfLogFrameContext {
     bool play_video = false;
     bool overlay_enabled = false;
     bool zarr_loaded = false;
+    int mask_perf_sample_every = 1;
     std::string source_label;
     std::string source_path;
     std::string run_name;

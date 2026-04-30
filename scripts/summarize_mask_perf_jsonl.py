@@ -93,6 +93,10 @@ def main() -> int:
         return 0
 
     print(f"formats: {dict(Counter(row.get('format') for row in rows))}")
+    print(
+        "mask_perf_sample_every:",
+        dict(Counter(row.get("mask_perf_sample_every", 1) for row in rows)),
+    )
     print(f"play_video: {dict(Counter(row.get('play_video') for row in rows))}")
     print(f"overlay_enabled: {dict(Counter(row.get('overlay_enabled') for row in rows))}")
     print(f"modes: {dict(Counter(get_path(row, 'metrics.mode') for row in rows))}")
@@ -123,6 +127,14 @@ def main() -> int:
         ("camera_texture_upload_ms", "frame_perf.camera_pipeline.texture_upload_ms"),
         ("camera_plot_image_ui_ms", "frame_perf.camera_pipeline.plot_image_ui_ms"),
         ("camera_overlay_ui_ms", "frame_perf.camera_pipeline.overlay_ui_ms"),
+        (
+            "subject_shape_overlay_ms",
+            "frame_perf.camera_pipeline.subject_shape_overlay_ms",
+        ),
+        (
+            "tail_kinematics_overlay_ms",
+            "frame_perf.camera_pipeline.tail_kinematics_overlay_ms",
+        ),
         ("camera_scene_ui_ms", "frame_perf.camera_pipeline.scene_ui_ms"),
         ("camera_playback_stage_total_ms", "frame_perf.camera_pipeline.playback_stage_total_ms"),
         ("camera_playback_swap_ms", "frame_perf.camera_pipeline.playback_swap_ms"),
@@ -223,6 +235,7 @@ def main() -> int:
             "ui={ui:.3f} imgui={imgui:.3f} gl={gl:.3f} swap={swap:.3f} "
             "cap_sleep={cap_sleep:.3f} "
             "camera_upload={cam_upload:.3f} plot={plot:.3f} decoder_wait={dec_wait:.3f} "
+            "shape_overlay={shape_overlay:.3f} tail_overlay={tail_overlay:.3f} "
             "crop={crop:.3f} crop_source={crop_source} rotated={rotated} "
             "mod32={mod32} crop_refresh={crop_refresh:.3f} "
             "crop_render={crop_render:.3f} crop_raw={crop_raw:.3f} "
@@ -247,6 +260,15 @@ def main() -> int:
                 cam_upload=get_nested(row, "frame_perf.camera_pipeline.upload_ms") or 0.0,
                 plot=get_nested(row, "frame_perf.camera_pipeline.plot_image_ui_ms") or 0.0,
                 dec_wait=get_nested(row, "frame_perf.decoder.buffer_wait_ms") or 0.0,
+                shape_overlay=get_nested(
+                    row, "frame_perf.camera_pipeline.subject_shape_overlay_ms"
+                )
+                or 0.0,
+                tail_overlay=get_nested(
+                    row,
+                    "frame_perf.camera_pipeline.tail_kinematics_overlay_ms",
+                )
+                or 0.0,
                 crop=get_nested(row, "frame_perf.ui.crop_preview_ms") or 0.0,
                 crop_source=get_path(
                     row, "frame_perf.ui.crop_preview_perf.crop_source"

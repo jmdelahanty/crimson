@@ -467,6 +467,30 @@ CameraViewWindowResult drawCameraViewWindowContents(
                 accumulateCameraViewMaskPerfMetrics(
                     result.perf.mask_overlay, mask_perf);
             }
+            if (context.subject_shape_details != nullptr) {
+                const auto subject_shape_overlay_start =
+                    std::chrono::steady_clock::now();
+                drawCameraViewSubjectShapeOverlay(
+                    *context.subject_shape_details,
+                    image_height_px,
+                    context.subject_shape_overlay_options);
+                result.perf.subject_shape_overlay_ms += durationMs(
+                    std::chrono::steady_clock::now() -
+                    subject_shape_overlay_start);
+            }
+            if (context.subject_shape_details != nullptr &&
+                context.tail_kinematics != nullptr) {
+                const auto tail_kinematics_overlay_start =
+                    std::chrono::steady_clock::now();
+                drawCameraViewTailKinematicsOverlay(
+                    *context.subject_shape_details,
+                    *context.tail_kinematics,
+                    image_height_px,
+                    context.tail_kinematics_overlay_options);
+                result.perf.tail_kinematics_overlay_ms += durationMs(
+                    std::chrono::steady_clock::now() -
+                    tail_kinematics_overlay_start);
+            }
             if (context.subject_mask_pick_enabled &&
                 context.mask_details != nullptr && plot_hovered &&
                 !context.full_frame_keypoint_edit_enabled &&

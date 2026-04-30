@@ -18,7 +18,12 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
     result.show_eye_left_mask = context.show_eye_left_mask;
     result.show_eye_right_mask = context.show_eye_right_mask;
     result.show_swim_bladder_mask = context.show_swim_bladder_mask;
+    result.show_eye_direction_beams = context.show_eye_direction_beams;
     result.mask_overlay_mode = context.mask_overlay_mode;
+    result.subject_shape_overlay_options =
+        context.subject_shape_overlay_options;
+    result.tail_kinematics_overlay_options =
+        context.tail_kinematics_overlay_options;
 
     ImGui::SetNextWindowSize(ImVec2(760.0f, 840.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Frame Inspect")) {
@@ -61,6 +66,8 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
                 break;
             case FrameInspectTab::EyeMasks:
                 drawEyeMaskOverlayPanel(context, result);
+                break;
+            case FrameInspectTab::TailKinematics:
                 break;
         }
     } else {

@@ -234,6 +234,10 @@ RefinedKeypointReviewPanelResult drawRefinedKeypointReviewPanel(
     ImGui::BeginDisabled(!has_editable_selection);
     ImGui::Checkbox("Enable full-frame keypoint edit",
                     &state.full_frame_edit.enabled);
+    if (state.full_frame_edit.enabled) {
+        ImGui::Checkbox("Show keypoint names",
+                        &state.full_frame_edit.show_labels);
+    }
     ImGui::EndDisabled();
     if (state.full_frame_edit.enabled && context.play_video) {
         ImGui::TextDisabled("Pause playback to drag or save keypoints.");

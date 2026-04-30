@@ -52,9 +52,37 @@ struct CameraViewMaskOverlayOptions {
     bool show_eye_left = true;
     bool show_eye_right = true;
     bool show_swim_bladder = true;
+    bool show_eye_direction_beams = true;
     int32_t highlighted_roi_index = -1;
     std::string highlighted_component_name;
     CameraViewMaskOverlayMode mode = CameraViewMaskOverlayMode::Review;
+};
+
+struct CameraViewSubjectShapeOverlayOptions {
+    bool show_overlay = true;
+    bool show_body_contour = false;
+    bool show_swim_bladder_contour = false;
+    bool show_eye_contours = false;
+    bool show_body_frame_axes = false;
+    bool show_snout_tip = true;
+    bool show_caudal_anchor = true;
+    bool show_tail_base = true;
+    bool show_tail_tip = true;
+    bool show_centerline = true;
+    bool show_bspline_sample = true;
+    bool show_bspline_debug_points = false;
+    bool show_bspline_control_points = false;
+    bool show_tail_samples = false;
+    bool show_tail_normals = false;
+};
+
+struct CameraViewTailKinematicsOverlayOptions {
+    bool show_overlay = true;
+    bool show_samples = true;
+    bool show_segments = true;
+    bool show_angle_vectors = false;
+    bool show_lateral_deflection = false;
+    bool color_invalid_frames = true;
 };
 
 std::vector<FullFrameRectOverlayItem> buildCameraViewBoundingBoxOverlayItems(
@@ -81,6 +109,17 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
     float image_height_px,
     const std::string& smoothing_run_id,
     const CameraViewMaskOverlayOptions& options);
+
+void drawCameraViewSubjectShapeOverlay(
+    const ZarrDetectionLoader::FrameDetections& detection_details,
+    float image_height_px,
+    const CameraViewSubjectShapeOverlayOptions& options);
+
+void drawCameraViewTailKinematicsOverlay(
+    const ZarrDetectionLoader::FrameDetections& detection_details,
+    const ZarrDetectionData::TailKinematicsData& tail_kinematics,
+    float image_height_px,
+    const CameraViewTailKinematicsOverlayOptions& options);
 
 void drawCameraViewChaserOverlay(
     std::vector<ZarrDetectionLoader::ChaserBoundingBox> chaser_bboxes,

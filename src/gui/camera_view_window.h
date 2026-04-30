@@ -21,6 +21,8 @@ struct CameraViewWindowPerfMetrics {
     double playback_swap_ms = 0.0;
     double plot_image_ui_ms = 0.0;
     double overlay_ui_ms = 0.0;
+    double subject_shape_overlay_ms = 0.0;
+    double tail_kinematics_overlay_ms = 0.0;
     double scene_ui_ms = 0.0;
     CameraViewMaskPerfMetrics mask_overlay;
     double viewport_width_px = std::numeric_limits<double>::quiet_NaN();
@@ -83,8 +85,12 @@ struct CameraViewWindowContext {
     bool can_draw_eye_masks = false;
     const ZarrDetectionLoader::FrameDetections* heading_details = nullptr;
     const ZarrDetectionLoader::FrameDetections* mask_details = nullptr;
+    const ZarrDetectionLoader::FrameDetections* subject_shape_details = nullptr;
     std::string eye_mask_smoothing_run_id;
     CameraViewMaskOverlayOptions mask_overlay_options;
+    CameraViewSubjectShapeOverlayOptions subject_shape_overlay_options;
+    const ZarrDetectionData::TailKinematicsData* tail_kinematics = nullptr;
+    CameraViewTailKinematicsOverlayOptions tail_kinematics_overlay_options;
     bool subject_mask_pick_enabled = false;
 
     const std::vector<ZarrDetectionLoader::ChaserBoundingBox>* chaser_bboxes =

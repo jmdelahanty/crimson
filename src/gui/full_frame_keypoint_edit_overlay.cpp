@@ -52,6 +52,14 @@ ImU32 keypointColor(const std::string& label, size_t kp_idx) {
     return chooseRefinedKeypointColorU32(label, kp_idx);
 }
 
+std::string keypointDisplayLabel(const std::vector<std::string>& labels,
+                                 size_t kp_idx) {
+    if (kp_idx < labels.size() && !labels[kp_idx].empty()) {
+        return labels[kp_idx];
+    }
+    return "kp_" + std::to_string(kp_idx);
+}
+
 void syncState(const FullFrameKeypointEditContext& context,
                FullFrameKeypointEditState& state) {
     if (!isEditableSelection(context) || context.selection == nullptr ||
@@ -128,8 +136,7 @@ void drawEditableKeypointOverlay(const FullFrameKeypointEditContext& context,
         if (!std::isfinite(point[0]) || !std::isfinite(point[1])) {
             continue;
         }
-        const std::string& label =
-            i < labels.size() ? labels[i] : std::string{};
+        const std::string label = keypointDisplayLabel(labels, i);
         const ImVec2 center = ImPlot::PlotToPixels(
             ImPlotPoint(point[0], image_height - point[1]));
         const float radius = state.active_handle == static_cast<int>(i) ? 8.0f
@@ -137,6 +144,23 @@ void drawEditableKeypointOverlay(const FullFrameKeypointEditContext& context,
         draw_list->AddCircleFilled(center, radius, keypointColor(label, i));
         draw_list->AddCircle(center, radius, IM_COL32(255, 255, 255, 255), 0,
                              2.0f);
+        if (state.show_labels) {
+            const ImVec2 text_size = ImGui::CalcTextSize(label.c_str());
+            const ImVec2 text_pos(center.x + radius + 5.0f,
+                                  center.y - text_size.y * 0.5f);
+            draw_list->AddRectFilled(
+                ImVec2(text_pos.x - 3.0f, text_pos.y - 2.0f),
+                ImVec2(text_pos.x + text_size.x + 3.0f,
+                       text_pos.y + text_size.y + 2.0f),
+                IM_COL32(0, 0, 0, 150),
+                3.0f);
+            draw_list->AddText(ImVec2(text_pos.x + 1.0f, text_pos.y + 1.0f),
+                               IM_COL32(0, 0, 0, 230),
+                               label.c_str());
+            draw_list->AddText(text_pos,
+                               IM_COL32(255, 255, 255, 245),
+                               label.c_str());
+        }
     }
 }
 

@@ -136,6 +136,7 @@ void drawEyeMaskSection(const FrameDebugWindowContext& context,
         context.zarr_loader.eyeMasksUseRefinedSubjectMasks();
     result.show_eye_masks = context.show_eye_masks;
     result.mask_overlay_mode = context.mask_overlay_mode;
+    result.show_eye_direction_beams = context.show_eye_direction_beams;
     ImGui::Separator();
     ImGui::Text("%s", refined_subject_masks ? "Subject Mask Overlay:"
                                             : "Eye Mask Overlay:");
@@ -227,6 +228,11 @@ void drawEyeMaskSection(const FrameDebugWindowContext& context,
         ImGui::SameLine();
         ImGui::Checkbox("Right eye", &result.show_eye_right_mask);
     }
+    ImGui::Checkbox("Eye direction beams", &result.show_eye_direction_beams);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Draw translucent direction triangles from the eye fit axes. Disable this to keep eye masks, contours, axes, and angle labels without the beam overlay.");
+    }
     if (!context.zarr_loader.getEyeMaskWarning().empty()) {
         ImGui::TextWrapped("  Warning: %s",
                            context.zarr_loader.getEyeMaskWarning().c_str());
@@ -235,6 +241,104 @@ void drawEyeMaskSection(const FrameDebugWindowContext& context,
         ImGui::TextWrapped(
             "Synthetic detections are present; masks are skipped for interpolated boxes.");
     }
+}
+
+void drawSubjectShapeSection(const FrameDebugWindowContext& context,
+                             FrameDebugWindowResult& result) {
+    if (!context.zarr_loader.hasSubjectShapeData()) {
+        return;
+    }
+
+    auto options = context.subject_shape_overlay_options;
+    ImGui::Separator();
+    ImGui::Text("Subject Shape Geometry:");
+    ImGui::Checkbox("Show subject shape", &options.show_overlay);
+    ImGui::Text("  Run: %s", context.zarr_loader.getSubjectShapeRunName().c_str());
+    if (!context.zarr_loader
+             .getSubjectShapeSourceRefinedSubjectMasksRun()
+             .empty()) {
+        ImGui::TextWrapped(
+            "  Source masks: %s",
+            context.zarr_loader
+                .getSubjectShapeSourceRefinedSubjectMasksRun()
+                .c_str());
+    }
+    ImGui::Text("  Schema/method: v%d / %s v%d",
+                context.zarr_loader.getSubjectShapeSchemaVersion(),
+                context.zarr_loader.getSubjectShapeMethod().c_str(),
+                context.zarr_loader.getSubjectShapeMethodVersion());
+    if (!context.zarr_loader.getSubjectShapeWarning().empty()) {
+        ImGui::TextWrapped("  Warning: %s",
+                           context.zarr_loader.getSubjectShapeWarning().c_str());
+    }
+
+    ImGui::BeginDisabled(!options.show_overlay);
+    ImGui::Checkbox("Snout tip", &options.show_snout_tip);
+    ImGui::SameLine();
+    ImGui::Checkbox("Tail base", &options.show_tail_base);
+    ImGui::SameLine();
+    ImGui::Checkbox("Tail tip", &options.show_tail_tip);
+    ImGui::Checkbox("Caudal swim-bladder anchor",
+                    &options.show_caudal_anchor);
+    ImGui::Checkbox("Centerline", &options.show_centerline);
+    ImGui::Checkbox("Dense B-spline centerline (geometry/QC)",
+                    &options.show_bspline_sample);
+    ImGui::Checkbox("Body frame axes", &options.show_body_frame_axes);
+    ImGui::Checkbox("Body contour", &options.show_body_contour);
+    ImGui::SameLine();
+    ImGui::Checkbox("Swim-bladder contour",
+                    &options.show_swim_bladder_contour);
+    ImGui::Checkbox("Eye contours", &options.show_eye_contours);
+    ImGui::Checkbox("Spline debug points",
+                    &options.show_bspline_debug_points);
+    ImGui::SameLine();
+    ImGui::Checkbox("Spline control points",
+                    &options.show_bspline_control_points);
+    ImGui::Checkbox("Dense tail geometry samples (source geometry)",
+                    &options.show_tail_samples);
+    ImGui::Checkbox("Tail normals", &options.show_tail_normals);
+    ImGui::EndDisabled();
+
+    result.subject_shape_overlay_options = options;
+}
+
+void drawTailKinematicsOverlaySection(const FrameDebugWindowContext& context,
+                                      FrameDebugWindowResult& result) {
+    if (!context.zarr_loader.hasTailKinematicsData()) {
+        return;
+    }
+
+    auto options = context.tail_kinematics_overlay_options;
+    ImGui::Separator();
+    ImGui::Text("Tail Kinematics:");
+    ImGui::Checkbox("Show tail kinematics overlay", &options.show_overlay);
+    ImGui::Text("  Run: %s",
+                context.zarr_loader.getTailKinematicsRunName().c_str());
+    if (!context.zarr_loader
+             .getTailKinematicsSourceSubjectShapeRun()
+             .empty()) {
+        ImGui::TextWrapped(
+            "  Source shape: %s",
+            context.zarr_loader
+                .getTailKinematicsSourceSubjectShapeRun()
+                .c_str());
+    }
+    if (!context.zarr_loader.getTailKinematicsWarning().empty()) {
+        ImGui::TextWrapped(
+            "  Warning: %s",
+            context.zarr_loader.getTailKinematicsWarning().c_str());
+    }
+
+    ImGui::BeginDisabled(!options.show_overlay);
+    ImGui::Checkbox("Tail-angle samples k=10 (analysis output)",
+                    &options.show_samples);
+    ImGui::Checkbox("Connect k=10 samples", &options.show_segments);
+    ImGui::Checkbox("Tail angle vectors", &options.show_angle_vectors);
+    ImGui::Checkbox("Lateral deflection", &options.show_lateral_deflection);
+    ImGui::Checkbox("Color invalid frames", &options.color_invalid_frames);
+    ImGui::EndDisabled();
+
+    result.tail_kinematics_overlay_options = options;
 }
 
 }  // namespace
@@ -255,6 +359,9 @@ void drawEyeMaskOverlayPanel(const FrameDebugWindowContext& context,
     result.show_eye_left_mask = context.show_eye_left_mask;
     result.show_eye_right_mask = context.show_eye_right_mask;
     result.show_swim_bladder_mask = context.show_swim_bladder_mask;
+    result.show_eye_direction_beams = context.show_eye_direction_beams;
     result.mask_overlay_mode = context.mask_overlay_mode;
     drawEyeMaskSection(context, result);
+    drawSubjectShapeSection(context, result);
+    drawTailKinematicsOverlaySection(context, result);
 }

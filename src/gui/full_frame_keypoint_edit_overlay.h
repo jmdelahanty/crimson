@@ -10,6 +10,7 @@
 
 struct FullFrameKeypointEditState {
     bool enabled = false;
+    bool show_labels = true;
     std::vector<std::array<float, 2>> positions_img;
     int active_handle = -1;
     int roi_index = -1;

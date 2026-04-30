@@ -133,6 +133,18 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
             } else {
                 std::cout << "  No keypoint heading data available" << std::endl;
             }
+            if (loadSubjectShapeData(store)) {
+                std::cout << "  Loaded subject shape run '"
+                          << data_.subject_shape.run_name << "'" << std::endl;
+            } else {
+                std::cout << "  No subject shape data available" << std::endl;
+            }
+            if (loadTailKinematicsData(store)) {
+                std::cout << "  Loaded tail kinematics run '"
+                          << data_.tail_kinematics.run_name << "'" << std::endl;
+            } else {
+                std::cout << "  No tail kinematics data available" << std::endl;
+            }
         } else {
             std::cout << "  detect_runs layout not found; opening in metadata/stimulus-only mode"
                       << std::endl;

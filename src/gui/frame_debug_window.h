@@ -8,6 +8,7 @@
 #include "subject_mask_edit_session.h"
 #include "zarr_bbox_edit.h"
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,7 @@ enum class FrameInspectTab {
     Detect = 0,
     Keypoints,
     EyeMasks,
+    TailKinematics,
 };
 
 struct FrameDebugWindowState {
@@ -24,6 +26,14 @@ struct FrameDebugWindowState {
     int subject_mask_edit_detection_index = -1;
     std::string subject_mask_edit_component_name = "subject_body";
     std::string subject_mask_edit_status;
+    bool subject_mask_canvas_pick_enabled = true;
+    ZarrDetectionLoader::SubjectShapeQcFilterOptions subject_shape_qc_filters;
+    std::array<char, 128> subject_shape_reason_filter{};
+    std::string subject_shape_qc_status;
+    ZarrDetectionLoader::TailKinematicsQcFilterOptions tail_kinematics_qc_filters;
+    std::array<char, 128> tail_kinematics_reason_filter{};
+    std::string tail_kinematics_qc_status;
+    int tail_kinematics_selected_row = -1;
     FrameInspectTab active_tab = FrameInspectTab::Detect;
 };
 
@@ -69,8 +79,11 @@ struct FrameDebugWindowContext {
     bool show_eye_left_mask = true;
     bool show_eye_right_mask = true;
     bool show_swim_bladder_mask = true;
+    bool show_eye_direction_beams = true;
     CameraViewMaskOverlayMode mask_overlay_mode =
         CameraViewMaskOverlayMode::Review;
+    CameraViewSubjectShapeOverlayOptions subject_shape_overlay_options;
+    CameraViewTailKinematicsOverlayOptions tail_kinematics_overlay_options;
 };
 
 struct FrameDebugWindowResult {
@@ -94,8 +107,17 @@ struct FrameDebugWindowResult {
     bool show_eye_left_mask = true;
     bool show_eye_right_mask = true;
     bool show_swim_bladder_mask = true;
+    bool show_eye_direction_beams = true;
     CameraViewMaskOverlayMode mask_overlay_mode =
         CameraViewMaskOverlayMode::Review;
+    CameraViewSubjectShapeOverlayOptions subject_shape_overlay_options;
+    CameraViewTailKinematicsOverlayOptions tail_kinematics_overlay_options;
+    bool request_prev_subject_shape_qc_frame = false;
+    bool request_next_subject_shape_qc_frame = false;
+    bool request_prev_tail_kinematics_qc_frame = false;
+    bool request_next_tail_kinematics_qc_frame = false;
+    bool request_seek_tail_kinematics_row = false;
+    size_t requested_tail_kinematics_row = 0;
 };
 
 FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& context,
