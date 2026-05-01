@@ -106,6 +106,9 @@ def print_observed_rates(rows: list[dict[str, Any]]) -> None:
         sample_every = run[0].get("mask_perf_sample_every", 1)
         if not isinstance(sample_every, int) or sample_every <= 0:
             sample_every = 1
+        forced_warmup_sampling = any(
+            row.get("playback_warmup_sample") is True for row in run
+        )
         sample_hz = (len(run) - 1) / wall_s
         approx_app_hz = sample_hz * sample_every
         mean_loop = mean_finite(get_nested(row, "frame_loop_ms") for row in run)
@@ -117,20 +120,240 @@ def print_observed_rates(rows: list[dict[str, Any]]) -> None:
             current_frame_hz = (last_frame - first_frame) / wall_s
         print(
             "run={idx} play={play} samples={samples} wall_s={wall_s:.3f} "
-            "sample_hz={sample_hz:.2f} approx_app_hz={app_hz:.2f} "
+            "sample_hz={sample_hz:.2f} sample_every={sample_every} "
+            "approx_app_hz={app_hz} "
             "loop_hz={loop_hz} current_frame_hz={current_hz}".format(
                 idx=idx,
                 play=run[0].get("play_video"),
                 samples=len(run),
                 wall_s=wall_s,
                 sample_hz=sample_hz,
-                app_hz=approx_app_hz,
+                sample_every=(
+                    "forced-warmup"
+                    if forced_warmup_sampling
+                    else str(sample_every)
+                ),
+                app_hz=(
+                    "n/a"
+                    if forced_warmup_sampling
+                    else f"{approx_app_hz:.2f}"
+                ),
                 loop_hz=f"{loop_hz:.2f}" if loop_hz is not None else "n/a",
                 current_hz=(
                     f"{current_frame_hz:.2f}"
                     if current_frame_hz is not None
                     else "n/a"
                 ),
+            )
+        )
+
+
+def print_playback_warmup(rows: list[dict[str, Any]], top: int) -> None:
+    warmup_rows = [
+        row
+        for row in rows
+        if row.get("playback_warmup_sample") is True
+        or get_path(row, "frame_perf.playback.startup_warmup_active") is True
+    ]
+    if not warmup_rows:
+        return
+
+    print("\nplayback startup warmup")
+    print(f"samples: {len(warmup_rows)}")
+    print(
+        "resume_paths:",
+        dict(
+            Counter(
+                get_path(row, "frame_perf.playback.resume_path")
+                for row in warmup_rows
+            )
+        ),
+    )
+    print(
+        "frames_since_start: "
+        f"{get_path(warmup_rows[0], 'frame_perf.playback.frames_since_start')} -> "
+        f"{get_path(warmup_rows[-1], 'frame_perf.playback.frames_since_start')}"
+    )
+    print(
+        "warmup forced samples:",
+        dict(Counter(row.get("playback_warmup_sample") for row in warmup_rows)),
+    )
+
+    timing_fields = [
+        ("frame_loop_ms", "frame_loop_ms"),
+        (
+            "camera_playback_stage_total_ms",
+            "frame_perf.camera_pipeline.playback_stage_total_ms",
+        ),
+        (
+            "camera_playback_stage_upload_ms",
+            "frame_perf.camera_pipeline.playback_stage_upload_ms",
+        ),
+        (
+            "camera_playback_prewarm_total_ms",
+            "frame_perf.camera_pipeline.playback_prewarm_total_ms",
+        ),
+        (
+            "camera_playback_prewarm_upload_ms",
+            "frame_perf.camera_pipeline.playback_prewarm_upload_ms",
+        ),
+        (
+            "camera_playback_front_path_ms",
+            "frame_perf.camera_pipeline.playback_front_path_ms",
+        ),
+        (
+            "camera_playback_swap_ms",
+            "frame_perf.camera_pipeline.playback_swap_ms",
+        ),
+        ("decoder_wait_ms", "frame_perf.decoder.buffer_wait_ms"),
+        ("decoder_pipeline_ms", "frame_perf.decoder.pipeline_ms"),
+        ("mask_data_load_ms", "mask_data_load_ms"),
+        ("frame_debug_ui_ms", "frame_perf.ui.frame_debug_ms"),
+        ("crop_preview_ui_ms", "frame_perf.ui.crop_preview_ms"),
+        ("ui_build_ms", "frame_perf.ui.build_ms"),
+        ("gl_draw_ms", "frame_perf.render.gl_draw_ms"),
+        ("swap_ms", "frame_perf.render.swap_ms"),
+    ]
+    gap_fields = [
+        ("camera_decode_gap_frames", "frame_perf.playback.camera_decode_gap_frames"),
+        ("stimulus_progress_gap_frames", "frame_perf.stimulus.progress_gap_frames"),
+        ("stimulus_buffered_frames", "frame_perf.stimulus.buffered_frames"),
+    ]
+    print_timing_group("playback warmup timings", warmup_rows, timing_fields)
+    print_timing_group("playback warmup gaps", warmup_rows, gap_fields)
+
+    print(f"\ntop {top} playback warmup frames")
+    top_rows = sorted(
+        warmup_rows,
+        key=lambda row: get_nested(row, "frame_loop_ms") or -1.0,
+        reverse=True,
+    )[:top]
+    for row in top_rows:
+        print(
+            "frame={frame} since={since} resume={resume} "
+            "loop={loop:.3f} stage={stage:.3f} stage_upload={stage_upload:.3f} "
+            "prewarm={prewarm:.3f} front={front:.3f} "
+            "decoder_wait={decoder_wait:.3f} "
+            "decoder_pipeline={decoder_pipeline:.3f} decode_gap={decode_gap} "
+            "stim_gap={stim_gap} stim_buffered={stim_buffered} "
+            "mask_load={mask_load:.3f} frame_debug={frame_debug:.3f} "
+            "crop={crop:.3f} ui={ui:.3f} gl={gl:.3f} swap={swap:.3f}".format(
+                frame=row.get("current_frame_num"),
+                since=get_path(row, "frame_perf.playback.frames_since_start"),
+                resume=get_path(row, "frame_perf.playback.resume_path"),
+                loop=get_nested(row, "frame_loop_ms") or 0.0,
+                stage=get_nested(
+                    row, "frame_perf.camera_pipeline.playback_stage_total_ms"
+                )
+                or 0.0,
+                stage_upload=get_nested(
+                    row, "frame_perf.camera_pipeline.playback_stage_upload_ms"
+                )
+                or 0.0,
+                prewarm=get_nested(
+                    row,
+                    "frame_perf.camera_pipeline.playback_prewarm_total_ms",
+                )
+                or 0.0,
+                front=get_nested(
+                    row, "frame_perf.camera_pipeline.playback_front_path_ms"
+                )
+                or 0.0,
+                decoder_wait=get_nested(row, "frame_perf.decoder.buffer_wait_ms")
+                or 0.0,
+                decoder_pipeline=get_nested(row, "frame_perf.decoder.pipeline_ms")
+                or 0.0,
+                decode_gap=get_path(
+                    row, "frame_perf.playback.camera_decode_gap_frames"
+                ),
+                stim_gap=get_path(row, "frame_perf.stimulus.progress_gap_frames"),
+                stim_buffered=get_path(row, "frame_perf.stimulus.buffered_frames"),
+                mask_load=get_nested(row, "mask_data_load_ms") or 0.0,
+                frame_debug=get_nested(row, "frame_perf.ui.frame_debug_ms") or 0.0,
+                crop=get_nested(row, "frame_perf.ui.crop_preview_ms") or 0.0,
+                ui=get_nested(row, "frame_perf.ui.build_ms") or 0.0,
+                gl=get_nested(row, "frame_perf.render.gl_draw_ms") or 0.0,
+                swap=get_nested(row, "frame_perf.render.swap_ms") or 0.0,
+            )
+        )
+
+
+def print_playback_prewarm(rows: list[dict[str, Any]], top: int) -> None:
+    prewarm_rows = [
+        row
+        for row in rows
+        if (get_nested(row, "frame_perf.camera_pipeline.playback_prewarm_count") or 0)
+        > 0
+    ]
+    if not prewarm_rows:
+        return
+
+    print("\nplayback texture prewarm")
+    print(f"samples: {len(prewarm_rows)}")
+    print(f"play_video: {dict(Counter(row.get('play_video') for row in prewarm_rows))}")
+    print(
+        "prewarm_count:",
+        summarize(
+            get_nested(row, "frame_perf.camera_pipeline.playback_prewarm_count")
+            for row in prewarm_rows
+        ),
+    )
+    timing_fields = [
+        ("frame_loop_ms", "frame_loop_ms"),
+        (
+            "camera_playback_prewarm_total_ms",
+            "frame_perf.camera_pipeline.playback_prewarm_total_ms",
+        ),
+        (
+            "camera_playback_prewarm_upload_ms",
+            "frame_perf.camera_pipeline.playback_prewarm_upload_ms",
+        ),
+        ("ui_build_ms", "frame_perf.ui.build_ms"),
+        ("gl_draw_ms", "frame_perf.render.gl_draw_ms"),
+        ("swap_ms", "frame_perf.render.swap_ms"),
+        ("frame_cap_sleep_ms", "frame_perf.render.frame_cap_sleep_ms"),
+    ]
+    print_timing_group("playback prewarm timings", prewarm_rows, timing_fields)
+
+    print(f"\ntop {top} playback prewarm frames")
+    top_rows = sorted(
+        prewarm_rows,
+        key=lambda row: get_nested(
+            row, "frame_perf.camera_pipeline.playback_prewarm_total_ms"
+        )
+        or -1.0,
+        reverse=True,
+    )[:top]
+    for row in top_rows:
+        print(
+            "frame={frame} play={play} loop={loop:.3f} "
+            "prewarm={prewarm:.3f} prewarm_upload={prewarm_upload:.3f} "
+            "count={count} ui={ui:.3f} gl={gl:.3f} swap={swap:.3f} "
+            "cap_sleep={cap_sleep:.3f}".format(
+                frame=row.get("current_frame_num"),
+                play=row.get("play_video"),
+                loop=get_nested(row, "frame_loop_ms") or 0.0,
+                prewarm=get_nested(
+                    row,
+                    "frame_perf.camera_pipeline.playback_prewarm_total_ms",
+                )
+                or 0.0,
+                prewarm_upload=get_nested(
+                    row,
+                    "frame_perf.camera_pipeline.playback_prewarm_upload_ms",
+                )
+                or 0.0,
+                count=get_path(
+                    row,
+                    "frame_perf.camera_pipeline.playback_prewarm_count",
+                ),
+                ui=get_nested(row, "frame_perf.ui.build_ms") or 0.0,
+                gl=get_nested(row, "frame_perf.render.gl_draw_ms") or 0.0,
+                swap=get_nested(row, "frame_perf.render.swap_ms") or 0.0,
+                cap_sleep=get_nested(
+                    row, "frame_perf.render.frame_cap_sleep_ms"
+                )
+                or 0.0,
             )
         )
 
@@ -191,6 +414,8 @@ def main() -> int:
             f"{frame_cap_fps:.3f} ({1000.0 / frame_cap_fps:.4f} ms budget)"
         )
     print_observed_rates(rows)
+    print_playback_prewarm(rows, args.top)
+    print_playback_warmup(rows, args.top)
 
     mask_fields = [
         ("frame_loop_ms", "frame_loop_ms"),
@@ -221,6 +446,7 @@ def main() -> int:
         ),
         ("camera_scene_ui_ms", "frame_perf.camera_pipeline.scene_ui_ms"),
         ("camera_playback_stage_total_ms", "frame_perf.camera_pipeline.playback_stage_total_ms"),
+        ("camera_playback_prewarm_total_ms", "frame_perf.camera_pipeline.playback_prewarm_total_ms"),
         ("camera_playback_swap_ms", "frame_perf.camera_pipeline.playback_swap_ms"),
         ("ui_build_ms", "frame_perf.ui.build_ms"),
         ("imgui_render_ms", "frame_perf.ui.imgui_render_ms"),
@@ -318,7 +544,8 @@ def main() -> int:
             "frame={frame} play={play} loop={loop:.3f} mask={mask:.3f} "
             "ui={ui:.3f} imgui={imgui:.3f} gl={gl:.3f} swap={swap:.3f} "
             "cap_sleep={cap_sleep:.3f} "
-            "camera_upload={cam_upload:.3f} plot={plot:.3f} decoder_wait={dec_wait:.3f} "
+            "camera_upload={cam_upload:.3f} prewarm={prewarm:.3f} "
+            "plot={plot:.3f} decoder_wait={dec_wait:.3f} "
             "shape_overlay={shape_overlay:.3f} tail_overlay={tail_overlay:.3f} "
             "crop={crop:.3f} crop_source={crop_source} rotated={rotated} "
             "mod32={mod32} crop_refresh={crop_refresh:.3f} "
@@ -342,6 +569,11 @@ def main() -> int:
                 )
                 or 0.0,
                 cam_upload=get_nested(row, "frame_perf.camera_pipeline.upload_ms") or 0.0,
+                prewarm=get_nested(
+                    row,
+                    "frame_perf.camera_pipeline.playback_prewarm_total_ms",
+                )
+                or 0.0,
                 plot=get_nested(row, "frame_perf.camera_pipeline.plot_image_ui_ms") or 0.0,
                 dec_wait=get_nested(row, "frame_perf.decoder.buffer_wait_ms") or 0.0,
                 shape_overlay=get_nested(

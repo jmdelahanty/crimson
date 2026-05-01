@@ -236,6 +236,13 @@ json framePerfToJson(const PerfLogFrameContext& context,
           {"current_frame_num", context.current_frame_num},
           {"min_decoded_camera_frame", context.perf_min_decoded_camera_frame},
           {"camera_decode_gap_frames", camera_decode_gap_frames},
+          {"startup_warmup_active", context.playback_start_warmup_active},
+          {"frames_since_start", context.frames_since_playback_start},
+          {"start_frame", context.playback_start_frame},
+          {"resume_path", context.playback_resume_path.empty()
+                              ? json(nullptr)
+                              : json(context.playback_resume_path)},
+          {"resume_target_frame", context.playback_resume_target_frame},
           {"visible_camera_count", visible_camera_count},
           {"camera_names", context.camera_names},
           {"renderer_mode", context.playback_renderer_mode_label},
@@ -269,6 +276,12 @@ json framePerfToJson(const PerfLogFrameContext& context,
            context.frame_camera_playback_stage_total_ms},
           {"playback_stage_upload_ms",
            context.frame_camera_playback_stage_upload_ms},
+          {"playback_prewarm_total_ms",
+           context.frame_camera_playback_prewarm_total_ms},
+          {"playback_prewarm_upload_ms",
+           context.frame_camera_playback_prewarm_upload_ms},
+          {"playback_prewarm_count",
+           context.frame_camera_playback_prewarm_count},
           {"playback_swap_ms", context.frame_camera_playback_swap_ms},
           {"plot_image_ui_ms", context.frame_camera_plot_image_ui_ms},
           {"overlay_ui_ms", context.frame_camera_overlay_ui_ms},
@@ -357,6 +370,9 @@ bool PerfLogWriter::open(const std::filesystem::path& output_path) {
         << "elapsed_s,wall_epoch_ms,play_video,set_playback_speed,inst_speed,"
         << "video_fps,requested_camera_frame,displayed_camera_frame,current_frame_num,"
         << "min_decoded_camera_frame,camera_decode_gap_frames,"
+        << "playback_start_warmup_active,frames_since_playback_start,"
+        << "playback_start_frame,playback_resume_path,"
+        << "playback_resume_target_frame,"
         << "camera_decode_convert_ms,camera_decode_wait_ms,"
         << "camera_decode_write_ms,camera_decode_pipeline_ms,"
         << "visible_camera_count,"
@@ -372,6 +388,9 @@ bool PerfLogWriter::open(const std::filesystem::path& output_path) {
         << "camera_playback_front_path_ms,"
         << "camera_playback_stage_total_ms,"
         << "camera_playback_stage_upload_ms,"
+        << "camera_playback_prewarm_total_ms,"
+        << "camera_playback_prewarm_upload_ms,"
+        << "camera_playback_prewarm_count,"
         << "camera_playback_swap_ms,"
         << "camera_plot_image_ui_ms,camera_overlay_ui_ms,camera_scene_ui_ms,"
         << "file_browser_ui_ms,frame_debug_ui_ms,buffer_window_ui_ms,"
@@ -536,6 +555,11 @@ void maybeWritePerfLogSample(PerfLogWriter& writer,
         << context.displayed_camera_frame << "," << context.current_frame_num
         << "," << context.perf_min_decoded_camera_frame << ","
         << camera_decode_gap_frames << ","
+        << (context.playback_start_warmup_active ? 1 : 0) << ","
+        << context.frames_since_playback_start << ","
+        << context.playback_start_frame << ","
+        << context.playback_resume_path << ","
+        << context.playback_resume_target_frame << ","
         << perf_camera_decode_convert_ms << ","
         << perf_camera_decode_wait_ms << ","
         << perf_camera_decode_write_ms << ","
@@ -563,6 +587,9 @@ void maybeWritePerfLogSample(PerfLogWriter& writer,
         << context.frame_camera_playback_front_path_ms << ","
         << context.frame_camera_playback_stage_total_ms << ","
         << context.frame_camera_playback_stage_upload_ms << ","
+        << context.frame_camera_playback_prewarm_total_ms << ","
+        << context.frame_camera_playback_prewarm_upload_ms << ","
+        << context.frame_camera_playback_prewarm_count << ","
         << context.frame_camera_playback_swap_ms << ","
         << context.frame_camera_plot_image_ui_ms << ","
         << context.frame_camera_overlay_ui_ms << ","
@@ -639,6 +666,16 @@ void maybeWritePerfLogSample(PerfLogWriter& writer,
           {"current_frame_num", context.current_frame_num},
           {"min_decoded_camera_frame", context.perf_min_decoded_camera_frame},
           {"camera_decode_gap_frames", camera_decode_gap_frames},
+          {"playback_start_warmup_active",
+           context.playback_start_warmup_active},
+          {"frames_since_playback_start",
+           context.frames_since_playback_start},
+          {"playback_start_frame", context.playback_start_frame},
+          {"playback_resume_path", context.playback_resume_path.empty()
+                                       ? json(nullptr)
+                                       : json(context.playback_resume_path)},
+          {"playback_resume_target_frame",
+           context.playback_resume_target_frame},
           {"visible_camera_count", visible_camera_count},
           {"camera_names", context.camera_names}}},
         {"stimulus",
@@ -671,7 +708,11 @@ void writeMaskPerfLogSample(MaskPerfLogWriter& writer,
     if (!writer.enabled()) {
         return;
     }
-    if (!context.overlay_enabled && !context.metrics.attempted &&
+    const bool has_playback_prewarm =
+        context.frame_perf != nullptr &&
+        context.frame_perf->frame_camera_playback_prewarm_count > 0;
+    if (!context.playback_warmup_sample && !context.overlay_enabled &&
+        !context.metrics.attempted && !has_playback_prewarm &&
         context.mask_data_load_ms <= 0.0) {
         return;
     }
@@ -706,6 +747,7 @@ void writeMaskPerfLogSample(MaskPerfLogWriter& writer,
         {"overlay_enabled", context.overlay_enabled},
         {"zarr_loaded", context.zarr_loaded},
         {"mask_perf_sample_every", context.mask_perf_sample_every},
+        {"playback_warmup_sample", context.playback_warmup_sample},
         {"source_label", context.source_label.empty()
                              ? json(nullptr)
                              : json(context.source_label)},

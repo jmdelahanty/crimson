@@ -471,19 +471,22 @@ CameraViewPresenterResult presentCameraViewFrame(
     auto& camera = context.scene->cameras[context.view_idx];
     result.presented_rgba_cuda_buffer = camera.pbo_cuda.cuda_buffer;
 
-    auto uploadCameraFrameToTexture = [&](int slot_index) -> int {
+    auto uploadCameraFrameToTexture = [&](int slot_index,
+                                          bool request_surface_swap = true) -> int {
         if (slot_index < 0) {
             return -1;
         }
 
         auto& slot = camera.display_buffer[slot_index];
         const int source_frame_number = slot.frame_number;
+        const bool playback_upload_active =
+            context.play_video || context.prewarm_playback_textures;
         const bool preview_resize_active =
             context.preview_active && context.scene->use_cpu_buffer;
         const bool preview_sampling_active =
             context.preview_active && !context.scene->use_cpu_buffer;
         const bool direct_nv12_playback_present_active =
-            context.play_video && context.lightweight_playback_renderer_active &&
+            playback_upload_active && context.lightweight_playback_renderer_active &&
             !context.scene->use_cpu_buffer && !context.yolo_detection &&
             slot.format == PictureBufferFormat::NV12;
         const int desired_preview_sampling_mode =
@@ -509,7 +512,7 @@ CameraViewPresenterResult presentCameraViewFrame(
             camera.applied_preview_sampling_mode !=
             desired_preview_sampling_mode;
         const bool pipeline_playback_present =
-            context.play_video && !context.scene->use_cpu_buffer &&
+            playback_upload_active && !context.scene->use_cpu_buffer &&
             !preview_resize_active && !context.yolo_detection &&
             !texture_shape_changed;
         const bool direct_nv12_pipeline_present =
@@ -557,8 +560,10 @@ CameraViewPresenterResult presentCameraViewFrame(
             result.perf.playback_front_path_ms +=
                 durationMs(std::chrono::steady_clock::now() - front_path_start);
 
-            if (!camera.playback_staging_valid ||
-                camera.playback_staging_frame != source_frame_number) {
+            const bool staging_has_requested_frame =
+                camera.playback_staging_valid &&
+                camera.playback_staging_frame == source_frame_number;
+            if (!staging_has_requested_frame) {
                 const auto stage_total_start = std::chrono::steady_clock::now();
                 const auto stage_upload_start =
                     std::chrono::steady_clock::now();
@@ -611,6 +616,9 @@ CameraViewPresenterResult presentCameraViewFrame(
                 result.perf.playback_stage_total_ms += stage_total_ms;
                 result.perf.upload_ms += stage_total_ms;
                 result.perf.upload_count++;
+            }
+            if (request_surface_swap && camera.playback_staging_valid &&
+                camera.playback_staging_frame == source_frame_number) {
                 result.swap_playback_surface_after_draw = true;
             }
             result.presented_rgba_cuda_buffer = camera.pbo_cuda.cuda_buffer;
@@ -703,6 +711,59 @@ CameraViewPresenterResult presentCameraViewFrame(
         return source_frame_number;
     };
 
+    auto findNextDecodedSlotAfter = [&](int frame_number) -> int {
+        if (context.scene->size_of_buffer <= 0) {
+            return -1;
+        }
+        int best_slot = -1;
+        int best_frame = std::numeric_limits<int>::max();
+        for (int i = 0; i < static_cast<int>(context.scene->size_of_buffer); ++i) {
+            const auto& slot = camera.display_buffer[i];
+            if (slot.available_to_write || slot.frame_number <= frame_number ||
+                slot.frame_number >= best_frame) {
+                continue;
+            }
+            best_frame = slot.frame_number;
+            best_slot = i;
+        }
+        return best_slot;
+    };
+
+    auto prewarmPlaybackStagingAfter = [&](int front_frame_number) {
+        if (!context.prewarm_playback_textures || front_frame_number < 0 ||
+            !camera.texture_has_valid_frame) {
+            return;
+        }
+        const int next_slot = findNextDecodedSlotAfter(front_frame_number);
+        if (next_slot < 0) {
+            return;
+        }
+        const int next_frame = camera.display_buffer[next_slot].frame_number;
+        if (camera.playback_staging_valid &&
+            camera.playback_staging_frame == next_frame) {
+            return;
+        }
+
+        const auto prewarm_start = std::chrono::steady_clock::now();
+        const double upload_before = result.perf.upload_ms;
+        const double stage_upload_before = result.perf.playback_stage_upload_ms;
+        const bool swap_before = result.swap_playback_surface_after_draw;
+        (void)uploadCameraFrameToTexture(next_slot,
+                                         /*request_surface_swap=*/false);
+        result.swap_playback_surface_after_draw = swap_before;
+
+        const double upload_delta = result.perf.upload_ms - upload_before;
+        const double stage_upload_delta =
+            result.perf.playback_stage_upload_ms - stage_upload_before;
+        if (upload_delta > 0.0 || stage_upload_delta > 0.0) {
+            result.perf.playback_prewarm_total_ms += durationMs(
+                std::chrono::steady_clock::now() - prewarm_start);
+            result.perf.playback_prewarm_upload_ms +=
+                std::max(upload_delta, stage_upload_delta);
+            result.perf.playback_prewarm_count++;
+        }
+    };
+
     if (context.play_video) {
         const int preferred_slot =
             context.read_head % static_cast<int>(context.scene->size_of_buffer);
@@ -728,7 +789,8 @@ CameraViewPresenterResult presentCameraViewFrame(
         return result;
     }
 
-    if (context.pause_seeked || context.preferred_paused_slot >= 0) {
+    if (context.pause_seeked || context.preferred_paused_slot >= 0 ||
+        context.prewarm_playback_textures) {
         int paused_slot = context.preferred_paused_slot;
         if (paused_slot < 0) {
             paused_slot =
@@ -740,13 +802,23 @@ CameraViewPresenterResult presentCameraViewFrame(
 
         if (paused_slot >= 0) {
             result.presented_slot = paused_slot;
+            const auto prewarm_start = std::chrono::steady_clock::now();
+            const double upload_before = result.perf.upload_ms;
             result.presented_frame = uploadCameraFrameToTexture(paused_slot);
+            const double upload_delta = result.perf.upload_ms - upload_before;
+            if (context.prewarm_playback_textures && upload_delta > 0.0) {
+                result.perf.playback_prewarm_total_ms += durationMs(
+                    std::chrono::steady_clock::now() - prewarm_start);
+                result.perf.playback_prewarm_upload_ms += upload_delta;
+                result.perf.playback_prewarm_count++;
+            }
             if (result.presented_frame >= 0) {
                 result.resolved_current_frame_num = result.presented_frame;
             } else {
                 result.resolved_current_frame_num =
                     std::max(0, context.target_display_frame);
             }
+            prewarmPlaybackStagingAfter(result.presented_frame);
         } else if (camera.texture_has_valid_frame) {
             clearCameraDisplayBuffer(camera);
         }

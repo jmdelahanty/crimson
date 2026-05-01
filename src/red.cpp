@@ -750,6 +750,8 @@ int main(int argc, char **argv) {
     PerfLogWriter perf_log_writer;
     MaskPerfLogWriter mask_perf_log_writer;
     constexpr auto kPerfLogSamplePeriod = std::chrono::milliseconds(250);
+    constexpr uint64_t kPlaybackWarmupPerfFrames = 120;
+    constexpr uint64_t kPlaybackWarmupPerfSampleStride = 2;
     if (!cli_perf_log_path.empty()) {
         (void)perf_log_writer.open(cli_perf_log_path);
     }
@@ -765,6 +767,10 @@ int main(int argc, char **argv) {
         }
     }
     uint64_t mask_perf_sample_index = 0;
+    int perf_playback_start_frame = -1;
+    uint64_t perf_frames_since_playback_start = 0;
+    std::string perf_playback_resume_path = resumePathName(ResumePath::None);
+    int perf_playback_resume_target_frame = -1;
 
     window_need_decoding[stimulus_player.window_name].store(false);
     latest_decoded_frame[stimulus_player.window_name].store(-1);
@@ -832,6 +838,28 @@ int main(int argc, char **argv) {
             &window_was_decoding,
             &window_need_decoding,
         });
+    auto resetPlaybackStartPerf = [&]() {
+        perf_playback_start_frame = -1;
+        perf_frames_since_playback_start = 0;
+        perf_playback_resume_path = resumePathName(ResumePath::None);
+        perf_playback_resume_target_frame = -1;
+    };
+    auto markPlaybackStartForPerf = [&]() {
+        perf_playback_start_frame =
+            std::max(0, ps.to_display_frame_number);
+        perf_frames_since_playback_start = 0;
+        perf_playback_resume_path = resumePathName(ps.last_resume_path);
+        perf_playback_resume_target_frame = ps.last_resume_target_frame;
+    };
+    auto applyPlaybackToggleForPerf = [&]() {
+        const bool was_playing = ps.play_video;
+        playback_session_controller.applyPlaybackToggle();
+        if (!was_playing && ps.play_video) {
+            markPlaybackStartForPerf();
+        } else if (was_playing && !ps.play_video) {
+            resetPlaybackStartPerf();
+        }
+    };
 
     auto makeDecodeDebugDumpContext = [&]() {
         return DecodeDebugDumpContext{
@@ -907,6 +935,9 @@ int main(int argc, char **argv) {
         double frame_camera_playback_front_path_ms = 0.0;
         double frame_camera_playback_stage_total_ms = 0.0;
         double frame_camera_playback_stage_upload_ms = 0.0;
+        double frame_camera_playback_prewarm_total_ms = 0.0;
+        double frame_camera_playback_prewarm_upload_ms = 0.0;
+        int frame_camera_playback_prewarm_count = 0;
         double frame_camera_playback_swap_ms = 0.0;
         double frame_camera_plot_image_ui_ms = 0.0;
         double frame_camera_overlay_ui_ms = 0.0;
@@ -2197,6 +2228,13 @@ int main(int argc, char **argv) {
                 };
 
                 if (is_visible) {
+                    const bool prewarm_playback_textures =
+                        !ps.play_video && video_loaded &&
+                        !yolo_detection &&
+                        playbackLightweightRendererIsActive(
+                            true, playback_renderer_mode);
+                    const bool playback_upload_mode_active =
+                        ps.play_video || prewarm_playback_textures;
                     const CameraViewPresenterContext camera_view_presenter_context{
                         scene,
                         j,
@@ -2208,10 +2246,12 @@ int main(int argc, char **argv) {
                         ps.pause_seeked,
                         yolo_detection,
                         playbackLightweightRendererIsActive(
-                            ps.play_video, playback_renderer_mode),
+                            playback_upload_mode_active,
+                            playback_renderer_mode),
                         playbackPreviewIsActive(
-                            ps.play_video, yolo_detection,
+                            playback_upload_mode_active, yolo_detection,
                             playback_preview_scale_mode),
+                        prewarm_playback_textures,
                         playbackPreviewScaleFactor(
                             playback_preview_scale_mode),
                         playback_preview_scale_mode,
@@ -2250,6 +2290,15 @@ int main(int argc, char **argv) {
                         camera_view_presenter_result.perf.playback_stage_total_ms;
                     frame_camera_playback_stage_upload_ms +=
                         camera_view_presenter_result.perf.playback_stage_upload_ms;
+                    frame_camera_playback_prewarm_total_ms +=
+                        camera_view_presenter_result
+                            .perf.playback_prewarm_total_ms;
+                    frame_camera_playback_prewarm_upload_ms +=
+                        camera_view_presenter_result
+                            .perf.playback_prewarm_upload_ms;
+                    frame_camera_playback_prewarm_count +=
+                        camera_view_presenter_result
+                            .perf.playback_prewarm_count;
 
                     // sync yolo detection
                     if (yolo_detection) {
@@ -2991,7 +3040,7 @@ int main(int argc, char **argv) {
                     ps.slider_just_changed =
                         camera_transport_result.slider_just_changed;
                     if (camera_transport_result.toggle_playback) {
-                        playback_session_controller.applyPlaybackToggle();
+                        applyPlaybackToggleForPerf();
                     }
                     if (camera_transport_result.step_delta != 0) {
                         playback_session_controller.stepFrames(
@@ -3009,7 +3058,7 @@ int main(int argc, char **argv) {
             const CameraViewPlaybackShortcutsResult playback_shortcuts =
                 handleCameraViewPlaybackShortcuts();
             if (playback_shortcuts.toggle_playback) {
-                playback_session_controller.applyPlaybackToggle();
+                applyPlaybackToggleForPerf();
             }
             if (playback_shortcuts.step_delta != 0) {
                 playback_session_controller.stepFrames(
@@ -3451,6 +3500,16 @@ int main(int argc, char **argv) {
             }
         }
 
+        const bool perf_playback_start_warmup_active =
+            ps.play_video && perf_playback_start_frame >= 0 &&
+            perf_frames_since_playback_start < kPlaybackWarmupPerfFrames;
+        const int perf_frames_since_playback_start_value =
+            perf_playback_start_frame >= 0
+                ? static_cast<int>(std::min<uint64_t>(
+                      perf_frames_since_playback_start,
+                      static_cast<uint64_t>(
+                          std::numeric_limits<int>::max())))
+                : -1;
         const PerfLogFrameContext perf_frame_context{
             camera_names,
             cwd,
@@ -3465,6 +3524,11 @@ int main(int argc, char **argv) {
             ps.to_display_frame_number,
             current_frame_num,
             perf_min_decoded_camera_frame,
+            perf_playback_start_warmup_active,
+            perf_frames_since_playback_start_value,
+            perf_playback_start_frame,
+            perf_playback_resume_path,
+            perf_playback_resume_target_frame,
             scene->use_cpu_buffer,
             static_cast<int>(scene->size_of_buffer),
             label_buffer_size,
@@ -3491,6 +3555,9 @@ int main(int argc, char **argv) {
             frame_camera_playback_front_path_ms,
             frame_camera_playback_stage_total_ms,
             frame_camera_playback_stage_upload_ms,
+            frame_camera_playback_prewarm_total_ms,
+            frame_camera_playback_prewarm_upload_ms,
+            frame_camera_playback_prewarm_count,
             frame_camera_playback_swap_ms,
             frame_camera_plot_image_ui_ms,
             frame_camera_overlay_ui_ms,
@@ -3543,9 +3610,18 @@ int main(int argc, char **argv) {
             selected_mask_roi_index = target.roi_index;
             selected_mask_component_name = target.component_name;
         }
-        const bool should_write_mask_perf_sample =
+        const bool periodic_mask_perf_sample =
             (mask_perf_sample_index++ %
              static_cast<uint64_t>(cli_mask_perf_sample_every)) == 0;
+        const bool playback_warmup_mask_perf_sample =
+            perf_playback_start_warmup_active &&
+            ((perf_frames_since_playback_start %
+              kPlaybackWarmupPerfSampleStride) == 0);
+        const bool playback_prewarm_mask_perf_sample =
+            frame_camera_playback_prewarm_count > 0;
+        const bool should_write_mask_perf_sample =
+            periodic_mask_perf_sample || playback_warmup_mask_perf_sample ||
+            playback_prewarm_mask_perf_sample;
         if (should_write_mask_perf_sample) {
             writeMaskPerfLogSample(
                 mask_perf_log_writer,
@@ -3561,6 +3637,7 @@ int main(int argc, char **argv) {
                     zarr_loaded && show_eye_masks && zarr_loader.hasEyeMasks(),
                     zarr_loaded,
                     cli_mask_perf_sample_every,
+                    playback_warmup_mask_perf_sample,
                     zarr_loaded ? zarr_loader.getEyeMaskSourceLabel()
                                 : std::string{},
                     zarr_loaded ? zarr_loader.getEyeMaskSourcePath()
@@ -3574,6 +3651,11 @@ int main(int argc, char **argv) {
                     &perf_frame_context,
                     frame_loop_start,
                 });
+        }
+        if (ps.play_video && perf_playback_start_frame >= 0) {
+            perf_frames_since_playback_start++;
+        } else if (!ps.play_video && perf_playback_start_frame >= 0) {
+            resetPlaybackStartPerf();
         }
     }
 

@@ -15,6 +15,7 @@ struct CameraViewPresenterContext {
     bool yolo_detection = false;
     bool lightweight_playback_renderer_active = false;
     bool preview_active = false;
+    bool prewarm_playback_textures = false;
     double preview_scale = 1.0;
     int preview_scale_mode = 0;
 };
@@ -30,6 +31,9 @@ struct CameraViewPresenterPerfMetrics {
     double playback_front_path_ms = 0.0;
     double playback_stage_total_ms = 0.0;
     double playback_stage_upload_ms = 0.0;
+    double playback_prewarm_total_ms = 0.0;
+    double playback_prewarm_upload_ms = 0.0;
+    int playback_prewarm_count = 0;
 };
 
 struct CameraViewPresenterResult {

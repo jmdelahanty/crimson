@@ -47,6 +47,11 @@ struct PerfLogFrameContext {
     int displayed_camera_frame = -1;
     int current_frame_num = -1;
     int perf_min_decoded_camera_frame = -1;
+    bool playback_start_warmup_active = false;
+    int frames_since_playback_start = -1;
+    int playback_start_frame = -1;
+    std::string playback_resume_path;
+    int playback_resume_target_frame = -1;
 
     bool scene_use_cpu_buffer = false;
     int scene_buffer_size = 0;
@@ -75,6 +80,9 @@ struct PerfLogFrameContext {
     double frame_camera_playback_front_path_ms = 0.0;
     double frame_camera_playback_stage_total_ms = 0.0;
     double frame_camera_playback_stage_upload_ms = 0.0;
+    double frame_camera_playback_prewarm_total_ms = 0.0;
+    double frame_camera_playback_prewarm_upload_ms = 0.0;
+    int frame_camera_playback_prewarm_count = 0;
     double frame_camera_playback_swap_ms = 0.0;
     double frame_camera_plot_image_ui_ms = 0.0;
     double frame_camera_overlay_ui_ms = 0.0;
@@ -131,6 +139,7 @@ struct MaskPerfLogFrameContext {
     bool overlay_enabled = false;
     bool zarr_loaded = false;
     int mask_perf_sample_every = 1;
+    bool playback_warmup_sample = false;
     std::string source_label;
     std::string source_path;
     std::string run_name;
