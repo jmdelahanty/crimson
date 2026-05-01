@@ -33,6 +33,9 @@ Makefile
 *.DS_Store
 /.codex
 
+# --- Local UI layout state ---
+/imgui.ini
+
 # --- Python cache ---
 __pycache__/
 *.pyc
