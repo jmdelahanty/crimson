@@ -461,6 +461,7 @@ CameraViewWindowResult drawCameraViewWindowContents(
                 CameraViewMaskPerfMetrics mask_perf =
                     drawCameraViewEyeMaskOverlay(
                         *context.mask_details,
+                        context.subject_shape_details,
                         image_height_px,
                         context.eye_mask_smoothing_run_id,
                         context.mask_overlay_options);

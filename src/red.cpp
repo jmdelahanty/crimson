@@ -431,6 +431,7 @@ int main(int argc, char **argv) {
     std::string cli_recording_path;
     std::string cli_subject_shape_run;
     std::string cli_tail_kinematics_run;
+    std::string cli_eye_angle_run;
     std::filesystem::path cli_perf_log_path;
     std::filesystem::path cli_mask_perf_log_path;
     int cli_swap_interval = 1;
@@ -474,6 +475,15 @@ int main(int argc, char **argv) {
                 return 1;
             }
             cli_tail_kinematics_run = argv[++i];
+            continue;
+        }
+        if (arg == "--eye-angle-run") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value for --eye-angle-run"
+                          << std::endl;
+                return 1;
+            }
+            cli_eye_angle_run = argv[++i];
             continue;
         }
         if (arg == "--perf-log") {
@@ -596,6 +606,9 @@ int main(int argc, char **argv) {
         zarr_loader.setRequestedTailKinematicsRunName(
             cli_tail_kinematics_run);
     }
+    if (!cli_eye_angle_run.empty()) {
+        zarr_loader.setRequestedEyeAngleRunName(cli_eye_angle_run);
+    }
     bool zarr_loaded = false;
 
     DecoderContext *dc_context = new DecoderContext();
@@ -618,6 +631,9 @@ int main(int argc, char **argv) {
     bool show_eye_right_mask = true;
     bool show_swim_bladder_mask = true;
     bool show_eye_direction_beams = true;
+    bool show_eye_gaze_rays = true;
+    bool show_eye_angle_arcs = true;
+    bool show_eye_angle_labels = true;
     CameraViewMaskOverlayMode mask_overlay_mode =
         CameraViewMaskOverlayMode::Review;
     CameraViewSubjectShapeOverlayOptions subject_shape_overlay_options;
@@ -1143,6 +1159,8 @@ int main(int argc, char **argv) {
                     (subject_shape_overlay_options.show_overlay ||
                      (zarr_loader.hasTailKinematicsData() &&
                       tail_kinematics_overlay_options.show_overlay) ||
+                     (show_eye_masks && show_eye_angle_arcs &&
+                      zarr_loader.hasEyeAngleData()) ||
                      frame_debug_window_state.active_tab ==
                          FrameInspectTab::EyeMasks);
                 const bool include_eye_masks_in_details =
@@ -1212,6 +1230,9 @@ int main(int argc, char **argv) {
                 show_eye_right_mask,
                 show_swim_bladder_mask,
                 show_eye_direction_beams,
+                show_eye_gaze_rays,
+                show_eye_angle_arcs,
+                show_eye_angle_labels,
                 mask_overlay_mode,
                 subject_shape_overlay_options,
                 tail_kinematics_overlay_options,
@@ -1232,6 +1253,9 @@ int main(int argc, char **argv) {
                 frame_debug_result.show_swim_bladder_mask;
             show_eye_direction_beams =
                 frame_debug_result.show_eye_direction_beams;
+            show_eye_gaze_rays = frame_debug_result.show_eye_gaze_rays;
+            show_eye_angle_arcs = frame_debug_result.show_eye_angle_arcs;
+            show_eye_angle_labels = frame_debug_result.show_eye_angle_labels;
             mask_overlay_mode = frame_debug_result.mask_overlay_mode;
             subject_shape_overlay_options =
                 frame_debug_result.subject_shape_overlay_options;
@@ -1364,6 +1388,56 @@ int main(int argc, char **argv) {
                 } else {
                     frame_debug_window_state.tail_kinematics_qc_status =
                         "Selected tail row has no frame mapping.";
+                }
+            }
+            if (frame_debug_result.request_prev_eye_angle_qc_frame) {
+                auto jump_result = zarr_loader.computeEyeAngleQcJump(
+                    frame_debug_window_state.eye_angle_qc_filters,
+                    current_frame_num,
+                    false);
+                frame_debug_window_state.eye_angle_qc_status =
+                    std::move(jump_result.status);
+                if (jump_result.target_row.has_value()) {
+                    frame_debug_window_state.eye_angle_selected_row =
+                        static_cast<int>(*jump_result.target_row);
+                }
+                if (jump_result.target_frame.has_value()) {
+                    playback_session_controller.seekToFrame(
+                        *jump_result.target_frame, true);
+                }
+            }
+            if (frame_debug_result.request_next_eye_angle_qc_frame) {
+                auto jump_result = zarr_loader.computeEyeAngleQcJump(
+                    frame_debug_window_state.eye_angle_qc_filters,
+                    current_frame_num,
+                    true);
+                frame_debug_window_state.eye_angle_qc_status =
+                    std::move(jump_result.status);
+                if (jump_result.target_row.has_value()) {
+                    frame_debug_window_state.eye_angle_selected_row =
+                        static_cast<int>(*jump_result.target_row);
+                }
+                if (jump_result.target_frame.has_value()) {
+                    playback_session_controller.seekToFrame(
+                        *jump_result.target_frame, true);
+                }
+            }
+            if (frame_debug_result.request_seek_eye_angle_row) {
+                frame_debug_window_state.eye_angle_selected_row =
+                    static_cast<int>(
+                        frame_debug_result.requested_eye_angle_row);
+                auto frame = zarr_loader.getEyeAngleFrameForRow(
+                    frame_debug_result.requested_eye_angle_row);
+                if (frame.has_value()) {
+                    playback_session_controller.seekToFrame(*frame, true);
+                    frame_debug_window_state.eye_angle_qc_status =
+                        "Selected eye-angle row " +
+                        std::to_string(
+                            frame_debug_result.requested_eye_angle_row) +
+                        " mapped to frame " + std::to_string(*frame) + ".";
+                } else {
+                    frame_debug_window_state.eye_angle_qc_status =
+                        "Selected eye-angle row has no frame mapping.";
                 }
             }
             if (diagnostics_result.request_dump_decode_buffers) {
@@ -2200,7 +2274,9 @@ int main(int argc, char **argv) {
                         zarr_loader.hasSubjectShapeData() &&
                         (subject_shape_overlay_options.show_overlay ||
                          (zarr_loader.hasTailKinematicsData() &&
-                          tail_kinematics_overlay_options.show_overlay));
+                          tail_kinematics_overlay_options.show_overlay) ||
+                         (show_eye_masks && show_eye_angle_arcs &&
+                          zarr_loader.hasEyeAngleData()));
                     const bool camera_details_include_eye_masks =
                         zarr_loaded &&
                         (show_eye_masks || camera_subject_shape_needs_contours) &&
@@ -2630,6 +2706,9 @@ int main(int argc, char **argv) {
                             show_eye_right_mask,
                             show_swim_bladder_mask,
                             show_eye_direction_beams,
+                            show_eye_gaze_rays,
+                            show_eye_angle_arcs,
+                            show_eye_angle_labels,
                             frame_debug_window_state.subject_mask_edit_session
                                     .active()
                                 ? frame_debug_window_state

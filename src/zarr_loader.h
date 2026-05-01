@@ -245,6 +245,95 @@ struct ZarrDetectionData {
     std::vector<uint8_t> eye_vergence_frame_valid;
     bool has_eye_vergence_frame = false;
 
+    struct EyeAngleFieldInfo {
+        std::string name;
+        std::string representation_key;
+        std::string field_role;
+        std::string display_name;
+        std::string units;
+        bool default_plot = false;
+    };
+    struct EyeAngleRepresentationInfo {
+        std::string key;
+        std::string display_name;
+        std::string role;
+        std::string axis;
+        std::string coordinate_frame;
+        std::string units;
+        std::string sign_convention;
+        std::string derived_from;
+        std::vector<std::string> default_plot_fields;
+        std::vector<std::string> primary_roi_fields;
+        std::vector<std::string> aggregate_roi_fields;
+        std::vector<std::string> vector_roi_fields;
+        std::vector<std::string> frame_fields;
+    };
+    struct EyeAngleScalarField {
+        std::string name;
+        std::string representation_key;
+        std::string field_role;
+        std::string display_name;
+        std::string units;
+        bool has_roi = false;
+        bool has_frame = false;
+        std::vector<float> roi_values;
+        std::vector<float> frame_values;
+    };
+    struct EyeAngleVectorField {
+        std::string name;
+        std::string representation_key;
+        std::string field_role;
+        std::string display_name;
+        std::string units;
+        bool has_roi = false;
+        std::vector<std::array<float, 2>> roi_values;
+    };
+    struct EyeAngleAnalysisData {
+        bool loaded = false;
+        bool variant_schema_inferred = false;
+        std::string run_name;
+        std::string schema_id;
+        int schema_version = -1;
+        std::string method;
+        std::string method_version;
+        std::string source_geometry_kind;
+        std::string source_eye_geometry_run;
+        std::string source_subject_shape_run;
+        std::string source_refined_subject_masks_run;
+        std::string source_keypoints_run;
+        std::string output_schema_id;
+        int output_schema_version = -1;
+        std::string variant_schema_id;
+        int variant_schema_version = -1;
+        std::string default_representation;
+        std::vector<std::string> representation_order;
+        std::vector<EyeAngleRepresentationInfo> representations;
+        std::vector<EyeAngleFieldInfo> fields;
+        std::vector<EyeAngleScalarField> scalar_fields;
+        std::vector<EyeAngleVectorField> vector_fields;
+        std::unordered_map<int32_t, std::string> reason_code_map;
+        std::vector<int32_t> roi_frame_indices;
+        std::vector<int32_t> row_to_frame;
+        std::vector<float> roi_time_seconds;
+        std::vector<float> frame_time_seconds;
+        std::vector<uint8_t> roi_valid_left;
+        std::vector<uint8_t> roi_valid_right;
+        std::vector<uint8_t> roi_valid_frame;
+        std::vector<uint8_t> frame_valid_frame;
+        std::vector<uint8_t> roi_left_major_axis_marginal;
+        std::vector<uint8_t> roi_right_major_axis_marginal;
+        std::vector<uint8_t> roi_major_axis_marginal;
+        std::vector<uint8_t> frame_major_axis_marginal;
+        std::vector<int32_t> roi_reason_codes;
+        std::vector<int32_t> frame_reason_codes;
+        std::vector<std::string> roi_reason_labels;
+        std::vector<std::string> frame_reason_labels;
+        size_t row_count = 0;
+        size_t frame_count = 0;
+        std::string warning;
+    };
+    EyeAngleAnalysisData eye_angle_analysis;
+
     struct SubjectShapeData {
         bool loaded = false;
         std::string run_name;
@@ -518,6 +607,12 @@ public:
     const std::string& getRequestedTailKinematicsRunName() const {
         return requested_tail_kinematics_run_name_;
     }
+    void setRequestedEyeAngleRunName(const std::string& run_name) {
+        requested_eye_angle_run_name_ = run_name;
+    }
+    const std::string& getRequestedEyeAngleRunName() const {
+        return requested_eye_angle_run_name_;
+    }
     
     // Compatibility interface matching H5SessionLoader
     std::vector<LoggedBoundingBox> getBoundingBoxesForFrame(size_t frame_id) const;
@@ -598,6 +693,16 @@ public:
         std::string* error_message = nullptr) const;
     bool hasEyeAngleData() const { return data_.has_eye_angles; }
     const std::string& getEyeAngleRunName() const { return data_.eye_angle_run_name; }
+    bool hasEyeAngleAnalysisData() const {
+        return data_.eye_angle_analysis.loaded;
+    }
+    const ZarrDetectionData::EyeAngleAnalysisData& getEyeAngleAnalysisData() const {
+        return data_.eye_angle_analysis;
+    }
+    const ZarrDetectionData::EyeAngleScalarField*
+    findEyeAngleScalarField(const std::string& field_name) const;
+    const ZarrDetectionData::EyeAngleVectorField*
+    findEyeAngleVectorField(const std::string& field_name) const;
     bool hasEyeVergenceFrame() const { return data_.has_eye_vergence_frame; }
     const std::vector<float>& getEyeVergenceFrameSignedDeg() const {
         static const std::vector<float> kEmpty;
@@ -941,6 +1046,14 @@ public:
                 std::numeric_limits<float>::quiet_NaN()};
             std::array<uint8_t, 2> feret_angle_valid = {0, 0};
             bool has_eye_angles = false;
+            std::array<std::array<float, 2>, 2> gaze_vector_xy = {{
+                {std::numeric_limits<float>::quiet_NaN(),
+                 std::numeric_limits<float>::quiet_NaN()},
+                {std::numeric_limits<float>::quiet_NaN(),
+                 std::numeric_limits<float>::quiet_NaN()},
+            }};
+            std::array<uint8_t, 2> gaze_vector_valid = {0, 0};
+            bool has_gaze_vectors = false;
             struct SubjectMaskComponent {
                 std::string label;
                 size_t channel_index = std::numeric_limits<size_t>::max();
@@ -1054,6 +1167,23 @@ public:
         bool forward) const;
     std::optional<size_t> findTailKinematicsRowForFrame(int frame) const;
     std::optional<int32_t> getTailKinematicsFrameForRow(size_t row) const;
+    struct EyeAngleQcFilterOptions {
+        bool invalid_rows = true;
+        bool major_axis_marginal = false;
+        std::string reason_substring;
+    };
+    struct EyeAngleQcJumpResult {
+        std::optional<int> target_frame;
+        std::optional<size_t> target_row;
+        size_t match_count = 0;
+        std::string status;
+    };
+    EyeAngleQcJumpResult computeEyeAngleQcJump(
+        const EyeAngleQcFilterOptions& filters,
+        int current_frame_num,
+        bool forward) const;
+    std::optional<size_t> findEyeAngleRowForFrame(int frame) const;
+    std::optional<int32_t> getEyeAngleFrameForRow(size_t row) const;
     int32_t getKeypointRoiIndexForFrameDetection(size_t frame_id,
                                                  size_t detection_idx,
                                                  bool use_interpolated = false) const;
@@ -1170,6 +1300,7 @@ private:
     std::string root_path_;
     std::string requested_subject_shape_run_name_;
     std::string requested_tail_kinematics_run_name_;
+    std::string requested_eye_angle_run_name_;
     DetectionDataset active_dataset_ = DetectionDataset::RawDetect;
     
     // Loading functions

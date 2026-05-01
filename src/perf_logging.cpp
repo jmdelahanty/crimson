@@ -96,6 +96,7 @@ json maskPerfMetricsToJson(const CameraViewMaskPerfMetrics& metrics) {
         {"selected_contours_drawn", metrics.selected_contours_drawn},
         {"contour_points", metrics.contour_points},
         {"axes_drawn", metrics.axes_drawn},
+        {"gaze_rays_drawn", metrics.gaze_rays_drawn},
         {"angle_labels_drawn", metrics.angle_labels_drawn},
         {"selected_highlight_drawn", metrics.selected_highlight_drawn},
         {"pick_attempted", metrics.pick_attempted},

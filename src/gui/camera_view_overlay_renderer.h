@@ -30,6 +30,7 @@ struct CameraViewMaskPerfMetrics {
     int selected_contours_drawn = 0;
     int contour_points = 0;
     int axes_drawn = 0;
+    int gaze_rays_drawn = 0;
     int angle_labels_drawn = 0;
     bool selected_highlight_drawn = false;
     bool pick_attempted = false;
@@ -53,6 +54,9 @@ struct CameraViewMaskOverlayOptions {
     bool show_eye_right = true;
     bool show_swim_bladder = true;
     bool show_eye_direction_beams = true;
+    bool show_eye_gaze_rays = true;
+    bool show_eye_angle_arcs = true;
+    bool show_eye_angle_labels = true;
     int32_t highlighted_roi_index = -1;
     std::string highlighted_component_name;
     CameraViewMaskOverlayMode mode = CameraViewMaskOverlayMode::Review;
@@ -106,6 +110,7 @@ void drawCameraViewHeadingOverlay(
 
 CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
     const ZarrDetectionLoader::FrameDetections& mask_details,
+    const ZarrDetectionLoader::FrameDetections* subject_shape_details,
     float image_height_px,
     const std::string& smoothing_run_id,
     const CameraViewMaskOverlayOptions& options);

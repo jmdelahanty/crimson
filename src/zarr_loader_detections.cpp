@@ -1414,21 +1414,74 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                     bool roi_valid = data_.eye_angle_valid_mask.empty() ||
                                      (roi_idx < data_.eye_angle_valid_mask.size() &&
                                       data_.eye_angle_valid_mask[roi_idx] != 0);
+                    bool left_valid = roi_valid;
+                    bool right_valid = roi_valid;
+                    if (data_.eye_angle_analysis.loaded) {
+                        const auto& eye = data_.eye_angle_analysis;
+                        if (!eye.roi_valid_left.empty()) {
+                            left_valid =
+                                roi_idx < eye.roi_valid_left.size() &&
+                                eye.roi_valid_left[roi_idx] != 0;
+                        }
+                        if (!eye.roi_valid_right.empty()) {
+                            right_valid =
+                                roi_idx < eye.roi_valid_right.size() &&
+                                eye.roi_valid_right[roi_idx] != 0;
+                        }
+                        if (!eye.roi_valid_frame.empty()) {
+                            const bool frame_valid =
+                                roi_idx < eye.roi_valid_frame.size() &&
+                                eye.roi_valid_frame[roi_idx] != 0;
+                            left_valid = left_valid && frame_valid;
+                            right_valid = right_valid && frame_valid;
+                        }
+                    }
                     if (roi_idx < data_.eye_angle_left_deg.size()) {
                         float left_angle = data_.eye_angle_left_deg[roi_idx];
                         mask_entry.feret_minor_angle_deg[0] = left_angle;
                         mask_entry.feret_angle_valid[0] =
-                            (roi_valid && std::isfinite(left_angle)) ? 1 : 0;
+                            (left_valid && std::isfinite(left_angle)) ? 1 : 0;
                     }
                     if (roi_idx < data_.eye_angle_right_deg.size()) {
                         float right_angle = data_.eye_angle_right_deg[roi_idx];
                         mask_entry.feret_minor_angle_deg[1] = right_angle;
                         mask_entry.feret_angle_valid[1] =
-                            (roi_valid && std::isfinite(right_angle)) ? 1 : 0;
+                            (right_valid && std::isfinite(right_angle)) ? 1 : 0;
                     }
                     mask_entry.has_eye_angles =
                         (mask_entry.feret_angle_valid[0] != 0) ||
                         (mask_entry.feret_angle_valid[1] != 0);
+                }
+                if (data_.eye_angle_analysis.loaded && roi_lookup >= 0) {
+                    const size_t roi_idx = static_cast<size_t>(roi_lookup);
+                    const auto& vector_fields =
+                        data_.eye_angle_analysis.vector_fields;
+                    auto copy_gaze_vector =
+                        [&](const std::string& field_name, size_t eye_index) {
+                        auto it = std::find_if(
+                            vector_fields.begin(),
+                            vector_fields.end(),
+                            [&](const auto& field) {
+                                return field.name == field_name &&
+                                       field.has_roi;
+                            });
+                        if (it == vector_fields.end() ||
+                            roi_idx >= it->roi_values.size()) {
+                            return;
+                        }
+                        const auto value = it->roi_values[roi_idx];
+                        if (!std::isfinite(value[0]) ||
+                            !std::isfinite(value[1])) {
+                            return;
+                        }
+                        mask_entry.gaze_vector_xy[eye_index] = value;
+                        mask_entry.gaze_vector_valid[eye_index] = 1;
+                    };
+                    copy_gaze_vector("left_gaze_xy", 0);
+                    copy_gaze_vector("right_gaze_xy", 1);
+                    mask_entry.has_gaze_vectors =
+                        mask_entry.gaze_vector_valid[0] != 0 ||
+                        mask_entry.gaze_vector_valid[1] != 0;
                 }
 
                 result.eye_masks.push_back(std::move(mask_entry));

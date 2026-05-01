@@ -137,6 +137,9 @@ void drawEyeMaskSection(const FrameDebugWindowContext& context,
     result.show_eye_masks = context.show_eye_masks;
     result.mask_overlay_mode = context.mask_overlay_mode;
     result.show_eye_direction_beams = context.show_eye_direction_beams;
+    result.show_eye_gaze_rays = context.show_eye_gaze_rays;
+    result.show_eye_angle_arcs = context.show_eye_angle_arcs;
+    result.show_eye_angle_labels = context.show_eye_angle_labels;
     ImGui::Separator();
     ImGui::Text("%s", refined_subject_masks ? "Subject Mask Overlay:"
                                             : "Eye Mask Overlay:");
@@ -233,6 +236,18 @@ void drawEyeMaskSection(const FrameDebugWindowContext& context,
         ImGui::SetTooltip(
             "Draw translucent direction triangles from the eye fit axes. Disable this to keep eye masks, contours, axes, and angle labels without the beam overlay.");
     }
+    ImGui::Checkbox("Gaze rays", &result.show_eye_gaze_rays);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Draw Palette eye-angle gaze vectors from left_gaze_xy/right_gaze_xy when available.");
+    }
+    ImGui::Checkbox("Eye angle arcs", &result.show_eye_angle_arcs);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Draw signed gaze-angle arcs from the body-frame forward axis to the ellipse minor-axis gaze direction.");
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("Angle labels", &result.show_eye_angle_labels);
     if (!context.zarr_loader.getEyeMaskWarning().empty()) {
         ImGui::TextWrapped("  Warning: %s",
                            context.zarr_loader.getEyeMaskWarning().c_str());
@@ -360,6 +375,9 @@ void drawEyeMaskOverlayPanel(const FrameDebugWindowContext& context,
     result.show_eye_right_mask = context.show_eye_right_mask;
     result.show_swim_bladder_mask = context.show_swim_bladder_mask;
     result.show_eye_direction_beams = context.show_eye_direction_beams;
+    result.show_eye_gaze_rays = context.show_eye_gaze_rays;
+    result.show_eye_angle_arcs = context.show_eye_angle_arcs;
+    result.show_eye_angle_labels = context.show_eye_angle_labels;
     result.mask_overlay_mode = context.mask_overlay_mode;
     drawEyeMaskSection(context, result);
     drawSubjectShapeSection(context, result);

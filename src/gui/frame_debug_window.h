@@ -17,6 +17,7 @@ enum class FrameInspectTab {
     Keypoints,
     EyeMasks,
     TailKinematics,
+    EyeAngles,
 };
 
 struct FrameDebugWindowState {
@@ -34,6 +35,11 @@ struct FrameDebugWindowState {
     std::array<char, 128> tail_kinematics_reason_filter{};
     std::string tail_kinematics_qc_status;
     int tail_kinematics_selected_row = -1;
+    ZarrDetectionLoader::EyeAngleQcFilterOptions eye_angle_qc_filters;
+    std::array<char, 128> eye_angle_reason_filter{};
+    std::string eye_angle_qc_status;
+    int eye_angle_selected_row = -1;
+    int eye_angle_representation_index = -1;
     FrameInspectTab active_tab = FrameInspectTab::Detect;
 };
 
@@ -80,6 +86,9 @@ struct FrameDebugWindowContext {
     bool show_eye_right_mask = true;
     bool show_swim_bladder_mask = true;
     bool show_eye_direction_beams = true;
+    bool show_eye_gaze_rays = true;
+    bool show_eye_angle_arcs = true;
+    bool show_eye_angle_labels = true;
     CameraViewMaskOverlayMode mask_overlay_mode =
         CameraViewMaskOverlayMode::Review;
     CameraViewSubjectShapeOverlayOptions subject_shape_overlay_options;
@@ -108,6 +117,9 @@ struct FrameDebugWindowResult {
     bool show_eye_right_mask = true;
     bool show_swim_bladder_mask = true;
     bool show_eye_direction_beams = true;
+    bool show_eye_gaze_rays = true;
+    bool show_eye_angle_arcs = true;
+    bool show_eye_angle_labels = true;
     CameraViewMaskOverlayMode mask_overlay_mode =
         CameraViewMaskOverlayMode::Review;
     CameraViewSubjectShapeOverlayOptions subject_shape_overlay_options;
@@ -118,6 +130,10 @@ struct FrameDebugWindowResult {
     bool request_next_tail_kinematics_qc_frame = false;
     bool request_seek_tail_kinematics_row = false;
     size_t requested_tail_kinematics_row = 0;
+    bool request_prev_eye_angle_qc_frame = false;
+    bool request_next_eye_angle_qc_frame = false;
+    bool request_seek_eye_angle_row = false;
+    size_t requested_eye_angle_row = 0;
 };
 
 FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& context,

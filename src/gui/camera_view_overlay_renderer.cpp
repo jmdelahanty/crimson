@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <deque>
 #include <limits>
+#include <cstdio>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -533,6 +534,56 @@ float chooseKeypointSize(const std::string& lowered_label) {
     return 7.0f;
 }
 
+void drawPlotTextBox(const char* text,
+                     double plot_x,
+                     double plot_y,
+                     const ImVec4& accent_color,
+                     float font_scale = 1.25f) {
+    if (text == nullptr || text[0] == '\0' || !std::isfinite(plot_x) ||
+        !std::isfinite(plot_y)) {
+        return;
+    }
+
+    ImDrawList* draw_list = ImPlot::GetPlotDrawList();
+    const ImVec2 center =
+        ImPlot::PlotToPixels(ImPlotPoint(plot_x, plot_y));
+    const float base_font_size = ImGui::GetFontSize();
+    const float font_size = base_font_size * font_scale;
+    const ImVec2 text_size = ImGui::CalcTextSize(text);
+    const ImVec2 scaled_text_size(text_size.x * font_scale,
+                                  text_size.y * font_scale);
+    const ImVec2 padding(7.0f, 4.0f);
+    const ImVec2 box_min(center.x - scaled_text_size.x * 0.5f - padding.x,
+                         center.y - scaled_text_size.y * 0.5f - padding.y);
+    const ImVec2 box_max(center.x + scaled_text_size.x * 0.5f + padding.x,
+                         center.y + scaled_text_size.y * 0.5f + padding.y);
+
+    ImVec4 border = accent_color;
+    border.w = 0.95f;
+    draw_list->AddRectFilled(box_min,
+                             box_max,
+                             IM_COL32(8, 10, 14, 214),
+                             4.0f);
+    draw_list->AddRect(box_min,
+                       box_max,
+                       ImGui::ColorConvertFloat4ToU32(border),
+                       4.0f,
+                       0,
+                       1.2f);
+    const ImVec2 text_pos(center.x - scaled_text_size.x * 0.5f,
+                          center.y - scaled_text_size.y * 0.5f);
+    draw_list->AddText(ImGui::GetFont(),
+                       font_size,
+                       ImVec2(text_pos.x + 1.0f, text_pos.y + 1.0f),
+                       IM_COL32(0, 0, 0, 210),
+                       text);
+    draw_list->AddText(ImGui::GetFont(),
+                       font_size,
+                       text_pos,
+                       IM_COL32(255, 255, 245, 255),
+                       text);
+}
+
 }  // namespace
 
 const char* cameraViewMaskOverlayModeLabel(CameraViewMaskOverlayMode mode) {
@@ -564,6 +615,7 @@ void accumulateCameraViewMaskPerfMetrics(CameraViewMaskPerfMetrics& dst,
     dst.selected_contours_drawn += src.selected_contours_drawn;
     dst.contour_points += src.contour_points;
     dst.axes_drawn += src.axes_drawn;
+    dst.gaze_rays_drawn += src.gaze_rays_drawn;
     dst.angle_labels_drawn += src.angle_labels_drawn;
     dst.selected_highlight_drawn =
         dst.selected_highlight_drawn || src.selected_highlight_drawn;
@@ -915,6 +967,7 @@ void drawCameraViewHeadingOverlay(
 
 CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
     const ZarrDetectionLoader::FrameDetections& mask_details,
+    const ZarrDetectionLoader::FrameDetections* subject_shape_details,
     float image_height_px,
     const std::string& smoothing_run_id,
     const CameraViewMaskOverlayOptions& options) {
@@ -947,6 +1000,31 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
     const bool draw_all_contours = !realtime_mode;
     const bool draw_axes_and_angles = !realtime_mode;
     const float scene_height_f = image_height_px;
+    auto findSubjectShapeForMask =
+        [&](size_t det_idx,
+            int32_t roi_index)
+            -> const ZarrDetectionLoader::FrameDetections::SubjectShape* {
+        if (subject_shape_details == nullptr ||
+            !subject_shape_details->includes_subject_shapes ||
+            subject_shape_details->subject_shapes.empty() || roi_index < 0) {
+            return nullptr;
+        }
+        if (det_idx < subject_shape_details->subject_shapes.size()) {
+            const auto& shape = subject_shape_details->subject_shapes[det_idx];
+            if (shape.valid && shape.roi_index == roi_index) {
+                return &shape;
+            }
+        }
+        auto it = std::find_if(
+            subject_shape_details->subject_shapes.begin(),
+            subject_shape_details->subject_shapes.end(),
+            [&](const ZarrDetectionLoader::FrameDetections::SubjectShape&
+                    shape) {
+                return shape.valid && shape.roi_index == roi_index;
+            });
+        return it == subject_shape_details->subject_shapes.end() ? nullptr
+                                                                 : &*it;
+    };
     for (size_t det_idx = 0; det_idx < mask_count; ++det_idx) {
         const auto& mask_info = mask_details.eye_masks[det_idx];
         if (!mask_details.detection_source.empty() &&
@@ -1246,6 +1324,151 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
                     auto world = roiToWorld(roi_x, roi_y);
                     return worldToScene(world.first, world.second);
                 };
+                auto draw_eye_angle_arc =
+                    [&](const ZarrDetectionLoader::FrameDetections::
+                            SubjectShape& shape,
+                        const std::pair<double, double>& center_world,
+                        float angle_deg,
+                        const std::string& label,
+                        const ImVec4& color,
+                        double minor_axis_len_world) -> bool {
+                    if (!shape.body_frame_valid ||
+                        !std::isfinite(shape.body_forward_axis_xy[0]) ||
+                        !std::isfinite(shape.body_forward_axis_xy[1]) ||
+                        !std::isfinite(shape.body_left_axis_xy[0]) ||
+                        !std::isfinite(shape.body_left_axis_xy[1]) ||
+                        shape.coordinate_width <= 0.0f ||
+                        shape.coordinate_height <= 0.0f ||
+                        shape.roi_width <= 0.0f ||
+                        shape.roi_height <= 0.0f ||
+                        !std::isfinite(angle_deg)) {
+                        return false;
+                    }
+
+                    auto normalize = [](double x,
+                                        double y) -> std::array<double, 2> {
+                        const double len = std::sqrt(x * x + y * y);
+                        if (len <= 1e-6 || !std::isfinite(len)) {
+                            return {std::numeric_limits<double>::quiet_NaN(),
+                                    std::numeric_limits<double>::quiet_NaN()};
+                        }
+                        return {x / len, y / len};
+                    };
+                    const auto forward = normalize(
+                        static_cast<double>(shape.body_forward_axis_xy[0]) *
+                            static_cast<double>(shape.roi_width) /
+                            static_cast<double>(shape.coordinate_width),
+                        static_cast<double>(shape.body_forward_axis_xy[1]) *
+                            static_cast<double>(shape.roi_height) /
+                            static_cast<double>(shape.coordinate_height));
+                    const auto left = normalize(
+                        static_cast<double>(shape.body_left_axis_xy[0]) *
+                            static_cast<double>(shape.roi_width) /
+                            static_cast<double>(shape.coordinate_width),
+                        static_cast<double>(shape.body_left_axis_xy[1]) *
+                            static_cast<double>(shape.roi_height) /
+                            static_cast<double>(shape.coordinate_height));
+                    if (!std::isfinite(forward[0]) ||
+                        !std::isfinite(forward[1]) ||
+                        !std::isfinite(left[0]) || !std::isfinite(left[1])) {
+                        return false;
+                    }
+
+                    const double roi_span = std::max(
+                        static_cast<double>(mask_info.roi_width),
+                        static_cast<double>(mask_info.roi_height));
+                    const double radius = std::clamp(
+                        std::max(minor_axis_len_world * 0.75,
+                                 roi_span * 0.075),
+                        10.0,
+                        std::max(12.0, roi_span * 0.18));
+                    const double angle_rad = std::clamp(
+                        static_cast<double>(angle_deg) * M_PI / 180.0,
+                        -M_PI,
+                        M_PI);
+                    const int steps = std::clamp(
+                        static_cast<int>(std::ceil(
+                            std::fabs(angle_rad) / (M_PI / 24.0))),
+                        6,
+                        32);
+
+                    std::vector<double> xs;
+                    std::vector<double> ys;
+                    xs.reserve(static_cast<size_t>(steps + 1));
+                    ys.reserve(static_cast<size_t>(steps + 1));
+                    for (int step = 0; step <= steps; ++step) {
+                        const double t =
+                            angle_rad * static_cast<double>(step) /
+                            static_cast<double>(steps);
+                        const double vx =
+                            std::cos(t) * forward[0] + std::sin(t) * left[0];
+                        const double vy =
+                            std::cos(t) * forward[1] + std::sin(t) * left[1];
+                        auto scene = worldToScene(center_world.first + vx * radius,
+                                                  center_world.second + vy * radius);
+                        xs.push_back(scene.first);
+                        ys.push_back(scene.second);
+                    }
+                    if (xs.size() < 2) {
+                        return false;
+                    }
+
+                    const double start_x[2] = {
+                        center_world.first,
+                        center_world.first + forward[0] * radius};
+                    const double start_y[2] = {
+                        scene_height_f - center_world.second,
+                        scene_height_f - (center_world.second + forward[1] * radius)};
+                    ImPlot::SetNextLineStyle(
+                        ImVec4(1.0f, 1.0f, 1.0f, 0.42f), 1.0f);
+                    ImPlot::PlotLine((label + "_body_axis").c_str(),
+                                     start_x,
+                                     start_y,
+                                     2);
+
+                    ImVec4 arc_color = color;
+                    arc_color.w = 0.95f;
+                    ImPlot::SetNextLineStyle(arc_color, 2.4f);
+                    ImPlot::PlotLine(label.c_str(),
+                                     xs.data(),
+                                     ys.data(),
+                                     static_cast<int>(xs.size()));
+
+                    const double end_x[2] = {center_world.first, xs.back()};
+                    const double end_y[2] = {
+                        scene_height_f - center_world.second,
+                        ys.back()};
+                    ImVec4 end_color = color;
+                    end_color.w = 0.65f;
+                    ImPlot::SetNextLineStyle(end_color, 1.1f);
+                    ImPlot::PlotLine((label + "_gaze_axis").c_str(),
+                                     end_x,
+                                     end_y,
+                                     2);
+
+                    if (options.show_eye_angle_labels) {
+                        const double mid_t = angle_rad * 0.5;
+                        const double vx = std::cos(mid_t) * forward[0] +
+                                          std::sin(mid_t) * left[0];
+                        const double vy = std::cos(mid_t) * forward[1] +
+                                          std::sin(mid_t) * left[1];
+                        auto label_scene =
+                            worldToScene(center_world.first + vx * radius * 1.25,
+                                         center_world.second + vy * radius * 1.25);
+                        char angle_label[32];
+                        std::snprintf(angle_label,
+                                      sizeof(angle_label),
+                                      "%+.1f°",
+                                      angle_deg);
+                        drawPlotTextBox(angle_label,
+                                        label_scene.first,
+                                        label_scene.second,
+                                        color,
+                                        1.3f);
+                        metrics.angle_labels_drawn++;
+                    }
+                    return true;
+                };
                 auto draw_axis =
                     [&](const ZarrDetectionLoader::FrameDetections::EyeMask::AxisSegment&
                             axis,
@@ -1288,20 +1511,97 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
                     auto center_world = roiToWorld(
                         0.5f * (minor_axis.x0 + minor_axis.x1),
                         0.5f * (minor_axis.y0 + minor_axis.y1));
+                    const double minor_axis_len_world =
+                        std::hypot(endpoint1_world.first - endpoint0_world.first,
+                                   endpoint1_world.second - endpoint0_world.second);
+                    if (options.show_eye_gaze_rays &&
+                        mask_info.has_gaze_vectors &&
+                        mask_info.gaze_vector_valid[eye] != 0) {
+                        const auto gaze = mask_info.gaze_vector_xy[eye];
+                        if (std::isfinite(gaze[0]) &&
+                            std::isfinite(gaze[1])) {
+                            const double gaze_len =
+                                std::hypot(static_cast<double>(gaze[0]),
+                                           static_cast<double>(gaze[1]));
+                            if (gaze_len > 1e-6) {
+                                const double roi_span = std::max(
+                                    static_cast<double>(mask_info.roi_width),
+                                    static_cast<double>(mask_info.roi_height));
+                                const double ray_len =
+                                    std::max(roi_span * 0.32,
+                                             minor_axis_len_world * 1.35);
+                                auto ray_end_scene = worldToScene(
+                                    center_world.first +
+                                        static_cast<double>(gaze[0]) /
+                                            gaze_len * ray_len,
+                                    center_world.second +
+                                        static_cast<double>(gaze[1]) /
+                                            gaze_len * ray_len);
+                                auto ray_start_scene = worldToScene(
+                                    center_world.first,
+                                    center_world.second);
+                                const double ray_x[2] = {
+                                    ray_start_scene.first,
+                                    ray_end_scene.first};
+                                const double ray_y[2] = {
+                                    ray_start_scene.second,
+                                    ray_end_scene.second};
+                                ImVec4 ray_color = minor_color;
+                                ray_color.w = 0.95f;
+                                ImPlot::SetNextLineStyle(ray_color, 2.2f);
+                                ImPlot::PlotLine(
+                                    (base_id + "_gaze_ray").c_str(),
+                                    ray_x,
+                                    ray_y,
+                                    2);
+                                ImPlot::SetNextMarkerStyle(
+                                    ImPlotMarker_Circle,
+                                    3.0f,
+                                    ray_color,
+                                    1.0f,
+                                    ray_color);
+                                const double tip_x[1] = {ray_end_scene.first};
+                                const double tip_y[1] = {ray_end_scene.second};
+                                ImPlot::PlotScatter(
+                                    (base_id + "_gaze_ray_tip").c_str(),
+                                    tip_x,
+                                    tip_y,
+                                    1);
+                                metrics.gaze_rays_drawn++;
+                            }
+                        }
+                    }
                     if (mask_info.has_eye_angles &&
                         mask_info.feret_angle_valid[eye]) {
-                        auto center_scene =
-                            worldToScene(center_world.first, center_world.second);
-                        char angle_label[32];
-                        std::snprintf(angle_label,
-                                      sizeof(angle_label),
-                                      "%+.1f°",
-                                      mask_info.feret_minor_angle_deg[eye]);
-                        ImPlot::PlotText(angle_label,
-                                         center_scene.first,
-                                         center_scene.second,
-                                         ImVec2(0.0f, -12.0f));
-                        metrics.angle_labels_drawn++;
+                        bool drew_arc = false;
+                        if (options.show_eye_angle_arcs) {
+                            const auto* shape = findSubjectShapeForMask(
+                                det_idx, mask_info.roi_index);
+                            if (shape != nullptr) {
+                                drew_arc = draw_eye_angle_arc(
+                                    *shape,
+                                    center_world,
+                                    mask_info.feret_minor_angle_deg[eye],
+                                    base_id + "_angle_arc",
+                                    minor_color,
+                                    minor_axis_len_world);
+                            }
+                        }
+                        if (!drew_arc && options.show_eye_angle_labels) {
+                            auto center_scene = worldToScene(
+                                center_world.first, center_world.second);
+                            char angle_label[32];
+                            std::snprintf(angle_label,
+                                          sizeof(angle_label),
+                                          "%+.1f°",
+                                          mask_info.feret_minor_angle_deg[eye]);
+                            drawPlotTextBox(angle_label,
+                                            center_scene.first,
+                                            center_scene.second,
+                                            minor_color,
+                                            1.3f);
+                            metrics.angle_labels_drawn++;
+                        }
                     }
 
                     const double det_center_x = 0.5 *

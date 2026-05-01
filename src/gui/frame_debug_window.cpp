@@ -19,6 +19,9 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
     result.show_eye_right_mask = context.show_eye_right_mask;
     result.show_swim_bladder_mask = context.show_swim_bladder_mask;
     result.show_eye_direction_beams = context.show_eye_direction_beams;
+    result.show_eye_gaze_rays = context.show_eye_gaze_rays;
+    result.show_eye_angle_arcs = context.show_eye_angle_arcs;
+    result.show_eye_angle_labels = context.show_eye_angle_labels;
     result.mask_overlay_mode = context.mask_overlay_mode;
     result.subject_shape_overlay_options =
         context.subject_shape_overlay_options;
@@ -68,6 +71,8 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
                 drawEyeMaskOverlayPanel(context, result);
                 break;
             case FrameInspectTab::TailKinematics:
+                break;
+            case FrameInspectTab::EyeAngles:
                 break;
         }
     } else {

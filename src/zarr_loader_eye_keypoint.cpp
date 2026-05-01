@@ -85,6 +85,202 @@ bool stringAttrMatches(const nlohmann::json& attrs,
            attrs[key].get<std::string>() == expected;
 }
 
+std::string jsonStringAttr(const nlohmann::json& attrs,
+                           const char* key) {
+    if (attrs.contains(key) && attrs[key].is_string()) {
+        return attrs[key].get<std::string>();
+    }
+    return {};
+}
+
+int jsonIntAttr(const nlohmann::json& attrs, const char* key) {
+    if (attrs.contains(key) && attrs[key].is_number_integer()) {
+        return attrs[key].get<int>();
+    }
+    if (attrs.contains(key) && attrs[key].is_number()) {
+        return static_cast<int>(attrs[key].get<double>());
+    }
+    return -1;
+}
+
+std::vector<std::string> jsonStringVector(const nlohmann::json& obj,
+                                          const char* key) {
+    std::vector<std::string> values;
+    if (!obj.contains(key) || !obj[key].is_array()) {
+        return values;
+    }
+    for (const auto& item : obj[key]) {
+        if (item.is_string()) {
+            values.push_back(item.get<std::string>());
+        }
+    }
+    return values;
+}
+
+void appendEyeAngleWarning(
+    ZarrDetectionData::EyeAngleAnalysisData& eye_angles,
+    const std::string& message) {
+    if (message.empty()) {
+        return;
+    }
+    if (!eye_angles.warning.empty()) {
+        eye_angles.warning += " ";
+    }
+    eye_angles.warning += message;
+}
+
+void addUniqueString(std::vector<std::string>& values,
+                     const std::string& value) {
+    if (value.empty()) {
+        return;
+    }
+    if (std::find(values.begin(), values.end(), value) == values.end()) {
+        values.push_back(value);
+    }
+}
+
+bool endsWith(const std::string& value, const std::string& suffix) {
+    return value.size() >= suffix.size() &&
+           value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+std::string unsmoothedBaseField(const std::string& field_name) {
+    constexpr const char* kSmoothedSuffix = "_smoothed";
+    if (!endsWith(field_name, kSmoothedSuffix)) {
+        return {};
+    }
+    return field_name.substr(0, field_name.size() - std::strlen(kSmoothedSuffix));
+}
+
+ZarrDetectionData::EyeAngleFieldInfo makeEyeAngleFieldInfo(
+    const std::string& name,
+    const std::string& representation_key,
+    const std::string& field_role,
+    const std::string& display_name,
+    const std::string& units,
+    bool default_plot) {
+    ZarrDetectionData::EyeAngleFieldInfo info;
+    info.name = name;
+    info.representation_key = representation_key;
+    info.field_role = field_role;
+    info.display_name = display_name;
+    info.units = units;
+    info.default_plot = default_plot;
+    return info;
+}
+
+void appendCompatibilityEyeAngleSchema(
+    ZarrDetectionData::EyeAngleAnalysisData& eye_angles) {
+    eye_angles.variant_schema_inferred = true;
+    eye_angles.variant_schema_id = "inferred.compatibility_eye_angle_variant_schema";
+    eye_angles.default_representation = "eye_frame";
+    eye_angles.representation_order = {
+        "eye_frame", "gaze", "nasal_gaze", "major", "centroid", "legacy"};
+
+    auto make_rep =
+        [](const std::string& key,
+           const std::string& display_name,
+           std::vector<std::string> default_plot,
+           std::vector<std::string> primary,
+           std::vector<std::string> aggregate,
+           std::vector<std::string> vectors = {})
+            -> ZarrDetectionData::EyeAngleRepresentationInfo {
+        ZarrDetectionData::EyeAngleRepresentationInfo rep;
+        rep.key = key;
+        rep.display_name = display_name;
+        rep.units = "deg";
+        rep.default_plot_fields = std::move(default_plot);
+        rep.primary_roi_fields = std::move(primary);
+        rep.aggregate_roi_fields = std::move(aggregate);
+        rep.vector_roi_fields = std::move(vectors);
+        return rep;
+    };
+
+    eye_angles.representations = {
+        make_rep("eye_frame",
+                 "Bianco/Engert eye-frame angles",
+                 {"left_eye_angle_deg_smoothed",
+                  "right_eye_angle_deg_smoothed",
+                  "vergence_eye_angle_deg_smoothed"},
+                 {"left_eye_angle_deg", "right_eye_angle_deg"},
+                 {"vergence_eye_angle_deg"}),
+        make_rep("gaze",
+                 "Gaze direction",
+                 {"left_gaze_signed_deg_smoothed",
+                  "right_gaze_signed_deg_smoothed"},
+                 {"left_gaze_signed_deg", "right_gaze_signed_deg"},
+                 {"vergence_gaze_deg", "version_gaze_deg"},
+                 {"left_gaze_xy", "right_gaze_xy"}),
+        make_rep("nasal_gaze",
+                 "BEAST/Johnson nasal-gaze convergence",
+                 {"left_nasal_gaze_deg_smoothed",
+                  "right_nasal_gaze_deg_smoothed",
+                  "mean_eye_vergence_gaze_deg_smoothed"},
+                 {"left_nasal_gaze_deg", "right_nasal_gaze_deg"},
+                 {"mean_eye_vergence_gaze_deg"}),
+        make_rep("major",
+                 "Canonical major-axis orientation",
+                 {"left_major_signed_deg", "right_major_signed_deg"},
+                 {"left_major_signed_deg", "right_major_signed_deg"},
+                 {"vergence_major_signed_deg", "version_major_deg"}),
+        make_rep("centroid",
+                 "Centroid-position diagnostics",
+                 {"left_centroid_deg_smoothed",
+                  "right_centroid_deg_smoothed"},
+                 {"left_centroid_deg", "right_centroid_deg"},
+                 {"vergence_centroid_deg"}),
+        make_rep("legacy",
+                 "Legacy compatibility aliases",
+                 {},
+                 {"left_deg", "right_deg", "left_signed_deg",
+                  "right_signed_deg", "left_minor_signed_deg",
+                  "right_minor_signed_deg"},
+                 {"vergence_deg", "vergence_signed_deg", "version_deg",
+                  "vergence_minor_signed_deg", "version_minor_deg"}),
+    };
+}
+
+std::string decodeEyeAngleReasonCode(
+    int32_t code,
+    const std::unordered_map<int32_t, std::string>& reason_code_map) {
+    if (code == 0) {
+        return {};
+    }
+    std::vector<int32_t> bits;
+    bits.reserve(reason_code_map.size());
+    for (const auto& entry : reason_code_map) {
+        if (entry.first > 0) {
+            bits.push_back(entry.first);
+        }
+    }
+    std::sort(bits.begin(), bits.end());
+    std::ostringstream oss;
+    int32_t known_bits = 0;
+    bool first = true;
+    for (int32_t bit : bits) {
+        if ((code & bit) == 0) {
+            continue;
+        }
+        if (!first) {
+            oss << "|";
+        }
+        auto it = reason_code_map.find(bit);
+        oss << (it != reason_code_map.end()
+                    ? it->second
+                    : ("reason_" + std::to_string(bit)));
+        known_bits |= bit;
+        first = false;
+    }
+    const int32_t unknown_bits = code & ~known_bits;
+    if (unknown_bits != 0) {
+        if (!first) {
+            oss << "|";
+        }
+        oss << "unknown_" << unknown_bits;
+    }
+    return oss.str();
+}
+
 }  // namespace
 
 bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& store) {
@@ -117,6 +313,7 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     data_.eye_vergence_frame_time_seconds.clear();
     data_.eye_vergence_frame_valid.clear();
     data_.has_eye_vergence_frame = false;
+    data_.eye_angle_analysis = ZarrDetectionData::EyeAngleAnalysisData{};
 
     // Clear refined keypoint quality fields
     data_.is_refined_keypoints = false;
@@ -1584,162 +1781,738 @@ bool ZarrDetectionLoader::loadEyeAngleData(const ts::kvstore::KvStore& store,
     data_.eye_angle_indices_by_frame.clear();
     data_.has_eye_angles = false;
 
-    std::string latest_run;
-    if (auto group_attrs = readAttrsAny(store, "analysis/eye_angle_runs")) {
-        latest_run = extractLatestRunName(*group_attrs);
-    }
+    {
+        data_.eye_vergence_signed_frame_deg.clear();
+        data_.eye_vergence_frame_time_seconds.clear();
+        data_.eye_vergence_frame_valid.clear();
+        data_.has_eye_vergence_frame = false;
+        data_.eye_angle_analysis =
+            ZarrDetectionData::EyeAngleAnalysisData{};
 
-    if (latest_run.empty() && !root_path_.empty()) {
-        auto fs_candidates = collect_runs_fs(
-            root_path_, "analysis/eye_angle_runs",
-            {"angles/roi/left_feret_minor_signed_deg"});
-        if (!fs_candidates.empty()) {
-            latest_run = fs_candidates.back();
-        }
-    }
-
-    if (latest_run.empty()) {
-        return false;
-    }
-
-    std::string base = "analysis/eye_angle_runs/" + latest_run + "/angles/roi/";
-
-    std::vector<float> left_angles;
-    if (!readFloatArray(store, base + "left_feret_minor_signed_deg", left_angles)) {
-        std::cout << "[EYE_ANGLE_WARNING] Failed to read left_feret_minor_signed_deg for run '"
-                  << latest_run << "'" << std::endl;
-        return false;
-    }
-    std::vector<float> right_angles;
-    if (!readFloatArray(store, base + "right_feret_minor_signed_deg", right_angles)) {
-        std::cout << "[EYE_ANGLE_WARNING] Failed to read right_feret_minor_signed_deg for run '"
-                  << latest_run << "'" << std::endl;
-        return false;
-    }
-
-    if (left_angles.empty() || right_angles.empty()) {
-        return false;
-    }
-
-    std::vector<int32_t> frame_indices;
-    readInt32Array(store, base + "frame_indices", frame_indices);
-
-    std::vector<uint8_t> valid_mask;
-    if (!readBoolArray(store, base + "valid_mask", valid_mask)) {
-        valid_mask.assign(left_angles.size(), 1);
-    }
-
-    size_t count = std::min(left_angles.size(), right_angles.size());
-    if (!frame_indices.empty()) {
-        count = std::min(count, frame_indices.size());
-    }
-    if (!valid_mask.empty()) {
-        count = std::min(count, valid_mask.size());
-    }
-
-    if (count == 0) {
-        return false;
-    }
-
-    left_angles.resize(count);
-    right_angles.resize(count);
-
-    if (frame_indices.empty()) {
-        frame_indices.assign(count, -1);
-    } else if (frame_indices.size() != count) {
-        frame_indices.resize(count, -1);
-    }
-
-    if (valid_mask.empty()) {
-        valid_mask.assign(count, 1);
-    } else if (valid_mask.size() != count) {
-        valid_mask.resize(count, 1);
-    }
-
-    data_.eye_angle_run_name = latest_run;
-    data_.eye_angle_left_deg = std::move(left_angles);
-    data_.eye_angle_right_deg = std::move(right_angles);
-    data_.eye_angle_frame_indices = std::move(frame_indices);
-    data_.eye_angle_valid_mask = std::move(valid_mask);
-
-    size_t max_frame_index = 0;
-    for (auto frame : data_.eye_angle_frame_indices) {
-        if (frame >= 0) {
-            max_frame_index = std::max(max_frame_index,
-                                       static_cast<size_t>(frame));
-        }
-    }
-    size_t desired_size = std::max({max_frame_index + 1,
-                                    data_.total_frames,
-                                    roi_count});
-    data_.eye_angle_indices_by_frame.clear();
-    data_.eye_angle_indices_by_frame.resize(desired_size);
-    for (size_t i = 0; i < data_.eye_angle_frame_indices.size(); ++i) {
-        int32_t frame = data_.eye_angle_frame_indices[i];
-        if (frame < 0) continue;
-        size_t frame_index = static_cast<size_t>(frame);
-        if (frame_index >= data_.eye_angle_indices_by_frame.size()) {
-            data_.eye_angle_indices_by_frame.resize(frame_index + 1);
-        }
-        data_.eye_angle_indices_by_frame[frame_index].push_back(i);
-    }
-
-    data_.has_eye_angles = true;
-    std::cout << "  Eye angle run '" << latest_run << "' loaded ("
-              << data_.eye_angle_left_deg.size()
-              << " ROI entries)" << std::endl;
-    if (roi_count > 0 && data_.eye_angle_left_deg.size() != roi_count) {
-        std::cout << "    [EYE_ANGLE_WARNING] ROI count mismatch: angles="
-                  << data_.eye_angle_left_deg.size()
-                  << ", expected " << roi_count << std::endl;
-    }
-
-    std::string frame_base = "analysis/eye_angle_runs/" + latest_run + "/angles/frame/";
-    std::vector<float> vergence_signed;
-    if (!readFloatArray(store, frame_base + "vergence_signed_deg_smoothed", vergence_signed) ||
-        vergence_signed.empty()) {
-        readFloatArray(store, frame_base + "vergence_signed_deg", vergence_signed);
-    }
-    if (!vergence_signed.empty()) {
-        std::vector<uint8_t> frame_valid;
-        readBoolArray(store,
-                      "analysis/eye_angle_runs/" + latest_run + "/qa/frame/valid_frame",
-                      frame_valid);
-        std::vector<float> frame_time_seconds;
-        readFloatArray(store,
-                       "analysis/eye_angle_runs/" + latest_run + "/support/frame_time_seconds",
-                       frame_time_seconds);
-
-        size_t frame_count = vergence_signed.size();
-        if (!frame_valid.empty()) {
-            frame_count = std::min(frame_count, frame_valid.size());
-        }
-        if (!frame_time_seconds.empty()) {
-            frame_count = std::min(frame_count, frame_time_seconds.size());
-        }
-        vergence_signed.resize(frame_count);
-        if (frame_valid.empty()) {
-            frame_valid.assign(frame_count, 1);
-        } else {
-            frame_valid.resize(frame_count, 1);
-        }
-        if (frame_time_seconds.empty()) {
-            frame_time_seconds.resize(frame_count);
-            double fps = data_.fps > 0.0 ? data_.fps : 30.0;
-            double inv_fps = fps > 0.0 ? (1.0 / fps) : 0.033333333;
-            for (size_t i = 0; i < frame_count; ++i) {
-                frame_time_seconds[i] = static_cast<float>(static_cast<double>(i) * inv_fps);
+        std::string selected_run = requested_eye_angle_run_name_;
+        if (selected_run.empty()) {
+            if (auto group_attrs = readAttrsAny(store, "analysis/eye_angle_runs")) {
+                selected_run = extractLatestRunName(*group_attrs);
             }
-        } else {
-            frame_time_seconds.resize(frame_count);
+        }
+        if (selected_run.empty() && !root_path_.empty()) {
+            auto candidates = collect_runs_fs(
+                root_path_,
+                "analysis/eye_angle_runs",
+                {"angles/roi/left_eye_angle_deg"});
+            if (candidates.empty()) {
+                candidates = collect_runs_fs(
+                    root_path_,
+                    "analysis/eye_angle_runs",
+                    {"angles/roi/left_gaze_signed_deg"});
+            }
+            if (candidates.empty()) {
+                candidates = collect_runs_fs(
+                    root_path_,
+                    "analysis/eye_angle_runs",
+                    {"angles/roi/left_minor_signed_deg"});
+            }
+            if (!candidates.empty()) {
+                selected_run = candidates.back();
+            }
+        }
+        if (selected_run.empty()) {
+            return false;
         }
 
-        data_.eye_vergence_signed_frame_deg = std::move(vergence_signed);
-        data_.eye_vergence_frame_time_seconds = std::move(frame_time_seconds);
-        data_.eye_vergence_frame_valid = std::move(frame_valid);
-        data_.has_eye_vergence_frame = !data_.eye_vergence_signed_frame_deg.empty();
+        const std::string run_base =
+            "analysis/eye_angle_runs/" + selected_run + "/";
+        auto run_attrs = readAttrsAny(store, run_base);
+        if (!run_attrs.has_value()) {
+            if (!requested_eye_angle_run_name_.empty()) {
+                std::cout
+                    << "  [EYE_ANGLE_WARNING] Requested eye-angle run '"
+                    << requested_eye_angle_run_name_ << "' was not found at "
+                    << run_base << std::endl;
+            }
+            return false;
+        }
+
+        auto& eye = data_.eye_angle_analysis;
+        eye.run_name = selected_run;
+        eye.schema_id = jsonStringAttr(*run_attrs, "schema_id");
+        eye.schema_version = jsonIntAttr(*run_attrs, "schema_version");
+        eye.method = jsonStringAttr(*run_attrs, "method");
+        eye.method_version = jsonStringAttr(*run_attrs, "method_version");
+        eye.source_geometry_kind =
+            jsonStringAttr(*run_attrs, "source_geometry_kind");
+        eye.source_eye_geometry_run =
+            jsonStringAttr(*run_attrs, "source_eye_geometry_run");
+        eye.source_subject_shape_run =
+            jsonStringAttr(*run_attrs, "source_subject_shape_run");
+        eye.source_refined_subject_masks_run =
+            jsonStringAttr(*run_attrs, "source_refined_subject_masks_run");
+        eye.source_keypoints_run =
+            jsonStringAttr(*run_attrs, "source_keypoints_run");
+        if (eye.source_keypoints_run.empty()) {
+            eye.source_keypoints_run =
+                jsonStringAttr(*run_attrs, "source_keypoint_run");
+        }
+        if (!eye.schema_id.empty() &&
+            eye.schema_id != "analysis.eye_angle_runs") {
+            appendEyeAngleWarning(
+                eye,
+                "Unexpected eye-angle schema_id '" + eye.schema_id +
+                    "'; attempting partial load.");
+        }
+        if (eye.schema_version >= 0 && eye.schema_version < 5) {
+            appendEyeAngleWarning(
+                eye,
+                "Eye-angle run schema_version is older than 5; using compatibility load.");
+        }
+
+        if (run_attrs->contains("reason_code_map") &&
+            (*run_attrs)["reason_code_map"].is_object()) {
+            for (auto it = (*run_attrs)["reason_code_map"].begin();
+                 it != (*run_attrs)["reason_code_map"].end(); ++it) {
+                try {
+                    const int32_t code = std::stoi(it.key());
+                    if (it.value().is_string()) {
+                        eye.reason_code_map[code] =
+                            it.value().get<std::string>();
+                    }
+                } catch (const std::exception&) {
+                    continue;
+                }
+            }
+        }
+
+        nlohmann::json variant_schema;
+        if (run_attrs->contains("eye_angle_variant_schema") &&
+            (*run_attrs)["eye_angle_variant_schema"].is_object()) {
+            variant_schema = (*run_attrs)["eye_angle_variant_schema"];
+        }
+        if (run_attrs->contains("eye_angle_output_schema") &&
+            (*run_attrs)["eye_angle_output_schema"].is_object()) {
+            const auto& output_schema = (*run_attrs)["eye_angle_output_schema"];
+            eye.output_schema_id = jsonStringAttr(output_schema, "schema_id");
+            eye.output_schema_version =
+                jsonIntAttr(output_schema, "schema_version");
+            if (variant_schema.is_null() &&
+                output_schema.contains("variant_schema") &&
+                output_schema["variant_schema"].is_object()) {
+                variant_schema = output_schema["variant_schema"];
+            }
+        }
+        if (eye.output_schema_version >= 0 && eye.output_schema_version < 7) {
+            appendEyeAngleWarning(
+                eye,
+                "Eye-angle output schema is older than v7; using compatibility UI metadata.");
+        }
+
+        if (variant_schema.is_object()) {
+            eye.variant_schema_id =
+                jsonStringAttr(variant_schema, "schema_id");
+            eye.variant_schema_version =
+                jsonIntAttr(variant_schema, "schema_version");
+            eye.default_representation =
+                jsonStringAttr(variant_schema, "default_representation");
+            eye.representation_order =
+                jsonStringVector(variant_schema, "representation_order");
+            if (variant_schema.contains("representations") &&
+                variant_schema["representations"].is_object()) {
+                const auto& reps = variant_schema["representations"];
+                for (const auto& key : eye.representation_order) {
+                    if (!reps.contains(key) || !reps[key].is_object()) {
+                        continue;
+                    }
+                    const auto& rep_json = reps[key];
+                    ZarrDetectionData::EyeAngleRepresentationInfo rep;
+                    rep.key = key;
+                    rep.display_name =
+                        jsonStringAttr(rep_json, "display_name");
+                    rep.role = jsonStringAttr(rep_json, "role");
+                    rep.axis = jsonStringAttr(rep_json, "axis");
+                    rep.coordinate_frame =
+                        jsonStringAttr(rep_json, "coordinate_frame");
+                    rep.units = jsonStringAttr(rep_json, "units");
+                    rep.sign_convention =
+                        jsonStringAttr(rep_json, "sign_convention");
+                    rep.derived_from =
+                        jsonStringAttr(rep_json, "derived_from");
+                    rep.default_plot_fields =
+                        jsonStringVector(rep_json, "default_plot_fields");
+                    rep.primary_roi_fields =
+                        jsonStringVector(rep_json, "primary_roi_fields");
+                    rep.aggregate_roi_fields =
+                        jsonStringVector(rep_json, "aggregate_roi_fields");
+                    rep.vector_roi_fields =
+                        jsonStringVector(rep_json, "vector_roi_fields");
+                    rep.frame_fields =
+                        jsonStringVector(rep_json, "frame_fields");
+                    eye.representations.push_back(std::move(rep));
+                }
+            }
+            if (variant_schema.contains("fields") &&
+                variant_schema["fields"].is_object()) {
+                for (auto it = variant_schema["fields"].begin();
+                     it != variant_schema["fields"].end(); ++it) {
+                    if (!it.value().is_object()) {
+                        continue;
+                    }
+                    const auto& field_json = it.value();
+                    eye.fields.push_back(makeEyeAngleFieldInfo(
+                        it.key(),
+                        jsonStringAttr(field_json, "representation"),
+                        jsonStringAttr(field_json, "field_role"),
+                        jsonStringAttr(field_json, "display_name"),
+                        jsonStringAttr(field_json, "units"),
+                        field_json.contains("default_plot") &&
+                            field_json["default_plot"].is_boolean() &&
+                            field_json["default_plot"].get<bool>()));
+                }
+            }
+        }
+        if (eye.representations.empty()) {
+            appendCompatibilityEyeAngleSchema(eye);
+            appendEyeAngleWarning(
+                eye,
+                "eye_angle_variant_schema missing or incomplete; representation metadata is inferred.");
+        }
+        if (eye.default_representation.empty()) {
+            eye.default_representation =
+                eye.representation_order.empty()
+                    ? "eye_frame"
+                    : eye.representation_order.front();
+        }
+
+        std::vector<std::string> scalar_fields_to_load;
+        std::vector<std::string> vector_fields_to_load;
+        for (const auto& rep : eye.representations) {
+            for (const auto& field : rep.default_plot_fields) {
+                addUniqueString(scalar_fields_to_load, field);
+                addUniqueString(scalar_fields_to_load,
+                                unsmoothedBaseField(field));
+            }
+            for (const auto& field : rep.primary_roi_fields) {
+                addUniqueString(scalar_fields_to_load, field);
+            }
+            for (const auto& field : rep.aggregate_roi_fields) {
+                addUniqueString(scalar_fields_to_load, field);
+            }
+            for (const auto& field : rep.frame_fields) {
+                addUniqueString(scalar_fields_to_load, field);
+                addUniqueString(scalar_fields_to_load, field + "_smoothed");
+            }
+            for (const auto& field : rep.vector_roi_fields) {
+                addUniqueString(vector_fields_to_load, field);
+            }
+        }
+        addUniqueString(scalar_fields_to_load, "left_gaze_signed_deg");
+        addUniqueString(scalar_fields_to_load, "right_gaze_signed_deg");
+        addUniqueString(scalar_fields_to_load, "left_minor_signed_deg");
+        addUniqueString(scalar_fields_to_load, "right_minor_signed_deg");
+        addUniqueString(scalar_fields_to_load, "vergence_eye_angle_deg_smoothed");
+        addUniqueString(scalar_fields_to_load, "vergence_eye_angle_deg");
+        addUniqueString(scalar_fields_to_load, "vergence_signed_deg_smoothed");
+        addUniqueString(scalar_fields_to_load, "vergence_signed_deg");
+        addUniqueString(vector_fields_to_load, "left_gaze_xy");
+        addUniqueString(vector_fields_to_load, "right_gaze_xy");
+
+        auto field_info_for =
+            [&](const std::string& name) -> ZarrDetectionData::EyeAngleFieldInfo {
+            auto field_it = std::find_if(
+                eye.fields.begin(),
+                eye.fields.end(),
+                [&](const auto& field) { return field.name == name; });
+            if (field_it != eye.fields.end()) {
+                return *field_it;
+            }
+            for (const auto& rep : eye.representations) {
+                auto contains = [&](const std::vector<std::string>& values) {
+                    return std::find(values.begin(), values.end(), name) !=
+                           values.end();
+                };
+                if (contains(rep.default_plot_fields) ||
+                    contains(rep.primary_roi_fields) ||
+                    contains(rep.aggregate_roi_fields) ||
+                    contains(rep.frame_fields) ||
+                    contains(rep.vector_roi_fields)) {
+                    return makeEyeAngleFieldInfo(
+                        name,
+                        rep.key,
+                        contains(rep.vector_roi_fields) ? "vector_roi" : "",
+                        name,
+                        rep.units,
+                        contains(rep.default_plot_fields));
+                }
+            }
+            return makeEyeAngleFieldInfo(name, {}, {}, name, "deg", false);
+        };
+
+        auto readVec2Array =
+            [&](const std::string& rel_path,
+                std::vector<std::array<float, 2>>& out) -> bool {
+            const std::string path = run_base + rel_path;
+            auto try_read = [&](auto type_token) -> bool {
+                using Source = decltype(type_token);
+                auto open_result =
+                    openArrayAny<Source, 2>(store, path, context_);
+                if (!open_result.ok()) {
+                    return false;
+                }
+                auto array_result = ts::Read(open_result.value()).result();
+                if (!array_result.ok()) {
+                    return false;
+                }
+                auto array = array_result.value();
+                if (array.rank() != 2 || array.shape()[1] < 2) {
+                    return false;
+                }
+                const size_t rows = static_cast<size_t>(array.shape()[0]);
+                out.resize(rows);
+                for (size_t row = 0; row < rows; ++row) {
+                    out[row] = {
+                        static_cast<float>(
+                            array(static_cast<ts::Index>(row), 0)),
+                        static_cast<float>(
+                            array(static_cast<ts::Index>(row), 1))};
+                }
+                return true;
+            };
+            return try_read(float{}) || try_read(double{});
+        };
+
+        for (const auto& field_name : scalar_fields_to_load) {
+            ZarrDetectionData::EyeAngleScalarField field;
+            const auto info = field_info_for(field_name);
+            field.name = field_name;
+            field.representation_key = info.representation_key;
+            field.field_role = info.field_role;
+            field.display_name =
+                info.display_name.empty() ? field_name : info.display_name;
+            field.units = info.units;
+            field.has_roi = readFloatArray(
+                store, run_base + "angles/roi/" + field_name,
+                field.roi_values);
+            field.has_frame = readFloatArray(
+                store, run_base + "angles/frame/" + field_name,
+                field.frame_values);
+            if (field.has_roi || field.has_frame) {
+                if (field.has_roi) {
+                    eye.row_count =
+                        std::max(eye.row_count, field.roi_values.size());
+                }
+                if (field.has_frame) {
+                    eye.frame_count =
+                        std::max(eye.frame_count, field.frame_values.size());
+                }
+                eye.scalar_fields.push_back(std::move(field));
+            }
+        }
+        for (const auto& field_name : vector_fields_to_load) {
+            ZarrDetectionData::EyeAngleVectorField field;
+            const auto info = field_info_for(field_name);
+            field.name = field_name;
+            field.representation_key = info.representation_key;
+            field.field_role = info.field_role;
+            field.display_name =
+                info.display_name.empty() ? field_name : info.display_name;
+            field.units = info.units;
+            field.has_roi =
+                readVec2Array("angles/roi/" + field_name, field.roi_values);
+            if (field.has_roi) {
+                eye.row_count =
+                    std::max(eye.row_count, field.roi_values.size());
+                eye.vector_fields.push_back(std::move(field));
+            }
+        }
+
+        readInt32Array(store, run_base + "support/frame_indices",
+                       eye.roi_frame_indices);
+        if (eye.roi_frame_indices.empty()) {
+            readInt32Array(store, run_base + "angles/roi/frame_indices",
+                           eye.roi_frame_indices);
+        }
+        readFloatArray(store, run_base + "support/time_seconds",
+                       eye.roi_time_seconds);
+        readFloatArray(store, run_base + "support/frame_time_seconds",
+                       eye.frame_time_seconds);
+        readBoolArray(store, run_base + "qa/roi/valid_left",
+                      eye.roi_valid_left);
+        readBoolArray(store, run_base + "qa/roi/valid_right",
+                      eye.roi_valid_right);
+        readBoolArray(store, run_base + "qa/roi/valid_frame",
+                      eye.roi_valid_frame);
+        readBoolArray(store, run_base + "qa/frame/valid_frame",
+                      eye.frame_valid_frame);
+        readBoolArray(store, run_base + "qa/roi/left_major_axis_marginal",
+                      eye.roi_left_major_axis_marginal);
+        readBoolArray(store, run_base + "qa/roi/right_major_axis_marginal",
+                      eye.roi_right_major_axis_marginal);
+        readBoolArray(store, run_base + "qa/roi/major_axis_marginal",
+                      eye.roi_major_axis_marginal);
+        readBoolArray(store, run_base + "qa/frame/major_axis_marginal",
+                      eye.frame_major_axis_marginal);
+        readInt32Array(store, run_base + "qa/roi/reason_codes",
+                       eye.roi_reason_codes);
+        readInt32Array(store, run_base + "qa/frame/reason_codes",
+                       eye.frame_reason_codes);
+
+        eye.row_count = std::max(
+            {eye.row_count,
+             eye.roi_frame_indices.size(),
+             eye.roi_time_seconds.size(),
+             eye.roi_valid_left.size(),
+             eye.roi_valid_right.size(),
+             eye.roi_valid_frame.size(),
+             eye.roi_reason_codes.size()});
+        eye.frame_count = std::max(
+            {eye.frame_count,
+             eye.frame_time_seconds.size(),
+             eye.frame_valid_frame.size(),
+             eye.frame_reason_codes.size()});
+        if (eye.row_count == 0 && eye.frame_count == 0) {
+            return false;
+        }
+        eye.roi_reason_labels.resize(eye.roi_reason_codes.size());
+        for (size_t i = 0; i < eye.roi_reason_codes.size(); ++i) {
+            eye.roi_reason_labels[i] =
+                decodeEyeAngleReasonCode(eye.roi_reason_codes[i],
+                                         eye.reason_code_map);
+        }
+        eye.frame_reason_labels.resize(eye.frame_reason_codes.size());
+        for (size_t i = 0; i < eye.frame_reason_codes.size(); ++i) {
+            eye.frame_reason_labels[i] =
+                decodeEyeAngleReasonCode(eye.frame_reason_codes[i],
+                                         eye.reason_code_map);
+        }
+        if (!eye.roi_frame_indices.empty() &&
+            eye.roi_frame_indices.size() == eye.row_count) {
+            eye.row_to_frame = eye.roi_frame_indices;
+        } else {
+            eye.row_to_frame.assign(eye.row_count, -1);
+            appendEyeAngleWarning(
+                eye,
+                "Eye-angle support/frame_indices missing or length-mismatched; QC seeking may be unavailable.");
+        }
+
+        auto scalar_roi_values =
+            [&](const std::vector<std::string>& candidates)
+                -> const std::vector<float>* {
+            for (const auto& name : candidates) {
+                auto it = std::find_if(
+                    eye.scalar_fields.begin(),
+                    eye.scalar_fields.end(),
+                    [&](const auto& field) { return field.name == name; });
+                if (it != eye.scalar_fields.end() && it->has_roi &&
+                    !it->roi_values.empty()) {
+                    return &it->roi_values;
+                }
+            }
+            return nullptr;
+        };
+        const auto* left_angle_source = scalar_roi_values(
+            {"left_gaze_signed_deg", "left_minor_signed_deg",
+             "left_feret_minor_signed_deg"});
+        const auto* right_angle_source = scalar_roi_values(
+            {"right_gaze_signed_deg", "right_minor_signed_deg",
+             "right_feret_minor_signed_deg"});
+        if (left_angle_source != nullptr && right_angle_source != nullptr) {
+            size_t count =
+                std::min(left_angle_source->size(),
+                         right_angle_source->size());
+            if (eye.row_count > 0) {
+                count = std::min(count, eye.row_count);
+            }
+            data_.eye_angle_left_deg.assign(
+                left_angle_source->begin(),
+                left_angle_source->begin() + count);
+            data_.eye_angle_right_deg.assign(
+                right_angle_source->begin(),
+                right_angle_source->begin() + count);
+            if (!eye.row_to_frame.empty()) {
+                data_.eye_angle_frame_indices.assign(
+                    eye.row_to_frame.begin(),
+                    eye.row_to_frame.begin() +
+                        std::min(count, eye.row_to_frame.size()));
+            }
+            data_.eye_angle_frame_indices.resize(count, -1);
+            data_.eye_angle_valid_mask.assign(count, 1);
+            for (size_t i = 0; i < count; ++i) {
+                const bool frame_valid =
+                    eye.roi_valid_frame.empty() ||
+                    (i < eye.roi_valid_frame.size() &&
+                     eye.roi_valid_frame[i] != 0);
+                data_.eye_angle_valid_mask[i] = frame_valid ? 1 : 0;
+            }
+            data_.has_eye_angles = true;
+        } else {
+            appendEyeAngleWarning(
+                eye,
+                "No ROI gaze/minor signed fields were available for eye-angle arc overlays.");
+        }
+        data_.eye_angle_run_name = selected_run;
+
+        size_t max_frame_index = 0;
+        for (auto frame : data_.eye_angle_frame_indices) {
+            if (frame >= 0) {
+                max_frame_index =
+                    std::max(max_frame_index, static_cast<size_t>(frame));
+            }
+        }
+        const size_t desired_size =
+            std::max({max_frame_index + 1, data_.total_frames, roi_count});
+        data_.eye_angle_indices_by_frame.assign(desired_size, {});
+        for (size_t i = 0; i < data_.eye_angle_frame_indices.size(); ++i) {
+            const int32_t frame = data_.eye_angle_frame_indices[i];
+            if (frame < 0) {
+                continue;
+            }
+            const size_t frame_index = static_cast<size_t>(frame);
+            if (frame_index >= data_.eye_angle_indices_by_frame.size()) {
+                data_.eye_angle_indices_by_frame.resize(frame_index + 1);
+            }
+            data_.eye_angle_indices_by_frame[frame_index].push_back(i);
+        }
+
+        auto scalar_field_by_name =
+            [&](const std::vector<std::string>& candidates)
+                -> const ZarrDetectionData::EyeAngleScalarField* {
+            for (const auto& name : candidates) {
+                auto it = std::find_if(
+                    eye.scalar_fields.begin(),
+                    eye.scalar_fields.end(),
+                    [&](const auto& field) { return field.name == name; });
+                if (it != eye.scalar_fields.end()) {
+                    return &(*it);
+                }
+            }
+            return nullptr;
+        };
+        const auto* vergence_field = scalar_field_by_name(
+            {"vergence_eye_angle_deg_smoothed", "vergence_eye_angle_deg",
+             "vergence_signed_deg_smoothed", "vergence_signed_deg"});
+        if (vergence_field != nullptr) {
+            if (vergence_field->has_frame &&
+                !vergence_field->frame_values.empty()) {
+                data_.eye_vergence_signed_frame_deg =
+                    vergence_field->frame_values;
+            } else if (vergence_field->has_roi &&
+                       !vergence_field->roi_values.empty()) {
+                data_.eye_vergence_signed_frame_deg =
+                    vergence_field->roi_values;
+            }
+            if (!data_.eye_vergence_signed_frame_deg.empty()) {
+                const size_t frame_count =
+                    data_.eye_vergence_signed_frame_deg.size();
+                if (vergence_field->has_frame &&
+                    eye.frame_time_seconds.size() == frame_count) {
+                    data_.eye_vergence_frame_time_seconds =
+                        eye.frame_time_seconds;
+                } else if (eye.roi_time_seconds.size() == frame_count) {
+                    data_.eye_vergence_frame_time_seconds =
+                        eye.roi_time_seconds;
+                } else {
+                    data_.eye_vergence_frame_time_seconds.resize(frame_count);
+                    const double fps = data_.fps > 0.0 ? data_.fps : 30.0;
+                    const double inv_fps =
+                        fps > 0.0 ? (1.0 / fps) : 0.033333333;
+                    for (size_t i = 0; i < frame_count; ++i) {
+                        data_.eye_vergence_frame_time_seconds[i] =
+                            static_cast<float>(
+                                static_cast<double>(i) * inv_fps);
+                    }
+                }
+                if (vergence_field->has_frame &&
+                    eye.frame_valid_frame.size() == frame_count) {
+                    data_.eye_vergence_frame_valid = eye.frame_valid_frame;
+                } else if (eye.roi_valid_frame.size() == frame_count) {
+                    data_.eye_vergence_frame_valid = eye.roi_valid_frame;
+                } else {
+                    data_.eye_vergence_frame_valid.assign(frame_count, 1);
+                }
+                data_.has_eye_vergence_frame = true;
+            }
+        }
+
+        eye.loaded = true;
+        std::cout << "  Eye angle run '" << selected_run << "' loaded ("
+                  << eye.row_count << " ROI rows, " << eye.frame_count
+                  << " frame rows, default representation '"
+                  << eye.default_representation << "')" << std::endl;
+        if (roi_count > 0 && eye.row_count != 0 && eye.row_count != roi_count) {
+            std::cout << "    [EYE_ANGLE_WARNING] ROI count mismatch: angles="
+                      << eye.row_count << ", expected " << roi_count
+                      << std::endl;
+        }
+        if (!eye.warning.empty()) {
+            std::cout << "  [EYE_ANGLE_WARNING] " << eye.warning
+                      << std::endl;
+        }
+        return true;
     }
-    return true;
+    return false;
+}
+
+const ZarrDetectionData::EyeAngleScalarField*
+ZarrDetectionLoader::findEyeAngleScalarField(
+    const std::string& field_name) const {
+    const auto& fields = data_.eye_angle_analysis.scalar_fields;
+    auto it = std::find_if(
+        fields.begin(),
+        fields.end(),
+        [&](const auto& field) { return field.name == field_name; });
+    if (it == fields.end()) {
+        return nullptr;
+    }
+    return &(*it);
+}
+
+const ZarrDetectionData::EyeAngleVectorField*
+ZarrDetectionLoader::findEyeAngleVectorField(
+    const std::string& field_name) const {
+    const auto& fields = data_.eye_angle_analysis.vector_fields;
+    auto it = std::find_if(
+        fields.begin(),
+        fields.end(),
+        [&](const auto& field) { return field.name == field_name; });
+    if (it == fields.end()) {
+        return nullptr;
+    }
+    return &(*it);
+}
+
+ZarrDetectionLoader::EyeAngleQcJumpResult
+ZarrDetectionLoader::computeEyeAngleQcJump(
+    const EyeAngleQcFilterOptions& filters,
+    int current_frame_num,
+    bool forward) const {
+    EyeAngleQcJumpResult result;
+    const auto& eye = data_.eye_angle_analysis;
+    if (!eye.loaded || eye.row_count == 0) {
+        result.status = "Eye-angle data unavailable.";
+        return result;
+    }
+
+    const std::string reason_filter =
+        toLowerCopy(filters.reason_substring);
+    const bool filter_enabled =
+        filters.invalid_rows ||
+        filters.major_axis_marginal ||
+        !reason_filter.empty();
+    if (!filter_enabled) {
+        result.status = "Enable at least one eye-angle QC filter.";
+        return result;
+    }
+
+    auto boolAtRow = [](const std::vector<uint8_t>& values,
+                        size_t row) -> bool {
+        return row < values.size() && values[row] != 0;
+    };
+    auto rowInvalid = [&](size_t row) -> bool {
+        const bool left_invalid =
+            row < eye.roi_valid_left.size() && eye.roi_valid_left[row] == 0;
+        const bool right_invalid =
+            row < eye.roi_valid_right.size() && eye.roi_valid_right[row] == 0;
+        const bool frame_invalid =
+            row < eye.roi_valid_frame.size() && eye.roi_valid_frame[row] == 0;
+        return left_invalid || right_invalid || frame_invalid;
+    };
+    auto rowMarginal = [&](size_t row) -> bool {
+        return boolAtRow(eye.roi_major_axis_marginal, row) ||
+               boolAtRow(eye.roi_left_major_axis_marginal, row) ||
+               boolAtRow(eye.roi_right_major_axis_marginal, row);
+    };
+    auto rowHasReason = [&](size_t row) -> bool {
+        if (reason_filter.empty() || row >= eye.roi_reason_labels.size()) {
+            return false;
+        }
+        return toLowerCopy(eye.roi_reason_labels[row]).find(reason_filter) !=
+               std::string::npos;
+    };
+    auto rowMatches = [&](size_t row) -> bool {
+        bool matched = false;
+        matched = matched || (filters.invalid_rows && rowInvalid(row));
+        matched = matched ||
+                  (filters.major_axis_marginal && rowMarginal(row));
+        matched = matched || rowHasReason(row);
+        return matched;
+    };
+
+    std::vector<std::pair<int, size_t>> frame_rows;
+    frame_rows.reserve(eye.row_count);
+    for (size_t row = 0; row < eye.row_count; ++row) {
+        if (!rowMatches(row)) {
+            continue;
+        }
+        result.match_count++;
+        if (row < eye.row_to_frame.size() && eye.row_to_frame[row] >= 0) {
+            frame_rows.emplace_back(eye.row_to_frame[row], row);
+        }
+    }
+    std::sort(frame_rows.begin(), frame_rows.end());
+    frame_rows.erase(std::unique(frame_rows.begin(), frame_rows.end()),
+                     frame_rows.end());
+    if (frame_rows.empty()) {
+        if (result.match_count == 0) {
+            result.status = "No eye-angle rows match QC filters.";
+        } else {
+            result.status =
+                "Eye-angle rows matched, but no video frame mapping is available.";
+        }
+        return result;
+    }
+
+    auto select_forward = [&]() -> std::pair<int, size_t> {
+        auto it = std::upper_bound(
+            frame_rows.begin(),
+            frame_rows.end(),
+            std::make_pair(current_frame_num,
+                           std::numeric_limits<size_t>::max()));
+        if (it == frame_rows.end()) {
+            it = frame_rows.begin();
+        }
+        return *it;
+    };
+    auto select_backward = [&]() -> std::pair<int, size_t> {
+        auto it = std::lower_bound(
+            frame_rows.begin(),
+            frame_rows.end(),
+            std::make_pair(current_frame_num, static_cast<size_t>(0)));
+        if (it == frame_rows.begin()) {
+            return frame_rows.back();
+        }
+        --it;
+        return *it;
+    };
+    const auto selected = forward ? select_forward() : select_backward();
+    result.target_frame = selected.first;
+    result.target_row = selected.second;
+    result.status = "Eye-angle QC rows: " +
+                    std::to_string(result.match_count) +
+                    " matching rows across " +
+                    std::to_string(frame_rows.size()) + " frame/row entries.";
+    return result;
+}
+
+std::optional<size_t> ZarrDetectionLoader::findEyeAngleRowForFrame(
+    int frame) const {
+    const auto& eye = data_.eye_angle_analysis;
+    if (!eye.loaded || frame < 0) {
+        return std::nullopt;
+    }
+    for (size_t row = 0; row < eye.row_to_frame.size(); ++row) {
+        if (eye.row_to_frame[row] == frame) {
+            return row;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<int32_t> ZarrDetectionLoader::getEyeAngleFrameForRow(
+    size_t row) const {
+    const auto& eye = data_.eye_angle_analysis;
+    if (!eye.loaded || row >= eye.row_to_frame.size() ||
+        eye.row_to_frame[row] < 0) {
+        return std::nullopt;
+    }
+    return eye.row_to_frame[row];
 }
 
 const ZarrDetectionData::EyeMaskChunkCacheEntry*
