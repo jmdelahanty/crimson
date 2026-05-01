@@ -29,6 +29,99 @@ double durationMs(std::chrono::steady_clock::duration duration) {
     return std::chrono::duration<double, std::milli>(duration).count();
 }
 
+float cross(const ImVec2& a, const ImVec2& b, const ImVec2& c) {
+    return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+float signedArea(const std::vector<ImVec2>& polygon) {
+    if (polygon.size() < 3) {
+        return 0.0f;
+    }
+    double area = 0.0;
+    for (size_t i = 0; i < polygon.size(); ++i) {
+        const ImVec2& a = polygon[i];
+        const ImVec2& b = polygon[(i + 1) % polygon.size()];
+        area += static_cast<double>(a.x) * static_cast<double>(b.y) -
+                static_cast<double>(b.x) * static_cast<double>(a.y);
+    }
+    return static_cast<float>(area * 0.5);
+}
+
+bool insideClipEdge(const ImVec2& point,
+                    const ImVec2& edge_start,
+                    const ImVec2& edge_end,
+                    float clip_area_sign) {
+    const float edge_cross = cross(edge_start, edge_end, point);
+    return clip_area_sign >= 0.0f ? edge_cross >= -0.01f
+                                  : edge_cross <= 0.01f;
+}
+
+ImVec2 lineIntersection(const ImVec2& segment_start,
+                        const ImVec2& segment_end,
+                        const ImVec2& clip_start,
+                        const ImVec2& clip_end) {
+    const ImVec2 segment_delta(segment_end.x - segment_start.x,
+                               segment_end.y - segment_start.y);
+    const ImVec2 clip_delta(clip_end.x - clip_start.x,
+                            clip_end.y - clip_start.y);
+    const float denom =
+        segment_delta.x * clip_delta.y - segment_delta.y * clip_delta.x;
+    if (std::fabs(denom) <= 1e-5f) {
+        return segment_end;
+    }
+    const ImVec2 start_delta(clip_start.x - segment_start.x,
+                             clip_start.y - segment_start.y);
+    const float t =
+        (start_delta.x * clip_delta.y - start_delta.y * clip_delta.x) /
+        denom;
+    return ImVec2(segment_start.x + t * segment_delta.x,
+                  segment_start.y + t * segment_delta.y);
+}
+
+std::vector<ImVec2> clipConvexPolygon(const std::vector<ImVec2>& subject,
+                                      const std::vector<ImVec2>& clip) {
+    if (subject.size() < 3 || clip.size() < 3) {
+        return {};
+    }
+
+    std::vector<ImVec2> output = subject;
+    const float clip_area_sign = signedArea(clip);
+    if (std::fabs(clip_area_sign) <= 1e-3f) {
+        return {};
+    }
+
+    for (size_t clip_idx = 0; clip_idx < clip.size(); ++clip_idx) {
+        const ImVec2 edge_start = clip[clip_idx];
+        const ImVec2 edge_end = clip[(clip_idx + 1) % clip.size()];
+        const std::vector<ImVec2> input = output;
+        output.clear();
+        if (input.empty()) {
+            break;
+        }
+
+        ImVec2 previous = input.back();
+        bool previous_inside =
+            insideClipEdge(previous, edge_start, edge_end, clip_area_sign);
+        for (const ImVec2& current : input) {
+            const bool current_inside =
+                insideClipEdge(current, edge_start, edge_end, clip_area_sign);
+            if (current_inside) {
+                if (!previous_inside) {
+                    output.push_back(lineIntersection(
+                        previous, current, edge_start, edge_end));
+                }
+                output.push_back(current);
+            } else if (previous_inside) {
+                output.push_back(lineIntersection(
+                    previous, current, edge_start, edge_end));
+            }
+            previous = current;
+            previous_inside = current_inside;
+        }
+    }
+    return output;
+}
+
 struct EyeMaskTextureCacheEntry {
     std::string source_key;
     int32_t roi_index = -1;
@@ -426,6 +519,8 @@ void accumulateCameraViewMaskPerfMetrics(CameraViewMaskPerfMetrics& dst,
     dst.selected_contours_drawn += src.selected_contours_drawn;
     dst.contour_points += src.contour_points;
     dst.axes_drawn += src.axes_drawn;
+    dst.visual_cones_drawn += src.visual_cones_drawn;
+    dst.visual_cone_overlaps_drawn += src.visual_cone_overlaps_drawn;
     dst.gaze_rays_drawn += src.gaze_rays_drawn;
     dst.angle_labels_drawn += src.angle_labels_drawn;
     dst.selected_highlight_drawn =
@@ -687,6 +782,7 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
             }
         }
 
+        std::array<std::vector<ImVec2>, 2> visual_cone_polygons;
         for (int eye = 0; eye < 2; ++eye) {
             if ((eye == 0 && !options.show_eye_left) ||
                 (eye == 1 && !options.show_eye_right)) {
@@ -1103,6 +1199,20 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
                     ImVec2 dir_world(
                         static_cast<float>(outward_endpoint.first - center_world.first),
                         static_cast<float>(outward_endpoint.second - center_world.second));
+                    if (mask_info.has_gaze_vectors &&
+                        mask_info.gaze_vector_valid[eye] != 0) {
+                        const auto gaze = mask_info.gaze_vector_xy[eye];
+                        if (std::isfinite(gaze[0]) &&
+                            std::isfinite(gaze[1])) {
+                            const double gaze_len =
+                                std::hypot(static_cast<double>(gaze[0]),
+                                           static_cast<double>(gaze[1]));
+                            if (gaze_len > 1e-6) {
+                                dir_world.x = gaze[0];
+                                dir_world.y = gaze[1];
+                            }
+                        }
+                    }
                     float dir_len =
                         std::sqrt(dir_world.x * dir_world.x + dir_world.y * dir_world.y);
                     if (options.show_eye_direction_beams && dir_len > 1e-3f) {
@@ -1122,59 +1232,105 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
 
                         const float roi_span =
                             std::max(mask_info.roi_width, mask_info.roi_height);
-                        const float beam_length = std::max(roi_span * 3.5f, 80.0f);
-                        const float beam_width = std::max(roi_span * 0.75f, 25.0f);
+                        const float cone_length =
+                            std::clamp(roi_span * 1.15f, 90.0f, 520.0f);
+                        constexpr float kEyeVisualAngleDeg = 163.0f;
+                        const float half_angle_rad =
+                            (kEyeVisualAngleDeg * 0.5f) *
+                            static_cast<float>(M_PI / 180.0);
+                        constexpr int kConeSteps = 30;
 
-                        ImVec2 apex_world(
-                            static_cast<float>(center_world.first -
-                                               dir_world.x * (roi_span * 0.15f)),
-                            static_cast<float>(center_world.second -
-                                               dir_world.y * (roi_span * 0.15f)));
-                        ImVec2 base_center_world(
-                            apex_world.x + dir_world.x * beam_length,
-                            apex_world.y + dir_world.y * beam_length);
+                        std::vector<ImVec2> cone_points;
+                        std::vector<double> arc_x;
+                        std::vector<double> arc_y;
+                        cone_points.reserve(kConeSteps + 2);
+                        arc_x.reserve(kConeSteps + 1);
+                        arc_y.reserve(kConeSteps + 1);
 
-                        ImVec2 perp_world(-dir_world.y, dir_world.x);
-                        const float perp_len = std::sqrt(
-                            perp_world.x * perp_world.x +
-                            perp_world.y * perp_world.y);
-                        if (perp_len > 1e-3f) {
-                            perp_world.x /= perp_len;
-                            perp_world.y /= perp_len;
+                        auto center_scene =
+                            worldToScene(center_world.first, center_world.second);
+                        cone_points.push_back(ImPlot::PlotToPixels(
+                            ImPlotPoint(center_scene.first, center_scene.second)));
+
+                        for (int step = 0; step <= kConeSteps; ++step) {
+                            const float t =
+                                -half_angle_rad +
+                                (2.0f * half_angle_rad *
+                                 static_cast<float>(step) /
+                                 static_cast<float>(kConeSteps));
+                            const float c = std::cos(t);
+                            const float s = std::sin(t);
+                            const float vx = c * dir_world.x - s * dir_world.y;
+                            const float vy = s * dir_world.x + c * dir_world.y;
+                            auto scene =
+                                worldToScene(center_world.first +
+                                                 static_cast<double>(vx) *
+                                                     cone_length,
+                                             center_world.second +
+                                                 static_cast<double>(vy) *
+                                                     cone_length);
+                            arc_x.push_back(scene.first);
+                            arc_y.push_back(scene.second);
+                            cone_points.push_back(ImPlot::PlotToPixels(
+                                ImPlotPoint(scene.first, scene.second)));
                         }
 
-                        ImVec2 left_world(
-                            base_center_world.x +
-                                perp_world.x * (beam_width * 0.5f),
-                            base_center_world.y +
-                                perp_world.y * (beam_width * 0.5f));
-                        ImVec2 right_world(
-                            base_center_world.x -
-                                perp_world.x * (beam_width * 0.5f),
-                            base_center_world.y -
-                                perp_world.y * (beam_width * 0.5f));
+                        ImVec4 cone_fill_color = base_color;
+                        cone_fill_color.w = 0.13f;
+                        ImDrawList* cone_draw_list = ImPlot::GetPlotDrawList();
+                        cone_draw_list->AddConvexPolyFilled(
+                            cone_points.data(),
+                            static_cast<int>(cone_points.size()),
+                            ImGui::ColorConvertFloat4ToU32(cone_fill_color));
 
-                        auto left_scene_pair =
-                            worldToScene(left_world.x, left_world.y);
-                        auto right_scene_pair =
-                            worldToScene(right_world.x, right_world.y);
-                        auto apex_scene_pair =
-                            worldToScene(apex_world.x, apex_world.y);
-
-                        ImVec2 tri_points[3];
-                        tri_points[0] = ImPlot::PlotToPixels(
-                            ImPlotPoint(left_scene_pair.first, left_scene_pair.second));
-                        tri_points[1] = ImPlot::PlotToPixels(
-                            ImPlotPoint(right_scene_pair.first, right_scene_pair.second));
-                        tri_points[2] = ImPlot::PlotToPixels(
-                            ImPlotPoint(apex_scene_pair.first, apex_scene_pair.second));
-
-                        ImVec4 beam_color = base_color;
-                        beam_color.w = 0.16f;
-                        ImDrawList* beam_draw_list = ImPlot::GetPlotDrawList();
-                        beam_draw_list->AddConvexPolyFilled(
-                            tri_points, 3,
-                            ImGui::ColorConvertFloat4ToU32(beam_color));
+                        ImVec4 cone_outline_color = base_color;
+                        cone_outline_color.w = 0.55f;
+                        if (!arc_x.empty()) {
+                            ImPlot::SetNextLineStyle(cone_outline_color, 1.3f);
+                            ImPlot::PlotLine(
+                                (base_id + "_visual_cone_arc").c_str(),
+                                arc_x.data(),
+                                arc_y.data(),
+                                static_cast<int>(arc_x.size()));
+                            const double side0_x[2] = {
+                                center_scene.first, arc_x.front()};
+                            const double side0_y[2] = {
+                                center_scene.second, arc_y.front()};
+                            const double side1_x[2] = {
+                                center_scene.first, arc_x.back()};
+                            const double side1_y[2] = {
+                                center_scene.second, arc_y.back()};
+                            ImPlot::SetNextLineStyle(cone_outline_color, 1.0f);
+                            ImPlot::PlotLine(
+                                (base_id + "_visual_cone_side0").c_str(),
+                                side0_x,
+                                side0_y,
+                                2);
+                            ImPlot::SetNextLineStyle(cone_outline_color, 1.0f);
+                            ImPlot::PlotLine(
+                                (base_id + "_visual_cone_side1").c_str(),
+                                side1_x,
+                                side1_y,
+                                2);
+                        }
+                        metrics.visual_cones_drawn++;
+                        visual_cone_polygons[eye] = cone_points;
+                        if (!visual_cone_polygons[0].empty() &&
+                            !visual_cone_polygons[1].empty()) {
+                            const std::vector<ImVec2> overlap =
+                                clipConvexPolygon(visual_cone_polygons[0],
+                                                  visual_cone_polygons[1]);
+                            if (overlap.size() >= 3) {
+                                constexpr ImVec4 kVergenceOverlapColor =
+                                    ImVec4(0.34f, 1.0f, 0.42f, 0.24f);
+                                cone_draw_list->AddConvexPolyFilled(
+                                    overlap.data(),
+                                    static_cast<int>(overlap.size()),
+                                    ImGui::ColorConvertFloat4ToU32(
+                                        kVergenceOverlapColor));
+                                metrics.visual_cone_overlaps_drawn++;
+                            }
+                        }
                     }
                 }
                 metrics.axis_draw_ms += durationMs(

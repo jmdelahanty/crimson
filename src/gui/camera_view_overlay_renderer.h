@@ -30,6 +30,8 @@ struct CameraViewMaskPerfMetrics {
     int selected_contours_drawn = 0;
     int contour_points = 0;
     int axes_drawn = 0;
+    int visual_cones_drawn = 0;
+    int visual_cone_overlaps_drawn = 0;
     int gaze_rays_drawn = 0;
     int angle_labels_drawn = 0;
     bool selected_highlight_drawn = false;

@@ -231,10 +231,10 @@ void drawEyeMaskSection(const FrameDebugWindowContext& context,
         ImGui::SameLine();
         ImGui::Checkbox("Right eye", &result.show_eye_right_mask);
     }
-    ImGui::Checkbox("Eye direction beams", &result.show_eye_direction_beams);
+    ImGui::Checkbox("Eye visual cones", &result.show_eye_direction_beams);
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
-            "Draw translucent direction triangles from the eye fit axes. Disable this to keep eye masks, contours, axes, and angle labels without the beam overlay.");
+            "Draw translucent 163 degree visual-field cones from each eye, centered on Palette gaze vectors when available and falling back to the ellipse minor axis.");
     }
     ImGui::Checkbox("Gaze rays", &result.show_eye_gaze_rays);
     if (ImGui::IsItemHovered()) {
