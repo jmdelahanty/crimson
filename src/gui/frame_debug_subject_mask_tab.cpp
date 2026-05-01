@@ -1,0 +1,514 @@
+#include "gui/frame_debug_subject_mask_tab.h"
+
+#include "imgui.h"
+
+#include <algorithm>
+#include <limits>
+#include <sstream>
+#include <string>
+#include <vector>
+
+namespace {
+
+void drawReviewArtifactBlock(
+    const ZarrDetectionLoader::ReviewArtifactSummary* artifact) {
+    if (artifact == nullptr) {
+        ImGui::TextDisabled("Review metadata unavailable");
+        return;
+    }
+    if (!artifact->run_name.empty()) {
+        ImGui::Text("Run: %s", artifact->run_name.c_str());
+    }
+    if (!artifact->has_review_status) {
+        ImGui::TextDisabled("Review metadata unavailable");
+        return;
+    }
+
+    const auto& review_state = artifact->review_state;
+    ImVec4 status_color = (review_state == "approved")
+                              ? ImVec4(0.2f, 0.9f, 0.2f, 1.0f)
+                          : (review_state == "rejected")
+                              ? ImVec4(1.0f, 0.3f, 0.3f, 1.0f)
+                              : ImVec4(1.0f, 0.85f, 0.3f, 1.0f);
+    ImGui::TextColored(status_color, "Review: %s", review_state.c_str());
+    if (!artifact->review_intended_use.empty() ||
+        !artifact->review_method.empty()) {
+        ImGui::Text("Use: %s | Method: %s",
+                    artifact->review_intended_use.c_str(),
+                    artifact->review_method.c_str());
+    }
+    if (!artifact->review_timestamp.empty()) {
+        ImGui::Text("Reviewed: %s", artifact->review_timestamp.c_str());
+    }
+    if (!artifact->review_reviewer.empty()) {
+        ImGui::Text("Reviewer: %s", artifact->review_reviewer.c_str());
+    }
+    if (!artifact->review_notes.empty()) {
+        ImGui::Text("Notes: %s", artifact->review_notes.c_str());
+    }
+}
+
+const char* maskReviewTitle(const FrameDebugWindowContext& context) {
+    return context.zarr_loader.eyeMasksUseRefinedSubjectMasks() ||
+                   context.zarr_loader.hasSubjectShapeData()
+               ? "Subject Mask Review:"
+               : "Eye Mask Review:";
+}
+
+const char* unavailableMaskDetailsText(const FrameDebugWindowContext& context) {
+    return context.zarr_loader.eyeMasksUseRefinedSubjectMasks() ||
+                   context.zarr_loader.hasSubjectShapeData()
+               ? "Current frame subject-mask details unavailable"
+               : "Current frame eye-mask details unavailable";
+}
+
+std::string shortSubjectMaskComponentLabel(const std::string& label) {
+    if (label == "subject_body") {
+        return "Body";
+    }
+    if (label == "eye_left") {
+        return "Left eye";
+    }
+    if (label == "eye_right") {
+        return "Right eye";
+    }
+    if (label == "swim_bladder") {
+        return "Swim bladder";
+    }
+    return label;
+}
+
+bool maskHasComponent(
+    const ZarrDetectionLoader::FrameDetections::EyeMask& mask,
+    const std::string& component_name) {
+    return std::any_of(
+        mask.subject_mask_components.begin(),
+        mask.subject_mask_components.end(),
+        [&](const ZarrDetectionLoader::FrameDetections::EyeMask::
+                SubjectMaskComponent& component) {
+            return component.label == component_name;
+        });
+}
+
+std::string componentSummary(
+    const ZarrDetectionLoader::FrameDetections::EyeMask& mask) {
+    std::ostringstream oss;
+    bool first = true;
+    for (const char* label :
+         {"subject_body", "eye_left", "eye_right", "swim_bladder"}) {
+        if (!maskHasComponent(mask, label)) {
+            continue;
+        }
+        if (!first) {
+            oss << ", ";
+        }
+        oss << shortSubjectMaskComponentLabel(label);
+        first = false;
+    }
+    return first ? "<none>" : oss.str();
+}
+
+std::string firstEditableComponent(
+    const ZarrDetectionLoader::FrameDetections::EyeMask& mask) {
+    for (const char* label :
+         {"subject_body", "eye_left", "eye_right", "swim_bladder"}) {
+        if (maskHasComponent(mask, label)) {
+            return label;
+        }
+    }
+    if (!mask.subject_mask_components.empty()) {
+        return mask.subject_mask_components.front().label;
+    }
+    return {};
+}
+
+bool loadSubjectMaskEditTarget(
+    const FrameDebugWindowContext& context,
+    FrameDebugWindowState& state,
+    int detection_index,
+    int32_t roi_index,
+    const std::string& component_name) {
+    if (roi_index < 0 || component_name.empty()) {
+        state.subject_mask_edit_status =
+            "Preview load failed: no editable subject-mask target.";
+        return false;
+    }
+
+    std::string error;
+    if (state.subject_mask_edit_session.startFromLoadedRow(
+            context.zarr_loader,
+            static_cast<size_t>(roi_index),
+            component_name,
+            &error)) {
+        state.subject_mask_edit_detection_index = detection_index;
+        state.subject_mask_edit_component_name = component_name;
+        const auto& target = state.subject_mask_edit_session.target();
+        std::ostringstream oss;
+        oss << "Preview loaded: detection=" << detection_index
+            << " roi=" << target.roi_index
+            << " component=" << target.component_name
+            << " shape=" << target.rows << "x" << target.cols;
+        state.subject_mask_edit_status = oss.str();
+        return true;
+    }
+
+    state.subject_mask_edit_status = "Preview load failed: " + error;
+    return false;
+}
+
+void drawSubjectMaskEditPreviewSection(
+    const FrameDebugWindowContext& context,
+    FrameDebugWindowState& state) {
+    if (!context.zarr_loader.eyeMasksUseRefinedSubjectMasks()) {
+        return;
+    }
+
+    if (context.zarr_loader.getRefinedSubjectMaskOverlayComponents().empty()) {
+        return;
+    }
+
+    if (state.subject_mask_edit_session.active() &&
+        state.subject_mask_edit_session.target().zarr_path !=
+            context.zarr_loader.getArchivePath()) {
+        state.subject_mask_edit_session.clear();
+        state.subject_mask_edit_status.clear();
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Subject Mask Editor:");
+    ImGui::Checkbox("Enable canvas mask selection",
+                    &state.subject_mask_canvas_pick_enabled);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "When enabled, left-clicking visible subject masks in the camera view selects an edit target. Turn this off to leave canvas clicks available for keypoint editing or navigation while masks stay visible.");
+    }
+
+    const auto* masks =
+        (context.detection_details != nullptr &&
+         context.detection_details->includes_eye_masks)
+            ? &context.detection_details->eye_masks
+            : nullptr;
+    std::vector<int> editable_target_indices;
+    if (masks != nullptr) {
+        for (int idx = 0; idx < static_cast<int>(masks->size()); ++idx) {
+            if ((*masks)[static_cast<size_t>(idx)].roi_index >= 0) {
+                editable_target_indices.push_back(idx);
+            }
+        }
+    }
+
+    if (masks == nullptr || editable_target_indices.empty()) {
+        ImGui::TextDisabled("No editable subject-mask rows on this frame.");
+    } else {
+        const bool selected_target_on_frame = std::find(
+            editable_target_indices.begin(),
+            editable_target_indices.end(),
+            state.subject_mask_edit_detection_index) !=
+            editable_target_indices.end();
+        if (!selected_target_on_frame) {
+            state.subject_mask_edit_detection_index =
+                editable_target_indices.front();
+        }
+
+        ImGuiTableFlags table_flags =
+            ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
+            ImGuiTableFlags_SizingStretchProp;
+        if (ImGui::BeginTable("##subject_mask_target_table",
+                              4,
+                              table_flags)) {
+            ImGui::TableSetupColumn("Detection");
+            ImGui::TableSetupColumn("ROI row");
+            ImGui::TableSetupColumn("Components");
+            ImGui::TableSetupColumn("State");
+            ImGui::TableHeadersRow();
+
+            for (int idx : editable_target_indices) {
+                const auto& mask = (*masks)[static_cast<size_t>(idx)];
+                const bool active_target =
+                    state.subject_mask_edit_session.active() &&
+                    state.subject_mask_edit_session.target().roi_index ==
+                        mask.roi_index;
+                const bool selected_row =
+                    idx == state.subject_mask_edit_detection_index ||
+                    active_target;
+
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                std::string label = "Detection " + std::to_string(idx);
+                if (ImGui::Selectable(label.c_str(), selected_row)) {
+                    std::string component_name =
+                        state.subject_mask_edit_component_name;
+                    if (!maskHasComponent(mask, component_name)) {
+                        component_name = firstEditableComponent(mask);
+                    }
+                    loadSubjectMaskEditTarget(context,
+                                              state,
+                                              idx,
+                                              mask.roi_index,
+                                              component_name);
+                }
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%d", mask.roi_index);
+                ImGui::TableSetColumnIndex(2);
+                ImGui::TextWrapped("%s", componentSummary(mask).c_str());
+                ImGui::TableSetColumnIndex(3);
+                if (active_target &&
+                    state.subject_mask_edit_session.dirty()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.25f, 1.0f),
+                                       "dirty");
+                } else if (active_target) {
+                    ImGui::Text("preview");
+                } else {
+                    ImGui::TextDisabled("clean");
+                }
+            }
+            ImGui::EndTable();
+        }
+
+        const auto& selected_mask =
+            (*masks)[static_cast<size_t>(
+                state.subject_mask_edit_detection_index)];
+        ImGui::Text("Component:");
+        bool first_button = true;
+        for (const char* label :
+             {"subject_body", "eye_left", "eye_right", "swim_bladder"}) {
+            const bool available = maskHasComponent(selected_mask, label);
+            const bool selected =
+                state.subject_mask_edit_component_name == label &&
+                state.subject_mask_edit_session.active() &&
+                state.subject_mask_edit_session.target().roi_index ==
+                    selected_mask.roi_index;
+            if (!first_button) {
+                ImGui::SameLine();
+            }
+            first_button = false;
+            ImGui::BeginDisabled(!available);
+            if (selected) {
+                ImGui::PushStyleColor(ImGuiCol_Button,
+                                      ImVec4(0.34f, 0.34f, 0.20f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                                      ImVec4(0.42f, 0.42f, 0.24f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+                                      ImVec4(0.48f, 0.48f, 0.28f, 1.0f));
+            }
+            if (ImGui::Button(shortSubjectMaskComponentLabel(label).c_str())) {
+                loadSubjectMaskEditTarget(
+                    context,
+                    state,
+                    state.subject_mask_edit_detection_index,
+                    selected_mask.roi_index,
+                    label);
+            }
+            if (selected) {
+                ImGui::PopStyleColor(3);
+            }
+            ImGui::EndDisabled();
+        }
+    }
+
+    if (state.subject_mask_edit_session.active()) {
+        if (ImGui::Button("Reset Preview")) {
+            state.subject_mask_edit_session.resetPreview();
+            state.subject_mask_edit_status =
+                "Preview reset to loaded mask row.";
+        }
+
+        const auto& target = state.subject_mask_edit_session.target();
+        ImGui::Text("Active: %s row %d",
+                    target.component_name.c_str(),
+                    target.roi_index);
+        ImGui::Text("Shape: %zux%zu | Dirty: %s",
+                    target.rows,
+                    target.cols,
+                    state.subject_mask_edit_session.dirty() ? "yes" : "no");
+        ImGui::TextDisabled("Save backend: PreviewOnly");
+        ImGui::BeginDisabled(true);
+        ImGui::Button("Save");
+        ImGui::EndDisabled();
+    }
+
+    if (!state.subject_mask_edit_status.empty()) {
+        ImGui::TextWrapped("%s", state.subject_mask_edit_status.c_str());
+    }
+}
+
+void drawSubjectShapeQcSection(const FrameDebugWindowContext& context,
+                               FrameDebugWindowState& state,
+                               FrameDebugWindowResult& result) {
+    if (!context.zarr_loader.hasSubjectShapeData()) {
+        return;
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Subject Shape QC:");
+    ImGui::Text("Rows: %zu | Run: %s",
+                context.zarr_loader.getSubjectShapeRowCount(),
+                context.zarr_loader.getSubjectShapeRunName().c_str());
+
+    auto filters = state.subject_shape_qc_filters;
+    bool changed = false;
+    changed |= ImGui::Checkbox("Any invalid", &filters.any_invalid);
+    changed |= ImGui::Checkbox("Source mask QC failure",
+                               &filters.source_mask_qc_failure);
+    changed |= ImGui::Checkbox("Body frame invalid",
+                               &filters.body_frame_invalid);
+    ImGui::SameLine();
+    changed |= ImGui::Checkbox("Snout invalid", &filters.snout_invalid);
+    changed |= ImGui::Checkbox("Centerline invalid",
+                               &filters.centerline_invalid);
+    ImGui::SameLine();
+    changed |= ImGui::Checkbox("Centerline misses snout",
+                               &filters.centerline_misses_snout);
+    changed |= ImGui::Checkbox("B-spline invalid",
+                               &filters.bspline_invalid);
+    ImGui::SameLine();
+    changed |= ImGui::Checkbox("Tail base invalid",
+                               &filters.tail_base_invalid);
+    changed |= ImGui::Checkbox("Tail samples invalid",
+                               &filters.tail_sample_invalid);
+    if (ImGui::InputText("Reason contains",
+                         state.subject_shape_reason_filter.data(),
+                         state.subject_shape_reason_filter.size())) {
+        changed = true;
+    }
+    if (changed) {
+        filters.reason_substring =
+            state.subject_shape_reason_filter.data();
+        state.subject_shape_qc_filters = filters;
+        state.subject_shape_qc_status.clear();
+    } else {
+        state.subject_shape_qc_filters.reason_substring =
+            state.subject_shape_reason_filter.data();
+    }
+
+    if (ImGui::Button("Prev Shape QC Frame")) {
+        result.request_prev_subject_shape_qc_frame = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Next Shape QC Frame")) {
+        result.request_next_subject_shape_qc_frame = true;
+    }
+    if (!state.subject_shape_qc_status.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.25f, 1.0f),
+                           "%s",
+                           state.subject_shape_qc_status.c_str());
+    }
+}
+
+}  // namespace
+
+const char* frameDebugSubjectMaskTabTitle(
+    const FrameDebugWindowContext& context) {
+    return context.zarr_loader.eyeMasksUseRefinedSubjectMasks() ||
+                   context.zarr_loader.hasSubjectShapeData()
+               ? "Subject Masks"
+               : "Eye Masks";
+}
+
+void drawSubjectMaskTab(
+    const FrameDebugWindowContext& context,
+    FrameDebugWindowState& state,
+    FrameDebugWindowResult& result,
+    const ZarrDetectionLoader::ReviewArtifactSummary* artifact) {
+    if (!context.zarr_loader.hasEyeMasks() &&
+        !context.zarr_loader.hasSubjectShapeData() &&
+        artifact == nullptr) {
+        ImGui::TextDisabled("Subject mask data unavailable");
+        return;
+    }
+
+    if (context.zarr_loader.hasEyeMasks()) {
+        if (!context.zarr_loader.getEyeMaskSourceLabel().empty()) {
+            ImGui::Text("Source: %s",
+                        context.zarr_loader.getEyeMaskSourceLabel().c_str());
+        }
+        if (!context.zarr_loader.getEyeMaskSourcePath().empty()) {
+            ImGui::TextWrapped("Dataset: %s",
+                               context.zarr_loader.getEyeMaskSourcePath().c_str());
+        } else {
+            ImGui::Text("Run: %s",
+                        context.zarr_loader.getEyeMaskRunName().c_str());
+        }
+        if (context.zarr_loader.eyeMasksUseRefinedSubjectMasks()) {
+            const auto& labels = context.zarr_loader.getEyeMaskChannelLabels();
+            const auto& channels = context.zarr_loader.getEyeMaskChannelIndices();
+            const std::string left_channel =
+                channels[0] == std::numeric_limits<size_t>::max()
+                    ? "unavailable"
+                    : std::to_string(channels[0]);
+            const std::string right_channel =
+                channels[1] == std::numeric_limits<size_t>::max()
+                    ? "unavailable"
+                    : std::to_string(channels[1]);
+            ImGui::Text("Channels: %s=%s, %s=%s",
+                        labels[0].c_str(),
+                        left_channel.c_str(),
+                        labels[1].c_str(),
+                        right_channel.c_str());
+        }
+        if (!context.zarr_loader.getEyeMaskWarning().empty()) {
+            ImGui::TextWrapped("Warning: %s",
+                               context.zarr_loader.getEyeMaskWarning().c_str());
+        }
+        if (context.detection_details != nullptr &&
+            context.detection_details->includes_eye_masks) {
+            size_t valid_masks = 0;
+            size_t masks_with_axes = 0;
+            size_t masks_with_angle_labels = 0;
+            size_t masks_with_subject_body = 0;
+            size_t masks_with_swim_bladder = 0;
+            size_t masks_with_component_contours = 0;
+            for (const auto& mask : context.detection_details->eye_masks) {
+                if (mask.valid) {
+                    ++valid_masks;
+                }
+                if (mask.has_feret_axes) {
+                    ++masks_with_axes;
+                }
+                if (mask.has_eye_angles &&
+                    ((mask.feret_angle_valid[0] != 0) ||
+                     (mask.feret_angle_valid[1] != 0))) {
+                    ++masks_with_angle_labels;
+                }
+                for (const auto& component : mask.subject_mask_components) {
+                    if (!component.valid) {
+                        continue;
+                    }
+                    if (component.label == "subject_body") {
+                        ++masks_with_subject_body;
+                    } else if (component.label == "swim_bladder") {
+                        ++masks_with_swim_bladder;
+                    }
+                    if (component.has_contour) {
+                        ++masks_with_component_contours;
+                    }
+                }
+            }
+            ImGui::Text("Current frame valid masks: %zu", valid_masks);
+            ImGui::Text("Current frame masks with axes: %zu", masks_with_axes);
+            ImGui::Text("Current frame masks with angle labels: %zu",
+                        masks_with_angle_labels);
+            if (context.zarr_loader.eyeMasksUseRefinedSubjectMasks()) {
+                ImGui::Text("Current frame body/swim bladder masks: %zu / %zu",
+                            masks_with_subject_body,
+                            masks_with_swim_bladder);
+                ImGui::Text("Current frame component contours: %zu",
+                            masks_with_component_contours);
+            }
+        } else {
+            ImGui::TextDisabled("%s", unavailableMaskDetailsText(context));
+        }
+        if (context.zarr_loader.hasEyeAngleData()) {
+            ImGui::Text("Angle run: %s",
+                        context.zarr_loader.getEyeAngleRunName().c_str());
+        }
+        drawSubjectMaskEditPreviewSection(context, state);
+    } else {
+        ImGui::TextDisabled("Eye mask arrays unavailable for current dataset");
+    }
+    drawSubjectShapeQcSection(context, state, result);
+
+    ImGui::Separator();
+    ImGui::Text("%s", maskReviewTitle(context));
+    drawReviewArtifactBlock(artifact);
+}
