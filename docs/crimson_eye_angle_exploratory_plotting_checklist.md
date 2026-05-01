@@ -27,39 +27,39 @@ Related contracts and docs:
 - [ ] Represent every loaded scalar field with name, display name, units,
       representation, role, ROI availability, frame availability, and source
       path.
-- [ ] Represent vector fields separately from scalar fields.
-- [ ] Distinguish ROI-indexed data from frame-indexed data in the plotting
+- [x] Represent vector fields separately from scalar fields.
+- [x] Distinguish ROI-indexed data from frame-indexed data in the plotting
       API.
-- [ ] For ROI arrays, use `support/frame_indices` for frame x-values when
+- [x] For ROI arrays, use `support/frame_indices` for frame x-values when
       available.
-- [ ] For ROI arrays, use `support/time_seconds` for time x-values when the UI
+- [x] For ROI arrays, use `support/time_seconds` for time x-values when the UI
       is in time mode.
-- [ ] For frame arrays, use frame row index or `support/frame_time_seconds`;
+- [x] For frame arrays, use frame row index or `support/frame_time_seconds`;
       do not remap through ROI frame indices.
-- [ ] Preserve the current smoothed-to-base fallback, but expose the fallback in
+- [x] Preserve the current smoothed-to-base fallback, but expose the fallback in
       the UI when it happens.
 
 ### 2. Field Browser
 
-- [ ] Add a searchable field browser in the Eye Angles tab.
+- [x] Add a searchable field browser in the Eye Angles tab.
 - [ ] Group fields by representation: `eye_frame`, `gaze`, `nasal_gaze`,
       `major`, `centroid`, `legacy`, and any future schema-provided
       representation.
-- [ ] Show scalar and vector fields in separate groups.
-- [ ] Mark unavailable schema fields as disabled rather than hiding them.
+- [x] Show scalar and vector fields in separate groups.
+- [x] Mark unavailable schema fields as disabled rather than hiding them.
 - [ ] Add selection presets: `Default`, `All in representation`, `Clear`, and
       `Valid plotted fields`.
-- [ ] Keep `default_plot_fields` as the initial selection for each
+- [x] Keep `default_plot_fields` as the initial selection for each
       representation.
-- [ ] Persist the active selection in UI state for the current session.
+- [x] Persist the active selection in UI state for the current session.
 
 ### 3. Scalar Plotting
 
-- [ ] Plot multiple selected scalar traces at once.
-- [ ] Group selected traces by compatible units so degrees, pixels, seconds,
+- [x] Plot multiple selected scalar traces at once.
+- [x] Group selected traces by compatible units so degrees, pixels, seconds,
       and unitless values do not share misleading axes.
-- [ ] Add an x-axis mode selector: frame, time, or row.
-- [ ] Draw the current frame/row cursor on each plot.
+- [x] Add an x-axis mode selector: frame, time, or row.
+- [x] Draw the current frame/row cursor on each plot.
 - [ ] Add hover readout for field name, x-value, y-value, row, and frame.
 - [ ] Add click-to-seek from a plotted point back to the video frame.
 - [ ] Add selected-row highlighting across all visible plots.
@@ -128,8 +128,8 @@ Related contracts and docs:
 - [ ] Confirm click-to-seek lands on the expected video frame.
 - [ ] Confirm invalid and major-axis marginal rows can be found visually and via
       QC seek controls.
-- [ ] Run `git diff --check`.
-- [ ] Build `redgui`.
+- [x] Run `git diff --check`.
+- [x] Build `redgui`.
 
 ## Suggested First Slice
 

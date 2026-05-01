@@ -4,9 +4,11 @@
 #include "implot.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -124,6 +126,28 @@ std::string eyeUnsmoothedBaseField(const std::string& field_name) {
         return {};
     }
     return field_name.substr(0, field_name.size() - std::strlen(kSmoothedSuffix));
+}
+
+std::string toLowerAscii(std::string value) {
+    std::transform(value.begin(),
+                   value.end(),
+                   value.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return value;
+}
+
+bool containsString(const std::vector<std::string>& values,
+                    const std::string& needle) {
+    return std::find(values.begin(), values.end(), needle) != values.end();
+}
+
+void addUniqueString(std::vector<std::string>& values,
+                     const std::string& value) {
+    if (!value.empty() && !containsString(values, value)) {
+        values.push_back(value);
+    }
 }
 
 bool maskHasComponent(
@@ -1045,61 +1069,278 @@ const ZarrDetectionData::EyeAngleScalarField* resolveEyeAnglePlotField(
     return nullptr;
 }
 
-void drawEyeAngleSeriesPlot(
+const ZarrDetectionData::EyeAngleFieldInfo* findEyeAngleFieldInfo(
+    const ZarrDetectionData::EyeAngleAnalysisData& eye,
+    const std::string& field_name) {
+    auto it = std::find_if(
+        eye.fields.begin(),
+        eye.fields.end(),
+        [&](const auto& field) { return field.name == field_name; });
+    if (it == eye.fields.end()) {
+        return nullptr;
+    }
+    return &(*it);
+}
+
+std::string eyeAngleFieldDisplayName(
+    const ZarrDetectionData::EyeAngleAnalysisData& eye,
+    const ZarrDetectionData::EyeAngleScalarField* scalar_field,
+    const std::string& field_name) {
+    if (scalar_field != nullptr && !scalar_field->display_name.empty()) {
+        return scalar_field->display_name;
+    }
+    if (const auto* info = findEyeAngleFieldInfo(eye, field_name);
+        info != nullptr && !info->display_name.empty()) {
+        return info->display_name;
+    }
+    return field_name;
+}
+
+std::string eyeAngleFieldAvailabilityLabel(
+    const ZarrDetectionData::EyeAngleScalarField* field,
+    const std::string& requested_name,
+    const std::string& resolved_name) {
+    if (field == nullptr) {
+        return "unavailable";
+    }
+    std::string label;
+    if (field->has_roi && field->has_frame) {
+        label = "roi+frame";
+    } else if (field->has_frame) {
+        label = "frame";
+    } else if (field->has_roi) {
+        label = "roi";
+    } else {
+        label = "empty";
+    }
+    if (resolved_name != requested_name) {
+        label += ", fallback: " + resolved_name;
+    }
+    return label;
+}
+
+std::vector<std::string> defaultEyeAnglePlotFields(
+    const ZarrDetectionData::EyeAngleRepresentationInfo& rep) {
+    return rep.default_plot_fields.empty() ? rep.primary_roi_fields
+                                           : rep.default_plot_fields;
+}
+
+std::vector<std::string> collectEyeAngleScalarCandidates(
+    const ZarrDetectionData::EyeAngleAnalysisData& eye,
+    const ZarrDetectionData::EyeAngleRepresentationInfo& rep) {
+    std::vector<std::string> candidates;
+    for (const auto& field : rep.default_plot_fields) {
+        addUniqueString(candidates, field);
+    }
+    for (const auto& field : rep.primary_roi_fields) {
+        addUniqueString(candidates, field);
+    }
+    for (const auto& field : rep.aggregate_roi_fields) {
+        addUniqueString(candidates, field);
+    }
+    for (const auto& field : rep.frame_fields) {
+        addUniqueString(candidates, field);
+        addUniqueString(candidates, field + "_smoothed");
+    }
+    for (const auto& field : eye.scalar_fields) {
+        if (field.representation_key == rep.key) {
+            addUniqueString(candidates, field.name);
+        }
+    }
+    return candidates;
+}
+
+std::vector<std::string> collectEyeAngleVectorCandidates(
+    const ZarrDetectionData::EyeAngleAnalysisData& eye,
+    const ZarrDetectionData::EyeAngleRepresentationInfo& rep) {
+    std::vector<std::string> candidates;
+    for (const auto& field : rep.vector_roi_fields) {
+        addUniqueString(candidates, field);
+    }
+    for (const auto& field : eye.vector_fields) {
+        if (field.representation_key == rep.key) {
+            addUniqueString(candidates, field.name);
+        }
+    }
+    return candidates;
+}
+
+void resetEyeAnglePlotSelection(
+    const FrameDebugWindowContext& context,
+    const ZarrDetectionData::EyeAngleRepresentationInfo& rep,
+    FrameDebugWindowState& state) {
+    state.eye_angle_selected_plot_fields.clear();
+    for (const auto& field_name : defaultEyeAnglePlotFields(rep)) {
+        std::string resolved_name;
+        if (resolveEyeAnglePlotField(
+                context.zarr_loader, field_name, resolved_name) != nullptr) {
+            addUniqueString(state.eye_angle_selected_plot_fields, field_name);
+        }
+    }
+}
+
+const char* eyeAngleXAxisLabel(int mode) {
+    switch (mode) {
+        case 1:
+            return "Time (s)";
+        case 2:
+            return "Row";
+        default:
+            return "Frame";
+    }
+}
+
+std::optional<double> eyeAngleXForSample(
+    const ZarrDetectionData::EyeAngleAnalysisData& eye,
+    bool use_frame_values,
+    int x_axis_mode,
+    size_t row) {
+    if (x_axis_mode == 2) {
+        return static_cast<double>(row);
+    }
+    if (x_axis_mode == 1) {
+        const auto& times =
+            use_frame_values ? eye.frame_time_seconds : eye.roi_time_seconds;
+        if (row >= times.size() || !std::isfinite(times[row])) {
+            return std::nullopt;
+        }
+        return static_cast<double>(times[row]);
+    }
+    if (use_frame_values) {
+        return static_cast<double>(row);
+    }
+    if (row < eye.roi_frame_indices.size() &&
+        eye.roi_frame_indices[row] >= 0) {
+        return static_cast<double>(eye.roi_frame_indices[row]);
+    }
+    return static_cast<double>(row);
+}
+
+std::optional<double> currentEyeAnglePlotX(
+    const ZarrDetectionData::EyeAngleAnalysisData& eye,
+    int x_axis_mode,
+    int current_frame_num,
+    std::optional<size_t> current_row) {
+    if (x_axis_mode == 2) {
+        if (current_row) {
+            return static_cast<double>(*current_row);
+        }
+        return std::nullopt;
+    }
+    if (x_axis_mode == 1) {
+        if (current_row && *current_row < eye.roi_time_seconds.size() &&
+            std::isfinite(eye.roi_time_seconds[*current_row])) {
+            return static_cast<double>(eye.roi_time_seconds[*current_row]);
+        }
+        if (current_frame_num >= 0 &&
+            static_cast<size_t>(current_frame_num) <
+                eye.frame_time_seconds.size() &&
+            std::isfinite(eye.frame_time_seconds[current_frame_num])) {
+            return static_cast<double>(
+                eye.frame_time_seconds[current_frame_num]);
+        }
+        return std::nullopt;
+    }
+    return static_cast<double>(current_frame_num);
+}
+
+struct EyeAngleTraceBuffer {
+    std::string requested_name;
+    std::string resolved_name;
+    std::string label;
+    std::string units;
+    bool use_frame_values = false;
+    std::vector<double> xs;
+    std::vector<double> ys;
+};
+
+bool buildEyeAngleTraceBuffer(
     const ZarrDetectionData::EyeAngleAnalysisData& eye,
     const ZarrDetectionData::EyeAngleScalarField& field,
     const std::string& requested_name,
     const std::string& resolved_name,
-    int current_frame_num) {
+    int x_axis_mode,
+    EyeAngleTraceBuffer& out) {
     const bool use_frame = field.has_frame && !field.frame_values.empty();
     const auto& values = use_frame ? field.frame_values : field.roi_values;
     if (values.empty()) {
-        ImGui::TextDisabled("%s unavailable", requested_name.c_str());
-        return;
+        return false;
     }
 
-    std::vector<double> xs;
-    std::vector<double> ys;
-    xs.reserve(values.size());
-    ys.reserve(values.size());
+    out.requested_name = requested_name;
+    out.resolved_name = resolved_name;
+    out.label = field.display_name.empty() ? resolved_name : field.display_name;
+    if (resolved_name != requested_name) {
+        out.label += " (fallback)";
+    }
+    out.units = field.units.empty() ? "value" : field.units;
+    out.use_frame_values = use_frame;
+    out.xs.clear();
+    out.ys.clear();
+    out.xs.reserve(values.size());
+    out.ys.reserve(values.size());
     for (size_t row = 0; row < values.size(); ++row) {
         const float value = values[row];
         if (!std::isfinite(value)) {
             continue;
         }
-        double x = static_cast<double>(row);
-        if (row < eye.roi_frame_indices.size() &&
-            eye.roi_frame_indices[row] >= 0) {
-            x = static_cast<double>(eye.roi_frame_indices[row]);
+        auto x = eyeAngleXForSample(eye, use_frame, x_axis_mode, row);
+        if (!x) {
+            continue;
         }
-        xs.push_back(x);
-        ys.push_back(static_cast<double>(value));
+        out.xs.push_back(*x);
+        out.ys.push_back(static_cast<double>(value));
     }
-    if (xs.size() < 2) {
-        ImGui::TextDisabled("%s has no finite values", requested_name.c_str());
+    return out.xs.size() >= 2;
+}
+
+void drawEyeAngleTraceGroupPlot(
+    const std::string& title,
+    const std::vector<EyeAngleTraceBuffer>& traces,
+    const char* x_axis_label,
+    const std::string& units,
+    std::optional<double> current_x) {
+    if (traces.empty()) {
         return;
     }
 
-    std::string title = requested_name;
-    if (resolved_name != requested_name) {
-        title += " (fallback: " + resolved_name + ")";
+    double y_min = std::numeric_limits<double>::infinity();
+    double y_max = -std::numeric_limits<double>::infinity();
+    for (const auto& trace : traces) {
+        if (trace.ys.empty()) {
+            continue;
+        }
+        const auto [trace_min, trace_max] =
+            std::minmax_element(trace.ys.begin(), trace.ys.end());
+        y_min = std::min(y_min, *trace_min);
+        y_max = std::max(y_max, *trace_max);
     }
-    if (ImPlot::BeginPlot(title.c_str(), ImVec2(-1.0f, 170.0f))) {
-        ImPlot::SetupAxes("Frame", field.units.empty() ? "deg" : field.units.c_str(),
+    if (!std::isfinite(y_min) || !std::isfinite(y_max)) {
+        return;
+    }
+    if (y_min == y_max) {
+        y_min -= 1.0;
+        y_max += 1.0;
+    }
+
+    const std::string y_axis_label = units == "value" ? "Value" : units;
+    if (ImPlot::BeginPlot(title.c_str(), ImVec2(-1.0f, 230.0f))) {
+        ImPlot::SetupAxes(x_axis_label,
+                          y_axis_label.c_str(),
                           ImPlotAxisFlags_AutoFit,
                           ImPlotAxisFlags_AutoFit);
-        ImPlot::PlotLine(resolved_name.c_str(),
-                         xs.data(),
-                         ys.data(),
-                         static_cast<int>(xs.size()));
-        const double current_x[2] = {
-            static_cast<double>(current_frame_num),
-            static_cast<double>(current_frame_num)};
-        const double current_y[2] = {
-            *std::min_element(ys.begin(), ys.end()),
-            *std::max_element(ys.begin(), ys.end())};
-        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.8f, 0.2f, 0.8f), 1.5f);
-        ImPlot::PlotLine("Current Frame", current_x, current_y, 2);
+        for (const auto& trace : traces) {
+            ImPlot::PlotLine(trace.label.c_str(),
+                             trace.xs.data(),
+                             trace.ys.data(),
+                             static_cast<int>(trace.xs.size()));
+        }
+        if (current_x) {
+            const double current_line_x[2] = {*current_x, *current_x};
+            const double current_line_y[2] = {y_min, y_max};
+            ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.8f, 0.2f, 0.8f), 1.5f);
+            ImPlot::PlotLine("Current", current_line_x, current_line_y, 2);
+        }
         ImPlot::EndPlot();
     }
 }
@@ -1177,6 +1418,191 @@ void drawEyeAngleCurrentValues(
                     field_name.c_str(),
                     value[0],
                     value[1]);
+    }
+}
+
+void drawEyeAngleFieldBrowser(
+    const FrameDebugWindowContext& context,
+    const ZarrDetectionData::EyeAngleAnalysisData& eye,
+    const ZarrDetectionData::EyeAngleRepresentationInfo& rep,
+    FrameDebugWindowState& state) {
+    ImGui::Text("Plot Fields:");
+    ImGui::InputText("Field filter",
+                     state.eye_angle_field_filter.data(),
+                     state.eye_angle_field_filter.size());
+
+    if (ImGui::Button("Default")) {
+        resetEyeAnglePlotSelection(context, rep, state);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("All Available")) {
+        state.eye_angle_selected_plot_fields.clear();
+        for (const auto& field_name :
+             collectEyeAngleScalarCandidates(eye, rep)) {
+            std::string resolved_name;
+            if (resolveEyeAnglePlotField(
+                    context.zarr_loader, field_name, resolved_name) !=
+                nullptr) {
+                addUniqueString(state.eye_angle_selected_plot_fields,
+                                field_name);
+            }
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Clear")) {
+        state.eye_angle_selected_plot_fields.clear();
+    }
+    ImGui::TextDisabled("Selected scalar fields: %zu",
+                        state.eye_angle_selected_plot_fields.size());
+
+    const std::string filter = toLowerAscii(
+        std::string(state.eye_angle_field_filter.data()));
+    const auto candidates = collectEyeAngleScalarCandidates(eye, rep);
+    int visible_scalar_count = 0;
+    for (const auto& field_name : candidates) {
+        std::string resolved_name;
+        const auto* field = resolveEyeAnglePlotField(
+            context.zarr_loader, field_name, resolved_name);
+        const bool available = field != nullptr;
+        const std::string display_name =
+            eyeAngleFieldDisplayName(eye, field, field_name);
+        const std::string search_text =
+            toLowerAscii(field_name + " " + display_name);
+        if (!filter.empty() &&
+            search_text.find(filter) == std::string::npos) {
+            continue;
+        }
+
+        ++visible_scalar_count;
+        bool selected = containsString(state.eye_angle_selected_plot_fields,
+                                       field_name);
+        if (!available) {
+            ImGui::BeginDisabled(true);
+        }
+        ImGui::PushID(field_name.c_str());
+        if (ImGui::Checkbox(display_name.c_str(), &selected)) {
+            if (selected) {
+                addUniqueString(state.eye_angle_selected_plot_fields,
+                                field_name);
+            } else {
+                auto& selected_fields = state.eye_angle_selected_plot_fields;
+                selected_fields.erase(
+                    std::remove(selected_fields.begin(),
+                                selected_fields.end(),
+                                field_name),
+                    selected_fields.end());
+            }
+        }
+        ImGui::PopID();
+        if (!available) {
+            ImGui::EndDisabled();
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("[%s]",
+                            eyeAngleFieldAvailabilityLabel(
+                                field, field_name, resolved_name)
+                                .c_str());
+        if (display_name != field_name) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", field_name.c_str());
+        }
+    }
+    if (visible_scalar_count == 0) {
+        ImGui::TextDisabled("No scalar fields match this filter");
+    }
+
+    const auto vector_candidates = collectEyeAngleVectorCandidates(eye, rep);
+    if (!vector_candidates.empty() &&
+        ImGui::CollapsingHeader("Vector Fields",
+                                ImGuiTreeNodeFlags_DefaultOpen)) {
+        for (const auto& field_name : vector_candidates) {
+            const auto* field =
+                context.zarr_loader.findEyeAngleVectorField(field_name);
+            ImGui::TextDisabled("%s [%s]",
+                                field_name.c_str(),
+                                (field != nullptr && field->has_roi)
+                                    ? "roi vector"
+                                    : "unavailable");
+        }
+    }
+}
+
+void drawEyeAngleSelectedPlots(
+    const FrameDebugWindowContext& context,
+    const ZarrDetectionData::EyeAngleAnalysisData& eye,
+    const FrameDebugWindowState& state,
+    std::optional<size_t> current_row) {
+    if (state.eye_angle_selected_plot_fields.empty()) {
+        ImGui::TextDisabled("No eye-angle scalar fields selected");
+        return;
+    }
+
+    struct TraceGroup {
+        std::string units;
+        std::vector<EyeAngleTraceBuffer> traces;
+    };
+    std::vector<TraceGroup> groups;
+    int unavailable_count = 0;
+    int empty_count = 0;
+    for (const auto& requested_field :
+         state.eye_angle_selected_plot_fields) {
+        std::string resolved_name;
+        const auto* field = resolveEyeAnglePlotField(
+            context.zarr_loader, requested_field, resolved_name);
+        if (field == nullptr) {
+            ++unavailable_count;
+            continue;
+        }
+
+        EyeAngleTraceBuffer trace;
+        if (!buildEyeAngleTraceBuffer(eye,
+                                      *field,
+                                      requested_field,
+                                      resolved_name,
+                                      state.eye_angle_plot_x_axis_mode,
+                                      trace)) {
+            ++empty_count;
+            continue;
+        }
+        auto group_it = std::find_if(
+            groups.begin(),
+            groups.end(),
+            [&](const auto& group) { return group.units == trace.units; });
+        if (group_it == groups.end()) {
+            groups.push_back({trace.units, {}});
+            group_it = std::prev(groups.end());
+        }
+        group_it->traces.push_back(std::move(trace));
+    }
+
+    if (unavailable_count > 0) {
+        ImGui::TextDisabled("%d selected fields unavailable",
+                            unavailable_count);
+    }
+    if (empty_count > 0) {
+        ImGui::TextDisabled(
+            "%d selected fields have no finite samples for this x-axis",
+            empty_count);
+    }
+    if (groups.empty()) {
+        ImGui::TextDisabled("No selected fields can be plotted");
+        return;
+    }
+
+    const char* x_axis_label =
+        eyeAngleXAxisLabel(state.eye_angle_plot_x_axis_mode);
+    const auto current_x = currentEyeAnglePlotX(
+        eye,
+        state.eye_angle_plot_x_axis_mode,
+        context.current_frame_num,
+        current_row);
+    for (const auto& group : groups) {
+        std::string title = "Eye Angles";
+        if (groups.size() > 1) {
+            title += " (" + group.units + ")";
+        }
+        drawEyeAngleTraceGroupPlot(
+            title, group.traces, x_axis_label, group.units, current_x);
     }
 }
 
@@ -1274,9 +1700,15 @@ void drawEyeAngleTab(const FrameDebugWindowContext& context,
                     selected_rep->axis.c_str());
     }
 
-    if (auto current_row =
-            context.zarr_loader.findEyeAngleRowForFrame(
-                context.current_frame_num)) {
+    const std::string selection_key = eye.run_name + "|" + selected_rep->key;
+    if (state.eye_angle_plot_selection_key != selection_key) {
+        state.eye_angle_plot_selection_key = selection_key;
+        resetEyeAnglePlotSelection(context, *selected_rep, state);
+    }
+
+    const auto current_row = context.zarr_loader.findEyeAngleRowForFrame(
+        context.current_frame_num);
+    if (current_row) {
         state.eye_angle_selected_row = static_cast<int>(*current_row);
         drawEyeAngleCurrentValues(context, eye, *selected_rep, *current_row);
     } else {
@@ -1340,26 +1772,16 @@ void drawEyeAngleTab(const FrameDebugWindowContext& context,
     }
 
     ImGui::Separator();
-    const auto& plot_fields = selected_rep->default_plot_fields.empty()
-                                  ? selected_rep->primary_roi_fields
-                                  : selected_rep->default_plot_fields;
-    if (plot_fields.empty()) {
-        ImGui::TextDisabled("No default plot fields for this representation");
+    ImGui::Text("Eye-Angle Plots:");
+    const char* x_axis_labels[] = {"Frame", "Time (s)", "Row"};
+    int x_axis_mode = std::clamp(state.eye_angle_plot_x_axis_mode, 0, 2);
+    if (ImGui::Combo("X axis", &x_axis_mode, x_axis_labels, 3)) {
+        state.eye_angle_plot_x_axis_mode = x_axis_mode;
     }
-    for (const auto& requested_field : plot_fields) {
-        std::string resolved_name;
-        const auto* field = resolveEyeAnglePlotField(
-            context.zarr_loader, requested_field, resolved_name);
-        if (field == nullptr) {
-            ImGui::TextDisabled("%s unavailable", requested_field.c_str());
-            continue;
-        }
-        drawEyeAngleSeriesPlot(eye,
-                               *field,
-                               requested_field,
-                               resolved_name,
-                               context.current_frame_num);
-    }
+    drawEyeAngleFieldBrowser(context, eye, *selected_rep, state);
+
+    ImGui::Separator();
+    drawEyeAngleSelectedPlots(context, eye, state, current_row);
 }
 
 }  // namespace

@@ -40,6 +40,10 @@ struct FrameDebugWindowState {
     std::string eye_angle_qc_status;
     int eye_angle_selected_row = -1;
     int eye_angle_representation_index = -1;
+    int eye_angle_plot_x_axis_mode = 0;
+    std::array<char, 128> eye_angle_field_filter{};
+    std::vector<std::string> eye_angle_selected_plot_fields;
+    std::string eye_angle_plot_selection_key;
     FrameInspectTab active_tab = FrameInspectTab::Detect;
 };
 
