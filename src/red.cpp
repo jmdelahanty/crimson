@@ -435,7 +435,7 @@ int main(int argc, char **argv) {
     std::filesystem::path cli_perf_log_path;
     std::filesystem::path cli_mask_perf_log_path;
     int cli_swap_interval = 1;
-    int cli_mask_perf_sample_every = 1;
+    int cli_mask_perf_sample_every = 10;
     double cli_frame_cap_fps = 0.0;
     bool mask_perf_log_enabled = true;
     const std::filesystem::path argv0_path = (argc > 0) ? argv[0] : "";

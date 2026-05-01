@@ -58,6 +58,83 @@ def summarize(values: Iterable[float | int | None]) -> str:
     )
 
 
+def contiguous_runs(rows: list[dict[str, Any]], gap_ms: int = 100) -> list[list[dict[str, Any]]]:
+    runs: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    for row in rows:
+        if not current:
+            current = [row]
+            continue
+        previous = current[-1]
+        wall = row.get("wall_epoch_ms")
+        previous_wall = previous.get("wall_epoch_ms")
+        gap = (
+            wall - previous_wall
+            if isinstance(wall, int) and isinstance(previous_wall, int)
+            else 0
+        )
+        if row.get("play_video") != previous.get("play_video") or gap > gap_ms:
+            runs.append(current)
+            current = [row]
+        else:
+            current.append(row)
+    if current:
+        runs.append(current)
+    return runs
+
+
+def mean_finite(values: Iterable[float | int | None]) -> float | None:
+    finite = [float(v) for v in values if isinstance(v, (int, float)) and math.isfinite(v)]
+    if not finite:
+        return None
+    return sum(finite) / len(finite)
+
+
+def print_observed_rates(rows: list[dict[str, Any]]) -> None:
+    runs = [run for run in contiguous_runs(rows) if len(run) >= 10]
+    if not runs:
+        return
+    print("\nobserved contiguous rates")
+    for idx, run in enumerate(runs):
+        first_wall = run[0].get("wall_epoch_ms")
+        last_wall = run[-1].get("wall_epoch_ms")
+        if not isinstance(first_wall, int) or not isinstance(last_wall, int):
+            continue
+        wall_s = (last_wall - first_wall) / 1000.0
+        if wall_s <= 0.0:
+            continue
+        sample_every = run[0].get("mask_perf_sample_every", 1)
+        if not isinstance(sample_every, int) or sample_every <= 0:
+            sample_every = 1
+        sample_hz = (len(run) - 1) / wall_s
+        approx_app_hz = sample_hz * sample_every
+        mean_loop = mean_finite(get_nested(row, "frame_loop_ms") for row in run)
+        loop_hz = 1000.0 / mean_loop if mean_loop and mean_loop > 0.0 else None
+        current_frame_hz = None
+        first_frame = run[0].get("current_frame_num")
+        last_frame = run[-1].get("current_frame_num")
+        if isinstance(first_frame, int) and isinstance(last_frame, int):
+            current_frame_hz = (last_frame - first_frame) / wall_s
+        print(
+            "run={idx} play={play} samples={samples} wall_s={wall_s:.3f} "
+            "sample_hz={sample_hz:.2f} approx_app_hz={app_hz:.2f} "
+            "loop_hz={loop_hz} current_frame_hz={current_hz}".format(
+                idx=idx,
+                play=run[0].get("play_video"),
+                samples=len(run),
+                wall_s=wall_s,
+                sample_hz=sample_hz,
+                app_hz=approx_app_hz,
+                loop_hz=f"{loop_hz:.2f}" if loop_hz is not None else "n/a",
+                current_hz=(
+                    f"{current_frame_hz:.2f}"
+                    if current_frame_hz is not None
+                    else "n/a"
+                ),
+            )
+        )
+
+
 def print_timing_group(title: str, rows: list[dict[str, Any]], fields: list[tuple[str, str]]) -> None:
     print(f"\n{title}")
     for label, path in fields:
@@ -107,6 +184,13 @@ def main() -> int:
     )
     print(f"zarr: {rows[-1].get('loaded_zarr_path')}")
     print(f"source: {rows[-1].get('source_label')} / {rows[-1].get('run_name')}")
+    frame_cap_fps = get_nested(rows[-1], "frame_perf.render.frame_cap_fps")
+    if frame_cap_fps and frame_cap_fps > 0.0:
+        print(
+            "frame_cap_fps: "
+            f"{frame_cap_fps:.3f} ({1000.0 / frame_cap_fps:.4f} ms budget)"
+        )
+    print_observed_rates(rows)
 
     mask_fields = [
         ("frame_loop_ms", "frame_loop_ms"),
