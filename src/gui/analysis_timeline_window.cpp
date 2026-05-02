@@ -367,6 +367,286 @@ size_t validCount(const std::vector<uint8_t>& values) {
         }));
 }
 
+struct AnalysisTimelineTrace {
+    std::string label;
+    std::string units;
+    std::vector<double> xs;
+    std::vector<double> ys;
+};
+
+bool stringEndsWith(const std::string& value, const std::string& suffix) {
+    return value.size() >= suffix.size() &&
+           value.compare(value.size() - suffix.size(), suffix.size(), suffix) ==
+               0;
+}
+
+std::string unsmoothedEyeAngleFieldName(const std::string& field_name) {
+    constexpr const char* kSmoothedSuffix = "_smoothed";
+    if (!stringEndsWith(field_name, kSmoothedSuffix)) {
+        return {};
+    }
+    return field_name.substr(0, field_name.size() -
+                                      std::string(kSmoothedSuffix).size());
+}
+
+void addUniqueField(std::vector<std::string>& fields,
+                    const std::string& field_name) {
+    if (field_name.empty() ||
+        std::find(fields.begin(), fields.end(), field_name) != fields.end()) {
+        return;
+    }
+    fields.push_back(field_name);
+}
+
+const ZarrDetectionData::EyeAngleScalarField* resolveEyeAngleTimelineField(
+    const ZarrDetectionLoader& loader,
+    const std::string& requested_field,
+    std::string& resolved_name) {
+    resolved_name = requested_field;
+    const auto* field = loader.findEyeAngleScalarField(requested_field);
+    if (field != nullptr && (field->has_frame || field->has_roi)) {
+        return field;
+    }
+    const std::string base = unsmoothedEyeAngleFieldName(requested_field);
+    if (!base.empty()) {
+        field = loader.findEyeAngleScalarField(base);
+        if (field != nullptr && (field->has_frame || field->has_roi)) {
+            resolved_name = base;
+            return field;
+        }
+    }
+    return nullptr;
+}
+
+std::optional<double> sampleTimeFromFrame(int32_t frame, double video_fps) {
+    if (frame < 0 || video_fps <= 0.0) {
+        return std::nullopt;
+    }
+    return static_cast<double>(frame) / video_fps;
+}
+
+void extendTraceRange(const AnalysisTimelineTrace& trace,
+                      double& x_min,
+                      double& x_max,
+                      double& y_min,
+                      double& y_max) {
+    for (double value : trace.xs) {
+        if (!std::isfinite(value)) {
+            continue;
+        }
+        x_min = std::min(x_min, value);
+        x_max = std::max(x_max, value);
+    }
+    for (double value : trace.ys) {
+        if (!std::isfinite(value)) {
+            continue;
+        }
+        y_min = std::min(y_min, value);
+        y_max = std::max(y_max, value);
+    }
+}
+
+void drawCurrentTimeMarker(double current_time,
+                           const char* label = "##current_time") {
+    if (current_time < 0.0) {
+        return;
+    }
+    ImPlotRect limits = ImPlot::GetPlotLimits();
+    double current_line_x[2] = {current_time, current_time};
+    double current_line_y[2] = {limits.Y.Min, limits.Y.Max};
+    ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), 3.0f);
+    ImPlot::PlotLine(label, current_line_x, current_line_y, 2);
+}
+
+void drawAnalysisTracePlot(const char* title,
+                           const char* y_axis_label,
+                           const std::vector<AnalysisTimelineTrace>& traces,
+                           const TimelineScrollState& scroll_state,
+                           double current_time,
+                           const char* current_marker_id) {
+    if (traces.empty()) {
+        ImGui::TextDisabled("%s unavailable", title);
+        return;
+    }
+
+    double x_min = std::numeric_limits<double>::infinity();
+    double x_max = -std::numeric_limits<double>::infinity();
+    double y_min = std::numeric_limits<double>::infinity();
+    double y_max = -std::numeric_limits<double>::infinity();
+    for (const auto& trace : traces) {
+        extendTraceRange(trace, x_min, x_max, y_min, y_max);
+    }
+    if (!std::isfinite(x_min) || !std::isfinite(x_max) ||
+        !std::isfinite(y_min) || !std::isfinite(y_max)) {
+        ImGui::TextDisabled("%s has no finite samples", title);
+        return;
+    }
+    if (x_min == x_max) {
+        x_min -= 0.5;
+        x_max += 0.5;
+    }
+    if (y_min == y_max) {
+        y_min -= 1.0;
+        y_max += 1.0;
+    }
+    const double y_span = std::max(1e-6, y_max - y_min);
+    y_min -= y_span * 0.1;
+    y_max += y_span * 0.1;
+
+    if (ImPlot::BeginPlot(title, ImVec2(-1.0f, 230.0f))) {
+        ImPlot::SetupAxes("Time (s)", y_axis_label);
+        if (scroll_state.enabled && current_time >= 0.0) {
+            const double half_span = static_cast<double>(
+                std::max(0.1f, scroll_state.window_half_span_s));
+            ImPlot::SetupAxisLimits(ImAxis_X1,
+                                    current_time - half_span,
+                                    current_time + half_span,
+                                    ImGuiCond_Always);
+        } else if (!scroll_state.enabled && scroll_state.prev_enabled) {
+            ImPlot::SetupAxisLimits(ImAxis_X1, x_min, x_max,
+                                    ImGuiCond_Always);
+        } else {
+            ImPlot::SetupAxisLimits(ImAxis_X1, x_min, x_max,
+                                    ImGuiCond_Once);
+        }
+        ImPlot::SetupAxisLimits(ImAxis_Y1, y_min, y_max, ImGuiCond_Once);
+        for (const auto& trace : traces) {
+            ImPlot::PlotLine(trace.label.c_str(),
+                             trace.xs.data(),
+                             trace.ys.data(),
+                             static_cast<int>(trace.xs.size()));
+        }
+        drawCurrentTimeMarker(current_time, current_marker_id);
+        ImPlot::EndPlot();
+    }
+}
+
+std::optional<double> currentTimeSeconds(const AnalysisTimelineWindowContext& context) {
+    if (context.current_frame_num < 0 || context.video_fps <= 0.0) {
+        return std::nullopt;
+    }
+    return static_cast<double>(context.current_frame_num) / context.video_fps;
+}
+
+std::vector<std::string> defaultEyeAngleTimelineFields(
+    const ZarrDetectionData::EyeAngleRepresentationInfo& rep) {
+    std::vector<std::string> fields;
+    for (const auto& field : rep.default_plot_fields) {
+        addUniqueField(fields, field);
+    }
+    if (fields.empty()) {
+        for (const auto& field : rep.primary_roi_fields) {
+            addUniqueField(fields, field + "_smoothed");
+            addUniqueField(fields, field);
+        }
+        for (const auto& field : rep.aggregate_roi_fields) {
+            addUniqueField(fields, field + "_smoothed");
+            addUniqueField(fields, field);
+        }
+    }
+    return fields;
+}
+
+std::vector<AnalysisTimelineTrace> buildEyeAngleTimelineTraces(
+    const ZarrDetectionLoader& loader,
+    const ZarrDetectionData::EyeAngleAnalysisData& eye,
+    const ZarrDetectionData::EyeAngleRepresentationInfo& rep,
+    double video_fps) {
+    std::vector<AnalysisTimelineTrace> traces;
+    for (const auto& requested_field : defaultEyeAngleTimelineFields(rep)) {
+        std::string resolved_name;
+        const auto* field =
+            resolveEyeAngleTimelineField(loader, requested_field, resolved_name);
+        if (field == nullptr) {
+            continue;
+        }
+        const bool use_frame_values =
+            field->has_frame && !field->frame_values.empty();
+        const auto& values =
+            use_frame_values ? field->frame_values : field->roi_values;
+        if (values.empty()) {
+            continue;
+        }
+
+        AnalysisTimelineTrace trace;
+        trace.label = field->display_name.empty() ? resolved_name
+                                                  : field->display_name;
+        if (resolved_name != requested_field) {
+            trace.label += " (fallback)";
+        }
+        trace.units = field->units.empty() ? "deg" : field->units;
+        trace.xs.reserve(values.size());
+        trace.ys.reserve(values.size());
+        for (size_t row = 0; row < values.size(); ++row) {
+            const float value = values[row];
+            if (!std::isfinite(value)) {
+                continue;
+            }
+            std::optional<double> t;
+            if (use_frame_values) {
+                if (row < eye.frame_time_seconds.size() &&
+                    std::isfinite(eye.frame_time_seconds[row])) {
+                    t = static_cast<double>(eye.frame_time_seconds[row]);
+                } else {
+                    t = sampleTimeFromFrame(static_cast<int32_t>(row),
+                                            video_fps);
+                }
+            } else if (row < eye.roi_time_seconds.size() &&
+                       std::isfinite(eye.roi_time_seconds[row])) {
+                t = static_cast<double>(eye.roi_time_seconds[row]);
+            } else if (row < eye.roi_frame_indices.size()) {
+                t = sampleTimeFromFrame(eye.roi_frame_indices[row], video_fps);
+            }
+            if (!t.has_value()) {
+                continue;
+            }
+            trace.xs.push_back(*t);
+            trace.ys.push_back(static_cast<double>(value));
+        }
+        if (trace.xs.size() >= 2) {
+            traces.push_back(std::move(trace));
+        }
+    }
+    return traces;
+}
+
+void appendTailTimelineTrace(
+    const std::vector<float>& values,
+    const std::vector<int32_t>& frame_index,
+    double video_fps,
+    const std::string& label,
+    const std::string& units,
+    std::vector<AnalysisTimelineTrace>& traces) {
+    if (values.empty()) {
+        return;
+    }
+    AnalysisTimelineTrace trace;
+    trace.label = label;
+    trace.units = units;
+    trace.xs.reserve(values.size());
+    trace.ys.reserve(values.size());
+    for (size_t row = 0; row < values.size(); ++row) {
+        const float value = values[row];
+        if (!std::isfinite(value)) {
+            continue;
+        }
+        std::optional<double> t;
+        if (row < frame_index.size()) {
+            t = sampleTimeFromFrame(frame_index[row], video_fps);
+        } else {
+            t = sampleTimeFromFrame(static_cast<int32_t>(row), video_fps);
+        }
+        if (!t.has_value()) {
+            continue;
+        }
+        trace.xs.push_back(*t);
+        trace.ys.push_back(static_cast<double>(value));
+    }
+    if (trace.xs.size() >= 2) {
+        traces.push_back(std::move(trace));
+    }
+}
+
 }  // namespace
 
 void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
@@ -443,14 +723,23 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
     const std::string secondary_speed_units =
         context.zarr_loader.getMovementSecondarySpeedUnits();
 
-    if (!selected_series || time_data.empty() ||
-        (!smoothed_available && !instant_available && !distance_available &&
-         !heading_sample_available && !heading_per_second_available)) {
+    const bool has_track_timeline =
+        selected_series != nullptr && !time_data.empty() &&
+        (smoothed_available || instant_available || distance_available ||
+         heading_sample_available || heading_per_second_available);
+    const bool has_eye_angle_timeline =
+        context.zarr_loader.hasEyeAngleAnalysisData();
+    const bool has_tail_kinematics_timeline =
+        context.zarr_loader.hasTailKinematicsData();
+
+    if (!has_track_timeline && !has_eye_angle_timeline &&
+        !has_tail_kinematics_timeline) {
         ImGui::TextUnformatted("No analysis timeline data available.");
         ImGui::End();
         return;
     }
 
+    if (has_track_timeline) {
     if (!smoothed_available && state.show_smoothed) {
         state.show_smoothed = false;
     }
@@ -1462,6 +1751,183 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
         if (finite_count > 0) {
             ImGui::BulletText("Average per-second resultant: %.2f",
                               sum_res / static_cast<double>(finite_count));
+        }
+    }
+    } else {
+        ImGui::TextDisabled("Track kinematics traces unavailable.");
+    }
+
+    const double fallback_current_time =
+        currentTimeSeconds(context).value_or(-1.0);
+
+    if (has_eye_angle_timeline) {
+        ImGui::SeparatorText("Eye-Angle Traces");
+        const auto& eye = context.zarr_loader.getEyeAngleAnalysisData();
+        ImGui::Text("Run: %s", eye.run_name.c_str());
+        if (eye.representations.empty()) {
+            ImGui::TextDisabled("No eye-angle representations available.");
+        } else {
+            if (state.eye_angle_representation_index < 0 ||
+                static_cast<size_t>(state.eye_angle_representation_index) >=
+                    eye.representations.size()) {
+                state.eye_angle_representation_index = 0;
+                for (size_t idx = 0; idx < eye.representations.size(); ++idx) {
+                    if (eye.representations[idx].key ==
+                        eye.default_representation) {
+                        state.eye_angle_representation_index =
+                            static_cast<int>(idx);
+                        break;
+                    }
+                }
+            }
+
+            const auto& selected_rep = eye.representations
+                [static_cast<size_t>(state.eye_angle_representation_index)];
+            const char* rep_preview =
+                selected_rep.display_name.empty()
+                    ? selected_rep.key.c_str()
+                    : selected_rep.display_name.c_str();
+            if (ImGui::BeginCombo("Representation##analysis_eye_angle_rep",
+                                  rep_preview)) {
+                for (size_t idx = 0; idx < eye.representations.size(); ++idx) {
+                    const auto& rep = eye.representations[idx];
+                    const bool selected =
+                        static_cast<int>(idx) ==
+                        state.eye_angle_representation_index;
+                    const char* label =
+                        rep.display_name.empty() ? rep.key.c_str()
+                                                 : rep.display_name.c_str();
+                    if (ImGui::Selectable(label, selected)) {
+                        state.eye_angle_representation_index =
+                            static_cast<int>(idx);
+                    }
+                    if (selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::Checkbox("Show selected eye-angle representation",
+                            &state.show_eye_angle_traces);
+            if (state.show_eye_angle_traces) {
+                double current_eye_time = fallback_current_time;
+                if (auto current_row =
+                        context.zarr_loader.findEyeAngleRowForFrame(
+                            context.current_frame_num)) {
+                    if (*current_row < eye.roi_time_seconds.size() &&
+                        std::isfinite(eye.roi_time_seconds[*current_row])) {
+                        current_eye_time = static_cast<double>(
+                            eye.roi_time_seconds[*current_row]);
+                    }
+                } else if (context.current_frame_num >= 0 &&
+                           static_cast<size_t>(context.current_frame_num) <
+                               eye.frame_time_seconds.size() &&
+                           std::isfinite(eye.frame_time_seconds
+                                              [context.current_frame_num])) {
+                    current_eye_time = static_cast<double>(
+                        eye.frame_time_seconds[context.current_frame_num]);
+                }
+
+                const auto traces = buildEyeAngleTimelineTraces(
+                    context.zarr_loader, eye, selected_rep, context.video_fps);
+                std::string y_axis = "deg";
+                if (!traces.empty() && !traces.front().units.empty()) {
+                    y_axis = traces.front().units;
+                }
+                drawAnalysisTracePlot("Eye Angles",
+                                      y_axis.c_str(),
+                                      traces,
+                                      context.scroll_state,
+                                      current_eye_time,
+                                      "##current_time_eye_angles");
+            }
+        }
+    }
+
+    if (has_tail_kinematics_timeline) {
+        ImGui::SeparatorText("Tail-Kinematics Traces");
+        const auto& tail = context.zarr_loader.getTailKinematicsData();
+        ImGui::Text("Run: %s | Rows: %zu | Samples: %zu",
+                    tail.run_name.c_str(),
+                    tail.row_count,
+                    tail.sample_count);
+        if (!tail.warning.empty()) {
+            ImGui::TextWrapped("Warning: %s", tail.warning.c_str());
+        }
+
+        ImGui::Checkbox("Tail tip angle", &state.show_tail_tip_angle);
+        ImGui::SameLine();
+        ImGui::Checkbox("Tail tip lateral deflection",
+                        &state.show_tail_tip_lateral_deflection);
+        ImGui::SameLine();
+        ImGui::Checkbox("Tail curvature", &state.show_tail_curvature);
+
+        const std::vector<int32_t>& tail_frame_index =
+            !tail.frame_index.empty() ? tail.frame_index : tail.row_to_frame;
+        double current_tail_time = fallback_current_time;
+        if (auto current_row =
+                context.zarr_loader.findTailKinematicsRowForFrame(
+                    context.current_frame_num)) {
+            if (*current_row < tail_frame_index.size()) {
+                current_tail_time =
+                    sampleTimeFromFrame(tail_frame_index[*current_row],
+                                        context.video_fps)
+                        .value_or(current_tail_time);
+            }
+        }
+
+        if (state.show_tail_tip_angle) {
+            std::vector<AnalysisTimelineTrace> traces;
+            appendTailTimelineTrace(tail.tail_tip_angle_deg,
+                                    tail_frame_index,
+                                    context.video_fps,
+                                    "Tail Tip Angle",
+                                    "deg",
+                                    traces);
+            if (!tail.max_abs_tail_angle_deg.empty()) {
+                appendTailTimelineTrace(tail.max_abs_tail_angle_deg,
+                                        tail_frame_index,
+                                        context.video_fps,
+                                        "Max Abs Tail Angle",
+                                        "deg",
+                                        traces);
+            }
+            drawAnalysisTracePlot("Tail Angle",
+                                  "deg",
+                                  traces,
+                                  context.scroll_state,
+                                  current_tail_time,
+                                  "##current_time_tail_angle");
+        }
+        if (state.show_tail_tip_lateral_deflection) {
+            std::vector<AnalysisTimelineTrace> traces;
+            appendTailTimelineTrace(tail.tail_tip_lateral_deflection_px,
+                                    tail_frame_index,
+                                    context.video_fps,
+                                    "Tail Tip Lateral Deflection",
+                                    "px",
+                                    traces);
+            drawAnalysisTracePlot("Tail Lateral Deflection",
+                                  "px",
+                                  traces,
+                                  context.scroll_state,
+                                  current_tail_time,
+                                  "##current_time_tail_deflection");
+        }
+        if (state.show_tail_curvature) {
+            std::vector<AnalysisTimelineTrace> traces;
+            appendTailTimelineTrace(tail.max_abs_tail_curvature_px_inv,
+                                    tail_frame_index,
+                                    context.video_fps,
+                                    "Max Abs Tail Curvature",
+                                    "px^-1",
+                                    traces);
+            drawAnalysisTracePlot("Tail Curvature",
+                                  "px^-1",
+                                  traces,
+                                  context.scroll_state,
+                                  current_tail_time,
+                                  "##current_time_tail_curvature");
         }
     }
 

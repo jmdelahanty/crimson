@@ -3337,7 +3337,10 @@ int main(int argc, char **argv) {
         }
 
         // Analysis timeline window
-        if (zarr_loaded && zarr_loader.hasMovementData()) {
+        if (zarr_loaded &&
+            (zarr_loader.hasMovementData() ||
+             zarr_loader.hasEyeAngleAnalysisData() ||
+             zarr_loader.hasTailKinematicsData())) {
             const auto analysis_timeline_ui_start =
                 std::chrono::steady_clock::now();
             AnalysisTimelineWindowContext analysis_timeline_context{
