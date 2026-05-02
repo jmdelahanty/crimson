@@ -6,7 +6,7 @@
 
 class ZarrDetectionLoader;
 
-struct MovementTimelineWindowState {
+struct AnalysisTimelineWindowState {
     bool show_smoothed = true;
     bool show_instantaneous = false;
     bool show_vergence = true;
@@ -20,12 +20,12 @@ struct MovementTimelineWindowState {
     std::string selected_bout_kinematics_run;
 };
 
-struct MovementTimelineWindowContext {
+struct AnalysisTimelineWindowContext {
     ZarrDetectionLoader& zarr_loader;
     TimelineScrollState& scroll_state;
     int current_frame_num = 0;
     double video_fps = 0.0;
 };
 
-void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
-                                MovementTimelineWindowState& state);
+void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
+                                AnalysisTimelineWindowState& state);

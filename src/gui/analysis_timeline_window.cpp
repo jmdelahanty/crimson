@@ -1,4 +1,4 @@
-#include "gui/movement_timeline_window.h"
+#include "gui/analysis_timeline_window.h"
 
 #include "imgui.h"
 #include "implot.h"
@@ -239,7 +239,7 @@ std::string swimBoutCandidateLabel(
 const ZarrDetectionData::SwimBoutSeries* resolveSelectedSwimBoutSeries(
     const std::vector<ZarrDetectionData::SwimBoutSeries>& swim_bouts,
     const std::vector<size_t>& compatible_indices,
-    MovementTimelineWindowState& state) {
+    AnalysisTimelineWindowState& state) {
     if (compatible_indices.empty()) {
         state.selected_swim_bout_run.clear();
         state.selected_swim_bout_speed_level.clear();
@@ -326,7 +326,7 @@ const ZarrDetectionData::BoutKinematicsSeries*
 resolveSelectedBoutKinematicsSeries(
     const std::vector<ZarrDetectionData::BoutKinematicsSeries>& bout_kinematics,
     const std::vector<size_t>& compatible_indices,
-    MovementTimelineWindowState& state) {
+    AnalysisTimelineWindowState& state) {
     if (compatible_indices.empty()) {
         state.selected_bout_kinematics_run.clear();
         return nullptr;
@@ -369,15 +369,15 @@ size_t validCount(const std::vector<uint8_t>& values) {
 
 }  // namespace
 
-void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
-                                MovementTimelineWindowState& state) {
-    if (!ImGui::Begin("Speed & Distance Timeline")) {
+void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
+                                AnalysisTimelineWindowState& state) {
+    if (!ImGui::Begin("Analysis Timeline")) {
         ImGui::End();
         return;
     }
 
     const auto* selected_series =
-        renderMovementDatasetUI(context.zarr_loader, "Dataset");
+        renderMovementDatasetUI(context.zarr_loader, "Track Kinematics Source");
 
     const auto& time_data = context.zarr_loader.getMovementTimeSeconds();
     const auto& smoothed_speed =
@@ -446,7 +446,7 @@ void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
     if (!selected_series || time_data.empty() ||
         (!smoothed_available && !instant_available && !distance_available &&
          !heading_sample_available && !heading_per_second_available)) {
-        ImGui::TextUnformatted("No movement data available.");
+        ImGui::TextUnformatted("No analysis timeline data available.");
         ImGui::End();
         return;
     }
@@ -466,12 +466,12 @@ void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
     }
 
     if (!context.zarr_loader.getMovementCategory().empty()) {
-        ImGui::Text("Movement Run: %s/%s | Track: %s",
+        ImGui::Text("Track Kinematics: %s/%s | Track: %s",
                     context.zarr_loader.getMovementCategory().c_str(),
                     context.zarr_loader.getMovementRunName().c_str(),
                     context.zarr_loader.getMovementTrackId().c_str());
     } else {
-        ImGui::Text("Movement Run: %s | Track: %s",
+        ImGui::Text("Track Kinematics: %s | Track: %s",
                     context.zarr_loader.getMovementRunName().c_str(),
                     context.zarr_loader.getMovementTrackId().c_str());
     }
@@ -607,12 +607,12 @@ void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
         }
     }
 
-    ImGui::Checkbox("Scrolling Window (±s)##movement",
+    ImGui::Checkbox("Scrolling Window (+/-s)##analysis_timeline",
                     &context.scroll_state.enabled);
     if (context.scroll_state.enabled) {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(140.0f);
-        ImGui::DragFloat("Half-span##movement_window_span",
+        ImGui::DragFloat("Half-span##analysis_timeline_window_span",
                          &context.scroll_state.window_half_span_s,
                          0.1f,
                          0.5f,
@@ -627,7 +627,7 @@ void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
     ImGui::Checkbox(secondary_speed_label.c_str(),
                     &state.show_instantaneous);
 
-    ImGui::SeparatorText("Heading Options");
+    ImGui::SeparatorText("Plot Layers");
     ImGui::BeginDisabled(!heading_sample_available);
     ImGui::Checkbox("Show Raw Heading", &state.show_heading_raw);
     ImGui::SameLine();
@@ -1073,7 +1073,7 @@ void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
 
     ImVec2 subplot_size = ImVec2(-1, 920);
     if (!time_plot.empty() &&
-        ImPlot::BeginSubplots("##movement_plots",
+        ImPlot::BeginSubplots("##analysis_timeline_plots",
                               4,
                               1,
                               subplot_size,

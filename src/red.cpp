@@ -70,7 +70,7 @@
 #include "gui/stimulus_playback_windows.h"
 #include "gui/camera_view_transport_controls.h"
 #include "gui_interpolation.h"
-#include "gui/movement_timeline_window.h"
+#include "gui/analysis_timeline_window.h"
 #include "gui/stimulus_event_timeline_window.h"
 #include <opencv2/imgproc.hpp>
 
@@ -3313,7 +3313,7 @@ int main(int argc, char **argv) {
 
         static TimelineScrollState shared_timeline_scroll_state;
         static StimulusEventTimelineWindowState stimulus_timeline_window_state;
-        static MovementTimelineWindowState movement_timeline_window_state;
+        static AnalysisTimelineWindowState analysis_timeline_window_state;
 
         // Stimulus Event Timeline Window
         if (zarr_loaded) {
@@ -3336,20 +3336,20 @@ int main(int argc, char **argv) {
                 std::chrono::steady_clock::now() - stimulus_timeline_ui_start);
         }
 
-        // Movement timeline windows
+        // Analysis timeline window
         if (zarr_loaded && zarr_loader.hasMovementData()) {
-            const auto movement_timeline_ui_start =
+            const auto analysis_timeline_ui_start =
                 std::chrono::steady_clock::now();
-            MovementTimelineWindowContext movement_timeline_context{
+            AnalysisTimelineWindowContext analysis_timeline_context{
                 zarr_loader,
                 shared_timeline_scroll_state,
                 current_frame_num,
                 video_fps,
             };
-            drawMovementTimelineWindow(movement_timeline_context,
-                                       movement_timeline_window_state);
+            drawAnalysisTimelineWindow(analysis_timeline_context,
+                                       analysis_timeline_window_state);
             frame_movement_timeline_ui_ms += durationMs(
-                std::chrono::steady_clock::now() - movement_timeline_ui_start);
+                std::chrono::steady_clock::now() - analysis_timeline_ui_start);
         }
 
         shared_timeline_scroll_state.prev_enabled =
