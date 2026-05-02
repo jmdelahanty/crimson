@@ -7,6 +7,7 @@
 #include "zarr_loader.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <iomanip>
@@ -728,6 +729,37 @@ void appendTailTimelineTrace(
     }
 }
 
+void appendTrackPositionTrace(
+    const std::vector<std::array<float, 2>>& positions,
+    const std::vector<float>& time_seconds,
+    const std::string& axis_label,
+    size_t axis_index,
+    const ImVec4& color,
+    std::vector<AnalysisTimelineTrace>& traces) {
+    if (positions.empty() || time_seconds.empty() || axis_index > 1) {
+        return;
+    }
+    const size_t count = std::min(positions.size(), time_seconds.size());
+    AnalysisTimelineTrace trace;
+    trace.label = axis_label;
+    trace.has_color = true;
+    trace.color = color;
+    trace.xs.reserve(count);
+    trace.ys.reserve(count);
+    for (size_t row = 0; row < count; ++row) {
+        const float t = time_seconds[row];
+        const float value = positions[row][axis_index];
+        if (!std::isfinite(t) || !std::isfinite(value)) {
+            continue;
+        }
+        trace.xs.push_back(static_cast<double>(t));
+        trace.ys.push_back(static_cast<double>(value));
+    }
+    if (trace.xs.size() >= 2) {
+        traces.push_back(std::move(trace));
+    }
+}
+
 }  // namespace
 
 void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
@@ -1017,6 +1049,13 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
                          !selected_swim_bouts->has_detector_trace);
     ImGui::Checkbox("Show Detector Response",
                     &state.show_detector_response);
+    ImGui::EndDisabled();
+    ImGui::Checkbox("Show Track Position", &state.show_track_position);
+    ImGui::BeginDisabled(!state.show_track_position);
+    ImGui::SameLine();
+    ImGui::Checkbox("X##track_position_x", &state.show_track_position_x);
+    ImGui::SameLine();
+    ImGui::Checkbox("Y##track_position_y", &state.show_track_position_y);
     ImGui::EndDisabled();
 
     auto frameToTime = [&](int32_t frame) -> std::optional<double> {
@@ -1632,6 +1671,38 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
         }
 
         ImPlot::EndSubplots();
+    }
+
+    if (state.show_track_position && selected_series != nullptr) {
+        const bool use_mm_positions = !selected_series->positions_mm.empty();
+        const auto& positions = use_mm_positions ? selected_series->positions_mm
+                                                 : selected_series->positions_px;
+        const char* units = use_mm_positions ? "mm" : "px";
+        std::vector<AnalysisTimelineTrace> position_traces;
+        if (state.show_track_position_x) {
+            appendTrackPositionTrace(positions,
+                                     time_data,
+                                     std::string("X position (") + units + ")",
+                                     0,
+                                     ImVec4(0.25f, 0.72f, 1.0f, 1.0f),
+                                     position_traces);
+        }
+        if (state.show_track_position_y) {
+            appendTrackPositionTrace(positions,
+                                     time_data,
+                                     std::string("Y position (") + units + ")",
+                                     1,
+                                     ImVec4(1.0f, 0.62f, 0.18f, 1.0f),
+                                     position_traces);
+        }
+        const std::string position_axis_label =
+            std::string("Position (") + units + ")";
+        drawAnalysisTracePlot("Track Position",
+                              position_axis_label.c_str(),
+                              position_traces,
+                              context.scroll_state,
+                              current_time_line,
+                              "##current_time_track_position");
     }
 
     ImGui::SeparatorText("Speed Statistics");
