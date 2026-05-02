@@ -438,19 +438,16 @@ EyeOrientationSmoother& eyeOrientationSmoother() {
     return smoother;
 }
 
-void drawPlotTextBox(const char* text,
-                     double plot_x,
-                     double plot_y,
-                     const ImVec4& accent_color,
-                     float font_scale = 1.25f) {
-    if (text == nullptr || text[0] == '\0' || !std::isfinite(plot_x) ||
-        !std::isfinite(plot_y)) {
+void drawPixelTextBox(const char* text,
+                      const ImVec2& center,
+                      const ImVec4& accent_color,
+                      float font_scale = 1.25f) {
+    if (text == nullptr || text[0] == '\0' || !std::isfinite(center.x) ||
+        !std::isfinite(center.y)) {
         return;
     }
 
     ImDrawList* draw_list = ImPlot::GetPlotDrawList();
-    const ImVec2 center =
-        ImPlot::PlotToPixels(ImPlotPoint(plot_x, plot_y));
     const float base_font_size = ImGui::GetFontSize();
     const float font_size = base_font_size * font_scale;
     const ImVec2 text_size = ImGui::CalcTextSize(text);
@@ -783,6 +780,12 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
         }
 
         std::array<std::vector<ImVec2>, 2> visual_cone_polygons;
+        std::array<ImVec2, 2> visual_cone_dirs_world = {
+            ImVec2(0.0f, 0.0f), ImVec2(0.0f, 0.0f)};
+        std::array<ImVec2, 2> visual_cone_label_points = {
+            ImVec2(0.0f, 0.0f), ImVec2(0.0f, 0.0f)};
+        std::array<bool, 2> visual_cone_valid = {false, false};
+        bool drew_vergence_label = false;
         for (int eye = 0; eye < 2; ++eye) {
             if ((eye == 0 && !options.show_eye_left) ||
                 (eye == 1 && !options.show_eye_right)) {
@@ -1019,27 +1022,6 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
                                      end_y,
                                      2);
 
-                    if (options.show_eye_angle_labels) {
-                        const double mid_t = angle_rad * 0.5;
-                        const double vx = std::cos(mid_t) * forward[0] +
-                                          std::sin(mid_t) * left[0];
-                        const double vy = std::cos(mid_t) * forward[1] +
-                                          std::sin(mid_t) * left[1];
-                        auto label_scene =
-                            worldToScene(center_world.first + vx * radius * 1.25,
-                                         center_world.second + vy * radius * 1.25);
-                        char angle_label[32];
-                        std::snprintf(angle_label,
-                                      sizeof(angle_label),
-                                      "%+.1f°",
-                                      angle_deg);
-                        drawPlotTextBox(angle_label,
-                                        label_scene.first,
-                                        label_scene.second,
-                                        color,
-                                        1.3f);
-                        metrics.angle_labels_drawn++;
-                    }
                     return true;
                 };
                 auto draw_axis =
@@ -1146,12 +1128,11 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
                     }
                     if (mask_info.has_eye_angles &&
                         mask_info.feret_angle_valid[eye]) {
-                        bool drew_arc = false;
                         if (options.show_eye_angle_arcs) {
                             const auto* shape = findSubjectShapeForMask(
                                 det_idx, mask_info.roi_index);
                             if (shape != nullptr) {
-                                drew_arc = draw_eye_angle_arc(
+                                draw_eye_angle_arc(
                                     *shape,
                                     center_world,
                                     mask_info.feret_minor_angle_deg[eye],
@@ -1160,19 +1141,45 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
                                     minor_axis_len_world);
                             }
                         }
-                        if (!drew_arc && options.show_eye_angle_labels) {
+                    }
+                    if (options.show_eye_angle_labels) {
+                        const bool has_eye_frame_label =
+                            mask_info.has_eye_frame_angles &&
+                            mask_info.eye_frame_angle_valid[eye] != 0 &&
+                            std::isfinite(mask_info.eye_frame_angle_deg[eye]);
+                        const bool has_gaze_fallback_label =
+                            !has_eye_frame_label &&
+                            mask_info.has_eye_angles &&
+                            mask_info.feret_angle_valid[eye] != 0 &&
+                            std::isfinite(mask_info.feret_minor_angle_deg[eye]);
+                        if (has_eye_frame_label || has_gaze_fallback_label) {
                             auto center_scene = worldToScene(
                                 center_world.first, center_world.second);
-                            char angle_label[32];
-                            std::snprintf(angle_label,
-                                          sizeof(angle_label),
-                                          "%+.1f°",
-                                          mask_info.feret_minor_angle_deg[eye]);
-                            drawPlotTextBox(angle_label,
-                                            center_scene.first,
-                                            center_scene.second,
-                                            minor_color,
-                                            1.3f);
+                            ImVec2 label_center =
+                                ImPlot::PlotToPixels(ImPlotPoint(
+                                    center_scene.first,
+                                    center_scene.second));
+                            label_center.y += (eye == 0) ? -24.0f : 24.0f;
+                            char angle_label[64];
+                            if (has_eye_frame_label) {
+                                std::snprintf(
+                                    angle_label,
+                                    sizeof(angle_label),
+                                    "%s eye-frame %+.1f°",
+                                    eye == 0 ? "Left" : "Right",
+                                    mask_info.eye_frame_angle_deg[eye]);
+                            } else {
+                                std::snprintf(
+                                    angle_label,
+                                    sizeof(angle_label),
+                                    "%s gaze signed %+.1f°",
+                                    eye == 0 ? "Left" : "Right",
+                                    mask_info.feret_minor_angle_deg[eye]);
+                            }
+                            drawPixelTextBox(angle_label,
+                                             label_center,
+                                             minor_color,
+                                             1.05f);
                             metrics.angle_labels_drawn++;
                         }
                     }
@@ -1251,6 +1258,19 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
                             worldToScene(center_world.first, center_world.second);
                         cone_points.push_back(ImPlot::PlotToPixels(
                             ImPlotPoint(center_scene.first, center_scene.second)));
+                        const auto label_axis_scene = worldToScene(
+                            center_world.first +
+                                static_cast<double>(dir_world.x) *
+                                    cone_length * 0.42,
+                            center_world.second +
+                                static_cast<double>(dir_world.y) *
+                                    cone_length * 0.42);
+                        visual_cone_label_points[eye] =
+                            ImPlot::PlotToPixels(ImPlotPoint(
+                                label_axis_scene.first,
+                                label_axis_scene.second));
+                        visual_cone_dirs_world[eye] = dir_world;
+                        visual_cone_valid[eye] = true;
 
                         for (int step = 0; step <= kConeSteps; ++step) {
                             const float t =
@@ -1329,6 +1349,84 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
                                     ImGui::ColorConvertFloat4ToU32(
                                         kVergenceOverlapColor));
                                 metrics.visual_cone_overlaps_drawn++;
+                            }
+                            if (options.show_eye_angle_labels &&
+                                !drew_vergence_label &&
+                                visual_cone_valid[0] &&
+                                visual_cone_valid[1]) {
+                                const bool has_eye_frame_vergence =
+                                    mask_info.has_eye_frame_angles &&
+                                    mask_info.eye_frame_vergence_valid != 0 &&
+                                    std::isfinite(
+                                        mask_info.eye_frame_vergence_deg);
+                                float label_value_deg =
+                                    mask_info.eye_frame_vergence_deg;
+                                char vergence_label[64];
+                                if (has_eye_frame_vergence) {
+                                    std::snprintf(
+                                        vergence_label,
+                                        sizeof(vergence_label),
+                                        "Eye-frame vergence %+.1f°",
+                                        label_value_deg);
+                                } else {
+                                    const float dot =
+                                        std::clamp(
+                                            visual_cone_dirs_world[0].x *
+                                                    visual_cone_dirs_world[1].x +
+                                                visual_cone_dirs_world[0].y *
+                                                    visual_cone_dirs_world[1].y,
+                                            -1.0f,
+                                            1.0f);
+                                    label_value_deg =
+                                        std::acos(dot) *
+                                        static_cast<float>(180.0 / M_PI);
+                                    if (std::isfinite(label_value_deg)) {
+                                        std::snprintf(
+                                            vergence_label,
+                                            sizeof(vergence_label),
+                                            "Gaze-axis sep. %.1f°",
+                                            label_value_deg);
+                                    }
+                                }
+                                if (std::isfinite(label_value_deg)) {
+                                    ImVec2 vergence_label_center(
+                                        0.5f *
+                                            (visual_cone_label_points[0].x +
+                                             visual_cone_label_points[1].x),
+                                        0.5f *
+                                                (visual_cone_label_points[0].y +
+                                                 visual_cone_label_points[1].y) -
+                                            18.0f);
+                                    const ImVec2 plot_pos = ImPlot::GetPlotPos();
+                                    const ImVec2 plot_size = ImPlot::GetPlotSize();
+                                    const float min_label_x =
+                                        plot_pos.x + 48.0f;
+                                    const float max_label_x =
+                                        plot_pos.x + plot_size.x - 48.0f;
+                                    const float min_label_y =
+                                        plot_pos.y + 18.0f;
+                                    const float max_label_y =
+                                        plot_pos.y + plot_size.y - 18.0f;
+                                    if (min_label_x <= max_label_x) {
+                                        vergence_label_center.x = std::clamp(
+                                            vergence_label_center.x,
+                                            min_label_x,
+                                            max_label_x);
+                                    }
+                                    if (min_label_y <= max_label_y) {
+                                        vergence_label_center.y = std::clamp(
+                                            vergence_label_center.y,
+                                            min_label_y,
+                                            max_label_y);
+                                    }
+                                    drawPixelTextBox(
+                                        vergence_label,
+                                        vergence_label_center,
+                                        ImVec4(0.34f, 1.0f, 0.42f, 0.92f),
+                                        1.15f);
+                                    metrics.angle_labels_drawn++;
+                                    drew_vergence_label = true;
+                                }
                             }
                         }
                     }

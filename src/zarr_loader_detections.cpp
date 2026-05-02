@@ -1436,6 +1436,45 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                             right_valid = right_valid && frame_valid;
                         }
                     }
+                    if (data_.has_eye_frame_angles) {
+                        if (roi_idx < data_.eye_frame_left_angle_deg.size()) {
+                            float left_eye_frame_angle =
+                                data_.eye_frame_left_angle_deg[roi_idx];
+                            mask_entry.eye_frame_angle_deg[0] =
+                                left_eye_frame_angle;
+                            mask_entry.eye_frame_angle_valid[0] =
+                                (left_valid &&
+                                 std::isfinite(left_eye_frame_angle))
+                                    ? 1
+                                    : 0;
+                        }
+                        if (roi_idx < data_.eye_frame_right_angle_deg.size()) {
+                            float right_eye_frame_angle =
+                                data_.eye_frame_right_angle_deg[roi_idx];
+                            mask_entry.eye_frame_angle_deg[1] =
+                                right_eye_frame_angle;
+                            mask_entry.eye_frame_angle_valid[1] =
+                                (right_valid &&
+                                 std::isfinite(right_eye_frame_angle))
+                                    ? 1
+                                    : 0;
+                        }
+                        if (roi_idx < data_.eye_frame_vergence_deg.size()) {
+                            float eye_frame_vergence =
+                                data_.eye_frame_vergence_deg[roi_idx];
+                            mask_entry.eye_frame_vergence_deg =
+                                eye_frame_vergence;
+                            mask_entry.eye_frame_vergence_valid =
+                                (left_valid && right_valid &&
+                                 std::isfinite(eye_frame_vergence))
+                                    ? 1
+                                    : 0;
+                        }
+                        mask_entry.has_eye_frame_angles =
+                            mask_entry.eye_frame_angle_valid[0] != 0 ||
+                            mask_entry.eye_frame_angle_valid[1] != 0 ||
+                            mask_entry.eye_frame_vergence_valid != 0;
+                    }
                     if (roi_idx < data_.eye_angle_left_deg.size()) {
                         float left_angle = data_.eye_angle_left_deg[roi_idx];
                         mask_entry.feret_minor_angle_deg[0] = left_angle;

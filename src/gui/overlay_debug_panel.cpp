@@ -248,6 +248,10 @@ void drawEyeMaskSection(const FrameDebugWindowContext& context,
     }
     ImGui::SameLine();
     ImGui::Checkbox("Angle labels", &result.show_eye_angle_labels);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Draw text labels for eye-frame per-eye angles and vergence; legacy archives fall back to explicitly labeled gaze-signed values.");
+    }
     if (!context.zarr_loader.getEyeMaskWarning().empty()) {
         ImGui::TextWrapped("  Warning: %s",
                            context.zarr_loader.getEyeMaskWarning().c_str());

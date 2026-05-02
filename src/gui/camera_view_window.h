@@ -91,6 +91,7 @@ struct CameraViewWindowContext {
     CameraViewSubjectShapeOverlayOptions subject_shape_overlay_options;
     const ZarrDetectionData::TailKinematicsData* tail_kinematics = nullptr;
     CameraViewTailKinematicsOverlayOptions tail_kinematics_overlay_options;
+    const ZarrDetectionLoader::MovementFrameSample* movement_sample = nullptr;
     bool subject_mask_pick_enabled = false;
 
     const std::vector<ZarrDetectionLoader::ChaserBoundingBox>* chaser_bboxes =

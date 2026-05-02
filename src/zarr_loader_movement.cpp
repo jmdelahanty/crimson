@@ -3,14 +3,154 @@
 
 using json = nlohmann::json;
 
+namespace {
+
+std::string displaySpeedLevelLabel(const std::string& level) {
+    if (level == "raw") {
+        return "Raw Speed";
+    }
+    if (level == "filtered") {
+        return "Filtered Speed";
+    }
+    if (level == "smoothed") {
+        return "Smoothed Speed";
+    }
+    if (level == "averaged") {
+        return "Averaged Speed";
+    }
+    if (!level.empty()) {
+        std::string label = level;
+        std::replace(label.begin(), label.end(), '_', ' ');
+        if (!label.empty()) {
+            label[0] = static_cast<char>(
+                std::toupper(static_cast<unsigned char>(label[0])));
+        }
+        return label + " Speed";
+    }
+    return "Speed";
+}
+
+std::string flatSpeedPrefixForLevel(const std::string& level) {
+    if (level == "raw" || level == "filtered" || level == "smoothed" ||
+        level == "averaged") {
+        return "speed_" + level;
+    }
+    if (level.rfind("speed_", 0) == 0) {
+        return level;
+    }
+    return level;
+}
+
+std::string formatTrackId(int32_t track_id) {
+    return "id_" + std::to_string(track_id);
+}
+
+std::string normalizeSpeedLevelToken(std::string value) {
+    if (value.rfind("speed_", 0) == 0) {
+        value = value.substr(6);
+    }
+    return value;
+}
+
+const json* provenanceParameters(const json& attrs) {
+    if (attrs.contains("provenance") && attrs["provenance"].is_object()) {
+        const auto& provenance = attrs["provenance"];
+        if (provenance.contains("parameters") &&
+            provenance["parameters"].is_object()) {
+            return &provenance["parameters"];
+        }
+    }
+    return nullptr;
+}
+
+std::string jsonStringValue(const json& object, const char* key) {
+    if (object.contains(key) && object[key].is_string()) {
+        return object[key].get<std::string>();
+    }
+    return std::string();
+}
+
+std::string jsonStringAttr(const json& attrs, const char* key) {
+    std::string value = jsonStringValue(attrs, key);
+    if (!value.empty()) {
+        return value;
+    }
+    if (const json* params = provenanceParameters(attrs)) {
+        return jsonStringValue(*params, key);
+    }
+    return std::string();
+}
+
+bool jsonNumberValue(const json& object, const char* key, double& out) {
+    if (object.contains(key) && object[key].is_number()) {
+        out = object[key].get<double>();
+        return true;
+    }
+    return false;
+}
+
+float jsonFloatAttr(const json& attrs, const char* key) {
+    double value = 0.0;
+    if (jsonNumberValue(attrs, key, value)) {
+        return static_cast<float>(value);
+    }
+    if (const json* params = provenanceParameters(attrs);
+        params && jsonNumberValue(*params, key, value)) {
+        return static_cast<float>(value);
+    }
+    return std::numeric_limits<float>::quiet_NaN();
+}
+
+int32_t jsonTrackIdAttr(const json& attrs, const char* key) {
+    auto readTrack = [&](const json& object) -> std::optional<int32_t> {
+        if (!object.contains(key)) {
+            return std::nullopt;
+        }
+        const auto& value = object[key];
+        if (value.is_number_integer()) {
+            return value.get<int32_t>();
+        }
+        if (value.is_string()) {
+            std::string text = value.get<std::string>();
+            if (text.rfind("id_", 0) == 0) {
+                text = text.substr(3);
+            }
+            try {
+                return static_cast<int32_t>(std::stoi(text));
+            } catch (...) {
+                return std::nullopt;
+            }
+        }
+        return std::nullopt;
+    };
+
+    if (auto value = readTrack(attrs)) {
+        return *value;
+    }
+    if (const json* params = provenanceParameters(attrs)) {
+        if (auto value = readTrack(*params)) {
+            return *value;
+        }
+    }
+    return -1;
+}
+
+}  // namespace
+
 bool ZarrDetectionLoader::loadMovementData(const ts::kvstore::KvStore& store) {
     data_.has_movement_data = false;
     data_.movement_series.clear();
     data_.movement_selected_index = std::numeric_limits<size_t>::max();
     data_.movement_crop_run_name.clear();
+    data_.swim_bout_series.clear();
+    data_.bout_kinematics_series.clear();
     data_.crop_data = {};
 
-    bool loaded = loadLegacyMovementData(store);
+    const bool loaded_track_kinematics = loadTrackKinematicsData(store);
+    const bool loaded_legacy = loadLegacyMovementData(store);
+    loadSwimBoutData(store);
+    loadBoutKinematicsData(store);
+    bool loaded = loaded_track_kinematics || loaded_legacy;
 
     if (!loaded) {
         return false;
@@ -28,6 +168,557 @@ bool ZarrDetectionLoader::loadMovementData(const ts::kvstore::KvStore& store) {
     }
     return data_.has_movement_data;
 }
+
+bool ZarrDetectionLoader::loadTrackKinematicsData(
+    const ts::kvstore::KvStore& store) {
+    const std::vector<std::pair<std::string, std::string>> scopes = {
+        {"analysis/track_kinematics_runs/offline", "offline"},
+        {"analysis/track_kinematics_runs/online_refined", "online_refined"},
+        {"analysis/track_kinematics_runs/online", "online"},
+    };
+
+    bool loaded_any = false;
+
+    for (const auto& [scope_path, scope_name] : scopes) {
+        std::vector<std::string> run_candidates;
+        std::string latest;
+        if (auto scope_attrs = readGroupAttrs(store, scope_path)) {
+            latest = extractLatestRunName(*scope_attrs);
+            if (!latest.empty()) {
+                run_candidates.push_back(latest);
+            }
+        }
+        if (latest.empty() && !root_path_.empty()) {
+            auto runs = collect_runs_fs(root_path_, scope_path, {});
+            run_candidates.insert(run_candidates.end(), runs.begin(), runs.end());
+        }
+        std::sort(run_candidates.begin(), run_candidates.end());
+        run_candidates.erase(std::unique(run_candidates.begin(),
+                                         run_candidates.end()),
+                             run_candidates.end());
+        if (run_candidates.empty()) {
+            continue;
+        }
+
+        const std::string run_name =
+            !latest.empty() ? latest : run_candidates.back();
+        const std::string run_base = scope_path + "/" + run_name + "/";
+
+        float pixels_per_mm = 0.0f;
+        double run_fps = 0.0;
+        double smoothing_seconds = 0.0;
+        std::string detection_variant;
+        std::string source_detect_run;
+        std::string crop_candidate;
+
+        if (auto run_attrs_opt = readGroupAttrs(store, run_base)) {
+            const json& run_attrs = *run_attrs_opt;
+            auto readNumber = [&](const char* key, double& out) {
+                if (run_attrs.contains(key) && run_attrs[key].is_number()) {
+                    out = run_attrs[key].get<double>();
+                }
+            };
+            readNumber("fps", run_fps);
+            readNumber("smoothing_seconds", smoothing_seconds);
+
+            double pixel_to_mm = 0.0;
+            readNumber("pixel_to_mm", pixel_to_mm);
+            if (pixel_to_mm > 1e-12) {
+                pixels_per_mm = static_cast<float>(1.0 / pixel_to_mm);
+            }
+            if (run_attrs.contains("pixels_per_mm") &&
+                run_attrs["pixels_per_mm"].is_number()) {
+                pixels_per_mm =
+                    static_cast<float>(run_attrs["pixels_per_mm"].get<double>());
+            }
+
+            crop_candidate = ExtractCropRunFromObject(run_attrs);
+            if (run_attrs.contains("inputs") && run_attrs["inputs"].is_object()) {
+                const auto& inputs = run_attrs["inputs"];
+                std::string from_inputs = ExtractCropRunFromObject(inputs);
+                if (!from_inputs.empty()) {
+                    crop_candidate = from_inputs;
+                }
+                if (inputs.contains("detection_variant") &&
+                    inputs["detection_variant"].is_string()) {
+                    detection_variant =
+                        inputs["detection_variant"].get<std::string>();
+                }
+                if (inputs.contains("source_detect_run") &&
+                    inputs["source_detect_run"].is_string()) {
+                    source_detect_run =
+                        inputs["source_detect_run"].get<std::string>();
+                }
+            }
+            if (!crop_candidate.empty() && data_.movement_crop_run_name.empty()) {
+                data_.movement_crop_run_name = crop_candidate;
+            }
+        }
+
+        std::vector<std::string> track_ids;
+        std::vector<int32_t> track_ids_array;
+        if (readInt32Array(store, run_base + "track_ids", track_ids_array) &&
+            !track_ids_array.empty()) {
+            track_ids.reserve(track_ids_array.size());
+            for (int32_t track_id : track_ids_array) {
+                track_ids.push_back(formatTrackId(track_id));
+            }
+        }
+        if (track_ids.empty() && !root_path_.empty()) {
+            namespace fs = std::filesystem;
+            fs::path track_root = fs::path(root_path_) / run_base / "tracks";
+            if (fs::exists(track_root) && fs::is_directory(track_root)) {
+                for (const auto& entry : fs::directory_iterator(track_root)) {
+                    if (entry.is_directory()) {
+                        track_ids.push_back(entry.path().filename().string());
+                    }
+                }
+            }
+        }
+        if (track_ids.empty()) {
+            track_ids.push_back("id_0");
+        }
+        std::sort(track_ids.begin(), track_ids.end());
+        track_ids.erase(std::unique(track_ids.begin(), track_ids.end()),
+                        track_ids.end());
+
+        const std::vector<std::string> speed_levels = {
+            "filtered", "smoothed", "raw", "averaged"};
+        const std::vector<std::string> frame_names = {"frame_indices"};
+        const std::vector<std::string> time_float_names = {"time_seconds"};
+        const std::vector<std::string> timestamp_ns_names = {
+            "timestamp_ns_session"};
+
+        for (const auto& track_id : track_ids) {
+            const std::string track_base = run_base + "tracks/" + track_id + "/";
+            for (const auto& level : speed_levels) {
+                const std::string flat_prefix = flatSpeedPrefixForLevel(level);
+                const std::vector<std::string> primary_mm_names = {
+                    "movement/speed/" + level + "/mm",
+                    flat_prefix + "_mm",
+                };
+                const std::vector<std::string> primary_px_names = {
+                    "movement/speed/" + level + "/px",
+                    flat_prefix + "_px",
+                };
+                const std::vector<std::string> secondary_mm_names =
+                    level == "raw"
+                        ? std::vector<std::string>{}
+                        : std::vector<std::string>{
+                              "movement/speed/raw/mm",
+                              "speed_raw_mm",
+                          };
+                const std::vector<std::string> secondary_px_names =
+                    level == "raw"
+                        ? std::vector<std::string>{}
+                        : std::vector<std::string>{
+                              "movement/speed/raw/px",
+                              "speed_raw_px",
+                          };
+
+                bool loaded_track = loadMovementTrack(
+                    store,
+                    "[TrackKinematics]",
+                    run_name,
+                    track_id,
+                    track_base,
+                    frame_names,
+                    time_float_names,
+                    timestamp_ns_names,
+                    primary_mm_names,
+                    primary_px_names,
+                    secondary_mm_names,
+                    secondary_px_names,
+                    pixels_per_mm,
+                    run_fps,
+                    "track_kinematics/" + scope_name,
+                    detection_variant.empty() ? level : detection_variant,
+                    source_detect_run,
+                    smoothing_seconds,
+                    0,
+                    0,
+                    false,
+                    nullptr,
+                    nullptr,
+                    nullptr,
+                    nullptr,
+                    level,
+                    displaySpeedLevelLabel(level),
+                    level == "raw" ? std::string() : "Raw Speed");
+                loaded_any = loaded_any || loaded_track;
+            }
+        }
+    }
+
+    return loaded_any;
+}
+
+bool ZarrDetectionLoader::loadSwimBoutData(
+    const ts::kvstore::KvStore& store) {
+    const std::string parent_path = "analysis/swim_bout_runs";
+    std::vector<std::string> run_candidates;
+    std::string latest;
+    if (auto parent_attrs = readGroupAttrs(store, parent_path)) {
+        latest = extractLatestRunName(*parent_attrs);
+        if (!latest.empty()) {
+            run_candidates.push_back(latest);
+        }
+    }
+    if (!root_path_.empty()) {
+        auto runs = collect_runs_fs(root_path_, parent_path, {});
+        run_candidates.insert(run_candidates.end(), runs.begin(), runs.end());
+    }
+    std::sort(run_candidates.begin(), run_candidates.end());
+    run_candidates.erase(std::unique(run_candidates.begin(),
+                                     run_candidates.end()),
+                         run_candidates.end());
+    if (run_candidates.empty()) {
+        return false;
+    }
+
+    auto readFrameColumn = [&](const std::string& path,
+                               std::vector<int32_t>& out) -> bool {
+        if (readInt32Array(store, path, out) && !out.empty()) {
+            return true;
+        }
+        std::vector<int64_t> tmp64;
+        if (!readInt64Array(store, path, tmp64) || tmp64.empty()) {
+            return false;
+        }
+        out.resize(tmp64.size());
+        for (size_t i = 0; i < tmp64.size(); ++i) {
+            out[i] = clampToInt32(tmp64[i]);
+        }
+        return true;
+    };
+
+    bool loaded_any = false;
+    for (const auto& run_name : run_candidates) {
+        const std::string run_base = parent_path + "/" + run_name + "/";
+
+        json run_attrs = json::object();
+        if (auto run_attrs_opt = readGroupAttrs(store, run_base)) {
+            run_attrs = *run_attrs_opt;
+        }
+
+        const std::string default_level = jsonStringAttr(run_attrs,
+                                                         "default_level");
+        std::vector<std::string> speed_levels;
+        if (!default_level.empty()) {
+            speed_levels.push_back(default_level);
+        }
+        if (!root_path_.empty()) {
+            auto fs_levels =
+                collect_runs_fs(root_path_, parent_path + "/" + run_name,
+                                {"bouts"});
+            speed_levels.insert(speed_levels.end(), fs_levels.begin(),
+                                fs_levels.end());
+        }
+        std::sort(speed_levels.begin(), speed_levels.end());
+        speed_levels.erase(std::unique(speed_levels.begin(), speed_levels.end()),
+                           speed_levels.end());
+
+        for (const auto& speed_level : speed_levels) {
+            const std::string level_base = run_base + speed_level + "/";
+            const std::string bouts_base = level_base + "bouts/";
+            if (!arrayExists(store, bouts_base + "start_frame") &&
+                !arrayExists(store, bouts_base + "end_frame")) {
+                continue;
+            }
+
+            json level_attrs = json::object();
+            if (auto level_attrs_opt = readGroupAttrs(store, level_base)) {
+                level_attrs = *level_attrs_opt;
+            }
+
+            ZarrDetectionData::SwimBoutSeries series;
+            series.run_name = run_name;
+            series.speed_level = speed_level;
+            series.default_level = default_level;
+            series.is_latest_run = !latest.empty() && run_name == latest;
+            series.is_default_level =
+                !default_level.empty() &&
+                normalizeSpeedLevelToken(default_level) ==
+                    normalizeSpeedLevelToken(speed_level);
+            if (level_attrs.contains("is_default_level") &&
+                level_attrs["is_default_level"].is_boolean()) {
+                series.is_default_level =
+                    level_attrs["is_default_level"].get<bool>();
+            }
+
+            series.source_track_kinematics_run =
+                jsonStringAttr(run_attrs, "source_track_kinematics_run");
+            series.track_id = jsonTrackIdAttr(run_attrs, "track_id");
+            series.detection_method =
+                jsonStringAttr(run_attrs, "detection_method");
+            series.detection_signal_source_level =
+                jsonStringAttr(run_attrs, "detection_signal_source_level");
+            if (series.detection_signal_source_level.empty()) {
+                series.detection_signal_source_level =
+                    jsonStringAttr(run_attrs, "exponential_source_level");
+            }
+            if (series.detection_signal_source_level.empty()) {
+                series.detection_signal_source_level =
+                    jsonStringAttr(level_attrs, "source_speed_level");
+            }
+            series.detection_signal_source_path =
+                jsonStringAttr(run_attrs, "detection_signal_source_path");
+            series.movement_metric_source_level =
+                jsonStringAttr(run_attrs, "movement_metric_source_level");
+            series.path_distance_source_level =
+                jsonStringAttr(run_attrs, "path_distance_source_level");
+            if (series.path_distance_source_level.empty()) {
+                series.path_distance_source_level =
+                    jsonStringAttr(level_attrs, "path_distance_source_level");
+            }
+            series.threshold_mm = jsonFloatAttr(run_attrs, "threshold_mm");
+            series.exponential_tau_s =
+                jsonFloatAttr(run_attrs, "exponential_tau_s");
+            if (!std::isfinite(static_cast<double>(series.exponential_tau_s))) {
+                series.exponential_tau_s = jsonFloatAttr(level_attrs, "tau_s");
+            }
+            series.min_bout_duration_s =
+                jsonFloatAttr(run_attrs, "min_bout_duration_s");
+            series.min_gap_duration_s =
+                jsonFloatAttr(run_attrs, "min_gap_duration_s");
+            series.min_peak_prominence_mm_s =
+                jsonFloatAttr(run_attrs, "min_peak_prominence_mm_s");
+            series.peak_width_rel_height =
+                jsonFloatAttr(run_attrs, "peak_width_rel_height");
+
+            if (level_attrs.contains("detection_signal_transform_family") &&
+                level_attrs["detection_signal_transform_family"].is_string()) {
+                series.detection_signal_label =
+                    level_attrs["detection_signal_transform_family"]
+                        .get<std::string>();
+            } else if (level_attrs.contains("detection_signal_array") &&
+                       level_attrs["detection_signal_array"].is_string()) {
+                series.detection_signal_label =
+                    level_attrs["detection_signal_array"].get<std::string>();
+            } else if (normalizeSpeedLevelToken(speed_level) == "exponential") {
+                series.detection_signal_label = "exponential detector";
+            }
+
+            readFrameColumn(bouts_base + "start_frame", series.start_frame);
+            readFrameColumn(bouts_base + "end_frame", series.end_frame);
+            readFrameColumn(bouts_base + "core_start_frame",
+                            series.core_start_frame);
+            readFrameColumn(bouts_base + "core_end_frame",
+                            series.core_end_frame);
+            readFloatArray(store, bouts_base + "start_time_s",
+                           series.start_time_s);
+            readFloatArray(store, bouts_base + "end_time_s", series.end_time_s);
+            readFloatArray(store, bouts_base + "duration_s", series.duration_s);
+            readFloatArray(store, bouts_base + "path_length_mm",
+                           series.path_length_mm);
+            readFloatArray(store, bouts_base + "path_length_px",
+                           series.path_length_px);
+            readFloatArray(store, bouts_base + "net_displacement_mm",
+                           series.net_displacement_mm);
+            readFloatArray(store, bouts_base + "net_displacement_px",
+                           series.net_displacement_px);
+            if (!readFloatArray(store,
+                                bouts_base + "peak_detection_signal_mm_s",
+                                series.peak_detection_signal_mm_s)) {
+                readFloatArray(store, bouts_base + "peak_speed_mm_s",
+                               series.peak_detection_signal_mm_s);
+            }
+            readFloatArray(store, bouts_base + "peak_speed_mm_s",
+                           series.peak_speed_mm_s);
+            readBoolArray(store, bouts_base + "gap_censored",
+                          series.gap_censored);
+
+            if (readFloatArray(store,
+                               level_base + "detection_signal_mm_s",
+                               series.detector_trace_values)) {
+                series.detector_trace_label = "Detector response";
+                series.detector_trace_units = "mm/s";
+            } else if (readFloatArray(store,
+                                      level_base + "speed_exponential_mm",
+                                      series.detector_trace_values)) {
+                series.detector_trace_label = "Detector response";
+                series.detector_trace_units = "mm/s";
+            }
+            if (!series.detector_trace_values.empty()) {
+                readFrameColumn(level_base + "frame_indices",
+                                series.detector_trace_frame_indices);
+                series.has_detector_trace = true;
+            }
+
+            const size_t bout_count =
+                std::min(series.start_frame.size(), series.end_frame.size());
+            if (bout_count == 0) {
+                continue;
+            }
+            auto trim = [&](auto& values) {
+                if (!values.empty() && values.size() > bout_count) {
+                    values.resize(bout_count);
+                }
+            };
+            trim(series.start_frame);
+            trim(series.end_frame);
+            trim(series.core_start_frame);
+            trim(series.core_end_frame);
+            trim(series.start_time_s);
+            trim(series.end_time_s);
+            trim(series.duration_s);
+            trim(series.path_length_mm);
+            trim(series.path_length_px);
+            trim(series.net_displacement_mm);
+            trim(series.net_displacement_px);
+            trim(series.peak_detection_signal_mm_s);
+            trim(series.peak_speed_mm_s);
+            trim(series.gap_censored);
+
+            data_.swim_bout_series.push_back(std::move(series));
+            loaded_any = true;
+        }
+    }
+
+    if (loaded_any) {
+        std::cout << "  [SwimBouts] Loaded "
+                  << data_.swim_bout_series.size() << " candidates"
+                  << std::endl;
+    }
+    return loaded_any;
+}
+
+bool ZarrDetectionLoader::loadBoutKinematicsData(
+    const ts::kvstore::KvStore& store) {
+    const std::string parent_path = "analysis/bout_kinematics_runs";
+    std::vector<std::string> run_candidates;
+    if (auto parent_attrs = readGroupAttrs(store, parent_path)) {
+        const std::string latest = extractLatestRunName(*parent_attrs);
+        if (!latest.empty()) {
+            run_candidates.push_back(latest);
+        }
+    }
+    if (!root_path_.empty()) {
+        auto runs = collect_runs_fs(root_path_, parent_path, {});
+        run_candidates.insert(run_candidates.end(), runs.begin(), runs.end());
+    }
+    std::sort(run_candidates.begin(), run_candidates.end());
+    run_candidates.erase(std::unique(run_candidates.begin(),
+                                     run_candidates.end()),
+                         run_candidates.end());
+    if (run_candidates.empty()) {
+        return false;
+    }
+
+    auto readFrameColumn = [&](const std::string& path,
+                               std::vector<int32_t>& out) -> bool {
+        if (readInt32Array(store, path, out) && !out.empty()) {
+            return true;
+        }
+        std::vector<int64_t> tmp64;
+        if (!readInt64Array(store, path, tmp64) || tmp64.empty()) {
+            return false;
+        }
+        out.resize(tmp64.size());
+        for (size_t i = 0; i < tmp64.size(); ++i) {
+            out[i] = clampToInt32(tmp64[i]);
+        }
+        return true;
+    };
+
+    bool loaded_any = false;
+    for (const auto& run_name : run_candidates) {
+        const std::string run_base = parent_path + "/" + run_name + "/";
+        const std::string metrics_base = run_base + "movement/per_bout_metrics/";
+        if (!arrayExists(store, metrics_base + "source_start_frame") &&
+            !arrayExists(store, metrics_base + "physical_active_duration_s")) {
+            continue;
+        }
+
+        json run_attrs = json::object();
+        if (auto run_attrs_opt = readGroupAttrs(store, run_base)) {
+            run_attrs = *run_attrs_opt;
+        }
+
+        ZarrDetectionData::BoutKinematicsSeries series;
+        series.run_name = run_name;
+        series.source_track_kinematics_run =
+            jsonStringAttr(run_attrs, "source_track_kinematics_run");
+        series.source_track_id = jsonTrackIdAttr(run_attrs, "source_track_id");
+        series.source_swim_bout_run =
+            jsonStringAttr(run_attrs, "source_swim_bout_run");
+        series.source_swim_bout_speed_level =
+            jsonStringAttr(run_attrs, "source_swim_bout_speed_level");
+        series.schema_id = jsonStringAttr(run_attrs, "schema_id");
+        series.created_at_utc = jsonStringAttr(run_attrs, "created_at_utc");
+        series.movement_metric_source_level =
+            jsonStringAttr(run_attrs, "movement_metric_source_level");
+
+        readFrameColumn(metrics_base + "source_start_frame",
+                        series.source_start_frame);
+        readFrameColumn(metrics_base + "source_end_frame",
+                        series.source_end_frame);
+        readFrameColumn(metrics_base + "source_core_start_frame",
+                        series.source_core_start_frame);
+        readFrameColumn(metrics_base + "source_core_end_frame",
+                        series.source_core_end_frame);
+        readFrameColumn(metrics_base + "physical_active_start_frame",
+                        series.physical_active_start_frame);
+        readFrameColumn(metrics_base + "physical_active_end_frame",
+                        series.physical_active_end_frame);
+        readFloatArray(store,
+                       metrics_base + "physical_active_duration_s",
+                       series.physical_active_duration_s);
+        readFloatArray(store,
+                       metrics_base + "physical_active_path_length_mm",
+                       series.physical_active_path_length_mm);
+        readFloatArray(store,
+                       metrics_base + "physical_active_path_length_px",
+                       series.physical_active_path_length_px);
+        readFloatArray(store,
+                       metrics_base + "physical_active_mean_speed_mm_s",
+                       series.physical_active_mean_speed_mm_s);
+        readFloatArray(store,
+                       metrics_base + "physical_active_peak_speed_mm_s",
+                       series.physical_active_peak_speed_mm_s);
+        readBoolArray(store,
+                      metrics_base + "physical_active_valid",
+                      series.physical_active_valid);
+        readStringArray(store,
+                        metrics_base + "failure_reason_bytes",
+                        series.failure_reason);
+
+        const size_t row_count = std::max(series.source_start_frame.size(),
+                                          series.physical_active_duration_s.size());
+        if (row_count == 0) {
+            continue;
+        }
+        auto trim = [&](auto& values) {
+            if (!values.empty() && values.size() > row_count) {
+                values.resize(row_count);
+            }
+        };
+        trim(series.source_start_frame);
+        trim(series.source_end_frame);
+        trim(series.source_core_start_frame);
+        trim(series.source_core_end_frame);
+        trim(series.physical_active_start_frame);
+        trim(series.physical_active_end_frame);
+        trim(series.physical_active_duration_s);
+        trim(series.physical_active_path_length_mm);
+        trim(series.physical_active_path_length_px);
+        trim(series.physical_active_mean_speed_mm_s);
+        trim(series.physical_active_peak_speed_mm_s);
+        trim(series.physical_active_valid);
+        trim(series.failure_reason);
+
+        data_.bout_kinematics_series.push_back(std::move(series));
+        loaded_any = true;
+    }
+
+    if (loaded_any) {
+        std::cout << "  [BoutKinematics] Loaded "
+                  << data_.bout_kinematics_series.size() << " candidates"
+                  << std::endl;
+    }
+    return loaded_any;
+}
+
 bool ZarrDetectionLoader::loadLegacyMovementData(const ts::kvstore::KvStore& store) {
     const std::vector<std::pair<std::string, std::string>> categories = {
         {"analysis/movement_runs/offline", "offline"},
@@ -340,7 +1031,10 @@ bool ZarrDetectionLoader::loadMovementTrack(
     const std::vector<int64_t>* run_camera_frame_ids,
     const std::unordered_map<int64_t, size_t>* run_camera_lookup,
     const std::vector<float>* run_distance_to_target_mm,
-    const std::vector<uint8_t>* run_has_offline_flags) {
+    const std::vector<uint8_t>* run_has_offline_flags,
+    const std::string& speed_level,
+    const std::string& primary_speed_label,
+    const std::string& secondary_speed_label) {
 
     auto readInt32Or64List = [&](const std::vector<std::string>& candidates,
                                  std::vector<int32_t>& dest) {
@@ -402,9 +1096,13 @@ bool ZarrDetectionLoader::loadMovementTrack(
     }
 
     auto readSpeedArray = [&](const std::vector<std::string>& names,
-                              std::vector<float>& dest) -> bool {
+                              std::vector<float>& dest,
+                              std::string* source_name = nullptr) -> bool {
         for (const auto& name : names) {
             if (readFloatArray(store, track_base + name, dest) && !dest.empty()) {
+                if (source_name) {
+                    *source_name = track_base + name;
+                }
                 return true;
             }
         }
@@ -415,23 +1113,38 @@ bool ZarrDetectionLoader::loadMovementTrack(
     auto readSpeedValues = [&](const std::vector<std::string>& mm_names,
                                const std::vector<std::string>& px_names,
                                std::vector<float>& dest,
-                               const char* label) -> bool {
-        if (readSpeedArray(mm_names, dest)) {
+                               const char* label,
+                               std::string& units_out,
+                               std::string& source_out) -> bool {
+        units_out.clear();
+        source_out.clear();
+        if (readSpeedArray(mm_names, dest, &source_out)) {
+            units_out = "mm/s";
             return true;
         }
         if (!px_names.empty()) {
             std::vector<float> px;
-            if (readSpeedArray(px_names, px) && !px.empty()) {
+            std::string px_source;
+            if (readSpeedArray(px_names, px, &px_source) && !px.empty()) {
                 if (pixels_per_mm > 1e-6f) {
                     dest.resize(px.size());
                     for (size_t i = 0; i < px.size(); ++i) {
                         dest[i] = px[i] / pixels_per_mm;
                     }
+                    units_out = "mm/s";
+                    source_out = px_source + " converted from px/s";
                     return true;
                 }
-                std::cout << "  " << log_tag << " Unable to convert " << label
-                          << " for run '" << run_name << "' track '" << track_id
-                          << "' (pixels_per_mm missing)" << std::endl;
+                dest = std::move(px);
+                units_out = "px/s";
+                source_out = px_source;
+                if (log_tag != "[TrackKinematics]") {
+                    std::cout << "  " << log_tag << " Using " << label
+                              << " in px/s for run '" << run_name
+                              << "' track '" << track_id
+                              << "' (pixels_per_mm missing)" << std::endl;
+                }
+                return true;
             }
         }
         return false;
@@ -439,8 +1152,22 @@ bool ZarrDetectionLoader::loadMovementTrack(
 
     std::vector<float> smoothed_mm;
     std::vector<float> instant_mm;
-    bool has_smoothed = readSpeedValues(smoothed_mm_names, smoothed_px_names, smoothed_mm, "smoothed speed");
-    bool has_instant = readSpeedValues(instant_mm_names, instant_px_names, instant_mm, "instantaneous speed");
+    std::string smoothed_units;
+    std::string instant_units;
+    std::string smoothed_source_path;
+    std::string instant_source_path;
+    bool has_smoothed = readSpeedValues(smoothed_mm_names,
+                                        smoothed_px_names,
+                                        smoothed_mm,
+                                        "primary speed",
+                                        smoothed_units,
+                                        smoothed_source_path);
+    bool has_instant = readSpeedValues(instant_mm_names,
+                                       instant_px_names,
+                                       instant_mm,
+                                       "secondary speed",
+                                       instant_units,
+                                       instant_source_path);
 
     std::vector<float> heading_degrees;
     readFloatArray(store, track_base + "heading_degrees", heading_degrees);
@@ -450,6 +1177,49 @@ bool ZarrDetectionLoader::loadMovementTrack(
 
     std::vector<uint8_t> keypoint_success;
     readBoolArray(store, track_base + "keypoint_success", keypoint_success);
+
+    std::vector<uint8_t> sample_valid;
+    readBoolArray(store, track_base + "sample_valid", sample_valid);
+
+    std::vector<uint8_t> transition_valid;
+    readBoolArray(store, track_base + "transition_valid", transition_valid);
+
+    auto readVec2Array = [&](const std::string& rel_path,
+                             std::vector<std::array<float, 2>>& out) -> bool {
+        auto readAs = [&](auto token) -> bool {
+            using Source = decltype(token);
+            auto open_result =
+                openArrayAny<Source, 2>(store, track_base + rel_path, context_);
+            if (!open_result.ok()) {
+                return false;
+            }
+            auto array_result = ts::Read(open_result.value()).result();
+            if (!array_result.ok()) {
+                return false;
+            }
+            auto array = array_result.value();
+            if (array.rank() != 2 || array.shape()[1] != 2) {
+                return false;
+            }
+            const size_t rows = static_cast<size_t>(array.shape()[0]);
+            out.resize(rows);
+            const auto* data = static_cast<const Source*>(array.data());
+            for (size_t row = 0; row < rows; ++row) {
+                out[row][0] = static_cast<float>(data[row * 2 + 0]);
+                out[row][1] = static_cast<float>(data[row * 2 + 1]);
+            }
+            return true;
+        };
+
+        out.clear();
+        return readAs(float{}) || readAs(double{});
+    };
+
+    std::vector<std::array<float, 2>> positions_px;
+    readVec2Array("positions_px", positions_px);
+
+    std::vector<std::array<float, 2>> positions_mm;
+    readVec2Array("positions_mm", positions_mm);
 
     std::vector<float> heading_per_second_degrees;
     readFloatArray(store, track_base + "heading_per_second_degrees", heading_per_second_degrees);
@@ -489,6 +1259,18 @@ bool ZarrDetectionLoader::loadMovementTrack(
     if (!keypoint_success.empty()) {
         sample_count = std::min(sample_count, keypoint_success.size());
     }
+    if (!sample_valid.empty()) {
+        sample_count = std::min(sample_count, sample_valid.size());
+    }
+    if (!transition_valid.empty()) {
+        sample_count = std::min(sample_count, transition_valid.size());
+    }
+    if (!positions_px.empty()) {
+        sample_count = std::min(sample_count, positions_px.size());
+    }
+    if (!positions_mm.empty()) {
+        sample_count = std::min(sample_count, positions_mm.size());
+    }
     if (!frame_indices.empty()) {
         sample_count = std::min(sample_count, frame_indices.size());
     }
@@ -507,8 +1289,16 @@ bool ZarrDetectionLoader::loadMovementTrack(
     trim_to(heading_degrees);
     trim_to(smoothed_heading_degrees);
     trim_to(keypoint_success);
+    trim_to(sample_valid);
+    trim_to(transition_valid);
+    trim_to(positions_px);
+    trim_to(positions_mm);
     trim_to(frame_indices);
     trim_to(detection_indices);
+
+    if (keypoint_success.empty() && !sample_valid.empty()) {
+        keypoint_success = sample_valid;
+    }
 
     std::vector<float> distance_series;
     if (run_camera_frame_ids && run_camera_lookup && run_distance_to_target_mm &&
@@ -554,6 +1344,18 @@ bool ZarrDetectionLoader::loadMovementTrack(
     series.category = category;
     series.run_name = run_name;
     series.track_id = track_id;
+    series.speed_level = speed_level;
+    series.primary_speed_label =
+        primary_speed_label.empty() ? "Smoothed Speed" : primary_speed_label;
+    series.primary_speed_units =
+        smoothed_units.empty() ? "mm/s" : smoothed_units;
+    series.primary_speed_source_path = smoothed_source_path;
+    series.secondary_speed_label =
+        secondary_speed_label.empty() ? "Instantaneous Speed"
+                                      : secondary_speed_label;
+    series.secondary_speed_units =
+        instant_units.empty() ? series.primary_speed_units : instant_units;
+    series.secondary_speed_source_path = instant_source_path;
     series.detection_variant = detection_variant;
     series.source_detect_run = source_detect_run;
     series.fps = run_fps;
@@ -567,6 +1369,10 @@ bool ZarrDetectionLoader::loadMovementTrack(
     series.heading_degrees = std::move(heading_degrees);
     series.smoothed_heading_degrees = std::move(smoothed_heading_degrees);
     series.keypoint_success = std::move(keypoint_success);
+    series.sample_valid = std::move(sample_valid);
+    series.transition_valid = std::move(transition_valid);
+    series.positions_px = std::move(positions_px);
+    series.positions_mm = std::move(positions_mm);
     series.frame_indices = std::move(frame_indices);
     series.detection_indices = std::move(detection_indices);
     if (!distance_series.empty()) {
@@ -581,10 +1387,16 @@ bool ZarrDetectionLoader::loadMovementTrack(
     if (!heading_per_second_time_seconds.empty()) {
         series.heading_per_second_time_seconds = std::move(heading_per_second_time_seconds);
     }
+    series.frame_to_row.reserve(series.frame_indices.size());
+    for (size_t i = 0; i < series.frame_indices.size(); ++i) {
+        series.frame_to_row.emplace(series.frame_indices[i], i);
+    }
 
     data_.movement_series.push_back(std::move(series));
     std::cout << "  " << log_tag << " Loaded run '" << run_name << "' track '" << track_id
-              << "' (" << category << ", samples " << sample_count << ")"
+              << "' (" << category
+              << (speed_level.empty() ? "" : ", speed " + speed_level)
+              << ", samples " << sample_count << ")"
               << std::endl;
     return true;
 }
@@ -680,6 +1492,7 @@ void ZarrDetectionLoader::finalizeMovementSelection() {
         lower.resize(value.size());
         std::transform(value.begin(), value.end(), lower.begin(),
                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (lower.find("track_kinematics") != std::string::npos) return 6;
         if (lower == "refined") return 5;
         if (lower == "offline") return 4;
         if (lower == "online_refined") return 3;
@@ -726,6 +1539,80 @@ ZarrDetectionLoader::getSelectedMovementSeries() const {
         return &data_.movement_series[index];
     }
     return nullptr;
+}
+
+std::optional<ZarrDetectionLoader::MovementFrameSample>
+ZarrDetectionLoader::getMovementSampleForFrame(int32_t frame_index) const {
+    const auto* series = getSelectedMovementSeries();
+    if (!series || frame_index < 0) {
+        return std::nullopt;
+    }
+
+    auto row_it = series->frame_to_row.find(frame_index);
+    if (row_it == series->frame_to_row.end()) {
+        return std::nullopt;
+    }
+
+    const size_t row = row_it->second;
+    ZarrDetectionLoader::MovementFrameSample sample;
+    sample.valid = true;
+    sample.frame_index = frame_index;
+    sample.row_index = row;
+    sample.category = series->category;
+    sample.run_name = series->run_name;
+    sample.track_id = series->track_id;
+    sample.speed_level = series->speed_level;
+    sample.speed_label = series->primary_speed_label.empty()
+                             ? "Speed"
+                             : series->primary_speed_label;
+    sample.speed_units = series->primary_speed_units.empty()
+                             ? "mm/s"
+                             : series->primary_speed_units;
+
+    if (row < series->smoothed_speed_mm.size()) {
+        const float speed = series->smoothed_speed_mm[row];
+        if (std::isfinite(static_cast<double>(speed))) {
+            sample.has_speed = true;
+            sample.speed = speed;
+        }
+    }
+
+    if (row < series->smoothed_heading_degrees.size()) {
+        const float heading = series->smoothed_heading_degrees[row];
+        if (std::isfinite(static_cast<double>(heading))) {
+            sample.has_heading = true;
+            sample.heading_smoothed = true;
+            sample.heading_degrees = heading;
+        }
+    }
+    if (!sample.has_heading && row < series->heading_degrees.size()) {
+        const float heading = series->heading_degrees[row];
+        if (std::isfinite(static_cast<double>(heading))) {
+            sample.has_heading = true;
+            sample.heading_smoothed = false;
+            sample.heading_degrees = heading;
+        }
+    }
+
+    if (row < series->positions_px.size()) {
+        const auto& point = series->positions_px[row];
+        if (std::isfinite(static_cast<double>(point[0])) &&
+            std::isfinite(static_cast<double>(point[1]))) {
+            sample.has_position_px = true;
+            sample.x_px = point[0];
+            sample.y_px = point[1];
+        }
+    }
+    if (row < series->sample_valid.size()) {
+        sample.has_sample_valid = true;
+        sample.sample_valid = series->sample_valid[row] != 0;
+    }
+    if (row < series->transition_valid.size()) {
+        sample.has_transition_valid = true;
+        sample.transition_valid = series->transition_valid[row] != 0;
+    }
+
+    return sample;
 }
 
 bool ZarrDetectionLoader::selectMovementSeries(size_t index) {

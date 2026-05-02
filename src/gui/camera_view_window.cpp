@@ -457,6 +457,11 @@ CameraViewWindowResult drawCameraViewWindowContents(
                 drawCameraViewHeadingOverlay(*context.heading_details,
                                              image_height_px);
             }
+            if (context.movement_sample != nullptr) {
+                drawCameraViewMovementOverlay(*context.movement_sample,
+                                              context.detection_details,
+                                              image_height_px);
+            }
             if (context.can_draw_eye_masks && context.mask_details != nullptr) {
                 CameraViewMaskPerfMetrics mask_perf =
                     drawCameraViewEyeMaskOverlay(

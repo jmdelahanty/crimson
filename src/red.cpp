@@ -2699,6 +2699,13 @@ int main(int argc, char **argv) {
                     }
                     const bool full_frame_keypoint_edit_enabled =
                         zarr_loaded && keypoint_tab_full_frame_edit_enabled;
+                    std::optional<ZarrDetectionLoader::MovementFrameSample>
+                        movement_frame_sample;
+                    if (zarr_loaded && zarr_loader.hasMovementData()) {
+                        movement_frame_sample =
+                            zarr_loader.getMovementSampleForFrame(
+                                current_frame_num);
+                    }
 
                     const CameraViewWindowContext camera_view_context{
                         scene,
@@ -2776,6 +2783,9 @@ int main(int argc, char **argv) {
                             ? &zarr_loader.getTailKinematicsData()
                             : nullptr,
                         tail_kinematics_overlay_options,
+                        movement_frame_sample.has_value()
+                            ? &*movement_frame_sample
+                            : nullptr,
                         zarr_loaded && can_draw_eye_masks && show_eye_masks &&
                             zarr_loader.eyeMasksUseRefinedSubjectMasks() &&
                             frame_debug_window_state

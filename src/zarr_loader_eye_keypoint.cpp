@@ -309,6 +309,10 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     data_.eye_angle_right_deg.clear();
     data_.eye_angle_indices_by_frame.clear();
     data_.has_eye_angles = false;
+    data_.has_eye_frame_angles = false;
+    data_.eye_frame_left_angle_deg.clear();
+    data_.eye_frame_right_angle_deg.clear();
+    data_.eye_frame_vergence_deg.clear();
     data_.eye_vergence_signed_frame_deg.clear();
     data_.eye_vergence_frame_time_seconds.clear();
     data_.eye_vergence_frame_valid.clear();
@@ -1780,6 +1784,10 @@ bool ZarrDetectionLoader::loadEyeAngleData(const ts::kvstore::KvStore& store,
     data_.eye_angle_right_deg.clear();
     data_.eye_angle_indices_by_frame.clear();
     data_.has_eye_angles = false;
+    data_.has_eye_frame_angles = false;
+    data_.eye_frame_left_angle_deg.clear();
+    data_.eye_frame_right_angle_deg.clear();
+    data_.eye_frame_vergence_deg.clear();
 
     {
         data_.eye_vergence_signed_frame_deg.clear();
@@ -2003,6 +2011,11 @@ bool ZarrDetectionLoader::loadEyeAngleData(const ts::kvstore::KvStore& store,
                 addUniqueString(vector_fields_to_load, field);
             }
         }
+        addUniqueString(scalar_fields_to_load, "left_eye_angle_deg");
+        addUniqueString(scalar_fields_to_load, "right_eye_angle_deg");
+        addUniqueString(scalar_fields_to_load, "vergence_eye_angle_deg");
+        addUniqueString(scalar_fields_to_load, "left_eye_angle_deg_smoothed");
+        addUniqueString(scalar_fields_to_load, "right_eye_angle_deg_smoothed");
         addUniqueString(scalar_fields_to_load, "left_gaze_signed_deg");
         addUniqueString(scalar_fields_to_load, "right_gaze_signed_deg");
         addUniqueString(scalar_fields_to_load, "left_minor_signed_deg");
@@ -2207,6 +2220,50 @@ bool ZarrDetectionLoader::loadEyeAngleData(const ts::kvstore::KvStore& store,
             }
             return nullptr;
         };
+        const auto* left_eye_frame_source = scalar_roi_values(
+            {"left_eye_angle_deg", "left_eye_angle_deg_smoothed"});
+        const auto* right_eye_frame_source = scalar_roi_values(
+            {"right_eye_angle_deg", "right_eye_angle_deg_smoothed"});
+        const auto* vergence_eye_frame_source = scalar_roi_values(
+            {"vergence_eye_angle_deg", "vergence_eye_angle_deg_smoothed"});
+        if (left_eye_frame_source != nullptr &&
+            right_eye_frame_source != nullptr) {
+            size_t count =
+                std::min(left_eye_frame_source->size(),
+                         right_eye_frame_source->size());
+            if (eye.row_count > 0) {
+                count = std::min(count, eye.row_count);
+            }
+            data_.eye_frame_left_angle_deg.assign(
+                left_eye_frame_source->begin(),
+                left_eye_frame_source->begin() + count);
+            data_.eye_frame_right_angle_deg.assign(
+                right_eye_frame_source->begin(),
+                right_eye_frame_source->begin() + count);
+            if (vergence_eye_frame_source != nullptr) {
+                size_t vergence_count =
+                    std::min(vergence_eye_frame_source->size(), count);
+                data_.eye_frame_vergence_deg.assign(
+                    vergence_eye_frame_source->begin(),
+                    vergence_eye_frame_source->begin() + vergence_count);
+            } else {
+                data_.eye_frame_vergence_deg.resize(count);
+                for (size_t i = 0; i < count; ++i) {
+                    data_.eye_frame_vergence_deg[i] =
+                        data_.eye_frame_left_angle_deg[i] +
+                        data_.eye_frame_right_angle_deg[i];
+                }
+                appendEyeAngleWarning(
+                    eye,
+                    "ROI vergence_eye_angle_deg missing; camera overlay computes eye-frame vergence from left+right eye-frame angles.");
+            }
+            data_.has_eye_frame_angles = true;
+        } else {
+            appendEyeAngleWarning(
+                eye,
+                "No ROI left_eye_angle_deg/right_eye_angle_deg fields were available for default eye-frame camera labels.");
+        }
+
         const auto* left_angle_source = scalar_roi_values(
             {"left_gaze_signed_deg", "left_minor_signed_deg",
              "left_feret_minor_signed_deg"});
@@ -2226,27 +2283,38 @@ bool ZarrDetectionLoader::loadEyeAngleData(const ts::kvstore::KvStore& store,
             data_.eye_angle_right_deg.assign(
                 right_angle_source->begin(),
                 right_angle_source->begin() + count);
+        } else {
+            appendEyeAngleWarning(
+                eye,
+                "No ROI gaze/minor signed fields were available for eye-angle arc overlays.");
+        }
+        const size_t angle_index_count = std::max(
+            {data_.eye_frame_left_angle_deg.size(),
+             data_.eye_frame_right_angle_deg.size(),
+             data_.eye_frame_vergence_deg.size(),
+             data_.eye_angle_left_deg.size(),
+             data_.eye_angle_right_deg.size()});
+        if (angle_index_count > 0) {
             if (!eye.row_to_frame.empty()) {
                 data_.eye_angle_frame_indices.assign(
                     eye.row_to_frame.begin(),
                     eye.row_to_frame.begin() +
-                        std::min(count, eye.row_to_frame.size()));
+                        std::min(angle_index_count, eye.row_to_frame.size()));
             }
-            data_.eye_angle_frame_indices.resize(count, -1);
-            data_.eye_angle_valid_mask.assign(count, 1);
-            for (size_t i = 0; i < count; ++i) {
+            data_.eye_angle_frame_indices.resize(angle_index_count, -1);
+            data_.eye_angle_valid_mask.assign(angle_index_count, 1);
+            for (size_t i = 0; i < angle_index_count; ++i) {
                 const bool frame_valid =
                     eye.roi_valid_frame.empty() ||
                     (i < eye.roi_valid_frame.size() &&
                      eye.roi_valid_frame[i] != 0);
                 data_.eye_angle_valid_mask[i] = frame_valid ? 1 : 0;
             }
-            data_.has_eye_angles = true;
-        } else {
-            appendEyeAngleWarning(
-                eye,
-                "No ROI gaze/minor signed fields were available for eye-angle arc overlays.");
         }
+        data_.has_eye_angles =
+            data_.has_eye_frame_angles ||
+            !data_.eye_angle_left_deg.empty() ||
+            !data_.eye_angle_right_deg.empty();
         data_.eye_angle_run_name = selected_run;
 
         size_t max_frame_index = 0;
@@ -2999,6 +3067,12 @@ bool ZarrDetectionLoader::populateEyeMaskEntry(
     out_mask.feret_minor_angle_deg[1] = angle_nan;
     out_mask.feret_angle_valid = {0, 0};
     out_mask.has_eye_angles = false;
+    out_mask.eye_frame_angle_deg[0] = angle_nan;
+    out_mask.eye_frame_angle_deg[1] = angle_nan;
+    out_mask.eye_frame_angle_valid = {0, 0};
+    out_mask.eye_frame_vergence_deg = angle_nan;
+    out_mask.eye_frame_vergence_valid = 0;
+    out_mask.has_eye_frame_angles = false;
     out_mask.subject_mask_components.clear();
     out_mask.has_subject_mask_components = false;
     out_mask.roi_index = static_cast<int32_t>(roi_index);

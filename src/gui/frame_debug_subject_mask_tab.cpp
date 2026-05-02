@@ -465,9 +465,13 @@ void drawSubjectMaskTab(
                 if (mask.has_feret_axes) {
                     ++masks_with_axes;
                 }
-                if (mask.has_eye_angles &&
-                    ((mask.feret_angle_valid[0] != 0) ||
-                     (mask.feret_angle_valid[1] != 0))) {
+                if ((mask.has_eye_frame_angles &&
+                     ((mask.eye_frame_angle_valid[0] != 0) ||
+                      (mask.eye_frame_angle_valid[1] != 0) ||
+                      mask.eye_frame_vergence_valid != 0)) ||
+                    (mask.has_eye_angles &&
+                     ((mask.feret_angle_valid[0] != 0) ||
+                      (mask.feret_angle_valid[1] != 0)))) {
                     ++masks_with_angle_labels;
                 }
                 for (const auto& component : mask.subject_mask_components) {

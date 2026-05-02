@@ -8,7 +8,7 @@
 
 namespace {
 
-std::string format_transport_time(float t_seconds) {
+std::string format_transport_time(double t_seconds) {
     int seconds = static_cast<int>(t_seconds);
     const int hours = seconds / 3600;
     seconds -= hours * 3600;
@@ -94,12 +94,13 @@ CameraViewTransportControlsResult drawCameraViewTransportControls(
     const bool slider_released = ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SameLine();
 
-    const float current_time_sec =
-        context.video_fps > 0.0f ? result.slider_frame_number / context.video_fps
-                                 : 0.0f;
-    const float total_time_sec =
-        context.video_fps > 0.0f ? context.estimated_num_frames / context.video_fps
-                                 : 0.0f;
+    const double current_time_sec =
+        context.video_fps > 0.0 ? result.slider_frame_number / context.video_fps
+                                : 0.0;
+    const double total_time_sec =
+        context.video_fps > 0.0
+            ? context.estimated_num_frames / context.video_fps
+            : 0.0;
     const std::string current_str = format_transport_time(current_time_sec);
     const std::string total_str = format_transport_time(total_time_sec);
     ImGui::Text("%s / %s", current_str.c_str(), total_str.c_str());

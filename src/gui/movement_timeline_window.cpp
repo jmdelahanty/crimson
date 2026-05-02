@@ -7,8 +7,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
 #include <limits>
 #include <numeric>
+#include <optional>
 #include <sstream>
 #include <vector>
 
@@ -26,7 +28,11 @@ const ZarrDetectionData::MovementSeries* renderMovementDatasetUI(
         if (selected_series) {
             summary << selected_series->category << "/"
                     << selected_series->run_name << " (track "
-                    << selected_series->track_id << ")";
+                    << selected_series->track_id;
+            if (!selected_series->speed_level.empty()) {
+                summary << ", " << selected_series->speed_level;
+            }
+            summary << ")";
         } else {
             summary << "Select dataset";
         }
@@ -38,7 +44,11 @@ const ZarrDetectionData::MovementSeries* renderMovementDatasetUI(
                 }
                 std::ostringstream label;
                 label << series->category << "/" << series->run_name
-                      << " (track " << series->track_id << ")";
+                      << " (track " << series->track_id;
+                if (!series->speed_level.empty()) {
+                    label << ", " << series->speed_level;
+                }
+                label << ")";
                 bool is_selected = (i == selected_index);
                 if (ImGui::Selectable(label.str().c_str(), is_selected)) {
                     if (zarr_loader.selectMovementSeries(i)) {
@@ -100,6 +110,263 @@ const ZarrDetectionData::MovementSeries* renderMovementDatasetUI(
     return selected_series;
 }
 
+std::string normalizeSpeedLevelName(std::string value) {
+    if (value.rfind("speed_", 0) == 0) {
+        value = value.substr(6);
+    }
+    return value;
+}
+
+int32_t parseTrackId(const std::string& track_id) {
+    std::string value = track_id;
+    if (value.rfind("id_", 0) == 0) {
+        value = value.substr(3);
+    }
+    try {
+        return static_cast<int32_t>(std::stoi(value));
+    } catch (...) {
+        return -1;
+    }
+}
+
+bool isFiniteFloatValue(float value) {
+    return std::isfinite(static_cast<double>(value));
+}
+
+bool speedLevelMatches(const std::string& candidate_level,
+                       const std::string& selected_level) {
+    const std::string candidate = normalizeSpeedLevelName(candidate_level);
+    const std::string selected = normalizeSpeedLevelName(selected_level);
+    return selected.empty() || candidate == selected;
+}
+
+bool speedSourceMatches(const std::string& source_level,
+                        const std::string& selected_level) {
+    const std::string source = normalizeSpeedLevelName(source_level);
+    const std::string selected = normalizeSpeedLevelName(selected_level);
+    return !source.empty() && !selected.empty() && source == selected;
+}
+
+bool pathReferencesSpeedLevel(const std::string& source_path,
+                              const std::string& selected_level) {
+    const std::string selected = normalizeSpeedLevelName(selected_level);
+    if (source_path.empty() || selected.empty()) {
+        return false;
+    }
+    std::string lower_path = source_path;
+    std::transform(lower_path.begin(), lower_path.end(), lower_path.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return lower_path.find("speed_" + selected) != std::string::npos ||
+           lower_path.find("/" + selected + "/") != std::string::npos;
+}
+
+bool isCompatibleSwimBoutSeries(
+    const ZarrDetectionData::MovementSeries& movement_series,
+    const ZarrDetectionData::SwimBoutSeries& bouts) {
+    const int32_t selected_track = parseTrackId(movement_series.track_id);
+    const std::string selected_level =
+        normalizeSpeedLevelName(movement_series.speed_level);
+    if (!bouts.source_track_kinematics_run.empty() &&
+        bouts.source_track_kinematics_run != movement_series.run_name) {
+        return false;
+    }
+    if (bouts.source_track_kinematics_run.empty() &&
+        bouts.run_name.find(movement_series.run_name) == std::string::npos) {
+        return false;
+    }
+    if (bouts.track_id >= 0 && selected_track >= 0 &&
+        bouts.track_id != selected_track) {
+        return false;
+    }
+    if (selected_level.empty()) {
+        return true;
+    }
+    if (speedLevelMatches(bouts.speed_level, selected_level)) {
+        return true;
+    }
+    if (speedSourceMatches(bouts.detection_signal_source_level,
+                           selected_level) ||
+        speedSourceMatches(bouts.movement_metric_source_level,
+                           selected_level) ||
+        speedSourceMatches(bouts.path_distance_source_level,
+                           selected_level)) {
+        return true;
+    }
+    return pathReferencesSpeedLevel(bouts.detection_signal_source_path,
+                                    selected_level);
+}
+
+std::vector<size_t> findCompatibleSwimBoutIndices(
+    const ZarrDetectionData::MovementSeries& movement_series,
+    const std::vector<ZarrDetectionData::SwimBoutSeries>& swim_bouts) {
+    std::vector<size_t> indices;
+    for (size_t i = 0; i < swim_bouts.size(); ++i) {
+        if (isCompatibleSwimBoutSeries(movement_series, swim_bouts[i])) {
+            indices.push_back(i);
+        }
+    }
+    return indices;
+}
+
+std::string swimBoutCandidateLabel(
+    const ZarrDetectionData::SwimBoutSeries& bouts) {
+    std::ostringstream label;
+    label << bouts.run_name << " / " << bouts.speed_level;
+    label << " (" << (bouts.detection_method.empty()
+                          ? "method unknown"
+                          : bouts.detection_method)
+          << ", " << bouts.start_frame.size() << " bouts";
+    if (isFiniteFloatValue(bouts.threshold_mm)) {
+        label << ", threshold " << std::fixed << std::setprecision(3)
+              << bouts.threshold_mm;
+    }
+    if (isFiniteFloatValue(bouts.exponential_tau_s)) {
+        label << ", tau " << std::fixed << std::setprecision(3)
+              << bouts.exponential_tau_s << "s";
+    }
+    if (bouts.is_latest_run) {
+        label << ", latest";
+    }
+    if (bouts.is_default_level) {
+        label << ", default";
+    }
+    label << ")";
+    return label.str();
+}
+
+const ZarrDetectionData::SwimBoutSeries* resolveSelectedSwimBoutSeries(
+    const std::vector<ZarrDetectionData::SwimBoutSeries>& swim_bouts,
+    const std::vector<size_t>& compatible_indices,
+    MovementTimelineWindowState& state) {
+    if (compatible_indices.empty()) {
+        state.selected_swim_bout_run.clear();
+        state.selected_swim_bout_speed_level.clear();
+        return nullptr;
+    }
+
+    for (size_t index : compatible_indices) {
+        const auto& candidate = swim_bouts[index];
+        if (candidate.run_name == state.selected_swim_bout_run &&
+            candidate.speed_level == state.selected_swim_bout_speed_level) {
+            return &candidate;
+        }
+    }
+
+    size_t chosen = compatible_indices.front();
+    for (size_t index : compatible_indices) {
+        const auto& candidate = swim_bouts[index];
+        if (candidate.is_latest_run && candidate.is_default_level) {
+            chosen = index;
+            break;
+        }
+        if (swim_bouts[chosen].is_latest_run &&
+            !swim_bouts[chosen].is_default_level) {
+            continue;
+        }
+        if (candidate.is_latest_run || candidate.is_default_level) {
+            chosen = index;
+        }
+    }
+
+    const auto& selected = swim_bouts[chosen];
+    state.selected_swim_bout_run = selected.run_name;
+    state.selected_swim_bout_speed_level = selected.speed_level;
+    return &selected;
+}
+
+bool isCompatibleBoutKinematicsSeries(
+    const ZarrDetectionData::MovementSeries& movement_series,
+    const ZarrDetectionData::SwimBoutSeries& swim_bouts,
+    const ZarrDetectionData::BoutKinematicsSeries& bouts) {
+    const int32_t selected_track = parseTrackId(movement_series.track_id);
+    if (!bouts.source_track_kinematics_run.empty() &&
+        bouts.source_track_kinematics_run != movement_series.run_name) {
+        return false;
+    }
+    if (bouts.source_track_id >= 0 && selected_track >= 0 &&
+        bouts.source_track_id != selected_track) {
+        return false;
+    }
+    if (!bouts.source_swim_bout_run.empty() &&
+        bouts.source_swim_bout_run != swim_bouts.run_name) {
+        return false;
+    }
+    if (bouts.source_swim_bout_run.empty()) {
+        return false;
+    }
+    if (!bouts.source_swim_bout_speed_level.empty() &&
+        normalizeSpeedLevelName(bouts.source_swim_bout_speed_level) !=
+            normalizeSpeedLevelName(swim_bouts.speed_level)) {
+        return false;
+    }
+    return true;
+}
+
+std::vector<size_t> findCompatibleBoutKinematicsIndices(
+    const ZarrDetectionData::MovementSeries& movement_series,
+    const ZarrDetectionData::SwimBoutSeries* swim_bouts,
+    const std::vector<ZarrDetectionData::BoutKinematicsSeries>& bout_kinematics) {
+    std::vector<size_t> indices;
+    if (swim_bouts == nullptr) {
+        return indices;
+    }
+    for (size_t i = 0; i < bout_kinematics.size(); ++i) {
+        if (isCompatibleBoutKinematicsSeries(movement_series,
+                                             *swim_bouts,
+                                             bout_kinematics[i])) {
+            indices.push_back(i);
+        }
+    }
+    return indices;
+}
+
+const ZarrDetectionData::BoutKinematicsSeries*
+resolveSelectedBoutKinematicsSeries(
+    const std::vector<ZarrDetectionData::BoutKinematicsSeries>& bout_kinematics,
+    const std::vector<size_t>& compatible_indices,
+    MovementTimelineWindowState& state) {
+    if (compatible_indices.empty()) {
+        state.selected_bout_kinematics_run.clear();
+        return nullptr;
+    }
+    for (size_t index : compatible_indices) {
+        const auto& candidate = bout_kinematics[index];
+        if (candidate.run_name == state.selected_bout_kinematics_run) {
+            return &candidate;
+        }
+    }
+    const auto& selected = bout_kinematics[compatible_indices.front()];
+    state.selected_bout_kinematics_run = selected.run_name;
+    return &selected;
+}
+
+double finiteMean(const std::vector<float>& values,
+                  const std::vector<uint8_t>* valid_mask = nullptr) {
+    double sum = 0.0;
+    size_t count = 0;
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (valid_mask && i < valid_mask->size() && (*valid_mask)[i] == 0) {
+            continue;
+        }
+        if (!isFiniteFloatValue(values[i])) {
+            continue;
+        }
+        sum += static_cast<double>(values[i]);
+        ++count;
+    }
+    return count == 0 ? std::numeric_limits<double>::quiet_NaN()
+                      : sum / static_cast<double>(count);
+}
+
+size_t validCount(const std::vector<uint8_t>& values) {
+    return static_cast<size_t>(
+        std::count_if(values.begin(), values.end(), [](uint8_t value) {
+            return value != 0;
+        }));
+}
+
 }  // namespace
 
 void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
@@ -132,6 +399,31 @@ void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
     const auto& heading_per_second_time =
         context.zarr_loader.getMovementHeadingPerSecondTimeSeconds();
     const auto& frame_indices = context.zarr_loader.getMovementFrameIndices();
+    const auto& swim_bout_series = context.zarr_loader.getSwimBoutSeries();
+    const auto& bout_kinematics_series =
+        context.zarr_loader.getBoutKinematicsSeries();
+    std::vector<size_t> compatible_swim_bout_indices;
+    if (selected_series) {
+        compatible_swim_bout_indices =
+            findCompatibleSwimBoutIndices(*selected_series, swim_bout_series);
+    }
+    const auto* selected_swim_bouts =
+        selected_series
+            ? resolveSelectedSwimBoutSeries(swim_bout_series,
+                                            compatible_swim_bout_indices,
+                                            state)
+            : nullptr;
+    std::vector<size_t> compatible_bout_kinematics_indices;
+    if (selected_series && selected_swim_bouts) {
+        compatible_bout_kinematics_indices =
+            findCompatibleBoutKinematicsIndices(*selected_series,
+                                                selected_swim_bouts,
+                                                bout_kinematics_series);
+    }
+    const auto* selected_bout_kinematics =
+        resolveSelectedBoutKinematicsSeries(bout_kinematics_series,
+                                            compatible_bout_kinematics_indices,
+                                            state);
 
     bool smoothed_available = !smoothed_speed.empty();
     bool instant_available = !instant_speed.empty();
@@ -142,6 +434,14 @@ void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
         !heading_per_second_degrees.empty() &&
         !heading_per_second_time.empty() &&
         heading_per_second_degrees.size() == heading_per_second_time.size();
+    const std::string primary_speed_label =
+        context.zarr_loader.getMovementPrimarySpeedLabel();
+    const std::string primary_speed_units =
+        context.zarr_loader.getMovementPrimarySpeedUnits();
+    const std::string secondary_speed_label =
+        context.zarr_loader.getMovementSecondarySpeedLabel();
+    const std::string secondary_speed_units =
+        context.zarr_loader.getMovementSecondarySpeedUnits();
 
     if (!selected_series || time_data.empty() ||
         (!smoothed_available && !instant_available && !distance_available &&
@@ -175,7 +475,137 @@ void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
                     context.zarr_loader.getMovementRunName().c_str(),
                     context.zarr_loader.getMovementTrackId().c_str());
     }
+    if (!context.zarr_loader.getMovementSpeedLevel().empty()) {
+        ImGui::Text("Speed level: %s | Primary units: %s",
+                    context.zarr_loader.getMovementSpeedLevel().c_str(),
+                    primary_speed_units.c_str());
+    }
     ImGui::Text("Data points: %zu", time_data.size());
+
+    ImGui::SeparatorText("Derived Swim-Bout Candidate");
+    if (compatible_swim_bout_indices.empty()) {
+        ImGui::TextDisabled("No compatible swim-bout candidates for this track/speed.");
+    } else {
+        const std::string selected_label =
+            selected_swim_bouts ? swimBoutCandidateLabel(*selected_swim_bouts)
+                                : "Select candidate";
+        if (ImGui::BeginCombo("Candidate##swim_bout_candidate",
+                              selected_label.c_str())) {
+            for (size_t index : compatible_swim_bout_indices) {
+                const auto& candidate = swim_bout_series[index];
+                const std::string label = swimBoutCandidateLabel(candidate);
+                const bool is_selected =
+                    selected_swim_bouts == &candidate;
+                if (ImGui::Selectable(label.c_str(), is_selected)) {
+                    state.selected_swim_bout_run = candidate.run_name;
+                    state.selected_swim_bout_speed_level =
+                        candidate.speed_level;
+                    state.selected_bout_kinematics_run.clear();
+                    selected_swim_bouts = &candidate;
+                    compatible_bout_kinematics_indices =
+                        findCompatibleBoutKinematicsIndices(
+                            *selected_series,
+                            selected_swim_bouts,
+                            bout_kinematics_series);
+                    selected_bout_kinematics =
+                        resolveSelectedBoutKinematicsSeries(
+                            bout_kinematics_series,
+                            compatible_bout_kinematics_indices,
+                            state);
+                }
+                if (is_selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (selected_swim_bouts) {
+            ImGui::Text("Compatible candidates: %zu | Selected bouts: %zu",
+                        compatible_swim_bout_indices.size(),
+                        selected_swim_bouts->start_frame.size());
+            if (!selected_swim_bouts->detection_signal_source_level.empty() ||
+                !selected_swim_bouts->path_distance_source_level.empty()) {
+                ImGui::Text("Detector source: %s | Physical metrics: %s",
+                            selected_swim_bouts
+                                    ->detection_signal_source_level.empty()
+                                ? "direct speed level"
+                                : selected_swim_bouts
+                                      ->detection_signal_source_level.c_str(),
+                            selected_swim_bouts
+                                    ->path_distance_source_level.empty()
+                                ? "candidate bouts"
+                                : selected_swim_bouts
+                                      ->path_distance_source_level.c_str());
+            }
+        }
+    }
+
+    ImGui::SeparatorText("Bout-Kinematics Candidate");
+    if (selected_swim_bouts == nullptr ||
+        compatible_bout_kinematics_indices.empty()) {
+        ImGui::TextDisabled("No linked bout-kinematics metrics for the selected candidate.");
+    } else {
+        const char* combo_preview =
+            selected_bout_kinematics
+                ? selected_bout_kinematics->run_name.c_str()
+                : "Select bout-kinematics run";
+        if (ImGui::BeginCombo("Candidate##bout_kinematics_candidate",
+                              combo_preview)) {
+            for (size_t index : compatible_bout_kinematics_indices) {
+                const auto& candidate = bout_kinematics_series[index];
+                const bool is_selected =
+                    selected_bout_kinematics == &candidate;
+                std::ostringstream label;
+                label << candidate.run_name;
+                if (!candidate.physical_active_duration_s.empty()) {
+                    label << " (" << candidate.physical_active_duration_s.size()
+                          << " bouts)";
+                }
+                if (ImGui::Selectable(label.str().c_str(), is_selected)) {
+                    state.selected_bout_kinematics_run = candidate.run_name;
+                    selected_bout_kinematics = &candidate;
+                }
+                if (is_selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (selected_bout_kinematics) {
+            const auto* valid_mask =
+                selected_bout_kinematics->physical_active_valid.empty()
+                    ? nullptr
+                    : &selected_bout_kinematics->physical_active_valid;
+            const double mean_duration =
+                finiteMean(selected_bout_kinematics->physical_active_duration_s,
+                           valid_mask);
+            const double mean_path =
+                finiteMean(
+                    selected_bout_kinematics->physical_active_path_length_mm,
+                    valid_mask);
+            const double mean_speed =
+                finiteMean(
+                    selected_bout_kinematics->physical_active_mean_speed_mm_s,
+                    valid_mask);
+            const size_t valid_physical =
+                selected_bout_kinematics->physical_active_valid.empty()
+                    ? selected_bout_kinematics
+                          ->physical_active_duration_s.size()
+                    : validCount(selected_bout_kinematics
+                                     ->physical_active_valid);
+            ImGui::Text("Physical-active valid: %zu/%zu",
+                        valid_physical,
+                        selected_bout_kinematics
+                            ->physical_active_duration_s.size());
+            if (std::isfinite(mean_duration) || std::isfinite(mean_path) ||
+                std::isfinite(mean_speed)) {
+                ImGui::Text("Mean duration %.3fs | path %.3f mm | speed %.3f mm/s",
+                            std::isfinite(mean_duration) ? mean_duration : 0.0,
+                            std::isfinite(mean_path) ? mean_path : 0.0,
+                            std::isfinite(mean_speed) ? mean_speed : 0.0);
+            }
+        }
+    }
 
     ImGui::Checkbox("Scrolling Window (±s)##movement",
                     &context.scroll_state.enabled);
@@ -192,9 +622,10 @@ void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
             std::max(0.1f, context.scroll_state.window_half_span_s);
     }
 
-    ImGui::Checkbox("Show Smoothed Speed", &state.show_smoothed);
+    ImGui::Checkbox(primary_speed_label.c_str(), &state.show_smoothed);
     ImGui::SameLine();
-    ImGui::Checkbox("Show Instantaneous Speed", &state.show_instantaneous);
+    ImGui::Checkbox(secondary_speed_label.c_str(),
+                    &state.show_instantaneous);
 
     ImGui::SeparatorText("Heading Options");
     ImGui::BeginDisabled(!heading_sample_available);
@@ -211,6 +642,63 @@ void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
     ImGui::BeginDisabled(!context.zarr_loader.hasEyeVergenceFrame());
     ImGui::Checkbox("Show Vergence", &state.show_vergence);
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(selected_swim_bouts == nullptr);
+    ImGui::Checkbox("Show Swim Bouts", &state.show_swim_bouts);
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(selected_swim_bouts == nullptr ||
+                         !selected_swim_bouts->has_detector_trace);
+    ImGui::Checkbox("Show Detector Response",
+                    &state.show_detector_response);
+    ImGui::EndDisabled();
+
+    auto frameToTime = [&](int32_t frame) -> std::optional<double> {
+        if (frame < 0) {
+            return std::nullopt;
+        }
+        if (!frame_indices.empty()) {
+            auto upper = std::lower_bound(frame_indices.begin(),
+                                          frame_indices.end(),
+                                          frame);
+            if (upper != frame_indices.end() && *upper == frame) {
+                const size_t idx = static_cast<size_t>(
+                    std::distance(frame_indices.begin(), upper));
+                if (idx < time_data.size()) {
+                    return static_cast<double>(time_data[idx]);
+                }
+            }
+            if (upper != frame_indices.end() && upper != frame_indices.begin()) {
+                auto lower = upper - 1;
+                const size_t lower_idx = static_cast<size_t>(
+                    std::distance(frame_indices.begin(), lower));
+                const size_t upper_idx = static_cast<size_t>(
+                    std::distance(frame_indices.begin(), upper));
+                if (lower_idx < time_data.size() &&
+                    upper_idx < time_data.size()) {
+                    const int32_t f0 = *lower;
+                    const int32_t f1 = *upper;
+                    const double t0 = static_cast<double>(time_data[lower_idx]);
+                    const double t1 = static_cast<double>(time_data[upper_idx]);
+                    const int32_t delta_f = f1 - f0;
+                    if (delta_f != 0) {
+                        const double alpha =
+                            static_cast<double>(frame - f0) /
+                            static_cast<double>(delta_f);
+                        return t0 + alpha * (t1 - t0);
+                    }
+                }
+            } else if (upper == frame_indices.begin() && !time_data.empty()) {
+                return static_cast<double>(time_data.front());
+            } else if (upper == frame_indices.end() && !time_data.empty()) {
+                return static_cast<double>(time_data.back());
+            }
+        }
+        if (context.video_fps > 0.0) {
+            return static_cast<double>(frame) / context.video_fps;
+        }
+        return std::nullopt;
+    };
 
     std::vector<double> time_plot;
     std::vector<double> smoothed_plot;
@@ -228,6 +716,38 @@ void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
         }
         if (instant_available && i < instant_speed.size()) {
             instant_plot.push_back(static_cast<double>(instant_speed[i]));
+        }
+    }
+
+    std::vector<double> detector_time_plot;
+    std::vector<double> detector_value_plot;
+    if (selected_swim_bouts != nullptr &&
+        state.show_detector_response &&
+        selected_swim_bouts->has_detector_trace &&
+        !selected_swim_bouts->detector_trace_values.empty()) {
+        const size_t detector_count =
+            selected_swim_bouts->detector_trace_values.size();
+        detector_time_plot.reserve(detector_count);
+        detector_value_plot.reserve(detector_count);
+        for (size_t i = 0; i < detector_count; ++i) {
+            const float value =
+                selected_swim_bouts->detector_trace_values[i];
+            if (!isFiniteFloatValue(value)) {
+                continue;
+            }
+            std::optional<double> t;
+            if (i < selected_swim_bouts
+                        ->detector_trace_frame_indices.size()) {
+                t = frameToTime(selected_swim_bouts
+                                    ->detector_trace_frame_indices[i]);
+            } else if (i < time_data.size()) {
+                t = static_cast<double>(time_data[i]);
+            }
+            if (!t.has_value()) {
+                continue;
+            }
+            detector_time_plot.push_back(*t);
+            detector_value_plot.push_back(static_cast<double>(value));
         }
     }
 
@@ -560,19 +1080,35 @@ void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
                               ImPlotSubplotFlags_LinkAllX |
                                   ImPlotSubplotFlags_NoTitle)) {
         if (ImPlot::BeginPlot("##speed_plot")) {
-            ImPlot::SetupAxes(nullptr, "Speed (mm/s)");
+            std::string speed_axis_label = "Speed";
+            if (!primary_speed_units.empty() &&
+                primary_speed_units == secondary_speed_units) {
+                speed_axis_label += " (" + primary_speed_units + ")";
+            }
+            ImPlot::SetupAxes(nullptr, speed_axis_label.c_str());
             apply_time_axis_limits(ImGuiCond_Once);
 
             double max_speed = 0.0;
             if (state.show_smoothed && !smoothed_plot.empty()) {
-                max_speed = std::max(
-                    max_speed,
-                    *std::max_element(smoothed_plot.begin(), smoothed_plot.end()));
+                for (double value : smoothed_plot) {
+                    if (std::isfinite(value)) {
+                        max_speed = std::max(max_speed, value);
+                    }
+                }
             }
             if (state.show_instantaneous && !instant_plot.empty()) {
-                max_speed = std::max(
-                    max_speed,
-                    *std::max_element(instant_plot.begin(), instant_plot.end()));
+                for (double value : instant_plot) {
+                    if (std::isfinite(value)) {
+                        max_speed = std::max(max_speed, value);
+                    }
+                }
+            }
+            if (!detector_value_plot.empty()) {
+                for (double value : detector_value_plot) {
+                    if (std::isfinite(value)) {
+                        max_speed = std::max(max_speed, value);
+                    }
+                }
             }
             double y_max_speed = (max_speed > 0.0) ? max_speed * 1.1 : 1.0;
             ImPlot::SetupAxisLimits(ImAxis_Y1,
@@ -580,9 +1116,54 @@ void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
                                     y_max_speed,
                                     ImGuiCond_Once);
 
+            if (state.show_swim_bouts && selected_swim_bouts != nullptr &&
+                !selected_swim_bouts->start_frame.empty() &&
+                selected_swim_bouts->start_frame.size() ==
+                    selected_swim_bouts->end_frame.size()) {
+                ImPlotRect limits = ImPlot::GetPlotLimits();
+                ImDrawList* draw_list = ImPlot::GetPlotDrawList();
+                const ImU32 bout_fill =
+                    ImGui::GetColorU32(ImVec4(0.15f, 0.95f, 0.45f, 0.16f));
+                const ImU32 bout_core_fill =
+                    ImGui::GetColorU32(ImVec4(0.15f, 0.95f, 0.45f, 0.24f));
+                const size_t bout_count =
+                    selected_swim_bouts->start_frame.size();
+                for (size_t i = 0; i < bout_count; ++i) {
+                    const auto start_time =
+                        frameToTime(selected_swim_bouts->start_frame[i]);
+                    const auto end_time =
+                        frameToTime(selected_swim_bouts->end_frame[i]);
+                    if (!start_time.has_value() || !end_time.has_value() ||
+                        *end_time < window_min ||
+                        *start_time > window_max) {
+                        continue;
+                    }
+                    const ImVec2 p0 = ImPlot::PlotToPixels(
+                        ImPlotPoint(*start_time, limits.Y.Max));
+                    const ImVec2 p1 = ImPlot::PlotToPixels(
+                        ImPlotPoint(*end_time, limits.Y.Min));
+                    draw_list->AddRectFilled(p0, p1, bout_fill, 0.0f);
+                    if (i < selected_swim_bouts->core_start_frame.size() &&
+                        i < selected_swim_bouts->core_end_frame.size()) {
+                        auto core_start = frameToTime(
+                            selected_swim_bouts->core_start_frame[i]);
+                        auto core_end = frameToTime(
+                            selected_swim_bouts->core_end_frame[i]);
+                        if (core_start.has_value() && core_end.has_value()) {
+                            const ImVec2 c0 = ImPlot::PlotToPixels(
+                                ImPlotPoint(*core_start, limits.Y.Max));
+                            const ImVec2 c1 = ImPlot::PlotToPixels(
+                                ImPlotPoint(*core_end, limits.Y.Min));
+                            draw_list->AddRectFilled(c0, c1, bout_core_fill,
+                                                     0.0f);
+                        }
+                    }
+                }
+            }
+
             if (state.show_smoothed && !smoothed_plot.empty()) {
                 ImPlot::SetNextLineStyle(ImVec4(0.2f, 0.7f, 1.0f, 1.0f), 2.0f);
-                ImPlot::PlotLine("Smoothed Speed",
+                ImPlot::PlotLine(primary_speed_label.c_str(),
                                  time_plot.data(),
                                  smoothed_plot.data(),
                                  static_cast<int>(time_plot.size()));
@@ -590,10 +1171,34 @@ void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
 
             if (state.show_instantaneous && !instant_plot.empty()) {
                 ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.5f, 0.2f, 0.6f), 1.0f);
-                ImPlot::PlotLine("Instantaneous Speed",
+                ImPlot::PlotLine(secondary_speed_label.c_str(),
                                  time_plot.data(),
                                  instant_plot.data(),
                                  static_cast<int>(instant_plot.size()));
+            }
+
+            if (!detector_time_plot.empty() &&
+                detector_time_plot.size() == detector_value_plot.size()) {
+                std::string detector_label =
+                    selected_swim_bouts &&
+                            !selected_swim_bouts->detector_trace_label.empty()
+                        ? selected_swim_bouts->detector_trace_label
+                        : "Detector response";
+                if (selected_swim_bouts &&
+                    !selected_swim_bouts->detector_trace_units.empty()) {
+                    detector_label += " (" +
+                                      selected_swim_bouts
+                                          ->detector_trace_units +
+                                      ", not physical speed)";
+                } else {
+                    detector_label += " (not physical speed)";
+                }
+                ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.85f, 0.2f, 0.85f),
+                                         1.5f);
+                ImPlot::PlotLine(detector_label.c_str(),
+                                 detector_time_plot.data(),
+                                 detector_value_plot.data(),
+                                 static_cast<int>(detector_time_plot.size()));
             }
 
             if (current_time_line >= 0.0) {
@@ -716,6 +1321,7 @@ void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
 
         if (ImPlot::BeginPlot("##vergence_plot")) {
             ImPlot::SetupAxes(nullptr, "Vergence (deg)");
+            apply_time_axis_limits(ImGuiCond_Once);
             if (!vergence_time_plot.empty()) {
                 ImPlot::SetupAxisLimits(ImAxis_Y1,
                                         vergence_axis_min,
@@ -729,6 +1335,20 @@ void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
                                      vergence_value_plot.data(),
                                      static_cast<int>(vergence_time_plot.size()));
                 }
+
+                if (current_time_line >= 0.0) {
+                    ImPlotRect limits = ImPlot::GetPlotLimits();
+                    double current_line_x[2] = {current_time_line,
+                                                current_time_line};
+                    double current_line_y[2] = {limits.Y.Min, limits.Y.Max};
+                    ImPlot::SetNextLineStyle(
+                        ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
+                        3.0f);
+                    ImPlot::PlotLine("##current_time_vergence",
+                                     current_line_x,
+                                     current_line_y,
+                                     2);
+                }
             } else {
                 ImGui::TextUnformatted("No vergence data available.");
             }
@@ -740,16 +1360,33 @@ void drawMovementTimelineWindow(const MovementTimelineWindowContext& context,
 
     ImGui::SeparatorText("Speed Statistics");
     if (!smoothed_speed.empty()) {
-        float avg_speed = std::accumulate(smoothed_speed.begin(),
-                                          smoothed_speed.end(),
-                                          0.0f) /
-                          smoothed_speed.size();
-        float max_spd = *std::max_element(smoothed_speed.begin(),
-                                          smoothed_speed.end());
-        ImGui::BulletText("Average Speed (smoothed): %.2f mm/s", avg_speed);
-        ImGui::BulletText("Max Speed (smoothed): %.2f mm/s", max_spd);
+        double sum_speed = 0.0;
+        double max_speed = 0.0;
+        size_t finite_speed_count = 0;
+        for (float value : smoothed_speed) {
+            if (!IsFiniteFloat(value)) {
+                continue;
+            }
+            sum_speed += static_cast<double>(value);
+            max_speed = std::max(max_speed, static_cast<double>(value));
+            ++finite_speed_count;
+        }
+        if (finite_speed_count > 0) {
+            const double avg_speed =
+                sum_speed / static_cast<double>(finite_speed_count);
+            ImGui::BulletText("Average %s: %.2f %s",
+                              primary_speed_label.c_str(),
+                              avg_speed,
+                              primary_speed_units.c_str());
+            ImGui::BulletText("Max %s: %.2f %s",
+                              primary_speed_label.c_str(),
+                              max_speed,
+                              primary_speed_units.c_str());
+        } else {
+            ImGui::TextUnformatted("No finite primary speed samples.");
+        }
     } else {
-        ImGui::TextUnformatted("No smoothed speed data available.");
+        ImGui::TextUnformatted("No primary speed data available.");
     }
 
     ImGui::SeparatorText("Distance Statistics");

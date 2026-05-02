@@ -5,9 +5,13 @@
 #include "implot.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <iomanip>
+#include <limits>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -57,6 +61,144 @@ float chooseKeypointSize(const std::string& lowered_label) {
         return 4.5f;
     }
     return 7.0f;
+}
+
+bool isFinitePoint(const std::array<float, 2>& point) {
+    return std::isfinite(point[0]) && std::isfinite(point[1]);
+}
+
+void drawBoxedOverlayText(const ImVec2& top_left,
+                          const std::vector<std::string>& lines,
+                          ImU32 text_color,
+                          ImU32 fill_color,
+                          ImU32 border_color) {
+    if (lines.empty()) {
+        return;
+    }
+
+    ImDrawList* draw_list = ImPlot::GetPlotDrawList();
+    const ImVec2 padding(7.0f, 5.0f);
+    const float line_spacing = 2.0f;
+    float width = 0.0f;
+    float height = padding.y * 2.0f;
+    for (const auto& line : lines) {
+        const ImVec2 size = ImGui::CalcTextSize(line.c_str());
+        width = std::max(width, size.x);
+        height += size.y + line_spacing;
+    }
+    height -= line_spacing;
+    const ImVec2 box_min = top_left;
+    const ImVec2 box_max(top_left.x + width + padding.x * 2.0f,
+                         top_left.y + height);
+
+    draw_list->AddRectFilled(box_min, box_max, fill_color, 4.0f);
+    draw_list->AddRect(box_min, box_max, border_color, 4.0f, 0, 1.0f);
+
+    float text_y = top_left.y + padding.y;
+    for (const auto& line : lines) {
+        draw_list->AddText(ImVec2(top_left.x + padding.x, text_y),
+                           text_color,
+                           line.c_str());
+        text_y += ImGui::GetTextLineHeight() + line_spacing;
+    }
+}
+
+ImVec2 boxedOverlayTextSize(const std::vector<std::string>& lines) {
+    const ImVec2 padding(7.0f, 5.0f);
+    const float line_spacing = 2.0f;
+    float width = 0.0f;
+    float height = padding.y * 2.0f;
+    for (const auto& line : lines) {
+        const ImVec2 size = ImGui::CalcTextSize(line.c_str());
+        width = std::max(width, size.x);
+        height += size.y + line_spacing;
+    }
+    if (!lines.empty()) {
+        height -= line_spacing;
+    }
+    return ImVec2(width + padding.x * 2.0f, height);
+}
+
+ImVec2 clampOverlayTextPosition(ImVec2 top_left,
+                                const ImVec2& box_size) {
+    const ImVec2 plot_pos = ImPlot::GetPlotPos();
+    const ImVec2 plot_size = ImPlot::GetPlotSize();
+    constexpr float margin = 4.0f;
+    const float min_x = plot_pos.x + margin;
+    const float min_y = plot_pos.y + margin;
+    const float max_x = plot_pos.x + plot_size.x - box_size.x - margin;
+    const float max_y = plot_pos.y + plot_size.y - box_size.y - margin;
+    if (min_x <= max_x) {
+        top_left.x = std::clamp(top_left.x, min_x, max_x);
+    } else {
+        top_left.x = min_x;
+    }
+    if (min_y <= max_y) {
+        top_left.y = std::clamp(top_left.y, min_y, max_y);
+    } else {
+        top_left.y = min_y;
+    }
+    return top_left;
+}
+
+bool boxCoordinatesAreFinite(const std::array<float, 4>& box) {
+    return std::isfinite(static_cast<double>(box[0])) &&
+           std::isfinite(static_cast<double>(box[1])) &&
+           std::isfinite(static_cast<double>(box[2])) &&
+           std::isfinite(static_cast<double>(box[3]));
+}
+
+const std::array<float, 4>* findMovementAnchorBox(
+    const ZarrDetectionLoader::MovementFrameSample& movement_sample,
+    const ZarrDetectionLoader::FrameDetections* detection_details) {
+    if (detection_details == nullptr || detection_details->boxes.empty()) {
+        return nullptr;
+    }
+
+    const std::array<float, 4>* best_box = nullptr;
+    float best_score = std::numeric_limits<float>::infinity();
+    for (const auto& box : detection_details->boxes) {
+        if (!boxCoordinatesAreFinite(box)) {
+            continue;
+        }
+        if (!movement_sample.has_position_px) {
+            return &box;
+        }
+        const float cx = 0.5f * (box[0] + box[2]);
+        const float cy = 0.5f * (box[1] + box[3]);
+        const float dx = cx - movement_sample.x_px;
+        const float dy = cy - movement_sample.y_px;
+        const float score = dx * dx + dy * dy;
+        if (score < best_score) {
+            best_score = score;
+            best_box = &box;
+        }
+    }
+    return best_box;
+}
+
+size_t findKeypointIndex(const std::vector<std::string>& labels,
+                         bool want_swim_bladder,
+                         bool want_left_eye,
+                         bool want_right_eye) {
+    for (size_t idx = 0; idx < labels.size(); ++idx) {
+        const std::string label = toLowerCopy(labels[idx]);
+        const bool has_eye = label.find("eye") != std::string::npos;
+        const bool has_left = label.find("left") != std::string::npos;
+        const bool has_right = label.find("right") != std::string::npos;
+        const bool has_swim = label.find("swim") != std::string::npos;
+        const bool has_bladder = label.find("bladder") != std::string::npos;
+        if (want_swim_bladder && has_swim && has_bladder) {
+            return idx;
+        }
+        if (want_left_eye && has_eye && has_left) {
+            return idx;
+        }
+        if (want_right_eye && has_eye && has_right) {
+            return idx;
+        }
+    }
+    return SIZE_MAX;
 }
 
 }  // namespace
@@ -329,7 +471,7 @@ void drawCameraViewHeadingOverlay(
     const size_t det_count = heading_details.boxes.size();
     const size_t valid_count = heading_details.heading_valid.size();
     const size_t heading_count = heading_details.headings_deg.size();
-    if (det_count == 0 || valid_count != det_count || heading_count != det_count) {
+    if (det_count == 0 || valid_count != det_count) {
         return;
     }
 
@@ -339,6 +481,25 @@ void drawCameraViewHeadingOverlay(
         ImGui::GetColorU32(ImVec4(1.0f, 0.25f, 0.1f, 0.95f));
     constexpr float arrow_thickness = 2.0f;
     const float scene_height_f = image_height_px;
+    const bool has_keypoint_heading_source =
+        heading_details.has_keypoints &&
+        !heading_details.keypoints_pixels.empty() &&
+        !heading_details.keypoint_labels.empty();
+    const size_t swim_bladder_kp_idx =
+        has_keypoint_heading_source
+            ? findKeypointIndex(heading_details.keypoint_labels, true, false,
+                                false)
+            : SIZE_MAX;
+    const size_t left_eye_kp_idx =
+        has_keypoint_heading_source
+            ? findKeypointIndex(heading_details.keypoint_labels, false, true,
+                                false)
+            : SIZE_MAX;
+    const size_t right_eye_kp_idx =
+        has_keypoint_heading_source
+            ? findKeypointIndex(heading_details.keypoint_labels, false, false,
+                                true)
+            : SIZE_MAX;
 
     for (size_t det_idx = 0; det_idx < det_count; ++det_idx) {
         if (heading_details.heading_valid[det_idx] == 0) {
@@ -358,20 +519,75 @@ void drawCameraViewHeadingOverlay(
         const float box_height = std::max(0.0f, box[3] - box[1]);
         float base_x = heading_details.swim_bladder_pixels[det_idx][0];
         float base_y = heading_details.swim_bladder_pixels[det_idx][1];
+        bool used_keypoint_direction = false;
+        float end_x = 0.0f;
+        float end_y = 0.0f;
+
+        if (has_keypoint_heading_source &&
+            swim_bladder_kp_idx != SIZE_MAX &&
+            left_eye_kp_idx != SIZE_MAX &&
+            right_eye_kp_idx != SIZE_MAX &&
+            det_idx < heading_details.keypoints_pixels.size()) {
+            const auto& keypoints = heading_details.keypoints_pixels[det_idx];
+            if (swim_bladder_kp_idx < keypoints.size() &&
+                left_eye_kp_idx < keypoints.size() &&
+                right_eye_kp_idx < keypoints.size()) {
+                const auto& swim_bladder = keypoints[swim_bladder_kp_idx];
+                const auto& left_eye = keypoints[left_eye_kp_idx];
+                const auto& right_eye = keypoints[right_eye_kp_idx];
+                if (isFinitePoint(swim_bladder) && isFinitePoint(left_eye) &&
+                    isFinitePoint(right_eye)) {
+                    base_x = swim_bladder[0];
+                    base_y = swim_bladder[1];
+                    const float eye_mid_x = 0.5f * (left_eye[0] + right_eye[0]);
+                    const float eye_mid_y = 0.5f * (left_eye[1] + right_eye[1]);
+                    const float dir_x = eye_mid_x - base_x;
+                    const float dir_y = eye_mid_y - base_y;
+                    const float dir_len =
+                        std::sqrt(dir_x * dir_x + dir_y * dir_y);
+                    if (dir_len > 1e-3f) {
+                        const float bbox_scale =
+                            std::max(box_width, box_height) * 1.25f;
+                        const float frame_scale = scene_height_f * 0.02f;
+                        const float extension =
+                            std::max(20.0f, dir_len * 0.35f);
+                        const float arrow_len =
+                            std::max(dir_len + extension,
+                                     std::max(60.0f,
+                                              std::max(bbox_scale,
+                                                       frame_scale)));
+                        const float shortened_arrow_len =
+                            std::max(dir_len + 8.0f, arrow_len * (2.0f / 3.0f));
+                        end_x =
+                            base_x + (dir_x / dir_len) * shortened_arrow_len;
+                        end_y =
+                            base_y + (dir_y / dir_len) * shortened_arrow_len;
+                        used_keypoint_direction = true;
+                    }
+                }
+            }
+        }
+
         if (!std::isfinite(base_x) || !std::isfinite(base_y)) {
             base_x = 0.5f * (box[0] + box[2]);
             base_y = 0.5f * (box[1] + box[3]);
         }
 
-        const float heading_deg = heading_details.headings_deg[det_idx];
-        const float heading_rad =
-            heading_deg * static_cast<float>(kPi) / 180.0f;
-        const float bbox_scale = std::max(box_width, box_height) * 1.25f;
-        const float frame_scale = scene_height_f * 0.02f;
-        const float arrow_len =
-            std::max(60.0f, std::max(bbox_scale, frame_scale));
-        const float end_x = base_x + std::cos(heading_rad) * arrow_len;
-        const float end_y = base_y - std::sin(heading_rad) * arrow_len;
+        if (!used_keypoint_direction) {
+            if (det_idx >= heading_count) {
+                continue;
+            }
+            const float heading_deg = heading_details.headings_deg[det_idx];
+            const float heading_rad =
+                heading_deg * static_cast<float>(kPi) / 180.0f;
+            const float bbox_scale = std::max(box_width, box_height) * 1.25f;
+            const float frame_scale = scene_height_f * 0.02f;
+            const float arrow_len =
+                std::max(60.0f, std::max(bbox_scale, frame_scale));
+            const float shortened_arrow_len = arrow_len * (2.0f / 3.0f);
+            end_x = base_x + std::cos(heading_rad) * shortened_arrow_len;
+            end_y = base_y - std::sin(heading_rad) * shortened_arrow_len;
+        }
 
         ImPlotPoint plot_start(base_x, scene_height_f - base_y);
         ImPlotPoint plot_end(end_x, scene_height_f - end_y);
@@ -394,4 +610,100 @@ void drawCameraViewHeadingOverlay(
             plot_draw_list->AddTriangleFilled(p1, left, right, arrow_color);
         }
     }
+}
+
+void drawCameraViewMovementOverlay(
+    const ZarrDetectionLoader::MovementFrameSample& movement_sample,
+    const ZarrDetectionLoader::FrameDetections* detection_details,
+    float image_height_px) {
+    if (!movement_sample.valid ||
+        (!movement_sample.has_speed && !movement_sample.has_heading)) {
+        return;
+    }
+
+    std::ostringstream metrics;
+    metrics << std::fixed << std::setprecision(1);
+    bool wrote_metric = false;
+    if (movement_sample.has_speed) {
+        const std::string label =
+            movement_sample.speed_label.empty() ? "Speed"
+                                                : movement_sample.speed_label;
+        metrics << label << " " << movement_sample.speed << " "
+                << (movement_sample.speed_units.empty()
+                        ? "units"
+                        : movement_sample.speed_units);
+        wrote_metric = true;
+    }
+    if (movement_sample.has_heading) {
+        if (wrote_metric) {
+            metrics << " | ";
+        }
+        metrics << (movement_sample.heading_smoothed ? "Heading smoothed "
+                                                     : "Heading ")
+                << movement_sample.heading_degrees << " deg";
+    }
+
+    std::ostringstream source;
+    source << "Track kinematics";
+    if (!movement_sample.speed_level.empty()) {
+        source << " | " << movement_sample.speed_level;
+    }
+    if (!movement_sample.track_id.empty()) {
+        source << " | " << movement_sample.track_id;
+    }
+
+    std::vector<std::string> lines = {metrics.str(), source.str()};
+    if (movement_sample.has_sample_valid ||
+        movement_sample.has_transition_valid) {
+        std::ostringstream validity;
+        bool wrote = false;
+        if (movement_sample.has_sample_valid) {
+            validity << "sample "
+                     << (movement_sample.sample_valid ? "valid" : "invalid");
+            wrote = true;
+        }
+        if (movement_sample.has_transition_valid) {
+            if (wrote) {
+                validity << ", ";
+            }
+            validity << "transition "
+                     << (movement_sample.transition_valid ? "valid"
+                                                          : "invalid");
+        }
+        lines.push_back(validity.str());
+    }
+
+    ImVec2 label_pos = ImPlot::GetPlotPos();
+    label_pos.x += 12.0f;
+    label_pos.y += 12.0f;
+
+    const ImVec2 box_size = boxedOverlayTextSize(lines);
+    if (const auto* anchor_box =
+            findMovementAnchorBox(movement_sample, detection_details)) {
+        const ImPlotPoint plot_corner(
+            static_cast<double>((*anchor_box)[2]),
+            static_cast<double>(image_height_px - (*anchor_box)[3]));
+        const ImVec2 corner_px = ImPlot::PlotToPixels(plot_corner);
+        constexpr float offset = 8.0f;
+        label_pos = ImVec2(corner_px.x + offset, corner_px.y + offset);
+        const ImVec2 plot_pos = ImPlot::GetPlotPos();
+        const ImVec2 plot_size = ImPlot::GetPlotSize();
+        const float plot_max_x = plot_pos.x + plot_size.x;
+        const float plot_max_y = plot_pos.y + plot_size.y;
+        if (label_pos.x + box_size.x > plot_max_x) {
+            label_pos.x = corner_px.x - box_size.x - offset;
+        }
+        if (label_pos.y + box_size.y > plot_max_y) {
+            label_pos.y = corner_px.y - box_size.y - offset;
+        }
+    }
+    label_pos = clampOverlayTextPosition(label_pos, box_size);
+
+    const ImU32 text_color =
+        ImGui::GetColorU32(ImVec4(0.93f, 0.99f, 1.0f, 1.0f));
+    const ImU32 fill_color =
+        ImGui::GetColorU32(ImVec4(0.02f, 0.07f, 0.09f, 0.78f));
+    const ImU32 border_color =
+        ImGui::GetColorU32(ImVec4(0.15f, 0.9f, 1.0f, 0.88f));
+    drawBoxedOverlayText(label_pos, lines, text_color, fill_color, border_color);
 }

@@ -6,7 +6,7 @@ struct CameraViewTransportControlsContext {
     int current_display_frame = 0;
     int total_num_frames = 0;
     int estimated_num_frames = 0;
-    float video_fps = 0.0f;
+    double video_fps = 0.0;
     bool play_video = false;
     int slider_frame_number = 0;
 };

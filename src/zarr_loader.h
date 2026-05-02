@@ -240,6 +240,10 @@ struct ZarrDetectionData {
     std::vector<float> eye_angle_left_deg;
     std::vector<float> eye_angle_right_deg;
     std::vector<std::vector<size_t>> eye_angle_indices_by_frame;
+    bool has_eye_frame_angles = false;
+    std::vector<float> eye_frame_left_angle_deg;
+    std::vector<float> eye_frame_right_angle_deg;
+    std::vector<float> eye_frame_vergence_deg;
     std::vector<float> eye_vergence_signed_frame_deg;
     std::vector<float> eye_vergence_frame_time_seconds;
     std::vector<uint8_t> eye_vergence_frame_valid;
@@ -459,6 +463,13 @@ struct ZarrDetectionData {
         std::string category;
         std::string run_name;
         std::string track_id;
+        std::string speed_level;
+        std::string primary_speed_label;
+        std::string primary_speed_units;
+        std::string primary_speed_source_path;
+        std::string secondary_speed_label;
+        std::string secondary_speed_units;
+        std::string secondary_speed_source_path;
         std::string detection_variant;
         std::string source_detect_run;
         double fps = 0.0;
@@ -473,14 +484,85 @@ struct ZarrDetectionData {
         std::vector<float> heading_degrees;
         std::vector<float> smoothed_heading_degrees;
         std::vector<uint8_t> keypoint_success;
+        std::vector<uint8_t> sample_valid;
+        std::vector<uint8_t> transition_valid;
+        std::vector<std::array<float, 2>> positions_px;
+        std::vector<std::array<float, 2>> positions_mm;
         std::vector<float> heading_per_second_degrees;
         std::vector<float> heading_per_second_resultant;
         std::vector<float> heading_per_second_time_seconds;
         std::vector<int32_t> frame_indices;
         std::vector<int32_t> detection_indices;
+        std::unordered_map<int32_t, size_t> frame_to_row;
+    };
+    struct SwimBoutSeries {
+        std::string run_name;
+        std::string speed_level;
+        std::string source_track_kinematics_run;
+        int32_t track_id = -1;
+        std::string detection_method;
+        std::string detection_signal_label;
+        std::string detection_signal_source_level;
+        std::string detection_signal_source_path;
+        std::string movement_metric_source_level;
+        std::string path_distance_source_level;
+        std::string default_level;
+        float threshold_mm = std::numeric_limits<float>::quiet_NaN();
+        float exponential_tau_s = std::numeric_limits<float>::quiet_NaN();
+        float min_bout_duration_s = std::numeric_limits<float>::quiet_NaN();
+        float min_gap_duration_s = std::numeric_limits<float>::quiet_NaN();
+        float min_peak_prominence_mm_s =
+            std::numeric_limits<float>::quiet_NaN();
+        float peak_width_rel_height = std::numeric_limits<float>::quiet_NaN();
+        bool is_latest_run = false;
+        bool is_default_level = false;
+        std::vector<int32_t> start_frame;
+        std::vector<int32_t> end_frame;
+        std::vector<int32_t> core_start_frame;
+        std::vector<int32_t> core_end_frame;
+        std::vector<float> start_time_s;
+        std::vector<float> end_time_s;
+        std::vector<float> duration_s;
+        std::vector<float> path_length_mm;
+        std::vector<float> path_length_px;
+        std::vector<float> net_displacement_mm;
+        std::vector<float> net_displacement_px;
+        std::vector<float> peak_detection_signal_mm_s;
+        std::vector<float> peak_speed_mm_s;
+        std::vector<uint8_t> gap_censored;
+        std::vector<int32_t> detector_trace_frame_indices;
+        std::vector<float> detector_trace_values;
+        std::string detector_trace_label;
+        std::string detector_trace_units;
+        bool has_detector_trace = false;
+    };
+    struct BoutKinematicsSeries {
+        std::string run_name;
+        std::string source_track_kinematics_run;
+        int32_t source_track_id = -1;
+        std::string source_swim_bout_run;
+        std::string source_swim_bout_speed_level;
+        std::string schema_id;
+        std::string created_at_utc;
+        std::string movement_metric_source_level;
+        std::vector<int32_t> source_start_frame;
+        std::vector<int32_t> source_end_frame;
+        std::vector<int32_t> source_core_start_frame;
+        std::vector<int32_t> source_core_end_frame;
+        std::vector<int32_t> physical_active_start_frame;
+        std::vector<int32_t> physical_active_end_frame;
+        std::vector<float> physical_active_duration_s;
+        std::vector<float> physical_active_path_length_mm;
+        std::vector<float> physical_active_path_length_px;
+        std::vector<float> physical_active_mean_speed_mm_s;
+        std::vector<float> physical_active_peak_speed_mm_s;
+        std::vector<uint8_t> physical_active_valid;
+        std::vector<std::string> failure_reason;
     };
     std::vector<MovementSeries> movement_series;
     size_t movement_selected_index = std::numeric_limits<size_t>::max();
+    std::vector<SwimBoutSeries> swim_bout_series;
+    std::vector<BoutKinematicsSeries> bout_kinematics_series;
 
     struct ChaserBoundingBoxRecord {
         int32_t camera_frame_id = -1;
@@ -913,6 +995,64 @@ public:
         const auto* series = getSelectedMovementSeries();
         return series ? series->track_id : kEmpty;
     }
+    const std::string& getMovementSpeedLevel() const {
+        static const std::string kEmpty;
+        const auto* series = getSelectedMovementSeries();
+        return series ? series->speed_level : kEmpty;
+    }
+    const std::string& getMovementPrimarySpeedLabel() const {
+        static const std::string kDefault = "Smoothed Speed";
+        const auto* series = getSelectedMovementSeries();
+        return series && !series->primary_speed_label.empty()
+                   ? series->primary_speed_label
+                   : kDefault;
+    }
+    const std::string& getMovementPrimarySpeedUnits() const {
+        static const std::string kDefault = "mm/s";
+        const auto* series = getSelectedMovementSeries();
+        return series && !series->primary_speed_units.empty()
+                   ? series->primary_speed_units
+                   : kDefault;
+    }
+    const std::string& getMovementSecondarySpeedLabel() const {
+        static const std::string kDefault = "Instantaneous Speed";
+        const auto* series = getSelectedMovementSeries();
+        return series && !series->secondary_speed_label.empty()
+                   ? series->secondary_speed_label
+                   : kDefault;
+    }
+    const std::string& getMovementSecondarySpeedUnits() const {
+        static const std::string kDefault = "mm/s";
+        const auto* series = getSelectedMovementSeries();
+        return series && !series->secondary_speed_units.empty()
+                   ? series->secondary_speed_units
+                   : kDefault;
+    }
+    struct MovementFrameSample {
+        bool valid = false;
+        int32_t frame_index = -1;
+        size_t row_index = 0;
+        bool has_position_px = false;
+        float x_px = std::numeric_limits<float>::quiet_NaN();
+        float y_px = std::numeric_limits<float>::quiet_NaN();
+        bool has_heading = false;
+        bool heading_smoothed = false;
+        float heading_degrees = std::numeric_limits<float>::quiet_NaN();
+        bool has_speed = false;
+        float speed = std::numeric_limits<float>::quiet_NaN();
+        std::string speed_label;
+        std::string speed_units;
+        std::string category;
+        std::string run_name;
+        std::string track_id;
+        std::string speed_level;
+        bool has_sample_valid = false;
+        bool sample_valid = false;
+        bool has_transition_valid = false;
+        bool transition_valid = false;
+    };
+    std::optional<MovementFrameSample> getMovementSampleForFrame(
+        int32_t frame_index) const;
     const std::vector<int32_t>& getCropFrameIndices() const {
         static const std::vector<int32_t> kEmpty;
         return data_.crop_data.loaded ? data_.crop_data.frame_indices : kEmpty;
@@ -949,6 +1089,14 @@ public:
         static const std::string kEmpty;
         const auto* series = getSelectedMovementSeries();
         return series ? series->category : kEmpty;
+    }
+    const std::vector<ZarrDetectionData::SwimBoutSeries>& getSwimBoutSeries()
+        const {
+        return data_.swim_bout_series;
+    }
+    const std::vector<ZarrDetectionData::BoutKinematicsSeries>&
+    getBoutKinematicsSeries() const {
+        return data_.bout_kinematics_series;
     }
     size_t getMovementSeriesCount() const;
     const ZarrDetectionData::MovementSeries* getMovementSeries(size_t index) const;
@@ -1046,6 +1194,14 @@ public:
                 std::numeric_limits<float>::quiet_NaN()};
             std::array<uint8_t, 2> feret_angle_valid = {0, 0};
             bool has_eye_angles = false;
+            std::array<float, 2> eye_frame_angle_deg = {
+                std::numeric_limits<float>::quiet_NaN(),
+                std::numeric_limits<float>::quiet_NaN()};
+            std::array<uint8_t, 2> eye_frame_angle_valid = {0, 0};
+            float eye_frame_vergence_deg =
+                std::numeric_limits<float>::quiet_NaN();
+            uint8_t eye_frame_vergence_valid = 0;
+            bool has_eye_frame_angles = false;
             std::array<std::array<float, 2>, 2> gaze_vector_xy = {{
                 {std::numeric_limits<float>::quiet_NaN(),
                  std::numeric_limits<float>::quiet_NaN()},
@@ -1369,6 +1525,9 @@ private:
                                    FrameDetections::SubjectShape& out_shape) const;
     bool loadMovementData(const ts::kvstore::KvStore& store);
     bool loadSpeedRunMovement(const ts::kvstore::KvStore& store);
+    bool loadTrackKinematicsData(const ts::kvstore::KvStore& store);
+    bool loadSwimBoutData(const ts::kvstore::KvStore& store);
+    bool loadBoutKinematicsData(const ts::kvstore::KvStore& store);
     bool loadLegacyMovementData(const ts::kvstore::KvStore& store);
     bool loadMovementTrack(const ts::kvstore::KvStore& store,
                            const std::string& log_tag,
@@ -1394,7 +1553,10 @@ private:
                            const std::vector<int64_t>* run_camera_frame_ids,
                            const std::unordered_map<int64_t, size_t>* run_camera_lookup,
                            const std::vector<float>* run_distance_to_target_mm,
-                           const std::vector<uint8_t>* run_has_offline_flags);
+                           const std::vector<uint8_t>* run_has_offline_flags,
+                           const std::string& speed_level = std::string(),
+                           const std::string& primary_speed_label = std::string(),
+                           const std::string& secondary_speed_label = std::string());
     bool loadMovementCropRun(const ts::kvstore::KvStore& store,
                              const std::string& crop_run_name);
 
