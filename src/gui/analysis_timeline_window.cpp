@@ -1,11 +1,13 @@
 #include "gui/analysis_timeline_window.h"
 
+#include "gui/camera_view_overlay_style.h"
 #include "imgui.h"
 #include "implot.h"
 #include "ui_path_config.h"
 #include "zarr_loader.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <iomanip>
 #include <limits>
@@ -370,9 +372,70 @@ size_t validCount(const std::vector<uint8_t>& values) {
 struct AnalysisTimelineTrace {
     std::string label;
     std::string units;
+    bool has_color = false;
+    ImVec4 color = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+    float line_width = 2.0f;
     std::vector<double> xs;
     std::vector<double> ys;
 };
+
+enum class EyeAngleTraceRole {
+    Other,
+    Left,
+    Right,
+    Vergence,
+};
+
+std::string toLowerAsciiCopy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return value;
+}
+
+EyeAngleTraceRole eyeAngleTraceRoleForField(const std::string& field_name) {
+    const std::string lower = toLowerAsciiCopy(field_name);
+    if (lower.find("vergence") != std::string::npos) {
+        return EyeAngleTraceRole::Vergence;
+    }
+    if (lower.find("left") != std::string::npos) {
+        return EyeAngleTraceRole::Left;
+    }
+    if (lower.find("right") != std::string::npos) {
+        return EyeAngleTraceRole::Right;
+    }
+    return EyeAngleTraceRole::Other;
+}
+
+std::optional<ImVec4> eyeAngleTimelineColorForRole(EyeAngleTraceRole role) {
+    if (role == EyeAngleTraceRole::Vergence) {
+        return ImVec4(0.34f, 1.0f, 0.42f, 0.95f);
+    }
+    if (role == EyeAngleTraceRole::Left) {
+        return camera_view_overlay::subjectMaskContourColor("eye_left");
+    }
+    if (role == EyeAngleTraceRole::Right) {
+        return camera_view_overlay::subjectMaskContourColor("eye_right");
+    }
+    return std::nullopt;
+}
+
+bool eyeAngleTraceRoleEnabled(EyeAngleTraceRole role,
+                              bool show_left,
+                              bool show_right,
+                              bool show_vergence) {
+    if (role == EyeAngleTraceRole::Left) {
+        return show_left;
+    }
+    if (role == EyeAngleTraceRole::Right) {
+        return show_right;
+    }
+    if (role == EyeAngleTraceRole::Vergence) {
+        return show_vergence;
+    }
+    return true;
+}
 
 bool stringEndsWith(const std::string& value, const std::string& suffix) {
     return value.size() >= suffix.size() &&
@@ -511,6 +574,9 @@ void drawAnalysisTracePlot(const char* title,
         }
         ImPlot::SetupAxisLimits(ImAxis_Y1, y_min, y_max, ImGuiCond_Once);
         for (const auto& trace : traces) {
+            if (trace.has_color) {
+                ImPlot::SetNextLineStyle(trace.color, trace.line_width);
+            }
             ImPlot::PlotLine(trace.label.c_str(),
                              trace.xs.data(),
                              trace.ys.data(),
@@ -551,13 +617,24 @@ std::vector<AnalysisTimelineTrace> buildEyeAngleTimelineTraces(
     const ZarrDetectionLoader& loader,
     const ZarrDetectionData::EyeAngleAnalysisData& eye,
     const ZarrDetectionData::EyeAngleRepresentationInfo& rep,
-    double video_fps) {
+    double video_fps,
+    bool show_left,
+    bool show_right,
+    bool show_vergence) {
     std::vector<AnalysisTimelineTrace> traces;
     for (const auto& requested_field : defaultEyeAngleTimelineFields(rep)) {
         std::string resolved_name;
         const auto* field =
             resolveEyeAngleTimelineField(loader, requested_field, resolved_name);
         if (field == nullptr) {
+            continue;
+        }
+        const EyeAngleTraceRole trace_role =
+            eyeAngleTraceRoleForField(resolved_name);
+        if (!eyeAngleTraceRoleEnabled(trace_role,
+                                      show_left,
+                                      show_right,
+                                      show_vergence)) {
             continue;
         }
         const bool use_frame_values =
@@ -575,6 +652,10 @@ std::vector<AnalysisTimelineTrace> buildEyeAngleTimelineTraces(
             trace.label += " (fallback)";
         }
         trace.units = field->units.empty() ? "deg" : field->units;
+        if (auto color = eyeAngleTimelineColorForRole(trace_role)) {
+            trace.has_color = true;
+            trace.color = *color;
+        }
         trace.xs.reserve(values.size());
         trace.ys.reserve(values.size());
         for (size_t row = 0; row < values.size(); ++row) {
@@ -928,10 +1009,6 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
                     &state.show_heading_per_second);
     ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::BeginDisabled(!context.zarr_loader.hasEyeVergenceFrame());
-    ImGui::Checkbox("Show Vergence", &state.show_vergence);
-    ImGui::EndDisabled();
-    ImGui::SameLine();
     ImGui::BeginDisabled(selected_swim_bouts == nullptr);
     ImGui::Checkbox("Show Swim Bouts", &state.show_swim_bouts);
     ImGui::EndDisabled();
@@ -1170,41 +1247,6 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
         }
     }
 
-    std::vector<double> vergence_time_plot;
-    std::vector<double> vergence_value_plot;
-    size_t vergence_valid_count = 0;
-    double vergence_sum = 0.0;
-    double vergence_min = std::numeric_limits<double>::infinity();
-    double vergence_max = -std::numeric_limits<double>::infinity();
-    if (context.zarr_loader.hasEyeVergenceFrame()) {
-        const auto& verg_time =
-            context.zarr_loader.getEyeVergenceFrameTimeSeconds();
-        const auto& verg_values =
-            context.zarr_loader.getEyeVergenceFrameSignedDeg();
-        const auto& verg_valid =
-            context.zarr_loader.getEyeVergenceFrameValidMask();
-        size_t count = std::min(verg_time.size(), verg_values.size());
-        vergence_time_plot.reserve(count);
-        vergence_value_plot.reserve(count);
-        for (size_t i = 0; i < count; ++i) {
-            double t = static_cast<double>(verg_time[i]);
-            double value = static_cast<double>(verg_values[i]);
-            bool valid = verg_valid.empty() ||
-                         (i < verg_valid.size() && verg_valid[i] != 0);
-            vergence_time_plot.push_back(t);
-            if (valid && std::isfinite(value)) {
-                vergence_value_plot.push_back(value);
-                vergence_min = std::min(vergence_min, value);
-                vergence_max = std::max(vergence_max, value);
-                vergence_sum += value;
-                ++vergence_valid_count;
-            } else {
-                vergence_value_plot.push_back(
-                    std::numeric_limits<double>::quiet_NaN());
-            }
-        }
-    }
-
     auto compute_heading_axis = [&](double& min_out, double& max_out) {
         if (heading_y_min == std::numeric_limits<double>::infinity() ||
             heading_y_max == -std::numeric_limits<double>::infinity()) {
@@ -1223,25 +1265,6 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
             }
         }
     };
-
-    double vergence_axis_min = -60.0;
-    double vergence_axis_max = 60.0;
-    if (!vergence_time_plot.empty()) {
-        if (vergence_min == std::numeric_limits<double>::infinity() ||
-            vergence_max == -std::numeric_limits<double>::infinity()) {
-            vergence_axis_min = -60.0;
-            vergence_axis_max = 60.0;
-        } else {
-            double span = std::max(5.0, vergence_max - vergence_min);
-            double padding = span * 0.1;
-            vergence_axis_min = vergence_min - padding;
-            vergence_axis_max = vergence_max + padding;
-            if (vergence_axis_min >= vergence_axis_max) {
-                vergence_axis_min -= 1.0;
-                vergence_axis_max += 1.0;
-            }
-        }
-    }
 
     auto computeCurrentTime = [&]() -> double {
         if (context.current_frame_num < 0) {
@@ -1360,10 +1383,10 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
         }
     };
 
-    ImVec2 subplot_size = ImVec2(-1, 920);
+    ImVec2 subplot_size = ImVec2(-1, 690);
     if (!time_plot.empty() &&
         ImPlot::BeginSubplots("##analysis_timeline_plots",
-                              4,
+                              3,
                               1,
                               subplot_size,
                               ImPlotSubplotFlags_LinkAllX |
@@ -1608,42 +1631,6 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
             ImPlot::EndPlot();
         }
 
-        if (ImPlot::BeginPlot("##vergence_plot")) {
-            ImPlot::SetupAxes(nullptr, "Vergence (deg)");
-            apply_time_axis_limits(ImGuiCond_Once);
-            if (!vergence_time_plot.empty()) {
-                ImPlot::SetupAxisLimits(ImAxis_Y1,
-                                        vergence_axis_min,
-                                        vergence_axis_max,
-                                        ImGuiCond_Once);
-                if (state.show_vergence) {
-                    ImVec4 vergence_color = ImVec4(0.85f, 0.2f, 0.7f, 1.0f);
-                    ImPlot::SetNextLineStyle(vergence_color, 2.0f);
-                    ImPlot::PlotLine("Vergence",
-                                     vergence_time_plot.data(),
-                                     vergence_value_plot.data(),
-                                     static_cast<int>(vergence_time_plot.size()));
-                }
-
-                if (current_time_line >= 0.0) {
-                    ImPlotRect limits = ImPlot::GetPlotLimits();
-                    double current_line_x[2] = {current_time_line,
-                                                current_time_line};
-                    double current_line_y[2] = {limits.Y.Min, limits.Y.Max};
-                    ImPlot::SetNextLineStyle(
-                        ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
-                        3.0f);
-                    ImPlot::PlotLine("##current_time_vergence",
-                                     current_line_x,
-                                     current_line_y,
-                                     2);
-                }
-            } else {
-                ImGui::TextUnformatted("No vergence data available.");
-            }
-            ImPlot::EndPlot();
-        }
-
         ImPlot::EndSubplots();
     }
 
@@ -1691,24 +1678,6 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
         ImGui::BulletText("Max Distance: %.2f mm", max_distance_mm);
         if (min_distance_mm < std::numeric_limits<double>::infinity()) {
             ImGui::BulletText("Min Distance: %.2f mm", min_distance_mm);
-        }
-    }
-
-    ImGui::SeparatorText("Vergence Statistics");
-    if (vergence_time_plot.empty()) {
-        ImGui::TextUnformatted("No vergence data available.");
-    } else if (vergence_valid_count == 0) {
-        ImGui::TextUnformatted("No valid vergence samples.");
-    } else {
-        double avg_vergence =
-            vergence_sum / static_cast<double>(vergence_valid_count);
-        ImGui::BulletText("Valid samples: %zu", vergence_valid_count);
-        ImGui::BulletText("Average Vergence: %.2f deg", avg_vergence);
-        if (vergence_min != std::numeric_limits<double>::infinity() &&
-            vergence_max != -std::numeric_limits<double>::infinity()) {
-            ImGui::BulletText("Range: %.2f .. %.2f deg",
-                              vergence_min,
-                              vergence_max);
         }
     }
 
@@ -1809,6 +1778,17 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
             }
             ImGui::Checkbox("Show selected eye-angle representation",
                             &state.show_eye_angle_traces);
+            ImGui::BeginDisabled(!state.show_eye_angle_traces);
+            ImGui::SameLine();
+            ImGui::Checkbox("Left##eye_angle_trace_left",
+                            &state.show_eye_left_trace);
+            ImGui::SameLine();
+            ImGui::Checkbox("Right##eye_angle_trace_right",
+                            &state.show_eye_right_trace);
+            ImGui::SameLine();
+            ImGui::Checkbox("Vergence##eye_angle_trace_vergence",
+                            &state.show_eye_vergence_trace);
+            ImGui::EndDisabled();
             if (state.show_eye_angle_traces) {
                 double current_eye_time = fallback_current_time;
                 if (auto current_row =
@@ -1829,7 +1809,13 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
                 }
 
                 const auto traces = buildEyeAngleTimelineTraces(
-                    context.zarr_loader, eye, selected_rep, context.video_fps);
+                    context.zarr_loader,
+                    eye,
+                    selected_rep,
+                    context.video_fps,
+                    state.show_eye_left_trace,
+                    state.show_eye_right_trace,
+                    state.show_eye_vergence_trace);
                 std::string y_axis = "deg";
                 if (!traces.empty() && !traces.front().units.empty()) {
                     y_axis = traces.front().units;

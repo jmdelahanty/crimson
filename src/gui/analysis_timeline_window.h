@@ -9,13 +9,15 @@ class ZarrDetectionLoader;
 struct AnalysisTimelineWindowState {
     bool show_smoothed = true;
     bool show_instantaneous = false;
-    bool show_vergence = true;
     bool show_heading_raw = false;
     bool show_heading_smoothed = true;
     bool show_heading_per_second = false;
     bool show_swim_bouts = true;
     bool show_detector_response = true;
     bool show_eye_angle_traces = true;
+    bool show_eye_left_trace = true;
+    bool show_eye_right_trace = true;
+    bool show_eye_vergence_trace = true;
     bool show_tail_tip_angle = true;
     bool show_tail_tip_lateral_deflection = true;
     bool show_tail_curvature = false;
