@@ -959,9 +959,11 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
                     selected_bout_kinematics == &candidate;
                 std::ostringstream label;
                 label << candidate.run_name;
-                if (!candidate.physical_active_duration_s.empty()) {
+                if (candidate.metrics_loaded) {
                     label << " (" << candidate.physical_active_duration_s.size()
                           << " bouts)";
+                } else {
+                    label << " (details not loaded)";
                 }
                 if (ImGui::Selectable(label.str().c_str(), is_selected)) {
                     state.selected_bout_kinematics_run = candidate.run_name;
@@ -974,37 +976,57 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
             ImGui::EndCombo();
         }
         if (selected_bout_kinematics) {
-            const auto* valid_mask =
-                selected_bout_kinematics->physical_active_valid.empty()
-                    ? nullptr
-                    : &selected_bout_kinematics->physical_active_valid;
-            const double mean_duration =
-                finiteMean(selected_bout_kinematics->physical_active_duration_s,
-                           valid_mask);
-            const double mean_path =
-                finiteMean(
-                    selected_bout_kinematics->physical_active_path_length_mm,
-                    valid_mask);
-            const double mean_speed =
-                finiteMean(
-                    selected_bout_kinematics->physical_active_mean_speed_mm_s,
-                    valid_mask);
-            const size_t valid_physical =
-                selected_bout_kinematics->physical_active_valid.empty()
-                    ? selected_bout_kinematics
-                          ->physical_active_duration_s.size()
-                    : validCount(selected_bout_kinematics
-                                     ->physical_active_valid);
-            ImGui::Text("Physical-active valid: %zu/%zu",
-                        valid_physical,
+            if (!selected_bout_kinematics->metrics_loaded) {
+                ImGui::TextDisabled(
+                    "Per-bout physical metrics are deferred to keep startup responsive.");
+                if (selected_bout_kinematics->metrics_load_failed &&
+                    !selected_bout_kinematics->metrics_load_error.empty()) {
+                    ImGui::TextWrapped("Load failed: %s",
+                                       selected_bout_kinematics
+                                           ->metrics_load_error.c_str());
+                }
+                if (ImGui::Button("Load Bout Metrics")) {
+                    std::string error_message;
+                    context.zarr_loader.ensureBoutKinematicsMetricsLoaded(
+                        selected_bout_kinematics->run_name,
+                        &error_message);
+                }
+            } else {
+                const auto* valid_mask =
+                    selected_bout_kinematics->physical_active_valid.empty()
+                        ? nullptr
+                        : &selected_bout_kinematics->physical_active_valid;
+                const double mean_duration =
+                    finiteMean(
+                        selected_bout_kinematics->physical_active_duration_s,
+                        valid_mask);
+                const double mean_path =
+                    finiteMean(
                         selected_bout_kinematics
-                            ->physical_active_duration_s.size());
-            if (std::isfinite(mean_duration) || std::isfinite(mean_path) ||
-                std::isfinite(mean_speed)) {
-                ImGui::Text("Mean duration %.3fs | path %.3f mm | speed %.3f mm/s",
-                            std::isfinite(mean_duration) ? mean_duration : 0.0,
-                            std::isfinite(mean_path) ? mean_path : 0.0,
-                            std::isfinite(mean_speed) ? mean_speed : 0.0);
+                            ->physical_active_path_length_mm,
+                        valid_mask);
+                const double mean_speed =
+                    finiteMean(
+                        selected_bout_kinematics
+                            ->physical_active_mean_speed_mm_s,
+                        valid_mask);
+                const size_t valid_physical =
+                    selected_bout_kinematics->physical_active_valid.empty()
+                        ? selected_bout_kinematics
+                              ->physical_active_duration_s.size()
+                        : validCount(selected_bout_kinematics
+                                         ->physical_active_valid);
+                ImGui::Text("Physical-active valid: %zu/%zu",
+                            valid_physical,
+                            selected_bout_kinematics
+                                ->physical_active_duration_s.size());
+                if (std::isfinite(mean_duration) || std::isfinite(mean_path) ||
+                    std::isfinite(mean_speed)) {
+                    ImGui::Text("Mean duration %.3fs | path %.3f mm | speed %.3f mm/s",
+                                std::isfinite(mean_duration) ? mean_duration : 0.0,
+                                std::isfinite(mean_path) ? mean_path : 0.0,
+                                std::isfinite(mean_speed) ? mean_speed : 0.0);
+                }
             }
         }
     }

@@ -1,9 +1,68 @@
 #include "media_session_loader.h"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <map>
+#include <sstream>
+
+namespace {
+
+bool applyZarrCalibrationToCameraParams(const ZarrCalibrationData& calibration,
+                                        CameraParams& camera_params,
+                                        std::string& error_message) {
+    cv::Mat projector_to_camera(3, 3, CV_64F);
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+            projector_to_camera.at<double>(row, col) =
+                calibration.homography_projector_to_camera[static_cast<size_t>(row * 3 + col)];
+        }
+    }
+
+    cv::Mat camera_to_projector;
+    if (!cv::invert(projector_to_camera, camera_to_projector)) {
+        error_message = "Zarr calibration homography is not invertible";
+        return false;
+    }
+
+    // CameraParams predates the Palette Zarr contract. Existing Crimson overlay
+    // code uses inverse_homography_matrix as projector/texture -> camera, so
+    // keep that internal convention while preserving Palette's source semantics.
+    camera_params.homography_matrix = camera_to_projector;
+    camera_params.inverse_homography_matrix = projector_to_camera;
+    camera_params.has_valid_homography = true;
+
+    if (std::isfinite(calibration.pixels_per_mm_projector)) {
+        camera_params.pixels_per_mm_projector =
+            static_cast<float>(calibration.pixels_per_mm_projector);
+    }
+    if (std::isfinite(calibration.pixels_per_mm_camera)) {
+        camera_params.pixels_per_mm_camera =
+            static_cast<float>(calibration.pixels_per_mm_camera);
+    }
+    if (std::isfinite(calibration.real_world_ref_mm)) {
+        camera_params.real_world_ref_mm =
+            static_cast<float>(calibration.real_world_ref_mm);
+    }
+    camera_params.stimulus_offset_x =
+        static_cast<float>(calibration.sub_arena_x_px);
+    camera_params.stimulus_offset_y =
+        static_cast<float>(calibration.sub_arena_y_px);
+
+    std::ostringstream provenance;
+    provenance << "zarr:" << calibration.source_group;
+    if (!calibration.source_stimulus_run.empty()) {
+        provenance << " stimulus=" << calibration.source_stimulus_run;
+    }
+    if (!calibration.homography_source.empty()) {
+        provenance << " homography_source=" << calibration.homography_source;
+    }
+    camera_params.calibration_timestamp = provenance.str();
+    return true;
+}
+
+}  // namespace
 
 MediaSessionLoader::MediaSessionLoader(const MediaSessionLoaderContext& context)
     : context_(context) {}
@@ -17,16 +76,60 @@ void MediaSessionLoader::loadCameraCalibrationsForCurrentMedia() const {
     }
 
     context_.camera_params->resize(context_.scene->num_cams);
-    std::cout << "\n=== Loading Camera Calibrations from YAML ==="
+    std::cout << "\n=== Loading Camera Calibrations from Zarr/YAML ==="
               << std::endl;
     for (size_t i = 0; i < context_.camera_names->size(); ++i) {
+        const std::string& camera_name = (*context_.camera_names)[i];
         std::cout << "\nProcessing camera " << i << ": "
-                  << (*context_.camera_names)[i] << std::endl;
+                  << camera_name << std::endl;
+
+        bool loaded_from_zarr = false;
+        if (context_.zarr_loader != nullptr && context_.zarr_loaded != nullptr &&
+            *context_.zarr_loaded &&
+            !context_.zarr_loader->getArchivePath().empty()) {
+            std::string zarr_status;
+            auto calibration =
+                context_.zarr_loader->loadCalibrationForCamera(camera_name,
+                                                               zarr_status);
+            if (calibration.has_value()) {
+                std::string apply_error;
+                if (applyZarrCalibrationToCameraParams(
+                        *calibration, (*context_.camera_params)[i],
+                        apply_error)) {
+                    std::cout << "Loading homography from Zarr for camera: "
+                              << camera_name << std::endl;
+                    std::cout << "  " << zarr_status << std::endl;
+                    std::cout << "  Zarr homography semantics: projector/texture px -> camera px"
+                              << std::endl;
+                    std::cout << "  Applied to legacy CameraParams: inverse_homography_matrix"
+                              << " holds projector/texture px -> camera px" << std::endl;
+                    std::cout << "  Stimulus texture offset: ("
+                              << (*context_.camera_params)[i].stimulus_offset_x
+                              << ", "
+                              << (*context_.camera_params)[i].stimulus_offset_y
+                              << ")" << std::endl;
+                    camera_print_calibration_details(
+                        (*context_.camera_params)[i], camera_name);
+                    loaded_from_zarr = true;
+                } else {
+                    std::cerr
+                        << "Warning: Failed to apply Zarr calibration for camera "
+                        << camera_name << ": " << apply_error << std::endl;
+                }
+            } else if (!zarr_status.empty()) {
+                std::cout << "  " << zarr_status << std::endl;
+            }
+        }
+
+        if (loaded_from_zarr) {
+            continue;
+        }
+
         std::string yaml_file = *context_.root_dir + "/calibration/" +
-                                (*context_.camera_names)[i] + ".yaml";
+                                camera_name + ".yaml";
         if (std::filesystem::exists(yaml_file)) {
             std::cout << "Loading homography from YAML for camera: "
-                      << (*context_.camera_names)[i] << std::endl;
+                      << camera_name << std::endl;
             if (!camera_load_params_from_yaml(
                     yaml_file, (*context_.camera_params)[i],
                     *context_.error_message)) {
@@ -36,7 +139,7 @@ void MediaSessionLoader::loadCameraCalibrationsForCurrentMedia() const {
                 break;
             }
             camera_print_calibration_details((*context_.camera_params)[i],
-                                             (*context_.camera_names)[i]);
+                                             camera_name);
         } else {
             std::cerr << "Warning: No calibration YAML file found at: "
                       << yaml_file << std::endl;

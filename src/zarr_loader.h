@@ -34,6 +34,34 @@ enum class ZarrLayoutType {
     kPaletteRuns
 };
 
+struct ZarrCalibrationData {
+    std::string source_group;
+    std::string active_camera_id;
+    std::string primary_camera_id;
+    std::string source_h5;
+    std::string source_stimulus_run;
+    std::string homography_source;
+    std::string experimental_area_shape;
+
+    // Palette contract: projector/texture pixels -> camera pixels.
+    std::array<double, 9> homography_projector_to_camera = {};
+
+    double pixel_to_mm = std::numeric_limits<double>::quiet_NaN();
+    double pixels_per_mm_camera = std::numeric_limits<double>::quiet_NaN();
+    double pixels_per_mm_projector = std::numeric_limits<double>::quiet_NaN();
+    double real_world_ref_mm = std::numeric_limits<double>::quiet_NaN();
+    double native_width_px = std::numeric_limits<double>::quiet_NaN();
+    double native_height_px = std::numeric_limits<double>::quiet_NaN();
+    double experimental_area_center_x_px = std::numeric_limits<double>::quiet_NaN();
+    double experimental_area_center_y_px = std::numeric_limits<double>::quiet_NaN();
+    double experimental_area_radius_px = std::numeric_limits<double>::quiet_NaN();
+    double experimental_area_radius_mm = std::numeric_limits<double>::quiet_NaN();
+    double sub_arena_x_px = 0.0;
+    double sub_arena_y_px = 0.0;
+    double sub_arena_width_px = std::numeric_limits<double>::quiet_NaN();
+    double sub_arena_height_px = std::numeric_limits<double>::quiet_NaN();
+};
+
 // Structure to hold interpolation run data (refined detections and stimulus alignment)
 struct InterpolationRunData {
     std::string run_name;
@@ -423,6 +451,7 @@ struct ZarrDetectionData {
     TailKinematicsData tail_kinematics;
 
     struct CropImageData {
+        bool metadata_loaded = false;
         bool loaded = false;
         std::string run_name;
         size_t roi_count = 0;
@@ -545,6 +574,9 @@ struct ZarrDetectionData {
         std::string schema_id;
         std::string created_at_utc;
         std::string movement_metric_source_level;
+        bool metrics_loaded = false;
+        bool metrics_load_failed = false;
+        std::string metrics_load_error;
         std::vector<int32_t> source_start_frame;
         std::vector<int32_t> source_end_frame;
         std::vector<int32_t> source_core_start_frame;
@@ -677,6 +709,9 @@ public:
     
     // Main loading function
     bool loadZarrFile(const std::string& filepath, std::string& error_message);
+    std::optional<ZarrCalibrationData> loadCalibrationForCamera(
+        const std::string& camera_name_or_id,
+        std::string& status_message) const;
     void setRequestedSubjectShapeRunName(const std::string& run_name) {
         requested_subject_shape_run_name_ = run_name;
     }
@@ -1055,7 +1090,8 @@ public:
         int32_t frame_index) const;
     const std::vector<int32_t>& getCropFrameIndices() const {
         static const std::vector<int32_t> kEmpty;
-        return data_.crop_data.loaded ? data_.crop_data.frame_indices : kEmpty;
+        return data_.crop_data.metadata_loaded ? data_.crop_data.frame_indices
+                                               : kEmpty;
     }
     bool hasCropImages() const { return data_.crop_data.loaded; }
     struct CropImageView {
@@ -1098,6 +1134,8 @@ public:
     getBoutKinematicsSeries() const {
         return data_.bout_kinematics_series;
     }
+    bool ensureBoutKinematicsMetricsLoaded(const std::string& run_name,
+                                           std::string* error_message = nullptr);
     size_t getMovementSeriesCount() const;
     const ZarrDetectionData::MovementSeries* getMovementSeries(size_t index) const;
     size_t getSelectedMovementSeriesIndex() const;
@@ -1528,6 +1566,9 @@ private:
     bool loadTrackKinematicsData(const ts::kvstore::KvStore& store);
     bool loadSwimBoutData(const ts::kvstore::KvStore& store);
     bool loadBoutKinematicsData(const ts::kvstore::KvStore& store);
+    bool loadBoutKinematicsMetrics(const ts::kvstore::KvStore& store,
+                                   ZarrDetectionData::BoutKinematicsSeries& series,
+                                   std::string* error_message = nullptr);
     bool loadLegacyMovementData(const ts::kvstore::KvStore& store);
     bool loadMovementTrack(const ts::kvstore::KvStore& store,
                            const std::string& log_tag,
@@ -1559,6 +1600,8 @@ private:
                            const std::string& secondary_speed_label = std::string());
     bool loadMovementCropRun(const ts::kvstore::KvStore& store,
                              const std::string& crop_run_name);
+    bool loadMovementCropRunMetadata(const ts::kvstore::KvStore& store,
+                                     const std::string& crop_run_name);
 
     std::optional<json> readGroupAttrs(const ts::kvstore::KvStore& store,
                                        const std::string& path) const;

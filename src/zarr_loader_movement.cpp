@@ -1,9 +1,36 @@
 #include "zarr_loader_internal.h"
+#include <chrono>
+#include <cstdlib>
 #include <iostream>
 
 using json = nlohmann::json;
 
 namespace {
+
+bool startupTraceEnabled() {
+    const char* value = std::getenv("CRIMSON_STARTUP_TRACE");
+    return value != nullptr && std::string(value) == "1";
+}
+
+bool eagerCropImagesEnabled() {
+    const char* value = std::getenv("CRIMSON_EAGER_CROP_IMAGES");
+    return value != nullptr && std::string(value) == "1";
+}
+
+size_t jsonShapeDim(const json& node_meta, size_t index) {
+    if (!node_meta.contains("shape") || !node_meta["shape"].is_array() ||
+        node_meta["shape"].size() <= index ||
+        !node_meta["shape"][index].is_number()) {
+        return 0;
+    }
+    const auto value = node_meta["shape"][index].get<int64_t>();
+    return value > 0 ? static_cast<size_t>(value) : 0;
+}
+
+double elapsedMilliseconds(std::chrono::steady_clock::time_point start,
+                           std::chrono::steady_clock::time_point end) {
+    return std::chrono::duration<double, std::milli>(end - start).count();
+}
 
 std::string displaySpeedLevelLabel(const std::string& level) {
     if (level == "raw") {
@@ -135,6 +162,108 @@ int32_t jsonTrackIdAttr(const json& attrs, const char* key) {
     return -1;
 }
 
+struct TrackKinematicsCompatibilityFilter {
+    std::unordered_set<std::string> run_names;
+    std::unordered_set<int32_t> track_ids;
+};
+
+TrackKinematicsCompatibilityFilter makeTrackKinematicsCompatibilityFilter(
+    const std::vector<ZarrDetectionData::MovementSeries>& movement_series) {
+    TrackKinematicsCompatibilityFilter filter;
+    for (const auto& series : movement_series) {
+        if (series.category.rfind("track_kinematics/", 0) != 0) {
+            continue;
+        }
+        if (!series.run_name.empty()) {
+            filter.run_names.insert(series.run_name);
+        }
+        const int32_t track_id =
+            jsonTrackIdAttr(json{{"track_id", series.track_id}}, "track_id");
+        if (track_id >= 0) {
+            filter.track_ids.insert(track_id);
+        }
+    }
+    return filter;
+}
+
+bool isCompatibleTrackKinematicsSource(
+    const json& attrs,
+    const TrackKinematicsCompatibilityFilter& filter,
+    const char* source_run_key,
+    const char* track_id_key) {
+    if (filter.run_names.empty()) {
+        return true;
+    }
+
+    const std::string source_run = jsonStringAttr(attrs, source_run_key);
+    if (!source_run.empty() && filter.run_names.count(source_run) == 0) {
+        return false;
+    }
+
+    const int32_t track_id = jsonTrackIdAttr(attrs, track_id_key);
+    if (track_id >= 0 && !filter.track_ids.empty() &&
+        filter.track_ids.count(track_id) == 0) {
+        return false;
+    }
+    return true;
+}
+
+using SwimBoutSourceKey = std::pair<std::string, std::string>;
+
+std::set<SwimBoutSourceKey> preferredSwimBoutKinematicsSources(
+    const std::vector<ZarrDetectionData::SwimBoutSeries>& swim_bout_series) {
+    std::set<SwimBoutSourceKey> preferred;
+    auto add_matching = [&](auto predicate) {
+        for (const auto& series : swim_bout_series) {
+            if (series.run_name.empty() || series.speed_level.empty() ||
+                !predicate(series)) {
+                continue;
+            }
+            preferred.emplace(series.run_name,
+                              normalizeSpeedLevelToken(series.speed_level));
+        }
+    };
+
+    add_matching([](const auto& series) {
+        return series.is_latest_run && series.is_default_level;
+    });
+    if (!preferred.empty()) {
+        return preferred;
+    }
+    add_matching([](const auto& series) { return series.is_latest_run; });
+    if (!preferred.empty()) {
+        return preferred;
+    }
+    add_matching([](const auto& series) { return series.is_default_level; });
+    if (!preferred.empty()) {
+        return preferred;
+    }
+    if (!swim_bout_series.empty() && !swim_bout_series.front().run_name.empty()) {
+        preferred.emplace(
+            swim_bout_series.front().run_name,
+            normalizeSpeedLevelToken(swim_bout_series.front().speed_level));
+    }
+    return preferred;
+}
+
+bool matchesPreferredSwimBoutSource(
+    const json& attrs,
+    const std::set<SwimBoutSourceKey>& preferred_sources) {
+    if (preferred_sources.empty()) {
+        return true;
+    }
+    const std::string source_swim_bout_run =
+        jsonStringAttr(attrs, "source_swim_bout_run");
+    const std::string source_swim_bout_speed_level =
+        normalizeSpeedLevelToken(
+            jsonStringAttr(attrs, "source_swim_bout_speed_level"));
+    if (source_swim_bout_run.empty() || source_swim_bout_speed_level.empty()) {
+        return false;
+    }
+    return preferred_sources.count(
+               {source_swim_bout_run, source_swim_bout_speed_level}) > 0;
+}
+
 }  // namespace
 
 bool ZarrDetectionLoader::loadMovementData(const ts::kvstore::KvStore& store) {
@@ -146,10 +275,27 @@ bool ZarrDetectionLoader::loadMovementData(const ts::kvstore::KvStore& store) {
     data_.bout_kinematics_series.clear();
     data_.crop_data = {};
 
+    const bool trace_startup = startupTraceEnabled();
+    auto trace_mark = std::chrono::steady_clock::now();
+    auto traceStep = [&](const char* label) {
+        if (!trace_startup) {
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        std::cout << "  [StartupTrace] " << label << " "
+                  << elapsedMilliseconds(trace_mark, now) << " ms"
+                  << std::endl;
+        trace_mark = now;
+    };
+
     const bool loaded_track_kinematics = loadTrackKinematicsData(store);
+    traceStep("loadTrackKinematicsData");
     const bool loaded_legacy = loadLegacyMovementData(store);
+    traceStep("loadLegacyMovementData");
     loadSwimBoutData(store);
+    traceStep("loadSwimBoutData");
     loadBoutKinematicsData(store);
+    traceStep("loadBoutKinematicsData");
     bool loaded = loaded_track_kinematics || loaded_legacy;
 
     if (!loaded) {
@@ -157,15 +303,25 @@ bool ZarrDetectionLoader::loadMovementData(const ts::kvstore::KvStore& store) {
     }
 
     finalizeMovementSelection();
+    traceStep("finalizeMovementSelection");
     if (data_.has_movement_data) {
         std::string crop_candidate = data_.movement_crop_run_name;
         if (crop_candidate.empty() && !data_.keypoints_source_crop_run.empty()) {
             crop_candidate = NormalizeCropRunName(data_.keypoints_source_crop_run);
         }
         if (!crop_candidate.empty()) {
-            loadMovementCropRun(store, crop_candidate);
+            loadMovementCropRunMetadata(store, crop_candidate);
+            if (eagerCropImagesEnabled()) {
+                loadMovementCropRun(store, crop_candidate);
+            }
+        }
+        if (!crop_candidate.empty() && trace_startup &&
+            !eagerCropImagesEnabled()) {
+            std::cout << "  [StartupTrace] deferred crop image preload for '"
+                      << crop_candidate << "'" << std::endl;
         }
     }
+    traceStep("loadMovementCropRun");
     return data_.has_movement_data;
 }
 
@@ -356,6 +512,8 @@ bool ZarrDetectionLoader::loadTrackKinematicsData(
 bool ZarrDetectionLoader::loadSwimBoutData(
     const ts::kvstore::KvStore& store) {
     const std::string parent_path = "analysis/swim_bout_runs";
+    const auto compatibility_filter =
+        makeTrackKinematicsCompatibilityFilter(data_.movement_series);
     std::vector<std::string> run_candidates;
     std::string latest;
     if (auto parent_attrs = readGroupAttrs(store, parent_path)) {
@@ -378,18 +536,15 @@ bool ZarrDetectionLoader::loadSwimBoutData(
 
     auto readFrameColumn = [&](const std::string& path,
                                std::vector<int32_t>& out) -> bool {
-        if (readInt32Array(store, path, out) && !out.empty()) {
+        std::vector<int64_t> tmp64;
+        if (readInt64Array(store, path, tmp64) && !tmp64.empty()) {
+            out.resize(tmp64.size());
+            for (size_t i = 0; i < tmp64.size(); ++i) {
+                out[i] = clampToInt32(tmp64[i]);
+            }
             return true;
         }
-        std::vector<int64_t> tmp64;
-        if (!readInt64Array(store, path, tmp64) || tmp64.empty()) {
-            return false;
-        }
-        out.resize(tmp64.size());
-        for (size_t i = 0; i < tmp64.size(); ++i) {
-            out[i] = clampToInt32(tmp64[i]);
-        }
-        return true;
+        return readInt32Array(store, path, out) && !out.empty();
     };
 
     bool loaded_any = false;
@@ -399,6 +554,11 @@ bool ZarrDetectionLoader::loadSwimBoutData(
         json run_attrs = json::object();
         if (auto run_attrs_opt = readGroupAttrs(store, run_base)) {
             run_attrs = *run_attrs_opt;
+        }
+        if (!isCompatibleTrackKinematicsSource(
+                run_attrs, compatibility_filter, "source_track_kinematics_run",
+                "track_id")) {
+            continue;
         }
 
         const std::string default_level = jsonStringAttr(run_attrs,
@@ -586,6 +746,10 @@ bool ZarrDetectionLoader::loadSwimBoutData(
 bool ZarrDetectionLoader::loadBoutKinematicsData(
     const ts::kvstore::KvStore& store) {
     const std::string parent_path = "analysis/bout_kinematics_runs";
+    const auto compatibility_filter =
+        makeTrackKinematicsCompatibilityFilter(data_.movement_series);
+    const auto preferred_swim_bout_sources =
+        preferredSwimBoutKinematicsSources(data_.swim_bout_series);
     std::vector<std::string> run_candidates;
     if (auto parent_attrs = readGroupAttrs(store, parent_path)) {
         const std::string latest = extractLatestRunName(*parent_attrs);
@@ -605,34 +769,30 @@ bool ZarrDetectionLoader::loadBoutKinematicsData(
         return false;
     }
 
-    auto readFrameColumn = [&](const std::string& path,
-                               std::vector<int32_t>& out) -> bool {
-        if (readInt32Array(store, path, out) && !out.empty()) {
-            return true;
-        }
-        std::vector<int64_t> tmp64;
-        if (!readInt64Array(store, path, tmp64) || tmp64.empty()) {
-            return false;
-        }
-        out.resize(tmp64.size());
-        for (size_t i = 0; i < tmp64.size(); ++i) {
-            out[i] = clampToInt32(tmp64[i]);
-        }
-        return true;
-    };
-
     bool loaded_any = false;
     for (const auto& run_name : run_candidates) {
         const std::string run_base = parent_path + "/" + run_name + "/";
-        const std::string metrics_base = run_base + "movement/per_bout_metrics/";
-        if (!arrayExists(store, metrics_base + "source_start_frame") &&
-            !arrayExists(store, metrics_base + "physical_active_duration_s")) {
-            continue;
-        }
-
         json run_attrs = json::object();
         if (auto run_attrs_opt = readGroupAttrs(store, run_base)) {
             run_attrs = *run_attrs_opt;
+        }
+        if (!isCompatibleTrackKinematicsSource(
+                run_attrs, compatibility_filter, "source_track_kinematics_run",
+                "source_track_id")) {
+            continue;
+        }
+        if (!matchesPreferredSwimBoutSource(run_attrs,
+                                            preferred_swim_bout_sources)) {
+            continue;
+        }
+
+        const std::string metrics_base = run_base + "movement/per_bout_metrics/";
+        if (!root_path_.empty()) {
+            namespace fs = std::filesystem;
+            const fs::path metrics_path = fs::path(root_path_) / metrics_base;
+            if (!fs::exists(metrics_path)) {
+                continue;
+            }
         }
 
         ZarrDetectionData::BoutKinematicsSeries series;
@@ -649,64 +809,8 @@ bool ZarrDetectionLoader::loadBoutKinematicsData(
         series.movement_metric_source_level =
             jsonStringAttr(run_attrs, "movement_metric_source_level");
 
-        readFrameColumn(metrics_base + "source_start_frame",
-                        series.source_start_frame);
-        readFrameColumn(metrics_base + "source_end_frame",
-                        series.source_end_frame);
-        readFrameColumn(metrics_base + "source_core_start_frame",
-                        series.source_core_start_frame);
-        readFrameColumn(metrics_base + "source_core_end_frame",
-                        series.source_core_end_frame);
-        readFrameColumn(metrics_base + "physical_active_start_frame",
-                        series.physical_active_start_frame);
-        readFrameColumn(metrics_base + "physical_active_end_frame",
-                        series.physical_active_end_frame);
-        readFloatArray(store,
-                       metrics_base + "physical_active_duration_s",
-                       series.physical_active_duration_s);
-        readFloatArray(store,
-                       metrics_base + "physical_active_path_length_mm",
-                       series.physical_active_path_length_mm);
-        readFloatArray(store,
-                       metrics_base + "physical_active_path_length_px",
-                       series.physical_active_path_length_px);
-        readFloatArray(store,
-                       metrics_base + "physical_active_mean_speed_mm_s",
-                       series.physical_active_mean_speed_mm_s);
-        readFloatArray(store,
-                       metrics_base + "physical_active_peak_speed_mm_s",
-                       series.physical_active_peak_speed_mm_s);
-        readBoolArray(store,
-                      metrics_base + "physical_active_valid",
-                      series.physical_active_valid);
-        readStringArray(store,
-                        metrics_base + "failure_reason_bytes",
-                        series.failure_reason);
-
-        const size_t row_count = std::max(series.source_start_frame.size(),
-                                          series.physical_active_duration_s.size());
-        if (row_count == 0) {
-            continue;
-        }
-        auto trim = [&](auto& values) {
-            if (!values.empty() && values.size() > row_count) {
-                values.resize(row_count);
-            }
-        };
-        trim(series.source_start_frame);
-        trim(series.source_end_frame);
-        trim(series.source_core_start_frame);
-        trim(series.source_core_end_frame);
-        trim(series.physical_active_start_frame);
-        trim(series.physical_active_end_frame);
-        trim(series.physical_active_duration_s);
-        trim(series.physical_active_path_length_mm);
-        trim(series.physical_active_path_length_px);
-        trim(series.physical_active_mean_speed_mm_s);
-        trim(series.physical_active_peak_speed_mm_s);
-        trim(series.physical_active_valid);
-        trim(series.failure_reason);
-
+        std::string metrics_error;
+        loadBoutKinematicsMetrics(store, series, &metrics_error);
         data_.bout_kinematics_series.push_back(std::move(series));
         loaded_any = true;
     }
@@ -717,6 +821,178 @@ bool ZarrDetectionLoader::loadBoutKinematicsData(
                   << std::endl;
     }
     return loaded_any;
+}
+
+bool ZarrDetectionLoader::loadBoutKinematicsMetrics(
+    const ts::kvstore::KvStore& store,
+    ZarrDetectionData::BoutKinematicsSeries& series,
+    std::string* error_message) {
+    auto set_error = [&](const std::string& message) {
+        series.metrics_load_failed = true;
+        series.metrics_load_error = message;
+        if (error_message) {
+            *error_message = message;
+        }
+    };
+
+    if (series.run_name.empty()) {
+        set_error("missing bout-kinematics run name");
+        return false;
+    }
+
+    const std::string metrics_base =
+        "analysis/bout_kinematics_runs/" + series.run_name +
+        "/movement/per_bout_metrics/";
+
+    auto readFrameColumn = [&](const std::string& path,
+                               std::vector<int32_t>& out) -> bool {
+        std::vector<int64_t> tmp64;
+        if (readInt64Array(store, path, tmp64) && !tmp64.empty()) {
+            out.resize(tmp64.size());
+            for (size_t i = 0; i < tmp64.size(); ++i) {
+                out[i] = clampToInt32(tmp64[i]);
+            }
+            return true;
+        }
+        return readInt32Array(store, path, out) && !out.empty();
+    };
+
+    series.source_start_frame.clear();
+    series.source_end_frame.clear();
+    series.source_core_start_frame.clear();
+    series.source_core_end_frame.clear();
+    series.physical_active_start_frame.clear();
+    series.physical_active_end_frame.clear();
+    series.physical_active_duration_s.clear();
+    series.physical_active_path_length_mm.clear();
+    series.physical_active_path_length_px.clear();
+    series.physical_active_mean_speed_mm_s.clear();
+    series.physical_active_peak_speed_mm_s.clear();
+    series.physical_active_valid.clear();
+    series.failure_reason.clear();
+
+    readFrameColumn(metrics_base + "source_start_frame",
+                    series.source_start_frame);
+    readFrameColumn(metrics_base + "source_end_frame",
+                    series.source_end_frame);
+    readFrameColumn(metrics_base + "source_core_start_frame",
+                    series.source_core_start_frame);
+    readFrameColumn(metrics_base + "source_core_end_frame",
+                    series.source_core_end_frame);
+    readFrameColumn(metrics_base + "physical_active_start_frame",
+                    series.physical_active_start_frame);
+    readFrameColumn(metrics_base + "physical_active_end_frame",
+                    series.physical_active_end_frame);
+    readFloatArray(store,
+                   metrics_base + "physical_active_duration_s",
+                   series.physical_active_duration_s);
+    readFloatArray(store,
+                   metrics_base + "physical_active_path_length_mm",
+                   series.physical_active_path_length_mm);
+    readFloatArray(store,
+                   metrics_base + "physical_active_path_length_px",
+                   series.physical_active_path_length_px);
+    readFloatArray(store,
+                   metrics_base + "physical_active_mean_speed_mm_s",
+                   series.physical_active_mean_speed_mm_s);
+    readFloatArray(store,
+                   metrics_base + "physical_active_peak_speed_mm_s",
+                   series.physical_active_peak_speed_mm_s);
+    readBoolArray(store,
+                  metrics_base + "physical_active_valid",
+                  series.physical_active_valid);
+    readStringArray(store,
+                    metrics_base + "failure_reason_bytes",
+                    series.failure_reason);
+
+    const size_t row_count = std::max(series.source_start_frame.size(),
+                                      series.physical_active_duration_s.size());
+    if (row_count == 0) {
+        set_error("no per-bout metric arrays were readable for '" +
+                  series.run_name + "'");
+        return false;
+    }
+
+    auto trim = [&](auto& values) {
+        if (!values.empty() && values.size() > row_count) {
+            values.resize(row_count);
+        }
+    };
+    trim(series.source_start_frame);
+    trim(series.source_end_frame);
+    trim(series.source_core_start_frame);
+    trim(series.source_core_end_frame);
+    trim(series.physical_active_start_frame);
+    trim(series.physical_active_end_frame);
+    trim(series.physical_active_duration_s);
+    trim(series.physical_active_path_length_mm);
+    trim(series.physical_active_path_length_px);
+    trim(series.physical_active_mean_speed_mm_s);
+    trim(series.physical_active_peak_speed_mm_s);
+    trim(series.physical_active_valid);
+    trim(series.failure_reason);
+
+    series.metrics_loaded = true;
+    series.metrics_load_failed = false;
+    series.metrics_load_error.clear();
+    std::cout << "  [BoutKinematics] Loaded metrics for '"
+              << series.run_name << "' (" << row_count << " bouts)"
+              << std::endl;
+    return true;
+}
+
+bool ZarrDetectionLoader::ensureBoutKinematicsMetricsLoaded(
+    const std::string& run_name,
+    std::string* error_message) {
+    auto found = std::find_if(
+        data_.bout_kinematics_series.begin(),
+        data_.bout_kinematics_series.end(),
+        [&](const auto& series) { return series.run_name == run_name; });
+    if (found == data_.bout_kinematics_series.end()) {
+        if (error_message) {
+            *error_message = "unknown bout-kinematics run '" + run_name + "'";
+        }
+        return false;
+    }
+    if (found->metrics_loaded) {
+        return true;
+    }
+    if (root_path_.empty()) {
+        found->metrics_load_failed = true;
+        found->metrics_load_error = "archive path is unavailable";
+        if (error_message) {
+            *error_message = found->metrics_load_error;
+        }
+        return false;
+    }
+
+    const std::string kvstore_path = normalizeKvstoreFileRootPath(root_path_);
+    auto spec_result =
+        ts::kvstore::Spec::FromJson({{"driver", "file"},
+                                     {"path", kvstore_path}});
+    if (!spec_result.ok()) {
+        found->metrics_load_failed = true;
+        found->metrics_load_error =
+            "failed to create kvstore spec: " +
+            spec_result.status().ToString();
+        if (error_message) {
+            *error_message = found->metrics_load_error;
+        }
+        return false;
+    }
+
+    auto store_result = ts::kvstore::Open(spec_result.value(), context_).result();
+    if (!store_result.ok()) {
+        found->metrics_load_failed = true;
+        found->metrics_load_error =
+            "failed to open kvstore: " + store_result.status().ToString();
+        if (error_message) {
+            *error_message = found->metrics_load_error;
+        }
+        return false;
+    }
+
+    return loadBoutKinematicsMetrics(store_result.value(), *found, error_message);
 }
 
 bool ZarrDetectionLoader::loadLegacyMovementData(const ts::kvstore::KvStore& store) {
@@ -1000,7 +1276,10 @@ bool ZarrDetectionLoader::loadLegacyMovementData(const ts::kvstore::KvStore& sto
     }
 
     if (loaded_any && !data_.movement_crop_run_name.empty()) {
-        loadMovementCropRun(store, data_.movement_crop_run_name);
+        loadMovementCropRunMetadata(store, data_.movement_crop_run_name);
+        if (eagerCropImagesEnabled()) {
+            loadMovementCropRun(store, data_.movement_crop_run_name);
+        }
     }
 
     return loaded_any;
@@ -1401,13 +1680,15 @@ bool ZarrDetectionLoader::loadMovementTrack(
     return true;
 }
 
-bool ZarrDetectionLoader::loadMovementCropRun(const ts::kvstore::KvStore& store,
-                                              const std::string& crop_run_name) {
+bool ZarrDetectionLoader::loadMovementCropRunMetadata(
+    const ts::kvstore::KvStore& store,
+    const std::string& crop_run_name) {
     std::string normalized = NormalizeCropRunName(crop_run_name);
     if (normalized.empty()) {
         return false;
     }
-    if (data_.crop_data.loaded && data_.crop_data.run_name == normalized) {
+    if (data_.crop_data.metadata_loaded &&
+        data_.crop_data.run_name == normalized) {
         return true;
     }
 
@@ -1415,16 +1696,72 @@ bool ZarrDetectionLoader::loadMovementCropRun(const ts::kvstore::KvStore& store,
     data_.crop_data.run_name = normalized;
 
     const std::string crop_base = "crop_runs/" + normalized + "/";
-    std::cout << "  [CropRun] Resolving movement crop run at '" << crop_base << "'" << std::endl;
+    std::cout << "  [CropRun] Resolving crop metadata at '" << crop_base << "'"
+              << std::endl;
 
     std::vector<int32_t> crop_frame_indices;
-    readInt32Array(store, crop_base + "frame_indices", crop_frame_indices);
+    if (!readInt32Array(store, crop_base + "frame_indices", crop_frame_indices)) {
+        std::vector<int64_t> tmp64;
+        if (readInt64Array(store, crop_base + "frame_indices", tmp64)) {
+            crop_frame_indices.resize(tmp64.size());
+            for (size_t i = 0; i < tmp64.size(); ++i) {
+                crop_frame_indices[i] = clampToInt32(tmp64[i]);
+            }
+        }
+    }
+
+    size_t roi_count = crop_frame_indices.size();
+    size_t height = 0;
+    size_t width = 0;
+    size_t channels = 1;
+    if (auto image_meta = readNodeMetaV3(store, crop_base + "roi_images")) {
+        roi_count = std::max(roi_count, jsonShapeDim(*image_meta, 0));
+        height = jsonShapeDim(*image_meta, 1);
+        width = jsonShapeDim(*image_meta, 2);
+        const size_t channel_dim = jsonShapeDim(*image_meta, 3);
+        if (channel_dim > 0) {
+            channels = channel_dim;
+        }
+    }
+
+    if (roi_count == 0) {
+        data_.crop_data = {};
+        return false;
+    }
+
+    if (crop_frame_indices.size() < roi_count) {
+        crop_frame_indices.resize(roi_count, -1);
+    }
+    data_.crop_data.roi_count = roi_count;
+    data_.crop_data.height = height;
+    data_.crop_data.width = width;
+    data_.crop_data.channels = channels;
+    data_.crop_data.frame_indices = std::move(crop_frame_indices);
+    data_.crop_data.metadata_loaded = true;
+    return true;
+}
+
+bool ZarrDetectionLoader::loadMovementCropRun(const ts::kvstore::KvStore& store,
+                                              const std::string& crop_run_name) {
+    std::string normalized = NormalizeCropRunName(crop_run_name);
+    if (normalized.empty()) {
+        return false;
+    }
+    if (!loadMovementCropRunMetadata(store, normalized)) {
+        return false;
+    }
+    if (data_.crop_data.loaded && data_.crop_data.run_name == normalized) {
+        return true;
+    }
+
+    const std::string crop_base = "crop_runs/" + normalized + "/";
+    std::cout << "  [CropRun] Loading persisted crop images at '"
+              << crop_base << "'" << std::endl;
 
     auto assignFrameIndices = [&](size_t roi_count) {
-        if (crop_frame_indices.size() < roi_count) {
-            crop_frame_indices.resize(roi_count, -1);
+        if (data_.crop_data.frame_indices.size() < roi_count) {
+            data_.crop_data.frame_indices.resize(roi_count, -1);
         }
-        data_.crop_data.frame_indices = std::move(crop_frame_indices);
     };
 
     auto load_from_array = [&](auto& store_handle, int rank) -> bool {
@@ -1467,7 +1804,7 @@ bool ZarrDetectionLoader::loadMovementCropRun(const ts::kvstore::KvStore& store,
     }
 
     if (!data_.crop_data.loaded) {
-        data_.crop_data = {};
+        data_.crop_data.images.clear();
         return false;
     }
 
