@@ -1,9 +1,9 @@
 #include "gui/analysis_timeline_window.h"
 
 #include "gui/analysis_timeline_eye_angle.h"
+#include "gui/analysis_timeline_motion_controls.h"
 #include "gui/analysis_timeline_motion_data.h"
 #include "gui/analysis_timeline_motion_plot.h"
-#include "gui/analysis_timeline_motion_sources.h"
 #include "gui/analysis_timeline_tail_kinematics.h"
 #include "gui/analysis_timeline_trace_plot.h"
 #include "imgui.h"
@@ -14,7 +14,6 @@
 #include <cmath>
 #include <limits>
 #include <optional>
-#include <sstream>
 #include <vector>
 
 namespace {
@@ -67,7 +66,7 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
     }
 
     const auto* selected_series =
-        renderMovementDatasetUI(context.zarr_loader, "Track Kinematics Source");
+        drawAnalysisTimelineMotionSourceSelector(context.zarr_loader);
 
     const auto& time_data = context.zarr_loader.getMovementTimeSeconds();
     const auto& smoothed_speed =
@@ -89,31 +88,8 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
     const auto& heading_per_second_time =
         context.zarr_loader.getMovementHeadingPerSecondTimeSeconds();
     const auto& frame_indices = context.zarr_loader.getMovementFrameIndices();
-    const auto& swim_bout_series = context.zarr_loader.getSwimBoutSeries();
-    const auto& bout_kinematics_series =
-        context.zarr_loader.getBoutKinematicsSeries();
-    std::vector<size_t> compatible_swim_bout_indices;
-    if (selected_series) {
-        compatible_swim_bout_indices =
-            findCompatibleSwimBoutIndices(*selected_series, swim_bout_series);
-    }
-    const auto* selected_swim_bouts =
-        selected_series
-            ? resolveSelectedSwimBoutSeries(swim_bout_series,
-                                            compatible_swim_bout_indices,
-                                            state)
-            : nullptr;
-    std::vector<size_t> compatible_bout_kinematics_indices;
-    if (selected_series && selected_swim_bouts) {
-        compatible_bout_kinematics_indices =
-            findCompatibleBoutKinematicsIndices(*selected_series,
-                                                selected_swim_bouts,
-                                                bout_kinematics_series);
-    }
-    const auto* selected_bout_kinematics =
-        resolveSelectedBoutKinematicsSeries(bout_kinematics_series,
-                                            compatible_bout_kinematics_indices,
-                                            state);
+    AnalysisTimelineMotionSelection motion_selection;
+    motion_selection.selected_series = selected_series;
 
     bool smoothed_available = !smoothed_speed.empty();
     bool instant_available = !instant_speed.empty();
@@ -150,233 +126,19 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
     }
 
     if (has_track_timeline) {
-    if (!smoothed_available && state.show_smoothed) {
-        state.show_smoothed = false;
-    }
-    if (!instant_available && state.show_instantaneous) {
-        state.show_instantaneous = false;
-    }
-    if (!heading_sample_available) {
-        state.show_heading_raw = false;
-        state.show_heading_smoothed = false;
-    }
-    if (!heading_per_second_available) {
-        state.show_heading_per_second = false;
-    }
-
-    if (!context.zarr_loader.getMovementCategory().empty()) {
-        ImGui::Text("Track Kinematics: %s/%s | Track: %s",
-                    context.zarr_loader.getMovementCategory().c_str(),
-                    context.zarr_loader.getMovementRunName().c_str(),
-                    context.zarr_loader.getMovementTrackId().c_str());
-    } else {
-        ImGui::Text("Track Kinematics: %s | Track: %s",
-                    context.zarr_loader.getMovementRunName().c_str(),
-                    context.zarr_loader.getMovementTrackId().c_str());
-    }
-    if (!context.zarr_loader.getMovementSpeedLevel().empty()) {
-        ImGui::Text("Speed level: %s | Primary units: %s",
-                    context.zarr_loader.getMovementSpeedLevel().c_str(),
-                    primary_speed_units.c_str());
-    }
-    ImGui::Text("Data points: %zu", time_data.size());
-
-    ImGui::SeparatorText("Derived Swim-Bout Candidate");
-    if (compatible_swim_bout_indices.empty()) {
-        ImGui::TextDisabled("No compatible swim-bout candidates for this track/speed.");
-    } else {
-        const std::string selected_label =
-            selected_swim_bouts ? swimBoutCandidateLabel(*selected_swim_bouts)
-                                : "Select candidate";
-        if (ImGui::BeginCombo("Candidate##swim_bout_candidate",
-                              selected_label.c_str())) {
-            for (size_t index : compatible_swim_bout_indices) {
-                const auto& candidate = swim_bout_series[index];
-                const std::string label = swimBoutCandidateLabel(candidate);
-                const bool is_selected =
-                    selected_swim_bouts == &candidate;
-                if (ImGui::Selectable(label.c_str(), is_selected)) {
-                    state.selected_swim_bout_run = candidate.run_name;
-                    state.selected_swim_bout_speed_level =
-                        candidate.speed_level;
-                    state.selected_bout_kinematics_run.clear();
-                    selected_swim_bouts = &candidate;
-                    compatible_bout_kinematics_indices =
-                        findCompatibleBoutKinematicsIndices(
-                            *selected_series,
-                            selected_swim_bouts,
-                            bout_kinematics_series);
-                    selected_bout_kinematics =
-                        resolveSelectedBoutKinematicsSeries(
-                            bout_kinematics_series,
-                            compatible_bout_kinematics_indices,
-                            state);
-                }
-                if (is_selected) {
-                    ImGui::SetItemDefaultFocus();
-                }
-            }
-            ImGui::EndCombo();
-        }
-        if (selected_swim_bouts) {
-            ImGui::Text("Compatible candidates: %zu | Selected bouts: %zu",
-                        compatible_swim_bout_indices.size(),
-                        selected_swim_bouts->start_frame.size());
-            if (!selected_swim_bouts->detection_signal_source_level.empty() ||
-                !selected_swim_bouts->path_distance_source_level.empty()) {
-                ImGui::Text("Detector source: %s | Physical metrics: %s",
-                            selected_swim_bouts
-                                    ->detection_signal_source_level.empty()
-                                ? "direct speed level"
-                                : selected_swim_bouts
-                                      ->detection_signal_source_level.c_str(),
-                            selected_swim_bouts
-                                    ->path_distance_source_level.empty()
-                                ? "candidate bouts"
-                                : selected_swim_bouts
-                                      ->path_distance_source_level.c_str());
-            }
-        }
-    }
-
-    ImGui::SeparatorText("Bout-Kinematics Candidate");
-    if (selected_swim_bouts == nullptr ||
-        compatible_bout_kinematics_indices.empty()) {
-        ImGui::TextDisabled("No linked bout-kinematics metrics for the selected candidate.");
-    } else {
-        const char* combo_preview =
-            selected_bout_kinematics
-                ? selected_bout_kinematics->run_name.c_str()
-                : "Select bout-kinematics run";
-        if (ImGui::BeginCombo("Candidate##bout_kinematics_candidate",
-                              combo_preview)) {
-            for (size_t index : compatible_bout_kinematics_indices) {
-                const auto& candidate = bout_kinematics_series[index];
-                const bool is_selected =
-                    selected_bout_kinematics == &candidate;
-                std::ostringstream label;
-                label << candidate.run_name;
-                if (candidate.metrics_loaded) {
-                    label << " (" << candidate.physical_active_duration_s.size()
-                          << " bouts)";
-                } else {
-                    label << " (details not loaded)";
-                }
-                if (ImGui::Selectable(label.str().c_str(), is_selected)) {
-                    state.selected_bout_kinematics_run = candidate.run_name;
-                    selected_bout_kinematics = &candidate;
-                }
-                if (is_selected) {
-                    ImGui::SetItemDefaultFocus();
-                }
-            }
-            ImGui::EndCombo();
-        }
-        if (selected_bout_kinematics) {
-            if (!selected_bout_kinematics->metrics_loaded) {
-                ImGui::TextDisabled(
-                    "Per-bout physical metrics are deferred to keep startup responsive.");
-                if (selected_bout_kinematics->metrics_load_failed &&
-                    !selected_bout_kinematics->metrics_load_error.empty()) {
-                    ImGui::TextWrapped("Load failed: %s",
-                                       selected_bout_kinematics
-                                           ->metrics_load_error.c_str());
-                }
-                if (ImGui::Button("Load Bout Metrics")) {
-                    std::string error_message;
-                    context.zarr_loader.ensureBoutKinematicsMetricsLoaded(
-                        selected_bout_kinematics->run_name,
-                        &error_message);
-                }
-            } else {
-                const auto* valid_mask =
-                    selected_bout_kinematics->physical_active_valid.empty()
-                        ? nullptr
-                        : &selected_bout_kinematics->physical_active_valid;
-                const double mean_duration =
-                    computeFiniteMean(
-                        selected_bout_kinematics->physical_active_duration_s,
-                        valid_mask);
-                const double mean_path =
-                    computeFiniteMean(
-                        selected_bout_kinematics
-                            ->physical_active_path_length_mm,
-                        valid_mask);
-                const double mean_speed =
-                    computeFiniteMean(
-                        selected_bout_kinematics
-                            ->physical_active_mean_speed_mm_s,
-                        valid_mask);
-                const size_t valid_physical =
-                    selected_bout_kinematics->physical_active_valid.empty()
-                        ? selected_bout_kinematics
-                              ->physical_active_duration_s.size()
-                        : countValidMaskValues(
-                              selected_bout_kinematics
-                                  ->physical_active_valid);
-                ImGui::Text("Physical-active valid: %zu/%zu",
-                            valid_physical,
-                            selected_bout_kinematics
-                                ->physical_active_duration_s.size());
-                if (std::isfinite(mean_duration) || std::isfinite(mean_path) ||
-                    std::isfinite(mean_speed)) {
-                    ImGui::Text("Mean duration %.3fs | path %.3f mm | speed %.3f mm/s",
-                                std::isfinite(mean_duration) ? mean_duration : 0.0,
-                                std::isfinite(mean_path) ? mean_path : 0.0,
-                                std::isfinite(mean_speed) ? mean_speed : 0.0);
-                }
-            }
-        }
-    }
-
-    ImGui::Checkbox("Scrolling Window (+/-s)##analysis_timeline",
-                    &context.scroll_state.enabled);
-    if (context.scroll_state.enabled) {
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(140.0f);
-        ImGui::DragFloat("Half-span##analysis_timeline_window_span",
-                         &context.scroll_state.window_half_span_s,
-                         0.1f,
-                         0.5f,
-                         60.0f,
-                         "%.1f s");
-        context.scroll_state.window_half_span_s =
-            std::max(0.1f, context.scroll_state.window_half_span_s);
-    }
-
-    ImGui::Checkbox(primary_speed_label.c_str(), &state.show_smoothed);
-    ImGui::SameLine();
-    ImGui::Checkbox(secondary_speed_label.c_str(),
-                    &state.show_instantaneous);
-
-    ImGui::SeparatorText("Plot Layers");
-    ImGui::BeginDisabled(!heading_sample_available);
-    ImGui::Checkbox("Show Raw Heading", &state.show_heading_raw);
-    ImGui::SameLine();
-    ImGui::Checkbox("Show Smoothed Heading", &state.show_heading_smoothed);
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!heading_per_second_available);
-    ImGui::Checkbox("Show Heading (per-second)",
-                    &state.show_heading_per_second);
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::BeginDisabled(selected_swim_bouts == nullptr);
-    ImGui::Checkbox("Show Swim Bouts", &state.show_swim_bouts);
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::BeginDisabled(selected_swim_bouts == nullptr ||
-                         !selected_swim_bouts->has_detector_trace);
-    ImGui::Checkbox("Show Detector Response",
-                    &state.show_detector_response);
-    ImGui::EndDisabled();
-    ImGui::Checkbox("Show Track Position", &state.show_track_position);
-    ImGui::BeginDisabled(!state.show_track_position);
-    ImGui::SameLine();
-    ImGui::Checkbox("X##track_position_x", &state.show_track_position_x);
-    ImGui::SameLine();
-    ImGui::Checkbox("Y##track_position_y", &state.show_track_position_y);
-    ImGui::EndDisabled();
+    motion_selection = drawAnalysisTimelineMotionControls({
+        context.zarr_loader,
+        context.scroll_state,
+        selected_series,
+        time_data.size(),
+        smoothed_available,
+        instant_available,
+        heading_sample_available,
+        heading_per_second_available,
+        primary_speed_label,
+        primary_speed_units,
+        secondary_speed_label,
+    }, state);
 
     const auto motion_data = prepareAnalysisTimelineMotionData({
         time_data,
@@ -390,7 +152,7 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
         heading_per_second_degrees,
         heading_per_second_resultant,
         heading_per_second_time,
-        selected_swim_bouts,
+        motion_selection.selected_swim_bouts,
         smoothed_available,
         instant_available,
         heading_per_second_available,
@@ -418,7 +180,7 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
         motion_data.heading_per_second_resultant_plot,
         motion_data.distance_time,
         motion_data.distance_units,
-        selected_swim_bouts,
+        motion_selection.selected_swim_bouts,
         primary_speed_label,
         primary_speed_units,
         secondary_speed_label,
@@ -427,10 +189,13 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
         motion_data.heading_axis_max,
         motion_data.max_distance_mm,
     });
-    if (state.show_track_position && selected_series != nullptr) {
-        const bool use_mm_positions = !selected_series->positions_mm.empty();
-        const auto& positions = use_mm_positions ? selected_series->positions_mm
-                                                 : selected_series->positions_px;
+    if (state.show_track_position &&
+        motion_selection.selected_series != nullptr) {
+        const bool use_mm_positions =
+            !motion_selection.selected_series->positions_mm.empty();
+        const auto& positions =
+            use_mm_positions ? motion_selection.selected_series->positions_mm
+                             : motion_selection.selected_series->positions_px;
         const char* units = use_mm_positions ? "mm" : "px";
         std::vector<AnalysisTimelineTrace> position_traces;
         if (state.show_track_position_x) {
