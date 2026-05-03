@@ -1,10 +1,10 @@
 #include "gui/analysis_timeline_window.h"
 
+#include "gui/analysis_timeline_motion_plot.h"
 #include "gui/analysis_timeline_motion_sources.h"
 #include "gui/analysis_timeline_trace_plot.h"
 #include "gui/camera_view_overlay_style.h"
 #include "imgui.h"
-#include "implot.h"
 #include "ui_path_config.h"
 #include "zarr_loader.h"
 
@@ -13,7 +13,6 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
-#include <numeric>
 #include <optional>
 #include <sstream>
 #include <vector>
@@ -890,374 +889,39 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
         }
     };
 
-    auto computeCurrentTime = [&]() -> double {
-        if (context.current_frame_num < 0) {
-            return -1.0;
-        }
-        double resolved_time = -1.0;
-
-        if (!frame_indices.empty()) {
-            auto it = std::find(frame_indices.begin(),
-                                frame_indices.end(),
-                                context.current_frame_num);
-            if (it != frame_indices.end()) {
-                size_t idx = std::distance(frame_indices.begin(), it);
-                if (idx < time_data.size()) {
-                    resolved_time = static_cast<double>(time_data[idx]);
-                }
-            } else {
-                auto upper =
-                    std::lower_bound(frame_indices.begin(),
-                                     frame_indices.end(),
-                                     context.current_frame_num);
-                if (upper != frame_indices.end() && upper != frame_indices.begin()) {
-                    auto lower = upper - 1;
-                    size_t lower_idx =
-                        std::distance(frame_indices.begin(), lower);
-                    size_t upper_idx =
-                        std::distance(frame_indices.begin(), upper);
-
-                    if (upper_idx < time_data.size() &&
-                        lower_idx < time_data.size()) {
-                        int32_t f0 = *lower;
-                        int32_t f1 = *upper;
-                        float t0 = time_data[lower_idx];
-                        float t1 = time_data[upper_idx];
-                        float delta_f = static_cast<float>(f1 - f0);
-                        if (delta_f != 0.0f) {
-                            float alpha = static_cast<float>(
-                                              context.current_frame_num - f0) /
-                                          delta_f;
-                            resolved_time =
-                                static_cast<double>(t0 + alpha * (t1 - t0));
-                        }
-                    }
-                } else if (upper == frame_indices.begin() && !time_data.empty()) {
-                    resolved_time = static_cast<double>(time_data.front());
-                } else if (upper == frame_indices.end() && !time_data.empty()) {
-                    resolved_time = static_cast<double>(time_data.back());
-                }
-            }
-        }
-
-        if (resolved_time < 0.0 && context.video_fps > 0.0) {
-            double estimated_time =
-                static_cast<double>(context.current_frame_num) /
-                context.video_fps;
-            if (!time_data.empty()) {
-                double min_time = static_cast<double>(time_data.front());
-                double max_time = static_cast<double>(time_data.back());
-                resolved_time = std::clamp(estimated_time, min_time, max_time);
-            } else {
-                resolved_time = estimated_time;
-            }
-        }
-
-        return resolved_time;
-    };
-
-    double current_time_line = computeCurrentTime();
-    double time_axis_min = time_plot.front();
-    double time_axis_max = time_plot.back();
-    if (time_axis_max <= time_axis_min) {
-        time_axis_max = time_axis_min + 0.5;
-    }
-    bool has_time_span = time_axis_max > time_axis_min;
-    double half_span_seconds = static_cast<double>(std::max(
-        0.1f, context.scroll_state.window_half_span_s));
-    bool use_time_window =
-        context.scroll_state.enabled && current_time_line >= 0.0 &&
-        has_time_span;
-    double window_min = time_axis_min;
-    double window_max = time_axis_max;
-    if (use_time_window) {
-        window_min =
-            std::max(time_axis_min, current_time_line - half_span_seconds);
-        window_max =
-            std::min(time_axis_max, current_time_line + half_span_seconds);
-        if (window_max - window_min < 0.1) {
-            double pad = std::max(0.1, half_span_seconds);
-            window_min = std::max(time_axis_min, current_time_line - pad);
-            window_max = std::min(time_axis_max, current_time_line + pad);
-            if (window_max <= window_min) {
-                window_min = std::max(time_axis_min, time_axis_max - pad);
-                window_max = time_axis_max;
-            }
-        }
-    }
-    bool reset_time_axis =
-        (!context.scroll_state.enabled && context.scroll_state.prev_enabled);
-
-    auto apply_time_axis_limits = [&](ImGuiCond fallback_cond) {
-        if (use_time_window) {
-            ImPlot::SetupAxisLimits(ImAxis_X1,
-                                    window_min,
-                                    window_max,
-                                    ImGuiCond_Always);
-        } else if (reset_time_axis) {
-            ImPlot::SetupAxisLimits(ImAxis_X1,
-                                    time_axis_min,
-                                    time_axis_max,
-                                    ImGuiCond_Always);
-        } else {
-            ImPlot::SetupAxisLimits(ImAxis_X1,
-                                    time_axis_min,
-                                    time_axis_max,
-                                    fallback_cond);
-        }
-    };
-
-    ImVec2 subplot_size = ImVec2(-1, 690);
-    if (!time_plot.empty() &&
-        ImPlot::BeginSubplots("##analysis_timeline_plots",
-                              3,
-                              1,
-                              subplot_size,
-                              ImPlotSubplotFlags_LinkAllX |
-                                  ImPlotSubplotFlags_NoTitle)) {
-        if (ImPlot::BeginPlot("##speed_plot")) {
-            std::string speed_axis_label = "Speed";
-            if (!primary_speed_units.empty() &&
-                primary_speed_units == secondary_speed_units) {
-                speed_axis_label += " (" + primary_speed_units + ")";
-            }
-            ImPlot::SetupAxes(nullptr, speed_axis_label.c_str());
-            apply_time_axis_limits(ImGuiCond_Once);
-
-            double max_speed = 0.0;
-            if (state.show_smoothed && !smoothed_plot.empty()) {
-                for (double value : smoothed_plot) {
-                    if (std::isfinite(value)) {
-                        max_speed = std::max(max_speed, value);
-                    }
-                }
-            }
-            if (state.show_instantaneous && !instant_plot.empty()) {
-                for (double value : instant_plot) {
-                    if (std::isfinite(value)) {
-                        max_speed = std::max(max_speed, value);
-                    }
-                }
-            }
-            if (!detector_value_plot.empty()) {
-                for (double value : detector_value_plot) {
-                    if (std::isfinite(value)) {
-                        max_speed = std::max(max_speed, value);
-                    }
-                }
-            }
-            double y_max_speed = (max_speed > 0.0) ? max_speed * 1.1 : 1.0;
-            ImPlot::SetupAxisLimits(ImAxis_Y1,
-                                    0.0,
-                                    y_max_speed,
-                                    ImGuiCond_Once);
-
-            if (state.show_swim_bouts && selected_swim_bouts != nullptr &&
-                !selected_swim_bouts->start_frame.empty() &&
-                selected_swim_bouts->start_frame.size() ==
-                    selected_swim_bouts->end_frame.size()) {
-                ImPlotRect limits = ImPlot::GetPlotLimits();
-                ImDrawList* draw_list = ImPlot::GetPlotDrawList();
-                const ImU32 bout_fill =
-                    ImGui::GetColorU32(ImVec4(0.15f, 0.95f, 0.45f, 0.16f));
-                const ImU32 bout_core_fill =
-                    ImGui::GetColorU32(ImVec4(0.15f, 0.95f, 0.45f, 0.24f));
-                const size_t bout_count =
-                    selected_swim_bouts->start_frame.size();
-                for (size_t i = 0; i < bout_count; ++i) {
-                    const auto start_time =
-                        frameToTime(selected_swim_bouts->start_frame[i]);
-                    const auto end_time =
-                        frameToTime(selected_swim_bouts->end_frame[i]);
-                    if (!start_time.has_value() || !end_time.has_value() ||
-                        *end_time < window_min ||
-                        *start_time > window_max) {
-                        continue;
-                    }
-                    const ImVec2 p0 = ImPlot::PlotToPixels(
-                        ImPlotPoint(*start_time, limits.Y.Max));
-                    const ImVec2 p1 = ImPlot::PlotToPixels(
-                        ImPlotPoint(*end_time, limits.Y.Min));
-                    draw_list->AddRectFilled(p0, p1, bout_fill, 0.0f);
-                    if (i < selected_swim_bouts->core_start_frame.size() &&
-                        i < selected_swim_bouts->core_end_frame.size()) {
-                        auto core_start = frameToTime(
-                            selected_swim_bouts->core_start_frame[i]);
-                        auto core_end = frameToTime(
-                            selected_swim_bouts->core_end_frame[i]);
-                        if (core_start.has_value() && core_end.has_value()) {
-                            const ImVec2 c0 = ImPlot::PlotToPixels(
-                                ImPlotPoint(*core_start, limits.Y.Max));
-                            const ImVec2 c1 = ImPlot::PlotToPixels(
-                                ImPlotPoint(*core_end, limits.Y.Min));
-                            draw_list->AddRectFilled(c0, c1, bout_core_fill,
-                                                     0.0f);
-                        }
-                    }
-                }
-            }
-
-            if (state.show_smoothed && !smoothed_plot.empty()) {
-                ImPlot::SetNextLineStyle(ImVec4(0.2f, 0.7f, 1.0f, 1.0f), 2.0f);
-                ImPlot::PlotLine(primary_speed_label.c_str(),
-                                 time_plot.data(),
-                                 smoothed_plot.data(),
-                                 static_cast<int>(time_plot.size()));
-            }
-
-            if (state.show_instantaneous && !instant_plot.empty()) {
-                ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.5f, 0.2f, 0.6f), 1.0f);
-                ImPlot::PlotLine(secondary_speed_label.c_str(),
-                                 time_plot.data(),
-                                 instant_plot.data(),
-                                 static_cast<int>(instant_plot.size()));
-            }
-
-            if (!detector_time_plot.empty() &&
-                detector_time_plot.size() == detector_value_plot.size()) {
-                std::string detector_label =
-                    selected_swim_bouts &&
-                            !selected_swim_bouts->detector_trace_label.empty()
-                        ? selected_swim_bouts->detector_trace_label
-                        : "Detector response";
-                if (selected_swim_bouts &&
-                    !selected_swim_bouts->detector_trace_units.empty()) {
-                    detector_label += " (" +
-                                      selected_swim_bouts
-                                          ->detector_trace_units +
-                                      ", not physical speed)";
-                } else {
-                    detector_label += " (not physical speed)";
-                }
-                ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.85f, 0.2f, 0.85f),
-                                         1.5f);
-                ImPlot::PlotLine(detector_label.c_str(),
-                                 detector_time_plot.data(),
-                                 detector_value_plot.data(),
-                                 static_cast<int>(detector_time_plot.size()));
-            }
-
-            if (current_time_line >= 0.0) {
-                ImPlotRect limits = ImPlot::GetPlotLimits();
-                double current_line_x[2] = {current_time_line, current_time_line};
-                double current_line_y[2] = {limits.Y.Min, limits.Y.Max};
-                ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), 3.0f);
-                ImPlot::PlotLine("##current_time_speed",
-                                 current_line_x,
-                                 current_line_y,
-                                 2);
-            }
-
-            ImPlot::EndPlot();
-        }
-
-        if (ImPlot::BeginPlot("##heading_plot")) {
-            ImPlot::SetupAxes(nullptr, "Heading (deg)");
-            if (!time_plot.empty()) {
-                apply_time_axis_limits(ImGuiCond_Once);
-            }
-            double heading_axis_min;
-            double heading_axis_max;
-            compute_heading_axis(heading_axis_min, heading_axis_max);
-            ImPlot::SetupAxisLimits(ImAxis_Y1,
-                                    heading_axis_min,
-                                    heading_axis_max,
-                                    ImGuiCond_Once);
-
-            bool drew_heading = false;
-            if (state.show_heading_raw && !heading_raw_plot.empty()) {
-                ImPlot::SetNextLineStyle(ImVec4(0.9f, 0.35f, 0.2f, 0.9f), 1.5f);
-                ImPlot::PlotLine("Heading (raw)",
-                                 heading_time_raw.data(),
-                                 heading_raw_plot.data(),
-                                 static_cast<int>(heading_raw_plot.size()));
-                drew_heading = true;
-            }
-            if (state.show_heading_smoothed && !heading_smoothed_plot.empty()) {
-                ImPlot::SetNextLineStyle(ImVec4(0.7f, 0.4f, 1.0f, 1.0f), 2.0f);
-                ImPlot::PlotLine("Heading (smoothed)",
-                                 heading_time_smoothed.data(),
-                                 heading_smoothed_plot.data(),
-                                 static_cast<int>(heading_smoothed_plot.size()));
-                drew_heading = true;
-            }
-
-            bool drew_per_second =
-                state.show_heading_per_second &&
-                !heading_per_second_plot.empty();
-            if (drew_per_second) {
-                ImPlot::SetNextLineStyle(ImVec4(0.2f, 0.8f, 0.8f, 1.0f), 2.0f);
-                ImPlot::PlotLine("Heading (per-second)",
-                                 heading_per_second_time_plot.data(),
-                                 heading_per_second_plot.data(),
-                                 static_cast<int>(heading_per_second_plot.size()));
-            }
-
-            bool drew_resultant =
-                drew_per_second && !heading_per_second_resultant_plot.empty();
-            if (drew_resultant) {
-                ImPlot::SetupAxis(ImAxis_Y2, "Resultant");
-                ImPlot::SetupAxisLimits(ImAxis_Y2, 0.0, 1.0, ImGuiCond_Once);
-                ImPlot::SetAxes(ImAxis_X1, ImAxis_Y2);
-                ImPlot::SetNextLineStyle(ImVec4(0.6f, 0.6f, 0.6f, 0.7f), 1.5f);
-                ImPlot::PlotLine(
-                    "Resultant",
-                    heading_per_second_time_plot.data(),
-                    heading_per_second_resultant_plot.data(),
-                    static_cast<int>(heading_per_second_resultant_plot.size()));
-                ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
-            }
-
-            if ((drew_heading || drew_per_second) && current_time_line >= 0.0) {
-                ImPlotRect limits = ImPlot::GetPlotLimits();
-                double current_line_x[2] = {current_time_line, current_time_line};
-                double current_line_y[2] = {limits.Y.Min, limits.Y.Max};
-                ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), 3.0f);
-                ImPlot::PlotLine("##current_time_heading",
-                                 current_line_x,
-                                 current_line_y,
-                                 2);
-            }
-
-            ImPlot::EndPlot();
-        }
-
-        if (ImPlot::BeginPlot("##distance_plot")) {
-            ImPlot::SetupAxes("Time (s)", "Distance (10 mm)");
-            apply_time_axis_limits(ImGuiCond_Once);
-            double y_max_units = (max_distance_mm > 0.0)
-                                     ? (max_distance_mm * 1.1) / kMmPerPlotUnit
-                                     : 1.0;
-            if (y_max_units <= 0.0) {
-                y_max_units = 1.0;
-            }
-            ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, y_max_units, ImGuiCond_Once);
-
-            if (!distance_time.empty()) {
-                ImPlot::SetNextLineStyle(ImVec4(0.3f, 0.85f, 0.4f, 1.0f), 2.0f);
-                ImPlot::PlotLine("Distance to Target (10 mm)",
-                                 distance_time.data(),
-                                 distance_units.data(),
-                                 static_cast<int>(distance_time.size()));
-            }
-
-            if (current_time_line >= 0.0) {
-                ImPlotRect limits = ImPlot::GetPlotLimits();
-                double current_line_x[2] = {current_time_line, current_time_line};
-                double current_line_y[2] = {limits.Y.Min, limits.Y.Max};
-                ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), 3.0f);
-                ImPlot::PlotLine("##current_time_distance",
-                                 current_line_x,
-                                 current_line_y,
-                                 2);
-            }
-
-            ImPlot::EndPlot();
-        }
-
-        ImPlot::EndSubplots();
-    }
-
+    double heading_axis_min;
+    double heading_axis_max;
+    compute_heading_axis(heading_axis_min, heading_axis_max);
+    const double current_time_line = drawAnalysisTimelineMotionPlots({
+        state,
+        context.scroll_state,
+        context.current_frame_num,
+        context.video_fps,
+        time_data,
+        frame_indices,
+        time_plot,
+        smoothed_plot,
+        instant_plot,
+        detector_time_plot,
+        detector_value_plot,
+        heading_time_raw,
+        heading_raw_plot,
+        heading_time_smoothed,
+        heading_smoothed_plot,
+        heading_per_second_time_plot,
+        heading_per_second_plot,
+        heading_per_second_resultant_plot,
+        distance_time,
+        distance_units,
+        selected_swim_bouts,
+        primary_speed_label,
+        primary_speed_units,
+        secondary_speed_label,
+        secondary_speed_units,
+        heading_axis_min,
+        heading_axis_max,
+        max_distance_mm,
+    });
     if (state.show_track_position && selected_series != nullptr) {
         const bool use_mm_positions = !selected_series->positions_mm.empty();
         const auto& positions = use_mm_positions ? selected_series->positions_mm
