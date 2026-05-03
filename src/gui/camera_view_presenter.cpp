@@ -458,6 +458,42 @@ int findCameraDisplaySlotForFrame(const render_scene& scene,
     return best_abs_slot;
 }
 
+namespace {
+
+int findExactCameraDisplaySlotForFrame(const render_scene& scene,
+                                       int cam_idx,
+                                       int target_frame,
+                                       int preferred_slot) {
+    if (scene.num_cams <= 0 || scene.size_of_buffer <= 0 || cam_idx < 0 ||
+        cam_idx >= static_cast<int>(scene.num_cams) || target_frame < 0) {
+        return -1;
+    }
+
+    auto slotIsExact = [&](int slot_idx) -> bool {
+        return slot_idx >= 0 &&
+               slot_idx < static_cast<int>(scene.size_of_buffer) &&
+               !scene.cameras[cam_idx]
+                    .display_buffer[slot_idx]
+                    .available_to_write &&
+               scene.cameras[cam_idx]
+                       .display_buffer[slot_idx]
+                       .frame_number == target_frame;
+    };
+
+    if (slotIsExact(preferred_slot)) {
+        return preferred_slot;
+    }
+
+    for (int i = 0; i < static_cast<int>(scene.size_of_buffer); ++i) {
+        if (slotIsExact(i)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+}  // namespace
+
 CameraViewPresenterResult presentCameraViewFrame(
     const CameraViewPresenterContext& context) {
     CameraViewPresenterResult result;
@@ -791,14 +827,15 @@ CameraViewPresenterResult presentCameraViewFrame(
 
     if (context.pause_seeked || context.preferred_paused_slot >= 0 ||
         context.prewarm_playback_textures) {
+        const int paused_target_frame =
+            std::max(0, context.target_display_frame);
         int paused_slot = context.preferred_paused_slot;
         if (paused_slot < 0) {
             paused_slot =
                 context.read_head % static_cast<int>(context.scene->size_of_buffer);
         }
-        paused_slot = findCameraDisplaySlotForFrame(
-            *context.scene, context.view_idx,
-            std::max(0, context.target_display_frame), paused_slot);
+        paused_slot = findExactCameraDisplaySlotForFrame(
+            *context.scene, context.view_idx, paused_target_frame, paused_slot);
 
         if (paused_slot >= 0) {
             result.presented_slot = paused_slot;
@@ -818,9 +855,16 @@ CameraViewPresenterResult presentCameraViewFrame(
                 result.resolved_current_frame_num =
                     std::max(0, context.target_display_frame);
             }
-            prewarmPlaybackStagingAfter(result.presented_frame);
-        } else if (camera.texture_has_valid_frame) {
-            clearCameraDisplayBuffer(camera);
+            if (!result.swap_playback_surface_after_draw) {
+                prewarmPlaybackStagingAfter(result.presented_frame);
+            }
+        } else {
+            result.presented_frame =
+                camera.texture_has_valid_frame ? camera.last_uploaded_frame : -1;
+            result.resolved_current_frame_num =
+                (camera.texture_has_valid_frame && camera.last_uploaded_frame >= 0)
+                    ? camera.last_uploaded_frame
+                    : paused_target_frame;
         }
     } else if (camera.texture_has_valid_frame) {
         clearCameraDisplayBuffer(camera);

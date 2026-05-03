@@ -476,7 +476,12 @@ void PlaybackSessionController::stepFrames(int delta_frames) const {
     if (context_.current_frame_num == nullptr) {
         return;
     }
-    seekToFrame(*context_.current_frame_num + delta_frames, true);
+    int base_frame = *context_.current_frame_num;
+    if (context_.playback_state != nullptr &&
+        !context_.playback_state->play_video) {
+        base_frame = context_.playback_state->to_display_frame_number;
+    }
+    seekToFrame(base_frame + delta_frames, true);
 }
 
 void PlaybackSessionController::applyPlaybackToggle() const {
