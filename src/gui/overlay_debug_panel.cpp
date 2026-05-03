@@ -360,6 +360,43 @@ void drawTailKinematicsOverlaySection(const FrameDebugWindowContext& context,
     result.tail_kinematics_overlay_options = options;
 }
 
+void drawTrackKinematicsOverlaySection(const FrameDebugWindowContext& context,
+                                       FrameDebugWindowResult& result) {
+    if (!context.zarr_loader.hasMovementData()) {
+        return;
+    }
+
+    result.show_movement_trail = context.show_movement_trail;
+    result.movement_trail_seconds = context.movement_trail_seconds;
+    result.movement_trail_valid_samples_only =
+        context.movement_trail_valid_samples_only;
+
+    ImGui::Separator();
+    ImGui::Text("Track Kinematics Overlay:");
+    ImGui::Checkbox("Show motion trail", &result.show_movement_trail);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Draw the selected track-kinematics position history with older samples faded out.");
+    }
+    ImGui::BeginDisabled(!result.show_movement_trail);
+    ImGui::SetNextItemWidth(180.0f);
+    ImGui::SliderFloat("Trail duration (s)",
+                       &result.movement_trail_seconds,
+                       0.1f,
+                       5.0f,
+                       "%.1f");
+    result.movement_trail_seconds =
+        std::clamp(result.movement_trail_seconds, 0.1f, 5.0f);
+    ImGui::Checkbox("Valid samples only",
+                    &result.movement_trail_valid_samples_only);
+    ImGui::EndDisabled();
+
+    ImGui::TextWrapped("  Source: %s | %s | %s",
+                       context.zarr_loader.getMovementRunName().c_str(),
+                       context.zarr_loader.getMovementTrackId().c_str(),
+                       context.zarr_loader.getMovementSpeedLevel().c_str());
+}
+
 }  // namespace
 
 void drawKeypointHeadingOverlayPanel(const FrameDebugWindowContext& context,
@@ -386,4 +423,9 @@ void drawEyeMaskOverlayPanel(const FrameDebugWindowContext& context,
     drawEyeMaskSection(context, result);
     drawSubjectShapeSection(context, result);
     drawTailKinematicsOverlaySection(context, result);
+}
+
+void drawTrackKinematicsOverlayPanel(const FrameDebugWindowContext& context,
+                                     FrameDebugWindowResult& result) {
+    drawTrackKinematicsOverlaySection(context, result);
 }

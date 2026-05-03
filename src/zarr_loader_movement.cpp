@@ -1952,6 +1952,126 @@ ZarrDetectionLoader::getMovementSampleForFrame(int32_t frame_index) const {
     return sample;
 }
 
+std::vector<ZarrDetectionLoader::MovementTrailPoint>
+ZarrDetectionLoader::getMovementTrailForFrame(
+    int32_t frame_index,
+    double duration_seconds,
+    bool valid_samples_only) const {
+    std::vector<MovementTrailPoint> trail;
+    const auto* series = getSelectedMovementSeries();
+    if (!series || frame_index < 0 || duration_seconds <= 0.0 ||
+        series->positions_px.empty()) {
+        return trail;
+    }
+
+    size_t current_row = std::numeric_limits<size_t>::max();
+    if (const auto row_it = series->frame_to_row.find(frame_index);
+        row_it != series->frame_to_row.end()) {
+        current_row = row_it->second;
+    } else if (!series->frame_indices.empty()) {
+        const auto upper = std::upper_bound(series->frame_indices.begin(),
+                                            series->frame_indices.end(),
+                                            frame_index);
+        if (upper == series->frame_indices.begin()) {
+            return trail;
+        }
+        current_row = static_cast<size_t>(
+            std::distance(series->frame_indices.begin(), upper) - 1);
+    } else {
+        current_row = static_cast<size_t>(frame_index);
+    }
+
+    if (current_row >= series->positions_px.size()) {
+        return trail;
+    }
+
+    const double fps =
+        series->fps > 0.0 ? series->fps : (data_.fps > 0.0 ? data_.fps : 60.0);
+    auto sample_time_seconds = [&](size_t row) -> double {
+        if (row < series->time_seconds.size()) {
+            const double t = static_cast<double>(series->time_seconds[row]);
+            if (std::isfinite(t)) {
+                return t;
+            }
+        }
+        if (row < series->frame_indices.size() && fps > 0.0) {
+            return static_cast<double>(series->frame_indices[row]) / fps;
+        }
+        return fps > 0.0 ? static_cast<double>(row) / fps
+                         : static_cast<double>(row);
+    };
+
+    const double current_time = sample_time_seconds(current_row);
+    constexpr size_t kMaxTrailPoints = 600;
+    for (size_t row = current_row + 1; row > 0 && trail.size() < kMaxTrailPoints;) {
+        --row;
+        if (row >= series->positions_px.size()) {
+            continue;
+        }
+
+        const double age = current_time - sample_time_seconds(row);
+        if (age < -1e-6) {
+            continue;
+        }
+        if (age > duration_seconds) {
+            break;
+        }
+
+        const auto& point = series->positions_px[row];
+        if (!std::isfinite(static_cast<double>(point[0])) ||
+            !std::isfinite(static_cast<double>(point[1]))) {
+            continue;
+        }
+
+        const bool sample_valid =
+            row >= series->sample_valid.size() || series->sample_valid[row] != 0;
+        const bool transition_valid =
+            row >= series->transition_valid.size() ||
+            series->transition_valid[row] != 0;
+        if (valid_samples_only && (!sample_valid || !transition_valid)) {
+            continue;
+        }
+
+        MovementTrailPoint trail_point;
+        trail_point.frame_index =
+            row < series->frame_indices.size()
+                ? series->frame_indices[row]
+                : static_cast<int32_t>(row);
+        trail_point.row_index = row;
+        trail_point.x_px = point[0];
+        trail_point.y_px = point[1];
+        trail_point.age_seconds = static_cast<float>(age);
+        const double normalized_age =
+            duration_seconds > 0.0 ? std::clamp(age / duration_seconds, 0.0, 1.0)
+                                   : 0.0;
+        trail_point.alpha =
+            static_cast<float>(std::clamp(1.0 - normalized_age, 0.0, 1.0));
+        trail_point.sample_valid = sample_valid;
+        trail_point.transition_valid = transition_valid;
+        trail.push_back(trail_point);
+    }
+
+    std::reverse(trail.begin(), trail.end());
+
+    const int32_t gap_frame_threshold =
+        std::max<int32_t>(2, static_cast<int32_t>(std::ceil(fps * 0.1)));
+    for (size_t i = 1; i < trail.size(); ++i) {
+        bool gap = false;
+        if (trail[i - 1].frame_index >= 0 && trail[i].frame_index >= 0) {
+            gap = (trail[i].frame_index - trail[i - 1].frame_index) >
+                  gap_frame_threshold;
+        } else {
+            gap = trail[i].row_index > trail[i - 1].row_index + 1;
+        }
+        if (gap || !trail[i - 1].sample_valid || !trail[i - 1].transition_valid ||
+            !trail[i].sample_valid || !trail[i].transition_valid) {
+            trail[i].break_before = true;
+        }
+    }
+
+    return trail;
+}
+
 bool ZarrDetectionLoader::selectMovementSeries(size_t index) {
     if (index >= data_.movement_series.size()) {
         return false;

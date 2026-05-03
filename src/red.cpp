@@ -706,6 +706,9 @@ int main(int argc, char **argv) {
     bool show_eye_gaze_rays = true;
     bool show_eye_angle_arcs = true;
     bool show_eye_angle_labels = true;
+    bool show_movement_trail = true;
+    float movement_trail_seconds = 2.0f;
+    bool movement_trail_valid_samples_only = true;
     CameraViewMaskOverlayMode mask_overlay_mode =
         CameraViewMaskOverlayMode::Review;
     CameraViewSubjectShapeOverlayOptions subject_shape_overlay_options;
@@ -1534,6 +1537,9 @@ int main(int argc, char **argv) {
                 mask_overlay_mode,
                 subject_shape_overlay_options,
                 tail_kinematics_overlay_options,
+                show_movement_trail,
+                movement_trail_seconds,
+                movement_trail_valid_samples_only,
             };
             const FrameDebugWindowResult frame_debug_result =
                 drawFrameDebugWindow(frame_debug_context, frame_debug_window_state);
@@ -1559,6 +1565,11 @@ int main(int argc, char **argv) {
                 frame_debug_result.subject_shape_overlay_options;
             tail_kinematics_overlay_options =
                 frame_debug_result.tail_kinematics_overlay_options;
+            show_movement_trail = frame_debug_result.show_movement_trail;
+            movement_trail_seconds =
+                frame_debug_result.movement_trail_seconds;
+            movement_trail_valid_samples_only =
+                frame_debug_result.movement_trail_valid_samples_only;
             active_full_frame_keypoint_selection =
                 frame_debug_result.selected_keypoint_selection;
             keypoint_tab_full_frame_edit_enabled =
@@ -2993,10 +3004,19 @@ int main(int argc, char **argv) {
                         zarr_loaded && keypoint_tab_full_frame_edit_enabled;
                     std::optional<ZarrDetectionLoader::MovementFrameSample>
                         movement_frame_sample;
+                    std::vector<ZarrDetectionLoader::MovementTrailPoint>
+                        movement_trail_points;
                     if (zarr_loaded && zarr_loader.hasMovementData()) {
                         movement_frame_sample =
                             zarr_loader.getMovementSampleForFrame(
                                 current_frame_num);
+                        if (show_movement_trail) {
+                            movement_trail_points =
+                                zarr_loader.getMovementTrailForFrame(
+                                    current_frame_num,
+                                    movement_trail_seconds,
+                                    movement_trail_valid_samples_only);
+                        }
                     }
 
                     const CameraViewWindowContext camera_view_context{
@@ -3077,6 +3097,9 @@ int main(int argc, char **argv) {
                         tail_kinematics_overlay_options,
                         movement_frame_sample.has_value()
                             ? &*movement_frame_sample
+                            : nullptr,
+                        !movement_trail_points.empty()
+                            ? &movement_trail_points
                             : nullptr,
                         zarr_loaded && can_draw_eye_masks && show_eye_masks &&
                             zarr_loader.eyeMasksUseRefinedSubjectMasks() &&

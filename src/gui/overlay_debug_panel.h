@@ -6,3 +6,5 @@ void drawKeypointHeadingOverlayPanel(const FrameDebugWindowContext& context,
                                      FrameDebugWindowResult& result);
 void drawEyeMaskOverlayPanel(const FrameDebugWindowContext& context,
                              FrameDebugWindowResult& result);
+void drawTrackKinematicsOverlayPanel(const FrameDebugWindowContext& context,
+                                     FrameDebugWindowResult& result);

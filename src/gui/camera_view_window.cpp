@@ -453,6 +453,10 @@ CameraViewWindowResult drawCameraViewWindowContents(
                                             static_cast<int>(camera.image_height));
             }
 
+            if (context.movement_trail != nullptr) {
+                drawCameraViewMovementTrailOverlay(*context.movement_trail,
+                                                   image_height_px);
+            }
             if (context.can_draw_headings && context.heading_details != nullptr) {
                 drawCameraViewHeadingOverlay(*context.heading_details,
                                              image_height_px);

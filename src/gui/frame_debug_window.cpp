@@ -27,6 +27,10 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
         context.subject_shape_overlay_options;
     result.tail_kinematics_overlay_options =
         context.tail_kinematics_overlay_options;
+    result.show_movement_trail = context.show_movement_trail;
+    result.movement_trail_seconds = context.movement_trail_seconds;
+    result.movement_trail_valid_samples_only =
+        context.movement_trail_valid_samples_only;
 
     ImGui::SetNextWindowSize(ImVec2(760.0f, 840.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Frame Inspect")) {
@@ -40,6 +44,7 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
             case FrameInspectTab::Detect:
                 drawFrameDebugReviewPanel(context, result);
                 drawFrameDebugBBoxPanel(context, state, result);
+                drawTrackKinematicsOverlayPanel(context, result);
                 break;
             case FrameInspectTab::Keypoints:
                 drawKeypointHeadingOverlayPanel(context, result);

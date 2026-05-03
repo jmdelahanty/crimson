@@ -707,3 +707,66 @@ void drawCameraViewMovementOverlay(
         ImGui::GetColorU32(ImVec4(0.15f, 0.9f, 1.0f, 0.88f));
     drawBoxedOverlayText(label_pos, lines, text_color, fill_color, border_color);
 }
+
+void drawCameraViewMovementTrailOverlay(
+    const std::vector<ZarrDetectionLoader::MovementTrailPoint>& trail_points,
+    float image_height_px) {
+    if (trail_points.empty()) {
+        return;
+    }
+
+    ImDrawList* draw_list = ImPlot::GetPlotDrawList();
+    auto to_pixels = [image_height_px](const auto& point) {
+        return ImPlot::PlotToPixels(ImPlotPoint(
+            static_cast<double>(point.x_px),
+            static_cast<double>(image_height_px - point.y_px)));
+    };
+    auto color_for_alpha = [](float alpha_scale) {
+        const float alpha = std::clamp(0.10f + alpha_scale * 0.72f,
+                                       0.08f,
+                                       0.86f);
+        return ImGui::GetColorU32(ImVec4(0.08f, 0.82f, 1.0f, alpha));
+    };
+
+    for (size_t i = 1; i < trail_points.size(); ++i) {
+        const auto& prev = trail_points[i - 1];
+        const auto& curr = trail_points[i];
+        if (curr.break_before) {
+            continue;
+        }
+        if (!std::isfinite(static_cast<double>(prev.x_px)) ||
+            !std::isfinite(static_cast<double>(prev.y_px)) ||
+            !std::isfinite(static_cast<double>(curr.x_px)) ||
+            !std::isfinite(static_cast<double>(curr.y_px))) {
+            continue;
+        }
+        const float segment_alpha =
+            std::clamp(0.5f * (prev.alpha + curr.alpha), 0.0f, 1.0f);
+        const float thickness = 1.4f + segment_alpha * 2.2f;
+        draw_list->AddLine(to_pixels(prev),
+                           to_pixels(curr),
+                           color_for_alpha(segment_alpha),
+                           thickness);
+    }
+
+    for (size_t i = 0; i < trail_points.size(); ++i) {
+        const auto& point = trail_points[i];
+        if (!std::isfinite(static_cast<double>(point.x_px)) ||
+            !std::isfinite(static_cast<double>(point.y_px))) {
+            continue;
+        }
+        const bool newest = i + 1 == trail_points.size();
+        const float radius = newest ? 4.2f : 2.0f + point.alpha * 1.2f;
+        draw_list->AddCircleFilled(to_pixels(point),
+                                   radius,
+                                   color_for_alpha(point.alpha));
+        if (newest) {
+            draw_list->AddCircle(to_pixels(point),
+                                 radius + 1.5f,
+                                 ImGui::GetColorU32(
+                                     ImVec4(0.92f, 1.0f, 1.0f, 0.9f)),
+                                 20,
+                                 1.5f);
+        }
+    }
+}

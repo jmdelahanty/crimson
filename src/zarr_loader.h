@@ -1086,8 +1086,23 @@ public:
         bool has_transition_valid = false;
         bool transition_valid = false;
     };
+    struct MovementTrailPoint {
+        int32_t frame_index = -1;
+        size_t row_index = 0;
+        float x_px = std::numeric_limits<float>::quiet_NaN();
+        float y_px = std::numeric_limits<float>::quiet_NaN();
+        float age_seconds = 0.0f;
+        float alpha = 1.0f;
+        bool sample_valid = true;
+        bool transition_valid = true;
+        bool break_before = false;
+    };
     std::optional<MovementFrameSample> getMovementSampleForFrame(
         int32_t frame_index) const;
+    std::vector<MovementTrailPoint> getMovementTrailForFrame(
+        int32_t frame_index,
+        double duration_seconds,
+        bool valid_samples_only) const;
     const std::vector<int32_t>& getCropFrameIndices() const {
         static const std::vector<int32_t> kEmpty;
         return data_.crop_data.metadata_loaded ? data_.crop_data.frame_indices

@@ -115,6 +115,10 @@ void drawCameraViewMovementOverlay(
     const ZarrDetectionLoader::FrameDetections* detection_details,
     float image_height_px);
 
+void drawCameraViewMovementTrailOverlay(
+    const std::vector<ZarrDetectionLoader::MovementTrailPoint>& trail_points,
+    float image_height_px);
+
 CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
     const ZarrDetectionLoader::FrameDetections& mask_details,
     const ZarrDetectionLoader::FrameDetections* subject_shape_details,

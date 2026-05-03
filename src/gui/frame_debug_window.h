@@ -97,6 +97,9 @@ struct FrameDebugWindowContext {
         CameraViewMaskOverlayMode::Review;
     CameraViewSubjectShapeOverlayOptions subject_shape_overlay_options;
     CameraViewTailKinematicsOverlayOptions tail_kinematics_overlay_options;
+    bool show_movement_trail = true;
+    float movement_trail_seconds = 2.0f;
+    bool movement_trail_valid_samples_only = true;
 };
 
 struct FrameDebugWindowResult {
@@ -128,6 +131,9 @@ struct FrameDebugWindowResult {
         CameraViewMaskOverlayMode::Review;
     CameraViewSubjectShapeOverlayOptions subject_shape_overlay_options;
     CameraViewTailKinematicsOverlayOptions tail_kinematics_overlay_options;
+    bool show_movement_trail = true;
+    float movement_trail_seconds = 2.0f;
+    bool movement_trail_valid_samples_only = true;
     bool request_prev_subject_shape_qc_frame = false;
     bool request_next_subject_shape_qc_frame = false;
     bool request_prev_tail_kinematics_qc_frame = false;
