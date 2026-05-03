@@ -1,0 +1,216 @@
+#include "gui/camera_view_frame_context_builder.h"
+
+#include <chrono>
+#include <sstream>
+
+namespace {
+
+double durationMs(std::chrono::steady_clock::duration delta) {
+    return std::chrono::duration<double, std::milli>(delta).count();
+}
+
+bool hasActiveSubjectMaskEdit(const FrameDebugWindowState* state) {
+    return state != nullptr && state->subject_mask_edit_session.active();
+}
+
+int activeSubjectMaskEditRoi(const FrameDebugWindowState* state) {
+    if (!hasActiveSubjectMaskEdit(state)) {
+        return -1;
+    }
+    return state->subject_mask_edit_session.target().roi_index;
+}
+
+std::string activeSubjectMaskEditComponent(const FrameDebugWindowState* state) {
+    if (!hasActiveSubjectMaskEdit(state)) {
+        return {};
+    }
+    return state->subject_mask_edit_session.target().component_name;
+}
+
+bool subjectMaskCanvasPickEnabled(const CameraViewFrameContextInput& input) {
+    if (!(input.zarr_loaded && input.can_draw_eye_masks &&
+          input.zarr_loader != nullptr &&
+          input.frame_debug_state != nullptr)) {
+        return false;
+    }
+    return input.frame_debug_state->subject_mask_canvas_pick_enabled &&
+           input.frame_debug_state->active_tab == FrameInspectTab::EyeMasks &&
+           input.zarr_loader->eyeMasksUseRefinedSubjectMasks();
+}
+
+const RefinedKeypointSelection* activeFullFrameKeypointSelection(
+    const CameraViewFrameContextInput& input) {
+    if (input.active_full_frame_keypoint_selection == nullptr ||
+        !input.active_full_frame_keypoint_selection->has_value()) {
+        return nullptr;
+    }
+    return &**input.active_full_frame_keypoint_selection;
+}
+
+}  // namespace
+
+void prepareCameraViewFrameContext(
+    const CameraViewFrameContextInput& input,
+    PreparedCameraViewFrameContext& prepared) {
+    prepared = PreparedCameraViewFrameContext{};
+
+    const bool zarr_available = input.zarr_loaded && input.zarr_loader != nullptr;
+    const auto* detection_details = input.detection_details;
+    const ZarrDetectionLoader::FrameDetections* heading_details = nullptr;
+    const ZarrDetectionLoader::FrameDetections* mask_details = nullptr;
+
+    if (input.can_draw_headings) {
+        heading_details = detection_details;
+    }
+
+    if (input.can_draw_eye_masks && zarr_available) {
+        if (detection_details != nullptr &&
+            detection_details->includes_eye_masks) {
+            mask_details = detection_details;
+        } else {
+            const auto mask_load_start = std::chrono::steady_clock::now();
+            prepared.mask_details = input.zarr_loader->getRawDetections(
+                input.current_frame_num,
+                /*use_interpolated=*/false,
+                /*include_eye_masks=*/true);
+            prepared.mask_data_load_ms += durationMs(
+                std::chrono::steady_clock::now() - mask_load_start);
+            mask_details = &*prepared.mask_details;
+        }
+    }
+
+    if (zarr_available && input.zarr_loader->hasStimulusEvents()) {
+        prepared.frame_events =
+            input.zarr_loader->getStimulusEventsForFrame(
+                input.current_frame_num);
+    }
+
+    if (zarr_available && input.zarr_loader->hasMovementData()) {
+        prepared.movement_frame_sample =
+            input.zarr_loader->getMovementSampleForFrame(
+                input.current_frame_num);
+        if (input.show_movement_trail) {
+            prepared.movement_trail_points =
+                input.zarr_loader->getMovementTrailForFrame(
+                    input.current_frame_num,
+                    input.movement_trail_seconds,
+                    input.movement_trail_valid_samples_only);
+        }
+    }
+
+    const bool full_frame_keypoint_edit_enabled =
+        zarr_available && input.keypoint_tab_full_frame_edit_enabled;
+    const FullFrameKeypointEditState full_frame_keypoint_edit_state =
+        input.frame_debug_state != nullptr
+            ? input.frame_debug_state->keypoint_review_panel.full_frame_edit
+            : FullFrameKeypointEditState{};
+
+    prepared.context = CameraViewWindowContext{
+        input.scene,
+        input.view_idx,
+        input.camera_name,
+        input.current_frame_num,
+        input.presented_slot,
+        input.presented_frame,
+        input.swap_playback_surface_after_draw,
+        input.play_video,
+        input.lightweight_playback_renderer_active,
+        input.use_legacy_manual_keypoint_tools,
+        input.legacy_labeling_state,
+        input.zarr_loaded,
+        input.dataset_allows_bbox_edit,
+        input.bbox_edit_enabled,
+        input.bbox_allow_edit_while_playing,
+        input.bbox_edit_state,
+        input.full_frame_edit_state,
+        zarr_available ? input.zarr_boxes : nullptr,
+        zarr_available ? detection_details : nullptr,
+        zarr_available ? &input.zarr_loader->getHeadingComputationSpec()
+                       : nullptr,
+        zarr_available &&
+            input.zarr_loader->activeDatasetHasSyntheticDetections(),
+        input.frame_is_interpolated,
+        input.latest_decoded_frame,
+        input.total_recording_frames,
+        input.has_yolo_detections,
+        input.has_yolo_detections ? input.yolo_boxes : nullptr,
+        input.has_yolo_detections ? input.yolo_labels : nullptr,
+        input.has_yolo_detections ? input.yolo_class_ids : nullptr,
+        input.show_keypoint_markers,
+        full_frame_keypoint_edit_enabled &&
+            input.view_idx == input.visible_camera_index,
+        activeFullFrameKeypointSelection(input),
+        full_frame_keypoint_edit_state,
+        input.can_draw_headings,
+        input.can_draw_eye_masks,
+        heading_details,
+        mask_details,
+        zarr_available ? detection_details : nullptr,
+        zarr_available
+            ? (input.zarr_loader->getEyeMaskSourcePath() + "|" +
+               input.zarr_loader->getEyeAngleRunName())
+            : std::string{},
+        CameraViewMaskOverlayOptions{
+            input.show_subject_body_mask,
+            input.show_eye_left_mask,
+            input.show_eye_right_mask,
+            input.show_swim_bladder_mask,
+            input.show_eye_direction_beams,
+            input.show_eye_gaze_rays,
+            input.show_eye_angle_arcs,
+            input.show_eye_angle_labels,
+            activeSubjectMaskEditRoi(input.frame_debug_state),
+            activeSubjectMaskEditComponent(input.frame_debug_state),
+            input.mask_overlay_mode},
+        input.subject_shape_overlay_options,
+        zarr_available && input.zarr_loader->hasTailKinematicsData()
+            ? &input.zarr_loader->getTailKinematicsData()
+            : nullptr,
+        input.tail_kinematics_overlay_options,
+        prepared.movement_frame_sample.has_value()
+            ? &*prepared.movement_frame_sample
+            : nullptr,
+        !prepared.movement_trail_points.empty()
+            ? &prepared.movement_trail_points
+            : nullptr,
+        subjectMaskCanvasPickEnabled(input),
+        zarr_available ? input.chaser_bboxes : nullptr,
+        zarr_available ? input.chaser_states : nullptr,
+        input.camera_params,
+        !prepared.frame_events.empty() ? &prepared.frame_events : nullptr,
+        input.transport_controls,
+    };
+}
+
+void applyCameraViewSubjectMaskPick(
+    const CameraViewWindowResult& camera_view_result,
+    ZarrDetectionLoader& zarr_loader,
+    FrameDebugWindowState& frame_debug_state) {
+    if (!camera_view_result.subject_mask_pick.valid) {
+        return;
+    }
+
+    const auto& pick = camera_view_result.subject_mask_pick;
+    std::string error;
+    if (frame_debug_state.subject_mask_edit_session.startFromLoadedRow(
+            zarr_loader,
+            static_cast<size_t>(pick.roi_index),
+            pick.component_name,
+            &error)) {
+        frame_debug_state.subject_mask_edit_detection_index =
+            pick.detection_index;
+        frame_debug_state.subject_mask_edit_component_name =
+            pick.component_name;
+        const auto& target =
+            frame_debug_state.subject_mask_edit_session.target();
+        std::ostringstream status;
+        status << "Preview loaded from canvas: detection="
+               << pick.detection_index << " roi=" << target.roi_index
+               << " component=" << target.component_name
+               << " shape=" << target.rows << "x" << target.cols;
+        frame_debug_state.subject_mask_edit_status = status.str();
+    } else {
+        frame_debug_state.subject_mask_edit_status =
+            "Canvas pick failed: " + error;
+    }
+}

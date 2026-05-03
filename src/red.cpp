@@ -66,6 +66,7 @@
 #include "gui/auxiliary_windows.h"
 #include "gui/camera_view_manual_keypoint_input.h"
 #include "gui/camera_view_presenter.h"
+#include "gui/camera_view_frame_context_builder.h"
 #include "gui/camera_view_window.h"
 #include "gui/stimulus_playback_windows.h"
 #include "gui/camera_view_transport_controls.h"
@@ -2951,39 +2952,6 @@ int main(int argc, char **argv) {
                         }
                     }
 
-                    std::optional<ZarrDetectionLoader::FrameDetections>
-                        mask_details;
-                    const ZarrDetectionLoader::FrameDetections*
-                        heading_details_ptr = nullptr;
-                    const ZarrDetectionLoader::FrameDetections*
-                        mask_details_ptr = nullptr;
-                    if (can_draw_headings) {
-                        heading_details_ptr = &detection_details;
-                    }
-                    if (can_draw_eye_masks) {
-                        if (detection_details.includes_eye_masks) {
-                            mask_details_ptr = &detection_details;
-                        } else {
-                            const auto mask_load_start =
-                                std::chrono::steady_clock::now();
-                            mask_details = zarr_loader.getRawDetections(
-                                current_frame_num,
-                                /*use_interpolated=*/false,
-                                /*include_eye_masks=*/true);
-                            frame_mask_data_load_ms += durationMs(
-                                std::chrono::steady_clock::now() -
-                                mask_load_start);
-                            mask_details_ptr = &*mask_details;
-                        }
-                    }
-
-                    std::vector<std::string> frame_events;
-                    if (zarr_loaded && zarr_loader.hasStimulusEvents()) {
-                        frame_events =
-                            zarr_loader.getStimulusEventsForFrame(
-                                current_frame_num);
-                    }
-
                     int latest_decoded = -1;
                     const auto latest_it = latest_decoded_frame.find(win_name);
                     if (latest_it != latest_decoded_frame.end()) {
@@ -3000,117 +2968,95 @@ int main(int argc, char **argv) {
                             total_recording_frames,
                             dc_context->total_num_frame);
                     }
-                    const bool full_frame_keypoint_edit_enabled =
-                        zarr_loaded && keypoint_tab_full_frame_edit_enabled;
-                    std::optional<ZarrDetectionLoader::MovementFrameSample>
-                        movement_frame_sample;
-                    std::vector<ZarrDetectionLoader::MovementTrailPoint>
-                        movement_trail_points;
-                    if (zarr_loaded && zarr_loader.hasMovementData()) {
-                        movement_frame_sample =
-                            zarr_loader.getMovementSampleForFrame(
-                                current_frame_num);
-                        if (show_movement_trail) {
-                            movement_trail_points =
-                                zarr_loader.getMovementTrailForFrame(
-                                    current_frame_num,
-                                    movement_trail_seconds,
-                                    movement_trail_valid_samples_only);
-                        }
-                    }
 
-                    const CameraViewWindowContext camera_view_context{
-                        scene,
-                        j,
-                        win_name,
-                        current_frame_num,
-                        presented_slot,
-                        presented_frame,
-                        swap_playback_surface_after_draw,
-                        ps.play_video,
+                    CameraViewFrameContextInput camera_context_input;
+                    camera_context_input.scene = scene;
+                    camera_context_input.view_idx = j;
+                    camera_context_input.camera_name = win_name;
+                    camera_context_input.current_frame_num = current_frame_num;
+                    camera_context_input.presented_slot = presented_slot;
+                    camera_context_input.presented_frame = presented_frame;
+                    camera_context_input.swap_playback_surface_after_draw =
+                        swap_playback_surface_after_draw;
+                    camera_context_input.play_video = ps.play_video;
+                    camera_context_input.lightweight_playback_renderer_active =
                         playbackLightweightRendererIsActive(
-                            ps.play_video, playback_renderer_mode),
-                        use_legacy_manual_keypoint_tools,
-                        &legacy_labeling_state,
-                        zarr_loaded,
-                        dataset_allows_bbox_edit,
-                        g_zarr_bbox_edit_state.enabled,
-                        g_zarr_bbox_edit_state.allow_edit_while_playing,
-                        &g_zarr_bbox_edit_state,
-                        full_frame_edit_state,
-                        zarr_loaded ? &zarr_boxes : nullptr,
-                        zarr_loaded ? &detection_details : nullptr,
-                        zarr_loaded ? &zarr_loader.getHeadingComputationSpec()
-                                    : nullptr,
-                        zarr_loaded &&
-                            zarr_loader.activeDatasetHasSyntheticDetections(),
-                        is_zarr_interpolated,
-                        latest_decoded,
-                        total_recording_frames,
-                        yolo_detection,
-                        yolo_detection ? &yolo_boxes.at(j) : nullptr,
-                        yolo_detection ? &yolo_labels.at(j) : nullptr,
-                        yolo_detection ? &yolo_classid.at(j) : nullptr,
-                        show_keypoint_markers,
-                        full_frame_keypoint_edit_enabled &&
-                            j == playback_session_controller.getVisibleCameraIndex(),
-                        active_full_frame_keypoint_selection.has_value()
-                            ? &*active_full_frame_keypoint_selection
-                            : nullptr,
-                        frame_debug_window_state.keypoint_review_panel
-                            .full_frame_edit,
-                        can_draw_headings,
-                        can_draw_eye_masks,
-                        heading_details_ptr,
-                        mask_details_ptr,
-                        zarr_loaded ? &detection_details : nullptr,
-                        zarr_loaded
-                            ? (zarr_loader.getEyeMaskSourcePath() + "|" +
-                               zarr_loader.getEyeAngleRunName())
-                            : std::string{},
-                        CameraViewMaskOverlayOptions{
-                            show_subject_body_mask,
-                            show_eye_left_mask,
-                            show_eye_right_mask,
-                            show_swim_bladder_mask,
-                            show_eye_direction_beams,
-                            show_eye_gaze_rays,
-                            show_eye_angle_arcs,
-                            show_eye_angle_labels,
-                            frame_debug_window_state.subject_mask_edit_session
-                                    .active()
-                                ? frame_debug_window_state
-                                      .subject_mask_edit_session.target()
-                                      .roi_index
-                                : -1,
-                            frame_debug_window_state.subject_mask_edit_session
-                                    .active()
-                                ? frame_debug_window_state
-                                      .subject_mask_edit_session.target()
-                                      .component_name
-                                : std::string{},
-                            mask_overlay_mode},
-                        subject_shape_overlay_options,
-                        zarr_loaded && zarr_loader.hasTailKinematicsData()
-                            ? &zarr_loader.getTailKinematicsData()
-                            : nullptr,
-                        tail_kinematics_overlay_options,
-                        movement_frame_sample.has_value()
-                            ? &*movement_frame_sample
-                            : nullptr,
-                        !movement_trail_points.empty()
-                            ? &movement_trail_points
-                            : nullptr,
-                        zarr_loaded && can_draw_eye_masks && show_eye_masks &&
-                            zarr_loader.eyeMasksUseRefinedSubjectMasks() &&
-                            frame_debug_window_state
-                                .subject_mask_canvas_pick_enabled &&
-                            frame_debug_window_state.active_tab ==
-                                FrameInspectTab::EyeMasks,
-                        zarr_loaded ? &chaser_bboxes : nullptr,
-                        zarr_loaded ? &chaser_states : nullptr,
-                        &camera_params[j],
-                        !frame_events.empty() ? &frame_events : nullptr,
+                            ps.play_video, playback_renderer_mode);
+                    camera_context_input.use_legacy_manual_keypoint_tools =
+                        use_legacy_manual_keypoint_tools;
+                    camera_context_input.legacy_labeling_state =
+                        &legacy_labeling_state;
+                    camera_context_input.zarr_loaded = zarr_loaded;
+                    camera_context_input.zarr_loader = &zarr_loader;
+                    camera_context_input.dataset_allows_bbox_edit =
+                        dataset_allows_bbox_edit;
+                    camera_context_input.bbox_edit_enabled =
+                        g_zarr_bbox_edit_state.enabled;
+                    camera_context_input.bbox_allow_edit_while_playing =
+                        g_zarr_bbox_edit_state.allow_edit_while_playing;
+                    camera_context_input.bbox_edit_state =
+                        &g_zarr_bbox_edit_state;
+                    camera_context_input.full_frame_edit_state =
+                        full_frame_edit_state;
+                    camera_context_input.zarr_boxes = &zarr_boxes;
+                    camera_context_input.detection_details =
+                        zarr_loaded ? &detection_details : nullptr;
+                    camera_context_input.frame_is_interpolated =
+                        is_zarr_interpolated;
+                    camera_context_input.latest_decoded_frame = latest_decoded;
+                    camera_context_input.total_recording_frames =
+                        total_recording_frames;
+                    camera_context_input.has_yolo_detections = yolo_detection;
+                    camera_context_input.yolo_boxes =
+                        yolo_detection ? &yolo_boxes.at(j) : nullptr;
+                    camera_context_input.yolo_labels =
+                        yolo_detection ? &yolo_labels.at(j) : nullptr;
+                    camera_context_input.yolo_class_ids =
+                        yolo_detection ? &yolo_classid.at(j) : nullptr;
+                    camera_context_input.show_keypoint_markers =
+                        show_keypoint_markers;
+                    camera_context_input.keypoint_tab_full_frame_edit_enabled =
+                        keypoint_tab_full_frame_edit_enabled;
+                    camera_context_input.visible_camera_index =
+                        playback_session_controller.getVisibleCameraIndex();
+                    camera_context_input.active_full_frame_keypoint_selection =
+                        &active_full_frame_keypoint_selection;
+                    camera_context_input.frame_debug_state =
+                        &frame_debug_window_state;
+                    camera_context_input.can_draw_headings = can_draw_headings;
+                    camera_context_input.can_draw_eye_masks =
+                        can_draw_eye_masks;
+                    camera_context_input.show_subject_body_mask =
+                        show_subject_body_mask;
+                    camera_context_input.show_eye_left_mask =
+                        show_eye_left_mask;
+                    camera_context_input.show_eye_right_mask =
+                        show_eye_right_mask;
+                    camera_context_input.show_swim_bladder_mask =
+                        show_swim_bladder_mask;
+                    camera_context_input.show_eye_direction_beams =
+                        show_eye_direction_beams;
+                    camera_context_input.show_eye_gaze_rays =
+                        show_eye_gaze_rays;
+                    camera_context_input.show_eye_angle_arcs =
+                        show_eye_angle_arcs;
+                    camera_context_input.show_eye_angle_labels =
+                        show_eye_angle_labels;
+                    camera_context_input.mask_overlay_mode = mask_overlay_mode;
+                    camera_context_input.subject_shape_overlay_options =
+                        subject_shape_overlay_options;
+                    camera_context_input.tail_kinematics_overlay_options =
+                        tail_kinematics_overlay_options;
+                    camera_context_input.show_movement_trail =
+                        show_movement_trail;
+                    camera_context_input.movement_trail_seconds =
+                        movement_trail_seconds;
+                    camera_context_input.movement_trail_valid_samples_only =
+                        movement_trail_valid_samples_only;
+                    camera_context_input.chaser_bboxes = &chaser_bboxes;
+                    camera_context_input.chaser_states = &chaser_states;
+                    camera_context_input.camera_params = &camera_params[j];
+                    camera_context_input.transport_controls =
                         CameraViewTransportControlsContext{
                             ps.to_display_frame_number,
                             dc_context->total_num_frame,
@@ -3118,48 +3064,25 @@ int main(int argc, char **argv) {
                             video_fps,
                             ps.play_video,
                             ps.slider_frame_number,
-                        },
-                    };
+                        };
+                    PreparedCameraViewFrameContext prepared_camera_context;
+                    prepareCameraViewFrameContext(camera_context_input,
+                                                  prepared_camera_context);
+                    frame_mask_data_load_ms +=
+                        prepared_camera_context.mask_data_load_ms;
+
                     const CameraViewWindowResult camera_view_result =
-                        drawCameraViewWindowContents(camera_view_context);
+                        drawCameraViewWindowContents(
+                            prepared_camera_context.context);
                     accumulateCameraViewMaskPerfMetrics(
                         frame_mask_overlay_perf,
                         camera_view_result.perf.mask_overlay);
 
-                    if (camera_view_result.subject_mask_pick.valid &&
-                        zarr_loaded) {
-                        const auto& pick =
-                            camera_view_result.subject_mask_pick;
-                        std::string error;
-                        if (frame_debug_window_state.subject_mask_edit_session
-                                .startFromLoadedRow(
-                                    zarr_loader,
-                                    static_cast<size_t>(pick.roi_index),
-                                    pick.component_name,
-                                    &error)) {
-                            frame_debug_window_state
-                                .subject_mask_edit_detection_index =
-                                pick.detection_index;
-                            frame_debug_window_state
-                                .subject_mask_edit_component_name =
-                                pick.component_name;
-                            const auto& target =
-                                frame_debug_window_state
-                                    .subject_mask_edit_session.target();
-                            std::ostringstream status;
-                            status << "Preview loaded from canvas: detection="
-                                   << pick.detection_index
-                                   << " roi=" << target.roi_index
-                                   << " component=" << target.component_name
-                                   << " shape=" << target.rows << "x"
-                                   << target.cols;
-                            frame_debug_window_state
-                                .subject_mask_edit_status = status.str();
-                        } else {
-                            frame_debug_window_state
-                                .subject_mask_edit_status =
-                                "Canvas pick failed: " + error;
-                        }
+                    if (zarr_loaded) {
+                        applyCameraViewSubjectMaskPick(
+                            camera_view_result,
+                            zarr_loader,
+                            frame_debug_window_state);
                     }
 
                     perf_camera_viewport_width_px =
