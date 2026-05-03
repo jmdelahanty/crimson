@@ -1,11 +1,11 @@
 #include "gui/analysis_timeline_window.h"
 
+#include "gui/analysis_timeline_motion_data.h"
 #include "gui/analysis_timeline_motion_plot.h"
 #include "gui/analysis_timeline_motion_sources.h"
 #include "gui/analysis_timeline_trace_plot.h"
 #include "gui/camera_view_overlay_style.h"
 #include "imgui.h"
-#include "ui_path_config.h"
 #include "zarr_loader.h"
 
 #include <algorithm>
@@ -18,35 +18,6 @@
 #include <vector>
 
 namespace {
-
-bool isFiniteFloatValue(float value) {
-    return std::isfinite(static_cast<double>(value));
-}
-
-double finiteMean(const std::vector<float>& values,
-                  const std::vector<uint8_t>* valid_mask = nullptr) {
-    double sum = 0.0;
-    size_t count = 0;
-    for (size_t i = 0; i < values.size(); ++i) {
-        if (valid_mask && i < valid_mask->size() && (*valid_mask)[i] == 0) {
-            continue;
-        }
-        if (!isFiniteFloatValue(values[i])) {
-            continue;
-        }
-        sum += static_cast<double>(values[i]);
-        ++count;
-    }
-    return count == 0 ? std::numeric_limits<double>::quiet_NaN()
-                      : sum / static_cast<double>(count);
-}
-
-size_t validCount(const std::vector<uint8_t>& values) {
-    return static_cast<size_t>(
-        std::count_if(values.begin(), values.end(), [](uint8_t value) {
-            return value != 0;
-        }));
-}
 
 enum class EyeAngleTraceRole {
     Other,
@@ -559,16 +530,16 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
                         ? nullptr
                         : &selected_bout_kinematics->physical_active_valid;
                 const double mean_duration =
-                    finiteMean(
+                    computeFiniteMean(
                         selected_bout_kinematics->physical_active_duration_s,
                         valid_mask);
                 const double mean_path =
-                    finiteMean(
+                    computeFiniteMean(
                         selected_bout_kinematics
                             ->physical_active_path_length_mm,
                         valid_mask);
                 const double mean_speed =
-                    finiteMean(
+                    computeFiniteMean(
                         selected_bout_kinematics
                             ->physical_active_mean_speed_mm_s,
                         valid_mask);
@@ -576,8 +547,9 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
                     selected_bout_kinematics->physical_active_valid.empty()
                         ? selected_bout_kinematics
                               ->physical_active_duration_s.size()
-                        : validCount(selected_bout_kinematics
-                                         ->physical_active_valid);
+                        : countValidMaskValues(
+                              selected_bout_kinematics
+                                  ->physical_active_valid);
                 ImGui::Text("Physical-active valid: %zu/%zu",
                             valid_physical,
                             selected_bout_kinematics
@@ -642,256 +614,25 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
     ImGui::Checkbox("Y##track_position_y", &state.show_track_position_y);
     ImGui::EndDisabled();
 
-    auto frameToTime = [&](int32_t frame) -> std::optional<double> {
-        if (frame < 0) {
-            return std::nullopt;
-        }
-        if (!frame_indices.empty()) {
-            auto upper = std::lower_bound(frame_indices.begin(),
-                                          frame_indices.end(),
-                                          frame);
-            if (upper != frame_indices.end() && *upper == frame) {
-                const size_t idx = static_cast<size_t>(
-                    std::distance(frame_indices.begin(), upper));
-                if (idx < time_data.size()) {
-                    return static_cast<double>(time_data[idx]);
-                }
-            }
-            if (upper != frame_indices.end() && upper != frame_indices.begin()) {
-                auto lower = upper - 1;
-                const size_t lower_idx = static_cast<size_t>(
-                    std::distance(frame_indices.begin(), lower));
-                const size_t upper_idx = static_cast<size_t>(
-                    std::distance(frame_indices.begin(), upper));
-                if (lower_idx < time_data.size() &&
-                    upper_idx < time_data.size()) {
-                    const int32_t f0 = *lower;
-                    const int32_t f1 = *upper;
-                    const double t0 = static_cast<double>(time_data[lower_idx]);
-                    const double t1 = static_cast<double>(time_data[upper_idx]);
-                    const int32_t delta_f = f1 - f0;
-                    if (delta_f != 0) {
-                        const double alpha =
-                            static_cast<double>(frame - f0) /
-                            static_cast<double>(delta_f);
-                        return t0 + alpha * (t1 - t0);
-                    }
-                }
-            } else if (upper == frame_indices.begin() && !time_data.empty()) {
-                return static_cast<double>(time_data.front());
-            } else if (upper == frame_indices.end() && !time_data.empty()) {
-                return static_cast<double>(time_data.back());
-            }
-        }
-        if (context.video_fps > 0.0) {
-            return static_cast<double>(frame) / context.video_fps;
-        }
-        return std::nullopt;
-    };
-
-    std::vector<double> time_plot;
-    std::vector<double> smoothed_plot;
-    std::vector<double> instant_plot;
-    time_plot.reserve(time_data.size());
-    smoothed_plot.reserve(smoothed_speed.size());
-    if (!instant_speed.empty()) {
-        instant_plot.reserve(instant_speed.size());
-    }
-
-    for (size_t i = 0; i < time_data.size(); ++i) {
-        time_plot.push_back(static_cast<double>(time_data[i]));
-        if (smoothed_available && i < smoothed_speed.size()) {
-            smoothed_plot.push_back(static_cast<double>(smoothed_speed[i]));
-        }
-        if (instant_available && i < instant_speed.size()) {
-            instant_plot.push_back(static_cast<double>(instant_speed[i]));
-        }
-    }
-
-    std::vector<double> detector_time_plot;
-    std::vector<double> detector_value_plot;
-    if (selected_swim_bouts != nullptr &&
-        state.show_detector_response &&
-        selected_swim_bouts->has_detector_trace &&
-        !selected_swim_bouts->detector_trace_values.empty()) {
-        const size_t detector_count =
-            selected_swim_bouts->detector_trace_values.size();
-        detector_time_plot.reserve(detector_count);
-        detector_value_plot.reserve(detector_count);
-        for (size_t i = 0; i < detector_count; ++i) {
-            const float value =
-                selected_swim_bouts->detector_trace_values[i];
-            if (!isFiniteFloatValue(value)) {
-                continue;
-            }
-            std::optional<double> t;
-            if (i < selected_swim_bouts
-                        ->detector_trace_frame_indices.size()) {
-                t = frameToTime(selected_swim_bouts
-                                    ->detector_trace_frame_indices[i]);
-            } else if (i < time_data.size()) {
-                t = static_cast<double>(time_data[i]);
-            }
-            if (!t.has_value()) {
-                continue;
-            }
-            detector_time_plot.push_back(*t);
-            detector_value_plot.push_back(static_cast<double>(value));
-        }
-    }
-
-    constexpr double kMmPerPlotUnit = 10.0;
-    std::vector<double> distance_time;
-    std::vector<double> distance_units;
-    double sum_distance = 0.0;
-    double max_distance_mm = 0.0;
-    double min_distance_mm = std::numeric_limits<double>::infinity();
-    size_t valid_distance_count = 0;
-
-    size_t distance_samples = std::min(time_data.size(), distance_mm.size());
-    distance_time.reserve(distance_samples);
-    distance_units.reserve(distance_samples);
-    for (size_t i = 0; i < distance_samples; ++i) {
-        float raw_distance = distance_mm[i];
-        if (!IsFiniteFloat(raw_distance)) {
-            continue;
-        }
-        double t = static_cast<double>(time_data[i]);
-        double value_mm = static_cast<double>(raw_distance);
-        distance_time.push_back(t);
-        distance_units.push_back(value_mm / kMmPerPlotUnit);
-        sum_distance += value_mm;
-        max_distance_mm = std::max(max_distance_mm, value_mm);
-        min_distance_mm = std::min(min_distance_mm, value_mm);
-        ++valid_distance_count;
-    }
-
-    std::vector<double> heading_time_raw;
-    std::vector<double> heading_raw_plot;
-    std::vector<double> heading_time_smoothed;
-    std::vector<double> heading_smoothed_plot;
-    heading_time_raw.reserve(std::min(time_data.size(), heading_degrees.size()));
-    heading_raw_plot.reserve(std::min(time_data.size(), heading_degrees.size()));
-    heading_time_smoothed.reserve(
-        std::min(time_data.size(), smoothed_heading_degrees.size()));
-    heading_smoothed_plot.reserve(
-        std::min(time_data.size(), smoothed_heading_degrees.size()));
-
-    auto headingSampleAllowed = [&](size_t index) {
-        if (!heading_keypoint_success.empty() &&
-            index < heading_keypoint_success.size()) {
-            return heading_keypoint_success[index] != 0;
-        }
-        return true;
-    };
-
-    double heading_y_min = std::numeric_limits<double>::infinity();
-    double heading_y_max = -std::numeric_limits<double>::infinity();
-    auto extend_heading_range = [&](double value) {
-        heading_y_min = std::min(heading_y_min, value);
-        heading_y_max = std::max(heading_y_max, value);
-    };
-
-    size_t raw_samples = std::min(time_data.size(), heading_degrees.size());
-    for (size_t i = 0; i < raw_samples; ++i) {
-        if (!headingSampleAllowed(i)) {
-            continue;
-        }
-        float heading_raw_val = heading_degrees[i];
-        if (!IsFiniteFloat(heading_raw_val)) {
-            continue;
-        }
-        double t = static_cast<double>(time_data[i]);
-        double v = static_cast<double>(heading_raw_val);
-        heading_time_raw.push_back(t);
-        heading_raw_plot.push_back(v);
-        extend_heading_range(v);
-    }
-
-    size_t smoothed_samples =
-        std::min(time_data.size(), smoothed_heading_degrees.size());
-    for (size_t i = 0; i < smoothed_samples; ++i) {
-        if (!headingSampleAllowed(i)) {
-            continue;
-        }
-        float heading_smooth_val = smoothed_heading_degrees[i];
-        if (!IsFiniteFloat(heading_smooth_val)) {
-            continue;
-        }
-        double t = static_cast<double>(time_data[i]);
-        double v = static_cast<double>(heading_smooth_val);
-        heading_time_smoothed.push_back(t);
-        heading_smoothed_plot.push_back(v);
-        extend_heading_range(v);
-    }
-
-    std::vector<double> heading_per_second_time_plot;
-    std::vector<double> heading_per_second_plot;
-    std::vector<double> heading_per_second_resultant_plot;
-    if (heading_per_second_available) {
-        size_t per_samples =
-            std::min(heading_per_second_degrees.size(),
-                     heading_per_second_time.size());
-        heading_per_second_time_plot.reserve(per_samples);
-        heading_per_second_plot.reserve(per_samples);
-        if (!heading_per_second_resultant.empty()) {
-            heading_per_second_resultant_plot.reserve(per_samples);
-        }
-        for (size_t i = 0; i < per_samples; ++i) {
-            float heading_val = heading_per_second_degrees[i];
-            float heading_time_val = heading_per_second_time[i];
-            if (!IsFiniteFloat(heading_val) ||
-                !IsFiniteFloat(heading_time_val)) {
-                continue;
-            }
-            double t = static_cast<double>(heading_time_val);
-            double v = static_cast<double>(heading_val);
-            heading_per_second_time_plot.push_back(t);
-            heading_per_second_plot.push_back(v);
-            extend_heading_range(v);
-            if (!heading_per_second_resultant.empty() &&
-                i < heading_per_second_resultant.size()) {
-                float resultant = heading_per_second_resultant[i];
-                if (IsFiniteFloat(resultant)) {
-                    heading_per_second_resultant_plot.push_back(
-                        static_cast<double>(resultant));
-                } else {
-                    heading_per_second_resultant_plot.push_back(
-                        std::numeric_limits<double>::quiet_NaN());
-                }
-            }
-        }
-        if (!heading_per_second_resultant.empty() &&
-            heading_per_second_resultant_plot.size() !=
-                heading_per_second_plot.size()) {
-            heading_per_second_resultant_plot.resize(
-                heading_per_second_plot.size(),
-                std::numeric_limits<double>::quiet_NaN());
-        }
-    }
-
-    auto compute_heading_axis = [&](double& min_out, double& max_out) {
-        if (heading_y_min == std::numeric_limits<double>::infinity() ||
-            heading_y_max == -std::numeric_limits<double>::infinity()) {
-            min_out = -180.0;
-            max_out = 180.0;
-        } else {
-            min_out = heading_y_min;
-            max_out = heading_y_max;
-            double span = std::max(10.0, max_out - min_out);
-            double padding = std::max(5.0, span * 0.1);
-            min_out -= padding;
-            max_out += padding;
-            if (min_out >= max_out) {
-                min_out -= 1.0;
-                max_out += 1.0;
-            }
-        }
-    };
-
-    double heading_axis_min;
-    double heading_axis_max;
-    compute_heading_axis(heading_axis_min, heading_axis_max);
+    const auto motion_data = prepareAnalysisTimelineMotionData({
+        time_data,
+        frame_indices,
+        smoothed_speed,
+        instant_speed,
+        distance_mm,
+        heading_degrees,
+        smoothed_heading_degrees,
+        heading_keypoint_success,
+        heading_per_second_degrees,
+        heading_per_second_resultant,
+        heading_per_second_time,
+        selected_swim_bouts,
+        smoothed_available,
+        instant_available,
+        heading_per_second_available,
+        state.show_detector_response,
+        context.video_fps,
+    });
     const double current_time_line = drawAnalysisTimelineMotionPlots({
         state,
         context.scroll_state,
@@ -899,28 +640,28 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
         context.video_fps,
         time_data,
         frame_indices,
-        time_plot,
-        smoothed_plot,
-        instant_plot,
-        detector_time_plot,
-        detector_value_plot,
-        heading_time_raw,
-        heading_raw_plot,
-        heading_time_smoothed,
-        heading_smoothed_plot,
-        heading_per_second_time_plot,
-        heading_per_second_plot,
-        heading_per_second_resultant_plot,
-        distance_time,
-        distance_units,
+        motion_data.time_plot,
+        motion_data.smoothed_plot,
+        motion_data.instant_plot,
+        motion_data.detector_time_plot,
+        motion_data.detector_value_plot,
+        motion_data.heading_time_raw,
+        motion_data.heading_raw_plot,
+        motion_data.heading_time_smoothed,
+        motion_data.heading_smoothed_plot,
+        motion_data.heading_per_second_time_plot,
+        motion_data.heading_per_second_plot,
+        motion_data.heading_per_second_resultant_plot,
+        motion_data.distance_time,
+        motion_data.distance_units,
         selected_swim_bouts,
         primary_speed_label,
         primary_speed_units,
         secondary_speed_label,
         secondary_speed_units,
-        heading_axis_min,
-        heading_axis_max,
-        max_distance_mm,
+        motion_data.heading_axis_min,
+        motion_data.heading_axis_max,
+        motion_data.max_distance_mm,
     });
     if (state.show_track_position && selected_series != nullptr) {
         const bool use_mm_positions = !selected_series->positions_mm.empty();
@@ -955,28 +696,16 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
     }
 
     ImGui::SeparatorText("Speed Statistics");
-    if (!smoothed_speed.empty()) {
-        double sum_speed = 0.0;
-        double max_speed = 0.0;
-        size_t finite_speed_count = 0;
-        for (float value : smoothed_speed) {
-            if (!IsFiniteFloat(value)) {
-                continue;
-            }
-            sum_speed += static_cast<double>(value);
-            max_speed = std::max(max_speed, static_cast<double>(value));
-            ++finite_speed_count;
-        }
-        if (finite_speed_count > 0) {
-            const double avg_speed =
-                sum_speed / static_cast<double>(finite_speed_count);
+    const auto speed_stats = computePrimarySpeedStats(smoothed_speed);
+    if (speed_stats.has_primary_speed_data) {
+        if (speed_stats.finite_count > 0) {
             ImGui::BulletText("Average %s: %.2f %s",
                               primary_speed_label.c_str(),
-                              avg_speed,
+                              speed_stats.average,
                               primary_speed_units.c_str());
             ImGui::BulletText("Max %s: %.2f %s",
                               primary_speed_label.c_str(),
-                              max_speed,
+                              speed_stats.max,
                               primary_speed_units.c_str());
         } else {
             ImGui::TextUnformatted("No finite primary speed samples.");
@@ -986,61 +715,39 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
     }
 
     ImGui::SeparatorText("Distance Statistics");
-    if (valid_distance_count == 0) {
+    if (motion_data.valid_distance_count == 0) {
         ImGui::TextUnformatted("No valid distance samples available.");
     } else {
         ImGui::Text("Valid points: %zu / %zu",
-                    valid_distance_count,
-                    distance_samples);
+                    motion_data.valid_distance_count,
+                    motion_data.distance_samples);
         double avg_distance =
-            sum_distance / static_cast<double>(valid_distance_count);
+            motion_data.sum_distance_mm /
+            static_cast<double>(motion_data.valid_distance_count);
         ImGui::BulletText("Average Distance: %.2f mm", avg_distance);
-        ImGui::BulletText("Max Distance: %.2f mm", max_distance_mm);
-        if (min_distance_mm < std::numeric_limits<double>::infinity()) {
-            ImGui::BulletText("Min Distance: %.2f mm", min_distance_mm);
+        ImGui::BulletText("Max Distance: %.2f mm",
+                          motion_data.max_distance_mm);
+        if (motion_data.min_distance_mm <
+            std::numeric_limits<double>::infinity()) {
+            ImGui::BulletText("Min Distance: %.2f mm",
+                              motion_data.min_distance_mm);
         }
     }
 
     ImGui::SeparatorText("Heading Statistics");
-    const std::vector<double>* heading_for_stats = nullptr;
-    if (!heading_smoothed_plot.empty()) {
-        heading_for_stats = &heading_smoothed_plot;
-    } else if (!heading_raw_plot.empty()) {
-        heading_for_stats = &heading_raw_plot;
-    }
-    if (heading_for_stats && !heading_for_stats->empty()) {
-        double sum_cos = 0.0;
-        double sum_sin = 0.0;
-        for (double deg : *heading_for_stats) {
-            double rad = deg * static_cast<double>(M_PI) / 180.0;
-            sum_cos += std::cos(rad);
-            sum_sin += std::sin(rad);
-        }
-        size_t count = heading_for_stats->size();
-        double mean_rad = std::atan2(sum_sin, sum_cos);
-        double mean_deg = mean_rad * 180.0 / static_cast<double>(M_PI);
-        double resultant =
-            std::sqrt(sum_cos * sum_cos + sum_sin * sum_sin) /
-            static_cast<double>(count);
-        ImGui::Text("Valid samples: %zu", count);
-        ImGui::BulletText("Circular Mean: %.1f deg", mean_deg);
-        ImGui::BulletText("Mean Resultant Length: %.2f", resultant);
+    const auto heading_stats = computeHeadingStats(motion_data);
+    if (heading_stats.valid) {
+        ImGui::Text("Valid samples: %zu", heading_stats.count);
+        ImGui::BulletText("Circular Mean: %.1f deg",
+                          heading_stats.circular_mean_deg);
+        ImGui::BulletText("Mean Resultant Length: %.2f",
+                          heading_stats.mean_resultant_length);
     } else {
         ImGui::TextUnformatted("No valid heading samples available.");
     }
-    if (!heading_per_second_resultant_plot.empty()) {
-        size_t finite_count = 0;
-        double sum_res = 0.0;
-        for (double value : heading_per_second_resultant_plot) {
-            if (value == value) {
-                sum_res += value;
-                ++finite_count;
-            }
-        }
-        if (finite_count > 0) {
-            ImGui::BulletText("Average per-second resultant: %.2f",
-                              sum_res / static_cast<double>(finite_count));
-        }
+    if (heading_stats.per_second_resultant_count > 0) {
+        ImGui::BulletText("Average per-second resultant: %.2f",
+                          heading_stats.average_per_second_resultant);
     }
     } else {
         ImGui::TextDisabled("Track kinematics traces unavailable.");
