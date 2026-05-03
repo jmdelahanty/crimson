@@ -8,6 +8,7 @@
 #include "implot.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -21,6 +22,34 @@ namespace {
 double durationMs(std::chrono::steady_clock::duration delta) {
     return std::chrono::duration<double, std::milli>(delta).count();
 }
+
+enum class CameraViewOverlayLayer {
+    BoundingBoxes,
+    BoundingBoxDraft,
+    Chaser,
+    MovementTrail,
+    KeypointHeading,
+    MovementLabel,
+    SubjectMasks,
+    SubjectShape,
+    TailKinematics,
+    SubjectMaskPicking,
+    Keypoints,
+};
+
+constexpr std::array<CameraViewOverlayLayer, 11> kCameraViewOverlayOrder = {
+    CameraViewOverlayLayer::BoundingBoxes,
+    CameraViewOverlayLayer::BoundingBoxDraft,
+    CameraViewOverlayLayer::Chaser,
+    CameraViewOverlayLayer::MovementTrail,
+    CameraViewOverlayLayer::KeypointHeading,
+    CameraViewOverlayLayer::MovementLabel,
+    CameraViewOverlayLayer::SubjectMasks,
+    CameraViewOverlayLayer::SubjectShape,
+    CameraViewOverlayLayer::TailKinematics,
+    CameraViewOverlayLayer::SubjectMaskPicking,
+    CameraViewOverlayLayer::Keypoints,
+};
 
 void drawCvContours(const std::vector<cv::Rect>& boxes,
                     const std::vector<std::string>& labels,
@@ -423,114 +452,169 @@ CameraViewWindowResult drawCameraViewWindowContents(
             result.full_frame_edit_result = processFullFrameRectEditInput(
                 full_frame_edit_context, context.full_frame_edit_state);
 
-            if (context.zarr_boxes != nullptr && context.detection_details != nullptr &&
-                context.bbox_edit_state != nullptr && !context.zarr_boxes->empty()) {
+            std::vector<FullFrameRectOverlayItem> bounding_box_overlay_items;
+            if (context.zarr_boxes != nullptr &&
+                context.detection_details != nullptr &&
+                context.bbox_edit_state != nullptr &&
+                !context.zarr_boxes->empty()) {
                 const bool frame_has_bbox_edits =
-                    context.bbox_edit_state->isFrameDirty(context.current_frame_num);
-                std::vector<FullFrameRectOverlayItem> overlay_items =
+                    context.bbox_edit_state->isFrameDirty(
+                        context.current_frame_num);
+                bounding_box_overlay_items =
                     buildCameraViewBoundingBoxOverlayItems(
-                        *context.zarr_boxes, *context.detection_details,
-                        *context.bbox_edit_state, context.current_frame_num,
+                        *context.zarr_boxes,
+                        *context.detection_details,
+                        *context.bbox_edit_state,
+                        context.current_frame_num,
                         frame_has_bbox_edits,
                         context.active_dataset_has_synthetic_detections,
                         context.frame_is_interpolated);
-                drawFullFrameRectOverlays(overlay_items, image_height_px);
             }
 
             const std::string draft_label_suffix =
                 std::to_string(context.view_idx);
-            drawFullFrameRectDraftOverlay(result.full_frame_edit_result.state,
-                                          context.current_frame_num,
-                                          image_height_px,
-                                          draft_label_suffix.c_str());
-
-            if (context.chaser_bboxes != nullptr && context.chaser_states != nullptr &&
-                context.camera_params != nullptr) {
-                drawCameraViewChaserOverlay(*context.chaser_bboxes,
-                                            *context.chaser_states,
-                                            *context.camera_params,
-                                            static_cast<int>(camera.image_width),
-                                            static_cast<int>(camera.image_height));
-            }
-
-            if (context.movement_trail != nullptr) {
-                drawCameraViewMovementTrailOverlay(*context.movement_trail,
-                                                   image_height_px);
-            }
-            if (context.can_draw_headings && context.heading_details != nullptr) {
-                drawCameraViewHeadingOverlay(*context.heading_details,
-                                             image_height_px);
-            }
-            if (context.movement_sample != nullptr) {
-                drawCameraViewMovementOverlay(*context.movement_sample,
-                                              context.detection_details,
-                                              image_height_px);
-            }
-            if (context.can_draw_eye_masks && context.mask_details != nullptr) {
-                CameraViewMaskPerfMetrics mask_perf =
-                    drawCameraViewEyeMaskOverlay(
-                        *context.mask_details,
-                        context.subject_shape_details,
-                        image_height_px,
-                        context.eye_mask_smoothing_run_id,
-                        context.mask_overlay_options);
-                accumulateCameraViewMaskPerfMetrics(
-                    result.perf.mask_overlay, mask_perf);
-            }
-            if (context.subject_shape_details != nullptr) {
-                const auto subject_shape_overlay_start =
-                    std::chrono::steady_clock::now();
-                drawCameraViewSubjectShapeOverlay(
-                    *context.subject_shape_details,
-                    image_height_px,
-                    context.subject_shape_overlay_options);
-                result.perf.subject_shape_overlay_ms += durationMs(
-                    std::chrono::steady_clock::now() -
-                    subject_shape_overlay_start);
-            }
-            if (context.subject_shape_details != nullptr &&
-                context.tail_kinematics != nullptr) {
-                const auto tail_kinematics_overlay_start =
-                    std::chrono::steady_clock::now();
-                drawCameraViewTailKinematicsOverlay(
-                    *context.subject_shape_details,
-                    *context.tail_kinematics,
-                    image_height_px,
-                    context.tail_kinematics_overlay_options);
-                result.perf.tail_kinematics_overlay_ms += durationMs(
-                    std::chrono::steady_clock::now() -
-                    tail_kinematics_overlay_start);
-            }
-            if (context.subject_mask_pick_enabled &&
-                context.mask_details != nullptr && plot_hovered &&
-                !context.full_frame_keypoint_edit_enabled &&
-                !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift &&
-                !ImGui::GetIO().KeyAlt &&
-                ImGui::IsMouseClicked(ImGuiMouseButton_Left, false)) {
-                const auto pick_start = std::chrono::steady_clock::now();
-                result.subject_mask_pick = pickSubjectMaskAtPlotPoint(
-                    *context.mask_details,
-                    context.mask_overlay_options,
-                    image_height_px,
-                    ImPlot::GetPlotMousePos());
-                result.perf.mask_overlay.pick_attempted = true;
-                result.perf.mask_overlay.pick_hit =
-                    result.perf.mask_overlay.pick_hit ||
-                    result.subject_mask_pick.valid;
-                result.perf.mask_overlay.pick_ms += durationMs(
-                    std::chrono::steady_clock::now() - pick_start);
-            }
-            if (context.detection_details != nullptr) {
-                const int keypoint_skip_detection =
-                    context.full_frame_keypoint_edit_enabled &&
-                            context.selected_keypoint_selection != nullptr &&
-                            context.selected_keypoint_selection->valid
-                        ? static_cast<int>(
-                              context.selected_keypoint_selection->detection_index)
-                        : -1;
-                drawCameraViewDetectionKeypointMarkers(
-                    *context.detection_details, context.show_keypoint_markers,
-                    image_height_px, keypoint_skip_detection);
+            for (const CameraViewOverlayLayer layer :
+                 kCameraViewOverlayOrder) {
+                switch (layer) {
+                    case CameraViewOverlayLayer::BoundingBoxes:
+                        if (!bounding_box_overlay_items.empty()) {
+                            drawFullFrameRectOverlays(
+                                bounding_box_overlay_items,
+                                image_height_px);
+                        }
+                        break;
+                    case CameraViewOverlayLayer::BoundingBoxDraft:
+                        drawFullFrameRectDraftOverlay(
+                            result.full_frame_edit_result.state,
+                            context.current_frame_num,
+                            image_height_px,
+                            draft_label_suffix.c_str());
+                        break;
+                    case CameraViewOverlayLayer::Chaser:
+                        if (context.chaser_bboxes != nullptr &&
+                            context.chaser_states != nullptr &&
+                            context.camera_params != nullptr) {
+                            drawCameraViewChaserOverlay(
+                                *context.chaser_bboxes,
+                                *context.chaser_states,
+                                *context.camera_params,
+                                static_cast<int>(camera.image_width),
+                                static_cast<int>(camera.image_height));
+                        }
+                        break;
+                    case CameraViewOverlayLayer::MovementTrail:
+                        if (context.movement_trail != nullptr) {
+                            drawCameraViewMovementTrailOverlay(
+                                *context.movement_trail,
+                                image_height_px);
+                        }
+                        break;
+                    case CameraViewOverlayLayer::KeypointHeading:
+                        if (context.can_draw_headings &&
+                            context.heading_details != nullptr) {
+                            drawCameraViewHeadingOverlay(
+                                *context.heading_details,
+                                image_height_px);
+                        }
+                        break;
+                    case CameraViewOverlayLayer::MovementLabel:
+                        if (context.movement_sample != nullptr) {
+                            drawCameraViewMovementOverlay(
+                                *context.movement_sample,
+                                context.detection_details,
+                                image_height_px);
+                        }
+                        break;
+                    case CameraViewOverlayLayer::SubjectMasks:
+                        if (context.can_draw_eye_masks &&
+                            context.mask_details != nullptr) {
+                            CameraViewMaskPerfMetrics mask_perf =
+                                drawCameraViewEyeMaskOverlay(
+                                    *context.mask_details,
+                                    context.subject_shape_details,
+                                    image_height_px,
+                                    context.eye_mask_smoothing_run_id,
+                                    context.mask_overlay_options);
+                            accumulateCameraViewMaskPerfMetrics(
+                                result.perf.mask_overlay, mask_perf);
+                        }
+                        break;
+                    case CameraViewOverlayLayer::SubjectShape:
+                        if (context.subject_shape_details != nullptr) {
+                            const auto subject_shape_overlay_start =
+                                std::chrono::steady_clock::now();
+                            drawCameraViewSubjectShapeOverlay(
+                                *context.subject_shape_details,
+                                image_height_px,
+                                context.subject_shape_overlay_options);
+                            result.perf.subject_shape_overlay_ms +=
+                                durationMs(
+                                    std::chrono::steady_clock::now() -
+                                    subject_shape_overlay_start);
+                        }
+                        break;
+                    case CameraViewOverlayLayer::TailKinematics:
+                        if (context.subject_shape_details != nullptr &&
+                            context.tail_kinematics != nullptr) {
+                            const auto tail_kinematics_overlay_start =
+                                std::chrono::steady_clock::now();
+                            drawCameraViewTailKinematicsOverlay(
+                                *context.subject_shape_details,
+                                *context.tail_kinematics,
+                                image_height_px,
+                                context.tail_kinematics_overlay_options);
+                            result.perf.tail_kinematics_overlay_ms +=
+                                durationMs(
+                                    std::chrono::steady_clock::now() -
+                                    tail_kinematics_overlay_start);
+                        }
+                        break;
+                    case CameraViewOverlayLayer::SubjectMaskPicking:
+                        if (context.subject_mask_pick_enabled &&
+                            context.mask_details != nullptr && plot_hovered &&
+                            !context.full_frame_keypoint_edit_enabled &&
+                            !ImGui::GetIO().KeyCtrl &&
+                            !ImGui::GetIO().KeyShift &&
+                            !ImGui::GetIO().KeyAlt &&
+                            ImGui::IsMouseClicked(
+                                ImGuiMouseButton_Left, false)) {
+                            const auto pick_start =
+                                std::chrono::steady_clock::now();
+                            result.subject_mask_pick =
+                                pickSubjectMaskAtPlotPoint(
+                                    *context.mask_details,
+                                    context.mask_overlay_options,
+                                    image_height_px,
+                                    ImPlot::GetPlotMousePos());
+                            result.perf.mask_overlay.pick_attempted = true;
+                            result.perf.mask_overlay.pick_hit =
+                                result.perf.mask_overlay.pick_hit ||
+                                result.subject_mask_pick.valid;
+                            result.perf.mask_overlay.pick_ms += durationMs(
+                                std::chrono::steady_clock::now() -
+                                pick_start);
+                        }
+                        break;
+                    case CameraViewOverlayLayer::Keypoints:
+                        if (context.detection_details != nullptr) {
+                            const int keypoint_skip_detection =
+                                context.full_frame_keypoint_edit_enabled &&
+                                        context.selected_keypoint_selection !=
+                                            nullptr &&
+                                        context.selected_keypoint_selection
+                                            ->valid
+                                    ? static_cast<int>(
+                                          context.selected_keypoint_selection
+                                              ->detection_index)
+                                    : -1;
+                            drawCameraViewDetectionKeypointMarkers(
+                                *context.detection_details,
+                                context.show_keypoint_markers,
+                                image_height_px,
+                                keypoint_skip_detection);
+                        }
+                        break;
+                }
             }
         }
 
