@@ -181,6 +181,9 @@ void prepareCameraViewFrameContext(
         zarr_available
             ? input.zarr_loader->getStimulusStepForFrame(input.current_frame_num)
             : nullptr,
+        input.stimulus_player,
+        input.target_stimulus_frame,
+        input.stimulus_inset_options,
         input.transport_controls,
     };
 }

@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+struct StimulusPlayback;
+
 enum class CameraViewMaskOverlayMode {
     Realtime = 0,
     Review = 1,
@@ -91,6 +93,13 @@ struct CameraViewTailKinematicsOverlayOptions {
     bool color_invalid_frames = true;
 };
 
+struct CameraViewStimulusInsetOptions {
+    bool show_inset = true;
+    float width_px = 220.0f;
+    float opacity = 0.82f;
+    bool show_frame_label = true;
+};
+
 std::vector<FullFrameRectOverlayItem> buildCameraViewBoundingBoxOverlayItems(
     const std::vector<LoggedBoundingBox>& zarr_boxes,
     const ZarrDetectionLoader::FrameDetections& detection_details,
@@ -151,3 +160,8 @@ void drawCameraViewStimulusEventOverlay(
 
 void drawCameraViewStimulusStepDirectionOverlay(
     const ZarrDetectionData::StimulusStep* stimulus_step);
+
+void drawCameraViewStimulusInsetOverlay(
+    const StimulusPlayback* stimulus_player,
+    int target_stimulus_frame,
+    const CameraViewStimulusInsetOptions& options);

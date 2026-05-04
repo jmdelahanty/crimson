@@ -3,6 +3,7 @@
 #include "global.h"
 #include "imgui.h"
 #include "implot.h"
+#include "stimulus_playback.h"
 #include <opencv2/core.hpp>
 
 #include <algorithm>
@@ -22,6 +23,8 @@ struct StimulusOverlayState {
     std::string text;
     int last_event_frame = std::numeric_limits<int>::min();
 };
+
+constexpr int kStimulusInsetCloseFrameSlack = 1;
 
 struct ChaserStateOverlay {
     int chaser_index = -1;
@@ -423,5 +426,87 @@ void drawCameraViewStimulusStepDirectionOverlay(
         const ImVec2 right(p1.x + unit.x * head_size - unit.y * head_size * 0.55f,
                            p1.y + unit.y * head_size + unit.x * head_size * 0.55f);
         draw_list->AddTriangleFilled(p1, left, right, arrow_color);
+    }
+}
+
+void drawCameraViewStimulusInsetOverlay(
+    const StimulusPlayback* stimulus_player,
+    int target_stimulus_frame,
+    const CameraViewStimulusInsetOptions& options) {
+    if (!options.show_inset || stimulus_player == nullptr ||
+        !stimulus_player->loaded || target_stimulus_frame < 0) {
+        return;
+    }
+
+    const ImVec2 plot_pos = ImPlot::GetPlotPos();
+    const ImVec2 plot_size = ImPlot::GetPlotSize();
+    if (plot_size.x < 120.0f || plot_size.y < 100.0f) {
+        return;
+    }
+
+    const float max_width = std::min(plot_size.x - 24.0f, plot_size.x * 0.36f);
+    const float inset_width =
+        std::clamp(options.width_px, 96.0f, std::max(96.0f, max_width));
+    const float aspect =
+        (stimulus_player->width > 0 && stimulus_player->height > 0)
+            ? static_cast<float>(stimulus_player->height) /
+                  static_cast<float>(stimulus_player->width)
+            : 1.0f;
+    const float image_height =
+        std::clamp(inset_width * aspect, 64.0f, plot_size.y * 0.42f);
+    const float label_height = options.show_frame_label ? 20.0f : 0.0f;
+    constexpr float kPad = 7.0f;
+    const ImVec2 box_min(plot_pos.x + 12.0f,
+                         plot_pos.y + plot_size.y -
+                             (image_height + label_height + kPad * 2.0f) -
+                             12.0f);
+    const ImVec2 box_max(box_min.x + inset_width + kPad * 2.0f,
+                         box_min.y + image_height + label_height +
+                             kPad * 2.0f);
+
+    ImDrawList* draw_list = ImPlot::GetPlotDrawList();
+    draw_list->AddRectFilled(box_min, box_max, IM_COL32(4, 8, 14, 190), 6.0f);
+    draw_list->AddRect(box_min, box_max, IM_COL32(125, 185, 255, 190), 6.0f);
+
+    const ImVec2 image_min(box_min.x + kPad, box_min.y + kPad);
+    const ImVec2 image_max(image_min.x + inset_width,
+                           image_min.y + image_height);
+    const bool has_uploaded_frame =
+        stimulus_player->texture != 0 && stimulus_player->last_displayed_frame >= 0;
+    if (has_uploaded_frame) {
+        const int alpha = static_cast<int>(
+            std::clamp(options.opacity, 0.15f, 1.0f) * 255.0f);
+        draw_list->AddImage(
+            (ImTextureID)(intptr_t)stimulus_player->texture,
+            image_min,
+            image_max,
+            ImVec2(0.0f, 0.0f),
+            ImVec2(1.0f, 1.0f),
+            IM_COL32(255, 255, 255, alpha));
+    } else {
+        draw_list->AddRectFilled(image_min, image_max, IM_COL32(12, 18, 28, 210), 3.0f);
+        draw_list->AddText(ImVec2(image_min.x + 8.0f, image_min.y + 8.0f),
+                           IM_COL32(205, 220, 240, 235),
+                           "Waiting for stimulus frame");
+    }
+
+    if (options.show_frame_label) {
+        std::ostringstream label;
+        label << "Stimulus";
+        if (stimulus_player->last_displayed_frame >= 0) {
+            const int delta =
+                stimulus_player->last_displayed_frame - target_stimulus_frame;
+            label << " " << stimulus_player->last_displayed_frame
+                  << " / target " << target_stimulus_frame;
+            if (std::abs(delta) > kStimulusInsetCloseFrameSlack) {
+                label << " (" << (delta > 0 ? "+" : "") << delta << ")";
+            }
+        } else {
+            label << " target " << target_stimulus_frame;
+        }
+        const std::string label_text = label.str();
+        draw_list->AddText(ImVec2(box_min.x + kPad, image_max.y + 4.0f),
+                           IM_COL32(225, 238, 255, 245),
+                           label_text.c_str());
     }
 }

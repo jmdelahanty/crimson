@@ -103,6 +103,9 @@ struct CameraViewWindowContext {
     const CameraParams* camera_params = nullptr;
     const std::vector<std::string>* stimulus_events = nullptr;
     const ZarrDetectionData::StimulusStep* stimulus_step = nullptr;
+    const StimulusPlayback* stimulus_player = nullptr;
+    int target_stimulus_frame = -1;
+    CameraViewStimulusInsetOptions stimulus_inset_options;
 
     CameraViewTransportControlsContext transport_controls;
 };

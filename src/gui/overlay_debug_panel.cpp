@@ -397,6 +397,54 @@ void drawTrackKinematicsOverlaySection(const FrameDebugWindowContext& context,
                        context.zarr_loader.getMovementSpeedLevel().c_str());
 }
 
+void drawStimulusOverlaySection(const FrameDebugWindowContext& context,
+                                FrameDebugWindowResult& result) {
+    if (!(context.zarr_loader.hasStimulusAlignment() ||
+          context.zarr_loader.hasStimulusSteps())) {
+        return;
+    }
+
+    result.stimulus_inset_options = context.stimulus_inset_options;
+    result.show_stimulus_debug_windows =
+        context.show_stimulus_debug_windows;
+
+    ImGui::Separator();
+    ImGui::Text("Stimulus Video:");
+    ImGui::Checkbox("Camera-view inset",
+                    &result.stimulus_inset_options.show_inset);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Draw the aligned stimulus video as a small inset in the camera view.");
+    }
+    ImGui::BeginDisabled(!result.stimulus_inset_options.show_inset);
+    ImGui::SetNextItemWidth(180.0f);
+    ImGui::SliderFloat("Inset width (px)",
+                       &result.stimulus_inset_options.width_px,
+                       120.0f,
+                       360.0f,
+                       "%.0f");
+    result.stimulus_inset_options.width_px =
+        std::clamp(result.stimulus_inset_options.width_px, 120.0f, 360.0f);
+    ImGui::SetNextItemWidth(180.0f);
+    ImGui::SliderFloat("Inset opacity",
+                       &result.stimulus_inset_options.opacity,
+                       0.20f,
+                       1.0f,
+                       "%.2f");
+    result.stimulus_inset_options.opacity =
+        std::clamp(result.stimulus_inset_options.opacity, 0.20f, 1.0f);
+    ImGui::Checkbox("Frame label",
+                    &result.stimulus_inset_options.show_frame_label);
+    ImGui::EndDisabled();
+
+    ImGui::Checkbox("Debug stimulus windows",
+                    &result.show_stimulus_debug_windows);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Show the old standalone stimulus and stimulus-buffer debug windows.");
+    }
+}
+
 }  // namespace
 
 void drawKeypointHeadingOverlayPanel(const FrameDebugWindowContext& context,
@@ -428,4 +476,5 @@ void drawEyeMaskOverlayPanel(const FrameDebugWindowContext& context,
 void drawTrackKinematicsOverlayPanel(const FrameDebugWindowContext& context,
                                      FrameDebugWindowResult& result) {
     drawTrackKinematicsOverlaySection(context, result);
+    drawStimulusOverlaySection(context, result);
 }

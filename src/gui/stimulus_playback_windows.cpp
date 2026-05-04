@@ -32,17 +32,14 @@ bool isStimulusFrameClose(int candidate_frame, int target_frame) {
 
 }  // namespace
 
-StimulusPlaybackWindowsResult drawStimulusPlaybackWindows(
-    const StimulusPlaybackWindowsContext& context,
-    StimulusPlaybackWindowsState& state) {
-    StimulusPlaybackWindowsResult result;
+StimulusPlaybackPresentationResult updateStimulusPlaybackPresentation(
+    const StimulusPlaybackPresentationContext& context,
+    StimulusPlaybackPresentationState& state) {
+    const auto update_start = std::chrono::steady_clock::now();
+    StimulusPlaybackPresentationResult result;
     auto& stimulus_player = context.stimulus_player;
     auto& playback_state = context.playback_state;
     auto& seek_progress = context.seek_progress;
-
-    const auto stimulus_window_ui_start = std::chrono::steady_clock::now();
-    ImGui::SetNextWindowSize(ImVec2(480.0f, 360.0f), ImGuiCond_FirstUseEver);
-    bool stimulus_visible = ImGui::Begin(stimulus_player.window_name.c_str());
 
     const bool mapping_available =
         context.zarr_loader != nullptr &&
@@ -55,6 +52,7 @@ StimulusPlaybackWindowsResult drawStimulusPlaybackWindows(
     bool decoder_requested = base_decode_request;
 
     int target_stimulus_frame = playback_state.current_stimulus_frame;
+    result.target_stimulus_frame = target_stimulus_frame;
     int effective_target_frame = target_stimulus_frame;
     if (effective_target_frame < 0) {
         std::optional<int32_t> first_stim;
@@ -216,28 +214,51 @@ StimulusPlaybackWindowsResult drawStimulusPlaybackWindows(
     }
     result.decoder_requested = decoder_requested;
 
-    if (stimulus_visible) {
-        if (mapping_available && target_stimulus_frame >= 0 &&
-            target_stimulus_frame != stimulus_player.last_displayed_frame) {
-            int buffer_index =
-                findStimulusBuffer(stimulus_player, target_stimulus_frame);
-            if (buffer_index != -1) {
-                const int buffered_frame =
-                    stimulus_player.display_buffer[buffer_index].frame_number;
-                if (isStimulusFrameClose(buffered_frame, target_stimulus_frame)) {
-                    uploadStimulusFrameToTexture(stimulus_player, buffer_index);
-                    stimulus_player.last_displayed_frame = buffered_frame;
-                    if (crimson_seek_debug_logs_enabled()) {
-                        std::cout << "[Stimulus] uploaded frame "
-                                  << buffered_frame
-                                  << " for target " << target_stimulus_frame
-                                  << " (buffer " << buffer_index << ")"
-                                  << std::endl;
-                    }
+    if (mapping_available && target_stimulus_frame >= 0 &&
+        target_stimulus_frame != stimulus_player.last_displayed_frame) {
+        int buffer_index =
+            findStimulusBuffer(stimulus_player, target_stimulus_frame);
+        if (buffer_index != -1) {
+            const int buffered_frame =
+                stimulus_player.display_buffer[buffer_index].frame_number;
+            if (isStimulusFrameClose(buffered_frame, target_stimulus_frame)) {
+                uploadStimulusFrameToTexture(stimulus_player, buffer_index);
+                stimulus_player.last_displayed_frame = buffered_frame;
+                result.uploaded_frame = true;
+                if (crimson_seek_debug_logs_enabled()) {
+                    std::cout << "[Stimulus] uploaded frame "
+                              << buffered_frame
+                              << " for target " << target_stimulus_frame
+                              << " (buffer " << buffer_index << ")"
+                              << std::endl;
                 }
             }
         }
+    }
 
+    result.displayed_stimulus_frame = stimulus_player.last_displayed_frame;
+    result.update_ms =
+        durationMs(std::chrono::steady_clock::now() - update_start);
+    return result;
+}
+
+StimulusPlaybackDebugWindowsResult drawStimulusPlaybackDebugWindows(
+    const StimulusPlaybackDebugWindowsContext& context) {
+    StimulusPlaybackDebugWindowsResult result;
+    auto& stimulus_player = context.stimulus_player;
+    auto& playback_state = context.playback_state;
+    auto& seek_progress = context.seek_progress;
+
+    const bool mapping_available =
+        context.zarr_loader != nullptr &&
+        context.zarr_loader->hasStimulusAlignment();
+    const int target_stimulus_frame = playback_state.current_stimulus_frame;
+
+    ImGui::SetNextWindowSize(ImVec2(480.0f, 360.0f),
+                             ImGuiCond_FirstUseEver);
+    const auto stimulus_window_ui_start = std::chrono::steady_clock::now();
+    bool stimulus_visible = ImGui::Begin(stimulus_player.window_name.c_str());
+    if (stimulus_visible) {
         ImVec2 avail = ImGui::GetContentRegionAvail();
         float aspect = (stimulus_player.width > 0 && stimulus_player.height > 0)
                            ? static_cast<float>(stimulus_player.height) /
@@ -304,7 +325,8 @@ StimulusPlaybackWindowsResult drawStimulusPlaybackWindows(
         durationMs(std::chrono::steady_clock::now() - stimulus_window_ui_start);
 
     ImGui::SetNextWindowSize(ImVec2(500.0f, 440.0f), ImGuiCond_FirstUseEver);
-    const auto stimulus_buffer_window_ui_start = std::chrono::steady_clock::now();
+    const auto stimulus_buffer_window_ui_start =
+        std::chrono::steady_clock::now();
     if (ImGui::Begin("Stimulus Frames in Buffer")) {
         struct StimulusBufferListItem {
             int slot = -1;

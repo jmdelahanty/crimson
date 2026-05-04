@@ -723,6 +723,8 @@ int main(int argc, char **argv) {
     bool show_movement_trail = true;
     float movement_trail_seconds = 2.0f;
     bool movement_trail_valid_samples_only = true;
+    CameraViewStimulusInsetOptions stimulus_inset_options;
+    bool show_stimulus_debug_windows = false;
     CameraViewMaskOverlayMode mask_overlay_mode =
         CameraViewMaskOverlayMode::Review;
     CameraViewSubjectShapeOverlayOptions subject_shape_overlay_options;
@@ -819,6 +821,7 @@ int main(int argc, char **argv) {
     bool stimulus_use_software_decode = false;
 #endif
     uint64_t stimulus_catchup_seek_generation = 1;
+    StimulusPlaybackPresentationState stimulus_playback_presentation_state;
     bool show_help_window = false;
     std::vector<bool> is_view_focused;
     bool input_is_imgs = false;
@@ -1554,6 +1557,8 @@ int main(int argc, char **argv) {
                 show_movement_trail,
                 movement_trail_seconds,
                 movement_trail_valid_samples_only,
+                stimulus_inset_options,
+                show_stimulus_debug_windows,
             };
             const FrameDebugWindowResult frame_debug_result =
                 drawFrameDebugWindow(frame_debug_context, frame_debug_window_state);
@@ -1584,6 +1589,10 @@ int main(int argc, char **argv) {
                 frame_debug_result.movement_trail_seconds;
             movement_trail_valid_samples_only =
                 frame_debug_result.movement_trail_valid_samples_only;
+            stimulus_inset_options =
+                frame_debug_result.stimulus_inset_options;
+            show_stimulus_debug_windows =
+                frame_debug_result.show_stimulus_debug_windows;
             active_full_frame_keypoint_selection =
                 frame_debug_result.selected_keypoint_selection;
             keypoint_tab_full_frame_edit_enabled =
@@ -2470,6 +2479,26 @@ int main(int argc, char **argv) {
             } else {
                 ps.current_stimulus_frame = -1;
             }
+            if (stimulus_player.loaded) {
+                const auto stimulus_presentation_result =
+                    updateStimulusPlaybackPresentation(
+                        StimulusPlaybackPresentationContext{
+                            stimulus_player,
+                            zarr_loaded ? &zarr_loader : nullptr,
+                            ps,
+                            seek_progress,
+                            current_frame_num,
+                            video_fps,
+                            latest_decoded_frame[stimulus_player.window_name]
+                                .load(),
+                            window_need_decoding[stimulus_player.window_name]
+                                .load(),
+                            &stimulus_catchup_seek_generation,
+                        },
+                        stimulus_playback_presentation_state);
+                window_need_decoding[stimulus_player.window_name].store(
+                    stimulus_presentation_result.decoder_requested);
+            }
             const int paused_visible_idx =
                 ps.play_video ? -1
                               : playback_session_controller
@@ -3066,6 +3095,12 @@ int main(int argc, char **argv) {
                         movement_trail_seconds;
                     camera_context_input.movement_trail_valid_samples_only =
                         movement_trail_valid_samples_only;
+                    camera_context_input.stimulus_inset_options =
+                        stimulus_inset_options;
+                    camera_context_input.stimulus_player =
+                        stimulus_player.loaded ? &stimulus_player : nullptr;
+                    camera_context_input.target_stimulus_frame =
+                        ps.current_stimulus_frame;
                     camera_context_input.chaser_bboxes = &chaser_bboxes;
                     camera_context_input.chaser_states = &chaser_states;
                     camera_context_input.camera_params = &camera_params[j];
@@ -3515,28 +3550,22 @@ int main(int argc, char **argv) {
                 durationMs(std::chrono::steady_clock::now() - crop_preview_ui_start);
         }
 
-        static StimulusPlaybackWindowsState stimulus_playback_windows_state;
-        if (stimulus_player.loaded) {
-            const auto stimulus_playback_windows_result =
-                drawStimulusPlaybackWindows(
-                    StimulusPlaybackWindowsContext{
+        if (stimulus_player.loaded && show_stimulus_debug_windows) {
+            const auto stimulus_debug_windows_result =
+                drawStimulusPlaybackDebugWindows(
+                    StimulusPlaybackDebugWindowsContext{
                         stimulus_player,
                         zarr_loaded ? &zarr_loader : nullptr,
                         ps,
                         seek_progress,
                         current_frame_num,
-                        video_fps,
-                        latest_decoded_frame[stimulus_player.window_name].load(),
-                        window_need_decoding[stimulus_player.window_name].load(),
-                        &stimulus_catchup_seek_generation,
-                    },
-                    stimulus_playback_windows_state);
-            window_need_decoding[stimulus_player.window_name].store(
-                stimulus_playback_windows_result.decoder_requested);
+                        latest_decoded_frame[stimulus_player.window_name]
+                            .load(),
+                    });
             frame_stimulus_window_ui_ms +=
-                stimulus_playback_windows_result.stimulus_window_ui_ms;
+                stimulus_debug_windows_result.stimulus_window_ui_ms;
             frame_stimulus_buffer_window_ui_ms +=
-                stimulus_playback_windows_result.stimulus_buffer_window_ui_ms;
+                stimulus_debug_windows_result.stimulus_buffer_window_ui_ms;
         }
 
         if (use_legacy_manual_keypoint_tools) {

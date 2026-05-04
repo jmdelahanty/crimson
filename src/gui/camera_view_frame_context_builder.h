@@ -66,6 +66,9 @@ struct CameraViewFrameContextInput {
     bool show_movement_trail = true;
     float movement_trail_seconds = 2.0f;
     bool movement_trail_valid_samples_only = true;
+    CameraViewStimulusInsetOptions stimulus_inset_options;
+    const StimulusPlayback* stimulus_player = nullptr;
+    int target_stimulus_frame = -1;
 
     const std::vector<ZarrDetectionLoader::ChaserBoundingBox>* chaser_bboxes =
         nullptr;

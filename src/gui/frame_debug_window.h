@@ -100,6 +100,8 @@ struct FrameDebugWindowContext {
     bool show_movement_trail = true;
     float movement_trail_seconds = 2.0f;
     bool movement_trail_valid_samples_only = true;
+    CameraViewStimulusInsetOptions stimulus_inset_options;
+    bool show_stimulus_debug_windows = false;
 };
 
 struct FrameDebugWindowResult {
@@ -134,6 +136,8 @@ struct FrameDebugWindowResult {
     bool show_movement_trail = true;
     float movement_trail_seconds = 2.0f;
     bool movement_trail_valid_samples_only = true;
+    CameraViewStimulusInsetOptions stimulus_inset_options;
+    bool show_stimulus_debug_windows = false;
     bool request_prev_subject_shape_qc_frame = false;
     bool request_next_subject_shape_qc_frame = false;
     bool request_prev_tail_kinematics_qc_frame = false;

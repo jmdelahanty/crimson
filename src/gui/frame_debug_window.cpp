@@ -31,6 +31,9 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
     result.movement_trail_seconds = context.movement_trail_seconds;
     result.movement_trail_valid_samples_only =
         context.movement_trail_valid_samples_only;
+    result.stimulus_inset_options = context.stimulus_inset_options;
+    result.show_stimulus_debug_windows =
+        context.show_stimulus_debug_windows;
 
     ImGui::SetNextWindowSize(ImVec2(760.0f, 840.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Frame Inspect")) {
