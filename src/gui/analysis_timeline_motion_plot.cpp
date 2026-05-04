@@ -53,13 +53,28 @@ void recordSubmittedTrace(AnalysisTimelinePerfStats* perf,
 
 void recordSubmittedTraceRow(AnalysisTimelinePerfStats* perf,
                              const AnalysisTimelineTracePlotRow& row,
+                             uint64_t submitted_points,
                              PointBucket bucket) {
     if (perf == nullptr) {
         return;
     }
-    for (const auto& trace : row.traces) {
-        recordSubmittedTrace(
-            perf, static_cast<uint64_t>(trace.xs.size()), bucket);
+    if (submitted_points > 0) {
+        perf->submitted_points_total += submitted_points;
+    }
+    perf->submitted_traces += static_cast<uint32_t>(row.traces.size());
+    switch (bucket) {
+        case PointBucket::Speed:
+            perf->speed_submitted_points += submitted_points;
+            break;
+        case PointBucket::Heading:
+            perf->heading_submitted_points += submitted_points;
+            break;
+        case PointBucket::Distance:
+            perf->distance_submitted_points += submitted_points;
+            break;
+        case PointBucket::Extra:
+            perf->extra_submitted_points += submitted_points;
+            break;
     }
 }
 
@@ -282,8 +297,9 @@ double drawAnalysisTimelineMotionPlots(
         row_ratios.push_back(1.0f);
     }
     if (context.extra_trace_rows != nullptr) {
-        for (const auto& row : *context.extra_trace_rows) {
-            row_ratios.push_back(std::max(0.5f, row.row_weight));
+        for (const auto* row : *context.extra_trace_rows) {
+            row_ratios.push_back(
+                row != nullptr ? std::max(0.5f, row->row_weight) : 1.0f);
         }
     }
     const int subplot_rows = static_cast<int>(row_ratios.size());
@@ -479,11 +495,12 @@ double drawAnalysisTimelineMotionPlots(
                 ImPlot::SetNextLineStyle(ImVec4(0.2f, 0.7f, 1.0f, 1.0f), 2.0f);
                 const uint64_t submitted =
                     static_cast<uint64_t>(context.time_plot.size());
-                ImPlot::PlotLine(context.primary_speed_label.c_str(),
-                                 context.time_plot.data(),
-                                 context.smoothed_plot.data(),
-                                 static_cast<int>(submitted));
-                recordSubmittedTrace(perf, submitted, PointBucket::Speed);
+                const uint64_t plotted =
+                    plotAnalysisTimelineLine(context.primary_speed_label.c_str(),
+                                             context.time_plot.data(),
+                                             context.smoothed_plot.data(),
+                                             static_cast<size_t>(submitted));
+                recordSubmittedTrace(perf, plotted, PointBucket::Speed);
             }
 
             if (context.state.show_instantaneous &&
@@ -491,11 +508,12 @@ double drawAnalysisTimelineMotionPlots(
                 ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.5f, 0.2f, 0.6f), 1.0f);
                 const uint64_t submitted =
                     static_cast<uint64_t>(context.time_plot.size());
-                ImPlot::PlotLine(context.secondary_speed_label.c_str(),
-                                 context.time_plot.data(),
-                                 context.instant_plot.data(),
-                                 static_cast<int>(submitted));
-                recordSubmittedTrace(perf, submitted, PointBucket::Speed);
+                const uint64_t plotted = plotAnalysisTimelineLine(
+                    context.secondary_speed_label.c_str(),
+                    context.time_plot.data(),
+                    context.instant_plot.data(),
+                    static_cast<size_t>(submitted));
+                recordSubmittedTrace(perf, plotted, PointBucket::Speed);
             }
 
             if (!context.detector_time_plot.empty() &&
@@ -521,12 +539,12 @@ double drawAnalysisTimelineMotionPlots(
                                          1.5f);
                 const uint64_t submitted =
                     static_cast<uint64_t>(context.detector_time_plot.size());
-                ImPlot::PlotLine(
+                const uint64_t plotted = plotAnalysisTimelineLine(
                     detector_label.c_str(),
                     context.detector_time_plot.data(),
                     context.detector_value_plot.data(),
-                    static_cast<int>(submitted));
-                recordSubmittedTrace(perf, submitted, PointBucket::Speed);
+                    static_cast<size_t>(submitted));
+                recordSubmittedTrace(perf, plotted, PointBucket::Speed);
             }
 
             drawMotionCurrentTimeMarker(current_time_line,
@@ -553,12 +571,12 @@ double drawAnalysisTimelineMotionPlots(
                 ImPlot::SetNextLineStyle(ImVec4(0.9f, 0.35f, 0.2f, 0.9f), 1.5f);
                 const uint64_t submitted =
                     static_cast<uint64_t>(context.heading_raw_plot.size());
-                ImPlot::PlotLine(
+                const uint64_t plotted = plotAnalysisTimelineLine(
                     "Heading (raw)",
                     context.heading_time_raw.data(),
                     context.heading_raw_plot.data(),
-                    static_cast<int>(submitted));
-                recordSubmittedTrace(perf, submitted, PointBucket::Heading);
+                    static_cast<size_t>(submitted));
+                recordSubmittedTrace(perf, plotted, PointBucket::Heading);
                 drew_heading = true;
             }
             if (context.state.show_heading_smoothed &&
@@ -567,12 +585,12 @@ double drawAnalysisTimelineMotionPlots(
                 const uint64_t submitted =
                     static_cast<uint64_t>(
                         context.heading_smoothed_plot.size());
-                ImPlot::PlotLine(
+                const uint64_t plotted = plotAnalysisTimelineLine(
                     "Heading (smoothed)",
                     context.heading_time_smoothed.data(),
                     context.heading_smoothed_plot.data(),
-                    static_cast<int>(submitted));
-                recordSubmittedTrace(perf, submitted, PointBucket::Heading);
+                    static_cast<size_t>(submitted));
+                recordSubmittedTrace(perf, plotted, PointBucket::Heading);
                 drew_heading = true;
             }
 
@@ -584,12 +602,12 @@ double drawAnalysisTimelineMotionPlots(
                 const uint64_t submitted =
                     static_cast<uint64_t>(
                         context.heading_per_second_plot.size());
-                ImPlot::PlotLine(
+                const uint64_t plotted = plotAnalysisTimelineLine(
                     "Heading (per-second)",
                     context.heading_per_second_time_plot.data(),
                     context.heading_per_second_plot.data(),
-                    static_cast<int>(submitted));
-                recordSubmittedTrace(perf, submitted, PointBucket::Heading);
+                    static_cast<size_t>(submitted));
+                recordSubmittedTrace(perf, plotted, PointBucket::Heading);
             }
 
             const bool drew_resultant =
@@ -603,12 +621,12 @@ double drawAnalysisTimelineMotionPlots(
                 const uint64_t submitted =
                     static_cast<uint64_t>(
                         context.heading_per_second_resultant_plot.size());
-                ImPlot::PlotLine(
+                const uint64_t plotted = plotAnalysisTimelineLine(
                     "Resultant",
                     context.heading_per_second_time_plot.data(),
                     context.heading_per_second_resultant_plot.data(),
-                    static_cast<int>(submitted));
-                recordSubmittedTrace(perf, submitted, PointBucket::Heading);
+                    static_cast<size_t>(submitted));
+                recordSubmittedTrace(perf, plotted, PointBucket::Heading);
                 ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
             }
 
@@ -640,12 +658,12 @@ double drawAnalysisTimelineMotionPlots(
                 ImPlot::SetNextLineStyle(ImVec4(0.3f, 0.85f, 0.4f, 1.0f), 2.0f);
                 const uint64_t submitted =
                     static_cast<uint64_t>(context.distance_time.size());
-                ImPlot::PlotLine(
+                const uint64_t plotted = plotAnalysisTimelineLine(
                     "Distance to Target (10 mm)",
                     context.distance_time.data(),
                     context.distance_units.data(),
-                    static_cast<int>(submitted));
-                recordSubmittedTrace(perf, submitted, PointBucket::Distance);
+                    static_cast<size_t>(submitted));
+                recordSubmittedTrace(perf, plotted, PointBucket::Distance);
             }
 
             drawMotionCurrentTimeMarker(current_time_line,
@@ -659,12 +677,18 @@ double drawAnalysisTimelineMotionPlots(
 
         if (context.extra_trace_rows != nullptr) {
             const auto extra_start = std::chrono::steady_clock::now();
-            for (const auto& row : *context.extra_trace_rows) {
-                recordSubmittedTraceRow(perf, row, PointBucket::Extra);
-                drawAnalysisTracePlotRow(row,
+            for (const auto* row : *context.extra_trace_rows) {
+                if (row == nullptr) {
+                    continue;
+                }
+                uint64_t submitted = 0;
+                drawAnalysisTracePlotRow(*row,
                                          context.scroll_state,
                                          &shared_x_limits,
-                                         true);
+                                         true,
+                                         &submitted);
+                recordSubmittedTraceRow(
+                    perf, *row, submitted, PointBucket::Extra);
             }
             if (perf != nullptr) {
                 perf->draw_extra_rows_ms +=

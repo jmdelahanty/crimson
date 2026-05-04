@@ -4,6 +4,7 @@
 
 #include "imgui.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -46,11 +47,17 @@ void extendTraceRange(const AnalysisTimelineTrace& trace,
 void drawCurrentTimeMarker(double current_time,
                            const char* label = "##current_time");
 
+uint64_t plotAnalysisTimelineLine(const char* label,
+                                  const double* xs,
+                                  const double* ys,
+                                  size_t count);
+
 bool drawAnalysisTracePlotRow(
     const AnalysisTimelineTracePlotRow& row,
     const TimelineScrollState& scroll_state,
     const AnalysisTimelineXAxisLimits* linked_x_limits = nullptr,
-    bool embedded_in_subplots = false);
+    bool embedded_in_subplots = false,
+    uint64_t* submitted_points_out = nullptr);
 
 void drawAnalysisTracePlot(const char* title,
                            const char* y_axis_label,

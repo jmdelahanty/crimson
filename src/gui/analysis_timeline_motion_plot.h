@@ -40,7 +40,7 @@ struct AnalysisTimelineMotionPlotContext {
     double max_distance_mm = 0.0;
     const ZarrDetectionLoader* stimulus_loader = nullptr;
     bool show_stimulus_context = false;
-    const std::vector<AnalysisTimelineTracePlotRow>* extra_trace_rows = nullptr;
+    const std::vector<const AnalysisTimelineTracePlotRow*>* extra_trace_rows = nullptr;
     AnalysisTimelinePerfStats* perf_stats = nullptr;
 };
 

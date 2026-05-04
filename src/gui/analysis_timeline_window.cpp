@@ -10,9 +10,10 @@
 #include "imgui.h"
 #include "zarr_loader.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
-#include <iterator>
 #include <optional>
 #include <string>
 #include <utility>
@@ -49,6 +50,318 @@ void addPreparedTraceRowStats(AnalysisTimelinePerfStats* perf,
     bucket += points;
     perf->prepared_points_total += points;
     perf->prepared_traces += static_cast<uint32_t>(row.traces.size());
+}
+
+struct MotionPreparedCacheKey {
+    const float* time_data = nullptr;
+    size_t time_size = 0;
+    const int32_t* frame_indices_data = nullptr;
+    size_t frame_indices_size = 0;
+    const float* smoothed_speed_data = nullptr;
+    size_t smoothed_speed_size = 0;
+    const float* instant_speed_data = nullptr;
+    size_t instant_speed_size = 0;
+    const float* distance_data = nullptr;
+    size_t distance_size = 0;
+    const float* heading_data = nullptr;
+    size_t heading_size = 0;
+    const float* smoothed_heading_data = nullptr;
+    size_t smoothed_heading_size = 0;
+    const uint8_t* heading_success_data = nullptr;
+    size_t heading_success_size = 0;
+    const float* heading_per_second_data = nullptr;
+    size_t heading_per_second_size = 0;
+    const float* heading_per_second_resultant_data = nullptr;
+    size_t heading_per_second_resultant_size = 0;
+    const float* heading_per_second_time_data = nullptr;
+    size_t heading_per_second_time_size = 0;
+    const ZarrDetectionData::SwimBoutSeries* selected_swim_bouts = nullptr;
+    std::string motion_source_key;
+    std::string swim_bouts_key;
+    bool smoothed_available = false;
+    bool instant_available = false;
+    bool heading_per_second_available = false;
+    bool show_detector_response = false;
+    double video_fps = 0.0;
+};
+
+bool operator==(const MotionPreparedCacheKey& lhs,
+                const MotionPreparedCacheKey& rhs) {
+    return lhs.time_data == rhs.time_data && lhs.time_size == rhs.time_size &&
+           lhs.frame_indices_data == rhs.frame_indices_data &&
+           lhs.frame_indices_size == rhs.frame_indices_size &&
+           lhs.smoothed_speed_data == rhs.smoothed_speed_data &&
+           lhs.smoothed_speed_size == rhs.smoothed_speed_size &&
+           lhs.instant_speed_data == rhs.instant_speed_data &&
+           lhs.instant_speed_size == rhs.instant_speed_size &&
+           lhs.distance_data == rhs.distance_data &&
+           lhs.distance_size == rhs.distance_size &&
+           lhs.heading_data == rhs.heading_data &&
+           lhs.heading_size == rhs.heading_size &&
+           lhs.smoothed_heading_data == rhs.smoothed_heading_data &&
+           lhs.smoothed_heading_size == rhs.smoothed_heading_size &&
+           lhs.heading_success_data == rhs.heading_success_data &&
+           lhs.heading_success_size == rhs.heading_success_size &&
+           lhs.heading_per_second_data == rhs.heading_per_second_data &&
+           lhs.heading_per_second_size == rhs.heading_per_second_size &&
+           lhs.heading_per_second_resultant_data ==
+               rhs.heading_per_second_resultant_data &&
+           lhs.heading_per_second_resultant_size ==
+               rhs.heading_per_second_resultant_size &&
+           lhs.heading_per_second_time_data ==
+               rhs.heading_per_second_time_data &&
+           lhs.heading_per_second_time_size ==
+               rhs.heading_per_second_time_size &&
+           lhs.selected_swim_bouts == rhs.selected_swim_bouts &&
+           lhs.motion_source_key == rhs.motion_source_key &&
+           lhs.swim_bouts_key == rhs.swim_bouts_key &&
+           lhs.smoothed_available == rhs.smoothed_available &&
+           lhs.instant_available == rhs.instant_available &&
+           lhs.heading_per_second_available ==
+               rhs.heading_per_second_available &&
+           lhs.show_detector_response == rhs.show_detector_response &&
+           lhs.video_fps == rhs.video_fps;
+}
+
+template <typename T>
+const T* vectorDataOrNull(const std::vector<T>& values) {
+    return values.empty() ? nullptr : values.data();
+}
+
+MotionPreparedCacheKey makeMotionPreparedCacheKey(
+    const AnalysisTimelineMotionDataInput& input,
+    const ZarrDetectionData::MovementSeries* selected_series) {
+    std::string motion_source_key;
+    if (selected_series != nullptr) {
+        motion_source_key = selected_series->category + "\n" +
+                            selected_series->run_name + "\n" +
+                            selected_series->track_id + "\n" +
+                            selected_series->speed_level + "\n" +
+                            selected_series->primary_speed_source_path + "\n" +
+                            selected_series->secondary_speed_source_path;
+    }
+    std::string swim_bouts_key;
+    if (input.selected_swim_bouts != nullptr) {
+        swim_bouts_key = input.selected_swim_bouts->run_name + "\n" +
+                         input.selected_swim_bouts->speed_level + "\n" +
+                         input.selected_swim_bouts->detection_signal_source_path;
+    }
+    return MotionPreparedCacheKey{
+        vectorDataOrNull(input.time_seconds),
+        input.time_seconds.size(),
+        vectorDataOrNull(input.frame_indices),
+        input.frame_indices.size(),
+        vectorDataOrNull(input.smoothed_speed),
+        input.smoothed_speed.size(),
+        vectorDataOrNull(input.instant_speed),
+        input.instant_speed.size(),
+        vectorDataOrNull(input.distance_mm),
+        input.distance_mm.size(),
+        vectorDataOrNull(input.heading_degrees),
+        input.heading_degrees.size(),
+        vectorDataOrNull(input.smoothed_heading_degrees),
+        input.smoothed_heading_degrees.size(),
+        vectorDataOrNull(input.heading_keypoint_success),
+        input.heading_keypoint_success.size(),
+        vectorDataOrNull(input.heading_per_second_degrees),
+        input.heading_per_second_degrees.size(),
+        vectorDataOrNull(input.heading_per_second_resultant),
+        input.heading_per_second_resultant.size(),
+        vectorDataOrNull(input.heading_per_second_time),
+        input.heading_per_second_time.size(),
+        input.selected_swim_bouts,
+        std::move(motion_source_key),
+        std::move(swim_bouts_key),
+        input.smoothed_available,
+        input.instant_available,
+        input.heading_per_second_available,
+        input.show_detector_response,
+        input.video_fps,
+    };
+}
+
+struct MotionPreparedCache {
+    bool valid = false;
+    MotionPreparedCacheKey key;
+    AnalysisTimelineMotionPreparedData data;
+};
+
+uint64_t motionPreparedPointCount(
+    const AnalysisTimelineMotionPreparedData& motion_data) {
+    return static_cast<uint64_t>(motion_data.smoothed_plot.size()) +
+           static_cast<uint64_t>(motion_data.instant_plot.size()) +
+           static_cast<uint64_t>(motion_data.detector_value_plot.size()) +
+           static_cast<uint64_t>(motion_data.heading_raw_plot.size()) +
+           static_cast<uint64_t>(motion_data.heading_smoothed_plot.size()) +
+           static_cast<uint64_t>(motion_data.heading_per_second_plot.size()) +
+           static_cast<uint64_t>(
+               motion_data.heading_per_second_resultant_plot.size()) +
+           static_cast<uint64_t>(motion_data.distance_units.size());
+}
+
+struct SingleTraceRowCache {
+    bool valid = false;
+    std::string key;
+    std::optional<AnalysisTimelineTracePlotRow> row;
+};
+
+struct TraceRowsCache {
+    bool valid = false;
+    std::string key;
+    std::vector<AnalysisTimelineTracePlotRow> rows;
+};
+
+std::string pointerKey(const void* ptr) {
+    return std::to_string(reinterpret_cast<uintptr_t>(ptr));
+}
+
+void appendKeyPart(std::string& key, const std::string& value) {
+    key += value;
+    key.push_back('\n');
+}
+
+void appendKeyPart(std::string& key, bool value) {
+    key += value ? "1\n" : "0\n";
+}
+
+void appendKeyPart(std::string& key, size_t value) {
+    key += std::to_string(value);
+    key.push_back('\n');
+}
+
+void appendKeyPart(std::string& key, double value) {
+    key += std::to_string(value);
+    key.push_back('\n');
+}
+
+std::string makePositionTraceCacheKey(
+    const AnalysisTimelineMotionSummaryContext& context) {
+    std::string key;
+    key.reserve(256);
+    const auto* series = context.selected_series;
+    appendKeyPart(key, pointerKey(series));
+    appendKeyPart(key, context.state.show_track_position);
+    appendKeyPart(key, context.state.show_track_position_x);
+    appendKeyPart(key, context.state.show_track_position_y);
+    appendKeyPart(key, pointerKey(vectorDataOrNull(context.time_data)));
+    appendKeyPart(key, context.time_data.size());
+    if (series != nullptr) {
+        appendKeyPart(key, series->category);
+        appendKeyPart(key, series->run_name);
+        appendKeyPart(key, series->track_id);
+        appendKeyPart(key, series->speed_level);
+        const bool use_mm_positions = !series->positions_mm.empty();
+        appendKeyPart(key, use_mm_positions);
+        if (use_mm_positions) {
+            appendKeyPart(key, pointerKey(vectorDataOrNull(series->positions_mm)));
+            appendKeyPart(key, series->positions_mm.size());
+        } else {
+            appendKeyPart(key, pointerKey(vectorDataOrNull(series->positions_px)));
+            appendKeyPart(key, series->positions_px.size());
+        }
+    }
+    return key;
+}
+
+std::string makeEyeTraceCacheKey(const AnalysisTimelineEyeAngleContext& context,
+                                 const AnalysisTimelineWindowState& state) {
+    const auto& eye = context.zarr_loader.getEyeAngleAnalysisData();
+    std::string key;
+    key.reserve(256);
+    appendKeyPart(key, pointerKey(&eye));
+    appendKeyPart(key, eye.run_name);
+    appendKeyPart(key, eye.scalar_fields.size());
+    appendKeyPart(key, eye.representations.size());
+    appendKeyPart(key, state.show_eye_angle_traces);
+    appendKeyPart(key, state.show_eye_left_trace);
+    appendKeyPart(key, state.show_eye_right_trace);
+    appendKeyPart(key, state.show_eye_vergence_trace);
+    appendKeyPart(key, static_cast<size_t>(
+                           std::max(0, state.eye_angle_representation_index)));
+    if (state.eye_angle_representation_index >= 0 &&
+        static_cast<size_t>(state.eye_angle_representation_index) <
+            eye.representations.size()) {
+        appendKeyPart(
+            key,
+            eye.representations[static_cast<size_t>(
+                                    state.eye_angle_representation_index)]
+                .key);
+    }
+    appendKeyPart(key, context.video_fps);
+    return key;
+}
+
+std::string makeTailTraceCacheKey(
+    const AnalysisTimelineTailKinematicsContext& context,
+    const AnalysisTimelineWindowState& state) {
+    const auto& tail = context.zarr_loader.getTailKinematicsData();
+    std::string key;
+    key.reserve(256);
+    appendKeyPart(key, pointerKey(&tail));
+    appendKeyPart(key, tail.run_name);
+    appendKeyPart(key, tail.row_count);
+    appendKeyPart(key, tail.sample_count);
+    appendKeyPart(key, state.show_tail_tip_angle);
+    appendKeyPart(key, state.show_tail_tip_lateral_deflection);
+    appendKeyPart(key, state.show_tail_curvature);
+    appendKeyPart(key, pointerKey(vectorDataOrNull(tail.frame_index)));
+    appendKeyPart(key, tail.frame_index.size());
+    appendKeyPart(key, pointerKey(vectorDataOrNull(tail.row_to_frame)));
+    appendKeyPart(key, tail.row_to_frame.size());
+    appendKeyPart(key, pointerKey(vectorDataOrNull(tail.tail_tip_angle_deg)));
+    appendKeyPart(key, tail.tail_tip_angle_deg.size());
+    appendKeyPart(key, pointerKey(vectorDataOrNull(tail.max_abs_tail_angle_deg)));
+    appendKeyPart(key, tail.max_abs_tail_angle_deg.size());
+    appendKeyPart(
+        key, pointerKey(vectorDataOrNull(tail.tail_tip_lateral_deflection_px)));
+    appendKeyPart(key, tail.tail_tip_lateral_deflection_px.size());
+    appendKeyPart(
+        key, pointerKey(vectorDataOrNull(tail.max_abs_tail_curvature_px_inv)));
+    appendKeyPart(key, tail.max_abs_tail_curvature_px_inv.size());
+    appendKeyPart(key, context.video_fps);
+    return key;
+}
+
+double currentEyeTimelineTime(const AnalysisTimelineEyeAngleContext& context) {
+    const auto& eye = context.zarr_loader.getEyeAngleAnalysisData();
+    double current_eye_time = context.fallback_current_time;
+    if (auto current_row =
+            context.zarr_loader.findEyeAngleRowForFrame(
+                context.current_frame_num)) {
+        if (*current_row < eye.roi_time_seconds.size() &&
+            std::isfinite(eye.roi_time_seconds[*current_row])) {
+            current_eye_time =
+                static_cast<double>(eye.roi_time_seconds[*current_row]);
+        }
+    } else if (context.current_frame_num >= 0 &&
+               static_cast<size_t>(context.current_frame_num) <
+                   eye.frame_time_seconds.size() &&
+               std::isfinite(
+                   eye.frame_time_seconds[context.current_frame_num])) {
+        current_eye_time =
+            static_cast<double>(
+                eye.frame_time_seconds[context.current_frame_num]);
+    }
+    return current_eye_time;
+}
+
+double currentTailTimelineTime(
+    const AnalysisTimelineTailKinematicsContext& context) {
+    const auto& tail = context.zarr_loader.getTailKinematicsData();
+    const std::vector<int32_t>& tail_frame_index =
+        !tail.frame_index.empty() ? tail.frame_index : tail.row_to_frame;
+    double current_tail_time = context.fallback_current_time;
+    if (auto current_row =
+            context.zarr_loader.findTailKinematicsRowForFrame(
+                context.current_frame_num)) {
+        if (*current_row < tail_frame_index.size()) {
+            current_tail_time =
+                sampleTimeFromFrame(tail_frame_index[*current_row],
+                                    context.video_fps)
+                    .value_or(current_tail_time);
+        }
+    }
+    return current_tail_time;
 }
 
 }  // namespace
@@ -169,51 +482,53 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
                            motion_controls_start);
         }
 
-        AnalysisTimelineMotionPreparedData motion_data;
+        static MotionPreparedCache motion_cache;
+        AnalysisTimelineMotionDataInput motion_input{
+            time_data,
+            frame_indices,
+            smoothed_speed,
+            instant_speed,
+            distance_mm,
+            heading_degrees,
+            smoothed_heading_degrees,
+            heading_keypoint_success,
+            heading_per_second_degrees,
+            heading_per_second_resultant,
+            heading_per_second_time,
+            motion_selection.selected_swim_bouts,
+            smoothed_available,
+            instant_available,
+            heading_per_second_available,
+            state.show_detector_response,
+            context.video_fps,
+        };
         {
             const auto prepare_start = std::chrono::steady_clock::now();
-            motion_data = prepareAnalysisTimelineMotionData({
-                time_data,
-                frame_indices,
-                smoothed_speed,
-                instant_speed,
-                distance_mm,
-                heading_degrees,
-                smoothed_heading_degrees,
-                heading_keypoint_success,
-                heading_per_second_degrees,
-                heading_per_second_resultant,
-                heading_per_second_time,
-                motion_selection.selected_swim_bouts,
-                smoothed_available,
-                instant_available,
-                heading_per_second_available,
-                state.show_detector_response,
-                context.video_fps,
-            });
+            const MotionPreparedCacheKey cache_key =
+                makeMotionPreparedCacheKey(motion_input, selected_series);
+            const bool cache_hit =
+                motion_cache.valid && motion_cache.key == cache_key;
+            if (!cache_hit) {
+                motion_cache.data =
+                    prepareAnalysisTimelineMotionData(motion_input);
+                motion_cache.key = cache_key;
+                motion_cache.valid = true;
+            }
             if (perf != nullptr) {
                 perf->prepare_motion_ms +=
                     durationMs(std::chrono::steady_clock::now() -
                                prepare_start);
-                const uint64_t motion_points =
-                    static_cast<uint64_t>(motion_data.smoothed_plot.size()) +
-                    static_cast<uint64_t>(motion_data.instant_plot.size()) +
-                    static_cast<uint64_t>(
-                        motion_data.detector_value_plot.size()) +
-                    static_cast<uint64_t>(
-                        motion_data.heading_raw_plot.size()) +
-                    static_cast<uint64_t>(
-                        motion_data.heading_smoothed_plot.size()) +
-                    static_cast<uint64_t>(
-                        motion_data.heading_per_second_plot.size()) +
-                    static_cast<uint64_t>(
-                        motion_data.heading_per_second_resultant_plot.size()) +
-                    static_cast<uint64_t>(motion_data.distance_units.size());
-                perf->motion_points_prepared += motion_points;
-                perf->prepared_points_total += motion_points;
+                if (!cache_hit) {
+                    const uint64_t motion_points =
+                        motionPreparedPointCount(motion_cache.data);
+                    perf->motion_points_prepared += motion_points;
+                    perf->prepared_points_total += motion_points;
+                }
             }
         }
-        std::vector<AnalysisTimelineTracePlotRow> linked_extra_rows;
+        const AnalysisTimelineMotionPreparedData& motion_data =
+            motion_cache.data;
+        std::vector<const AnalysisTimelineTracePlotRow*> linked_extra_rows;
         AnalysisTimelineMotionSummaryContext motion_summary_context{
             state,
             context.scroll_state,
@@ -225,15 +540,30 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
             primary_speed_label,
             primary_speed_units,
         };
+        static SingleTraceRowCache position_row_cache;
         const auto position_start = std::chrono::steady_clock::now();
-        if (auto position_row = buildAnalysisTimelineTrackPositionRow(
-                motion_summary_context)) {
+        const std::string position_cache_key =
+            makePositionTraceCacheKey(motion_summary_context);
+        const bool position_cache_hit =
+            position_row_cache.valid &&
+            position_row_cache.key == position_cache_key;
+        if (!position_cache_hit) {
+            position_row_cache.row =
+                buildAnalysisTimelineTrackPositionRow(motion_summary_context);
+            position_row_cache.key = position_cache_key;
+            position_row_cache.valid = true;
             if (perf != nullptr) {
-                addPreparedTraceRowStats(perf,
-                                         *position_row,
-                                         perf->position_points_prepared);
+                if (position_row_cache.row.has_value()) {
+                    addPreparedTraceRowStats(
+                        perf,
+                        *position_row_cache.row,
+                        perf->position_points_prepared);
+                }
             }
-            linked_extra_rows.push_back(std::move(*position_row));
+        }
+        if (position_row_cache.row.has_value()) {
+            position_row_cache.row->current_time = fallback_current_time;
+            linked_extra_rows.push_back(&*position_row_cache.row);
         }
         if (perf != nullptr) {
             perf->build_position_ms +=
@@ -255,15 +585,29 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
                     durationMs(std::chrono::steady_clock::now() -
                                eye_controls_start);
             }
+            static SingleTraceRowCache eye_row_cache;
             const auto eye_build_start = std::chrono::steady_clock::now();
-            if (auto eye_row = buildAnalysisTimelineEyeAngleRow(eye_context,
-                                                                state)) {
+            const std::string eye_cache_key =
+                makeEyeTraceCacheKey(eye_context, state);
+            const bool eye_cache_hit =
+                eye_row_cache.valid && eye_row_cache.key == eye_cache_key;
+            if (!eye_cache_hit) {
+                eye_row_cache.row =
+                    buildAnalysisTimelineEyeAngleRow(eye_context, state);
+                eye_row_cache.key = eye_cache_key;
+                eye_row_cache.valid = true;
                 if (perf != nullptr) {
-                    addPreparedTraceRowStats(perf,
-                                             *eye_row,
-                                             perf->eye_points_prepared);
+                    if (eye_row_cache.row.has_value()) {
+                        addPreparedTraceRowStats(perf,
+                                                 *eye_row_cache.row,
+                                                 perf->eye_points_prepared);
+                    }
                 }
-                linked_extra_rows.push_back(std::move(*eye_row));
+            }
+            if (eye_row_cache.row.has_value()) {
+                eye_row_cache.row->current_time =
+                    currentEyeTimelineTime(eye_context);
+                linked_extra_rows.push_back(&*eye_row_cache.row);
             }
             if (perf != nullptr) {
                 perf->build_eye_ms +=
@@ -287,23 +631,38 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
                     durationMs(std::chrono::steady_clock::now() -
                                tail_controls_start);
             }
+            static TraceRowsCache tail_rows_cache;
             const auto tail_build_start = std::chrono::steady_clock::now();
-            auto tail_rows =
-                buildAnalysisTimelineTailKinematicsRows(tail_context, state);
-            if (perf != nullptr) {
-                for (const auto& row : tail_rows) {
-                    addPreparedTraceRowStats(perf,
-                                             row,
-                                             perf->tail_points_prepared);
+            const std::string tail_cache_key =
+                makeTailTraceCacheKey(tail_context, state);
+            const bool tail_cache_hit =
+                tail_rows_cache.valid &&
+                tail_rows_cache.key == tail_cache_key;
+            if (!tail_cache_hit) {
+                tail_rows_cache.rows =
+                    buildAnalysisTimelineTailKinematicsRows(tail_context,
+                                                            state);
+                tail_rows_cache.key = tail_cache_key;
+                tail_rows_cache.valid = true;
+                if (perf != nullptr) {
+                    for (const auto& row : tail_rows_cache.rows) {
+                        addPreparedTraceRowStats(perf,
+                                                 row,
+                                                 perf->tail_points_prepared);
+                    }
                 }
+            }
+            const double current_tail_time =
+                currentTailTimelineTime(tail_context);
+            for (auto& row : tail_rows_cache.rows) {
+                row.current_time = current_tail_time;
+                linked_extra_rows.push_back(&row);
+            }
+            if (perf != nullptr) {
                 perf->build_tail_ms +=
                     durationMs(std::chrono::steady_clock::now() -
                                tail_build_start);
             }
-            linked_extra_rows.insert(linked_extra_rows.end(),
-                                     std::make_move_iterator(
-                                         tail_rows.begin()),
-                                     std::make_move_iterator(tail_rows.end()));
         }
         const double current_time_line = drawAnalysisTimelineMotionPlots({
             state,
