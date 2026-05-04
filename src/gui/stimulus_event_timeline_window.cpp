@@ -52,6 +52,32 @@ ImVec4 getStimulusEventTypeColor(int32_t event_type_id) {
     return ImVec4(r + m, g + m, b + m, 0.9f);
 }
 
+ImU32 stimulusStepFillColor(const ZarrDetectionData::StimulusStep& step) {
+    if (step.stimulus_mode == "MOVING_GRATING") {
+        return IM_COL32(70, 140, 255, 54);
+    }
+    if (step.stimulus_mode == "CONCENTRIC_GRATING") {
+        return IM_COL32(90, 210, 150, 54);
+    }
+    if (step.stimulus_mode == "LOOMING_DOT") {
+        return IM_COL32(255, 185, 70, 54);
+    }
+    return IM_COL32(180, 180, 190, 42);
+}
+
+ImU32 stimulusStepBorderColor(const ZarrDetectionData::StimulusStep& step) {
+    if (step.stimulus_mode == "MOVING_GRATING") {
+        return IM_COL32(90, 160, 255, 150);
+    }
+    if (step.stimulus_mode == "CONCENTRIC_GRATING") {
+        return IM_COL32(110, 235, 170, 150);
+    }
+    if (step.stimulus_mode == "LOOMING_DOT") {
+        return IM_COL32(255, 205, 90, 150);
+    }
+    return IM_COL32(190, 190, 205, 120);
+}
+
 std::string stimulusEventTypeLabel(const std::string& label) {
     std::string type_name = label;
     size_t dash_pos = type_name.find(" - ");
@@ -59,6 +85,26 @@ std::string stimulusEventTypeLabel(const std::string& label) {
         type_name = type_name.substr(0, dash_pos);
     }
     return type_name;
+}
+
+std::string stimulusStepDisplayLabel(
+    const ZarrDetectionData::StimulusStep& step) {
+    std::ostringstream label;
+    label << "Step " << step.step_index;
+    if (!step.step_name.empty()) {
+        label << " " << step.step_name;
+    } else if (!step.stimulus_mode.empty()) {
+        label << " " << step.stimulus_mode;
+    }
+    if (step.moving_grating.present &&
+        std::isfinite(step.moving_grating.grating_direction_camera_deg)) {
+        label << " " << step.moving_grating.grating_direction_camera_deg
+              << " deg";
+    } else if (step.concentric_grating.present &&
+               !step.concentric_grating.radial_polarity_authored.empty()) {
+        label << " " << step.concentric_grating.radial_polarity_authored;
+    }
+    return label.str();
 }
 
 }  // namespace
@@ -73,6 +119,7 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
     }
 
     auto timeline = context.zarr_loader.getStimulusEventTimeline();
+    const auto& steps = context.zarr_loader.getStimulusSteps();
     if (timeline.size() != state.last_logged_timeline_count) {
         size_t missing_camera = 0;
         for (const auto& evt : timeline) {
@@ -93,9 +140,34 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
         }
         state.last_logged_timeline_count = timeline.size();
     }
+    if (steps.size() != state.last_logged_step_count) {
+        std::cout << "  [StimulusStepsTimeline] Steps=" << steps.size();
+        if (!context.zarr_loader.getStimulusStepsRunName().empty()) {
+            std::cout << ", run='"
+                      << context.zarr_loader.getStimulusStepsRunName()
+                      << "'";
+        }
+        std::cout << std::endl;
+        const size_t preview = std::min<size_t>(steps.size(), 5);
+        for (size_t i = 0; i < preview; ++i) {
+            const auto& step = steps[i];
+            std::cout << "    [" << i << "] step=" << step.step_index
+                      << ", mode='" << step.stimulus_mode
+                      << "', frames=" << step.start_camera_frame << "-"
+                      << step.end_camera_frame;
+            if (step.moving_grating.present &&
+                std::isfinite(
+                    step.moving_grating.grating_direction_camera_deg)) {
+                std::cout << ", camera_dir="
+                          << step.moving_grating.grating_direction_camera_deg;
+            }
+            std::cout << std::endl;
+        }
+        state.last_logged_step_count = steps.size();
+    }
 
-    if (timeline.empty()) {
-        ImGui::TextUnformatted("No stimulus events found.");
+    if (timeline.empty() && steps.empty()) {
+        ImGui::TextUnformatted("No stimulus events or canonical steps found.");
         ImGui::End();
         return result;
     }
@@ -114,6 +186,69 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
 
     if (state.selected_event_idx >= static_cast<int>(timeline.size())) {
         state.selected_event_idx = -1;
+    }
+
+    const auto* current_step =
+        context.zarr_loader.getStimulusStepForFrame(context.current_frame_num);
+    ImGui::SeparatorText("Current Canonical Step");
+    if (current_step != nullptr) {
+        ImGui::Text(
+            "Run: %s",
+            context.zarr_loader.getStimulusStepsRunName().empty()
+                ? "unknown"
+                : context.zarr_loader.getStimulusStepsRunName().c_str());
+        ImGui::Text("Step %d: %s (%s)",
+                    current_step->step_index,
+                    current_step->step_name.empty()
+                        ? "unnamed"
+                        : current_step->step_name.c_str(),
+                    current_step->stimulus_mode.empty()
+                        ? "unknown mode"
+                        : current_step->stimulus_mode.c_str());
+        ImGui::Text("Frames: %d-%d | Duration: %.3f s",
+                    current_step->start_camera_frame,
+                    current_step->end_camera_frame,
+                    current_step->duration_s);
+        if (current_step->moving_grating.present) {
+            ImGui::Text(
+                "Moving grating camera direction: %.1f deg",
+                current_step->moving_grating.grating_direction_camera_deg);
+            ImGui::TextDisabled(
+                "Authored orientation %.1f deg | Offset %.1f deg | %s%s",
+                current_step->moving_grating.orientation_degrees_authored,
+                current_step->moving_grating.camera_to_projector_offset_deg,
+                current_step->moving_grating.direction_mapping_status.empty()
+                    ? "mapping status unknown"
+                    : current_step->moving_grating.direction_mapping_status
+                          .c_str(),
+                current_step->moving_grating.has_direction_mapping_validated
+                    ? (current_step->moving_grating.direction_mapping_validated
+                           ? " | validated"
+                           : " | not auto-validated")
+                    : "");
+        }
+        if (current_step->concentric_grating.present) {
+            ImGui::Text("Concentric center: %.1f, %.1f px | %s",
+                        current_step->concentric_grating.center_x_px,
+                        current_step->concentric_grating.center_y_px,
+                        current_step->concentric_grating
+                                .radial_polarity_authored.empty()
+                            ? "polarity unknown"
+                            : current_step->concentric_grating
+                                  .radial_polarity_authored.c_str());
+            if (current_step->concentric_grating
+                    .has_radial_polarity_validated &&
+                !current_step->concentric_grating
+                     .radial_polarity_validated) {
+                ImGui::TextDisabled(
+                    "Radial polarity is authored, not independently validated.");
+            }
+        }
+    } else if (!steps.empty()) {
+        ImGui::Text("No canonical step covers camera frame %d.",
+                    context.current_frame_num);
+    } else {
+        ImGui::TextUnformatted("Canonical stimulus steps unavailable.");
     }
 
     auto resolveTimelineTargetFrame =
@@ -143,7 +278,7 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
                           : static_cast<double>(clamped);
     }
 
-    size_t timeline_signature = timeline.size();
+    size_t timeline_signature = timeline.size() + steps.size() * 65537u;
     if (!timeline.empty()) {
         auto signature_value = [&](int32_t frame) -> size_t {
             return static_cast<size_t>(std::max(frame, 0));
@@ -167,6 +302,24 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
                 (context.video_fps > 0.0)
                     ? static_cast<double>(frame + 1) / context.video_fps
                     : static_cast<double>(frame + 1);
+            default_max_time = std::max(default_max_time, candidate);
+        }
+    }
+    for (const auto& step : steps) {
+        if (step.start_camera_frame >= 0) {
+            const double candidate =
+                (context.video_fps > 0.0)
+                    ? static_cast<double>(step.start_camera_frame) /
+                          context.video_fps
+                    : static_cast<double>(step.start_camera_frame);
+            default_max_time = std::max(default_max_time, candidate);
+        }
+        if (step.end_camera_frame >= 0) {
+            const double candidate =
+                (context.video_fps > 0.0)
+                    ? static_cast<double>(step.end_camera_frame + 1) /
+                          context.video_fps
+                    : static_cast<double>(step.end_camera_frame + 1);
             default_max_time = std::max(default_max_time, candidate);
         }
     }
@@ -214,6 +367,24 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
             timeline_min_time = *minmax.first;
             timeline_max_time = std::max(default_max_time, *minmax.second);
         }
+        for (const auto& step : steps) {
+            if (step.start_camera_frame >= 0) {
+                const double x =
+                    (context.video_fps > 0.0)
+                        ? static_cast<double>(step.start_camera_frame) /
+                              context.video_fps
+                        : static_cast<double>(step.start_camera_frame);
+                timeline_min_time = std::min(timeline_min_time, x);
+            }
+            if (step.end_camera_frame >= 0) {
+                const double x =
+                    (context.video_fps > 0.0)
+                        ? static_cast<double>(step.end_camera_frame + 1) /
+                              context.video_fps
+                        : static_cast<double>(step.end_camera_frame + 1);
+                timeline_max_time = std::max(timeline_max_time, x);
+            }
+        }
         if (timeline_max_time <= timeline_min_time) {
             timeline_max_time = timeline_min_time + 0.5;
         }
@@ -256,6 +427,38 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
                                     timeline_max_time,
                                     ImGuiCond_Always);
             state.cached_timeline_signature = timeline_signature;
+        }
+
+        ImDrawList* draw_list = ImPlot::GetPlotDrawList();
+        for (const auto& step : steps) {
+            if (step.start_camera_frame < 0 || step.end_camera_frame < 0) {
+                continue;
+            }
+            const double x0 =
+                (context.video_fps > 0.0)
+                    ? static_cast<double>(step.start_camera_frame) /
+                          context.video_fps
+                    : static_cast<double>(step.start_camera_frame);
+            const double x1 =
+                (context.video_fps > 0.0)
+                    ? static_cast<double>(step.end_camera_frame + 1) /
+                          context.video_fps
+                    : static_cast<double>(step.end_camera_frame + 1);
+            ImVec2 p0 = ImPlot::PlotToPixels(ImPlotPoint(x0, -0.45));
+            ImVec2 p1 = ImPlot::PlotToPixels(ImPlotPoint(x1, 0.45));
+            ImVec2 rect_min(std::min(p0.x, p1.x), std::min(p0.y, p1.y));
+            ImVec2 rect_max(std::max(p0.x, p1.x), std::max(p0.y, p1.y));
+            draw_list->AddRectFilled(
+                rect_min, rect_max, stimulusStepFillColor(step), 0.0f);
+            draw_list->AddRect(
+                rect_min, rect_max, stimulusStepBorderColor(step), 0.0f);
+            if (rect_max.x - rect_min.x > 80.0f) {
+                const std::string label = stimulusStepDisplayLabel(step);
+                draw_list->AddText(
+                    ImVec2(rect_min.x + 4.0f, rect_min.y + 4.0f),
+                    IM_COL32(220, 230, 245, 210),
+                    label.c_str());
+            }
         }
 
         for (const auto& [event_type_id, type_label] : event_type_labels) {

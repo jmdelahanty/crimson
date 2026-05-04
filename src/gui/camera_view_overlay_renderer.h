@@ -148,3 +148,6 @@ void drawCameraViewStimulusEventOverlay(
     int view_idx,
     int current_frame_num,
     const std::vector<std::string>& frame_events);
+
+void drawCameraViewStimulusStepDirectionOverlay(
+    const ZarrDetectionData::StimulusStep* stimulus_step);

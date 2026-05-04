@@ -495,6 +495,7 @@ int main(int argc, char **argv) {
     std::string cli_subject_shape_run;
     std::string cli_tail_kinematics_run;
     std::string cli_eye_angle_run;
+    std::string cli_stimulus_run;
     std::filesystem::path cli_perf_log_path;
     std::filesystem::path cli_mask_perf_log_path;
     std::filesystem::path cli_playback_trace_log_path;
@@ -548,6 +549,15 @@ int main(int argc, char **argv) {
                 return 1;
             }
             cli_eye_angle_run = argv[++i];
+            continue;
+        }
+        if (arg == "--stimulus-run") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value for --stimulus-run"
+                          << std::endl;
+                return 1;
+            }
+            cli_stimulus_run = argv[++i];
             continue;
         }
         if (arg == "--perf-log") {
@@ -681,6 +691,9 @@ int main(int argc, char **argv) {
     }
     if (!cli_eye_angle_run.empty()) {
         zarr_loader.setRequestedEyeAngleRunName(cli_eye_angle_run);
+    }
+    if (!cli_stimulus_run.empty()) {
+        zarr_loader.setRequestedStimulusRunName(cli_stimulus_run);
     }
     bool zarr_loaded = false;
 

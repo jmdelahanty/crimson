@@ -178,6 +178,9 @@ void prepareCameraViewFrameContext(
         zarr_available ? input.chaser_states : nullptr,
         input.camera_params,
         !prepared.frame_events.empty() ? &prepared.frame_events : nullptr,
+        zarr_available
+            ? input.zarr_loader->getStimulusStepForFrame(input.current_frame_num)
+            : nullptr,
         input.transport_controls,
     };
 }

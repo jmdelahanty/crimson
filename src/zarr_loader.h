@@ -481,6 +481,58 @@ struct ZarrDetectionData {
     std::vector<std::vector<size_t>> stimulus_events_by_frame;
     std::vector<std::vector<size_t>> stimulus_events_by_camera_frame;
     bool has_stimulus_events = false;
+    struct StimulusStep {
+        struct MovingGratingAttrs {
+            bool present = false;
+            double grating_direction_camera_deg =
+                std::numeric_limits<double>::quiet_NaN();
+            double orientation_degrees_authored =
+                std::numeric_limits<double>::quiet_NaN();
+            double camera_to_projector_offset_deg =
+                std::numeric_limits<double>::quiet_NaN();
+            std::string direction_mapping_status;
+            bool direction_mapping_validated = false;
+            bool has_direction_mapping_validated = false;
+            double speed_mm_s = std::numeric_limits<double>::quiet_NaN();
+            double temporal_frequency_hz =
+                std::numeric_limits<double>::quiet_NaN();
+        };
+
+        struct ConcentricGratingAttrs {
+            bool present = false;
+            std::string stimulus_role;
+            std::string radial_polarity_authored;
+            double radial_sign_authored =
+                std::numeric_limits<double>::quiet_NaN();
+            bool radial_polarity_validated = false;
+            bool has_radial_polarity_validated = false;
+            double center_x_px = std::numeric_limits<double>::quiet_NaN();
+            double center_y_px = std::numeric_limits<double>::quiet_NaN();
+            double center_x_mm = std::numeric_limits<double>::quiet_NaN();
+            double center_y_mm = std::numeric_limits<double>::quiet_NaN();
+            double target_radius_min_mm =
+                std::numeric_limits<double>::quiet_NaN();
+            double target_radius_max_mm =
+                std::numeric_limits<double>::quiet_NaN();
+            double speed_mm_s = std::numeric_limits<double>::quiet_NaN();
+            double temporal_frequency_hz =
+                std::numeric_limits<double>::quiet_NaN();
+        };
+
+        int32_t step_index = -1;
+        std::string step_name;
+        int32_t stimulus_mode_id = -1;
+        std::string stimulus_mode;
+        int32_t start_camera_frame = -1;
+        int32_t end_camera_frame = -1;
+        double duration_s = std::numeric_limits<double>::quiet_NaN();
+        std::string raw_protocol_params_json;
+        MovingGratingAttrs moving_grating;
+        ConcentricGratingAttrs concentric_grating;
+    };
+    std::vector<StimulusStep> stimulus_steps;
+    bool has_stimulus_steps = false;
+    std::string stimulus_steps_run_name;
     bool has_stimulus_alignment_data = false;
     int64_t stimulus_camera_frame_offset = 0;
     std::string stimulus_video_path;     // from run attrs "source_stimulus_video_path"
@@ -730,6 +782,12 @@ public:
     const std::string& getRequestedEyeAngleRunName() const {
         return requested_eye_angle_run_name_;
     }
+    void setRequestedStimulusRunName(const std::string& run_name) {
+        requested_stimulus_run_name_ = run_name;
+    }
+    const std::string& getRequestedStimulusRunName() const {
+        return requested_stimulus_run_name_;
+    }
     
     // Compatibility interface matching H5SessionLoader
     std::vector<LoggedBoundingBox> getBoundingBoxesForFrame(size_t frame_id) const;
@@ -845,6 +903,16 @@ public:
         std::string label;
     };
     std::vector<StimulusEventSummary> getStimulusEventTimeline() const;
+    bool hasStimulusSteps() const { return data_.has_stimulus_steps; }
+    const std::vector<ZarrDetectionData::StimulusStep>& getStimulusSteps()
+        const {
+        return data_.stimulus_steps;
+    }
+    const std::string& getStimulusStepsRunName() const {
+        return data_.stimulus_steps_run_name;
+    }
+    const ZarrDetectionData::StimulusStep* getStimulusStepForFrame(
+        int32_t camera_frame) const;
     bool hasRefinedDetections() const {
         return data_.has_interpolation && data_.latest_interpolation.has_flat_detections;
     }
@@ -1510,6 +1578,7 @@ private:
     std::string requested_subject_shape_run_name_;
     std::string requested_tail_kinematics_run_name_;
     std::string requested_eye_angle_run_name_;
+    std::string requested_stimulus_run_name_;
     DetectionDataset active_dataset_ = DetectionDataset::RawDetect;
     
     // Loading functions
@@ -1550,6 +1619,9 @@ private:
     bool loadRefinedDetectRuns(const ts::kvstore::KvStore& store);
     bool loadRefinedDetectionsAsPrimary(const ts::kvstore::KvStore& store);
     bool loadStimulusAlignment(const ts::kvstore::KvStore& store);
+    bool loadStimulusStepsForRun(const ts::kvstore::KvStore& store,
+                                 const std::string& run_base,
+                                 const std::string& run_name);
     bool loadEyeAngleData(const ts::kvstore::KvStore& store, size_t roi_count);
     bool loadStimulusEventsForRun(const ts::kvstore::KvStore& store, const std::string& run_base);
     void loadStimulusEventEnums(const ts::kvstore::KvStore& store);

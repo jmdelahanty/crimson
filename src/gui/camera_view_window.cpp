@@ -623,6 +623,7 @@ CameraViewWindowResult drawCameraViewWindowContents(
                                                context.current_frame_num,
                                                *context.stimulus_events);
         }
+        drawCameraViewStimulusStepDirectionOverlay(context.stimulus_step);
 
         if (context.use_legacy_manual_keypoint_tools &&
             context.legacy_labeling_state != nullptr) {

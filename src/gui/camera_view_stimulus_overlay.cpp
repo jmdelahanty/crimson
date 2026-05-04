@@ -9,7 +9,9 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <iomanip>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -360,4 +362,66 @@ void drawCameraViewStimulusEventOverlay(
     draw_list->AddText(ImVec2(box_min.x + 6.0f, box_min.y + 4.0f),
                        IM_COL32(200, 220, 255, 255),
                        s_overlay_cache[view_idx].text.c_str());
+}
+
+void drawCameraViewStimulusStepDirectionOverlay(
+    const ZarrDetectionData::StimulusStep* stimulus_step) {
+    if (stimulus_step == nullptr ||
+        stimulus_step->stimulus_mode != "MOVING_GRATING" ||
+        !stimulus_step->moving_grating.present ||
+        !std::isfinite(
+            stimulus_step->moving_grating.grating_direction_camera_deg)) {
+        return;
+    }
+
+    constexpr float kPi = 3.14159265358979323846f;
+    const float direction_deg = static_cast<float>(
+        stimulus_step->moving_grating.grating_direction_camera_deg);
+    const float direction_rad = direction_deg * kPi / 180.0f;
+
+    const ImVec2 plot_pos = ImPlot::GetPlotPos();
+    const ImVec2 plot_size = ImPlot::GetPlotSize();
+    if (plot_size.x < 80.0f || plot_size.y < 60.0f) {
+        return;
+    }
+
+    ImDrawList* draw_list = ImPlot::GetPlotDrawList();
+    const float panel_width = std::min(204.0f, plot_size.x - 20.0f);
+    constexpr float kPanelHeight = 76.0f;
+    const ImVec2 box_min(plot_pos.x + plot_size.x - panel_width - 12.0f,
+                         plot_pos.y + 12.0f);
+    const ImVec2 box_max(box_min.x + panel_width, box_min.y + kPanelHeight);
+
+    draw_list->AddRectFilled(box_min, box_max, IM_COL32(8, 14, 24, 190), 6.0f);
+    draw_list->AddRect(box_min, box_max, IM_COL32(120, 190, 255, 220), 6.0f);
+
+    std::ostringstream label;
+    label << "Grating motion " << std::fixed << std::setprecision(0)
+          << direction_deg << " deg";
+    const std::string label_text = label.str();
+    draw_list->AddText(ImVec2(box_min.x + 10.0f, box_min.y + 8.0f),
+                       IM_COL32(225, 238, 255, 255),
+                       label_text.c_str());
+
+    const ImVec2 center(box_min.x + panel_width * 0.5f, box_min.y + 49.0f);
+    const float arrow_half_len = std::max(28.0f, panel_width * 0.27f);
+    const ImVec2 dir(std::cos(direction_rad), -std::sin(direction_rad));
+    const ImVec2 p0(center.x - dir.x * arrow_half_len,
+                    center.y - dir.y * arrow_half_len);
+    const ImVec2 p1(center.x + dir.x * arrow_half_len,
+                    center.y + dir.y * arrow_half_len);
+    const ImU32 arrow_color = IM_COL32(255, 215, 75, 255);
+    draw_list->AddLine(p0, p1, arrow_color, 3.0f);
+
+    const ImVec2 back(p0.x - p1.x, p0.y - p1.y);
+    const float len = std::sqrt(back.x * back.x + back.y * back.y);
+    if (len > 1e-3f) {
+        const ImVec2 unit(back.x / len, back.y / len);
+        constexpr float head_size = 12.0f;
+        const ImVec2 left(p1.x + unit.x * head_size + unit.y * head_size * 0.55f,
+                          p1.y + unit.y * head_size - unit.x * head_size * 0.55f);
+        const ImVec2 right(p1.x + unit.x * head_size - unit.y * head_size * 0.55f,
+                           p1.y + unit.y * head_size + unit.x * head_size * 0.55f);
+        draw_list->AddTriangleFilled(p1, left, right, arrow_color);
+    }
 }

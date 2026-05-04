@@ -3,9 +3,114 @@
 
 using json = nlohmann::json;
 
+namespace {
+
+std::string stimulusJsonStringAttr(const json& attrs, const char* key) {
+    if (attrs.contains(key) && attrs[key].is_string()) {
+        return attrs[key].get<std::string>();
+    }
+    return {};
+}
+
+int32_t stimulusJsonIntAttr(const json& attrs, const char* key) {
+    if (attrs.contains(key) && attrs[key].is_number_integer()) {
+        return attrs[key].get<int32_t>();
+    }
+    if (attrs.contains(key) && attrs[key].is_number()) {
+        return clampToInt32(static_cast<int64_t>(attrs[key].get<double>()));
+    }
+    return -1;
+}
+
+double stimulusJsonDoubleAttr(const json& attrs, const char* key) {
+    if (attrs.contains(key) && attrs[key].is_number()) {
+        return attrs[key].get<double>();
+    }
+    return std::numeric_limits<double>::quiet_NaN();
+}
+
+bool stimulusJsonBoolAttr(const json& attrs,
+                          const char* key,
+                          bool& out_value) {
+    if (!attrs.contains(key)) {
+        return false;
+    }
+    if (attrs[key].is_boolean()) {
+        out_value = attrs[key].get<bool>();
+        return true;
+    }
+    if (attrs[key].is_number_integer()) {
+        out_value = attrs[key].get<int>() != 0;
+        return true;
+    }
+    return false;
+}
+
+bool parseStimulusStepDirectoryName(const std::string& name,
+                                    int32_t& out_step_index) {
+    constexpr const char* kPrefix = "step_";
+    constexpr size_t kPrefixLen = 5;
+    if (name.rfind(kPrefix, 0) != 0 || name.size() <= kPrefixLen) {
+        return false;
+    }
+    int64_t value = 0;
+    for (size_t i = kPrefixLen; i < name.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(name[i]);
+        if (!std::isdigit(c)) {
+            return false;
+        }
+        value = value * 10 + static_cast<int64_t>(name[i] - '0');
+        if (value > std::numeric_limits<int32_t>::max()) {
+            return false;
+        }
+    }
+    out_step_index = static_cast<int32_t>(value);
+    return true;
+}
+
+std::vector<int32_t> collectStimulusStepIndicesFs(
+    const std::string& root_path,
+    const std::string& run_name) {
+    namespace fs = std::filesystem;
+    std::vector<int32_t> indices;
+    if (root_path.empty() || run_name.empty()) {
+        return indices;
+    }
+
+    const fs::path steps_dir =
+        fs::path(root_path) / "analysis" / "stimulus_runs" / run_name /
+        "steps";
+    if (!fs::exists(steps_dir) || !fs::is_directory(steps_dir)) {
+        return indices;
+    }
+
+    for (const auto& entry : fs::directory_iterator(steps_dir)) {
+        if (!entry.is_directory()) {
+            continue;
+        }
+        if (!fs::exists(entry.path() / "zarr.json")) {
+            continue;
+        }
+        int32_t step_index = -1;
+        if (parseStimulusStepDirectoryName(
+                entry.path().filename().string(), step_index)) {
+            indices.push_back(step_index);
+        }
+    }
+    std::sort(indices.begin(), indices.end());
+    indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+    return indices;
+}
+
+}  // namespace
+
 bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& store) {
     std::optional<std::string> latest_run_opt;
-    if (auto group_attrs = readAttrsAny(store, "analysis/stimulus_runs")) {
+    if (!requested_stimulus_run_name_.empty()) {
+        latest_run_opt = requested_stimulus_run_name_;
+        std::cout << "  [Stimulus] Requested run candidate: '"
+                  << *latest_run_opt << "'" << std::endl;
+    } else if (auto group_attrs = readAttrsAny(store, "analysis/stimulus_runs")) {
         auto latest = extractLatestRunName(*group_attrs);
         if (!latest.empty()) {
             std::cout << "  [Stimulus] Attr latest run candidate: '" << latest << "'" << std::endl;
@@ -38,6 +143,8 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
     data_.stimulus_video_path.clear();
     data_.stimulus_source_h5.clear();
     data_.chaser_transform = ZarrDetectionData::ChaserCoordinateTransform();
+
+    loadStimulusStepsForRun(store, run_base, latest_run);
 
     // Always attempt to load stimulus event metadata, even if frame alignment
     // data is missing. This keeps the event timeline available in the UI.
@@ -406,6 +513,150 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
     updateChaserCameraFramesFromAlignment();
 
    return true;
+}
+
+bool ZarrDetectionLoader::loadStimulusStepsForRun(
+    const ts::kvstore::KvStore& store,
+    const std::string& run_base,
+    const std::string& run_name) {
+    data_.stimulus_steps.clear();
+    data_.has_stimulus_steps = false;
+    data_.stimulus_steps_run_name.clear();
+
+    if (run_name.empty()) {
+        return false;
+    }
+
+    const std::vector<int32_t> step_indices =
+        collectStimulusStepIndicesFs(root_path_, run_name);
+    if (step_indices.empty()) {
+        std::cout << "  [StimulusSteps] No canonical step groups found for run '"
+                  << run_name << "'" << std::endl;
+        return false;
+    }
+
+    auto read_step_attrs = [&](const std::string& relative_path)
+        -> std::optional<json> {
+        if (!root_path_.empty()) {
+            const auto zarr_json_path =
+                std::filesystem::path(root_path_) / relative_path /
+                "zarr.json";
+            if (!std::filesystem::exists(zarr_json_path)) {
+                return std::nullopt;
+            }
+            return readAttrsFromZarrJsonFile(zarr_json_path);
+        }
+        return readAttrsAny(store, relative_path);
+    };
+
+    std::vector<ZarrDetectionData::StimulusStep> steps;
+    steps.reserve(step_indices.size());
+
+    for (const int32_t discovered_step_index : step_indices) {
+        const std::string step_name =
+            "step_" + std::to_string(discovered_step_index);
+        const std::string step_base =
+            appendPath(appendPath(run_base, "steps"), step_name);
+        auto step_attrs = read_step_attrs(step_base);
+        if (!step_attrs) {
+            continue;
+        }
+
+        ZarrDetectionData::StimulusStep step;
+        step.step_index =
+            stimulusJsonIntAttr(*step_attrs, "step_index");
+        if (step.step_index < 0) {
+            step.step_index = discovered_step_index;
+        }
+        step.step_name = stimulusJsonStringAttr(*step_attrs, "step_name");
+        step.stimulus_mode_id =
+            stimulusJsonIntAttr(*step_attrs, "stimulus_mode_id");
+        step.stimulus_mode =
+            stimulusJsonStringAttr(*step_attrs, "stimulus_mode");
+        step.start_camera_frame =
+            stimulusJsonIntAttr(*step_attrs, "start_camera_frame");
+        step.end_camera_frame =
+            stimulusJsonIntAttr(*step_attrs, "end_camera_frame");
+        step.duration_s = stimulusJsonDoubleAttr(*step_attrs, "duration_s");
+        step.raw_protocol_params_json =
+            stimulusJsonStringAttr(*step_attrs, "raw_protocol_params_json");
+
+        if (auto moving_attrs =
+                read_step_attrs(appendPath(step_base, "moving_grating"))) {
+            auto& moving = step.moving_grating;
+            moving.present = true;
+            moving.grating_direction_camera_deg = stimulusJsonDoubleAttr(
+                *moving_attrs, "grating_direction_camera_deg");
+            moving.orientation_degrees_authored = stimulusJsonDoubleAttr(
+                *moving_attrs, "orientation_degrees_authored");
+            moving.camera_to_projector_offset_deg = stimulusJsonDoubleAttr(
+                *moving_attrs, "camera_to_projector_offset_deg");
+            moving.direction_mapping_status = stimulusJsonStringAttr(
+                *moving_attrs, "direction_mapping_status");
+            moving.has_direction_mapping_validated = stimulusJsonBoolAttr(
+                *moving_attrs,
+                "direction_mapping_validated",
+                moving.direction_mapping_validated);
+            moving.speed_mm_s =
+                stimulusJsonDoubleAttr(*moving_attrs, "speed_mm_s");
+            moving.temporal_frequency_hz = stimulusJsonDoubleAttr(
+                *moving_attrs, "temporal_frequency_hz");
+        }
+
+        if (auto concentric_attrs =
+                read_step_attrs(appendPath(step_base, "concentric_grating"))) {
+            auto& concentric = step.concentric_grating;
+            concentric.present = true;
+            concentric.stimulus_role = stimulusJsonStringAttr(
+                *concentric_attrs, "stimulus_role");
+            concentric.radial_polarity_authored = stimulusJsonStringAttr(
+                *concentric_attrs, "radial_polarity_authored");
+            concentric.radial_sign_authored = stimulusJsonDoubleAttr(
+                *concentric_attrs, "radial_sign_authored");
+            concentric.has_radial_polarity_validated = stimulusJsonBoolAttr(
+                *concentric_attrs,
+                "radial_polarity_validated",
+                concentric.radial_polarity_validated);
+            concentric.center_x_px =
+                stimulusJsonDoubleAttr(*concentric_attrs, "center_x_px");
+            concentric.center_y_px =
+                stimulusJsonDoubleAttr(*concentric_attrs, "center_y_px");
+            concentric.center_x_mm =
+                stimulusJsonDoubleAttr(*concentric_attrs, "center_x_mm");
+            concentric.center_y_mm =
+                stimulusJsonDoubleAttr(*concentric_attrs, "center_y_mm");
+            concentric.target_radius_min_mm = stimulusJsonDoubleAttr(
+                *concentric_attrs, "target_radius_min_mm");
+            concentric.target_radius_max_mm = stimulusJsonDoubleAttr(
+                *concentric_attrs, "target_radius_max_mm");
+            concentric.speed_mm_s =
+                stimulusJsonDoubleAttr(*concentric_attrs, "speed_mm_s");
+            concentric.temporal_frequency_hz = stimulusJsonDoubleAttr(
+                *concentric_attrs, "temporal_frequency_hz");
+        }
+
+        steps.push_back(std::move(step));
+    }
+
+    std::sort(steps.begin(),
+              steps.end(),
+              [](const auto& a, const auto& b) {
+                  if (a.start_camera_frame != b.start_camera_frame) {
+                      return a.start_camera_frame < b.start_camera_frame;
+                  }
+                  return a.step_index < b.step_index;
+              });
+
+    data_.stimulus_steps = std::move(steps);
+    data_.has_stimulus_steps = !data_.stimulus_steps.empty();
+    if (data_.has_stimulus_steps) {
+        data_.stimulus_steps_run_name = run_name;
+        std::cout << "  [StimulusSteps] Loaded "
+                  << data_.stimulus_steps.size()
+                  << " canonical steps for run '" << run_name << "'"
+                  << std::endl;
+    }
+    return data_.has_stimulus_steps;
 }
 
 void ZarrDetectionLoader::loadStimulusEventEnums(const ts::kvstore::KvStore& store) {
@@ -1734,6 +1985,28 @@ ZarrDetectionLoader::getStimulusEventTimeline() const {
                   return a.stimulus_frame_num < b.stimulus_frame_num;
               });
     return result;
+}
+
+const ZarrDetectionData::StimulusStep*
+ZarrDetectionLoader::getStimulusStepForFrame(int32_t camera_frame) const {
+    if (camera_frame < 0 || data_.stimulus_steps.empty()) {
+        return nullptr;
+    }
+
+    // Step boundaries can share a frame at handoff points. Prefer the later
+    // step when a frame is both the previous end and next start.
+    for (auto it = data_.stimulus_steps.rbegin();
+         it != data_.stimulus_steps.rend();
+         ++it) {
+        if (it->start_camera_frame < 0 || it->end_camera_frame < 0) {
+            continue;
+        }
+        if (camera_frame >= it->start_camera_frame &&
+            camera_frame <= it->end_camera_frame) {
+            return &(*it);
+        }
+    }
+    return nullptr;
 }
 
 bool ZarrDetectionLoader::hasStimulusFrameMapping() const {

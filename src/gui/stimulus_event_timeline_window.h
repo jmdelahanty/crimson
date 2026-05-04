@@ -17,6 +17,7 @@ struct TimelineScrollState {
 
 struct StimulusEventTimelineWindowState {
     size_t last_logged_timeline_count = std::numeric_limits<size_t>::max();
+    size_t last_logged_step_count = std::numeric_limits<size_t>::max();
     std::unordered_map<int32_t, bool> event_type_filter;
     bool filter_initialized = false;
     int selected_event_idx = -1;
