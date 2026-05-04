@@ -129,7 +129,7 @@ StimulusPlaybackPresentationResult updateStimulusPlaybackPresentation(
             stimulus_player.playback_catchup_target_frame = catchup_seek_frame;
             stimulus_player.playback_catchup_last_request = now;
             decoder_requested = true;
-            if (crimson_seek_debug_logs_enabled()) {
+            if (crimson_stimulus_debug_logs_enabled()) {
                 std::cout << "[Stimulus] catch-up seek target="
                           << target_stimulus_frame
                           << " progress=" << stimulus_progress_frame
@@ -157,7 +157,7 @@ StimulusPlaybackPresentationResult updateStimulusPlaybackPresentation(
         if (context.decoder_active_now && newest_frame >= 0 &&
             newest_frame > high_threshold) {
             if (!stimulus_player.throttled &&
-                crimson_seek_debug_logs_enabled()) {
+                crimson_stimulus_debug_logs_enabled()) {
                 std::cout << "[Stimulus] throttling decode: newest="
                           << newest_frame
                           << " high_threshold=" << high_threshold << std::endl;
@@ -169,7 +169,7 @@ StimulusPlaybackPresentationResult updateStimulusPlaybackPresentation(
             const int resume_target =
                 std::max(low_threshold, stimulus_player.throttle_resume_frame);
             if (newest_frame <= resume_target) {
-                if (crimson_seek_debug_logs_enabled()) {
+                if (crimson_stimulus_debug_logs_enabled()) {
                     std::cout << "[Stimulus] resuming decode: newest="
                               << newest_frame
                               << " resume_target=" << resume_target
@@ -202,7 +202,7 @@ StimulusPlaybackPresentationResult updateStimulusPlaybackPresentation(
     }
 
     if (decoder_requested != state.last_decoder_logged) {
-        if (crimson_seek_debug_logs_enabled()) {
+        if (crimson_stimulus_debug_logs_enabled()) {
             std::cout << "[Stimulus] decoder_should_run="
                       << (decoder_requested ? "true" : "false")
                       << " (play=" << (playback_state.play_video ? "true" : "false")
@@ -225,7 +225,7 @@ StimulusPlaybackPresentationResult updateStimulusPlaybackPresentation(
                 uploadStimulusFrameToTexture(stimulus_player, buffer_index);
                 stimulus_player.last_displayed_frame = buffered_frame;
                 result.uploaded_frame = true;
-                if (crimson_seek_debug_logs_enabled()) {
+                if (crimson_stimulus_debug_logs_enabled()) {
                     std::cout << "[Stimulus] uploaded frame "
                               << buffered_frame
                               << " for target " << target_stimulus_frame
@@ -239,6 +239,41 @@ StimulusPlaybackPresentationResult updateStimulusPlaybackPresentation(
     result.displayed_stimulus_frame = stimulus_player.last_displayed_frame;
     result.update_ms =
         durationMs(std::chrono::steady_clock::now() - update_start);
+    if (crimson_stimulus_debug_logs_enabled()) {
+        const bool changed =
+            result.target_stimulus_frame !=
+                state.last_logged_target_stimulus_frame ||
+            result.displayed_stimulus_frame !=
+                state.last_logged_displayed_stimulus_frame ||
+            result.decoder_requested != state.last_logged_decoder_requested ||
+            stimulus_player.throttled != state.last_logged_throttled ||
+            result.uploaded_frame;
+        if (state.presentation_debug_logs < 12 || changed) {
+            std::cout << "[StimulusPresentation] update"
+                      << " camera_frame=" << context.current_frame_num
+                      << " target_stimulus_frame="
+                      << result.target_stimulus_frame
+                      << " displayed_stimulus_frame="
+                      << result.displayed_stimulus_frame
+                      << " latest_decoded_frame="
+                      << context.latest_decoded_frame
+                      << " decoder_requested="
+                      << (result.decoder_requested ? "true" : "false")
+                      << " uploaded_frame="
+                      << (result.uploaded_frame ? "true" : "false")
+                      << " throttled="
+                      << (stimulus_player.throttled ? "true" : "false")
+                      << " seek_state=" << seekStateName(seek_progress.state)
+                      << " update_ms=" << result.update_ms << std::endl;
+            state.last_logged_target_stimulus_frame =
+                result.target_stimulus_frame;
+            state.last_logged_displayed_stimulus_frame =
+                result.displayed_stimulus_frame;
+            state.last_logged_decoder_requested = result.decoder_requested;
+            state.last_logged_throttled = stimulus_player.throttled;
+            state.presentation_debug_logs++;
+        }
+    }
     return result;
 }
 
@@ -407,7 +442,7 @@ StimulusPlaybackDebugWindowsResult drawStimulusPlaybackDebugWindows(
                 if (ImGui::Selectable(label, selected_item == i)) {
                     uploadStimulusFrameToTexture(stimulus_player, item.slot);
                     stimulus_player.last_displayed_frame = item.frame;
-                    if (crimson_seek_debug_logs_enabled()) {
+                    if (crimson_stimulus_debug_logs_enabled()) {
                         std::cout << "[Stimulus] debug upload frame "
                                   << item.frame << " (slot " << item.slot
                                   << ")" << std::endl;

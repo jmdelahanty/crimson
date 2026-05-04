@@ -6,6 +6,11 @@ class ZarrDetectionLoader;
 
 struct StimulusPlaybackPresentationState {
     bool last_decoder_logged = false;
+    int last_logged_target_stimulus_frame = -2;
+    int last_logged_displayed_stimulus_frame = -2;
+    bool last_logged_decoder_requested = false;
+    bool last_logged_throttled = false;
+    int presentation_debug_logs = 0;
 };
 
 struct StimulusPlaybackPresentationContext {
