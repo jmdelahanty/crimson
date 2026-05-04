@@ -309,12 +309,18 @@ double drawAnalysisTimelineMotionPlots(
                     context.selected_swim_bouts->end_frame.size()) {
                 ImPlotRect limits = ImPlot::GetPlotLimits();
                 ImDrawList* draw_list = ImPlot::GetPlotDrawList();
+                const ImVec2 plot_pos = ImPlot::GetPlotPos();
+                const ImVec2 plot_size = ImPlot::GetPlotSize();
+                const ImVec2 clip_min = plot_pos;
+                const ImVec2 clip_max(plot_pos.x + plot_size.x,
+                                      plot_pos.y + plot_size.y);
                 const ImU32 bout_fill =
                     ImGui::GetColorU32(ImVec4(0.15f, 0.95f, 0.45f, 0.16f));
                 const ImU32 bout_core_fill =
                     ImGui::GetColorU32(ImVec4(0.15f, 0.95f, 0.45f, 0.24f));
                 const size_t bout_count =
                     context.selected_swim_bouts->start_frame.size();
+                draw_list->PushClipRect(clip_min, clip_max, true);
                 for (size_t i = 0; i < bout_count; ++i) {
                     const auto start_time =
                         frameToTime(context.selected_swim_bouts->start_frame[i],
@@ -327,14 +333,21 @@ double drawAnalysisTimelineMotionPlots(
                                     context.source_time_seconds,
                                     context.video_fps);
                     if (!start_time.has_value() || !end_time.has_value() ||
-                        *end_time < window_min ||
-                        *start_time > window_max) {
+                        *end_time < limits.X.Min ||
+                        *start_time > limits.X.Max) {
+                        continue;
+                    }
+                    const double visible_start =
+                        std::clamp(*start_time, limits.X.Min, limits.X.Max);
+                    const double visible_end =
+                        std::clamp(*end_time, limits.X.Min, limits.X.Max);
+                    if (visible_end <= visible_start) {
                         continue;
                     }
                     const ImVec2 p0 = ImPlot::PlotToPixels(
-                        ImPlotPoint(*start_time, limits.Y.Max));
+                        ImPlotPoint(visible_start, limits.Y.Max));
                     const ImVec2 p1 = ImPlot::PlotToPixels(
-                        ImPlotPoint(*end_time, limits.Y.Min));
+                        ImPlotPoint(visible_end, limits.Y.Min));
                     draw_list->AddRectFilled(p0, p1, bout_fill, 0.0f);
                     if (i < context.selected_swim_bouts
                                 ->core_start_frame.size() &&
@@ -351,15 +364,33 @@ double drawAnalysisTimelineMotionPlots(
                             context.source_time_seconds,
                             context.video_fps);
                         if (core_start.has_value() && core_end.has_value()) {
+                            if (*core_end < limits.X.Min ||
+                                *core_start > limits.X.Max) {
+                                continue;
+                            }
+                            const double visible_core_start =
+                                std::clamp(*core_start,
+                                           limits.X.Min,
+                                           limits.X.Max);
+                            const double visible_core_end =
+                                std::clamp(*core_end,
+                                           limits.X.Min,
+                                           limits.X.Max);
+                            if (visible_core_end <= visible_core_start) {
+                                continue;
+                            }
                             const ImVec2 c0 = ImPlot::PlotToPixels(
-                                ImPlotPoint(*core_start, limits.Y.Max));
+                                ImPlotPoint(visible_core_start,
+                                            limits.Y.Max));
                             const ImVec2 c1 = ImPlot::PlotToPixels(
-                                ImPlotPoint(*core_end, limits.Y.Min));
+                                ImPlotPoint(visible_core_end,
+                                            limits.Y.Min));
                             draw_list->AddRectFilled(c0, c1, bout_core_fill,
                                                      0.0f);
                         }
                     }
                 }
+                draw_list->PopClipRect();
             }
 
             if (context.state.show_smoothed &&

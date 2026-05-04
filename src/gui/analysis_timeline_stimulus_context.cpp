@@ -262,11 +262,17 @@ void drawAnalysisTimelineStimulusContext(
 
         ImDrawList* draw_list = ImPlot::GetPlotDrawList();
         ImPlotRect limits = ImPlot::GetPlotLimits();
+        const ImVec2 plot_pos = ImPlot::GetPlotPos();
+        const ImVec2 plot_size = ImPlot::GetPlotSize();
+        const ImVec2 clip_min = plot_pos;
+        const ImVec2 clip_max(plot_pos.x + plot_size.x,
+                              plot_pos.y + plot_size.y);
         const ImVec2 lane_min =
             ImPlot::PlotToPixels(ImPlotPoint(limits.X.Min, 0.45));
         const ImVec2 lane_max =
             ImPlot::PlotToPixels(ImPlotPoint(limits.X.Max, -0.45));
 
+        draw_list->PushClipRect(clip_min, clip_max, true);
         int hovered_step = -1;
         for (size_t i = 0; i < steps.size(); ++i) {
             const auto& step = steps[i];
@@ -280,8 +286,17 @@ void drawAnalysisTimelineStimulusContext(
             if (x1 < limits.X.Min || x0 > limits.X.Max) {
                 continue;
             }
-            const ImVec2 p0 = ImPlot::PlotToPixels(ImPlotPoint(x0, 0.42));
-            const ImVec2 p1 = ImPlot::PlotToPixels(ImPlotPoint(x1, -0.42));
+            const double visible_x0 =
+                std::clamp(x0, limits.X.Min, limits.X.Max);
+            const double visible_x1 =
+                std::clamp(x1, limits.X.Min, limits.X.Max);
+            if (visible_x1 <= visible_x0) {
+                continue;
+            }
+            const ImVec2 p0 =
+                ImPlot::PlotToPixels(ImPlotPoint(visible_x0, 0.42));
+            const ImVec2 p1 =
+                ImPlot::PlotToPixels(ImPlotPoint(visible_x1, -0.42));
             const ImVec2 rect_min(std::min(p0.x, p1.x),
                                   std::min(p0.y, p1.y));
             const ImVec2 rect_max(std::max(p0.x, p1.x),
@@ -353,6 +368,7 @@ void drawAnalysisTimelineStimulusContext(
                 }
             }
         }
+        draw_list->PopClipRect();
 
         drawCurrentTimeMarker(current_time);
 
