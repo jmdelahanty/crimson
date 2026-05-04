@@ -57,6 +57,7 @@ struct CropPreviewWindowContext {
     int selected_detection_index = -1;
     std::optional<CropSpec> selected_crop_spec;
     bool play_video = false;
+    bool* show_window = nullptr;
 };
 
 struct CropPreviewWindowResult {

@@ -11,6 +11,7 @@
 struct RefinedKeypointReviewPanelState {
     ReviewMetadataEditorState review_metadata{};
     FullFrameKeypointEditState full_frame_edit{};
+    bool show_advanced_crop_preview = false;
     std::string review_write_status;
     std::string manual_write_status;
 

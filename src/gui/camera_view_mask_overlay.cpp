@@ -1,6 +1,8 @@
 #include "gui/camera_view_overlay_renderer.h"
 #include "gui/camera_view_eye_angle_overlay.h"
 #include "gui/camera_view_overlay_style.h"
+#include "gui/refined_keypoint_style.h"
+#include "refined_keypoint_repository.h"
 
 #include "imgui.h"
 #include "implot.h"
@@ -939,4 +941,472 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
         }
     }
     return finish();
+}
+
+void drawCameraViewActiveRoiInsetOverlay(
+    unsigned int camera_texture_id,
+    int image_width_px,
+    int image_height_px,
+    const ZarrDetectionLoader::FrameDetections& mask_details,
+    const ZarrDetectionLoader::FrameDetections* detection_details,
+    const RefinedKeypointSelection* selected_keypoint_selection,
+    const std::string& smoothing_run_id,
+    const CameraViewMaskOverlayOptions& mask_options,
+    bool show_keypoint_markers,
+    const CameraViewSubjectMaskPreview* edit_preview,
+    const CameraViewActiveRoiInsetOptions& options) {
+    if (!options.show_inset || camera_texture_id == 0 || image_width_px <= 0 ||
+        image_height_px <= 0 || !mask_details.includes_eye_masks) {
+        return;
+    }
+
+    auto valid_mask = [](const ZarrDetectionLoader::FrameDetections::EyeMask& mask) {
+            return mask.valid &&
+                   mask.rows > 0 && mask.cols > 0 && mask.roi_width > 0.0f &&
+                   mask.roi_height > 0.0f && std::isfinite(mask.offset_x) &&
+                   std::isfinite(mask.offset_y);
+    };
+    auto find_mask_by_roi = [&](int32_t roi_index) {
+        if (roi_index < 0) {
+            return mask_details.eye_masks.end();
+        }
+        return std::find_if(
+            mask_details.eye_masks.begin(),
+            mask_details.eye_masks.end(),
+            [&](const ZarrDetectionLoader::FrameDetections::EyeMask& mask) {
+                return valid_mask(mask) && mask.roi_index == roi_index;
+            });
+    };
+
+    auto mask_it = mask_details.eye_masks.end();
+    size_t detection_index = 0;
+    if (mask_options.highlighted_roi_index >= 0) {
+        mask_it = find_mask_by_roi(mask_options.highlighted_roi_index);
+    }
+    if (mask_it == mask_details.eye_masks.end() &&
+        selected_keypoint_selection != nullptr &&
+        selected_keypoint_selection->valid) {
+        mask_it = find_mask_by_roi(selected_keypoint_selection->roi_index);
+        if (mask_it == mask_details.eye_masks.end() &&
+            selected_keypoint_selection->detection_index <
+                mask_details.eye_masks.size() &&
+            valid_mask(mask_details.eye_masks
+                           [selected_keypoint_selection->detection_index])) {
+            mask_it = mask_details.eye_masks.begin() +
+                      static_cast<std::ptrdiff_t>(
+                          selected_keypoint_selection->detection_index);
+        }
+    }
+    if (mask_it == mask_details.eye_masks.end()) {
+        mask_it = std::find_if(mask_details.eye_masks.begin(),
+                               mask_details.eye_masks.end(),
+                               valid_mask);
+    }
+    if (mask_it == mask_details.eye_masks.end()) {
+        return;
+    }
+    detection_index = static_cast<size_t>(
+        std::distance(mask_details.eye_masks.begin(), mask_it));
+    const auto& mask = *mask_it;
+
+    auto resolve_heading_for_detection =
+        [&](const ZarrDetectionLoader::FrameDetections* details,
+            float& out_heading_deg) {
+            if (details == nullptr ||
+                detection_index >= details->headings_deg.size()) {
+                return false;
+            }
+            if (!details->heading_valid.empty() &&
+                (detection_index >= details->heading_valid.size() ||
+                 details->heading_valid[detection_index] == 0)) {
+                return false;
+            }
+            const float heading_deg = details->headings_deg[detection_index];
+            if (!std::isfinite(heading_deg)) {
+                return false;
+            }
+            out_heading_deg = heading_deg;
+            return true;
+        };
+    float inset_heading_deg = 0.0f;
+    const bool heading_available =
+        resolve_heading_for_detection(&mask_details, inset_heading_deg) ||
+        resolve_heading_for_detection(detection_details, inset_heading_deg);
+    const bool use_heading_normalized =
+        options.heading_normalized_view && heading_available;
+
+    const ImVec2 plot_pos = ImPlot::GetPlotPos();
+    const ImVec2 plot_size = ImPlot::GetPlotSize();
+    if (plot_size.x < 160.0f || plot_size.y < 120.0f) {
+        return;
+    }
+
+    constexpr float kPad = 7.0f;
+    constexpr float kOuterMargin = 12.0f;
+    const float max_width = std::min(plot_size.x - kOuterMargin * 2.0f,
+                                     plot_size.x * 0.34f);
+    float image_width = std::clamp(options.width_px,
+                                   120.0f,
+                                   std::max(120.0f, max_width));
+    float image_height = image_width;
+    const float max_image_height = plot_size.y * 0.42f;
+    if (!use_heading_normalized) {
+        const float aspect =
+            mask.roi_width > 0.0f ? mask.roi_height / mask.roi_width : 1.0f;
+        image_height = image_width * std::clamp(aspect, 0.35f, 2.4f);
+        if (image_height > max_image_height) {
+            image_height = max_image_height;
+            image_width =
+                image_height /
+                std::max(0.35f, std::clamp(aspect, 0.35f, 2.4f));
+        }
+    } else if (image_height > max_image_height) {
+        image_width = max_image_height;
+        image_height = max_image_height;
+    }
+    image_width = std::max(96.0f, image_width);
+    image_height = std::max(64.0f, image_height);
+
+    const float label_height = options.show_label ? 22.0f : 0.0f;
+    const ImVec2 box_min(
+        plot_pos.x + plot_size.x - image_width - kPad * 2.0f - kOuterMargin,
+        plot_pos.y + plot_size.y - image_height - label_height - kPad * 2.0f -
+            kOuterMargin);
+    const ImVec2 box_max(box_min.x + image_width + kPad * 2.0f,
+                         box_min.y + image_height + label_height + kPad * 2.0f);
+    const ImVec2 image_min(box_min.x + kPad, box_min.y + kPad);
+    const ImVec2 image_max(image_min.x + image_width, image_min.y + image_height);
+
+    const double crop_x0 = std::clamp(static_cast<double>(mask.offset_x),
+                                      0.0,
+                                      static_cast<double>(image_width_px));
+    const double crop_y0 = std::clamp(static_cast<double>(mask.offset_y),
+                                      0.0,
+                                      static_cast<double>(image_height_px));
+    const double crop_x1 = std::clamp(
+        static_cast<double>(mask.offset_x + mask.roi_width),
+        0.0,
+        static_cast<double>(image_width_px));
+    const double crop_y1 = std::clamp(
+        static_cast<double>(mask.offset_y + mask.roi_height),
+        0.0,
+        static_cast<double>(image_height_px));
+    if (crop_x1 <= crop_x0 || crop_y1 <= crop_y0) {
+        return;
+    }
+
+    ImDrawList* draw_list = ImPlot::GetPlotDrawList();
+    draw_list->AddRectFilled(box_min, box_max, IM_COL32(5, 8, 13, 218), 6.0f);
+    draw_list->AddRect(box_min, box_max, IM_COL32(255, 240, 80, 220), 6.0f);
+
+    constexpr float kPi = 3.14159265358979323846f;
+    const float rotation_rad =
+        use_heading_normalized ? -inset_heading_deg * kPi / 180.0f : 0.0f;
+    const float rotation_c = std::cos(rotation_rad);
+    const float rotation_s = std::sin(rotation_rad);
+
+    const ImVec2 image_center(image_min.x + image_width * 0.5f,
+                              image_min.y + image_height * 0.5f);
+    auto unit_to_inset = [&](float sx, float sy) {
+        sx = std::clamp(sx, 0.0f, 1.0f);
+        sy = std::clamp(sy, 0.0f, 1.0f);
+        const float dx = (sx - 0.5f) * image_width;
+        const float dy = (sy - 0.5f) * image_height;
+        const float rx =
+            use_heading_normalized
+                ? rotation_c * dx + rotation_s * dy
+                : dx;
+        const float ry =
+            use_heading_normalized
+                ? -rotation_s * dx + rotation_c * dy
+                : dy;
+        return ImVec2(image_center.x + rx, image_center.y + ry);
+    };
+    auto draw_textured_inset_quad = [&](ImTextureID texture_id,
+                                        ImVec2 uv_min,
+                                        ImVec2 uv_max,
+                                        ImU32 tint) {
+        draw_list->AddImageQuad(
+            texture_id,
+            unit_to_inset(0.0f, 0.0f),
+            unit_to_inset(1.0f, 0.0f),
+            unit_to_inset(1.0f, 1.0f),
+            unit_to_inset(0.0f, 1.0f),
+            ImVec2(uv_min.x, uv_min.y),
+            ImVec2(uv_max.x, uv_min.y),
+            ImVec2(uv_max.x, uv_max.y),
+            ImVec2(uv_min.x, uv_max.y),
+            tint);
+    };
+
+    draw_list->PushClipRect(image_min, image_max, true);
+    draw_textured_inset_quad(
+        (ImTextureID)(intptr_t)camera_texture_id,
+        ImVec2(static_cast<float>(crop_x0 / image_width_px),
+               static_cast<float>(crop_y0 / image_height_px)),
+        ImVec2(static_cast<float>(crop_x1 / image_width_px),
+               static_cast<float>(crop_y1 / image_height_px)),
+        IM_COL32(255, 255, 255, 255));
+
+    auto roi_to_inset = [&](float roi_x, float roi_y) {
+        const float sx =
+            mask.cols > 0 ? std::clamp(roi_x / static_cast<float>(mask.cols),
+                                       0.0f,
+                                       1.0f)
+                          : 0.0f;
+        const float sy =
+            mask.rows > 0 ? std::clamp(roi_y / static_cast<float>(mask.rows),
+                                      0.0f,
+                                       1.0f)
+                          : 0.0f;
+        return unit_to_inset(sx, sy);
+    };
+    auto image_to_inset = [&](float image_x, float image_y) {
+        const float sx = static_cast<float>(
+            (static_cast<double>(image_x) - crop_x0) / (crop_x1 - crop_x0));
+        const float sy = static_cast<float>(
+            (static_cast<double>(image_y) - crop_y0) / (crop_y1 - crop_y0));
+        return unit_to_inset(sx, sy);
+    };
+    auto image_point_inside_crop = [&](float image_x, float image_y) {
+        return std::isfinite(image_x) && std::isfinite(image_y) &&
+               static_cast<double>(image_x) >= crop_x0 &&
+               static_cast<double>(image_x) <= crop_x1 &&
+               static_cast<double>(image_y) >= crop_y0 &&
+               static_cast<double>(image_y) <= crop_y1;
+    };
+
+    auto find_component = [&](const std::string& label) {
+        return std::find_if(
+            mask.subject_mask_components.begin(),
+            mask.subject_mask_components.end(),
+            [&](const ZarrDetectionLoader::FrameDetections::EyeMask::
+                    SubjectMaskComponent& component) {
+                return component.label == label;
+            });
+    };
+    auto draw_pixels = [&](const std::string& label,
+                           const std::vector<uint32_t>& pixels,
+                           const std::string& layer_suffix,
+                           float min_alpha) {
+        if (pixels.empty()) {
+            return;
+        }
+        eyeMaskTextureCache().resetIfSourceChanged(smoothing_run_id);
+        ImVec4 overlay_color = subjectMaskComponentColor(label);
+        overlay_color.w = std::max(overlay_color.w, min_alpha);
+        const std::string layer_key = "roi_inset:" + label + ":" + layer_suffix;
+        const GLuint texture_id = eyeMaskTextureCache().getOrCreatePixels(
+            smoothing_run_id,
+            mask.roi_index,
+            layer_key,
+            mask.rows,
+            mask.cols,
+            pixels,
+            overlay_color,
+            nullptr);
+        if (texture_id != 0) {
+            draw_textured_inset_quad((ImTextureID)(intptr_t)texture_id,
+                                     ImVec2(0.0f, 0.0f),
+                                     ImVec2(1.0f, 1.0f),
+                                     IM_COL32(255, 255, 255, 255));
+        }
+    };
+    auto draw_contour = [&](const std::string& label,
+                            const std::vector<std::array<float, 2>>& contour_xy,
+                            float thickness) {
+        if (contour_xy.size() < 2) {
+            return;
+        }
+        std::vector<ImVec2> contour;
+        contour.reserve(contour_xy.size() + 1);
+        for (const auto& point : contour_xy) {
+            contour.push_back(roi_to_inset(point[0], point[1]));
+        }
+        const auto& first = contour_xy.front();
+        const auto& last = contour_xy.back();
+        if (contour_xy.size() > 2 &&
+            (std::fabs(first[0] - last[0]) > 1e-5f ||
+             std::fabs(first[1] - last[1]) > 1e-5f)) {
+            contour.push_back(roi_to_inset(first[0], first[1]));
+        }
+        draw_list->AddPolyline(contour.data(),
+                               static_cast<int>(contour.size()),
+                               ImGui::ColorConvertFloat4ToU32(
+                                   subjectMaskContourColor(label)),
+                               0,
+                               thickness);
+    };
+    auto component_visible = [&](const std::string& label) {
+        if (!options.mirror_enabled_overlays &&
+            !mask_options.highlighted_component_name.empty()) {
+            return label == mask_options.highlighted_component_name;
+        }
+        return shouldDrawSubjectMaskComponent(label, mask_options);
+    };
+
+    bool drew_preview = false;
+    constexpr const char* kDrawOrder[] = {
+        "subject_body",
+        "swim_bladder",
+        "eye_left",
+        "eye_right",
+    };
+    for (const char* label_cstr : kDrawOrder) {
+        const std::string label(label_cstr);
+        if (!component_visible(label)) {
+            continue;
+        }
+        const auto component_it = find_component(label);
+        const bool component_present =
+            component_it != mask.subject_mask_components.end() &&
+            component_it->valid;
+        if (previewReplacesComponent(edit_preview, mask, label) &&
+            edit_preview != nullptr) {
+            const std::vector<uint32_t> preview_pixels =
+                previewPixelIndices(*edit_preview);
+            draw_pixels(label,
+                        preview_pixels,
+                        "preview:" + std::to_string(edit_preview->revision),
+                        0.70f);
+            drew_preview = true;
+            continue;
+        }
+        if (component_present) {
+            draw_pixels(label,
+                        component_it->pixel_indices,
+                        "component:" +
+                            std::to_string(component_it->channel_index),
+                        0.46f);
+            if (component_it->has_contour) {
+                draw_contour(label, component_it->contour_xy, 1.8f);
+            }
+            continue;
+        }
+        if (label == "eye_left" && !mask.pixel_indices[0].empty()) {
+            draw_pixels(label, mask.pixel_indices[0], "legacy_eye:0", 0.46f);
+        } else if (label == "eye_right" && !mask.pixel_indices[1].empty()) {
+            draw_pixels(label, mask.pixel_indices[1], "legacy_eye:1", 0.46f);
+        }
+    }
+
+    if (!mask_options.highlighted_component_name.empty()) {
+        const auto selected_component =
+            find_component(mask_options.highlighted_component_name);
+        if (selected_component != mask.subject_mask_components.end() &&
+            selected_component->has_contour) {
+            draw_contour(mask_options.highlighted_component_name,
+                         selected_component->contour_xy,
+                         2.8f);
+        }
+    }
+
+    const ZarrDetectionLoader::FrameDetections* keypoint_details =
+        detection_details != nullptr ? detection_details : &mask_details;
+    if (options.mirror_enabled_overlays && show_keypoint_markers &&
+        keypoint_details->has_keypoints &&
+        detection_index < keypoint_details->keypoints_pixels.size()) {
+        const auto& keypoints =
+            keypoint_details->keypoints_pixels[detection_index];
+        const size_t kp_per_det =
+            std::min(keypoints.size(), keypoint_details->keypoints_per_detection);
+        if (!keypoint_details->skeleton_edges.empty()) {
+            for (const auto& edge : keypoint_details->skeleton_edges) {
+                const size_t a = edge[0];
+                const size_t b = edge[1];
+                if (a >= kp_per_det || b >= kp_per_det ||
+                    !image_point_inside_crop(keypoints[a][0], keypoints[a][1]) ||
+                    !image_point_inside_crop(keypoints[b][0], keypoints[b][1])) {
+                    continue;
+                }
+                const ImVec2 pa =
+                    image_to_inset(keypoints[a][0], keypoints[a][1]);
+                const ImVec2 pb =
+                    image_to_inset(keypoints[b][0], keypoints[b][1]);
+                draw_list->AddLine(pa, pb, IM_COL32(255, 255, 255, 150), 1.4f);
+            }
+        }
+        for (size_t kp_idx = 0; kp_idx < kp_per_det; ++kp_idx) {
+            const auto& kp = keypoints[kp_idx];
+            if (!image_point_inside_crop(kp[0], kp[1])) {
+                continue;
+            }
+            const std::string label =
+                kp_idx < keypoint_details->keypoint_labels.size()
+                    ? keypoint_details->keypoint_labels[kp_idx]
+                    : std::string{};
+            const ImVec2 center = image_to_inset(kp[0], kp[1]);
+            const ImU32 fill =
+                chooseRefinedKeypointColorU32(label, kp_idx, 0.96f);
+            draw_list->AddCircleFilled(center, 4.0f, fill, 14);
+            draw_list->AddCircle(center, 4.0f, IM_COL32(0, 0, 0, 220), 14, 1.3f);
+        }
+    }
+
+    if (use_heading_normalized) {
+        const ImU32 aperture_fill = IM_COL32(5, 8, 13, 245);
+        const ImU32 aperture_outline = IM_COL32(255, 240, 80, 245);
+        const float radius =
+            std::max(1.0f, std::min(image_width, image_height) * 0.5f - 2.0f);
+        constexpr int kBands = 96;
+        const float band_height = image_height / static_cast<float>(kBands);
+        for (int band = 0; band < kBands; ++band) {
+            const float y0 = image_min.y + band_height * static_cast<float>(band);
+            const float y1 =
+                band == kBands - 1
+                    ? image_max.y
+                    : image_min.y +
+                          band_height * static_cast<float>(band + 1);
+            const float y_mid = 0.5f * (y0 + y1);
+            const float dy = y_mid - image_center.y;
+            if (std::fabs(dy) >= radius) {
+                draw_list->AddRectFilled(ImVec2(image_min.x, y0),
+                                         ImVec2(image_max.x, y1),
+                                         aperture_fill);
+                continue;
+            }
+            const float x_half =
+                std::sqrt(std::max(0.0f, radius * radius - dy * dy));
+            const float left_x = image_center.x - x_half;
+            const float right_x = image_center.x + x_half;
+            if (left_x > image_min.x) {
+                draw_list->AddRectFilled(ImVec2(image_min.x, y0),
+                                         ImVec2(left_x, y1),
+                                         aperture_fill);
+            }
+            if (right_x < image_max.x) {
+                draw_list->AddRectFilled(ImVec2(right_x, y0),
+                                         ImVec2(image_max.x, y1),
+                                         aperture_fill);
+            }
+        }
+        draw_list->AddCircle(image_center, radius, aperture_outline, 96, 1.6f);
+    }
+
+    draw_list->PopClipRect();
+    draw_list->AddRect(image_min,
+                       image_max,
+                       IM_COL32(255, 240, 80, 245),
+                       0.0f,
+                       0,
+                       1.4f);
+
+    if (options.show_label) {
+        std::string label = "ROI " + std::to_string(mask.roi_index);
+        if (!mask_options.highlighted_component_name.empty()) {
+            label += " | " +
+                     shortSubjectMaskLabel(mask_options.highlighted_component_name);
+        }
+        if (use_heading_normalized) {
+            label += " | heading-normalized";
+        } else if (options.heading_normalized_view) {
+            label += " | heading unavailable";
+        }
+        if (drew_preview) {
+            label += " preview";
+        }
+        draw_list->AddText(ImVec2(box_min.x + kPad, image_max.y + 4.0f),
+                           IM_COL32(255, 244, 180, 255),
+                           label.c_str());
+    }
 }

@@ -1,5 +1,6 @@
 #include "gui/analysis_timeline_motion_plot.h"
 
+#include "gui/analysis_timeline_stimulus_context.h"
 #include "imgui.h"
 #include "implot.h"
 
@@ -203,13 +204,37 @@ double drawAnalysisTimelineMotionPlots(
                                     fallback_cond);
         }
     };
+    const bool draw_stimulus_context =
+        context.show_stimulus_context && context.stimulus_loader != nullptr &&
+        (context.stimulus_loader->hasStimulusSteps() ||
+         context.stimulus_loader->hasStimulusEvents());
+    float row_ratios_with_stimulus[] = {0.70f, 1.15f, 1.05f, 1.0f};
+    const int subplot_rows = draw_stimulus_context ? 4 : 3;
+    const float subplot_height = draw_stimulus_context ? 820.0f : 690.0f;
 
     if (ImPlot::BeginSubplots("##analysis_timeline_plots",
-                              3,
+                              subplot_rows,
                               1,
-                              ImVec2(-1, 690),
+                              ImVec2(-1, subplot_height),
                               ImPlotSubplotFlags_LinkAllX |
-                                  ImPlotSubplotFlags_NoTitle)) {
+                                  ImPlotSubplotFlags_NoTitle,
+                              draw_stimulus_context
+                                  ? row_ratios_with_stimulus
+                                  : nullptr)) {
+        if (draw_stimulus_context) {
+            drawAnalysisTimelineStimulusContext({
+                *context.stimulus_loader,
+                context.scroll_state,
+                context.current_frame_num,
+                context.video_fps,
+                true,
+                true,
+                use_time_window ? window_min : time_axis_min,
+                use_time_window ? window_max : time_axis_max,
+                use_time_window || reset_time_axis,
+            });
+        }
+
         if (ImPlot::BeginPlot("##speed_plot")) {
             std::string speed_axis_label = "Speed";
             if (!context.primary_speed_units.empty() &&

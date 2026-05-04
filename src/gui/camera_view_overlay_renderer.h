@@ -9,6 +9,7 @@
 #include <vector>
 
 struct StimulusPlayback;
+struct RefinedKeypointSelection;
 
 enum class CameraViewMaskOverlayMode {
     Realtime = 0,
@@ -75,6 +76,14 @@ struct CameraViewSubjectMaskPreview {
     int cols = 0;
     uint64_t revision = 0;
     const std::vector<uint8_t>* binary_mask = nullptr;
+};
+
+struct CameraViewActiveRoiInsetOptions {
+    bool show_inset = true;
+    float width_px = 240.0f;
+    bool show_label = true;
+    bool mirror_enabled_overlays = true;
+    bool heading_normalized_view = false;
 };
 
 struct CameraViewSubjectShapeOverlayOptions {
@@ -146,6 +155,19 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
     const std::string& smoothing_run_id,
     const CameraViewMaskOverlayOptions& options,
     const CameraViewSubjectMaskPreview* edit_preview = nullptr);
+
+void drawCameraViewActiveRoiInsetOverlay(
+    unsigned int camera_texture_id,
+    int image_width_px,
+    int image_height_px,
+    const ZarrDetectionLoader::FrameDetections& mask_details,
+    const ZarrDetectionLoader::FrameDetections* detection_details,
+    const RefinedKeypointSelection* selected_keypoint_selection,
+    const std::string& smoothing_run_id,
+    const CameraViewMaskOverlayOptions& mask_options,
+    bool show_keypoint_markers,
+    const CameraViewSubjectMaskPreview* edit_preview,
+    const CameraViewActiveRoiInsetOptions& options);
 
 void drawCameraViewSubjectShapeOverlay(
     const ZarrDetectionLoader::FrameDetections& detection_details,

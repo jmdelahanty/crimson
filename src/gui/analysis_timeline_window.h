@@ -24,6 +24,7 @@ struct AnalysisTimelineWindowState {
     bool show_tail_tip_angle = true;
     bool show_tail_tip_lateral_deflection = true;
     bool show_tail_curvature = false;
+    bool show_stimulus_context = true;
     int eye_angle_representation_index = -1;
     std::string selected_swim_bout_run;
     std::string selected_swim_bout_speed_level;

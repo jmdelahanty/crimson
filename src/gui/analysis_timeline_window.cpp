@@ -5,6 +5,7 @@
 #include "gui/analysis_timeline_motion_data.h"
 #include "gui/analysis_timeline_motion_plot.h"
 #include "gui/analysis_timeline_motion_summary.h"
+#include "gui/analysis_timeline_stimulus_context.h"
 #include "gui/analysis_timeline_tail_kinematics.h"
 #include "imgui.h"
 #include "zarr_loader.h"
@@ -82,91 +83,111 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
         context.zarr_loader.hasEyeAngleAnalysisData();
     const bool has_tail_kinematics_timeline =
         context.zarr_loader.hasTailKinematicsData();
+    const bool has_stimulus_context =
+        context.zarr_loader.hasStimulusSteps() ||
+        context.zarr_loader.hasStimulusEvents();
 
     if (!has_track_timeline && !has_eye_angle_timeline &&
-        !has_tail_kinematics_timeline) {
+        !has_tail_kinematics_timeline && !has_stimulus_context) {
         ImGui::TextUnformatted("No analysis timeline data available.");
         ImGui::End();
         return;
     }
 
-    if (has_track_timeline) {
-    motion_selection = drawAnalysisTimelineMotionControls({
-        context.zarr_loader,
-        context.scroll_state,
-        selected_series,
-        time_data.size(),
-        smoothed_available,
-        instant_available,
-        heading_sample_available,
-        heading_per_second_available,
-        primary_speed_label,
-        primary_speed_units,
-        secondary_speed_label,
-    }, state);
+    ImGui::BeginDisabled(!has_stimulus_context);
+    ImGui::Checkbox("Show stimulus context", &state.show_stimulus_context);
+    ImGui::EndDisabled();
+    if (!has_stimulus_context && state.show_stimulus_context) {
+        ImGui::TextDisabled("Stimulus context unavailable.");
+    }
 
-    const auto motion_data = prepareAnalysisTimelineMotionData({
-        time_data,
-        frame_indices,
-        smoothed_speed,
-        instant_speed,
-        distance_mm,
-        heading_degrees,
-        smoothed_heading_degrees,
-        heading_keypoint_success,
-        heading_per_second_degrees,
-        heading_per_second_resultant,
-        heading_per_second_time,
-        motion_selection.selected_swim_bouts,
-        smoothed_available,
-        instant_available,
-        heading_per_second_available,
-        state.show_detector_response,
-        context.video_fps,
-    });
-    const double current_time_line = drawAnalysisTimelineMotionPlots({
-        state,
-        context.scroll_state,
-        context.current_frame_num,
-        context.video_fps,
-        time_data,
-        frame_indices,
-        motion_data.time_plot,
-        motion_data.smoothed_plot,
-        motion_data.instant_plot,
-        motion_data.detector_time_plot,
-        motion_data.detector_value_plot,
-        motion_data.heading_time_raw,
-        motion_data.heading_raw_plot,
-        motion_data.heading_time_smoothed,
-        motion_data.heading_smoothed_plot,
-        motion_data.heading_per_second_time_plot,
-        motion_data.heading_per_second_plot,
-        motion_data.heading_per_second_resultant_plot,
-        motion_data.distance_time,
-        motion_data.distance_units,
-        motion_selection.selected_swim_bouts,
-        primary_speed_label,
-        primary_speed_units,
-        secondary_speed_label,
-        secondary_speed_units,
-        motion_data.heading_axis_min,
-        motion_data.heading_axis_max,
-        motion_data.max_distance_mm,
-    });
-    drawAnalysisTimelineMotionSummary({
-        state,
-        context.scroll_state,
-        motion_selection.selected_series,
-        time_data,
-        smoothed_speed,
-        motion_data,
-        current_time_line,
-        primary_speed_label,
-        primary_speed_units,
-    });
+    if (has_track_timeline) {
+        motion_selection = drawAnalysisTimelineMotionControls({
+            context.zarr_loader,
+            context.scroll_state,
+            selected_series,
+            time_data.size(),
+            smoothed_available,
+            instant_available,
+            heading_sample_available,
+            heading_per_second_available,
+            primary_speed_label,
+            primary_speed_units,
+            secondary_speed_label,
+        }, state);
+
+        const auto motion_data = prepareAnalysisTimelineMotionData({
+            time_data,
+            frame_indices,
+            smoothed_speed,
+            instant_speed,
+            distance_mm,
+            heading_degrees,
+            smoothed_heading_degrees,
+            heading_keypoint_success,
+            heading_per_second_degrees,
+            heading_per_second_resultant,
+            heading_per_second_time,
+            motion_selection.selected_swim_bouts,
+            smoothed_available,
+            instant_available,
+            heading_per_second_available,
+            state.show_detector_response,
+            context.video_fps,
+        });
+        const double current_time_line = drawAnalysisTimelineMotionPlots({
+            state,
+            context.scroll_state,
+            context.current_frame_num,
+            context.video_fps,
+            time_data,
+            frame_indices,
+            motion_data.time_plot,
+            motion_data.smoothed_plot,
+            motion_data.instant_plot,
+            motion_data.detector_time_plot,
+            motion_data.detector_value_plot,
+            motion_data.heading_time_raw,
+            motion_data.heading_raw_plot,
+            motion_data.heading_time_smoothed,
+            motion_data.heading_smoothed_plot,
+            motion_data.heading_per_second_time_plot,
+            motion_data.heading_per_second_plot,
+            motion_data.heading_per_second_resultant_plot,
+            motion_data.distance_time,
+            motion_data.distance_units,
+            motion_selection.selected_swim_bouts,
+            primary_speed_label,
+            primary_speed_units,
+            secondary_speed_label,
+            secondary_speed_units,
+            motion_data.heading_axis_min,
+            motion_data.heading_axis_max,
+            motion_data.max_distance_mm,
+            &context.zarr_loader,
+            state.show_stimulus_context && has_stimulus_context,
+        });
+        drawAnalysisTimelineMotionSummary({
+            state,
+            context.scroll_state,
+            motion_selection.selected_series,
+            time_data,
+            smoothed_speed,
+            motion_data,
+            current_time_line,
+            primary_speed_label,
+            primary_speed_units,
+        });
     } else {
         ImGui::TextDisabled("Track kinematics traces unavailable.");
+        if (state.show_stimulus_context && has_stimulus_context) {
+            drawAnalysisTimelineStimulusContext({
+                context.zarr_loader,
+                context.scroll_state,
+                context.current_frame_num,
+                context.video_fps,
+            });
+        }
     }
 
     const double fallback_current_time =

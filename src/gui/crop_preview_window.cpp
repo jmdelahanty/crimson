@@ -1278,10 +1278,15 @@ CropPreviewWindowResult drawCropPreviewWindow(const CropPreviewWindowContext& co
     result.perf.window_setup_ms +=
         durationMs(std::chrono::steady_clock::now() - window_setup_start);
     const auto begin_start = std::chrono::steady_clock::now();
-    const bool window_open = ImGui::Begin("Crop Preview");
+    const bool window_open =
+        ImGui::Begin("Advanced Crop Preview###Crop Preview",
+                     context.show_window);
     result.perf.imgui_begin_ms +=
         durationMs(std::chrono::steady_clock::now() - begin_start);
     if (!window_open) {
+        if (context.show_window != nullptr && !*context.show_window) {
+            clearCropPreviewState(state);
+        }
         endWindow();
         return finish();
     }

@@ -225,10 +225,16 @@ RefinedKeypointReviewPanelResult drawRefinedKeypointReviewPanel(
         result.selected_selection->editable;
     if (!has_editable_selection) {
         ImGui::TextDisabled(
-            "Select a refined keypoint detection to edit in the main video or Crop Preview.");
+            "Select a refined keypoint detection to edit in the main video.");
     } else {
         ImGui::TextDisabled(
-            "Drag selected points in the main video or use Crop Preview for precision adjustments.");
+            "Drag selected points in the main video. Use the advanced crop preview only when you need a larger precision view.");
+    }
+    ImGui::Checkbox("Show advanced crop preview",
+                    &state.show_advanced_crop_preview);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Opens the legacy crop/keypoint precision window. The ROI inset is the normal review view.");
     }
 
     ImGui::BeginDisabled(!has_editable_selection);

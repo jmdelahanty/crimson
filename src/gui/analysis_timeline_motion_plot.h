@@ -37,6 +37,8 @@ struct AnalysisTimelineMotionPlotContext {
     double heading_axis_min = -180.0;
     double heading_axis_max = 180.0;
     double max_distance_mm = 0.0;
+    const ZarrDetectionLoader* stimulus_loader = nullptr;
+    bool show_stimulus_context = false;
 };
 
 double drawAnalysisTimelineMotionPlots(

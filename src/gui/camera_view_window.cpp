@@ -1125,6 +1125,21 @@ CameraViewWindowResult drawCameraViewWindowContents(
         drawCameraViewStimulusInsetOverlay(context.stimulus_player,
                                            context.target_stimulus_frame,
                                            context.stimulus_inset_options);
+        if (context.active_roi_inset_options.show_inset &&
+            context.mask_details != nullptr) {
+            drawCameraViewActiveRoiInsetOverlay(
+                camera.image_texture,
+                static_cast<int>(camera.image_width),
+                static_cast<int>(camera.image_height),
+                *context.mask_details,
+                context.detection_details,
+                context.selected_keypoint_selection,
+                context.eye_mask_smoothing_run_id,
+                context.mask_overlay_options,
+                context.show_keypoint_markers,
+                &subject_mask_preview,
+                context.active_roi_inset_options);
+        }
 
         if (context.use_legacy_manual_keypoint_tools &&
             context.legacy_labeling_state != nullptr) {

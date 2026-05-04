@@ -3408,7 +3408,9 @@ int main(int argc, char **argv) {
             }
         }
 
-        if (zarr_loaded &&
+        if (frame_debug_window_state.keypoint_review_panel
+                .show_advanced_crop_preview &&
+            zarr_loaded &&
             (zarr_loader.hasCropImages() || zarr_loader.hasKeypointData() ||
              zarr_loader.hasEyeMasks())) {
             const auto crop_preview_ui_start = std::chrono::steady_clock::now();
@@ -3539,6 +3541,8 @@ int main(int argc, char **argv) {
                 selected_detection_index,
                 selected_crop_spec,
                 ps.play_video,
+                &frame_debug_window_state.keypoint_review_panel
+                     .show_advanced_crop_preview,
             };
             const auto crop_preview_result = drawCropPreviewWindow(
                 crop_preview_context, crop_preview_window_state);
@@ -3662,7 +3666,9 @@ int main(int argc, char **argv) {
         if (zarr_loaded &&
             (zarr_loader.hasMovementData() ||
              zarr_loader.hasEyeAngleAnalysisData() ||
-             zarr_loader.hasTailKinematicsData())) {
+             zarr_loader.hasTailKinematicsData() ||
+             zarr_loader.hasStimulusSteps() ||
+             zarr_loader.hasStimulusEvents())) {
             const auto analysis_timeline_ui_start =
                 std::chrono::steady_clock::now();
             AnalysisTimelineWindowContext analysis_timeline_context{

@@ -25,6 +25,7 @@ struct FrameDebugWindowState {
     RefinedKeypointReviewPanelState keypoint_review_panel;
     SubjectMaskEditSession subject_mask_edit_session;
     SubjectMaskBrushState subject_mask_brush;
+    CameraViewActiveRoiInsetOptions subject_mask_active_roi_inset_options;
     int subject_mask_edit_detection_index = -1;
     std::string subject_mask_edit_component_name = "subject_body";
     std::string subject_mask_edit_status;

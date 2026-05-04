@@ -55,6 +55,14 @@ bool subjectMaskBrushInputEnabled(const CameraViewFrameContextInput& input) {
            input.zarr_loader->eyeMasksUseRefinedSubjectMasks();
 }
 
+bool subjectMaskRoiInsetEnabled(const CameraViewFrameContextInput& input) {
+    return input.zarr_loaded && input.zarr_loader != nullptr &&
+           input.frame_debug_state != nullptr &&
+           input.frame_debug_state->subject_mask_active_roi_inset_options
+               .show_inset &&
+           input.zarr_loader->hasEyeMasks();
+}
+
 CameraViewSubjectMaskPreview buildSubjectMaskPreview(
     const SubjectMaskEditSession* session) {
     CameraViewSubjectMaskPreview preview;
@@ -71,6 +79,17 @@ CameraViewSubjectMaskPreview buildSubjectMaskPreview(
     preview.revision = session->previewRevision();
     preview.binary_mask = &session->previewMask();
     return preview;
+}
+
+CameraViewActiveRoiInsetOptions activeRoiInsetOptions(
+    const FrameDebugWindowState* state) {
+    CameraViewActiveRoiInsetOptions options;
+    if (state == nullptr) {
+        options.show_inset = false;
+        return options;
+    }
+    options = state->subject_mask_active_roi_inset_options;
+    return options;
 }
 
 const RefinedKeypointSelection* activeFullFrameKeypointSelection(
@@ -98,7 +117,8 @@ void prepareCameraViewFrameContext(
         heading_details = detection_details;
     }
 
-    if (input.can_draw_eye_masks && zarr_available) {
+    if ((input.can_draw_eye_masks || subjectMaskRoiInsetEnabled(input)) &&
+        zarr_available) {
         if (detection_details != nullptr &&
             detection_details->includes_eye_masks) {
             mask_details = detection_details;
@@ -198,6 +218,7 @@ void prepareCameraViewFrameContext(
             activeSubjectMaskEditComponent(input.frame_debug_state),
             input.mask_overlay_mode},
         buildSubjectMaskPreview(input.subject_mask_edit_session),
+        activeRoiInsetOptions(input.frame_debug_state),
         input.subject_mask_edit_session,
         input.subject_mask_brush_state,
         input.subject_shape_overlay_options,
