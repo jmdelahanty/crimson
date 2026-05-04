@@ -364,6 +364,246 @@ double currentTailTimelineTime(
     return current_tail_time;
 }
 
+void appendTraceWarmupKey(std::string& key,
+                          const std::vector<double>& xs,
+                          const std::vector<double>& ys) {
+    appendKeyPart(key, pointerKey(vectorDataOrNull(xs)));
+    appendKeyPart(key, pointerKey(vectorDataOrNull(ys)));
+    appendKeyPart(key, xs.size());
+    appendKeyPart(key, ys.size());
+}
+
+void prewarmTraceLod(const std::vector<double>& xs,
+                     const std::vector<double>& ys,
+                     size_t target_bucket_count) {
+    if (xs.empty() || ys.empty() || xs.size() != ys.size()) {
+        return;
+    }
+    prewarmAnalysisTimelineLineLod(xs.data(),
+                                   ys.data(),
+                                   xs.size(),
+                                   target_bucket_count);
+}
+
+void appendMotionWarmupKey(std::string& key,
+                           const AnalysisTimelineWindowState& state,
+                           const AnalysisTimelineMotionPreparedData& motion) {
+    if (state.show_smoothed && !motion.smoothed_plot.empty()) {
+        appendTraceWarmupKey(key, motion.time_plot, motion.smoothed_plot);
+    }
+    if (state.show_instantaneous && !motion.instant_plot.empty()) {
+        appendTraceWarmupKey(key, motion.time_plot, motion.instant_plot);
+    }
+    if (!motion.detector_time_plot.empty() &&
+        motion.detector_time_plot.size() == motion.detector_value_plot.size()) {
+        appendTraceWarmupKey(key,
+                             motion.detector_time_plot,
+                             motion.detector_value_plot);
+    }
+    if (state.show_heading_raw && !motion.heading_raw_plot.empty()) {
+        appendTraceWarmupKey(key,
+                             motion.heading_time_raw,
+                             motion.heading_raw_plot);
+    }
+    if (state.show_heading_smoothed && !motion.heading_smoothed_plot.empty()) {
+        appendTraceWarmupKey(key,
+                             motion.heading_time_smoothed,
+                             motion.heading_smoothed_plot);
+    }
+    if (state.show_heading_per_second &&
+        !motion.heading_per_second_plot.empty()) {
+        appendTraceWarmupKey(key,
+                             motion.heading_per_second_time_plot,
+                             motion.heading_per_second_plot);
+        if (!motion.heading_per_second_resultant_plot.empty()) {
+            appendTraceWarmupKey(key,
+                                 motion.heading_per_second_time_plot,
+                                 motion.heading_per_second_resultant_plot);
+        }
+    }
+    if (state.show_distance_trace && !motion.distance_time.empty()) {
+        appendTraceWarmupKey(key, motion.distance_time, motion.distance_units);
+    }
+}
+
+void maybePrewarmTraceLod(const std::vector<double>& xs,
+                          const std::vector<double>& ys,
+                          size_t target_bucket_count,
+                          size_t& cursor,
+                          size_t& visited,
+                          size_t& built,
+                          size_t build_limit) {
+    if (xs.empty() || ys.empty() || xs.size() != ys.size()) {
+        return;
+    }
+    if (visited >= cursor && built < build_limit) {
+        prewarmTraceLod(xs, ys, target_bucket_count);
+        ++cursor;
+        ++built;
+    }
+    ++visited;
+}
+
+void prewarmMotionLodsStep(const AnalysisTimelineWindowState& state,
+                           const AnalysisTimelineMotionPreparedData& motion,
+                           size_t target_bucket_count,
+                           size_t& cursor,
+                           size_t& visited,
+                           size_t& built,
+                           size_t build_limit) {
+    if (state.show_smoothed && !motion.smoothed_plot.empty()) {
+        maybePrewarmTraceLod(motion.time_plot,
+                             motion.smoothed_plot,
+                             target_bucket_count,
+                             cursor,
+                             visited,
+                             built,
+                             build_limit);
+    }
+    if (state.show_instantaneous && !motion.instant_plot.empty()) {
+        maybePrewarmTraceLod(motion.time_plot,
+                             motion.instant_plot,
+                             target_bucket_count,
+                             cursor,
+                             visited,
+                             built,
+                             build_limit);
+    }
+    if (!motion.detector_time_plot.empty() &&
+        motion.detector_time_plot.size() == motion.detector_value_plot.size()) {
+        maybePrewarmTraceLod(motion.detector_time_plot,
+                             motion.detector_value_plot,
+                             target_bucket_count,
+                             cursor,
+                             visited,
+                             built,
+                             build_limit);
+    }
+    if (state.show_heading_raw && !motion.heading_raw_plot.empty()) {
+        maybePrewarmTraceLod(motion.heading_time_raw,
+                             motion.heading_raw_plot,
+                             target_bucket_count,
+                             cursor,
+                             visited,
+                             built,
+                             build_limit);
+    }
+    if (state.show_heading_smoothed && !motion.heading_smoothed_plot.empty()) {
+        maybePrewarmTraceLod(motion.heading_time_smoothed,
+                             motion.heading_smoothed_plot,
+                             target_bucket_count,
+                             cursor,
+                             visited,
+                             built,
+                             build_limit);
+    }
+    if (state.show_heading_per_second &&
+        !motion.heading_per_second_plot.empty()) {
+        maybePrewarmTraceLod(motion.heading_per_second_time_plot,
+                             motion.heading_per_second_plot,
+                             target_bucket_count,
+                             cursor,
+                             visited,
+                             built,
+                             build_limit);
+        if (!motion.heading_per_second_resultant_plot.empty()) {
+            maybePrewarmTraceLod(motion.heading_per_second_time_plot,
+                                 motion.heading_per_second_resultant_plot,
+                                 target_bucket_count,
+                                 cursor,
+                                 visited,
+                                 built,
+                                 build_limit);
+        }
+    }
+    if (state.show_distance_trace && !motion.distance_time.empty()) {
+        maybePrewarmTraceLod(motion.distance_time,
+                             motion.distance_units,
+                             target_bucket_count,
+                             cursor,
+                             visited,
+                             built,
+                             build_limit);
+    }
+}
+
+void appendRowWarmupKey(std::string& key,
+                        const AnalysisTimelineTracePlotRow& row) {
+    appendKeyPart(key, row.title);
+    appendKeyPart(key, row.traces.size());
+    for (const auto& trace : row.traces) {
+        appendKeyPart(key, trace.label);
+        appendTraceWarmupKey(key, trace.xs, trace.ys);
+    }
+}
+
+void prewarmRowLodsStep(const AnalysisTimelineTracePlotRow& row,
+                        size_t target_bucket_count,
+                        size_t& cursor,
+                        size_t& visited,
+                        size_t& built,
+                        size_t build_limit) {
+    for (const auto& trace : row.traces) {
+        maybePrewarmTraceLod(trace.xs,
+                             trace.ys,
+                             target_bucket_count,
+                             cursor,
+                             visited,
+                             built,
+                             build_limit);
+    }
+}
+
+std::string makeTimelineLodWarmupKey(
+    const AnalysisTimelineWindowState& state,
+    const AnalysisTimelineMotionPreparedData& motion,
+    const std::vector<const AnalysisTimelineTracePlotRow*>& extra_rows,
+    size_t target_bucket_count) {
+    std::string key;
+    key.reserve(1024);
+    appendKeyPart(key, target_bucket_count);
+    appendMotionWarmupKey(key, state, motion);
+    appendKeyPart(key, extra_rows.size());
+    for (const auto* row : extra_rows) {
+        appendKeyPart(key, pointerKey(row));
+        if (row != nullptr) {
+            appendRowWarmupKey(key, *row);
+        }
+    }
+    return key;
+}
+
+void prewarmTimelineLodsStep(
+    const AnalysisTimelineWindowState& state,
+    const AnalysisTimelineMotionPreparedData& motion,
+    const std::vector<const AnalysisTimelineTracePlotRow*>& extra_rows,
+    size_t target_bucket_count,
+    size_t& cursor,
+    size_t build_limit) {
+    size_t visited = 0;
+    size_t built = 0;
+    prewarmMotionLodsStep(state,
+                          motion,
+                          target_bucket_count,
+                          cursor,
+                          visited,
+                          built,
+                          build_limit);
+    for (const auto* row : extra_rows) {
+        if (row != nullptr) {
+            prewarmRowLodsStep(*row,
+                               target_bucket_count,
+                               cursor,
+                               visited,
+                               built,
+                               build_limit);
+        }
+    }
+    if (cursor > visited) {
+        cursor = visited;
+    }
+}
+
 }  // namespace
 
 void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
@@ -663,6 +903,29 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
                     durationMs(std::chrono::steady_clock::now() -
                                tail_build_start);
             }
+        }
+        const size_t lod_warmup_bucket_count =
+            std::max<size_t>(
+                1,
+                static_cast<size_t>(
+                    std::ceil(std::max(1.0f,
+                                       ImGui::GetContentRegionAvail().x))));
+        const std::string lod_warmup_key =
+            makeTimelineLodWarmupKey(state,
+                                     motion_data,
+                                     linked_extra_rows,
+                                     lod_warmup_bucket_count);
+        if (state.timeline_lod_warmup_key != lod_warmup_key) {
+            state.timeline_lod_warmup_key = lod_warmup_key;
+            state.timeline_lod_warmup_cursor = 0;
+        }
+        if (!state.timeline_lod_warmup_key.empty()) {
+            prewarmTimelineLodsStep(state,
+                                    motion_data,
+                                    linked_extra_rows,
+                                    lod_warmup_bucket_count,
+                                    state.timeline_lod_warmup_cursor,
+                                    2);
         }
         const double current_time_line = drawAnalysisTimelineMotionPlots({
             state,

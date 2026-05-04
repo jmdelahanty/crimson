@@ -28,6 +28,31 @@ This keeps implementation simple, but the cost scales with total trace length
 and number of visible rows, not with the number of pixels that can actually be
 drawn.
 
+## May 2026 Follow-Up
+
+After adding prepared trace caching, visible-range submission, and pixel-level
+LOD/envelope plotting, the feeding canary no longer shows Analysis Timeline as
+the dominant steady-state cost.
+
+The latest sampled run showed:
+
+- frame cap: `120 FPS` (`8.333 ms` budget)
+- frame loop after warmup: p50 about `8.40 ms`, p99 about `8.52 ms`
+- Analysis Timeline total: p50 about `0.78 ms`, p99 about `1.24 ms`
+- plot drawing: p50 about `0.53 ms`, p99 about `0.97 ms`
+- submitted timeline points: p50 about `6.6k`, max about `25.7k`
+- frame-cap sleep: p50 about `6.0 ms`
+
+The remaining notable timeline issue is cold-cache setup on the first visible
+frame. In the sampled run, frame `0` spent about `4.7 ms` in the Analysis
+Timeline and about `37 ms` in total UI build while preparing the first motion,
+position, eye-angle, and tail-kinematics trace rows. Later frames reuse those
+caches and are much cheaper.
+
+This is currently acceptable. Defer heavier startup/loading architecture unless
+users report visible startup hangs or the first-frame spike becomes a practical
+editing/playback problem.
+
 ## Data Layout
 
 Game/rendering-style data layout thinking is useful here.
@@ -185,18 +210,55 @@ Tradeoffs:
 
 This is a later optimization, not the first step.
 
+## Deferred Option: Progressive Cold-Cache Warmup
+
+If cold-cache UI setup becomes a problem, add a progressive warmup component
+instead of blocking the first frame.
+
+The desired behavior is:
+
+1. Open the GUI and camera view as soon as the Zarr/video are minimally usable.
+2. Show a small status such as `Preparing analysis timeline...`.
+3. Build timeline caches over several frames:
+   - motion prepared traces
+   - track position row
+   - eye-angle row
+   - tail-kinematics rows
+   - LOD/envelope levels
+4. Draw placeholders, partial rows, or decimated fallback traces until the final
+   cached row is ready.
+5. Keep each warmup slice bounded so event polling and rendering continue.
+
+Do not start with a modal loading screen. A modal is only justified if the app
+cannot render meaningful video yet. The better UI is progressive readiness:
+video first, analysis panels shortly after.
+
+Background threads can help, but they should be introduced carefully. The safe
+threading boundary is:
+
+- background workers prepare immutable CPU data only
+- ImGui, ImPlot, OpenGL, texture upload, and UI state mutation stay on the main
+  thread
+- each job carries a generation key, and the main thread discards completed
+  work if the user changed source/toggles meanwhile
+- use a small bounded worker pool; do not spawn one thread per trace
+
+Parallel prep is not automatically faster because these jobs are mostly memory
+traversal and allocation. The first future step should be progressive/asynchronous
+cache publication on the main thread; add worker parallelism only if logs still
+show cold-cache stalls.
+
 ## Recommended Order
 
-1. Add a cache layer for prepared plot buffers and derived ranges.
-2. Submit only visible x-range slices when a scrolling or linked x range is
-   active.
-3. Precompute swim-bout window times and detector trace times.
-4. Add targeted instrumentation for point counts submitted per row and cache
-   hit/miss status.
-5. Add pixel-level LOD for traces that still submit far more points than the
-   plot width.
-6. Consider static-background caching only if playback remains expensive after
-   the above.
+1. Keep the existing prepared-buffer, visible-range, and LOD/envelope path.
+2. Continue using perf JSONL to watch p95/p99 timeline cost and submitted point
+   counts.
+3. If steady-state plotting regresses, optimize specific rows/traces using the
+   existing instrumentation before adding new architecture.
+4. If first-frame cold-cache cost becomes user-visible, implement progressive
+   warmup before adding background worker parallelism.
+5. Consider static-background caching only if playback remains expensive after
+   cache/LOD and warmup improvements.
 
 ## Validation
 

@@ -52,6 +52,11 @@ uint64_t plotAnalysisTimelineLine(const char* label,
                                   const double* ys,
                                   size_t count);
 
+void prewarmAnalysisTimelineLineLod(const double* xs,
+                                    const double* ys,
+                                    size_t count,
+                                    size_t target_bucket_count);
+
 bool drawAnalysisTracePlotRow(
     const AnalysisTimelineTracePlotRow& row,
     const TimelineScrollState& scroll_state,

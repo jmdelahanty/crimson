@@ -7,12 +7,46 @@
 #include <cstdint>
 #include <cmath>
 #include <limits>
+#include <unordered_map>
 #include <vector>
 
 namespace {
 
 constexpr size_t kDirectPlotPointLimit = 4096;
 constexpr double kEnvelopeBucketsPerPixel = 1.0;
+constexpr size_t kMaxCachedTraceEntries = 128;
+
+struct TraceLodCacheKey {
+    const double* xs = nullptr;
+    const double* ys = nullptr;
+    size_t count = 0;
+
+    bool operator==(const TraceLodCacheKey& other) const {
+        return xs == other.xs && ys == other.ys && count == other.count;
+    }
+};
+
+struct TraceLodCacheKeyHash {
+    size_t operator()(const TraceLodCacheKey& key) const {
+        size_t hash = std::hash<const double*>{}(key.xs);
+        hash ^= std::hash<const double*>{}(key.ys) + 0x9e3779b9 +
+                (hash << 6) + (hash >> 2);
+        hash ^= std::hash<size_t>{}(key.count) + 0x9e3779b9 +
+                (hash << 6) + (hash >> 2);
+        return hash;
+    }
+};
+
+struct TraceLodLevel {
+    size_t bucket_size = 1;
+    std::vector<double> xs;
+    std::vector<double> ys;
+    std::vector<size_t> bucket_offsets;
+};
+
+struct TraceLodCacheEntry {
+    std::vector<TraceLodLevel> levels;
+};
 
 bool finitePoint(double x, double y) {
     return std::isfinite(x) && std::isfinite(y);
@@ -27,6 +61,172 @@ void appendEnvelopePoint(std::vector<double>& lod_x,
     }
     lod_x.push_back(x);
     lod_y.push_back(y);
+}
+
+std::unordered_map<TraceLodCacheKey,
+                   TraceLodCacheEntry,
+                   TraceLodCacheKeyHash>&
+traceLodCache() {
+    static std::unordered_map<TraceLodCacheKey,
+                              TraceLodCacheEntry,
+                              TraceLodCacheKeyHash>
+        cache;
+    return cache;
+}
+
+size_t roundUpPowerOfTwo(size_t value) {
+    size_t result = 1;
+    while (result < value && result <= (std::numeric_limits<size_t>::max() / 2)) {
+        result *= 2;
+    }
+    return result;
+}
+
+size_t chooseRawBucketSize(size_t visible_count, size_t target_bucket_count) {
+    const size_t target = std::max<size_t>(1, target_bucket_count);
+    const size_t raw_bucket_size =
+        std::max<size_t>(1, (visible_count + target - 1) / target);
+    return roundUpPowerOfTwo(raw_bucket_size);
+}
+
+TraceLodLevel buildLodLevel(const double* xs,
+                            const double* ys,
+                            size_t count,
+                            size_t bucket_size) {
+    TraceLodLevel level;
+    level.bucket_size = std::max<size_t>(1, bucket_size);
+    const size_t bucket_count =
+        (count + level.bucket_size - 1) / level.bucket_size;
+    level.xs.reserve(bucket_count * 2);
+    level.ys.reserve(bucket_count * 2);
+    level.bucket_offsets.reserve(bucket_count + 1);
+    level.bucket_offsets.push_back(0);
+
+    for (size_t bucket_index = 0; bucket_index < bucket_count; ++bucket_index) {
+        const size_t bucket_begin = bucket_index * level.bucket_size;
+        const size_t bucket_end =
+            std::min(count, bucket_begin + level.bucket_size);
+        size_t min_index = bucket_end;
+        size_t max_index = bucket_end;
+        double min_value = std::numeric_limits<double>::infinity();
+        double max_value = -std::numeric_limits<double>::infinity();
+        for (size_t idx = bucket_begin; idx < bucket_end; ++idx) {
+            if (!finitePoint(xs[idx], ys[idx])) {
+                continue;
+            }
+            if (ys[idx] < min_value) {
+                min_value = ys[idx];
+                min_index = idx;
+            }
+            if (ys[idx] > max_value) {
+                max_value = ys[idx];
+                max_index = idx;
+            }
+        }
+        if (min_index != bucket_end && max_index != bucket_end) {
+            if (min_index == max_index) {
+                appendEnvelopePoint(level.xs,
+                                    level.ys,
+                                    xs[min_index],
+                                    ys[min_index]);
+            } else if (min_index < max_index) {
+                appendEnvelopePoint(level.xs,
+                                    level.ys,
+                                    xs[min_index],
+                                    ys[min_index]);
+                appendEnvelopePoint(level.xs,
+                                    level.ys,
+                                    xs[max_index],
+                                    ys[max_index]);
+            } else {
+                appendEnvelopePoint(level.xs,
+                                    level.ys,
+                                    xs[max_index],
+                                    ys[max_index]);
+                appendEnvelopePoint(level.xs,
+                                    level.ys,
+                                    xs[min_index],
+                                    ys[min_index]);
+            }
+        }
+        level.bucket_offsets.push_back(level.xs.size());
+    }
+    return level;
+}
+
+const TraceLodLevel& getOrBuildLodLevel(const double* xs,
+                                        const double* ys,
+                                        size_t count,
+                                        size_t bucket_size) {
+    TraceLodCacheKey key{xs, ys, count};
+    auto& cache = traceLodCache();
+    auto found = cache.find(key);
+    if (found == cache.end() && cache.size() > kMaxCachedTraceEntries) {
+        cache.clear();
+    }
+    auto& entry = cache[key];
+    for (const auto& level : entry.levels) {
+        if (level.bucket_size == bucket_size) {
+            return level;
+        }
+    }
+    entry.levels.push_back(buildLodLevel(xs, ys, count, bucket_size));
+    return entry.levels.back();
+}
+
+const TraceLodLevel* findLodLevel(const double* xs,
+                                  const double* ys,
+                                  size_t count,
+                                  size_t bucket_size) {
+    const auto& cache = traceLodCache();
+    const auto found = cache.find(TraceLodCacheKey{xs, ys, count});
+    if (found == cache.end()) {
+        return nullptr;
+    }
+    for (const auto& level : found->second.levels) {
+        if (level.bucket_size == bucket_size) {
+            return &level;
+        }
+    }
+    return nullptr;
+}
+
+uint64_t plotDecimatedLineFallback(const char* label,
+                                   const double* xs,
+                                   const double* ys,
+                                   size_t begin,
+                                   size_t end,
+                                   size_t target_count) {
+    if (end <= begin) {
+        return 0;
+    }
+    thread_local std::vector<double> decimated_x;
+    thread_local std::vector<double> decimated_y;
+    decimated_x.clear();
+    decimated_y.clear();
+    const size_t visible_count = end - begin;
+    const size_t stride =
+        std::max<size_t>(1, visible_count / std::max<size_t>(1, target_count));
+    decimated_x.reserve(std::min(visible_count, target_count + 2));
+    decimated_y.reserve(std::min(visible_count, target_count + 2));
+    for (size_t idx = begin; idx < end; idx += stride) {
+        if (!finitePoint(xs[idx], ys[idx])) {
+            continue;
+        }
+        appendEnvelopePoint(decimated_x, decimated_y, xs[idx], ys[idx]);
+    }
+    const size_t last = end - 1;
+    if (finitePoint(xs[last], ys[last])) {
+        appendEnvelopePoint(decimated_x, decimated_y, xs[last], ys[last]);
+    }
+    if (decimated_x.empty()) {
+        return 0;
+    }
+    ImPlot::PlotLine(label,
+                     decimated_x.data(),
+                     decimated_y.data(),
+                     static_cast<int>(decimated_x.size()));
+    return static_cast<uint64_t>(decimated_x.size());
 }
 
 }  // namespace
@@ -118,57 +318,55 @@ uint64_t plotAnalysisTimelineLine(const char* label,
         return static_cast<uint64_t>(visible_count);
     }
 
-    thread_local std::vector<double> lod_x;
-    thread_local std::vector<double> lod_y;
-    lod_x.clear();
-    lod_y.clear();
-    lod_x.reserve(std::min(visible_count, bucket_count * 2 + 2));
-    lod_y.reserve(std::min(visible_count, bucket_count * 2 + 2));
-
-    const size_t bucket_size =
-        std::max<size_t>(1, (visible_count + bucket_count - 1) / bucket_count);
-    for (size_t bucket_begin = begin; bucket_begin < end;
-         bucket_begin += bucket_size) {
-        const size_t bucket_end = std::min(end, bucket_begin + bucket_size);
-        size_t min_index = bucket_end;
-        size_t max_index = bucket_end;
-        double min_value = std::numeric_limits<double>::infinity();
-        double max_value = -std::numeric_limits<double>::infinity();
-        for (size_t idx = bucket_begin; idx < bucket_end; ++idx) {
-            if (!finitePoint(xs[idx], ys[idx])) {
-                continue;
-            }
-            if (ys[idx] < min_value) {
-                min_value = ys[idx];
-                min_index = idx;
-            }
-            if (ys[idx] > max_value) {
-                max_value = ys[idx];
-                max_index = idx;
-            }
-        }
-        if (min_index == bucket_end || max_index == bucket_end) {
-            continue;
-        }
-        if (min_index == max_index) {
-            appendEnvelopePoint(lod_x, lod_y, xs[min_index], ys[min_index]);
-        } else if (min_index < max_index) {
-            appendEnvelopePoint(lod_x, lod_y, xs[min_index], ys[min_index]);
-            appendEnvelopePoint(lod_x, lod_y, xs[max_index], ys[max_index]);
-        } else {
-            appendEnvelopePoint(lod_x, lod_y, xs[max_index], ys[max_index]);
-            appendEnvelopePoint(lod_x, lod_y, xs[min_index], ys[min_index]);
-        }
+    const size_t bucket_size = chooseRawBucketSize(visible_count, bucket_count);
+    const TraceLodLevel* level =
+        findLodLevel(xs, ys, count, bucket_size);
+    if (level == nullptr) {
+        return plotDecimatedLineFallback(label,
+                                         xs,
+                                         ys,
+                                         begin,
+                                         end,
+                                         bucket_count * 2 + 2);
     }
-
-    if (lod_x.empty()) {
+    if (level->xs.empty() || level->bucket_offsets.empty()) {
         return 0;
     }
+    const size_t first_bucket = begin / bucket_size;
+    const size_t end_bucket =
+        std::min(level->bucket_offsets.size() - 1,
+                 (end + bucket_size - 1) / bucket_size);
+    if (first_bucket >= end_bucket ||
+        end_bucket >= level->bucket_offsets.size()) {
+        return 0;
+    }
+    const size_t first_point = level->bucket_offsets[first_bucket];
+    const size_t end_point = level->bucket_offsets[end_bucket];
+    if (end_point <= first_point) {
+        return 0;
+    }
+    const size_t submitted = end_point - first_point;
     ImPlot::PlotLine(label,
-                     lod_x.data(),
-                     lod_y.data(),
-                     static_cast<int>(lod_x.size()));
-    return static_cast<uint64_t>(lod_x.size());
+                     level->xs.data() + first_point,
+                     level->ys.data() + first_point,
+                     static_cast<int>(submitted));
+    return static_cast<uint64_t>(submitted);
+}
+
+void prewarmAnalysisTimelineLineLod(const double* xs,
+                                    const double* ys,
+                                    size_t count,
+                                    size_t target_bucket_count) {
+    if (xs == nullptr || ys == nullptr || count == 0 ||
+        target_bucket_count == 0) {
+        return;
+    }
+    if (count <= kDirectPlotPointLimit || count <= target_bucket_count * 2) {
+        return;
+    }
+    const size_t bucket_size =
+        chooseRawBucketSize(count, target_bucket_count);
+    (void)getOrBuildLodLevel(xs, ys, count, bucket_size);
 }
 
 bool drawAnalysisTracePlotRow(
