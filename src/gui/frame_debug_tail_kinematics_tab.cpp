@@ -1,12 +1,9 @@
 #include "gui/frame_debug_tail_kinematics_tab.h"
 
 #include "imgui.h"
-#include "implot.h"
 
 #include <algorithm>
-#include <cmath>
 #include <string>
-#include <vector>
 
 namespace {
 
@@ -17,55 +14,6 @@ std::string tailReasonAt(
         return tail.failure_reason[row];
     }
     return {};
-}
-
-void drawTailSeriesPlot(const char* title,
-                        const std::vector<int32_t>& frame_index,
-                        const std::vector<float>& values,
-                        int current_frame_num) {
-    if (values.empty()) {
-        ImGui::TextDisabled("%s unavailable", title);
-        return;
-    }
-    std::vector<double> xs;
-    std::vector<double> ys;
-    const size_t count = values.size();
-    xs.reserve(count);
-    ys.reserve(count);
-    for (size_t row = 0; row < count; ++row) {
-        const float value = values[row];
-        if (!std::isfinite(value)) {
-            continue;
-        }
-        const double x =
-            (row < frame_index.size() && frame_index[row] >= 0)
-                ? static_cast<double>(frame_index[row])
-                : static_cast<double>(row);
-        xs.push_back(x);
-        ys.push_back(static_cast<double>(value));
-    }
-    if (xs.size() < 2) {
-        ImGui::TextDisabled("%s has no finite values", title);
-        return;
-    }
-
-    if (ImPlot::BeginPlot(title, ImVec2(-1.0f, 190.0f))) {
-        ImPlot::SetupAxes("Frame", title, ImPlotAxisFlags_AutoFit,
-                          ImPlotAxisFlags_AutoFit);
-        ImPlot::PlotLine(title,
-                         xs.data(),
-                         ys.data(),
-                         static_cast<int>(xs.size()));
-        const double current_x[2] = {
-            static_cast<double>(current_frame_num),
-            static_cast<double>(current_frame_num)};
-        const double current_y[2] = {
-            *std::min_element(ys.begin(), ys.end()),
-            *std::max_element(ys.begin(), ys.end())};
-        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.8f, 0.2f, 0.8f), 1.5f);
-        ImPlot::PlotLine("Current Frame", current_x, current_y, 2);
-        ImPlot::EndPlot();
-    }
 }
 
 }  // namespace
@@ -197,18 +145,6 @@ void drawTailKinematicsTab(const FrameDebugWindowContext& context,
     }
 
     ImGui::Separator();
-    drawTailSeriesPlot("Tail Tip Angle (deg)",
-                       tail.frame_index,
-                       tail.tail_tip_angle_deg,
-                       context.current_frame_num);
-    drawTailSeriesPlot("Tail Tip Lateral Deflection (px)",
-                       tail.frame_index,
-                       tail.tail_tip_lateral_deflection_px,
-                       context.current_frame_num);
-    if (!tail.max_abs_tail_curvature_px_inv.empty()) {
-        drawTailSeriesPlot("Max Abs Tail Curvature (px^-1)",
-                           tail.frame_index,
-                           tail.max_abs_tail_curvature_px_inv,
-                           context.current_frame_num);
-    }
+    ImGui::TextDisabled(
+        "Tail-kinematics time-series traces are shown in Analysis Timeline.");
 }
