@@ -278,6 +278,10 @@ AnalysisTimelineMotionSelection drawAnalysisTimelineMotionControls(
     ImGui::Checkbox("Show Detector Response",
                     &state.show_detector_response);
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!context.distance_available);
+    ImGui::Checkbox("Show Distance", &state.show_distance_trace);
+    ImGui::EndDisabled();
     ImGui::Checkbox("Show Track Position", &state.show_track_position);
     ImGui::BeginDisabled(!state.show_track_position);
     ImGui::SameLine();

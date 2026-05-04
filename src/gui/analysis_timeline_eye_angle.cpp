@@ -10,6 +10,7 @@
 #include <cmath>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -213,9 +214,26 @@ std::vector<AnalysisTimelineTrace> buildEyeAngleTimelineTraces(
     return traces;
 }
 
+void ensureEyeAngleRepresentationSelection(
+    const ZarrDetectionData::EyeAngleAnalysisData& eye,
+    AnalysisTimelineWindowState& state) {
+    if (state.eye_angle_representation_index >= 0 &&
+        static_cast<size_t>(state.eye_angle_representation_index) <
+            eye.representations.size()) {
+        return;
+    }
+    state.eye_angle_representation_index = 0;
+    for (size_t idx = 0; idx < eye.representations.size(); ++idx) {
+        if (eye.representations[idx].key == eye.default_representation) {
+            state.eye_angle_representation_index = static_cast<int>(idx);
+            break;
+        }
+    }
+}
+
 }  // namespace
 
-void drawAnalysisTimelineEyeAngleSection(
+void drawAnalysisTimelineEyeAngleControls(
     const AnalysisTimelineEyeAngleContext& context,
     AnalysisTimelineWindowState& state) {
     ImGui::SeparatorText("Eye-Angle Traces");
@@ -226,18 +244,7 @@ void drawAnalysisTimelineEyeAngleSection(
         return;
     }
 
-    if (state.eye_angle_representation_index < 0 ||
-        static_cast<size_t>(state.eye_angle_representation_index) >=
-            eye.representations.size()) {
-        state.eye_angle_representation_index = 0;
-        for (size_t idx = 0; idx < eye.representations.size(); ++idx) {
-            if (eye.representations[idx].key == eye.default_representation) {
-                state.eye_angle_representation_index = static_cast<int>(idx);
-                break;
-            }
-        }
-    }
-
+    ensureEyeAngleRepresentationSelection(eye, state);
     const auto& selected_rep =
         eye.representations[static_cast<size_t>(
             state.eye_angle_representation_index)];
@@ -276,10 +283,22 @@ void drawAnalysisTimelineEyeAngleSection(
     ImGui::Checkbox("Vergence##eye_angle_trace_vergence",
                     &state.show_eye_vergence_trace);
     ImGui::EndDisabled();
+}
 
-    if (!state.show_eye_angle_traces) {
-        return;
+std::optional<AnalysisTimelineTracePlotRow> buildAnalysisTimelineEyeAngleRow(
+    const AnalysisTimelineEyeAngleContext& context,
+    AnalysisTimelineWindowState& state) {
+    const auto& eye = context.zarr_loader.getEyeAngleAnalysisData();
+    if (eye.representations.empty()) {
+        return std::nullopt;
     }
+    ensureEyeAngleRepresentationSelection(eye, state);
+    if (!state.show_eye_angle_traces) {
+        return std::nullopt;
+    }
+    const auto& selected_rep =
+        eye.representations[static_cast<size_t>(
+            state.eye_angle_representation_index)];
 
     double current_eye_time = context.fallback_current_time;
     if (auto current_row =
@@ -298,7 +317,7 @@ void drawAnalysisTimelineEyeAngleSection(
             static_cast<double>(eye.frame_time_seconds[context.current_frame_num]);
     }
 
-    const auto traces = buildEyeAngleTimelineTraces(
+    auto traces = buildEyeAngleTimelineTraces(
         context.zarr_loader,
         eye,
         selected_rep,
@@ -310,10 +329,26 @@ void drawAnalysisTimelineEyeAngleSection(
     if (!traces.empty() && !traces.front().units.empty()) {
         y_axis = traces.front().units;
     }
-    drawAnalysisTracePlot("Eye Angles",
-                          y_axis.c_str(),
-                          traces,
-                          context.scroll_state,
-                          current_eye_time,
-                          "##current_time_eye_angles");
+    if (traces.empty()) {
+        return std::nullopt;
+    }
+
+    AnalysisTimelineTracePlotRow row;
+    row.title = "Eye Angles";
+    row.y_axis_label = y_axis;
+    row.traces = std::move(traces);
+    row.current_time = current_eye_time;
+    row.current_marker_id = "##current_time_eye_angles";
+    row.row_weight = 1.0f;
+    return row;
+}
+
+void drawAnalysisTimelineEyeAngleSection(
+    const AnalysisTimelineEyeAngleContext& context,
+    AnalysisTimelineWindowState& state) {
+    drawAnalysisTimelineEyeAngleControls(context, state);
+    auto row = buildAnalysisTimelineEyeAngleRow(context, state);
+    if (row.has_value()) {
+        drawAnalysisTracePlotRow(*row, context.scroll_state);
+    }
 }

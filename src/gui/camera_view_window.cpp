@@ -603,7 +603,7 @@ CameraViewWindowResult drawCameraViewWindowContents(
                 0, static_cast<double>(camera.image_width), 0,
                 static_cast<double>(camera.image_height), ImGuiCond_Once);
         } else {
-            ImPlot::SetupLegend(ImPlotLocation_SouthWest,
+            ImPlot::SetupLegend(ImPlotLocation_NorthWest,
                                 ImPlotLegendFlags_None);
         }
 

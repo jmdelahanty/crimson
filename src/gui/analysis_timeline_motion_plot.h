@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gui/analysis_timeline_window.h"
+#include "gui/analysis_timeline_trace_plot.h"
 #include "zarr_loader.h"
 
 #include <string>
@@ -39,6 +40,7 @@ struct AnalysisTimelineMotionPlotContext {
     double max_distance_mm = 0.0;
     const ZarrDetectionLoader* stimulus_loader = nullptr;
     bool show_stimulus_context = false;
+    const std::vector<AnalysisTimelineTracePlotRow>* extra_trace_rows = nullptr;
 };
 
 double drawAnalysisTimelineMotionPlots(

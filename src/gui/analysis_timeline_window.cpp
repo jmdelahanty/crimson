@@ -11,7 +11,10 @@
 #include "zarr_loader.h"
 
 #include <optional>
+#include <iterator>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -101,6 +104,9 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
         ImGui::TextDisabled("Stimulus context unavailable.");
     }
 
+    const double fallback_current_time =
+        currentTimeSeconds(context).value_or(-1.0);
+
     if (has_track_timeline) {
         motion_selection = drawAnalysisTimelineMotionControls({
             context.zarr_loader,
@@ -109,6 +115,7 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
             time_data.size(),
             smoothed_available,
             instant_available,
+            distance_available,
             heading_sample_available,
             heading_per_second_available,
             primary_speed_label,
@@ -135,6 +142,53 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
             state.show_detector_response,
             context.video_fps,
         });
+        std::vector<AnalysisTimelineTracePlotRow> linked_extra_rows;
+        AnalysisTimelineMotionSummaryContext motion_summary_context{
+            state,
+            context.scroll_state,
+            motion_selection.selected_series,
+            time_data,
+            smoothed_speed,
+            motion_data,
+            fallback_current_time,
+            primary_speed_label,
+            primary_speed_units,
+        };
+        if (auto position_row =
+                buildAnalysisTimelineTrackPositionRow(
+                    motion_summary_context)) {
+            linked_extra_rows.push_back(std::move(*position_row));
+        }
+        if (has_eye_angle_timeline) {
+            AnalysisTimelineEyeAngleContext eye_context{
+                context.zarr_loader,
+                context.scroll_state,
+                context.current_frame_num,
+                context.video_fps,
+                fallback_current_time,
+            };
+            drawAnalysisTimelineEyeAngleControls(eye_context, state);
+            if (auto eye_row =
+                    buildAnalysisTimelineEyeAngleRow(eye_context, state)) {
+                linked_extra_rows.push_back(std::move(*eye_row));
+            }
+        }
+        if (has_tail_kinematics_timeline) {
+            AnalysisTimelineTailKinematicsContext tail_context{
+                context.zarr_loader,
+                context.scroll_state,
+                context.current_frame_num,
+                context.video_fps,
+                fallback_current_time,
+            };
+            drawAnalysisTimelineTailKinematicsControls(tail_context, state);
+            auto tail_rows =
+                buildAnalysisTimelineTailKinematicsRows(tail_context, state);
+            linked_extra_rows.insert(linked_extra_rows.end(),
+                                     std::make_move_iterator(
+                                         tail_rows.begin()),
+                                     std::make_move_iterator(tail_rows.end()));
+        }
         const double current_time_line = drawAnalysisTimelineMotionPlots({
             state,
             context.scroll_state,
@@ -166,6 +220,7 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
             motion_data.max_distance_mm,
             &context.zarr_loader,
             state.show_stimulus_context && has_stimulus_context,
+            &linked_extra_rows,
         });
         drawAnalysisTimelineMotionSummary({
             state,
@@ -190,10 +245,7 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
         }
     }
 
-    const double fallback_current_time =
-        currentTimeSeconds(context).value_or(-1.0);
-
-    if (has_eye_angle_timeline) {
+    if (!has_track_timeline && has_eye_angle_timeline) {
         drawAnalysisTimelineEyeAngleSection({
             context.zarr_loader,
             context.scroll_state,
@@ -203,7 +255,7 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
         }, state);
     }
 
-    if (has_tail_kinematics_timeline) {
+    if (!has_track_timeline && has_tail_kinematics_timeline) {
         drawAnalysisTimelineTailKinematicsSection({
             context.zarr_loader,
             context.scroll_state,

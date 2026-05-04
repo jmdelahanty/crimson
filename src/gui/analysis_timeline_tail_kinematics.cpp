@@ -52,7 +52,7 @@ void appendTailTimelineTrace(
 
 }  // namespace
 
-void drawAnalysisTimelineTailKinematicsSection(
+void drawAnalysisTimelineTailKinematicsControls(
     const AnalysisTimelineTailKinematicsContext& context,
     AnalysisTimelineWindowState& state) {
     ImGui::SeparatorText("Tail-Kinematics Traces");
@@ -71,6 +71,14 @@ void drawAnalysisTimelineTailKinematicsSection(
                     &state.show_tail_tip_lateral_deflection);
     ImGui::SameLine();
     ImGui::Checkbox("Tail curvature", &state.show_tail_curvature);
+}
+
+std::vector<AnalysisTimelineTracePlotRow>
+buildAnalysisTimelineTailKinematicsRows(
+    const AnalysisTimelineTailKinematicsContext& context,
+    AnalysisTimelineWindowState& state) {
+    std::vector<AnalysisTimelineTracePlotRow> rows;
+    const auto& tail = context.zarr_loader.getTailKinematicsData();
 
     const std::vector<int32_t>& tail_frame_index =
         !tail.frame_index.empty() ? tail.frame_index : tail.row_to_frame;
@@ -102,12 +110,16 @@ void drawAnalysisTimelineTailKinematicsSection(
                                     "deg",
                                     traces);
         }
-        drawAnalysisTracePlot("Tail Angle",
-                              "deg",
-                              traces,
-                              context.scroll_state,
-                              current_tail_time,
-                              "##current_time_tail_angle");
+        if (!traces.empty()) {
+            AnalysisTimelineTracePlotRow row;
+            row.title = "Tail Angle";
+            row.y_axis_label = "deg";
+            row.traces = std::move(traces);
+            row.current_time = current_tail_time;
+            row.current_marker_id = "##current_time_tail_angle";
+            row.row_weight = 1.0f;
+            rows.push_back(std::move(row));
+        }
     }
     if (state.show_tail_tip_lateral_deflection) {
         std::vector<AnalysisTimelineTrace> traces;
@@ -117,12 +129,16 @@ void drawAnalysisTimelineTailKinematicsSection(
                                 "Tail Tip Lateral Deflection",
                                 "px",
                                 traces);
-        drawAnalysisTracePlot("Tail Lateral Deflection",
-                              "px",
-                              traces,
-                              context.scroll_state,
-                              current_tail_time,
-                              "##current_time_tail_deflection");
+        if (!traces.empty()) {
+            AnalysisTimelineTracePlotRow row;
+            row.title = "Tail Lateral Deflection";
+            row.y_axis_label = "px";
+            row.traces = std::move(traces);
+            row.current_time = current_tail_time;
+            row.current_marker_id = "##current_time_tail_deflection";
+            row.row_weight = 1.0f;
+            rows.push_back(std::move(row));
+        }
     }
     if (state.show_tail_curvature) {
         std::vector<AnalysisTimelineTrace> traces;
@@ -132,11 +148,26 @@ void drawAnalysisTimelineTailKinematicsSection(
                                 "Max Abs Tail Curvature",
                                 "px^-1",
                                 traces);
-        drawAnalysisTracePlot("Tail Curvature",
-                              "px^-1",
-                              traces,
-                              context.scroll_state,
-                              current_tail_time,
-                              "##current_time_tail_curvature");
+        if (!traces.empty()) {
+            AnalysisTimelineTracePlotRow row;
+            row.title = "Tail Curvature";
+            row.y_axis_label = "px^-1";
+            row.traces = std::move(traces);
+            row.current_time = current_tail_time;
+            row.current_marker_id = "##current_time_tail_curvature";
+            row.row_weight = 1.0f;
+            rows.push_back(std::move(row));
+        }
+    }
+    return rows;
+}
+
+void drawAnalysisTimelineTailKinematicsSection(
+    const AnalysisTimelineTailKinematicsContext& context,
+    AnalysisTimelineWindowState& state) {
+    drawAnalysisTimelineTailKinematicsControls(context, state);
+    for (const auto& row :
+         buildAnalysisTimelineTailKinematicsRows(context, state)) {
+        drawAnalysisTracePlotRow(row, context.scroll_state);
     }
 }

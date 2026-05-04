@@ -135,7 +135,7 @@ double currentTimeLine(const AnalysisTimelineMotionPlotContext& context) {
     return resolved_time;
 }
 
-void drawCurrentTimeMarker(double current_time, const char* label) {
+void drawMotionCurrentTimeMarker(double current_time, const char* label) {
     if (current_time < 0.0) {
         return;
     }
@@ -208,9 +208,39 @@ double drawAnalysisTimelineMotionPlots(
         context.show_stimulus_context && context.stimulus_loader != nullptr &&
         (context.stimulus_loader->hasStimulusSteps() ||
          context.stimulus_loader->hasStimulusEvents());
-    float row_ratios_with_stimulus[] = {0.70f, 1.15f, 1.05f, 1.0f};
-    const int subplot_rows = draw_stimulus_context ? 4 : 3;
-    const float subplot_height = draw_stimulus_context ? 820.0f : 690.0f;
+    const bool draw_distance_plot =
+        context.state.show_distance_trace && !context.distance_time.empty();
+    const size_t extra_row_count =
+        context.extra_trace_rows != nullptr
+            ? context.extra_trace_rows->size()
+            : 0;
+    std::vector<float> row_ratios;
+    row_ratios.reserve((draw_stimulus_context ? 1 : 0) + 2 +
+                       (draw_distance_plot ? 1 : 0) +
+                       extra_row_count);
+    if (draw_stimulus_context) {
+        row_ratios.push_back(0.70f);
+    }
+    row_ratios.push_back(1.15f);
+    row_ratios.push_back(1.05f);
+    if (draw_distance_plot) {
+        row_ratios.push_back(1.0f);
+    }
+    if (context.extra_trace_rows != nullptr) {
+        for (const auto& row : *context.extra_trace_rows) {
+            row_ratios.push_back(std::max(0.5f, row.row_weight));
+        }
+    }
+    const int subplot_rows = static_cast<int>(row_ratios.size());
+    const float subplot_height =
+        210.0f * static_cast<float>(subplot_rows) -
+        (draw_stimulus_context ? 70.0f : 0.0f);
+    const AnalysisTimelineXAxisLimits shared_x_limits{
+        true,
+        use_time_window ? window_min : time_axis_min,
+        use_time_window ? window_max : time_axis_max,
+        use_time_window || reset_time_axis,
+    };
 
     if (ImPlot::BeginSubplots("##analysis_timeline_plots",
                               subplot_rows,
@@ -218,9 +248,7 @@ double drawAnalysisTimelineMotionPlots(
                               ImVec2(-1, subplot_height),
                               ImPlotSubplotFlags_LinkAllX |
                                   ImPlotSubplotFlags_NoTitle,
-                              draw_stimulus_context
-                                  ? row_ratios_with_stimulus
-                                  : nullptr)) {
+                              row_ratios.data())) {
         if (draw_stimulus_context) {
             drawAnalysisTimelineStimulusContext({
                 *context.stimulus_loader,
@@ -380,7 +408,8 @@ double drawAnalysisTimelineMotionPlots(
                     static_cast<int>(context.detector_time_plot.size()));
             }
 
-            drawCurrentTimeMarker(current_time_line, "##current_time_speed");
+            drawMotionCurrentTimeMarker(current_time_line,
+                                        "##current_time_speed");
             ImPlot::EndPlot();
         }
 
@@ -444,13 +473,13 @@ double drawAnalysisTimelineMotionPlots(
             }
 
             if (drew_heading || drew_per_second) {
-                drawCurrentTimeMarker(current_time_line,
-                                      "##current_time_heading");
+                drawMotionCurrentTimeMarker(current_time_line,
+                                            "##current_time_heading");
             }
             ImPlot::EndPlot();
         }
 
-        if (ImPlot::BeginPlot("##distance_plot")) {
+        if (draw_distance_plot && ImPlot::BeginPlot("##distance_plot")) {
             ImPlot::SetupAxes("Time (s)", "Distance (10 mm)");
             apply_time_axis_limits(ImGuiCond_Once);
             double y_max_units = (context.max_distance_mm > 0.0)
@@ -471,8 +500,18 @@ double drawAnalysisTimelineMotionPlots(
                     static_cast<int>(context.distance_time.size()));
             }
 
-            drawCurrentTimeMarker(current_time_line, "##current_time_distance");
+            drawMotionCurrentTimeMarker(current_time_line,
+                                        "##current_time_distance");
             ImPlot::EndPlot();
+        }
+
+        if (context.extra_trace_rows != nullptr) {
+            for (const auto& row : *context.extra_trace_rows) {
+                drawAnalysisTracePlotRow(row,
+                                         context.scroll_state,
+                                         &shared_x_limits,
+                                         true);
+            }
         }
 
         ImPlot::EndSubplots();

@@ -14,6 +14,7 @@ struct AnalysisTimelineWindowState {
     bool show_heading_per_second = false;
     bool show_swim_bouts = true;
     bool show_detector_response = true;
+    bool show_distance_trace = false;
     bool show_track_position = true;
     bool show_track_position_x = true;
     bool show_track_position_y = true;

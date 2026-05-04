@@ -1,9 +1,11 @@
 #pragma once
 
 #include "gui/analysis_timeline_motion_data.h"
+#include "gui/analysis_timeline_trace_plot.h"
 #include "gui/analysis_timeline_window.h"
 #include "zarr_loader.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -18,6 +20,9 @@ struct AnalysisTimelineMotionSummaryContext {
     std::string primary_speed_label;
     std::string primary_speed_units;
 };
+
+std::optional<AnalysisTimelineTracePlotRow> buildAnalysisTimelineTrackPositionRow(
+    const AnalysisTimelineMotionSummaryContext& context);
 
 void drawAnalysisTimelineMotionSummary(
     const AnalysisTimelineMotionSummaryContext& context);

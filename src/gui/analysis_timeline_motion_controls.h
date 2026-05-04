@@ -20,6 +20,7 @@ struct AnalysisTimelineMotionControlsContext {
     size_t data_point_count = 0;
     bool smoothed_available = false;
     bool instant_available = false;
+    bool distance_available = false;
     bool heading_sample_available = false;
     bool heading_per_second_available = false;
     std::string primary_speed_label;

@@ -45,46 +45,6 @@ void appendTrackPositionTrace(
     }
 }
 
-void drawTrackPositionPlot(
-    const AnalysisTimelineMotionSummaryContext& context) {
-    if (!context.state.show_track_position ||
-        context.selected_series == nullptr) {
-        return;
-    }
-
-    const bool use_mm_positions =
-        !context.selected_series->positions_mm.empty();
-    const auto& positions = use_mm_positions
-                                ? context.selected_series->positions_mm
-                                : context.selected_series->positions_px;
-    const char* units = use_mm_positions ? "mm" : "px";
-    std::vector<AnalysisTimelineTrace> position_traces;
-    if (context.state.show_track_position_x) {
-        appendTrackPositionTrace(positions,
-                                 context.time_data,
-                                 std::string("X position (") + units + ")",
-                                 0,
-                                 ImVec4(0.25f, 0.72f, 1.0f, 1.0f),
-                                 position_traces);
-    }
-    if (context.state.show_track_position_y) {
-        appendTrackPositionTrace(positions,
-                                 context.time_data,
-                                 std::string("Y position (") + units + ")",
-                                 1,
-                                 ImVec4(1.0f, 0.62f, 0.18f, 1.0f),
-                                 position_traces);
-    }
-    const std::string position_axis_label =
-        std::string("Position (") + units + ")";
-    drawAnalysisTracePlot("Track Position",
-                          position_axis_label.c_str(),
-                          position_traces,
-                          context.scroll_state,
-                          context.current_time_line,
-                          "##current_time_track_position");
-}
-
 void drawSpeedStatistics(
     const AnalysisTimelineMotionSummaryContext& context) {
     ImGui::SeparatorText("Speed Statistics");
@@ -151,10 +111,55 @@ void drawHeadingStatistics(
 
 }  // namespace
 
+std::optional<AnalysisTimelineTracePlotRow> buildAnalysisTimelineTrackPositionRow(
+    const AnalysisTimelineMotionSummaryContext& context) {
+    if (!context.state.show_track_position ||
+        context.selected_series == nullptr) {
+        return std::nullopt;
+    }
+
+    const bool use_mm_positions =
+        !context.selected_series->positions_mm.empty();
+    const auto& positions = use_mm_positions
+                                ? context.selected_series->positions_mm
+                                : context.selected_series->positions_px;
+    const char* units = use_mm_positions ? "mm" : "px";
+    std::vector<AnalysisTimelineTrace> position_traces;
+    if (context.state.show_track_position_x) {
+        appendTrackPositionTrace(positions,
+                                 context.time_data,
+                                 std::string("X position (") + units + ")",
+                                 0,
+                                 ImVec4(0.25f, 0.72f, 1.0f, 1.0f),
+                                 position_traces);
+    }
+    if (context.state.show_track_position_y) {
+        appendTrackPositionTrace(positions,
+                                 context.time_data,
+                                 std::string("Y position (") + units + ")",
+                                 1,
+                                 ImVec4(1.0f, 0.62f, 0.18f, 1.0f),
+                                 position_traces);
+    }
+    if (position_traces.empty()) {
+        return std::nullopt;
+    }
+    AnalysisTimelineTracePlotRow row;
+    row.title = "Track Position";
+    row.y_axis_label = std::string("Position (") + units + ")";
+    row.traces = std::move(position_traces);
+    row.current_time = context.current_time_line;
+    row.current_marker_id = "##current_time_track_position";
+    row.row_weight = 1.0f;
+    return row;
+}
+
 void drawAnalysisTimelineMotionSummary(
     const AnalysisTimelineMotionSummaryContext& context) {
-    drawTrackPositionPlot(context);
     drawSpeedStatistics(context);
-    drawDistanceStatistics(context.motion_data);
+    if (context.state.show_distance_trace &&
+        context.motion_data.valid_distance_count > 0) {
+        drawDistanceStatistics(context.motion_data);
+    }
     drawHeadingStatistics(context.motion_data);
 }

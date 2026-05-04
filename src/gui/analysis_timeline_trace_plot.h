@@ -19,6 +19,22 @@ struct AnalysisTimelineTrace {
     std::vector<double> ys;
 };
 
+struct AnalysisTimelineTracePlotRow {
+    std::string title;
+    std::string y_axis_label;
+    std::vector<AnalysisTimelineTrace> traces;
+    double current_time = -1.0;
+    std::string current_marker_id;
+    float row_weight = 1.0f;
+};
+
+struct AnalysisTimelineXAxisLimits {
+    bool valid = false;
+    double min = 0.0;
+    double max = 0.0;
+    bool force = false;
+};
+
 std::optional<double> sampleTimeFromFrame(int32_t frame, double video_fps);
 
 void extendTraceRange(const AnalysisTimelineTrace& trace,
@@ -29,6 +45,12 @@ void extendTraceRange(const AnalysisTimelineTrace& trace,
 
 void drawCurrentTimeMarker(double current_time,
                            const char* label = "##current_time");
+
+bool drawAnalysisTracePlotRow(
+    const AnalysisTimelineTracePlotRow& row,
+    const TimelineScrollState& scroll_state,
+    const AnalysisTimelineXAxisLimits* linked_x_limits = nullptr,
+    bool embedded_in_subplots = false);
 
 void drawAnalysisTracePlot(const char* title,
                            const char* y_axis_label,
