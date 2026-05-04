@@ -47,6 +47,8 @@ struct CameraViewFrameContextInput {
     const std::optional<RefinedKeypointSelection>*
         active_full_frame_keypoint_selection = nullptr;
     const FrameDebugWindowState* frame_debug_state = nullptr;
+    SubjectMaskEditSession* subject_mask_edit_session = nullptr;
+    SubjectMaskBrushState* subject_mask_brush_state = nullptr;
 
     bool can_draw_headings = false;
     bool can_draw_eye_masks = false;
@@ -96,4 +98,8 @@ void prepareCameraViewFrameContext(
 void applyCameraViewSubjectMaskPick(
     const CameraViewWindowResult& camera_view_result,
     ZarrDetectionLoader& zarr_loader,
+    FrameDebugWindowState& frame_debug_state);
+
+void applyCameraViewSubjectMaskPaint(
+    const CameraViewWindowResult& camera_view_result,
     FrameDebugWindowState& frame_debug_state);

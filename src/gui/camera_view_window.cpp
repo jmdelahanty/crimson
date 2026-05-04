@@ -195,6 +195,310 @@ CameraViewSubjectMaskPick pickSubjectMaskAtPlotPoint(
     return pick;
 }
 
+struct SubjectMaskPaintPoint {
+    bool valid = false;
+    int detection_index = -1;
+    int32_t roi_index = -1;
+    int row = -1;
+    int col = -1;
+};
+
+bool subjectMaskBrushInputEnabled(const CameraViewWindowContext& context) {
+    return context.subject_mask_brush_input_enabled &&
+           context.subject_mask_edit_session != nullptr &&
+           context.subject_mask_edit_session->active() &&
+           context.subject_mask_brush_state != nullptr &&
+           context.subject_mask_brush_state->enabled;
+}
+
+SubjectMaskPaintPoint subjectMaskPaintPointAtPlotPoint(
+    const ZarrDetectionLoader::FrameDetections& mask_details,
+    const SubjectMaskEditSession& edit_session,
+    float image_height_px,
+    const ImPlotPoint& plot_point) {
+    SubjectMaskPaintPoint point;
+    if (!mask_details.includes_eye_masks || !edit_session.active()) {
+        return point;
+    }
+
+    const auto& target = edit_session.target();
+    if (target.roi_index < 0 || target.rows == 0 || target.cols == 0) {
+        return point;
+    }
+
+    const double image_x = plot_point.x;
+    const double image_y = static_cast<double>(image_height_px) - plot_point.y;
+    for (int det_idx = 0;
+         det_idx < static_cast<int>(mask_details.eye_masks.size());
+         ++det_idx) {
+        const auto& mask =
+            mask_details.eye_masks[static_cast<size_t>(det_idx)];
+        if (!mask.valid || mask.roi_index != target.roi_index ||
+            mask.rows <= 0 || mask.cols <= 0 || mask.roi_width <= 0.0f ||
+            mask.roi_height <= 0.0f || !std::isfinite(mask.offset_x) ||
+            !std::isfinite(mask.offset_y)) {
+            continue;
+        }
+        if (image_x < mask.offset_x ||
+            image_x >= mask.offset_x + mask.roi_width ||
+            image_y < mask.offset_y ||
+            image_y >= mask.offset_y + mask.roi_height) {
+            continue;
+        }
+
+        const double roi_x =
+            (image_x - mask.offset_x) / mask.roi_width *
+            static_cast<double>(target.cols);
+        const double roi_y =
+            (image_y - mask.offset_y) / mask.roi_height *
+            static_cast<double>(target.rows);
+        const int col = static_cast<int>(std::floor(roi_x));
+        const int row = static_cast<int>(std::floor(roi_y));
+        if (row < 0 || col < 0 ||
+            row >= static_cast<int>(target.rows) ||
+            col >= static_cast<int>(target.cols)) {
+            continue;
+        }
+
+        point.valid = true;
+        point.detection_index = det_idx;
+        point.roi_index = target.roi_index;
+        point.row = row;
+        point.col = col;
+        return point;
+    }
+    return point;
+}
+
+void refreshSubjectMaskPreviewFromSession(
+    const SubjectMaskEditSession* session,
+    CameraViewSubjectMaskPreview& preview) {
+    preview = CameraViewSubjectMaskPreview{};
+    if (session == nullptr || !session->active() || !session->dirty()) {
+        return;
+    }
+    const auto& target = session->target();
+    preview.active = true;
+    preview.dirty = session->dirty();
+    preview.roi_index = target.roi_index;
+    preview.component_name = target.component_name;
+    preview.rows = static_cast<int>(target.rows);
+    preview.cols = static_cast<int>(target.cols);
+    preview.revision = session->previewRevision();
+    preview.binary_mask = &session->previewMask();
+}
+
+SubjectMaskRoiPoint roiPoint(const SubjectMaskPaintPoint& point) {
+    return SubjectMaskRoiPoint{point.row, point.col};
+}
+
+bool sameRoiPoint(const SubjectMaskRoiPoint& lhs,
+                  const SubjectMaskRoiPoint& rhs) {
+    return lhs.row == rhs.row && lhs.col == rhs.col;
+}
+
+bool appendRoiPointIfSeparated(std::vector<SubjectMaskRoiPoint>& points,
+                               const SubjectMaskPaintPoint& point,
+                               int min_distance_px) {
+    if (!point.valid) {
+        return false;
+    }
+    const SubjectMaskRoiPoint next = roiPoint(point);
+    if (!points.empty()) {
+        const SubjectMaskRoiPoint& prev = points.back();
+        const int drow = next.row - prev.row;
+        const int dcol = next.col - prev.col;
+        if (drow * drow + dcol * dcol <
+            min_distance_px * min_distance_px) {
+            return false;
+        }
+    }
+    points.push_back(next);
+    return true;
+}
+
+void resetBrushStroke(SubjectMaskBrushState& brush) {
+    brush.stroke_active = false;
+    brush.last_row = -1;
+    brush.last_col = -1;
+}
+
+void resetLassoDraft(SubjectMaskBrushState& brush) {
+    brush.lasso_active = false;
+    brush.lasso_points.clear();
+}
+
+void populatePaintResult(CameraViewSubjectMaskPaint& result,
+                         const SubjectMaskEditSession& edit_session,
+                         const SubjectMaskPaintPoint& point,
+                         bool changed) {
+    result.changed = result.changed || changed;
+    result.roi_index = point.roi_index;
+    result.component_name = edit_session.target().component_name;
+    result.row = point.row;
+    result.col = point.col;
+}
+
+bool applyShapeDraft(SubjectMaskEditSession& edit_session,
+                     std::vector<SubjectMaskRoiPoint>& points,
+                     bool erase) {
+    if (points.size() < 3) {
+        points.clear();
+        return false;
+    }
+    const uint8_t value = erase ? 0 : 1;
+    const bool changed = edit_session.fillPolygon(points, value);
+    points.clear();
+    return changed;
+}
+
+void appendDottedSegment(std::vector<double>& xs,
+                         std::vector<double>& ys,
+                         double x0,
+                         double y0,
+                         double x1,
+                         double y1) {
+    constexpr double kDotSpacingPx = 6.0;
+    const double dx = x1 - x0;
+    const double dy = y1 - y0;
+    const double length = std::sqrt(dx * dx + dy * dy);
+    if (length < 1e-6) {
+        xs.push_back(x0);
+        ys.push_back(y0);
+        return;
+    }
+    const int dot_count =
+        std::max(2, static_cast<int>(std::ceil(length / kDotSpacingPx)) + 1);
+    for (int i = 0; i < dot_count; ++i) {
+        const double t =
+            static_cast<double>(i) / static_cast<double>(dot_count - 1);
+        xs.push_back(x0 + dx * t);
+        ys.push_back(y0 + dy * t);
+    }
+}
+
+void drawSubjectMaskShapeDraft(
+    const ZarrDetectionLoader::FrameDetections& mask_details,
+    const SubjectMaskEditSession& edit_session,
+    const SubjectMaskBrushState& brush,
+    float image_height_px) {
+    if (!edit_session.active() || !mask_details.includes_eye_masks ||
+        !brush.enabled) {
+        return;
+    }
+
+    const auto& target = edit_session.target();
+    const auto mask_it = std::find_if(
+        mask_details.eye_masks.begin(),
+        mask_details.eye_masks.end(),
+        [&](const ZarrDetectionLoader::FrameDetections::EyeMask& mask) {
+            return mask.valid && mask.roi_index == target.roi_index &&
+                   mask.roi_width > 0.0f && mask.roi_height > 0.0f &&
+                   std::isfinite(mask.offset_x) &&
+                   std::isfinite(mask.offset_y);
+        });
+    if (mask_it == mask_details.eye_masks.end() || target.rows == 0 ||
+        target.cols == 0) {
+        return;
+    }
+
+    const auto& mask = *mask_it;
+    const double cell_w = mask.roi_width / static_cast<double>(target.cols);
+    const double cell_h = mask.roi_height / static_cast<double>(target.rows);
+    auto toPlot = [&](const SubjectMaskRoiPoint& point) {
+        const double x =
+            mask.offset_x + (static_cast<double>(point.col) + 0.5) * cell_w;
+        const double y_source =
+            mask.offset_y + (static_cast<double>(point.row) + 0.5) * cell_h;
+        return ImPlotPoint(x, static_cast<double>(image_height_px) - y_source);
+    };
+
+    const ImVec4 color = brush.erase ? ImVec4(1.0f, 0.35f, 0.25f, 0.95f)
+                                     : ImVec4(1.0f, 0.95f, 0.18f, 0.95f);
+
+    if (brush.tool == SubjectMaskPreviewTool::Brush) {
+        if (!brush.brush_hover_valid) {
+            return;
+        }
+        constexpr double kTwoPi = 6.28318530717958647692;
+        const int sample_count =
+            std::clamp(brush.radius_px * 8, 32, 192);
+        const ImPlotPoint center = toPlot(brush.brush_hover);
+        const double radius_x =
+            static_cast<double>(std::max(1, brush.radius_px)) * cell_w;
+        const double radius_y =
+            static_cast<double>(std::max(1, brush.radius_px)) * cell_h;
+        std::vector<double> xs;
+        std::vector<double> ys;
+        xs.reserve(static_cast<size_t>(sample_count));
+        ys.reserve(static_cast<size_t>(sample_count));
+        for (int i = 0; i < sample_count; ++i) {
+            const double theta =
+                kTwoPi * static_cast<double>(i) /
+                static_cast<double>(sample_count);
+            xs.push_back(center.x + std::cos(theta) * radius_x);
+            ys.push_back(center.y + std::sin(theta) * radius_y);
+        }
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle,
+                                   2.6f,
+                                   color,
+                                   1.0f,
+                                   color);
+        ImPlot::PlotScatter("##subject_mask_brush_footprint",
+                            xs.data(),
+                            ys.data(),
+                            static_cast<int>(xs.size()));
+        return;
+    }
+
+    std::vector<SubjectMaskRoiPoint> points;
+    bool close_shape = false;
+    if (brush.tool == SubjectMaskPreviewTool::Lasso && brush.lasso_active) {
+        points = brush.lasso_points;
+        close_shape = points.size() >= 3;
+    } else if (brush.tool == SubjectMaskPreviewTool::Polygon) {
+        points = brush.polygon_points;
+        if (brush.polygon_hover_valid) {
+            if (points.empty() || !sameRoiPoint(points.back(),
+                                                brush.polygon_hover)) {
+                points.push_back(brush.polygon_hover);
+            }
+        }
+        close_shape = points.size() >= 3;
+    }
+    if (points.size() < 2) {
+        return;
+    }
+
+    std::vector<double> xs;
+    std::vector<double> ys;
+    xs.reserve(points.size() * 8);
+    ys.reserve(points.size() * 8);
+    for (size_t i = 0; i + 1 < points.size(); ++i) {
+        const ImPlotPoint a = toPlot(points[i]);
+        const ImPlotPoint b = toPlot(points[i + 1]);
+        appendDottedSegment(xs, ys, a.x, a.y, b.x, b.y);
+    }
+    if (close_shape) {
+        const ImPlotPoint a = toPlot(points.back());
+        const ImPlotPoint b = toPlot(points.front());
+        appendDottedSegment(xs, ys, a.x, a.y, b.x, b.y);
+    }
+    if (xs.empty()) {
+        return;
+    }
+
+    ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle,
+                               2.8f,
+                               color,
+                               1.0f,
+                               color);
+    ImPlot::PlotScatter("##subject_mask_shape_draft",
+                        xs.data(),
+                        ys.data(),
+                        static_cast<int>(xs.size()));
+}
+
 }  // namespace
 
 CameraViewWindowResult drawCameraViewWindowContents(
@@ -204,6 +508,8 @@ CameraViewWindowResult drawCameraViewWindowContents(
     result.full_frame_keypoint_edit_state = context.full_frame_keypoint_edit_state;
     result.transport_result.slider_frame_number =
         context.transport_controls.slider_frame_number;
+    CameraViewSubjectMaskPreview subject_mask_preview =
+        context.subject_mask_preview;
 
     if (context.scene == nullptr || context.view_idx < 0 ||
         context.view_idx >= static_cast<int>(context.scene->num_cams)) {
@@ -229,6 +535,8 @@ CameraViewWindowResult drawCameraViewWindowContents(
     const int previous_plot_pan_mod = plot_input_map.PanMod;
     bool restore_plot_pan_mod = false;
     bool suppress_crosshairs = false;
+    const bool subject_mask_brush_input_enabled =
+        subjectMaskBrushInputEnabled(context);
     if (context.zarr_loaded && context.dataset_allows_bbox_edit &&
         context.bbox_edit_state != nullptr) {
         const bool draw_mode_active_for_current_frame =
@@ -245,7 +553,8 @@ CameraViewWindowResult drawCameraViewWindowContents(
             suppress_crosshairs = true;
         }
     }
-    if (context.full_frame_keypoint_edit_enabled) {
+    if (context.full_frame_keypoint_edit_enabled ||
+        subject_mask_brush_input_enabled) {
         plot_input_map.PanMod = ImGuiMod_Shift;
         restore_plot_pan_mod = true;
         suppress_crosshairs = true;
@@ -424,6 +733,184 @@ CameraViewWindowResult drawCameraViewWindowContents(
                     } else {
                         result.full_frame_keypoint_edit_state.active_handle = -1;
                     }
+                    if (subject_mask_brush_input_enabled &&
+                        context.mask_details != nullptr &&
+                        !context.full_frame_keypoint_edit_enabled &&
+                        !context.play_video &&
+                        !ImGui::GetIO().KeyCtrl &&
+                        !ImGui::GetIO().KeyShift &&
+                        !ImGui::GetIO().KeyAlt) {
+                        SubjectMaskBrushState& brush =
+                            *context.subject_mask_brush_state;
+                        SubjectMaskEditSession& edit_session =
+                            *context.subject_mask_edit_session;
+                        const SubjectMaskPaintPoint point =
+                            plot_hovered
+                                ? subjectMaskPaintPointAtPlotPoint(
+                                      *context.mask_details,
+                                      edit_session,
+                                      image_height_px,
+                                      ImPlot::GetPlotMousePos())
+                                : SubjectMaskPaintPoint{};
+                        brush.brush_hover_valid =
+                            brush.tool == SubjectMaskPreviewTool::Brush &&
+                            point.valid;
+                        brush.brush_hover =
+                            point.valid ? roiPoint(point) : SubjectMaskRoiPoint{};
+                        brush.polygon_hover_valid =
+                            brush.tool == SubjectMaskPreviewTool::Polygon &&
+                            point.valid;
+                        brush.polygon_hover =
+                            point.valid ? roiPoint(point) : SubjectMaskRoiPoint{};
+                        const bool mouse_down =
+                            ImGui::IsMouseDown(ImGuiMouseButton_Left);
+                        if (brush.tool == SubjectMaskPreviewTool::Brush &&
+                            mouse_down) {
+                            result.subject_mask_paint.attempted = true;
+                            if (point.valid) {
+                                const uint8_t value = brush.erase ? 0 : 1;
+                                bool changed = false;
+                                if (brush.stroke_active &&
+                                    brush.last_row >= 0 &&
+                                    brush.last_col >= 0) {
+                                    changed = edit_session.stampLine(
+                                        brush.last_row,
+                                        brush.last_col,
+                                        point.row,
+                                        point.col,
+                                        brush.radius_px,
+                                        value);
+                                } else {
+                                    changed = edit_session.stampDisk(
+                                        point.row,
+                                        point.col,
+                                        brush.radius_px,
+                                        value);
+                                }
+                                brush.stroke_active = true;
+                                brush.last_row = point.row;
+                                brush.last_col = point.col;
+                                result.subject_mask_paint.changed =
+                                    result.subject_mask_paint.changed ||
+                                    changed;
+                                populatePaintResult(result.subject_mask_paint,
+                                                    edit_session,
+                                                    point,
+                                                    changed);
+                                refreshSubjectMaskPreviewFromSession(
+                                    context.subject_mask_edit_session,
+                                    subject_mask_preview);
+                            } else {
+                                brush.stroke_active = false;
+                                brush.last_row = -1;
+                                brush.last_col = -1;
+                            }
+                        } else if (brush.stroke_active) {
+                            brush.stroke_active = false;
+                            brush.last_row = -1;
+                            brush.last_col = -1;
+                            result.subject_mask_paint.stroke_finished = true;
+                        }
+                        if (brush.tool == SubjectMaskPreviewTool::Lasso) {
+                            if (mouse_down) {
+                                result.subject_mask_paint.attempted = true;
+                                if (point.valid) {
+                                    if (!brush.lasso_active) {
+                                        brush.lasso_active = true;
+                                        brush.lasso_points.clear();
+                                    }
+                                    appendRoiPointIfSeparated(
+                                        brush.lasso_points,
+                                        point,
+                                        2);
+                                    populatePaintResult(
+                                        result.subject_mask_paint,
+                                        edit_session,
+                                        point,
+                                        false);
+                                }
+                            } else if (brush.lasso_active) {
+                                result.subject_mask_paint.attempted = true;
+                                const bool changed = applyShapeDraft(
+                                    edit_session,
+                                    brush.lasso_points,
+                                    brush.erase);
+                                resetLassoDraft(brush);
+                                result.subject_mask_paint.stroke_finished = true;
+                                result.subject_mask_paint.changed =
+                                    result.subject_mask_paint.changed ||
+                                    changed;
+                                result.subject_mask_paint.roi_index =
+                                    edit_session.target().roi_index;
+                                result.subject_mask_paint.component_name =
+                                    edit_session.target().component_name;
+                                refreshSubjectMaskPreviewFromSession(
+                                    context.subject_mask_edit_session,
+                                    subject_mask_preview);
+                            }
+                        } else {
+                            resetLassoDraft(brush);
+                        }
+                        if (brush.tool == SubjectMaskPreviewTool::Polygon) {
+                            if (ImGui::IsMouseClicked(
+                                    ImGuiMouseButton_Right, false)) {
+                                brush.polygon_points.clear();
+                                brush.polygon_hover_valid = false;
+                                result.subject_mask_paint.stroke_finished = true;
+                            } else if (point.valid &&
+                                       ImGui::IsMouseDoubleClicked(
+                                           ImGuiMouseButton_Left)) {
+                                appendRoiPointIfSeparated(
+                                    brush.polygon_points,
+                                    point,
+                                    1);
+                                const bool changed = applyShapeDraft(
+                                    edit_session,
+                                    brush.polygon_points,
+                                    brush.erase);
+                                brush.polygon_hover_valid = false;
+                                populatePaintResult(result.subject_mask_paint,
+                                                    edit_session,
+                                                    point,
+                                                    changed);
+                                result.subject_mask_paint.attempted = true;
+                                result.subject_mask_paint.stroke_finished = true;
+                                refreshSubjectMaskPreviewFromSession(
+                                    context.subject_mask_edit_session,
+                                    subject_mask_preview);
+                            } else if (point.valid &&
+                                       ImGui::IsMouseClicked(
+                                           ImGuiMouseButton_Left, false)) {
+                                appendRoiPointIfSeparated(
+                                    brush.polygon_points,
+                                    point,
+                                    1);
+                                populatePaintResult(result.subject_mask_paint,
+                                                    edit_session,
+                                                    point,
+                                                    false);
+                                result.subject_mask_paint.attempted = true;
+                            }
+                        } else {
+                            brush.polygon_hover_valid = false;
+                        }
+                    } else if (context.subject_mask_brush_state != nullptr &&
+                               context.subject_mask_brush_state
+                                   ->stroke_active) {
+                        context.subject_mask_brush_state->stroke_active = false;
+                        context.subject_mask_brush_state->last_row = -1;
+                        context.subject_mask_brush_state->last_col = -1;
+                        result.subject_mask_paint.stroke_finished = true;
+                    } else if (context.subject_mask_brush_state != nullptr &&
+                               context.subject_mask_brush_state->lasso_active) {
+                        resetLassoDraft(*context.subject_mask_brush_state);
+                        result.subject_mask_paint.stroke_finished = true;
+                    } else if (context.subject_mask_brush_state != nullptr) {
+                        context.subject_mask_brush_state->brush_hover_valid =
+                            false;
+                        context.subject_mask_brush_state->polygon_hover_valid =
+                            false;
+                    }
                     const bool can_modify_boxes =
                         context.dataset_allows_bbox_edit && context.bbox_edit_enabled &&
                         (context.bbox_allow_edit_while_playing || !context.play_video);
@@ -443,7 +930,8 @@ CameraViewWindowResult drawCameraViewWindowContents(
                 image_height_px,
                 plot_hovered,
                 !context.full_frame_keypoint_edit_enabled &&
-                    !context.subject_mask_pick_enabled,
+                    !context.subject_mask_pick_enabled &&
+                    !subject_mask_brush_input_enabled,
                 context.dataset_allows_bbox_edit,
                 can_modify_boxes,
                 &editable_rects,
@@ -534,9 +1022,19 @@ CameraViewWindowResult drawCameraViewWindowContents(
                                     context.subject_shape_details,
                                     image_height_px,
                                     context.eye_mask_smoothing_run_id,
-                                    context.mask_overlay_options);
+                                    context.mask_overlay_options,
+                                    &subject_mask_preview);
                             accumulateCameraViewMaskPerfMetrics(
                                 result.perf.mask_overlay, mask_perf);
+                            if (context.subject_mask_brush_input_enabled &&
+                                context.subject_mask_edit_session != nullptr &&
+                                context.subject_mask_brush_state != nullptr) {
+                                drawSubjectMaskShapeDraft(
+                                    *context.mask_details,
+                                    *context.subject_mask_edit_session,
+                                    *context.subject_mask_brush_state,
+                                    image_height_px);
+                            }
                         }
                         break;
                     case CameraViewOverlayLayer::SubjectShape:

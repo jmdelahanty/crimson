@@ -159,6 +159,11 @@ Render order:
 
 The preview should use the same component color as the persisted component but
 with a visually distinct alpha or outline so the user can tell what is unsaved.
+Shape drafts such as lasso paths and polygon vertices should be drawn as dotted
+camera overlays and should not affect `previewMask()` until the user releases
+the lasso or explicitly applies the polygon. Brush mode should draw the current
+circular footprint under the cursor so the user can see the exact ROI-pixel
+radius before starting a stroke.
 
 For performance:
 
@@ -229,14 +234,24 @@ Optional future tools:
 These should be separate tools or explicit commands so normal painting remains
 predictable.
 
-## Initial Implementation Checklist
+## Implementation Checklist
+
+Done:
 
 1. Add brush state: radius, mode, active stroke, last ROI coordinate.
-2. Add a `BrushFootprint` cache keyed by integer radius.
+2. Add a brush footprint cache keyed by integer radius.
 3. Add paint/erase mutation helpers on `SubjectMaskEditSession`.
 4. Add camera-view drag handling for active subject-mask edit targets.
-5. Add dirty-rectangle preview texture updates.
-6. Add stroke-level undo/redo.
-7. Keep save routed through `SubjectMaskWritebackClient`.
-8. Add focused tests for footprint generation, clipping, drag sampling, and
-   undo rectangle restoration.
+5. Render the dirty preview mask as a replacement for the selected persisted
+   component.
+6. Add lasso and polygon fill tools with dotted draft overlays.
+
+Remaining:
+
+1. Add dirty-rectangle preview texture updates instead of rebuilding the active
+   preview texture by revision.
+2. Add preview-specific contours or diff/hole highlighting.
+3. Add stroke-level undo/redo.
+4. Keep save routed through `SubjectMaskWritebackClient`.
+5. Add focused tests for footprint generation, clipping, drag sampling, polygon
+   fill, lasso fill, and undo rectangle restoration.

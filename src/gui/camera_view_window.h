@@ -8,6 +8,7 @@
 #include "legacy_labeling_state.h"
 #include "render.h"
 #include "refined_keypoint_repository.h"
+#include "subject_mask_edit_session.h"
 #include "zarr_bbox_edit.h"
 #include "zarr_loader.h"
 
@@ -88,6 +89,9 @@ struct CameraViewWindowContext {
     const ZarrDetectionLoader::FrameDetections* subject_shape_details = nullptr;
     std::string eye_mask_smoothing_run_id;
     CameraViewMaskOverlayOptions mask_overlay_options;
+    CameraViewSubjectMaskPreview subject_mask_preview;
+    SubjectMaskEditSession* subject_mask_edit_session = nullptr;
+    SubjectMaskBrushState* subject_mask_brush_state = nullptr;
     CameraViewSubjectShapeOverlayOptions subject_shape_overlay_options;
     const ZarrDetectionData::TailKinematicsData* tail_kinematics = nullptr;
     CameraViewTailKinematicsOverlayOptions tail_kinematics_overlay_options;
@@ -95,6 +99,7 @@ struct CameraViewWindowContext {
     const std::vector<ZarrDetectionLoader::MovementTrailPoint>* movement_trail =
         nullptr;
     bool subject_mask_pick_enabled = false;
+    bool subject_mask_brush_input_enabled = false;
 
     const std::vector<ZarrDetectionLoader::ChaserBoundingBox>* chaser_bboxes =
         nullptr;
@@ -117,11 +122,22 @@ struct CameraViewSubjectMaskPick {
     std::string component_name;
 };
 
+struct CameraViewSubjectMaskPaint {
+    bool attempted = false;
+    bool changed = false;
+    bool stroke_finished = false;
+    int32_t roi_index = -1;
+    std::string component_name;
+    int row = -1;
+    int col = -1;
+};
+
 struct CameraViewWindowResult {
     FullFrameRectEditResult full_frame_edit_result;
     FullFrameKeypointEditState full_frame_keypoint_edit_state;
     CameraViewTransportControlsResult transport_result;
     CameraViewSubjectMaskPick subject_mask_pick;
+    CameraViewSubjectMaskPaint subject_mask_paint;
     bool legacy_manual_keypoints_find = false;
     bool view_focused = false;
     CameraViewFrameSyncSummary frame_sync;

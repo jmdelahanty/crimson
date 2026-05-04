@@ -66,6 +66,17 @@ struct CameraViewMaskOverlayOptions {
     CameraViewMaskOverlayMode mode = CameraViewMaskOverlayMode::Review;
 };
 
+struct CameraViewSubjectMaskPreview {
+    bool active = false;
+    bool dirty = false;
+    int32_t roi_index = -1;
+    std::string component_name;
+    int rows = 0;
+    int cols = 0;
+    uint64_t revision = 0;
+    const std::vector<uint8_t>* binary_mask = nullptr;
+};
+
 struct CameraViewSubjectShapeOverlayOptions {
     bool show_overlay = true;
     bool show_body_contour = false;
@@ -133,7 +144,8 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
     const ZarrDetectionLoader::FrameDetections* subject_shape_details,
     float image_height_px,
     const std::string& smoothing_run_id,
-    const CameraViewMaskOverlayOptions& options);
+    const CameraViewMaskOverlayOptions& options,
+    const CameraViewSubjectMaskPreview* edit_preview = nullptr);
 
 void drawCameraViewSubjectShapeOverlay(
     const ZarrDetectionLoader::FrameDetections& detection_details,

@@ -24,6 +24,7 @@ struct FrameDebugWindowState {
     ReviewMetadataEditorState manual_write_review;
     RefinedKeypointReviewPanelState keypoint_review_panel;
     SubjectMaskEditSession subject_mask_edit_session;
+    SubjectMaskBrushState subject_mask_brush;
     int subject_mask_edit_detection_index = -1;
     std::string subject_mask_edit_component_name = "subject_body";
     std::string subject_mask_edit_status;

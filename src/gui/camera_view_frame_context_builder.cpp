@@ -33,9 +33,44 @@ bool subjectMaskCanvasPickEnabled(const CameraViewFrameContextInput& input) {
           input.frame_debug_state != nullptr)) {
         return false;
     }
-    return input.frame_debug_state->subject_mask_canvas_pick_enabled &&
+    const bool brush_editing =
+        input.frame_debug_state->subject_mask_brush.enabled &&
+        input.frame_debug_state->subject_mask_edit_session.active();
+    return !brush_editing &&
+           input.frame_debug_state->subject_mask_canvas_pick_enabled &&
            input.frame_debug_state->active_tab == FrameInspectTab::EyeMasks &&
            input.zarr_loader->eyeMasksUseRefinedSubjectMasks();
+}
+
+bool subjectMaskBrushInputEnabled(const CameraViewFrameContextInput& input) {
+    if (!(input.zarr_loaded && input.can_draw_eye_masks &&
+          input.zarr_loader != nullptr &&
+          input.frame_debug_state != nullptr)) {
+        return false;
+    }
+    return !input.play_video &&
+           input.frame_debug_state->subject_mask_brush.enabled &&
+           input.frame_debug_state->subject_mask_edit_session.active() &&
+           input.frame_debug_state->active_tab == FrameInspectTab::EyeMasks &&
+           input.zarr_loader->eyeMasksUseRefinedSubjectMasks();
+}
+
+CameraViewSubjectMaskPreview buildSubjectMaskPreview(
+    const SubjectMaskEditSession* session) {
+    CameraViewSubjectMaskPreview preview;
+    if (session == nullptr || !session->active() || !session->dirty()) {
+        return preview;
+    }
+    const auto& target = session->target();
+    preview.active = true;
+    preview.dirty = session->dirty();
+    preview.roi_index = target.roi_index;
+    preview.component_name = target.component_name;
+    preview.rows = static_cast<int>(target.rows);
+    preview.cols = static_cast<int>(target.cols);
+    preview.revision = session->previewRevision();
+    preview.binary_mask = &session->previewMask();
+    return preview;
 }
 
 const RefinedKeypointSelection* activeFullFrameKeypointSelection(
@@ -162,6 +197,9 @@ void prepareCameraViewFrameContext(
             activeSubjectMaskEditRoi(input.frame_debug_state),
             activeSubjectMaskEditComponent(input.frame_debug_state),
             input.mask_overlay_mode},
+        buildSubjectMaskPreview(input.subject_mask_edit_session),
+        input.subject_mask_edit_session,
+        input.subject_mask_brush_state,
         input.subject_shape_overlay_options,
         zarr_available && input.zarr_loader->hasTailKinematicsData()
             ? &input.zarr_loader->getTailKinematicsData()
@@ -174,6 +212,7 @@ void prepareCameraViewFrameContext(
             ? &prepared.movement_trail_points
             : nullptr,
         subjectMaskCanvasPickEnabled(input),
+        subjectMaskBrushInputEnabled(input),
         zarr_available ? input.chaser_bboxes : nullptr,
         zarr_available ? input.chaser_states : nullptr,
         input.camera_params,
@@ -219,4 +258,40 @@ void applyCameraViewSubjectMaskPick(
         frame_debug_state.subject_mask_edit_status =
             "Canvas pick failed: " + error;
     }
+}
+
+void applyCameraViewSubjectMaskPaint(
+    const CameraViewWindowResult& camera_view_result,
+    FrameDebugWindowState& frame_debug_state) {
+    const auto& paint = camera_view_result.subject_mask_paint;
+    if (paint.stroke_finished) {
+        frame_debug_state.subject_mask_brush.stroke_active = false;
+        frame_debug_state.subject_mask_brush.last_row = -1;
+        frame_debug_state.subject_mask_brush.last_col = -1;
+    }
+    if (!paint.changed) {
+        return;
+    }
+
+    std::ostringstream status;
+    status << "Preview dirty: roi=" << paint.roi_index
+           << " component=" << paint.component_name
+           << " tool=";
+    switch (frame_debug_state.subject_mask_brush.tool) {
+    case SubjectMaskPreviewTool::Brush:
+        status << "brush";
+        break;
+    case SubjectMaskPreviewTool::Lasso:
+        status << "lasso";
+        break;
+    case SubjectMaskPreviewTool::Polygon:
+        status << "polygon";
+        break;
+    }
+    status << " mode="
+           << (frame_debug_state.subject_mask_brush.erase ? "erase" : "paint");
+    if (paint.row >= 0 && paint.col >= 0) {
+        status << " at row=" << paint.row << " col=" << paint.col;
+    }
+    frame_debug_state.subject_mask_edit_status = status.str();
 }

@@ -78,6 +78,19 @@ std::string shortSubjectMaskComponentLabel(const std::string& label) {
     return label;
 }
 
+void clearSubjectMaskShapeDrafts(SubjectMaskBrushState& brush) {
+    brush.brush_hover_valid = false;
+    brush.brush_hover = SubjectMaskRoiPoint{};
+    brush.stroke_active = false;
+    brush.last_row = -1;
+    brush.last_col = -1;
+    brush.lasso_active = false;
+    brush.lasso_points.clear();
+    brush.polygon_points.clear();
+    brush.polygon_hover_valid = false;
+    brush.polygon_hover = SubjectMaskRoiPoint{};
+}
+
 bool maskHasComponent(
     const ZarrDetectionLoader::FrameDetections::EyeMask& mask,
     const std::string& component_name) {
@@ -142,6 +155,7 @@ bool loadSubjectMaskEditTarget(
             &error)) {
         state.subject_mask_edit_detection_index = detection_index;
         state.subject_mask_edit_component_name = component_name;
+        clearSubjectMaskShapeDrafts(state.subject_mask_brush);
         const auto& target = state.subject_mask_edit_session.target();
         std::ostringstream oss;
         oss << "Preview loaded: detection=" << detection_index
@@ -307,8 +321,102 @@ void drawSubjectMaskEditPreviewSection(
     }
 
     if (state.subject_mask_edit_session.active()) {
+        ImGui::Separator();
+        ImGui::Text("Preview Tools:");
+        ImGui::Checkbox("Enable preview tools",
+                        &state.subject_mask_brush.enabled);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Paints only the in-memory preview mask. Persisted Zarr data is unchanged because save is still disabled.");
+        }
+        ImGui::BeginDisabled(!state.subject_mask_brush.enabled);
+        ImGui::Text("Tool:");
+        bool tool_changed = false;
+        if (ImGui::RadioButton(
+                "Brush",
+                state.subject_mask_brush.tool ==
+                    SubjectMaskPreviewTool::Brush)) {
+            state.subject_mask_brush.tool = SubjectMaskPreviewTool::Brush;
+            tool_changed = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton(
+                "Lasso",
+                state.subject_mask_brush.tool ==
+                    SubjectMaskPreviewTool::Lasso)) {
+            state.subject_mask_brush.tool = SubjectMaskPreviewTool::Lasso;
+            tool_changed = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton(
+                "Polygon",
+                state.subject_mask_brush.tool ==
+                    SubjectMaskPreviewTool::Polygon)) {
+            state.subject_mask_brush.tool = SubjectMaskPreviewTool::Polygon;
+            tool_changed = true;
+        }
+        if (tool_changed) {
+            clearSubjectMaskShapeDrafts(state.subject_mask_brush);
+        }
+        if (state.subject_mask_brush.tool == SubjectMaskPreviewTool::Brush) {
+            ImGui::SliderInt("Radius (ROI px)",
+                             &state.subject_mask_brush.radius_px,
+                             1,
+                             64);
+        }
+        bool erase_mode = state.subject_mask_brush.erase;
+        if (ImGui::RadioButton("Paint", !erase_mode)) {
+            state.subject_mask_brush.erase = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Erase", erase_mode)) {
+            state.subject_mask_brush.erase = true;
+        }
+        if (state.subject_mask_brush.tool == SubjectMaskPreviewTool::Lasso) {
+            ImGui::TextDisabled("Drag in the selected ROI; release fills the lasso.");
+        } else if (state.subject_mask_brush.tool ==
+                   SubjectMaskPreviewTool::Polygon) {
+            ImGui::TextDisabled("Left-click vertices in the selected ROI; double-click or Apply fills.");
+            ImGui::BeginDisabled(
+                state.subject_mask_brush.polygon_points.size() < 3);
+            if (ImGui::Button("Apply Polygon")) {
+                const uint8_t value =
+                    state.subject_mask_brush.erase ? 0 : 1;
+                if (state.subject_mask_edit_session.fillPolygon(
+                        state.subject_mask_brush.polygon_points, value)) {
+                    state.subject_mask_edit_status =
+                        "Preview dirty: polygon fill applied.";
+                } else {
+                    state.subject_mask_edit_status =
+                        "Polygon fill made no preview change.";
+                }
+                state.subject_mask_brush.polygon_points.clear();
+                state.subject_mask_brush.polygon_hover_valid = false;
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(
+                state.subject_mask_brush.polygon_points.empty());
+            if (ImGui::Button("Cancel Polygon")) {
+                state.subject_mask_brush.polygon_points.clear();
+                state.subject_mask_brush.polygon_hover_valid = false;
+                state.subject_mask_edit_status = "Polygon draft canceled.";
+            }
+            ImGui::EndDisabled();
+            if (!state.subject_mask_brush.polygon_points.empty()) {
+                ImGui::TextDisabled("Vertices: %zu",
+                                    state.subject_mask_brush
+                                        .polygon_points.size());
+            }
+        }
+        ImGui::EndDisabled();
+        if (!state.subject_mask_brush.enabled) {
+            clearSubjectMaskShapeDrafts(state.subject_mask_brush);
+        }
+
         if (ImGui::Button("Reset Preview")) {
             state.subject_mask_edit_session.resetPreview();
+            clearSubjectMaskShapeDrafts(state.subject_mask_brush);
             state.subject_mask_edit_status =
                 "Preview reset to loaded mask row.";
         }

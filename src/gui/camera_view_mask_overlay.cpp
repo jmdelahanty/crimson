@@ -25,6 +25,64 @@ double durationMs(std::chrono::steady_clock::duration duration) {
     return std::chrono::duration<double, std::milli>(duration).count();
 }
 
+ImVec2 clampPlotOverlayPosition(ImVec2 top_left, const ImVec2& box_size) {
+    const ImVec2 plot_pos = ImPlot::GetPlotPos();
+    const ImVec2 plot_size = ImPlot::GetPlotSize();
+    constexpr float margin = 4.0f;
+    const float min_x = plot_pos.x + margin;
+    const float min_y = plot_pos.y + margin;
+    const float max_x = plot_pos.x + plot_size.x - box_size.x - margin;
+    const float max_y = plot_pos.y + plot_size.y - box_size.y - margin;
+    if (min_x <= max_x) {
+        top_left.x = std::clamp(top_left.x, min_x, max_x);
+    } else {
+        top_left.x = min_x;
+    }
+    if (min_y <= max_y) {
+        top_left.y = std::clamp(top_left.y, min_y, max_y);
+    } else {
+        top_left.y = min_y;
+    }
+    return top_left;
+}
+
+void drawPlotTextBox(const std::string& text,
+                     const ImPlotPoint& plot_anchor,
+                     const ImVec4& accent_color,
+                     const ImVec2& pixel_offset = ImVec2(6.0f, 6.0f)) {
+    if (text.empty() || !std::isfinite(plot_anchor.x) ||
+        !std::isfinite(plot_anchor.y)) {
+        return;
+    }
+
+    const ImVec2 padding(7.0f, 4.0f);
+    const ImVec2 text_size = ImGui::CalcTextSize(text.c_str());
+    const ImVec2 box_size(text_size.x + padding.x * 2.0f,
+                          text_size.y + padding.y * 2.0f);
+    ImVec2 top_left = ImPlot::PlotToPixels(plot_anchor);
+    top_left.x += pixel_offset.x;
+    top_left.y += pixel_offset.y;
+    top_left = clampPlotOverlayPosition(top_left, box_size);
+
+    const ImVec2 box_min = top_left;
+    const ImVec2 box_max(top_left.x + box_size.x, top_left.y + box_size.y);
+    ImDrawList* draw_list = ImPlot::GetPlotDrawList();
+    draw_list->AddRectFilled(box_min, box_max, IM_COL32(8, 10, 14, 220), 4.0f);
+    draw_list->AddRect(box_min,
+                       box_max,
+                       ImGui::ColorConvertFloat4ToU32(accent_color),
+                       4.0f,
+                       0,
+                       1.1f);
+    const ImVec2 text_pos(top_left.x + padding.x, top_left.y + padding.y);
+    draw_list->AddText(ImVec2(text_pos.x + 1.0f, text_pos.y + 1.0f),
+                       IM_COL32(0, 0, 0, 210),
+                       text.c_str());
+    draw_list->AddText(text_pos,
+                       ImGui::ColorConvertFloat4ToU32(accent_color),
+                       text.c_str());
+}
+
 struct EyeMaskTextureCacheEntry {
     std::string source_key;
     int32_t roi_index = -1;
@@ -262,6 +320,39 @@ bool shouldDrawSubjectMaskComponent(
     return true;
 }
 
+std::vector<uint32_t> previewPixelIndices(
+    const CameraViewSubjectMaskPreview& preview) {
+    std::vector<uint32_t> pixels;
+    if (!preview.active || preview.binary_mask == nullptr ||
+        preview.rows <= 0 || preview.cols <= 0) {
+        return pixels;
+    }
+    const size_t expected_size =
+        static_cast<size_t>(preview.rows) * static_cast<size_t>(preview.cols);
+    if (preview.binary_mask->size() != expected_size) {
+        return pixels;
+    }
+    pixels.reserve(expected_size / 4);
+    for (size_t idx = 0; idx < expected_size; ++idx) {
+        if ((*preview.binary_mask)[idx] != 0) {
+            pixels.push_back(static_cast<uint32_t>(idx));
+        }
+    }
+    return pixels;
+}
+
+bool previewReplacesComponent(
+    const CameraViewSubjectMaskPreview* preview,
+    const ZarrDetectionLoader::FrameDetections::EyeMask& mask_info,
+    const std::string& component_name) {
+    return preview != nullptr && preview->active && preview->dirty &&
+           preview->roi_index == mask_info.roi_index &&
+           preview->component_name == component_name &&
+           preview->rows == mask_info.rows &&
+           preview->cols == mask_info.cols &&
+           preview->binary_mask != nullptr;
+}
+
 }  // namespace
 
 const char* cameraViewMaskOverlayModeLabel(CameraViewMaskOverlayMode mode) {
@@ -316,7 +407,8 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
     const ZarrDetectionLoader::FrameDetections* subject_shape_details,
     float image_height_px,
     const std::string& smoothing_run_id,
-    const CameraViewMaskOverlayOptions& options) {
+    const CameraViewMaskOverlayOptions& options,
+    const CameraViewSubjectMaskPreview* edit_preview) {
     CameraViewMaskPerfMetrics metrics;
     metrics.attempted = true;
     metrics.mode = cameraViewMaskOverlayModeLabel(options.mode);
@@ -464,7 +556,10 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
         for (const auto& component : mask_info.subject_mask_components) {
             if (!component.valid || component.pixel_indices.empty() ||
                 isEyeMaskComponent(component.label) ||
-                !shouldDrawSubjectMaskComponent(component.label, options)) {
+                !shouldDrawSubjectMaskComponent(component.label, options) ||
+                previewReplacesComponent(edit_preview,
+                                         mask_info,
+                                         component.label)) {
                 continue;
             }
 
@@ -543,7 +638,10 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
 
         if (draw_all_contours) {
             for (const auto& component : mask_info.subject_mask_components) {
-                if (isEyeMaskComponent(component.label)) {
+                if (isEyeMaskComponent(component.label) ||
+                    previewReplacesComponent(edit_preview,
+                                             mask_info,
+                                             component.label)) {
                     continue;
                 }
                 draw_component_contour(
@@ -556,6 +654,112 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
             }
         }
 
+        auto draw_edit_preview =
+            [&](const CameraViewSubjectMaskPreview& preview) {
+                if (!preview.active || !preview.dirty ||
+                    preview.roi_index != mask_info.roi_index ||
+                    preview.component_name.empty() ||
+                    preview.rows != mask_info.rows ||
+                    preview.cols != mask_info.cols ||
+                    !shouldDrawSubjectMaskComponent(preview.component_name,
+                                                    options)) {
+                    return;
+                }
+                std::vector<uint32_t> pixels = previewPixelIndices(preview);
+                ImVec4 preview_color =
+                    subjectMaskComponentColor(preview.component_name);
+                preview_color.w =
+                    std::max(preview_color.w, 0.62f);
+                const std::string layer_key =
+                    "preview:" + preview.component_name + ":" +
+                    std::to_string(preview.revision);
+                const std::string base_id =
+                    "##subject_mask_preview_" + preview.component_name + "_" +
+                    std::to_string(det_idx);
+                if (!pixels.empty()) {
+                    GLuint texture_id = eyeMaskTextureCache().getOrCreatePixels(
+                        smoothing_run_id,
+                        preview.roi_index,
+                        layer_key,
+                        preview.rows,
+                        preview.cols,
+                        pixels,
+                        preview_color,
+                        &metrics);
+                    if (texture_id != 0) {
+                        const double x_min = mask_info.offset_x;
+                        const double x_max =
+                            mask_info.offset_x + mask_info.roi_width;
+                        const double y_min =
+                            scene_height_f -
+                            (mask_info.offset_y + mask_info.roi_height);
+                        const double y_max = scene_height_f - mask_info.offset_y;
+                        const auto fill_draw_start =
+                            std::chrono::steady_clock::now();
+                        ImPlot::PlotImage(
+                            (base_id + "_texture").c_str(),
+                            (ImTextureID)(intptr_t)texture_id,
+                            ImPlotPoint(x_min, y_min),
+                            ImPlotPoint(x_max, y_max),
+                            ImVec2(0, 0),
+                            ImVec2(1, 1),
+                            ImVec4(1, 1, 1, 1));
+                        metrics.fill_draw_ms += durationMs(
+                            std::chrono::steady_clock::now() - fill_draw_start);
+                    } else {
+                        const auto fill_draw_start =
+                            std::chrono::steady_clock::now();
+                        std::vector<double> xs;
+                        std::vector<double> ys;
+                        xs.reserve(pixels.size());
+                        ys.reserve(pixels.size());
+                        for (uint32_t linear : pixels) {
+                            const uint32_t row =
+                                linear / static_cast<uint32_t>(mask_info.cols);
+                            const uint32_t col =
+                                linear % static_cast<uint32_t>(mask_info.cols);
+                            const double px = mask_info.offset_x +
+                                              (static_cast<double>(col) + 0.5) *
+                                                  cell_w;
+                            const double py = mask_info.offset_y +
+                                              (static_cast<double>(row) + 0.5) *
+                                                  cell_h;
+                            xs.push_back(px);
+                            ys.push_back(scene_height_f - py);
+                        }
+                        ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle,
+                                                   2.5f,
+                                                   preview_color,
+                                                   1.0f,
+                                                   preview_color);
+                        ImPlot::PlotScatter((base_id + "_pts").c_str(),
+                                            xs.data(),
+                                            ys.data(),
+                                            static_cast<int>(xs.size()));
+                        metrics.fill_draw_ms += durationMs(
+                            std::chrono::steady_clock::now() - fill_draw_start);
+                        metrics.fallback_scatter_count++;
+                    }
+                    metrics.component_fill_count++;
+                }
+
+                constexpr ImVec4 kPreviewBorderColor =
+                    ImVec4(1.0f, 1.0f, 1.0f, 0.92f);
+                draw_roi_selection_border(base_id + "_border",
+                                          kPreviewBorderColor,
+                                          1.8f);
+                drawPlotTextBox(
+                    pixels.empty()
+                        ? ("Preview empty: " +
+                           shortSubjectMaskLabel(preview.component_name))
+                        : ("Preview: " +
+                           shortSubjectMaskLabel(preview.component_name)),
+                    ImPlotPoint(mask_info.offset_x,
+                                scene_height_f - mask_info.offset_y),
+                    kPreviewBorderColor,
+                    ImVec2(6.0f, 6.0f));
+            };
+
         CameraViewEyeAngleOverlayState eye_angle_overlay_state;
         for (int eye = 0; eye < 2; ++eye) {
             if ((eye == 0 && !options.show_eye_left) ||
@@ -563,6 +767,9 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
                 continue;
             }
             const auto& pixel_indices = mask_info.pixel_indices[eye];
+            const std::string eye_label = (eye == 0) ? "eye_left" : "eye_right";
+            const bool preview_replaces_eye =
+                previewReplacesComponent(edit_preview, mask_info, eye_label);
             const bool has_pixels = !pixel_indices.empty();
             const std::string base_id =
                 (eye == 0) ? "##eye_mask_left_" + std::to_string(det_idx)
@@ -572,7 +779,7 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
                                     : ImVec4(1.0f, 0.3f, 0.6f, 0.35f);
 
             bool drew_texture = false;
-            if (has_pixels) {
+            if (has_pixels && !preview_replaces_eye) {
                 GLuint texture_id = eyeMaskTextureCache().getOrCreate(
                     smoothing_run_id,
                     mask_info,
@@ -633,7 +840,6 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
                 metrics.component_fill_count++;
             }
 
-            const std::string eye_label = (eye == 0) ? "eye_left" : "eye_right";
             auto contour_component = std::find_if(
                 mask_info.subject_mask_components.begin(),
                 mask_info.subject_mask_components.end(),
@@ -642,7 +848,8 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
                     return component.label == eye_label;
                 });
             if (draw_all_contours &&
-                contour_component != mask_info.subject_mask_components.end()) {
+                contour_component != mask_info.subject_mask_components.end() &&
+                !preview_replaces_eye) {
                 draw_component_contour(
                     *contour_component,
                     base_id + "_contour",
@@ -670,6 +877,10 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
             }
         }
 
+        if (edit_preview != nullptr) {
+            draw_edit_preview(*edit_preview);
+        }
+
         const bool selected_roi =
             options.highlighted_roi_index >= 0 &&
             mask_info.roi_index == options.highlighted_roi_index &&
@@ -677,6 +888,12 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
         if (selected_roi) {
             constexpr ImVec4 kSelectionColor =
                 ImVec4(1.0f, 0.95f, 0.18f, 0.98f);
+            constexpr ImVec4 kEditableRoiColor =
+                ImVec4(1.0f, 0.95f, 0.18f, 0.72f);
+            draw_roi_selection_border(
+                "##selected_subject_mask_edit_roi_" + std::to_string(det_idx),
+                kEditableRoiColor,
+                2.0f);
             auto selected_component = std::find_if(
                 mask_info.subject_mask_components.begin(),
                 mask_info.subject_mask_components.end(),
@@ -704,16 +921,20 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
             }
             if (!drew_selection_contour) {
                 draw_roi_selection_border(
-                    "##selected_subject_mask_roi_" + std::to_string(det_idx),
+                    "##selected_subject_mask_edit_roi_fallback_" +
+                        std::to_string(det_idx),
                     kSelectionColor,
                     2.8f);
             }
 
-            ImPlot::PlotText(
-                shortSubjectMaskLabel(options.highlighted_component_name).c_str(),
-                mask_info.offset_x,
-                scene_height_f - mask_info.offset_y,
-                ImVec2(6.0f, 8.0f));
+            drawPlotTextBox(
+                "ROI edit: " +
+                    shortSubjectMaskLabel(options.highlighted_component_name) +
+                    " | ROI " + std::to_string(mask_info.roi_index),
+                ImPlotPoint(mask_info.offset_x,
+                            scene_height_f - mask_info.offset_y),
+                kSelectionColor,
+                ImVec2(6.0f, 6.0f));
             metrics.selected_highlight_drawn = true;
         }
     }

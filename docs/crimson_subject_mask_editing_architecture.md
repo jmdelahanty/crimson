@@ -99,17 +99,27 @@ camera canvas also selects the topmost component under the cursor using the
 same priority as the draw order: eyes, swim bladder, then body. Legacy fallback
 data remains labeled as Eye Masks.
 
+The current preview slice also exposes preview tools for the selected target:
+brush, lasso, and polygon. Brush mode shows the current circular footprint over
+the active ROI and paints or erases circular stamps. Lasso records a
+click-drag path and fills it on mouse release. Polygon mode records clicked
+vertices and fills on double-click or the explicit Apply Polygon button.
+All tools mutate only `SubjectMaskEditSession::previewMask()`, operate in
+ROI-pixel coordinates, draw dotted shape drafts before applying fills, and render
+the dirty preview mask above the persisted mask layer. Input is active only from
+the Subject Masks tab while playback is paused.
+
 Save is deliberately disabled in the UI because the default backend is
 `PreviewOnly`.
 
 ## Remaining Work
 
-1. Add paint/erase tools that mutate `SubjectMaskEditSession::previewMask()`.
-2. Render the active preview mask over persisted mask data before save.
-3. Add undo/redo state around preview mask mutations.
-4. Add an explicit backend setting for `PreviewOnly` vs configured Palette
+1. Add undo/redo state around preview mask mutations.
+2. Add preview-specific contour/diff rendering instead of only the full dirty
+   preview fill.
+3. Add an explicit backend setting for `PreviewOnly` vs configured Palette
    command/service.
-5. Wire save through `SubjectMaskWritebackClient`, then refresh the touched
+4. Wire save through `SubjectMaskWritebackClient`, then refresh the touched
    row/component after successful saves.
-6. Keep failed saves dirty and surface the backend error without marking the
+5. Keep failed saves dirty and surface the backend error without marking the
    edit accepted.

@@ -3065,6 +3065,10 @@ int main(int argc, char **argv) {
                         &active_full_frame_keypoint_selection;
                     camera_context_input.frame_debug_state =
                         &frame_debug_window_state;
+                    camera_context_input.subject_mask_edit_session =
+                        &frame_debug_window_state.subject_mask_edit_session;
+                    camera_context_input.subject_mask_brush_state =
+                        &frame_debug_window_state.subject_mask_brush;
                     camera_context_input.can_draw_headings = can_draw_headings;
                     camera_context_input.can_draw_eye_masks =
                         can_draw_eye_masks;
@@ -3130,6 +3134,9 @@ int main(int argc, char **argv) {
                         applyCameraViewSubjectMaskPick(
                             camera_view_result,
                             zarr_loader,
+                            frame_debug_window_state);
+                        applyCameraViewSubjectMaskPaint(
+                            camera_view_result,
                             frame_debug_window_state);
                     }
 
