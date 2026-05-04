@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gui/analysis_timeline_perf.h"
 #include "stimulus_event_timeline_window.h"
 
 #include <string>
@@ -37,6 +38,7 @@ struct AnalysisTimelineWindowContext {
     TimelineScrollState& scroll_state;
     int current_frame_num = 0;
     double video_fps = 0.0;
+    AnalysisTimelinePerfStats* perf_stats = nullptr;
 };
 
 void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,

@@ -10,8 +10,10 @@
 #include "imgui.h"
 #include "zarr_loader.h"
 
-#include <optional>
+#include <chrono>
+#include <cstdint>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -25,6 +27,30 @@ std::optional<double> currentTimeSeconds(const AnalysisTimelineWindowContext& co
     return static_cast<double>(context.current_frame_num) / context.video_fps;
 }
 
+double durationMs(std::chrono::steady_clock::duration duration) {
+    return std::chrono::duration<double, std::milli>(duration).count();
+}
+
+uint64_t traceRowPointCount(const AnalysisTimelineTracePlotRow& row) {
+    uint64_t count = 0;
+    for (const auto& trace : row.traces) {
+        count += static_cast<uint64_t>(trace.xs.size());
+    }
+    return count;
+}
+
+void addPreparedTraceRowStats(AnalysisTimelinePerfStats* perf,
+                              const AnalysisTimelineTracePlotRow& row,
+                              uint64_t& bucket) {
+    if (perf == nullptr) {
+        return;
+    }
+    const uint64_t points = traceRowPointCount(row);
+    bucket += points;
+    perf->prepared_points_total += points;
+    perf->prepared_traces += static_cast<uint32_t>(row.traces.size());
+}
+
 }  // namespace
 
 void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
@@ -34,8 +60,15 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
         return;
     }
 
+    AnalysisTimelinePerfStats* perf = context.perf_stats;
+    const auto source_selector_start = std::chrono::steady_clock::now();
     const auto* selected_series =
         drawAnalysisTimelineMotionSourceSelector(context.zarr_loader);
+    if (perf != nullptr) {
+        perf->source_selector_ms +=
+            durationMs(std::chrono::steady_clock::now() -
+                       source_selector_start);
+    }
 
     const auto& time_data = context.zarr_loader.getMovementTimeSeconds();
     const auto& smoothed_speed =
@@ -97,17 +130,25 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
         return;
     }
 
-    ImGui::BeginDisabled(!has_stimulus_context);
-    ImGui::Checkbox("Show stimulus context", &state.show_stimulus_context);
-    ImGui::EndDisabled();
-    if (!has_stimulus_context && state.show_stimulus_context) {
-        ImGui::TextDisabled("Stimulus context unavailable.");
+    {
+        const auto controls_start = std::chrono::steady_clock::now();
+        ImGui::BeginDisabled(!has_stimulus_context);
+        ImGui::Checkbox("Show stimulus context", &state.show_stimulus_context);
+        ImGui::EndDisabled();
+        if (!has_stimulus_context && state.show_stimulus_context) {
+            ImGui::TextDisabled("Stimulus context unavailable.");
+        }
+        if (perf != nullptr) {
+            perf->controls_ms +=
+                durationMs(std::chrono::steady_clock::now() - controls_start);
+        }
     }
 
     const double fallback_current_time =
         currentTimeSeconds(context).value_or(-1.0);
 
     if (has_track_timeline) {
+        const auto motion_controls_start = std::chrono::steady_clock::now();
         motion_selection = drawAnalysisTimelineMotionControls({
             context.zarr_loader,
             context.scroll_state,
@@ -122,26 +163,56 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
             primary_speed_units,
             secondary_speed_label,
         }, state);
+        if (perf != nullptr) {
+            perf->controls_ms +=
+                durationMs(std::chrono::steady_clock::now() -
+                           motion_controls_start);
+        }
 
-        const auto motion_data = prepareAnalysisTimelineMotionData({
-            time_data,
-            frame_indices,
-            smoothed_speed,
-            instant_speed,
-            distance_mm,
-            heading_degrees,
-            smoothed_heading_degrees,
-            heading_keypoint_success,
-            heading_per_second_degrees,
-            heading_per_second_resultant,
-            heading_per_second_time,
-            motion_selection.selected_swim_bouts,
-            smoothed_available,
-            instant_available,
-            heading_per_second_available,
-            state.show_detector_response,
-            context.video_fps,
-        });
+        AnalysisTimelineMotionPreparedData motion_data;
+        {
+            const auto prepare_start = std::chrono::steady_clock::now();
+            motion_data = prepareAnalysisTimelineMotionData({
+                time_data,
+                frame_indices,
+                smoothed_speed,
+                instant_speed,
+                distance_mm,
+                heading_degrees,
+                smoothed_heading_degrees,
+                heading_keypoint_success,
+                heading_per_second_degrees,
+                heading_per_second_resultant,
+                heading_per_second_time,
+                motion_selection.selected_swim_bouts,
+                smoothed_available,
+                instant_available,
+                heading_per_second_available,
+                state.show_detector_response,
+                context.video_fps,
+            });
+            if (perf != nullptr) {
+                perf->prepare_motion_ms +=
+                    durationMs(std::chrono::steady_clock::now() -
+                               prepare_start);
+                const uint64_t motion_points =
+                    static_cast<uint64_t>(motion_data.smoothed_plot.size()) +
+                    static_cast<uint64_t>(motion_data.instant_plot.size()) +
+                    static_cast<uint64_t>(
+                        motion_data.detector_value_plot.size()) +
+                    static_cast<uint64_t>(
+                        motion_data.heading_raw_plot.size()) +
+                    static_cast<uint64_t>(
+                        motion_data.heading_smoothed_plot.size()) +
+                    static_cast<uint64_t>(
+                        motion_data.heading_per_second_plot.size()) +
+                    static_cast<uint64_t>(
+                        motion_data.heading_per_second_resultant_plot.size()) +
+                    static_cast<uint64_t>(motion_data.distance_units.size());
+                perf->motion_points_prepared += motion_points;
+                perf->prepared_points_total += motion_points;
+            }
+        }
         std::vector<AnalysisTimelineTracePlotRow> linked_extra_rows;
         AnalysisTimelineMotionSummaryContext motion_summary_context{
             state,
@@ -154,10 +225,19 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
             primary_speed_label,
             primary_speed_units,
         };
-        if (auto position_row =
-                buildAnalysisTimelineTrackPositionRow(
-                    motion_summary_context)) {
+        const auto position_start = std::chrono::steady_clock::now();
+        if (auto position_row = buildAnalysisTimelineTrackPositionRow(
+                motion_summary_context)) {
+            if (perf != nullptr) {
+                addPreparedTraceRowStats(perf,
+                                         *position_row,
+                                         perf->position_points_prepared);
+            }
             linked_extra_rows.push_back(std::move(*position_row));
+        }
+        if (perf != nullptr) {
+            perf->build_position_ms +=
+                durationMs(std::chrono::steady_clock::now() - position_start);
         }
         if (has_eye_angle_timeline) {
             AnalysisTimelineEyeAngleContext eye_context{
@@ -166,11 +246,29 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
                 context.current_frame_num,
                 context.video_fps,
                 fallback_current_time,
+                context.perf_stats,
             };
+            const auto eye_controls_start = std::chrono::steady_clock::now();
             drawAnalysisTimelineEyeAngleControls(eye_context, state);
-            if (auto eye_row =
-                    buildAnalysisTimelineEyeAngleRow(eye_context, state)) {
+            if (perf != nullptr) {
+                perf->controls_ms +=
+                    durationMs(std::chrono::steady_clock::now() -
+                               eye_controls_start);
+            }
+            const auto eye_build_start = std::chrono::steady_clock::now();
+            if (auto eye_row = buildAnalysisTimelineEyeAngleRow(eye_context,
+                                                                state)) {
+                if (perf != nullptr) {
+                    addPreparedTraceRowStats(perf,
+                                             *eye_row,
+                                             perf->eye_points_prepared);
+                }
                 linked_extra_rows.push_back(std::move(*eye_row));
+            }
+            if (perf != nullptr) {
+                perf->build_eye_ms +=
+                    durationMs(std::chrono::steady_clock::now() -
+                               eye_build_start);
             }
         }
         if (has_tail_kinematics_timeline) {
@@ -180,10 +278,28 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
                 context.current_frame_num,
                 context.video_fps,
                 fallback_current_time,
+                context.perf_stats,
             };
+            const auto tail_controls_start = std::chrono::steady_clock::now();
             drawAnalysisTimelineTailKinematicsControls(tail_context, state);
+            if (perf != nullptr) {
+                perf->controls_ms +=
+                    durationMs(std::chrono::steady_clock::now() -
+                               tail_controls_start);
+            }
+            const auto tail_build_start = std::chrono::steady_clock::now();
             auto tail_rows =
                 buildAnalysisTimelineTailKinematicsRows(tail_context, state);
+            if (perf != nullptr) {
+                for (const auto& row : tail_rows) {
+                    addPreparedTraceRowStats(perf,
+                                             row,
+                                             perf->tail_points_prepared);
+                }
+                perf->build_tail_ms +=
+                    durationMs(std::chrono::steady_clock::now() -
+                               tail_build_start);
+            }
             linked_extra_rows.insert(linked_extra_rows.end(),
                                      std::make_move_iterator(
                                          tail_rows.begin()),
@@ -221,7 +337,9 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
             &context.zarr_loader,
             state.show_stimulus_context && has_stimulus_context,
             &linked_extra_rows,
+            context.perf_stats,
         });
+        const auto summary_start = std::chrono::steady_clock::now();
         drawAnalysisTimelineMotionSummary({
             state,
             context.scroll_state,
@@ -233,36 +351,58 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
             primary_speed_label,
             primary_speed_units,
         });
+        if (perf != nullptr) {
+            perf->summary_ms +=
+                durationMs(std::chrono::steady_clock::now() - summary_start);
+        }
     } else {
         ImGui::TextDisabled("Track kinematics traces unavailable.");
         if (state.show_stimulus_context && has_stimulus_context) {
+            const auto stimulus_start = std::chrono::steady_clock::now();
             drawAnalysisTimelineStimulusContext({
                 context.zarr_loader,
                 context.scroll_state,
                 context.current_frame_num,
                 context.video_fps,
             });
+            if (perf != nullptr) {
+                perf->draw_stimulus_context_ms +=
+                    durationMs(std::chrono::steady_clock::now() -
+                               stimulus_start);
+            }
         }
     }
 
     if (!has_track_timeline && has_eye_angle_timeline) {
+        const auto eye_start = std::chrono::steady_clock::now();
         drawAnalysisTimelineEyeAngleSection({
             context.zarr_loader,
             context.scroll_state,
             context.current_frame_num,
             context.video_fps,
             fallback_current_time,
+            context.perf_stats,
         }, state);
+        if (perf != nullptr) {
+            perf->standalone_eye_ms +=
+                durationMs(std::chrono::steady_clock::now() - eye_start);
+        }
     }
 
     if (!has_track_timeline && has_tail_kinematics_timeline) {
+        const auto tail_start = std::chrono::steady_clock::now();
         drawAnalysisTimelineTailKinematicsSection({
             context.zarr_loader,
             context.scroll_state,
             context.current_frame_num,
             context.video_fps,
             fallback_current_time,
+            context.perf_stats,
         }, state);
+        if (perf != nullptr) {
+            perf->standalone_tail_ms +=
+                durationMs(std::chrono::steady_clock::now() - tail_start);
+        }
     }
 
     ImGui::End();

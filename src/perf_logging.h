@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gui/analysis_timeline_perf.h"
 #include "gui/camera_view_overlay_renderer.h"
 #include "gui/crop_preview_perf.h"
 #include "stimulus_playback.h"
@@ -124,6 +125,7 @@ struct PerfLogFrameContext {
     int window_height = 0;
 
     std::chrono::steady_clock::time_point frame_loop_start{};
+    const AnalysisTimelinePerfStats* analysis_timeline_perf = nullptr;
 };
 
 struct MaskPerfLogFrameContext {

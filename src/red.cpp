@@ -1235,6 +1235,7 @@ int main(int argc, char **argv) {
         double frame_stimulus_window_ui_ms = 0.0;
         double frame_stimulus_timeline_ui_ms = 0.0;
         double frame_movement_timeline_ui_ms = 0.0;
+        AnalysisTimelinePerfStats frame_analysis_timeline_perf;
         double frame_help_menu_ui_ms = 0.0;
         double frame_gl_draw_ms = 0.0;
         double frame_swap_ms = 0.0;
@@ -3676,11 +3677,14 @@ int main(int argc, char **argv) {
                 shared_timeline_scroll_state,
                 current_frame_num,
                 video_fps,
+                &frame_analysis_timeline_perf,
             };
             drawAnalysisTimelineWindow(analysis_timeline_context,
                                        analysis_timeline_window_state);
             frame_movement_timeline_ui_ms += durationMs(
                 std::chrono::steady_clock::now() - analysis_timeline_ui_start);
+            frame_analysis_timeline_perf.total_window_ms =
+                frame_movement_timeline_ui_ms;
         }
 
         shared_timeline_scroll_state.prev_enabled =
@@ -3937,6 +3941,7 @@ int main(int argc, char **argv) {
             static_cast<int>(window->width),
             static_cast<int>(window->height),
             frame_loop_start,
+            &frame_analysis_timeline_perf,
         };
         maybeWritePerfLogSample(
             perf_log_writer,

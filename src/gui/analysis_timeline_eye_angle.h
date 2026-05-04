@@ -11,6 +11,7 @@ struct AnalysisTimelineEyeAngleContext {
     int current_frame_num = 0;
     double video_fps = 0.0;
     double fallback_current_time = -1.0;
+    AnalysisTimelinePerfStats* perf_stats = nullptr;
 };
 
 void drawAnalysisTimelineEyeAngleControls(

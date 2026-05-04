@@ -41,6 +41,7 @@ struct AnalysisTimelineMotionPlotContext {
     const ZarrDetectionLoader* stimulus_loader = nullptr;
     bool show_stimulus_context = false;
     const std::vector<AnalysisTimelineTracePlotRow>* extra_trace_rows = nullptr;
+    AnalysisTimelinePerfStats* perf_stats = nullptr;
 };
 
 double drawAnalysisTimelineMotionPlots(

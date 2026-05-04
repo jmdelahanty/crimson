@@ -151,6 +151,51 @@ json cropPreviewPerfToJson(const CropPreviewPerfMetrics& metrics) {
     };
 }
 
+json analysisTimelinePerfToJson(const AnalysisTimelinePerfStats* stats) {
+    if (stats == nullptr) {
+        return nullptr;
+    }
+    return json{
+        {"timing",
+         {{"source_selector_ms", stats->source_selector_ms},
+          {"controls_ms", stats->controls_ms},
+          {"prepare_motion_ms", stats->prepare_motion_ms},
+          {"build_position_ms", stats->build_position_ms},
+          {"build_eye_ms", stats->build_eye_ms},
+          {"build_tail_ms", stats->build_tail_ms},
+          {"draw_plots_ms", stats->draw_plots_ms},
+          {"draw_stimulus_context_ms", stats->draw_stimulus_context_ms},
+          {"draw_speed_plot_ms", stats->draw_speed_plot_ms},
+          {"draw_bout_rects_ms", stats->draw_bout_rects_ms},
+          {"draw_heading_plot_ms", stats->draw_heading_plot_ms},
+          {"draw_distance_plot_ms", stats->draw_distance_plot_ms},
+          {"draw_extra_rows_ms", stats->draw_extra_rows_ms},
+          {"summary_ms", stats->summary_ms},
+          {"standalone_eye_ms", stats->standalone_eye_ms},
+          {"standalone_tail_ms", stats->standalone_tail_ms},
+          {"total_window_ms", stats->total_window_ms}}},
+        {"points",
+         {{"motion_points_prepared", stats->motion_points_prepared},
+          {"position_points_prepared", stats->position_points_prepared},
+          {"eye_points_prepared", stats->eye_points_prepared},
+          {"tail_points_prepared", stats->tail_points_prepared},
+          {"prepared_points_total", stats->prepared_points_total},
+          {"submitted_points_total", stats->submitted_points_total},
+          {"speed_submitted_points", stats->speed_submitted_points},
+          {"heading_submitted_points", stats->heading_submitted_points},
+          {"distance_submitted_points", stats->distance_submitted_points},
+          {"extra_submitted_points", stats->extra_submitted_points}}},
+        {"counts",
+         {{"prepared_traces", stats->prepared_traces},
+          {"submitted_traces", stats->submitted_traces},
+          {"plot_rows", stats->plot_rows},
+          {"extra_rows", stats->extra_rows},
+          {"bout_rects_considered", stats->bout_rects_considered},
+          {"bout_rects_drawn", stats->bout_rects_drawn},
+          {"bout_core_rects_drawn", stats->bout_core_rects_drawn}}},
+    };
+}
+
 json framePerfToJson(const PerfLogFrameContext& context,
                      double frame_loop_ms) {
     int visible_camera_count = 0;
@@ -307,6 +352,8 @@ json framePerfToJson(const PerfLogFrameContext& context,
           {"stimulus_window_ms", context.frame_stimulus_window_ui_ms},
           {"stimulus_timeline_ms", context.frame_stimulus_timeline_ui_ms},
           {"movement_timeline_ms", context.frame_movement_timeline_ui_ms},
+          {"analysis_timeline",
+           analysisTimelinePerfToJson(context.analysis_timeline_perf)},
           {"help_menu_ms", context.frame_help_menu_ui_ms},
           {"draw_cmd_count", context.frame_imgui_draw_cmd_count},
           {"draw_list_count", context.frame_imgui_draw_list_count},
