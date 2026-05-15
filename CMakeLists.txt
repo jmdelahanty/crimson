@@ -574,6 +574,40 @@ target_link_libraries(zarr_calibration_probe PRIVATE
 )
 target_compile_features(zarr_calibration_probe PRIVATE cxx_std_17)
 
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE CRIMSON_GIT_COMMIT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(NOT CRIMSON_GIT_COMMIT)
+    set(CRIMSON_GIT_COMMIT "unknown")
+endif()
+
+add_executable(crimson_decode_smoke
+    tools/crimson_decode_smoke.cpp
+    src/FFmpegDemuxer.cpp
+    src/NvDecoder.cpp
+)
+target_include_directories(crimson_decode_smoke PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nvcodec
+    ${CUDA_INCLUDE_DIRS}
+    ${FFMPEG_INCLUDE_DIRS}
+)
+target_link_libraries(crimson_decode_smoke PRIVATE
+    ${CUDA_LIBRARIES}
+    ${CUDA_DRIVER}
+    ${NVCUVID_LIBRARY}
+    ${FFMPEG_LIBRARIES}
+    Threads::Threads
+)
+target_compile_features(crimson_decode_smoke PRIVATE cxx_std_17)
+target_compile_definitions(crimson_decode_smoke PRIVATE
+    CRIMSON_GIT_COMMIT="${CRIMSON_GIT_COMMIT}"
+)
+
 # --- Source Files ---
 # CUDA sources
 set(CUDA_SOURCES "")
