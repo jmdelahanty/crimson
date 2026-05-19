@@ -816,10 +816,16 @@ CameraViewPresenterResult presentCameraViewFrame(
                 result.resolved_current_frame_num = context.target_display_frame;
             }
         } else {
-            result.presented_frame = -1;
-            result.resolved_current_frame_num = context.target_display_frame;
             if (camera.texture_has_valid_frame) {
-                clearCameraDisplayBuffer(camera);
+                result.presented_frame = camera.last_uploaded_frame;
+                result.resolved_current_frame_num =
+                    camera.last_uploaded_frame >= 0
+                        ? camera.last_uploaded_frame
+                        : context.current_frame_num;
+            } else {
+                result.presented_frame = -1;
+                result.resolved_current_frame_num =
+                    context.target_display_frame;
             }
         }
         return result;

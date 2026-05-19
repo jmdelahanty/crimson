@@ -135,20 +135,23 @@ using json = nlohmann::json;
 struct PlaybackTraceLogWriter {
     std::ofstream stream;
     std::filesystem::path jsonl_path;
+    std::string label = "PlaybackTrace";
     std::chrono::steady_clock::time_point start_steady{};
     uint64_t sequence = 0;
     int samples_since_flush = 0;
 
-    bool open(const std::filesystem::path& output_path) {
+    bool open(const std::filesystem::path& output_path,
+              const std::string& log_label = "PlaybackTrace") {
         if (output_path.empty()) {
             return false;
         }
+        label = log_label.empty() ? "PlaybackTrace" : log_label;
         jsonl_path = output_path;
         std::error_code ec;
         if (jsonl_path.has_parent_path()) {
             std::filesystem::create_directories(jsonl_path.parent_path(), ec);
             if (ec) {
-                std::cerr << "[PlaybackTrace] Failed to create parent "
+                std::cerr << "[" << label << "] Failed to create parent "
                           << "directory for " << jsonl_path << ": "
                           << ec.message() << std::endl;
                 return false;
@@ -156,12 +159,12 @@ struct PlaybackTraceLogWriter {
         }
         stream.open(jsonl_path, std::ios::out | std::ios::trunc);
         if (!stream.is_open()) {
-            std::cerr << "[PlaybackTrace] Failed to open " << jsonl_path
+            std::cerr << "[" << label << "] Failed to open " << jsonl_path
                       << " for writing" << std::endl;
             return false;
         }
         start_steady = std::chrono::steady_clock::now();
-        std::cout << "[PlaybackTrace] Writing JSONL samples to " << jsonl_path
+        std::cout << "[" << label << "] Writing JSONL samples to " << jsonl_path
                   << std::endl;
         return true;
     }
@@ -189,6 +192,20 @@ struct PlaybackTraceLogWriter {
             samples_since_flush = 0;
         }
     }
+};
+
+struct FrameSyncTraceLastState {
+    bool initialized = false;
+    bool has_presented_frame = false;
+    int target_frame = std::numeric_limits<int>::min();
+    int presented_frame = std::numeric_limits<int>::min();
+    int bbox_query_frame = std::numeric_limits<int>::min();
+    int latest_decoded_frame = std::numeric_limits<int>::min();
+    int front_frame_before_draw = std::numeric_limits<int>::min();
+    int front_frame_after_draw = std::numeric_limits<int>::min();
+    int staging_frame_before_draw = std::numeric_limits<int>::min();
+    int staging_frame_after_draw = std::numeric_limits<int>::min();
+    int zarr_box_count = std::numeric_limits<int>::min();
 };
 
 double durationMs(std::chrono::steady_clock::duration duration) {
@@ -499,6 +516,7 @@ int main(int argc, char **argv) {
     std::filesystem::path cli_perf_log_path;
     std::filesystem::path cli_mask_perf_log_path;
     std::filesystem::path cli_playback_trace_log_path;
+    std::filesystem::path cli_frame_sync_trace_log_path;
     int cli_swap_interval = 1;
     int cli_mask_perf_sample_every = 10;
     double cli_frame_cap_fps = 0.0;
@@ -583,6 +601,15 @@ int main(int argc, char **argv) {
                 return 1;
             }
             cli_playback_trace_log_path = argv[++i];
+            continue;
+        }
+        if (arg == "--frame-sync-trace-log") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value for --frame-sync-trace-log"
+                          << std::endl;
+                return 1;
+            }
+            cli_frame_sync_trace_log_path = argv[++i];
             continue;
         }
         if (arg == "--no-mask-perf-log") {
@@ -842,6 +869,7 @@ int main(int argc, char **argv) {
     PerfLogWriter perf_log_writer;
     MaskPerfLogWriter mask_perf_log_writer;
     PlaybackTraceLogWriter playback_trace_log_writer;
+    PlaybackTraceLogWriter frame_sync_trace_log_writer;
     constexpr auto kPerfLogSamplePeriod = std::chrono::milliseconds(250);
     constexpr uint64_t kPlaybackWarmupPerfFrames = 120;
     constexpr uint64_t kPlaybackWarmupPerfSampleStride = 2;
@@ -862,6 +890,28 @@ int main(int argc, char **argv) {
     if (!cli_playback_trace_log_path.empty()) {
         (void)playback_trace_log_writer.open(cli_playback_trace_log_path);
     }
+    const char* frame_sync_trace_path_env =
+        std::getenv("CRIMSON_FRAME_SYNC_TRACE_PATH");
+    const bool frame_sync_trace_enabled =
+        crimson_env_flag_enabled("CRIMSON_FRAME_SYNC_TRACE") ||
+        !cli_frame_sync_trace_log_path.empty() ||
+        (frame_sync_trace_path_env != nullptr &&
+         frame_sync_trace_path_env[0] != '\0');
+    if (frame_sync_trace_enabled) {
+        std::filesystem::path frame_sync_trace_path =
+            default_buffer_dump_root / "frame_sync_trace_latest.jsonl";
+        if (frame_sync_trace_path_env != nullptr &&
+            frame_sync_trace_path_env[0] != '\0') {
+            frame_sync_trace_path = frame_sync_trace_path_env;
+        }
+        if (!cli_frame_sync_trace_log_path.empty()) {
+            frame_sync_trace_path = cli_frame_sync_trace_log_path;
+        }
+        (void)frame_sync_trace_log_writer.open(frame_sync_trace_path,
+                                               "FrameSyncTrace");
+    }
+    std::unordered_map<std::string, FrameSyncTraceLastState>
+        frame_sync_trace_last_by_camera;
     uint64_t mask_perf_sample_index = 0;
     int perf_playback_start_frame = -1;
     uint64_t perf_frames_since_playback_start = 0;
@@ -871,6 +921,7 @@ int main(int argc, char **argv) {
     window_need_decoding[stimulus_player.window_name].store(false);
     latest_decoded_frame[stimulus_player.window_name].store(-1);
     window_was_decoding[stimulus_player.window_name] = false;
+    PaletteClippedMediaState clipped_media_state;
     MediaSessionLoader media_session_loader(
         MediaSessionLoaderContext{
             scene,
@@ -887,6 +938,7 @@ int main(int argc, char **argv) {
             &is_view_focused,
             &window_need_decoding,
             &window_was_decoding,
+            &clipped_media_state,
             &video_loaded,
             &zarr_loaded,
             &input_is_imgs,
@@ -933,6 +985,10 @@ int main(int argc, char **argv) {
             &camera_names,
             &window_was_decoding,
             &window_need_decoding,
+            [&](int parent_frame) {
+                return media_session_loader.loadClippedVideoForParentFrame(
+                    parent_frame);
+            },
         });
     auto resetPlaybackStartPerf = [&]() {
         perf_playback_start_frame = -1;
@@ -1141,6 +1197,46 @@ int main(int argc, char **argv) {
             playback_trace_log_writer.write(sample, event_name != "frame");
         };
 
+    auto writeFrameSyncTraceEvent =
+        [&](const json& details,
+            int presenter_view_idx,
+            int presenter_target_frame,
+            int presenter_preferred_paused_slot,
+            int presenter_presented_slot,
+            int presenter_presented_frame,
+            int presenter_resolved_frame,
+            bool presenter_prewarm_active) {
+            if (!frame_sync_trace_log_writer.enabled()) {
+                return;
+            }
+            json sample = {
+                {"event", "camera_frame_sync"},
+                {"details", details},
+                {"video_loaded", video_loaded},
+                {"video_fps", video_fps},
+                {"current_frame_num", current_frame_num},
+                {"playback",
+                 {{"play_video", ps.play_video},
+                  {"to_display_frame_number", ps.to_display_frame_number},
+                  {"slider_frame_number", ps.slider_frame_number},
+                  {"read_head", ps.read_head},
+                  {"pause_seeked", ps.pause_seeked},
+                  {"just_seeked", ps.just_seeked},
+                  {"slider_just_changed", ps.slider_just_changed}}},
+                {"presenter",
+                 {{"view_idx", presenter_view_idx},
+                  {"target_frame", presenter_target_frame},
+                  {"preferred_paused_slot",
+                   presenter_preferred_paused_slot},
+                  {"presented_slot", presenter_presented_slot},
+                  {"presented_frame", presenter_presented_frame},
+                  {"resolved_frame", presenter_resolved_frame},
+                  {"prewarm_active", presenter_prewarm_active}}},
+            };
+            frame_sync_trace_log_writer.write(std::move(sample),
+                                              /*force_flush=*/true);
+        };
+
     auto makeDecodeDebugDumpContext = [&]() {
         return DecodeDebugDumpContext{
             video_loaded,
@@ -1221,6 +1317,16 @@ int main(int argc, char **argv) {
         double frame_camera_playback_swap_ms = 0.0;
         double frame_camera_plot_image_ui_ms = 0.0;
         double frame_camera_overlay_ui_ms = 0.0;
+        double frame_bbox_get_boxes_ms = 0.0;
+        double frame_bbox_edit_resolve_ms = 0.0;
+        double frame_bbox_get_raw_detections_ms = 0.0;
+        double frame_bbox_load_total_ms = 0.0;
+        double frame_bbox_overlay_build_ms = 0.0;
+        double frame_bbox_overlay_draw_ms = 0.0;
+        int frame_bbox_overlay_item_count = 0;
+        int frame_bbox_query_frame = -1;
+        int frame_bbox_loaded_count = 0;
+        int frame_bbox_display_count = 0;
         double frame_subject_shape_overlay_ms = 0.0;
         double frame_tail_kinematics_overlay_ms = 0.0;
         double frame_camera_scene_ui_ms = 0.0;
@@ -1462,7 +1568,9 @@ int main(int argc, char **argv) {
                     (zarr_loader.getActiveDetectionDataset() ==
                      ZarrDetectionLoader::DetectionDataset::RawDetect);
                 dataset_allows_bbox_edit =
-                    zarr_loader.hasDetectionData() && !active_dataset_is_raw_detect;
+                    zarr_loader.hasDetectionData() &&
+                    !active_dataset_is_raw_detect &&
+                    !zarr_loader.hasClippedCollection();
                 if (!dataset_allows_bbox_edit) {
                     g_zarr_bbox_edit_state.draw_mode = false;
                     g_zarr_bbox_edit_state.cancelDraw();
@@ -1820,99 +1928,105 @@ int main(int argc, char **argv) {
                 }
             }
             if (frame_debug_result.request_write_manual_payload) {
-                manual_payload_preview = buildManualDetectPayloadPreview(
-                    zarr_loaded, zarr_loader, g_zarr_bbox_edit_state,
-                    scene->num_cams > 0
-                        ? static_cast<int>(scene->cameras[0].image_width)
-                        : 0,
-                    scene->num_cams > 0
-                        ? static_cast<int>(scene->cameras[0].image_height)
-                        : 0);
-                if (!manual_payload_preview->valid) {
+                if (zarr_loaded && zarr_loader.hasClippedCollection()) {
+                    manual_payload_preview.reset();
                     bbox_payload_status =
-                        "Manual write failed: payload preview invalid: " +
-                        manual_payload_preview->error;
+                        "Manual write disabled for clipped finalized collections.";
                 } else {
-                    std::string source_variant = "interpolated";
-                    if (zarr_loader.getActiveDetectionDataset() ==
-                        ZarrDetectionLoader::DetectionDataset::RefinedFiltered) {
-                        source_variant = "filtered";
-                    }
-
-                    std::string write_error;
-                    std::string resolved_refined_run;
-                    ManualWriteReviewOptions review_opts;
-                    const auto review_metadata = resolveReviewMetadataValues(
-                        frame_debug_window_state.manual_write_review);
-                    review_opts.intended_use =
-                        review_metadata.intended_use;
-                    review_opts.state = review_metadata.review_state;
-                    review_opts.method = review_metadata.method;
-                    review_opts.reviewer = review_metadata.reviewer;
-                    review_opts.notes = review_metadata.notes;
-                    const bool write_ok =
-                        zarr_loader.writeManualRefinedDetections(
-                            manual_payload_preview->frame_indices,
-                            manual_payload_preview->bbox_norm_coords,
-                            manual_payload_preview->scores,
-                            manual_payload_preview->class_ids,
-                            manual_payload_preview->frame_counts,
-                            manual_payload_preview->detection_source,
-                            manual_payload_preview->reason,
-                            "manual",
-                            source_variant,
-                            write_error,
-                            &resolved_refined_run,
-                            review_opts);
-                    if (!write_ok) {
+                    manual_payload_preview = buildManualDetectPayloadPreview(
+                        zarr_loaded, zarr_loader, g_zarr_bbox_edit_state,
+                        scene->num_cams > 0
+                            ? static_cast<int>(scene->cameras[0].image_width)
+                            : 0,
+                        scene->num_cams > 0
+                            ? static_cast<int>(scene->cameras[0].image_height)
+                            : 0);
+                    if (!manual_payload_preview->valid) {
                         bbox_payload_status =
-                            "Manual write failed: " + write_error;
+                            "Manual write failed: payload preview invalid: " +
+                            manual_payload_preview->error;
                     } else {
-                        const size_t written_detections =
-                            manual_payload_preview->total_detections;
-                        std::string reload_error;
-                        const std::string archive_path =
-                            zarr_loader.getArchivePath();
-                        if (!archive_path.empty() &&
-                            zarr_loader.loadZarrFile(archive_path,
-                                                     reload_error)) {
-                            zarr_loaded = true;
-                            if (zarr_loader.isDatasetAvailable(
-                                    ZarrDetectionLoader::DetectionDataset::
-                                        RefinedRoot)) {
-                                (void)zarr_loader.setActiveDetectionDataset(
-                                    ZarrDetectionLoader::DetectionDataset::
-                                        RefinedRoot);
-                            }
-                            refreshDetectionDatasetOptions(zarr_loader);
-                            g_zarr_bbox_edit_state.clearAll();
-                            manual_payload_preview.reset();
-                            invalidateReviewFrameCache(review_frame_cache);
-                            review_frame_status.clear();
-                            if (zarr_loader.getTotalFrames() > 0 &&
-                                current_frame_num >= static_cast<int>(
-                                                         zarr_loader
-                                                             .getTotalFrames())) {
-                                current_frame_num =
-                                    static_cast<int>(
-                                        zarr_loader.getTotalFrames()) -
-                                    1;
-                            }
-                            std::ostringstream payload_msg;
-                            payload_msg
-                                << "Manual write complete: run="
-                                << (resolved_refined_run.empty() ? "<latest>"
-                                                                : resolved_refined_run)
-                                << " surface=instances"
-                                << " resolved_group=refined"
-                                << " detections=" << written_detections;
-                            bbox_payload_status = payload_msg.str();
-                        } else {
-                            zarr_loaded = false;
-                            g_zarr_bbox_edit_state.clearAll();
+                        std::string source_variant = "interpolated";
+                        if (zarr_loader.getActiveDetectionDataset() ==
+                            ZarrDetectionLoader::DetectionDataset::RefinedFiltered) {
+                            source_variant = "filtered";
+                        }
+
+                        std::string write_error;
+                        std::string resolved_refined_run;
+                        ManualWriteReviewOptions review_opts;
+                        const auto review_metadata = resolveReviewMetadataValues(
+                            frame_debug_window_state.manual_write_review);
+                        review_opts.intended_use =
+                            review_metadata.intended_use;
+                        review_opts.state = review_metadata.review_state;
+                        review_opts.method = review_metadata.method;
+                        review_opts.reviewer = review_metadata.reviewer;
+                        review_opts.notes = review_metadata.notes;
+                        const bool write_ok =
+                            zarr_loader.writeManualRefinedDetections(
+                                manual_payload_preview->frame_indices,
+                                manual_payload_preview->bbox_norm_coords,
+                                manual_payload_preview->scores,
+                                manual_payload_preview->class_ids,
+                                manual_payload_preview->frame_counts,
+                                manual_payload_preview->detection_source,
+                                manual_payload_preview->reason,
+                                "manual",
+                                source_variant,
+                                write_error,
+                                &resolved_refined_run,
+                                review_opts);
+                        if (!write_ok) {
                             bbox_payload_status =
-                                "Manual write succeeded but reload failed: " +
-                                reload_error;
+                                "Manual write failed: " + write_error;
+                        } else {
+                            const size_t written_detections =
+                                manual_payload_preview->total_detections;
+                            std::string reload_error;
+                            const std::string archive_path =
+                                zarr_loader.getArchivePath();
+                            if (!archive_path.empty() &&
+                                zarr_loader.loadZarrFile(archive_path,
+                                                         reload_error)) {
+                                zarr_loaded = true;
+                                if (zarr_loader.isDatasetAvailable(
+                                        ZarrDetectionLoader::DetectionDataset::
+                                            RefinedRoot)) {
+                                    (void)zarr_loader.setActiveDetectionDataset(
+                                        ZarrDetectionLoader::DetectionDataset::
+                                            RefinedRoot);
+                                }
+                                refreshDetectionDatasetOptions(zarr_loader);
+                                g_zarr_bbox_edit_state.clearAll();
+                                manual_payload_preview.reset();
+                                invalidateReviewFrameCache(review_frame_cache);
+                                review_frame_status.clear();
+                                if (zarr_loader.getTotalFrames() > 0 &&
+                                    current_frame_num >= static_cast<int>(
+                                                             zarr_loader
+                                                                 .getTotalFrames())) {
+                                    current_frame_num =
+                                        static_cast<int>(
+                                            zarr_loader.getTotalFrames()) -
+                                        1;
+                                }
+                                std::ostringstream payload_msg;
+                                payload_msg
+                                    << "Manual write complete: run="
+                                    << (resolved_refined_run.empty() ? "<latest>"
+                                                                    : resolved_refined_run)
+                                    << " surface=instances"
+                                    << " resolved_group=refined"
+                                    << " detections=" << written_detections;
+                                bbox_payload_status = payload_msg.str();
+                            } else {
+                                zarr_loaded = false;
+                                g_zarr_bbox_edit_state.clearAll();
+                                bbox_payload_status =
+                                    "Manual write succeeded but reload failed: " +
+                                    reload_error;
+                            }
                         }
                     }
                 }
@@ -2658,7 +2772,11 @@ int main(int argc, char **argv) {
                     }
 
                     ZarrDetectionLoader::FrameDetections detection_details;
-                    const int zarr_bbox_query_frame = current_frame_num;
+                    const bool has_presented_camera_frame =
+                        presented_frame >= 0;
+                    const int zarr_bbox_query_frame =
+                        has_presented_camera_frame ? presented_frame
+                                                   : current_frame_num;
                     const bool camera_subject_shape_needs_contours =
                         subject_shape_overlay_options.show_overlay &&
                         (subject_shape_overlay_options.show_body_contour ||
@@ -2667,6 +2785,7 @@ int main(int argc, char **argv) {
                          subject_shape_overlay_options.show_eye_contours);
                     const bool camera_details_include_subject_shapes =
                         zarr_loaded &&
+                        has_presented_camera_frame &&
                         zarr_loader.hasSubjectShapeData() &&
                         (subject_shape_overlay_options.show_overlay ||
                          (zarr_loader.hasTailKinematicsData() &&
@@ -2675,18 +2794,21 @@ int main(int argc, char **argv) {
                           zarr_loader.hasEyeAngleData()));
                     const bool camera_details_include_eye_masks =
                         zarr_loaded &&
+                        has_presented_camera_frame &&
                         (show_eye_masks || camera_subject_shape_needs_contours) &&
                         zarr_loader.hasEyeMasks();
                     const bool is_zarr_interpolated =
-                        zarr_loaded && zarr_loader.hasInterpolation() &&
+                        zarr_loaded && has_presented_camera_frame &&
+                        zarr_loader.hasInterpolation() &&
                         zarr_loader.isFrameInterpolated(zarr_bbox_query_frame);
                     const bool active_dataset_is_raw_detect =
                         zarr_loaded && zarr_loader.hasDetectionData() &&
                         (zarr_loader.getActiveDetectionDataset() ==
                          ZarrDetectionLoader::DetectionDataset::RawDetect);
                     const bool dataset_allows_bbox_edit =
-                        zarr_loaded && zarr_loader.hasDetectionData() &&
-                        !active_dataset_is_raw_detect;
+                        zarr_loaded && has_presented_camera_frame &&
+                        zarr_loader.hasDetectionData() && !active_dataset_is_raw_detect &&
+                        !zarr_loader.hasClippedCollection();
                     if (zarr_loaded && !dataset_allows_bbox_edit) {
                         g_zarr_bbox_edit_state.draw_mode = false;
                         g_zarr_bbox_edit_state.cancelDraw();
@@ -2699,12 +2821,29 @@ int main(int argc, char **argv) {
                          !ps.play_video);
                     std::vector<LoggedBoundingBox> loaded_zarr_boxes;
                     std::vector<LoggedBoundingBox> zarr_boxes;
-                    if (zarr_loaded) {
+                    if (zarr_loaded && has_presented_camera_frame) {
+                        frame_bbox_query_frame = zarr_bbox_query_frame;
+                        const auto bbox_load_total_start =
+                            std::chrono::steady_clock::now();
+                        const auto bbox_get_boxes_start =
+                            std::chrono::steady_clock::now();
                         loaded_zarr_boxes =
                             zarr_loader.getBoundingBoxesForFrame(
                                 zarr_bbox_query_frame);
+                        frame_bbox_get_boxes_ms += durationMs(
+                            std::chrono::steady_clock::now() -
+                            bbox_get_boxes_start);
+                        frame_bbox_loaded_count =
+                            static_cast<int>(loaded_zarr_boxes.size());
+                        const auto bbox_edit_resolve_start =
+                            std::chrono::steady_clock::now();
                         zarr_boxes = g_zarr_bbox_edit_state.resolveFrameBoxes(
                             zarr_bbox_query_frame, loaded_zarr_boxes);
+                        frame_bbox_edit_resolve_ms += durationMs(
+                            std::chrono::steady_clock::now() -
+                            bbox_edit_resolve_start);
+                        frame_bbox_display_count =
+                            static_cast<int>(zarr_boxes.size());
                         const auto detection_load_start =
                             std::chrono::steady_clock::now();
                         detection_details = zarr_loader.getRawDetections(
@@ -2712,11 +2851,17 @@ int main(int argc, char **argv) {
                             false,
                             camera_details_include_eye_masks,
                             camera_details_include_subject_shapes);
+                        const double raw_detections_ms = durationMs(
+                            std::chrono::steady_clock::now() -
+                            detection_load_start);
+                        frame_bbox_get_raw_detections_ms +=
+                            raw_detections_ms;
                         if (camera_details_include_eye_masks) {
-                            frame_mask_data_load_ms += durationMs(
-                                std::chrono::steady_clock::now() -
-                                detection_load_start);
+                            frame_mask_data_load_ms += raw_detections_ms;
                         }
+                        frame_bbox_load_total_ms += durationMs(
+                            std::chrono::steady_clock::now() -
+                            bbox_load_total_start);
                     }
 
                     auto deleteSelectedBoxOnCurrentFrame = [&]() -> bool {
@@ -3043,7 +3188,9 @@ int main(int argc, char **argv) {
                         full_frame_edit_state;
                     camera_context_input.zarr_boxes = &zarr_boxes;
                     camera_context_input.detection_details =
-                        zarr_loaded ? &detection_details : nullptr;
+                        zarr_loaded && has_presented_camera_frame
+                            ? &detection_details
+                            : nullptr;
                     camera_context_input.frame_is_interpolated =
                         is_zarr_interpolated;
                     camera_context_input.latest_decoded_frame = latest_decoded;
@@ -3124,12 +3271,273 @@ int main(int argc, char **argv) {
                     frame_mask_data_load_ms +=
                         prepared_camera_context.mask_data_load_ms;
 
+                    const auto& camera_before_draw = scene->cameras[j];
+                    const int frame_sync_front_frame_before_draw =
+                        camera_before_draw.last_uploaded_frame;
+                    const bool frame_sync_front_valid_before_draw =
+                        camera_before_draw.texture_has_valid_frame;
+                    const int frame_sync_staging_frame_before_draw =
+                        camera_before_draw.playback_staging_frame;
+                    const bool frame_sync_staging_valid_before_draw =
+                        camera_before_draw.playback_staging_valid;
+
                     const CameraViewWindowResult camera_view_result =
                         drawCameraViewWindowContents(
                             prepared_camera_context.context);
                     accumulateCameraViewMaskPerfMetrics(
                         frame_mask_overlay_perf,
                         camera_view_result.perf.mask_overlay);
+
+                    const auto& camera_after_draw = scene->cameras[j];
+                    const int frame_sync_front_frame_after_draw =
+                        camera_after_draw.last_uploaded_frame;
+                    const bool frame_sync_front_valid_after_draw =
+                        camera_after_draw.texture_has_valid_frame;
+                    const int frame_sync_staging_frame_after_draw =
+                        camera_after_draw.playback_staging_frame;
+                    const bool frame_sync_staging_valid_after_draw =
+                        camera_after_draw.playback_staging_valid;
+
+                    if (frame_sync_trace_log_writer.enabled()) {
+                        const int zarr_box_count =
+                            static_cast<int>(zarr_boxes.size());
+                        FrameSyncTraceLastState& last_trace_state =
+                            frame_sync_trace_last_by_camera[win_name];
+                        const bool trace_state_changed =
+                            !last_trace_state.initialized ||
+                            last_trace_state.has_presented_frame !=
+                                has_presented_camera_frame ||
+                            last_trace_state.target_frame !=
+                                camera_view_presenter_context
+                                    .target_display_frame ||
+                            last_trace_state.presented_frame !=
+                                presented_frame ||
+                            last_trace_state.bbox_query_frame !=
+                                zarr_bbox_query_frame ||
+                            last_trace_state.latest_decoded_frame !=
+                                latest_decoded ||
+                            last_trace_state.front_frame_before_draw !=
+                                frame_sync_front_frame_before_draw ||
+                            last_trace_state.front_frame_after_draw !=
+                                frame_sync_front_frame_after_draw ||
+                            last_trace_state.staging_frame_before_draw !=
+                                frame_sync_staging_frame_before_draw ||
+                            last_trace_state.staging_frame_after_draw !=
+                                frame_sync_staging_frame_after_draw ||
+                            last_trace_state.zarr_box_count != zarr_box_count;
+
+                        if (trace_state_changed) {
+                            auto makeTextureState =
+                                [](bool front_valid,
+                                   int front_frame,
+                                   bool staging_valid,
+                                   int staging_frame) {
+                                    return json{
+                                        {"front_valid", front_valid},
+                                        {"front_frame", front_frame},
+                                        {"staging_valid", staging_valid},
+                                        {"staging_frame", staging_frame},
+                                    };
+                                };
+                            auto makeBboxSummary =
+                                [](const std::vector<LoggedBoundingBox>& boxes) {
+                                    json summary = {
+                                        {"count",
+                                         static_cast<int>(boxes.size())},
+                                    };
+                                    if (!boxes.empty()) {
+                                        const LoggedBoundingBox& box =
+                                            boxes.front();
+                                        summary["first"] = {
+                                            {"payload_frame_id",
+                                             box.payload_frame_id},
+                                            {"payload_camera_id",
+                                             box.payload_camera_id},
+                                            {"box_index_in_payload",
+                                             static_cast<int>(
+                                                 box.box_index_in_payload)},
+                                            {"x", box.x_min},
+                                            {"y", box.y_min},
+                                            {"w", box.width},
+                                            {"h", box.height},
+                                            {"cx",
+                                             box.x_min + box.width * 0.5f},
+                                            {"cy",
+                                             box.y_min + box.height * 0.5f},
+                                            {"class_id", box.class_id},
+                                            {"confidence", box.confidence},
+                                        };
+                                    }
+                                    return summary;
+                                };
+                            auto makeClippedMapping =
+                                [&](int frame) -> json {
+                                    if (!zarr_loaded ||
+                                        !zarr_loader
+                                             .hasClippedCollection() ||
+                                        frame < 0) {
+                                        return nullptr;
+                                    }
+                                    const auto* row =
+                                        zarr_loader.resolveClippedFrame(
+                                            static_cast<int64_t>(frame));
+                                    if (row == nullptr) {
+                                        return nullptr;
+                                    }
+                                    json mapping = {
+                                        {"parent_frame_index",
+                                         row->parent_frame_index},
+                                        {"recording_frame_id",
+                                         row->recording_frame_id},
+                                        {"clip_id", row->clip_id},
+                                        {"clip_local_frame_index",
+                                         row->clip_local_frame_index},
+                                        {"camera_serial", row->camera_serial},
+                                        {"selected_run_index",
+                                         row->selected_run_index},
+                                    };
+                                    const auto* selected_run =
+                                        zarr_loader.getClippedResolver()
+                                            .selectedRun(
+                                                row->selected_run_index);
+                                    if (selected_run != nullptr) {
+                                        mapping["work_unit_id"] =
+                                            selected_run->work_unit_id;
+                                        mapping["detect_run"] =
+                                            selected_run->detect_run;
+                                        mapping["refined_detect_run"] =
+                                            selected_run
+                                                ->refined_detect_run;
+                                    }
+                                    return mapping;
+                                };
+
+                            json details = {
+                                {"camera_name", win_name},
+                                {"view_idx", j},
+                                {"has_presented_camera_frame",
+                                 has_presented_camera_frame},
+                                {"target_frame",
+                                 camera_view_presenter_context
+                                     .target_display_frame},
+                                {"current_frame_after_presenter",
+                                 current_frame_num},
+                                {"presented_slot", presented_slot},
+                                {"presented_frame", presented_frame},
+                                {"presenter_resolved_frame",
+                                 camera_view_presenter_result
+                                     .resolved_current_frame_num},
+                                {"swap_playback_surface_after_draw",
+                                 swap_playback_surface_after_draw},
+                                {"bbox_query_frame", zarr_bbox_query_frame},
+                                {"bbox", makeBboxSummary(zarr_boxes)},
+                                {"loaded_bbox",
+                                 makeBboxSummary(loaded_zarr_boxes)},
+                                {"detection_details_frame_id", nullptr},
+                                {"texture_before_draw",
+                                 makeTextureState(
+                                     frame_sync_front_valid_before_draw,
+                                     frame_sync_front_frame_before_draw,
+                                     frame_sync_staging_valid_before_draw,
+                                     frame_sync_staging_frame_before_draw)},
+                                {"texture_after_draw",
+                                 makeTextureState(
+                                     frame_sync_front_valid_after_draw,
+                                     frame_sync_front_frame_after_draw,
+                                     frame_sync_staging_valid_after_draw,
+                                     frame_sync_staging_frame_after_draw)},
+                                {"frame_sync_summary",
+                                 {{"valid_slots",
+                                   camera_view_result.frame_sync.valid_slots},
+                                  {"empty_slots",
+                                   camera_view_result.frame_sync.empty_slots},
+                                  {"latest_decoded",
+                                   camera_view_result
+                                       .frame_sync.latest_decoded},
+                                  {"recording_remaining",
+                                   camera_view_result
+                                       .frame_sync.recording_remaining},
+                                  {"recording_total",
+                                   camera_view_result
+                                       .frame_sync.recording_total},
+                                  {"debug_line",
+                                   camera_view_result
+                                       .frame_sync.debug_line}}},
+                                {"clipped_mapping",
+                                 {{"target",
+                                   makeClippedMapping(
+                                       camera_view_presenter_context
+                                           .target_display_frame)},
+                                  {"presented",
+                                   makeClippedMapping(presented_frame)},
+                                  {"bbox_query",
+                                   makeClippedMapping(
+                                       zarr_bbox_query_frame)},
+                                  {"front_before_draw",
+                                   makeClippedMapping(
+                                       frame_sync_front_frame_before_draw)},
+                                  {"front_after_draw",
+                                   makeClippedMapping(
+                                       frame_sync_front_frame_after_draw)}}},
+                            };
+                            details["bbox_frame_delta_from_presented"] =
+                                has_presented_camera_frame
+                                    ? json(zarr_bbox_query_frame -
+                                           presented_frame)
+                                    : json(nullptr);
+                            details["detection_details_frame_id"] =
+                                (zarr_loaded && has_presented_camera_frame)
+                                    ? json(detection_details.frame_id)
+                                    : json(nullptr);
+                            details["bbox_matches_presented_frame"] =
+                                has_presented_camera_frame &&
+                                zarr_bbox_query_frame == presented_frame;
+                            details["bbox_matches_front_before_draw"] =
+                                frame_sync_front_valid_before_draw &&
+                                zarr_bbox_query_frame ==
+                                    frame_sync_front_frame_before_draw;
+                            details["bbox_matches_front_after_draw"] =
+                                frame_sync_front_valid_after_draw &&
+                                zarr_bbox_query_frame ==
+                                    frame_sync_front_frame_after_draw;
+
+                            writeFrameSyncTraceEvent(
+                                details,
+                                j,
+                                camera_view_presenter_context
+                                    .target_display_frame,
+                                camera_view_presenter_context
+                                    .preferred_paused_slot,
+                                presented_slot,
+                                presented_frame,
+                                camera_view_presenter_result
+                                    .resolved_current_frame_num,
+                                prewarm_playback_textures);
+
+                            last_trace_state.initialized = true;
+                            last_trace_state.has_presented_frame =
+                                has_presented_camera_frame;
+                            last_trace_state.target_frame =
+                                camera_view_presenter_context
+                                    .target_display_frame;
+                            last_trace_state.presented_frame =
+                                presented_frame;
+                            last_trace_state.bbox_query_frame =
+                                zarr_bbox_query_frame;
+                            last_trace_state.latest_decoded_frame =
+                                latest_decoded;
+                            last_trace_state.front_frame_before_draw =
+                                frame_sync_front_frame_before_draw;
+                            last_trace_state.front_frame_after_draw =
+                                frame_sync_front_frame_after_draw;
+                            last_trace_state.staging_frame_before_draw =
+                                frame_sync_staging_frame_before_draw;
+                            last_trace_state.staging_frame_after_draw =
+                                frame_sync_staging_frame_after_draw;
+                            last_trace_state.zarr_box_count =
+                                zarr_box_count;
+                        }
+                    }
 
                     if (zarr_loaded) {
                         applyCameraViewSubjectMaskPick(
@@ -3161,6 +3569,12 @@ int main(int argc, char **argv) {
                         camera_view_result.perf.plot_image_ui_ms;
                     frame_camera_overlay_ui_ms +=
                         camera_view_result.perf.overlay_ui_ms;
+                    frame_bbox_overlay_build_ms +=
+                        camera_view_result.perf.bbox_overlay_build_ms;
+                    frame_bbox_overlay_draw_ms +=
+                        camera_view_result.perf.bbox_overlay_draw_ms;
+                    frame_bbox_overlay_item_count +=
+                        camera_view_result.perf.bbox_overlay_item_count;
                     frame_subject_shape_overlay_ms +=
                         camera_view_result.perf.subject_shape_overlay_ms;
                     frame_tail_kinematics_overlay_ms +=
@@ -3942,6 +4356,16 @@ int main(int argc, char **argv) {
             static_cast<int>(window->height),
             frame_loop_start,
             &frame_analysis_timeline_perf,
+            frame_bbox_query_frame,
+            frame_bbox_loaded_count,
+            frame_bbox_display_count,
+            frame_bbox_get_boxes_ms,
+            frame_bbox_edit_resolve_ms,
+            frame_bbox_get_raw_detections_ms,
+            frame_bbox_load_total_ms,
+            frame_bbox_overlay_build_ms,
+            frame_bbox_overlay_draw_ms,
+            frame_bbox_overlay_item_count,
         };
         maybeWritePerfLogSample(
             perf_log_writer,

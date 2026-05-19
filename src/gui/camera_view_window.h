@@ -22,6 +22,9 @@ struct CameraViewWindowPerfMetrics {
     double playback_swap_ms = 0.0;
     double plot_image_ui_ms = 0.0;
     double overlay_ui_ms = 0.0;
+    double bbox_overlay_build_ms = 0.0;
+    double bbox_overlay_draw_ms = 0.0;
+    int bbox_overlay_item_count = 0;
     double subject_shape_overlay_ms = 0.0;
     double tail_kinematics_overlay_ms = 0.0;
     double scene_ui_ms = 0.0;

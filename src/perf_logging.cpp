@@ -221,19 +221,28 @@ json framePerfToJson(const PerfLogFrameContext& context,
         std::numeric_limits<double>::quiet_NaN();
     double perf_camera_decode_pipeline_ms =
         std::numeric_limits<double>::quiet_NaN();
+    double perf_camera_decode_demux_ms =
+        std::numeric_limits<double>::quiet_NaN();
+    double perf_camera_decode_call_ms =
+        std::numeric_limits<double>::quiet_NaN();
+    double perf_camera_decode_packet_ms =
+        std::numeric_limits<double>::quiet_NaN();
+    int perf_camera_decode_returned = -1;
+    int perf_camera_decode_demux_success = -1;
+    int perf_camera_decode_published_frame = -1;
+    uint64_t perf_camera_decode_sample_sequence = 0;
     {
         std::lock_guard<std::mutex> lock(g_decoder_perf_mutex);
         for (const auto& cam_name : context.camera_names) {
-            auto need_it = window_need_decoding.find(cam_name);
-            if (need_it == window_need_decoding.end() ||
-                !need_it->second.load()) {
-                continue;
-            }
             auto perf_it = decoder_perf_samples.find(cam_name);
             if (perf_it == decoder_perf_samples.end() || !perf_it->second) {
                 continue;
             }
             const auto& perf = perf_it->second;
+            updateMaxFinite(perf_camera_decode_demux_ms,
+                            perf->demux_ms.load());
+            updateMaxFinite(perf_camera_decode_call_ms,
+                            perf->decode_ms.load());
             updateMaxFinite(perf_camera_decode_convert_ms,
                             perf->nv12_to_rgba_ms.load());
             updateMaxFinite(perf_camera_decode_wait_ms,
@@ -242,6 +251,20 @@ json framePerfToJson(const PerfLogFrameContext& context,
                             perf->frame_write_ms.load());
             updateMaxFinite(perf_camera_decode_pipeline_ms,
                             perf->frame_total_ms.load());
+            updateMaxFinite(perf_camera_decode_packet_ms,
+                            perf->packet_total_ms.load());
+            perf_camera_decode_returned =
+                std::max(perf_camera_decode_returned,
+                         perf->decode_returned.load());
+            perf_camera_decode_demux_success =
+                std::max(perf_camera_decode_demux_success,
+                         perf->demux_success.load());
+            perf_camera_decode_published_frame =
+                std::max(perf_camera_decode_published_frame,
+                         perf->published_frame.load());
+            perf_camera_decode_sample_sequence =
+                std::max(perf_camera_decode_sample_sequence,
+                         perf->sample_sequence.load());
         }
     }
 
@@ -296,10 +319,28 @@ json framePerfToJson(const PerfLogFrameContext& context,
           {"preview_scale", context.playback_preview_scale_label},
           {"preview_active", context.playback_preview_active}}},
         {"decoder",
-         {{"convert_ms", perf_camera_decode_convert_ms},
+         {{"demux_ms", perf_camera_decode_demux_ms},
+          {"decode_ms", perf_camera_decode_call_ms},
+          {"convert_ms", perf_camera_decode_convert_ms},
           {"buffer_wait_ms", perf_camera_decode_wait_ms},
           {"write_ms", perf_camera_decode_write_ms},
-          {"pipeline_ms", perf_camera_decode_pipeline_ms}}},
+          {"pipeline_ms", perf_camera_decode_pipeline_ms},
+          {"packet_ms", perf_camera_decode_packet_ms},
+          {"decode_returned", perf_camera_decode_returned},
+          {"demux_success", perf_camera_decode_demux_success},
+          {"published_frame", perf_camera_decode_published_frame},
+          {"sample_sequence", perf_camera_decode_sample_sequence}}},
+        {"bbox",
+         {{"query_frame", context.bbox_query_frame},
+          {"loaded_count", context.bbox_loaded_count},
+          {"display_count", context.bbox_display_count},
+          {"get_boxes_ms", context.bbox_get_boxes_ms},
+          {"edit_resolve_ms", context.bbox_edit_resolve_ms},
+          {"get_raw_detections_ms", context.bbox_get_raw_detections_ms},
+          {"load_total_ms", context.bbox_load_total_ms},
+          {"overlay_build_ms", context.bbox_overlay_build_ms},
+          {"overlay_draw_ms", context.bbox_overlay_draw_ms},
+          {"overlay_item_count", context.bbox_overlay_item_count}}},
         {"camera_view",
          {{"viewport_width_px", context.perf_camera_viewport_width_px},
           {"viewport_height_px", context.perf_camera_viewport_height_px},
@@ -422,9 +463,18 @@ bool PerfLogWriter::open(const std::filesystem::path& output_path) {
         << "playback_start_warmup_active,frames_since_playback_start,"
         << "playback_start_frame,playback_resume_path,"
         << "playback_resume_target_frame,"
+        << "camera_decode_demux_ms,camera_decode_decode_ms,"
         << "camera_decode_convert_ms,camera_decode_wait_ms,"
         << "camera_decode_write_ms,camera_decode_pipeline_ms,"
+        << "camera_decode_packet_ms,camera_decode_returned,"
+        << "camera_decode_demux_success,camera_decode_published_frame,"
+        << "camera_decode_sample_sequence,"
         << "visible_camera_count,"
+        << "bbox_query_frame,bbox_loaded_count,bbox_display_count,"
+        << "bbox_get_boxes_ms,bbox_edit_resolve_ms,"
+        << "bbox_get_raw_detections_ms,bbox_load_total_ms,"
+        << "bbox_overlay_build_ms,bbox_overlay_draw_ms,"
+        << "bbox_overlay_item_count,"
         << "main_buffer_mode,playback_preview_scale,playback_preview_active,"
         << "playback_renderer_mode,"
         << "camera_viewport_width_px,camera_viewport_height_px,"
@@ -543,18 +593,28 @@ void maybeWritePerfLogSample(PerfLogWriter& writer,
         std::numeric_limits<double>::quiet_NaN();
     double perf_camera_decode_pipeline_ms =
         std::numeric_limits<double>::quiet_NaN();
+    double perf_camera_decode_demux_ms =
+        std::numeric_limits<double>::quiet_NaN();
+    double perf_camera_decode_call_ms =
+        std::numeric_limits<double>::quiet_NaN();
+    double perf_camera_decode_packet_ms =
+        std::numeric_limits<double>::quiet_NaN();
+    int perf_camera_decode_returned = -1;
+    int perf_camera_decode_demux_success = -1;
+    int perf_camera_decode_published_frame = -1;
+    uint64_t perf_camera_decode_sample_sequence = 0;
     {
         std::lock_guard<std::mutex> lock(g_decoder_perf_mutex);
         for (const auto& cam_name : context.camera_names) {
-            auto need_it = window_need_decoding.find(cam_name);
-            if (need_it == window_need_decoding.end() || !need_it->second.load()) {
-                continue;
-            }
             auto perf_it = decoder_perf_samples.find(cam_name);
             if (perf_it == decoder_perf_samples.end() || !perf_it->second) {
                 continue;
             }
             const auto& perf = perf_it->second;
+            updateMaxFinite(perf_camera_decode_demux_ms,
+                            perf->demux_ms.load());
+            updateMaxFinite(perf_camera_decode_call_ms,
+                            perf->decode_ms.load());
             updateMaxFinite(perf_camera_decode_convert_ms,
                             perf->nv12_to_rgba_ms.load());
             updateMaxFinite(perf_camera_decode_wait_ms,
@@ -563,6 +623,20 @@ void maybeWritePerfLogSample(PerfLogWriter& writer,
                             perf->frame_write_ms.load());
             updateMaxFinite(perf_camera_decode_pipeline_ms,
                             perf->frame_total_ms.load());
+            updateMaxFinite(perf_camera_decode_packet_ms,
+                            perf->packet_total_ms.load());
+            perf_camera_decode_returned =
+                std::max(perf_camera_decode_returned,
+                         perf->decode_returned.load());
+            perf_camera_decode_demux_success =
+                std::max(perf_camera_decode_demux_success,
+                         perf->demux_success.load());
+            perf_camera_decode_published_frame =
+                std::max(perf_camera_decode_published_frame,
+                         perf->published_frame.load());
+            perf_camera_decode_sample_sequence =
+                std::max(perf_camera_decode_sample_sequence,
+                         perf->sample_sequence.load());
         }
     }
 
@@ -609,11 +683,28 @@ void maybeWritePerfLogSample(PerfLogWriter& writer,
         << context.playback_start_frame << ","
         << context.playback_resume_path << ","
         << context.playback_resume_target_frame << ","
+        << perf_camera_decode_demux_ms << ","
+        << perf_camera_decode_call_ms << ","
         << perf_camera_decode_convert_ms << ","
         << perf_camera_decode_wait_ms << ","
         << perf_camera_decode_write_ms << ","
         << perf_camera_decode_pipeline_ms << ","
+        << perf_camera_decode_packet_ms << ","
+        << perf_camera_decode_returned << ","
+        << perf_camera_decode_demux_success << ","
+        << perf_camera_decode_published_frame << ","
+        << perf_camera_decode_sample_sequence << ","
         << visible_camera_count << ","
+        << context.bbox_query_frame << ","
+        << context.bbox_loaded_count << ","
+        << context.bbox_display_count << ","
+        << context.bbox_get_boxes_ms << ","
+        << context.bbox_edit_resolve_ms << ","
+        << context.bbox_get_raw_detections_ms << ","
+        << context.bbox_load_total_ms << ","
+        << context.bbox_overlay_build_ms << ","
+        << context.bbox_overlay_draw_ms << ","
+        << context.bbox_overlay_item_count << ","
         << (context.scene_use_cpu_buffer ? "cpu" : "gpu") << ","
         << context.playback_preview_scale_label << ","
         << (context.playback_preview_active ? 1 : 0) << ","

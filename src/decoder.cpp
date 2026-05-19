@@ -2,9 +2,11 @@
 #include "AppDecUtils.h"
 #include "global.h"
 #include "debug_flags.h"
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <memory>
 
 inline double decoder_duration_ms(std::chrono::steady_clock::duration duration) {
@@ -142,20 +144,78 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
         return seek_info->use_seek;
     };
     uint64_t active_seek_id = 0;
-    auto mark_seek_done = [&](uint64_t settled_frame) -> bool {
+    auto publishFrameNumber = [&](uint64_t local_frame) -> int64_t {
+        std::shared_ptr<const std::vector<int64_t>> frame_map;
+        {
+            std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+            frame_map = seek_info->frame_number_map;
+        }
+        if (frame_map != nullptr &&
+            local_frame < static_cast<uint64_t>(frame_map->size())) {
+            const int64_t parent_frame = (*frame_map)[static_cast<size_t>(local_frame)];
+            if (parent_frame >= 0) {
+                return parent_frame;
+            }
+        }
+        return static_cast<int64_t>(local_frame);
+    };
+    auto publishFrameNumberInt = [&](uint64_t local_frame) -> int {
+        const int64_t frame = publishFrameNumber(local_frame);
+        return static_cast<int>(
+            std::clamp<int64_t>(frame, 0, std::numeric_limits<int>::max()));
+    };
+    auto usesExternalFrameNumberMap = [&]() -> bool {
+        std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+        return seek_info->frame_number_map != nullptr;
+    };
+    auto mark_seek_done = [&](uint64_t settled_local_frame) -> bool {
+        const int64_t settled_frame = publishFrameNumber(settled_local_frame);
         std::lock_guard<std::mutex> lock(g_seek_info_mutex);
         // If a newer request arrived while we processed this one, do not
         // overwrite it with stale completion state.
         if (seek_info->use_seek) {
             return false;
         }
-        seek_info->seek_frame = settled_frame;
+        seek_info->seek_frame = static_cast<uint64_t>(
+            std::max<int64_t>(0, settled_frame));
         seek_info->settled_seek_id = active_seek_id;
         seek_info->seek_done = true;
         return true;
     };
+    double last_demux_ms = 0.0;
+    double last_decode_ms = 0.0;
+    int last_decode_returned = 0;
+    bool last_demux_success = false;
+    auto timedDemux = [&]() -> bool {
+        const auto demux_start = std::chrono::steady_clock::now();
+        const bool ok = demuxer->Demux(pVideo, nVideoBytes, pktinfo);
+        last_demux_ms =
+            decoder_duration_ms(std::chrono::steady_clock::now() -
+                                demux_start);
+        last_demux_success = ok;
+        decoder_perf->demux_ms.store(last_demux_ms);
+        decoder_perf->demux_success.store(ok ? 1 : 0);
+        return ok;
+    };
+    auto timedDecode = [&](uint8_t* data,
+                           size_t byte_count,
+                           int flags = 0,
+                           int64_t timestamp = 0) -> int {
+        const auto decode_start = std::chrono::steady_clock::now();
+        const int returned = dec->Decode(data, byte_count, flags, timestamp);
+        last_decode_ms =
+            decoder_duration_ms(std::chrono::steady_clock::now() -
+                                decode_start);
+        last_decode_returned = returned;
+        decoder_perf->decode_ms.store(last_decode_ms);
+        decoder_perf->decode_returned.store(returned);
+        return returned;
+    };
     auto mapTimestampToFrameNumber = [&](int64_t timestamp,
                                          int64_t fallback_frame) -> int64_t {
+        if (usesExternalFrameNumberMap()) {
+            return fallback_frame;
+        }
         if (timestamp >= 0) {
             const int64_t frame_from_ts = demuxer->FrameNumberFromTs(timestamp);
             if (frame_from_ts >= 0) {
@@ -301,7 +361,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
             }
             // Flush parser/display-queue state before seek discontinuity so
             // stale pre-seek frames cannot leak into post-seek output.
-            nFrameReturned = dec->Decode(NULL, 0, 0);
+            nFrameReturned = timedDecode(nullptr, 0, 0);
             while (nFrameReturned > 0) {
                 dec->GetFrame();
                 nFrameReturned--;
@@ -320,7 +380,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                           << " first_decode_flags=" << seek_decode_flags
                           << std::endl;
             }
-            nFrameReturned = dec->Decode(
+            nFrameReturned = timedDecode(
                 pVideo, nVideoBytes, seek_decode_flags, pktinfo.pts);
 
             uint64_t decode_frame_cursor = requested_frame;
@@ -357,8 +417,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         discard_decoded_frames_until(decode_frame_cursor, requested_frame);
                     while (!reached_target) {
                         ++accurate_demux_attempts;
-                        demux_success =
-                            demuxer->Demux(pVideo, nVideoBytes, pktinfo);
+                        demux_success = timedDemux();
                         if (!demux_success) {
                             // Some streams intermittently fail to demux the exact
                             // terminal packet for a seek target. If we are already
@@ -372,7 +431,8 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                                 if (nFrameReturned == 0) {
                                     // Try draining any frame that may already be queued
                                     // in the decoder before we accept boundary fallback.
-                                    nFrameReturned = dec->Decode(NULL, 0);
+                                    nFrameReturned =
+                                        timedDecode(nullptr, 0);
                                 }
                                 skip_first_decode_after_seek = (nFrameReturned > 0);
                                 std::cout
@@ -388,12 +448,12 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                                       << " target_frame=" << requested_frame
                                       << " cursor=" << decode_frame_cursor
                                       << std::endl;
-                            nFrameReturned = dec->Decode(NULL, 0);
+                            nFrameReturned = timedDecode(nullptr, 0);
                             ++accurate_decode_calls;
                             dc_context->total_num_frame = nFrame + nFrameReturned;
                         } else {
-                            nFrameReturned =
-                                dec->Decode(pVideo, nVideoBytes, 0, pktinfo.pts);
+                            nFrameReturned = timedDecode(
+                                pVideo, nVideoBytes, 0, pktinfo.pts);
                             ++accurate_decode_calls;
                         }
                         if (!demux_success && nFrameReturned == 0) {
@@ -407,14 +467,13 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                     if (!skip_first_decode_after_seek) {
                         while (nFrameReturned == 0) {
                             ++accurate_demux_attempts;
-                            demux_success =
-                                demuxer->Demux(pVideo, nVideoBytes, pktinfo);
+                            demux_success = timedDemux();
                             if (!demux_success) {
                                 // End of stream/discontinuity while already at
                                 // target. Drain delayed frames from decoder
                                 // before giving up so seek can still settle
                                 // with a queued frame when available.
-                                nFrameReturned = dec->Decode(NULL, 0);
+                                nFrameReturned = timedDecode(nullptr, 0);
                                 ++accurate_decode_calls;
                                 if (seek_accurate) {
                                     if (crimson_seek_debug_logs_enabled()) std::cout << "[SeekAccurate] cam=" << cam_name
@@ -424,8 +483,8 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                                 }
                                 break;
                             }
-                            nFrameReturned =
-                                dec->Decode(pVideo, nVideoBytes, 0, pktinfo.pts);
+                            nFrameReturned = timedDecode(
+                                pVideo, nVideoBytes, 0, pktinfo.pts);
                             ++accurate_decode_calls;
                         }
                         skip_first_decode_after_seek = (nFrameReturned > 0);
@@ -457,7 +516,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
             nFrame = static_cast<int>(settled_seek_frame);
             if (nFrameReturned > 0) {
                 latest_decoded_frame[cam_name].store(
-                    static_cast<int>(settled_seek_frame));
+                    publishFrameNumberInt(settled_seek_frame));
             } else {
                 // No decoded frame is currently queued for display after this
                 // seek operation, so keep latest_decoded_frame invalid until a
@@ -503,17 +562,16 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
             if (window_need_decoding[cam_name].load()) {
                 logged_idle = false;
                 if (!skip_first_decode_after_seek) {
-                    demux_success =
-                        demuxer->Demux(pVideo, nVideoBytes, pktinfo);
+                    demux_success = timedDemux();
                     if (!demux_success) {
                         // end of stream
                         // std::cout << "Demux error..." << std::endl;
-                        nFrameReturned =
-                            dec->Decode(NULL, 0, CUVID_PKT_DISCONTINUITY);
+                        nFrameReturned = timedDecode(
+                            nullptr, 0, CUVID_PKT_DISCONTINUITY);
                         dc_context->total_num_frame = nFrame + nFrameReturned;
                     } else {
-                        nFrameReturned =
-                            dec->Decode(pVideo, nVideoBytes, 0, pktinfo.pts);
+                        nFrameReturned = timedDecode(
+                            pVideo, nVideoBytes, 0, pktinfo.pts);
                     }
                 } else {
                     skip_first_decode_after_seek = false;
@@ -547,7 +605,13 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                     if (mapped_frame_num < 0) {
                         mapped_frame_num = nFrame;
                     }
-                    const int assigned_frame_num = static_cast<int>(mapped_frame_num);
+                    const int local_frame_num = static_cast<int>(
+                        std::clamp<int64_t>(
+                            mapped_frame_num, 0,
+                            std::numeric_limits<int>::max()));
+                    const int assigned_frame_num =
+                        publishFrameNumberInt(static_cast<uint64_t>(
+                            local_frame_num));
                     const PictureBufferFormat slot_format =
                         display_buffer[buffer_head].format;
                     const int slot_pitch =
@@ -600,7 +664,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         latest_decoded_frame[cam_name].store(assigned_frame_num);
                         if (pending_seek_done) {
                             const bool marked =
-                                mark_seek_done(static_cast<uint64_t>(assigned_frame_num));
+                                mark_seek_done(static_cast<uint64_t>(local_frame_num));
                             if (pending_seek_was_accurate) {
                                 if (crimson_seek_debug_logs_enabled()) std::cout << "[SeekAccurate] cam=" << cam_name
                                           << " request id=" << pending_seek_id
@@ -639,7 +703,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         latest_decoded_frame[cam_name].store(assigned_frame_num);
                         if (pending_seek_done) {
                             const bool marked =
-                                mark_seek_done(static_cast<uint64_t>(assigned_frame_num));
+                                mark_seek_done(static_cast<uint64_t>(local_frame_num));
                             if (pending_seek_was_accurate) {
                                 if (crimson_seek_debug_logs_enabled()) std::cout << "[SeekAccurate] cam=" << cam_name
                                           << " request id=" << pending_seek_id
@@ -658,7 +722,14 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                     decoder_perf->frame_total_ms.store(decoder_duration_ms(
                         std::chrono::steady_clock::now() -
                         decode_pipeline_start));
+                    decoder_perf->demux_ms.store(last_demux_ms);
+                    decoder_perf->demux_success.store(last_demux_success ? 1 : 0);
+                    decoder_perf->decode_ms.store(last_decode_ms);
+                    decoder_perf->decode_returned.store(last_decode_returned);
+                    decoder_perf->packet_total_ms.store(last_demux_ms +
+                                                       last_decode_ms);
                     decoder_perf->published_frame.store(assigned_frame_num);
+                    (void)decoder_perf->sample_sequence.fetch_add(1);
                     if (seek_debug_frames_to_log > 0) {
                         const int64_t pts_frame =
                             (frame_timestamp >= 0)
@@ -666,13 +737,14 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                                 : -1;
                         if (crimson_seek_debug_logs_enabled()) std::cout << "[SeekDebug] cam=" << cam_name
                                   << " assigned=" << assigned_frame_num
+                                  << " local=" << local_frame_num
                                   << " pts_frame=" << pts_frame
                                   << " fallback_counter=" << nFrame
                                   << " pts=" << frame_timestamp
                                   << " buffer_head=" << buffer_head << std::endl;
                         --seek_debug_frames_to_log;
                     }
-                    nFrame = assigned_frame_num + 1;
+                    nFrame = local_frame_num + 1;
                     buffer_head = (buffer_head + 1) % size_of_buffer;
                     // for debugging purpose
                     if (!demux_success) {

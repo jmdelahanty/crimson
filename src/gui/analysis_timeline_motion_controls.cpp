@@ -99,6 +99,9 @@ AnalysisTimelineMotionSelection drawAnalysisTimelineMotionControls(
                     state.selected_swim_bout_run = candidate.run_name;
                     state.selected_swim_bout_speed_level =
                         candidate.speed_level;
+                    state.selected_swim_bout_candidate_id =
+                        candidate.candidate_id;
+                    state.selected_swim_bout_signal_id = candidate.signal_id;
                     state.selected_bout_kinematics_run.clear();
                     selection.selected_swim_bouts = &candidate;
                     compatible_bout_kinematics_indices =
@@ -160,8 +163,20 @@ AnalysisTimelineMotionSelection drawAnalysisTimelineMotionControls(
                 std::ostringstream label;
                 label << candidate.run_name;
                 if (candidate.metrics_loaded) {
-                    label << " (" << candidate.physical_active_duration_s.size()
-                          << " bouts)";
+                    if (candidate.is_compact_layout) {
+                        label << " (compact v2; movement "
+                              << candidate.compact_movement_metric_count
+                              << ", heading smoothed "
+                              << candidate.compact_heading_smoothed_metric_count
+                              << ", heading raw "
+                              << candidate.compact_heading_raw_metric_count
+                              << ", eye gaze "
+                              << candidate.compact_eye_gaze_metric_count << ")";
+                    } else {
+                        label << " ("
+                              << candidate.physical_active_duration_s.size()
+                              << " bouts)";
+                    }
                 } else {
                     label << " (details not loaded)";
                 }
@@ -193,6 +208,17 @@ AnalysisTimelineMotionSelection drawAnalysisTimelineMotionControls(
                         &error_message);
                 }
             } else {
+                if (selection.selected_bout_kinematics->is_compact_layout) {
+                    ImGui::Text("Compact v2 metrics: movement %zu | heading smoothed %zu | heading raw %zu | eye gaze %zu",
+                                selection.selected_bout_kinematics
+                                    ->compact_movement_metric_count,
+                                selection.selected_bout_kinematics
+                                    ->compact_heading_smoothed_metric_count,
+                                selection.selected_bout_kinematics
+                                    ->compact_heading_raw_metric_count,
+                                selection.selected_bout_kinematics
+                                    ->compact_eye_gaze_metric_count);
+                }
                 const auto* valid_mask =
                     selection.selected_bout_kinematics
                             ->physical_active_valid.empty()

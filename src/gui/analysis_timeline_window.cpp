@@ -144,6 +144,8 @@ MotionPreparedCacheKey makeMotionPreparedCacheKey(
     if (input.selected_swim_bouts != nullptr) {
         swim_bouts_key = input.selected_swim_bouts->run_name + "\n" +
                          input.selected_swim_bouts->speed_level + "\n" +
+                         std::to_string(input.selected_swim_bouts->candidate_id) + "\n" +
+                         std::to_string(input.selected_swim_bouts->signal_id) + "\n" +
                          input.selected_swim_bouts->detection_signal_source_path;
     }
     return MotionPreparedCacheKey{

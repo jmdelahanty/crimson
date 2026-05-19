@@ -141,7 +141,9 @@ bool ZarrDetectionLoader::applyDetectionDataset(const InterpolationRunData& stag
     data_.detection_reason_flags = stage.detection_reason;
     data_.has_scores = stage.has_scores;
     data_.has_class_ids = stage.has_class_ids;
-    data_.coordinates_normalized = stage.uses_palette_layout;
+    data_.boxes_are_pixel_xyxy = stage.boxes_are_pixel_xyxy;
+    data_.coordinates_normalized =
+        stage.uses_palette_layout && !stage.boxes_are_pixel_xyxy;
     data_.layout = ZarrLayoutType::kPaletteRuns;
 
     data_.n_detections = stage.n_detections;
@@ -586,7 +588,8 @@ bool ZarrDetectionLoader::loadMetadata(const ts::kvstore::KvStore& store) {
                 double frames = 0.0;
                 if (assignIfNumber(*root_attrs, "total_frames", frames) ||
                     assignIfNumber(*root_attrs, "n_frames", frames) ||
-                    assignIfNumber(*root_attrs, "source_video_total_frames", frames)) {
+                    assignIfNumber(*root_attrs, "source_video_total_frames", frames) ||
+                    assignIfNumber(*root_attrs, "recording_frame_index_row_count", frames)) {
                     if (frames > 0.0) {
                         data_.total_frames = static_cast<size_t>(frames);
                         metadata_found = true;
@@ -1218,6 +1221,9 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
         const auto& class_source = want_interpolated
             ? data_.latest_interpolation.flat_class_ids
             : data_.flat_class_ids;
+        const bool boxes_are_pixel_xyxy = want_interpolated
+            ? data_.latest_interpolation.boxes_are_pixel_xyxy
+            : data_.boxes_are_pixel_xyxy;
 
         const bool has_scores = want_interpolated
             ? !data_.latest_interpolation.flat_scores.empty()
@@ -1284,11 +1290,17 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
         }
 
         for (size_t idx = start; idx < end && idx < boxes_source.size(); ++idx) {
-            auto pixel_box = normalizedBoxToPixels(
-                boxes_source[idx],
-                data_.image_width,
-                data_.image_height
-            );
+            auto pixel_box = boxes_are_pixel_xyxy
+                ? boxes_source[idx]
+                : normalizedBoxToPixels(
+                      boxes_source[idx],
+                      data_.image_width,
+                      data_.image_height
+                  );
+            if (!std::isfinite(pixel_box[0]) || !std::isfinite(pixel_box[1]) ||
+                !std::isfinite(pixel_box[2]) || !std::isfinite(pixel_box[3])) {
+                continue;
+            }
             result.boxes.push_back(pixel_box);
 
             if (has_scores && idx < scores_source.size()) {

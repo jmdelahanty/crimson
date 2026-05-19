@@ -1,11 +1,17 @@
 #include "media_session_loader.h"
+#include "global.h"
+#include "render.h"
 
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <map>
+#include <mutex>
 #include <sstream>
+
+extern std::mutex g_seek_info_mutex;
 
 namespace {
 
@@ -66,6 +72,203 @@ bool applyZarrCalibrationToCameraParams(const ZarrCalibrationData& calibration,
 
 MediaSessionLoader::MediaSessionLoader(const MediaSessionLoaderContext& context)
     : context_(context) {}
+
+void MediaSessionLoader::stopCameraDecodersForReload() const {
+    if (context_.decoder_context == nullptr ||
+        context_.decoder_threads == nullptr ||
+        context_.demuxers == nullptr ||
+        context_.camera_names == nullptr ||
+        context_.is_view_focused == nullptr ||
+        context_.window_need_decoding == nullptr ||
+        context_.window_was_decoding == nullptr ||
+        context_.video_loaded == nullptr ||
+        context_.input_is_imgs == nullptr) {
+        return;
+    }
+
+    context_.decoder_context->stop_flag = true;
+    for (auto& thread : *context_.decoder_threads) {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
+    context_.decoder_threads->clear();
+
+    for (const auto& camera_name : *context_.camera_names) {
+        (*context_.window_need_decoding)[camera_name].store(false);
+        (*context_.window_was_decoding)[camera_name] = false;
+        latest_decoded_frame[camera_name].store(-1);
+    }
+
+    context_.demuxers->clear();
+    context_.camera_names->clear();
+    context_.is_view_focused->clear();
+    *context_.video_loaded = false;
+    *context_.input_is_imgs = false;
+    context_.decoder_context->stop_flag = false;
+    context_.decoder_context->decoding_flag = false;
+    context_.decoder_context->estimated_num_frames = 0;
+    if (context_.clipped_media_state != nullptr) {
+        context_.clipped_media_state->current_video_path.clear();
+        context_.clipped_media_state->parent_frame_by_clip_local.reset();
+    }
+}
+
+bool MediaSessionLoader::loadClippedVideoForParentFrame(int parent_frame) const {
+    if (context_.zarr_loaded == nullptr || !*context_.zarr_loaded ||
+        context_.zarr_loader == nullptr ||
+        !context_.zarr_loader->hasClippedCollection()) {
+        return true;
+    }
+    if (context_.scene == nullptr || context_.decoder_context == nullptr ||
+        context_.playback_state == nullptr || context_.root_dir == nullptr ||
+        context_.skeleton_dir == nullptr || context_.camera_names == nullptr ||
+        context_.decoder_threads == nullptr || context_.demuxers == nullptr ||
+        context_.is_view_focused == nullptr ||
+        context_.window_need_decoding == nullptr ||
+        context_.window_was_decoding == nullptr ||
+        context_.video_loaded == nullptr || context_.input_is_imgs == nullptr ||
+        context_.label_buffer_size == nullptr || context_.video_fps == nullptr) {
+        return false;
+    }
+
+    const auto* row = context_.zarr_loader->resolveClippedFrame(parent_frame);
+    if (row == nullptr) {
+        std::cout << "[Zarr] No clipped frame-run mapping for parent frame "
+                  << parent_frame << std::endl;
+        return false;
+    }
+
+    const auto* selected =
+        context_.zarr_loader->getClippedResolver().selectedRun(
+            row->selected_run_index);
+    if (selected == nullptr || selected->video_path.empty()) {
+        std::cout << "[Zarr] Clipped mapping has no source video for parent frame "
+                  << parent_frame << std::endl;
+        return false;
+    }
+
+    auto resolved_video_opt = ResolveAffiliatedVideoPath(
+        selected->video_path,
+        context_.zarr_loader->getArchivePath());
+    if (!resolved_video_opt.has_value()) {
+        std::cout << "[Zarr] Could not resolve clipped source video path: "
+                  << selected->video_path << std::endl;
+        return false;
+    }
+
+    const std::string resolved_video = resolved_video_opt->string();
+    PaletteClippedMediaState* clipped_state = context_.clipped_media_state;
+    if (*context_.video_loaded && clipped_state != nullptr &&
+        clipped_state->current_video_path == resolved_video &&
+        !context_.decoder_threads->empty()) {
+        if (context_.scene->num_cams > 0 &&
+            !context_.scene->cameras.empty()) {
+            std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+            context_.scene->cameras[0].seek_context.frame_number_map =
+                clipped_state->parent_frame_by_clip_local;
+        }
+        return true;
+    }
+
+    if (*context_.video_loaded || !context_.decoder_threads->empty() ||
+        !context_.demuxers->empty()) {
+        stopCameraDecodersForReload();
+    }
+
+    try {
+        *context_.input_is_imgs = false;
+        context_.camera_names->clear();
+        context_.demuxers->clear();
+        context_.is_view_focused->clear();
+
+        std::string camera_name = "Cam" + selected->camera_serial + "_" +
+                                  selected->clip_id;
+        context_.camera_names->push_back(camera_name);
+        (*context_.window_need_decoding)[camera_name].store(true);
+        (*context_.window_was_decoding)[camera_name] = true;
+        latest_decoded_frame[camera_name].store(-1);
+
+        std::map<std::string, std::string> ffmpeg_options;
+        context_.demuxers->push_back(std::make_unique<FFmpegDemuxer>(
+            resolved_video.c_str(), ffmpeg_options));
+
+        context_.decoder_context->seek_interval =
+            static_cast<int>(context_.demuxers->at(0)->FindKeyFrameInterval());
+        *context_.video_fps = context_.demuxers->at(0)->GetFramerate();
+        context_.scene->num_cams = 1;
+        context_.scene->cameras.resize(context_.scene->num_cams);
+        context_.scene->cameras[0].image_width =
+            context_.demuxers->at(0)->GetWidth();
+        context_.scene->cameras[0].image_height =
+            context_.demuxers->at(0)->GetHeight();
+
+        const bool needs_allocation =
+            context_.scene->cameras[0].display_buffer == nullptr ||
+            context_.scene->size_of_buffer == 0;
+        if (needs_allocation) {
+            render_allocate_scene_memory(context_.scene,
+                                         *context_.label_buffer_size);
+        } else {
+            for (u32 i = 0; i < context_.scene->size_of_buffer; ++i) {
+                context_.scene->cameras[0].display_buffer[i].available_to_write =
+                    true;
+                context_.scene->cameras[0].display_buffer[i].frame_number = -1;
+            }
+            context_.scene->cameras[0].last_uploaded_frame = -1;
+            context_.scene->cameras[0].texture_has_valid_frame = false;
+        }
+
+        auto frame_map = std::make_shared<const std::vector<int64_t>>(
+            selected->parent_frame_by_clip_local);
+        {
+            std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+            context_.scene->cameras[0].seek_context.frame_number_map = frame_map;
+        }
+        if (clipped_state != nullptr) {
+            clipped_state->current_video_path = resolved_video;
+            clipped_state->parent_frame_by_clip_local = frame_map;
+        }
+
+        const size_t total_parent_frames =
+            context_.zarr_loader->getTotalFrames();
+        context_.decoder_context->total_num_frame =
+            static_cast<int>(std::min<size_t>(
+                total_parent_frames,
+                static_cast<size_t>(std::numeric_limits<int>::max())));
+        context_.decoder_context->estimated_num_frames =
+            std::max(0, context_.decoder_context->total_num_frame - 1);
+
+        context_.decoder_threads->push_back(std::thread(
+            &decoder_process, context_.decoder_context,
+            context_.demuxers->at(0).get(), context_.camera_names->at(0),
+            context_.scene->cameras[0].display_buffer,
+            context_.scene->size_of_buffer,
+            &context_.scene->cameras[0].seek_context,
+            context_.scene->use_cpu_buffer));
+        context_.is_view_focused->push_back(false);
+        *context_.video_loaded = true;
+
+        std::filesystem::path inferred_root = InferRecordingRootPath(
+            *resolved_video_opt, context_.zarr_loader->getArchivePath());
+        if (!inferred_root.empty()) {
+            *context_.root_dir = inferred_root.string();
+            *context_.skeleton_dir = *context_.root_dir;
+        }
+
+        std::cout << "[Zarr] Loaded clipped video for parent frame "
+                  << parent_frame << " -> " << selected->clip_id
+                  << " local frame " << row->clip_local_frame_index
+                  << ": " << resolved_video << std::endl;
+        loadCameraCalibrationsForCurrentMedia();
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "[Zarr] Failed to load clipped source video: "
+                  << e.what() << std::endl;
+        stopCameraDecodersForReload();
+        return false;
+    }
+}
 
 void MediaSessionLoader::loadCameraCalibrationsForCurrentMedia() const {
     if (context_.video_loaded == nullptr || !*context_.video_loaded ||
@@ -223,6 +426,10 @@ bool MediaSessionLoader::loadSingleVideoMedia(
         }
 
         std::cout << success_label << video_path.string() << std::endl;
+        if (context_.clipped_media_state != nullptr) {
+            context_.clipped_media_state->current_video_path.clear();
+            context_.clipped_media_state->parent_frame_by_clip_local.reset();
+        }
         loadCameraCalibrationsForCurrentMedia();
         return true;
     } catch (const std::exception& e) {
@@ -238,6 +445,19 @@ void MediaSessionLoader::tryAutoLoadAffiliatedVideoFromZarr(
         context_.zarr_loader == nullptr) {
         return;
     }
+
+    if (context_.zarr_loader->hasClippedCollection()) {
+        const int parent_frame =
+            context_.playback_state != nullptr
+                ? std::max(0, context_.playback_state->to_display_frame_number)
+                : 0;
+        if (loadClippedVideoForParentFrame(parent_frame)) {
+            std::cout << "[Zarr] Auto-loaded clipped collection media ("
+                      << trigger_label << ")" << std::endl;
+        }
+        return;
+    }
+
     if (*context_.video_loaded || !context_.decoder_threads->empty()) {
         std::cout << "[Zarr] Skipping affiliated video auto-load ("
                   << trigger_label << "): media already loaded" << std::endl;

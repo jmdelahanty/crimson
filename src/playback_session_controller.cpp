@@ -188,13 +188,39 @@ void PlaybackSessionController::seekToFrame(int target_frame,
         context_.video_fps == nullptr) {
         return;
     }
+    const bool clipped_collection =
+        context_.zarr_loader->hasClippedCollection();
+    const int max_frame = clipped_collection
+                              ? std::max(0, static_cast<int>(
+                                                context_.zarr_loader
+                                                    ->getTotalFrames()) -
+                                                1)
+                              : std::max(0,
+                                         context_.decoder_context
+                                             ->total_num_frame -
+                                             1);
+    const int clamped_frame = std::clamp(target_frame, 0, max_frame);
+    int decoder_seek_frame = clamped_frame;
+
+    if (clipped_collection) {
+        if (context_.ensure_clipped_media_for_parent_frame &&
+            !context_.ensure_clipped_media_for_parent_frame(clamped_frame)) {
+            return;
+        }
+        const auto* row =
+            context_.zarr_loader->resolveClippedFrame(clamped_frame);
+        if (row == nullptr) {
+            std::cout << "[Seek] no clipped mapping for parent frame "
+                      << clamped_frame << std::endl;
+            return;
+        }
+        decoder_seek_frame = row->clip_local_frame_index;
+    }
+
     if (context_.scene->num_cams <= 0) {
         return;
     }
 
-    const int max_frame =
-        std::max(0, context_.decoder_context->total_num_frame - 1);
-    const int clamped_frame = std::clamp(target_frame, 0, max_frame);
     const bool seek_accurate =
         !force_inaccurate && !context_.playback_state->play_video;
 
@@ -302,13 +328,14 @@ void PlaybackSessionController::seekToFrame(int target_frame,
         }
     }
 
-    initiate_camera_seeks(context_.scene, clamped_frame,
+    initiate_camera_seeks(context_.scene, decoder_seek_frame,
                           context_.seek_progress->seek_id, seek_accurate);
 
     if (crimson_seek_debug_logs_enabled()) {
         std::cout << "[Seek] id=" << context_.seek_progress->seek_id
                   << " initiated cameras=" << context_.scene->num_cams
                   << " frame=" << clamped_frame
+                  << " decoder_frame=" << decoder_seek_frame
                   << " skip_stimulus_hard_seek="
                   << (skip_stimulus_hard_seek ? "true" : "false")
                   << " accurate=" << (seek_accurate ? "true" : "false")

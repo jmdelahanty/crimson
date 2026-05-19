@@ -126,6 +126,17 @@ struct PerfLogFrameContext {
 
     std::chrono::steady_clock::time_point frame_loop_start{};
     const AnalysisTimelinePerfStats* analysis_timeline_perf = nullptr;
+
+    int bbox_query_frame = -1;
+    int bbox_loaded_count = 0;
+    int bbox_display_count = 0;
+    double bbox_get_boxes_ms = 0.0;
+    double bbox_edit_resolve_ms = 0.0;
+    double bbox_get_raw_detections_ms = 0.0;
+    double bbox_load_total_ms = 0.0;
+    double bbox_overlay_build_ms = 0.0;
+    double bbox_overlay_draw_ms = 0.0;
+    int bbox_overlay_item_count = 0;
 };
 
 struct MaskPerfLogFrameContext {

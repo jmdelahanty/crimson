@@ -945,6 +945,8 @@ CameraViewWindowResult drawCameraViewWindowContents(
                 context.detection_details != nullptr &&
                 context.bbox_edit_state != nullptr &&
                 !context.zarr_boxes->empty()) {
+                const auto bbox_overlay_build_start =
+                    std::chrono::steady_clock::now();
                 const bool frame_has_bbox_edits =
                     context.bbox_edit_state->isFrameDirty(
                         context.current_frame_num);
@@ -957,6 +959,11 @@ CameraViewWindowResult drawCameraViewWindowContents(
                         frame_has_bbox_edits,
                         context.active_dataset_has_synthetic_detections,
                         context.frame_is_interpolated);
+                result.perf.bbox_overlay_build_ms += durationMs(
+                    std::chrono::steady_clock::now() -
+                    bbox_overlay_build_start);
+                result.perf.bbox_overlay_item_count +=
+                    static_cast<int>(bounding_box_overlay_items.size());
             }
 
             const std::string draft_label_suffix =
@@ -966,9 +973,14 @@ CameraViewWindowResult drawCameraViewWindowContents(
                 switch (layer) {
                     case CameraViewOverlayLayer::BoundingBoxes:
                         if (!bounding_box_overlay_items.empty()) {
+                            const auto bbox_overlay_draw_start =
+                                std::chrono::steady_clock::now();
                             drawFullFrameRectOverlays(
                                 bounding_box_overlay_items,
                                 image_height_px);
+                            result.perf.bbox_overlay_draw_ms += durationMs(
+                                std::chrono::steady_clock::now() -
+                                bbox_overlay_draw_start);
                         }
                         break;
                     case CameraViewOverlayLayer::BoundingBoxDraft:

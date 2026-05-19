@@ -1820,6 +1820,12 @@ bool ZarrDetectionLoader::loadEyeAngleData(const ts::kvstore::KvStore& store,
                     "analysis/eye_angle_runs",
                     {"angles/roi/left_minor_signed_deg"});
             }
+            if (candidates.empty()) {
+                candidates = collect_runs_fs(
+                    root_path_,
+                    "analysis/eye_angle_runs",
+                    {"roi_angles", "angle_channel_index/name"});
+            }
             if (!candidates.empty()) {
                 selected_run = candidates.back();
             }
@@ -2018,6 +2024,9 @@ bool ZarrDetectionLoader::loadEyeAngleData(const ts::kvstore::KvStore& store,
         addUniqueString(scalar_fields_to_load, "right_eye_angle_deg_smoothed");
         addUniqueString(scalar_fields_to_load, "left_gaze_signed_deg");
         addUniqueString(scalar_fields_to_load, "right_gaze_signed_deg");
+        addUniqueString(scalar_fields_to_load, "left_gaze_deg");
+        addUniqueString(scalar_fields_to_load, "right_gaze_deg");
+        addUniqueString(scalar_fields_to_load, "vergence_gaze_deg");
         addUniqueString(scalar_fields_to_load, "left_minor_signed_deg");
         addUniqueString(scalar_fields_to_load, "right_minor_signed_deg");
         addUniqueString(scalar_fields_to_load, "vergence_eye_angle_deg_smoothed");
@@ -2091,48 +2100,306 @@ bool ZarrDetectionLoader::loadEyeAngleData(const ts::kvstore::KvStore& store,
             return try_read(float{}) || try_read(double{});
         };
 
-        for (const auto& field_name : scalar_fields_to_load) {
-            ZarrDetectionData::EyeAngleScalarField field;
-            const auto info = field_info_for(field_name);
-            field.name = field_name;
-            field.representation_key = info.representation_key;
-            field.field_role = info.field_role;
-            field.display_name =
-                info.display_name.empty() ? field_name : info.display_name;
-            field.units = info.units;
-            field.has_roi = readFloatArray(
-                store, run_base + "angles/roi/" + field_name,
-                field.roi_values);
-            field.has_frame = readFloatArray(
-                store, run_base + "angles/frame/" + field_name,
-                field.frame_values);
-            if (field.has_roi || field.has_frame) {
+        struct CompactFloatMatrix {
+            size_t rows = 0;
+            size_t cols = 0;
+            std::vector<float> values;
+            bool loaded = false;
+        };
+        struct CompactVectorTensor {
+            size_t rows = 0;
+            size_t channels = 0;
+            std::vector<std::array<float, 2>> values;
+            bool loaded = false;
+        };
+        struct CompactQaMatrix {
+            size_t rows = 0;
+            size_t cols = 0;
+            std::vector<int32_t> values;
+            bool loaded = false;
+        };
+
+        const bool compact_dense_layout =
+            jsonStringAttr(*run_attrs, "layout") == "compact_dense_v2" ||
+            readNodeMetaV3(store, run_base + "roi_angles").has_value();
+
+        auto readCompactFloatMatrix =
+            [&](const std::string& rel_path,
+                CompactFloatMatrix& out) -> bool {
+            const std::string path = run_base + rel_path;
+            auto try_read = [&](auto type_token) -> bool {
+                using Source = decltype(type_token);
+                auto open_result =
+                    openArrayAny<Source, 2>(store, path, context_);
+                if (!open_result.ok()) {
+                    return false;
+                }
+                auto array_result = ts::Read(open_result.value()).result();
+                if (!array_result.ok()) {
+                    return false;
+                }
+                auto array = array_result.value();
+                if (array.rank() != 2) {
+                    return false;
+                }
+                out.rows = static_cast<size_t>(array.shape()[0]);
+                out.cols = static_cast<size_t>(array.shape()[1]);
+                out.values.resize(out.rows * out.cols);
+                const auto* data = static_cast<const Source*>(array.data());
+                for (size_t i = 0; i < out.values.size(); ++i) {
+                    out.values[i] = static_cast<float>(data[i]);
+                }
+                out.loaded = true;
+                return true;
+            };
+            return try_read(float{}) || try_read(double{});
+        };
+
+        auto readCompactVectorTensor =
+            [&](const std::string& rel_path,
+                CompactVectorTensor& out) -> bool {
+            const std::string path = run_base + rel_path;
+            auto try_read = [&](auto type_token) -> bool {
+                using Source = decltype(type_token);
+                auto open_result =
+                    openArrayAny<Source, 3>(store, path, context_);
+                if (!open_result.ok()) {
+                    return false;
+                }
+                auto array_result = ts::Read(open_result.value()).result();
+                if (!array_result.ok()) {
+                    return false;
+                }
+                auto array = array_result.value();
+                if (array.rank() != 3 || array.shape()[2] < 2) {
+                    return false;
+                }
+                out.rows = static_cast<size_t>(array.shape()[0]);
+                out.channels = static_cast<size_t>(array.shape()[1]);
+                out.values.resize(out.rows * out.channels);
+                const auto* data = static_cast<const Source*>(array.data());
+                const size_t stride_channels = out.channels * 2;
+                for (size_t row = 0; row < out.rows; ++row) {
+                    for (size_t channel = 0; channel < out.channels; ++channel) {
+                        const size_t src = row * stride_channels + channel * 2;
+                        out.values[row * out.channels + channel] = {
+                            static_cast<float>(data[src + 0]),
+                            static_cast<float>(data[src + 1])};
+                    }
+                }
+                out.loaded = true;
+                return true;
+            };
+            return try_read(float{}) || try_read(double{});
+        };
+
+        auto readCompactQaMatrix =
+            [&](const std::string& rel_path,
+                CompactQaMatrix& out) -> bool {
+            const std::string path = run_base + rel_path;
+            auto try_read = [&](auto type_token) -> bool {
+                using Source = decltype(type_token);
+                auto open_result =
+                    openArrayAny<Source, 2>(store, path, context_);
+                if (!open_result.ok()) {
+                    return false;
+                }
+                auto array_result = ts::Read(open_result.value()).result();
+                if (!array_result.ok()) {
+                    return false;
+                }
+                auto array = array_result.value();
+                if (array.rank() != 2) {
+                    return false;
+                }
+                out.rows = static_cast<size_t>(array.shape()[0]);
+                out.cols = static_cast<size_t>(array.shape()[1]);
+                out.values.resize(out.rows * out.cols);
+                for (size_t row = 0; row < out.rows; ++row) {
+                    for (size_t col = 0; col < out.cols; ++col) {
+                        out.values[row * out.cols + col] =
+                            static_cast<int32_t>(array(
+                                static_cast<ts::Index>(row),
+                                static_cast<ts::Index>(col)));
+                    }
+                }
+                out.loaded = true;
+                return true;
+            };
+            return try_read(bool{}) ||
+                   try_read(uint16_t{}) ||
+                   try_read(uint8_t{}) ||
+                   try_read(int32_t{}) ||
+                   try_read(int16_t{});
+        };
+
+        auto compactChannelMap =
+            [&](const std::string& index_base,
+                const std::string& availability_name)
+                -> std::unordered_map<std::string, size_t> {
+            std::vector<std::string> names;
+            std::vector<uint8_t> available;
+            std::unordered_map<std::string, size_t> channels;
+            if (!readStringArray(store, run_base + index_base + "/name",
+                                 names)) {
+                return channels;
+            }
+            readBoolArray(store,
+                          run_base + index_base + "/" + availability_name,
+                          available);
+            for (size_t i = 0; i < names.size(); ++i) {
+                if (names[i].empty()) {
+                    continue;
+                }
+                const bool is_available =
+                    available.empty() ||
+                    (i < available.size() && available[i] != 0);
+                if (is_available) {
+                    channels[names[i]] = i;
+                }
+            }
+            return channels;
+        };
+
+        if (compact_dense_layout) {
+            const auto angle_roi_channels =
+                compactChannelMap("angle_channel_index", "roi_available");
+            const auto angle_frame_channels =
+                compactChannelMap("angle_channel_index", "frame_available");
+            const auto vector_roi_channels =
+                compactChannelMap("vector_channel_index", "roi_available");
+
+            CompactFloatMatrix roi_angles;
+            CompactFloatMatrix frame_angles;
+            CompactVectorTensor roi_vectors;
+            if (!angle_roi_channels.empty()) {
+                readCompactFloatMatrix("roi_angles", roi_angles);
+            }
+            if (!angle_frame_channels.empty()) {
+                readCompactFloatMatrix("frame_angles", frame_angles);
+            }
+            if (!vector_roi_channels.empty()) {
+                readCompactVectorTensor("roi_vectors", roi_vectors);
+            }
+
+            auto copyCompactScalarColumn =
+                [](const CompactFloatMatrix& matrix,
+                   size_t channel,
+                   std::vector<float>& out) -> bool {
+                if (!matrix.loaded || channel >= matrix.cols) {
+                    return false;
+                }
+                out.resize(matrix.rows);
+                for (size_t row = 0; row < matrix.rows; ++row) {
+                    out[row] = matrix.values[row * matrix.cols + channel];
+                }
+                return true;
+            };
+
+            for (const auto& field_name : scalar_fields_to_load) {
+                ZarrDetectionData::EyeAngleScalarField field;
+                const auto info = field_info_for(field_name);
+                field.name = field_name;
+                field.representation_key = info.representation_key;
+                field.field_role = info.field_role;
+                field.display_name =
+                    info.display_name.empty() ? field_name : info.display_name;
+                field.units = info.units.empty() ? "deg" : info.units;
+                if (auto it = angle_roi_channels.find(field_name);
+                    it != angle_roi_channels.end()) {
+                    field.has_roi = copyCompactScalarColumn(
+                        roi_angles, it->second, field.roi_values);
+                }
+                if (auto it = angle_frame_channels.find(field_name);
+                    it != angle_frame_channels.end()) {
+                    field.has_frame = copyCompactScalarColumn(
+                        frame_angles, it->second, field.frame_values);
+                }
+                if (field.has_roi || field.has_frame) {
+                    if (field.has_roi) {
+                        eye.row_count =
+                            std::max(eye.row_count, field.roi_values.size());
+                    }
+                    if (field.has_frame) {
+                        eye.frame_count =
+                            std::max(eye.frame_count, field.frame_values.size());
+                    }
+                    eye.scalar_fields.push_back(std::move(field));
+                }
+            }
+
+            for (const auto& field_name : vector_fields_to_load) {
+                ZarrDetectionData::EyeAngleVectorField field;
+                const auto info = field_info_for(field_name);
+                field.name = field_name;
+                field.representation_key = info.representation_key;
+                field.field_role = info.field_role;
+                field.display_name =
+                    info.display_name.empty() ? field_name : info.display_name;
+                field.units = info.units;
+                if (auto it = vector_roi_channels.find(field_name);
+                    it != vector_roi_channels.end()) {
+                    const size_t channel = it->second;
+                    if (roi_vectors.loaded && channel < roi_vectors.channels) {
+                        field.roi_values.resize(roi_vectors.rows);
+                        for (size_t row = 0; row < roi_vectors.rows; ++row) {
+                            field.roi_values[row] =
+                                roi_vectors.values[row * roi_vectors.channels +
+                                                   channel];
+                        }
+                        field.has_roi = true;
+                    }
+                }
                 if (field.has_roi) {
                     eye.row_count =
                         std::max(eye.row_count, field.roi_values.size());
+                    eye.vector_fields.push_back(std::move(field));
                 }
-                if (field.has_frame) {
-                    eye.frame_count =
-                        std::max(eye.frame_count, field.frame_values.size());
-                }
-                eye.scalar_fields.push_back(std::move(field));
             }
-        }
-        for (const auto& field_name : vector_fields_to_load) {
-            ZarrDetectionData::EyeAngleVectorField field;
-            const auto info = field_info_for(field_name);
-            field.name = field_name;
-            field.representation_key = info.representation_key;
-            field.field_role = info.field_role;
-            field.display_name =
-                info.display_name.empty() ? field_name : info.display_name;
-            field.units = info.units;
-            field.has_roi =
-                readVec2Array("angles/roi/" + field_name, field.roi_values);
-            if (field.has_roi) {
-                eye.row_count =
-                    std::max(eye.row_count, field.roi_values.size());
-                eye.vector_fields.push_back(std::move(field));
+        } else {
+            for (const auto& field_name : scalar_fields_to_load) {
+                ZarrDetectionData::EyeAngleScalarField field;
+                const auto info = field_info_for(field_name);
+                field.name = field_name;
+                field.representation_key = info.representation_key;
+                field.field_role = info.field_role;
+                field.display_name =
+                    info.display_name.empty() ? field_name : info.display_name;
+                field.units = info.units;
+                field.has_roi = readFloatArray(
+                    store, run_base + "angles/roi/" + field_name,
+                    field.roi_values);
+                field.has_frame = readFloatArray(
+                    store, run_base + "angles/frame/" + field_name,
+                    field.frame_values);
+                if (field.has_roi || field.has_frame) {
+                    if (field.has_roi) {
+                        eye.row_count =
+                            std::max(eye.row_count, field.roi_values.size());
+                    }
+                    if (field.has_frame) {
+                        eye.frame_count =
+                            std::max(eye.frame_count, field.frame_values.size());
+                    }
+                    eye.scalar_fields.push_back(std::move(field));
+                }
+            }
+            for (const auto& field_name : vector_fields_to_load) {
+                ZarrDetectionData::EyeAngleVectorField field;
+                const auto info = field_info_for(field_name);
+                field.name = field_name;
+                field.representation_key = info.representation_key;
+                field.field_role = info.field_role;
+                field.display_name =
+                    info.display_name.empty() ? field_name : info.display_name;
+                field.units = info.units;
+                field.has_roi =
+                    readVec2Array("angles/roi/" + field_name, field.roi_values);
+                if (field.has_roi) {
+                    eye.row_count =
+                        std::max(eye.row_count, field.roi_values.size());
+                    eye.vector_fields.push_back(std::move(field));
+                }
             }
         }
 
@@ -2146,26 +2413,102 @@ bool ZarrDetectionLoader::loadEyeAngleData(const ts::kvstore::KvStore& store,
                        eye.roi_time_seconds);
         readFloatArray(store, run_base + "support/frame_time_seconds",
                        eye.frame_time_seconds);
-        readBoolArray(store, run_base + "qa/roi/valid_left",
-                      eye.roi_valid_left);
-        readBoolArray(store, run_base + "qa/roi/valid_right",
-                      eye.roi_valid_right);
-        readBoolArray(store, run_base + "qa/roi/valid_frame",
-                      eye.roi_valid_frame);
-        readBoolArray(store, run_base + "qa/frame/valid_frame",
-                      eye.frame_valid_frame);
-        readBoolArray(store, run_base + "qa/roi/left_major_axis_marginal",
-                      eye.roi_left_major_axis_marginal);
-        readBoolArray(store, run_base + "qa/roi/right_major_axis_marginal",
-                      eye.roi_right_major_axis_marginal);
-        readBoolArray(store, run_base + "qa/roi/major_axis_marginal",
-                      eye.roi_major_axis_marginal);
-        readBoolArray(store, run_base + "qa/frame/major_axis_marginal",
-                      eye.frame_major_axis_marginal);
-        readInt32Array(store, run_base + "qa/roi/reason_codes",
-                       eye.roi_reason_codes);
-        readInt32Array(store, run_base + "qa/frame/reason_codes",
-                       eye.frame_reason_codes);
+        if (compact_dense_layout) {
+            const auto qa_roi_channels =
+                compactChannelMap("qa_channel_index", "roi_available");
+            const auto qa_frame_channels =
+                compactChannelMap("qa_channel_index", "frame_available");
+            CompactQaMatrix roi_qa;
+            CompactQaMatrix frame_qa;
+            if (!qa_roi_channels.empty()) {
+                readCompactQaMatrix("roi_qa", roi_qa);
+            }
+            if (!qa_frame_channels.empty()) {
+                readCompactQaMatrix("frame_qa", frame_qa);
+            }
+            auto copyQaBoolColumn =
+                [](const CompactQaMatrix& matrix,
+                   size_t channel,
+                   std::vector<uint8_t>& out) -> bool {
+                if (!matrix.loaded || channel >= matrix.cols) {
+                    return false;
+                }
+                out.resize(matrix.rows);
+                for (size_t row = 0; row < matrix.rows; ++row) {
+                    out[row] =
+                        matrix.values[row * matrix.cols + channel] != 0 ? 1 : 0;
+                }
+                return true;
+            };
+            auto copyQaIntColumn =
+                [](const CompactQaMatrix& matrix,
+                   size_t channel,
+                   std::vector<int32_t>& out) -> bool {
+                if (!matrix.loaded || channel >= matrix.cols) {
+                    return false;
+                }
+                out.resize(matrix.rows);
+                for (size_t row = 0; row < matrix.rows; ++row) {
+                    out[row] = matrix.values[row * matrix.cols + channel];
+                }
+                return true;
+            };
+            auto copyRoiBool = [&](const std::string& name,
+                                   std::vector<uint8_t>& out) {
+                if (auto it = qa_roi_channels.find(name);
+                    it != qa_roi_channels.end()) {
+                    copyQaBoolColumn(roi_qa, it->second, out);
+                }
+            };
+            auto copyFrameBool = [&](const std::string& name,
+                                     std::vector<uint8_t>& out) {
+                if (auto it = qa_frame_channels.find(name);
+                    it != qa_frame_channels.end()) {
+                    copyQaBoolColumn(frame_qa, it->second, out);
+                }
+            };
+            copyRoiBool("valid_left", eye.roi_valid_left);
+            copyRoiBool("valid_right", eye.roi_valid_right);
+            copyRoiBool("valid_frame", eye.roi_valid_frame);
+            copyFrameBool("valid_frame", eye.frame_valid_frame);
+            copyRoiBool("left_major_axis_marginal",
+                        eye.roi_left_major_axis_marginal);
+            copyRoiBool("right_major_axis_marginal",
+                        eye.roi_right_major_axis_marginal);
+            copyRoiBool("major_axis_marginal",
+                        eye.roi_major_axis_marginal);
+            copyFrameBool("major_axis_marginal",
+                          eye.frame_major_axis_marginal);
+            if (auto it = qa_roi_channels.find("reason_codes");
+                it != qa_roi_channels.end()) {
+                copyQaIntColumn(roi_qa, it->second, eye.roi_reason_codes);
+            }
+            if (auto it = qa_frame_channels.find("reason_codes");
+                it != qa_frame_channels.end()) {
+                copyQaIntColumn(frame_qa, it->second, eye.frame_reason_codes);
+            }
+        } else {
+            readBoolArray(store, run_base + "qa/roi/valid_left",
+                          eye.roi_valid_left);
+            readBoolArray(store, run_base + "qa/roi/valid_right",
+                          eye.roi_valid_right);
+            readBoolArray(store, run_base + "qa/roi/valid_frame",
+                          eye.roi_valid_frame);
+            readBoolArray(store, run_base + "qa/frame/valid_frame",
+                          eye.frame_valid_frame);
+            readBoolArray(store, run_base + "qa/roi/left_major_axis_marginal",
+                          eye.roi_left_major_axis_marginal);
+            readBoolArray(store, run_base + "qa/roi/right_major_axis_marginal",
+                          eye.roi_right_major_axis_marginal);
+            readBoolArray(store, run_base + "qa/roi/major_axis_marginal",
+                          eye.roi_major_axis_marginal);
+            readBoolArray(store, run_base + "qa/frame/major_axis_marginal",
+                          eye.frame_major_axis_marginal);
+            readInt32Array(store, run_base + "qa/roi/reason_codes",
+                           eye.roi_reason_codes);
+            readInt32Array(store, run_base + "qa/frame/reason_codes",
+                           eye.frame_reason_codes);
+        }
 
         eye.row_count = std::max(
             {eye.row_count,
@@ -2403,7 +2746,11 @@ bool ZarrDetectionLoader::loadEyeAngleData(const ts::kvstore::KvStore& store,
         std::cout << "  Eye angle run '" << selected_run << "' loaded ("
                   << eye.row_count << " ROI rows, " << eye.frame_count
                   << " frame rows, default representation '"
-                  << eye.default_representation << "')" << std::endl;
+                  << eye.default_representation << "'";
+        if (compact_dense_layout) {
+            std::cout << ", layout compact_dense_v2";
+        }
+        std::cout << ")" << std::endl;
         if (roi_count > 0 && eye.row_count != 0 && eye.row_count != roi_count) {
             std::cout << "    [EYE_ANGLE_WARNING] ROI count mismatch: angles="
                       << eye.row_count << ", expected " << roi_count
@@ -2412,6 +2759,60 @@ bool ZarrDetectionLoader::loadEyeAngleData(const ts::kvstore::KvStore& store,
         if (!eye.warning.empty()) {
             std::cout << "  [EYE_ANGLE_WARNING] " << eye.warning
                       << std::endl;
+        }
+        if (compact_dense_layout) {
+            auto scalar_axes = [&](const std::string& name) {
+                auto it = std::find_if(
+                    eye.scalar_fields.begin(),
+                    eye.scalar_fields.end(),
+                    [&](const auto& field) { return field.name == name; });
+                std::string axes;
+                if (it != eye.scalar_fields.end() && it->has_roi) {
+                    axes += "roi";
+                }
+                if (it != eye.scalar_fields.end() && it->has_frame) {
+                    if (!axes.empty()) {
+                        axes += "+";
+                    }
+                    axes += "frame";
+                }
+                return axes.empty() ? std::string("missing") : axes;
+            };
+            auto vector_axes = [&](const std::string& name) {
+                auto it = std::find_if(
+                    eye.vector_fields.begin(),
+                    eye.vector_fields.end(),
+                    [&](const auto& field) { return field.name == name; });
+                return (it != eye.vector_fields.end() && it->has_roi)
+                           ? std::string("roi")
+                           : std::string("missing");
+            };
+            std::string valid_frame_axes;
+            if (!eye.roi_valid_frame.empty()) {
+                valid_frame_axes += "roi";
+            }
+            if (!eye.frame_valid_frame.empty()) {
+                if (!valid_frame_axes.empty()) {
+                    valid_frame_axes += "+";
+                }
+                valid_frame_axes += "frame";
+            }
+            if (valid_frame_axes.empty()) {
+                valid_frame_axes = "missing";
+            }
+            std::cout
+                << "  [EyeAngleCompact] overlay fields:"
+                << " left_gaze_xy=" << vector_axes("left_gaze_xy")
+                << " right_gaze_xy=" << vector_axes("right_gaze_xy")
+                << " left_eye_angle_deg=" << scalar_axes("left_eye_angle_deg")
+                << " right_eye_angle_deg=" << scalar_axes("right_eye_angle_deg")
+                << " vergence_eye_angle_deg="
+                << scalar_axes("vergence_eye_angle_deg")
+                << " left_gaze_deg=" << scalar_axes("left_gaze_deg")
+                << " right_gaze_deg=" << scalar_axes("right_gaze_deg")
+                << " vergence_gaze_deg=" << scalar_axes("vergence_gaze_deg")
+                << " valid_frame=" << valid_frame_axes
+                << std::endl;
         }
         return true;
     }

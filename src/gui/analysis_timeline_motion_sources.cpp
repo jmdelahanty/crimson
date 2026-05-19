@@ -124,6 +124,16 @@ bool isCompatibleBoutKinematicsSeries(
             normalizeSpeedLevelName(swim_bouts.speed_level)) {
         return false;
     }
+    if (bouts.source_swim_bout_candidate_id >= 0 &&
+        swim_bouts.candidate_id >= 0 &&
+        bouts.source_swim_bout_candidate_id != swim_bouts.candidate_id) {
+        return false;
+    }
+    if (bouts.source_swim_bout_signal_id >= 0 &&
+        swim_bouts.signal_id >= 0 &&
+        bouts.source_swim_bout_signal_id != swim_bouts.signal_id) {
+        return false;
+    }
     return true;
 }
 
@@ -243,6 +253,13 @@ std::string swimBoutCandidateLabel(
                           ? "method unknown"
                           : bouts.detection_method)
           << ", " << bouts.start_frame.size() << " bouts";
+    if (bouts.is_compact_layout) {
+        if (!bouts.signal_role.empty()) {
+            label << ", role " << bouts.signal_role;
+        }
+        label << ", candidate " << bouts.candidate_id << " signal "
+              << bouts.signal_id;
+    }
     if (isFiniteFloatValue(bouts.threshold_mm)) {
         label << ", threshold " << std::fixed << std::setprecision(3)
               << bouts.threshold_mm;
@@ -268,13 +285,19 @@ const ZarrDetectionData::SwimBoutSeries* resolveSelectedSwimBoutSeries(
     if (compatible_indices.empty()) {
         state.selected_swim_bout_run.clear();
         state.selected_swim_bout_speed_level.clear();
+        state.selected_swim_bout_candidate_id = -1;
+        state.selected_swim_bout_signal_id = -1;
         return nullptr;
     }
 
     for (size_t index : compatible_indices) {
         const auto& candidate = swim_bouts[index];
         if (candidate.run_name == state.selected_swim_bout_run &&
-            candidate.speed_level == state.selected_swim_bout_speed_level) {
+            candidate.speed_level == state.selected_swim_bout_speed_level &&
+            (!candidate.is_compact_layout ||
+             (candidate.candidate_id ==
+                  state.selected_swim_bout_candidate_id &&
+              candidate.signal_id == state.selected_swim_bout_signal_id))) {
             return &candidate;
         }
     }
@@ -298,6 +321,8 @@ const ZarrDetectionData::SwimBoutSeries* resolveSelectedSwimBoutSeries(
     const auto& selected = swim_bouts[chosen];
     state.selected_swim_bout_run = selected.run_name;
     state.selected_swim_bout_speed_level = selected.speed_level;
+    state.selected_swim_bout_candidate_id = selected.candidate_id;
+    state.selected_swim_bout_signal_id = selected.signal_id;
     return &selected;
 }
 

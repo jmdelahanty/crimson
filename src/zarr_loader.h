@@ -24,6 +24,7 @@
 #include <nlohmann/json.hpp>
 #include "h5_loader.h"  // For LoggedBoundingBox structure compatibility
 #include "keypoint_heading_utils.h"
+#include "zarr/palette_clipped_resolver.h"
 
 namespace ts = tensorstore;
 using json = nlohmann::json;
@@ -73,6 +74,7 @@ struct InterpolationRunData {
 
     bool uses_palette_layout = false;
     bool has_flat_detections = false;
+    bool boxes_are_pixel_xyxy = false;
 
     // Flattened detection data (refined/interpolated detections)
     std::vector<int32_t> frame_indices;
@@ -156,6 +158,8 @@ struct ZarrDetectionData {
     bool has_scores = false;
     bool has_class_ids = false;
     bool coordinates_normalized = false;  // true if coords are 0-1, false if pixel values
+    bool boxes_are_pixel_xyxy = false;
+    bool has_clipped_collection = false;
 
     // Palette layout flat buffers
     std::vector<int32_t> frame_indices;                 // length = total detections
@@ -579,6 +583,11 @@ struct ZarrDetectionData {
     struct SwimBoutSeries {
         std::string run_name;
         std::string speed_level;
+        bool is_compact_layout = false;
+        int32_t candidate_id = -1;
+        int32_t signal_id = -1;
+        std::string signal_role;
+        std::string signal_name;
         std::string source_track_kinematics_run;
         int32_t track_id = -1;
         std::string detection_method;
@@ -623,12 +632,20 @@ struct ZarrDetectionData {
         int32_t source_track_id = -1;
         std::string source_swim_bout_run;
         std::string source_swim_bout_speed_level;
+        int32_t source_swim_bout_candidate_id = -1;
+        int32_t source_swim_bout_signal_id = -1;
+        std::string source_swim_bout_signal_role;
         std::string schema_id;
         std::string created_at_utc;
         std::string movement_metric_source_level;
+        bool is_compact_layout = false;
         bool metrics_loaded = false;
         bool metrics_load_failed = false;
         std::string metrics_load_error;
+        size_t compact_movement_metric_count = 0;
+        size_t compact_heading_smoothed_metric_count = 0;
+        size_t compact_heading_raw_metric_count = 0;
+        size_t compact_eye_gaze_metric_count = 0;
         std::vector<int32_t> source_start_frame;
         std::vector<int32_t> source_end_frame;
         std::vector<int32_t> source_core_start_frame;
@@ -642,6 +659,9 @@ struct ZarrDetectionData {
         std::vector<float> physical_active_peak_speed_mm_s;
         std::vector<uint8_t> physical_active_valid;
         std::vector<std::string> failure_reason;
+        std::vector<float> heading_smoothed_net_delta_heading_deg;
+        std::vector<float> heading_raw_net_delta_heading_deg;
+        std::vector<float> eye_gaze_within_bout_vergence_gaze_mean_deg;
     };
     std::vector<MovementSeries> movement_series;
     size_t movement_selected_index = std::numeric_limits<size_t>::max();
@@ -807,6 +827,16 @@ public:
     int getImageHeight() const { return data_.image_height; }
     const std::string& getSourceVideoPath() const { return data_.video_path; }
     const std::string& getArchivePath() const { return root_path_; }
+    bool hasClippedCollection() const { return data_.has_clipped_collection; }
+    const PaletteClippedResolver& getClippedResolver() const {
+        return clipped_resolver_;
+    }
+    const PaletteClippedResolver::FrameRunRow* resolveClippedFrame(
+        int64_t parent_frame_index,
+        const std::string& camera_serial = std::string()) const {
+        return clipped_resolver_.rowForParentFrame(parent_frame_index,
+                                                   camera_serial);
+    }
     const std::string& getDetectRunName() const { return data_.detect_run_name; }
     const std::string& getDetectRunMethod() const { return data_.detect_run_method; }
     const std::string& getDetectRunCreatedAt() const { return data_.detect_run_created_at; }
@@ -1573,6 +1603,7 @@ public:
     
 private:
     ZarrDetectionData data_;
+    PaletteClippedResolver clipped_resolver_;
     ts::Context context_;
     std::string root_path_;
     std::string requested_subject_shape_run_name_;
@@ -1591,6 +1622,7 @@ private:
     
     // Palette layout loaders
     bool loadDetectionRuns(const ts::kvstore::KvStore& store);
+    bool loadClippedRefinedCollectionAsPrimary(const ts::kvstore::KvStore& store);
     bool loadDetectionRunFromGroup(const ts::kvstore::KvStore& store,
                                    const std::string& group_path);
     bool loadFlattenedRun(const ts::kvstore::KvStore& store,

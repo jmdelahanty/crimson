@@ -7,11 +7,17 @@
 
 #include <atomic>
 #include <functional>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
+
+struct PaletteClippedMediaState {
+    std::string current_video_path;
+    std::shared_ptr<const std::vector<int64_t>> parent_frame_by_clip_local;
+};
 
 struct MediaSessionLoaderContext {
     render_scene* scene = nullptr;
@@ -31,6 +37,7 @@ struct MediaSessionLoaderContext {
     std::unordered_map<std::string, std::atomic<bool>>* window_need_decoding =
         nullptr;
     std::unordered_map<std::string, bool>* window_was_decoding = nullptr;
+    PaletteClippedMediaState* clipped_media_state = nullptr;
 
     bool* video_loaded = nullptr;
     bool* zarr_loaded = nullptr;
@@ -53,6 +60,7 @@ class MediaSessionLoader {
     void loadCameraCalibrationsForCurrentMedia() const;
     void tryAutoLoadAffiliatedVideoFromZarr(const char* trigger_label) const;
     void tryAutoLoadStimulusVideo(const char* trigger_label) const;
+    bool loadClippedVideoForParentFrame(int parent_frame) const;
     void bootstrapFromCli(
         const std::string& cli_zarr_override_path,
         const std::string& cli_recording_path,
@@ -60,6 +68,7 @@ class MediaSessionLoader {
         const std::function<void()>& clear_bbox_edits) const;
 
   private:
+    void stopCameraDecodersForReload() const;
     bool loadSingleVideoMedia(const std::filesystem::path& video_path,
                               bool infer_recording_root,
                               const char* success_label) const;

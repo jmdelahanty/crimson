@@ -31,3 +31,10 @@ inline bool crimson_stimulus_debug_logs_enabled() {
     }();
     return enabled;
 }
+
+inline bool crimson_clipped_startup_trace_enabled() {
+    static const bool enabled = []() {
+        return crimson_env_flag_enabled("CRIMSON_CLIPPED_STARTUP_TRACE");
+    }();
+    return enabled;
+}

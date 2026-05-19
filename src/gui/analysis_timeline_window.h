@@ -3,6 +3,7 @@
 #include "gui/analysis_timeline_perf.h"
 #include "stimulus_event_timeline_window.h"
 
+#include <cstdint>
 #include <string>
 
 class ZarrDetectionLoader;
@@ -30,6 +31,8 @@ struct AnalysisTimelineWindowState {
     int eye_angle_representation_index = -1;
     std::string selected_swim_bout_run;
     std::string selected_swim_bout_speed_level;
+    int32_t selected_swim_bout_candidate_id = -1;
+    int32_t selected_swim_bout_signal_id = -1;
     std::string selected_bout_kinematics_run;
     std::string timeline_lod_warmup_key;
     size_t timeline_lod_warmup_cursor = 0;

@@ -7,6 +7,7 @@ include(GNUInstallDirs)
 option(ENABLE_NVML "Link against NVIDIA Management Library (NVML)" ON)
 option(CRIMSON_INSTALL_DEV_TOOLS "Install diagnostic and developer helper executables" OFF)
 option(CRIMSON_ENABLE_SFM "Enable OpenCV SFM-based triangulation workflows" ON)
+option(CRIMSON_ENABLE_PARQUET "Enable Arrow/Parquet support for Palette clipped frame maps" OFF)
 
 # Set output directory for executables
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/release)
@@ -204,6 +205,20 @@ find_package(GLEW REQUIRED)
 find_package(glfw3 REQUIRED)
 find_package(Threads REQUIRED)
 find_package(HDF5 REQUIRED COMPONENTS CXX HL)
+if(CRIMSON_ENABLE_PARQUET)
+    find_package(Arrow CONFIG QUIET)
+    find_package(Parquet CONFIG QUIET)
+    if(NOT Arrow_FOUND OR NOT Parquet_FOUND)
+        message(FATAL_ERROR
+            "CRIMSON_ENABLE_PARQUET=ON requires Arrow and Parquet CMake packages.\n"
+            "Provide a package prefix, for example:\n"
+            "  -DCMAKE_PREFIX_PATH=/path/to/arrow-prefix\n"
+            "or explicit package dirs:\n"
+            "  -DArrow_DIR=/path/to/lib/cmake/Arrow\n"
+            "  -DParquet_DIR=/path/to/lib/cmake/Parquet\n"
+            "Disable clipped Parquet support with -DCRIMSON_ENABLE_PARQUET=OFF.")
+    endif()
+endif()
 
 crimson_require_exact_version("CUDA" "${CUDA_VERSION}" "${CRIMSON_EXPECT_CUDA_VERSION}")
 crimson_require_exact_version("OpenCV" "${OpenCV_VERSION}" "${CRIMSON_EXPECT_OPENCV_VERSION}")
@@ -218,6 +233,42 @@ endif()
 message(STATUS "OpenCV version: ${OpenCV_VERSION}")
 message(STATUS "OpenCV libraries: ${OpenCV_LIBS}")
 message(STATUS "OpenCV include dirs: ${OpenCV_INCLUDE_DIRS}")
+
+set(CRIMSON_ARROW_TARGET "")
+set(CRIMSON_PARQUET_TARGET "")
+if(CRIMSON_ENABLE_PARQUET)
+    if(TARGET Arrow::arrow_shared)
+        set(CRIMSON_ARROW_TARGET Arrow::arrow_shared)
+    elseif(TARGET Arrow::arrow_static)
+        set(CRIMSON_ARROW_TARGET Arrow::arrow_static)
+    else()
+        message(FATAL_ERROR
+            "Arrow package found, but no Arrow::arrow_shared or "
+            "Arrow::arrow_static target is available")
+    endif()
+
+    if(TARGET Parquet::parquet_shared)
+        set(CRIMSON_PARQUET_TARGET Parquet::parquet_shared)
+    elseif(TARGET Parquet::parquet_static)
+        set(CRIMSON_PARQUET_TARGET Parquet::parquet_static)
+    else()
+        message(FATAL_ERROR
+            "Parquet package found, but no Parquet::parquet_shared or "
+            "Parquet::parquet_static target is available")
+    endif()
+endif()
+
+function(crimson_configure_parquet_support target_name)
+    if(CRIMSON_ENABLE_PARQUET)
+        target_compile_definitions(${target_name} PRIVATE CRIMSON_ENABLE_PARQUET=1)
+        target_link_libraries(${target_name} PRIVATE
+            ${CRIMSON_ARROW_TARGET}
+            ${CRIMSON_PARQUET_TARGET}
+        )
+    else()
+        target_compile_definitions(${target_name} PRIVATE CRIMSON_ENABLE_PARQUET=0)
+    endif()
+endfunction()
 
 # --- FFmpeg with NVIDIA support ---
 find_path(AVFORMAT_INCLUDE_DIR libavformat/avformat.h HINTS ${CRIMSON_FFMPEG_INCLUDE_HINTS})
@@ -625,7 +676,10 @@ foreach(CUDA_FILE ${POSSIBLE_CUDA_SOURCES})
 endforeach()
 
 # C++ sources
-file(GLOB CPP_SOURCES CONFIGURE_DEPENDS "src/*.cpp" "src/gui/*.cpp")
+file(GLOB CPP_SOURCES CONFIGURE_DEPENDS
+    "src/*.cpp"
+    "src/gui/*.cpp"
+    "src/zarr/*.cpp")
 
 # keypoint write path requires strict IEEE NaN semantics for contract-idempotent
 # NaN-aware comparisons and writes.
@@ -697,6 +751,7 @@ target_link_libraries(redgui PRIVATE
     # System Libraries
     Threads::Threads
 )
+crimson_configure_parquet_support(redgui)
 
 # Add NVML if enabled
 if(ENABLE_NVML)
@@ -781,6 +836,7 @@ message(STATUS "  OpenCV Version: ${OpenCV_VERSION}")
 message(STATUS "  OpenCV Dir: ${OpenCV_DIR}")
 message(STATUS "  Expected OpenCV Version: ${CRIMSON_EXPECT_OPENCV_VERSION}")
 message(STATUS "  OpenCV SFM Triangulation: ${CRIMSON_ENABLE_SFM}")
+message(STATUS "  Arrow/Parquet Clipped Maps: ${CRIMSON_ENABLE_PARQUET}")
 message(STATUS "  FFmpeg Directory: ${FFMPEG_ROOT}")
 message(STATUS "  Video Codec SDK Root: ${VIDEO_CODEC_SDK_ROOT}")
 message(STATUS "  Install Prefix: ${CMAKE_INSTALL_PREFIX}")
@@ -814,6 +870,36 @@ message(STATUS "========================================")
 add_executable(debug_detect_run tools/debug_detect_run.cpp)
 target_link_libraries(debug_detect_run PRIVATE tensorstore::all_drivers)
 
+add_executable(palette_clipped_loader_probe
+    tools/palette_clipped_loader_probe.cpp
+    src/zarr_loader.cpp
+    src/zarr_loader_detections.cpp
+    src/zarr_loader_eye_keypoint.cpp
+    src/zarr_loader_movement.cpp
+    src/zarr_loader_stimulus.cpp
+    src/zarr_loader_subject_shape.cpp
+    src/zarr_loader_tail_kinematics.cpp
+    src/zarr_loader_write.cpp
+    src/zarr_loader_internal.cpp
+    src/keypoint_heading_utils.cpp
+    src/zarr/palette_clipped_resolver.cpp
+)
+target_include_directories(palette_clipped_loader_probe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+    ${HDF5_INCLUDE_DIRS}
+)
+target_link_libraries(palette_clipped_loader_probe PRIVATE
+    tensorstore::all_drivers
+    nlohmann_json::nlohmann_json
+    Threads::Threads
+    ${OpenCV_LIBS}
+    ${HDF5_CXX_LIBRARIES}
+    ${HDF5_HL_LIBRARIES}
+)
+target_compile_features(palette_clipped_loader_probe PRIVATE cxx_std_17)
+crimson_configure_parquet_support(palette_clipped_loader_probe)
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/keypoint_fish_present_contract_check.cpp")
     add_executable(keypoint_fish_present_contract_check
         tools/keypoint_fish_present_contract_check.cpp
@@ -826,6 +912,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/keypoint_fish_present_contract_chec
         src/zarr_loader_write.cpp
         src/zarr_loader_keypoint_write.cpp
         src/zarr_loader_internal.cpp
+        src/zarr/palette_clipped_resolver.cpp
     )
     target_include_directories(keypoint_fish_present_contract_check PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -841,6 +928,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/keypoint_fish_present_contract_chec
         ${HDF5_HL_LIBRARIES}
     )
     target_compile_features(keypoint_fish_present_contract_check PRIVATE cxx_std_17)
+    crimson_configure_parquet_support(keypoint_fish_present_contract_check)
     if(CRIMSON_STRICT_NAN_COMPILE_OPTION)
         target_compile_options(keypoint_fish_present_contract_check PRIVATE
             ${CRIMSON_STRICT_NAN_COMPILE_OPTION})
@@ -862,6 +950,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/keypoint_plot_debug_dump.cpp")
         src/zarr_loader_stimulus.cpp
         src/zarr_loader_write.cpp
         src/zarr_loader_internal.cpp
+        src/zarr/palette_clipped_resolver.cpp
     )
     target_include_directories(keypoint_plot_debug_dump PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -877,6 +966,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/keypoint_plot_debug_dump.cpp")
         ${HDF5_HL_LIBRARIES}
     )
     target_compile_features(keypoint_plot_debug_dump PRIVATE cxx_std_17)
+    crimson_configure_parquet_support(keypoint_plot_debug_dump)
 else()
     message(STATUS
         "Skipping keypoint_plot_debug_dump: "

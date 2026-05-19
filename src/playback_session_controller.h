@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -23,6 +24,7 @@ struct PlaybackSessionControllerContext {
     std::unordered_map<std::string, bool>* window_was_decoding = nullptr;
     std::unordered_map<std::string, std::atomic<bool>>* window_need_decoding =
         nullptr;
+    std::function<bool(int)> ensure_clipped_media_for_parent_frame;
 };
 
 double playbackPreviewScaleFactor(int playback_preview_scale_mode);

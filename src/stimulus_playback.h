@@ -93,7 +93,7 @@ struct StimulusPlayback {
     GLuint texture = 0;
     std::unique_ptr<FFmpegDemuxer> demuxer;
     std::unique_ptr<DecoderContext> decoder_context;
-    SeekInfo seek = {false, false, 0, false, 0, 0};
+    SeekInfo seek = {};
     std::thread decoder_thread;
     bool resources_initialized = false;
     int last_displayed_frame = -1;
