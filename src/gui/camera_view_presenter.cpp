@@ -391,9 +391,13 @@ void clearCameraDisplayBuffer(CameraResources& camera) {
     unbind_pbo();
     unbind_texture();
     camera.last_uploaded_frame = -1;
+    camera.last_uploaded_local_frame = -1;
+    camera.last_uploaded_pts = -1;
     camera.texture_has_valid_frame = false;
     camera.applied_preview_sampling_mode = -1;
     camera.playback_staging_frame = -1;
+    camera.playback_staging_local_frame = -1;
+    camera.playback_staging_pts = -1;
     camera.playback_staging_valid = false;
     camera.playback_staging_preview_sampling_mode = -1;
 }
@@ -578,8 +582,12 @@ CameraViewPresenterResult presentCameraViewFrame(
             result.perf.texture_resize_ms += durationMs(
                 std::chrono::steady_clock::now() - texture_resize_start);
             camera.last_uploaded_frame = -1;
+            camera.last_uploaded_local_frame = -1;
+            camera.last_uploaded_pts = -1;
             camera.texture_has_valid_frame = false;
             camera.playback_staging_frame = -1;
+            camera.playback_staging_local_frame = -1;
+            camera.playback_staging_pts = -1;
             camera.playback_staging_valid = false;
             camera.playback_staging_preview_sampling_mode = -1;
         }
@@ -645,6 +653,9 @@ CameraViewPresenterResult presentCameraViewFrame(
                 result.perf.playback_stage_upload_ms += durationMs(
                     std::chrono::steady_clock::now() - stage_upload_start);
                 camera.playback_staging_frame = source_frame_number;
+                camera.playback_staging_local_frame =
+                    slot.local_frame_number;
+                camera.playback_staging_pts = slot.frame_pts;
                 camera.playback_staging_valid = true;
                 const double stage_total_ms =
                     durationMs(std::chrono::steady_clock::now() -
@@ -736,10 +747,14 @@ CameraViewPresenterResult presentCameraViewFrame(
         }
 
         camera.playback_staging_frame = -1;
+        camera.playback_staging_local_frame = -1;
+        camera.playback_staging_pts = -1;
         camera.playback_staging_valid = false;
         camera.playback_staging_preview_sampling_mode = -1;
         result.presented_rgba_cuda_buffer = camera.pbo_cuda.cuda_buffer;
         camera.last_uploaded_frame = source_frame_number;
+        camera.last_uploaded_local_frame = slot.local_frame_number;
+        camera.last_uploaded_pts = slot.frame_pts;
         camera.texture_has_valid_frame = true;
         result.perf.upload_ms +=
             durationMs(std::chrono::steady_clock::now() - upload_start);

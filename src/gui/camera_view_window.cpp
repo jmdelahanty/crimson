@@ -499,6 +499,58 @@ void drawSubjectMaskShapeDraft(
                         static_cast<int>(xs.size()));
 }
 
+void cameraTextureDrawTraceCallback(const ImDrawList*, const ImDrawCmd* cmd) {
+    if (cmd == nullptr || cmd->UserCallbackData == nullptr) {
+        return;
+    }
+    auto* camera = static_cast<CameraResources*>(cmd->UserCallbackData);
+    auto& trace = camera->texture_draw_trace;
+    if (!trace.enabled || trace.queued_texture_id == 0) {
+        return;
+    }
+
+    GLint active_texture = 0;
+    GLint bound_texture = 0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &active_texture);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &bound_texture);
+
+    trace.callback_observed = true;
+    trace.callback_count++;
+    trace.callback_active_texture = active_texture;
+    trace.callback_bound_texture_id = static_cast<GLuint>(bound_texture);
+    trace.callback_bound_matches_queued =
+        static_cast<GLuint>(bound_texture) == trace.queued_texture_id;
+}
+
+void queueCameraTextureDrawTrace(CameraResources& camera, int view_idx) {
+    static uint64_t next_sequence = 1;
+    auto& trace = camera.texture_draw_trace;
+    trace.enabled = true;
+    trace.queue_sequence = next_sequence++;
+    trace.view_idx = view_idx;
+    trace.queued_texture_id = camera.image_texture;
+    trace.front_texture_id = camera.image_texture;
+    trace.staging_texture_id = camera.playback_staging_texture;
+    trace.front_pbo_id = camera.pbo_cuda.pbo;
+    trace.staging_pbo_id = camera.playback_staging_pbo.pbo;
+
+    trace.front_valid = camera.texture_has_valid_frame;
+    trace.front_parent_frame = camera.last_uploaded_frame;
+    trace.front_local_frame = camera.last_uploaded_local_frame;
+    trace.front_pts = camera.last_uploaded_pts;
+
+    trace.staging_valid = camera.playback_staging_valid;
+    trace.staging_parent_frame = camera.playback_staging_frame;
+    trace.staging_local_frame = camera.playback_staging_local_frame;
+    trace.staging_pts = camera.playback_staging_pts;
+
+    trace.callback_observed = false;
+    trace.callback_count = 0;
+    trace.callback_active_texture = 0;
+    trace.callback_bound_texture_id = 0;
+    trace.callback_bound_matches_queued = false;
+}
+
 }  // namespace
 
 CameraViewWindowResult drawCameraViewWindowContents(
@@ -607,10 +659,20 @@ CameraViewWindowResult drawCameraViewWindowContents(
                                 ImPlotLegendFlags_None);
         }
 
+        if (context.capture_texture_draw_trace) {
+            queueCameraTextureDrawTrace(camera, context.view_idx);
+        } else {
+            camera.texture_draw_trace.enabled = false;
+        }
+
         ImPlot::PlotImage("##no_image_name",
                           (ImTextureID)(intptr_t)camera.image_texture,
                           ImVec2(0, 0),
                           ImVec2(camera.image_width, camera.image_height));
+        if (context.capture_texture_draw_trace) {
+            ImPlot::GetPlotDrawList()->AddCallback(
+                cameraTextureDrawTraceCallback, &camera);
+        }
 
         const ImPlotRect plot_limits = ImPlot::GetPlotLimits();
         const ImVec2 plot_size = ImPlot::GetPlotSize();
@@ -1178,10 +1240,18 @@ CameraViewWindowResult drawCameraViewWindowContents(
             std::swap(camera.applied_preview_sampling_mode,
                       camera.playback_staging_preview_sampling_mode);
             const int previous_front_frame = camera.last_uploaded_frame;
+            const int previous_front_local_frame =
+                camera.last_uploaded_local_frame;
+            const int64_t previous_front_pts = camera.last_uploaded_pts;
             const bool previous_front_valid = camera.texture_has_valid_frame;
             camera.last_uploaded_frame = camera.playback_staging_frame;
+            camera.last_uploaded_local_frame =
+                camera.playback_staging_local_frame;
+            camera.last_uploaded_pts = camera.playback_staging_pts;
             camera.texture_has_valid_frame = camera.playback_staging_valid;
             camera.playback_staging_frame = previous_front_frame;
+            camera.playback_staging_local_frame = previous_front_local_frame;
+            camera.playback_staging_pts = previous_front_pts;
             camera.playback_staging_valid = previous_front_valid;
             result.perf.playback_swap_ms += durationMs(
                 std::chrono::steady_clock::now() - swap_start);

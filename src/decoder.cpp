@@ -347,6 +347,9 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                 // }
                 display_buffer[i].available_to_write = true;
                 display_buffer[i].frame_number = -1;
+                display_buffer[i].local_frame_number = -1;
+                display_buffer[i].frame_pts = -1;
+                display_buffer[i].frame_source_code = 0;
                 if (display_buffer[i].frame_bytes > 0 &&
                     display_buffer[i].frame) {
                     if (use_cpu_buffer) {
@@ -524,6 +527,9 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                 latest_decoded_frame[cam_name].store(-1);
             }
             display_buffer[0].frame_number = -1;
+            display_buffer[0].local_frame_number = -1;
+            display_buffer[0].frame_pts = -1;
+            display_buffer[0].frame_source_code = 0;
             // If no frame is currently queued (or this window is not actively
             // decoding), acknowledge seek completion now.  When nFrameReturned
             // is zero there is nothing to write, so deferring would leave
@@ -658,6 +664,11 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         display_buffer[buffer_head].available_to_write = false;
                         dc_context->decoding_flag = true;
                         display_buffer[buffer_head].frame_number = assigned_frame_num;
+                        display_buffer[buffer_head].local_frame_number =
+                            local_frame_num;
+                        display_buffer[buffer_head].frame_pts = frame_timestamp;
+                        display_buffer[buffer_head].frame_source_code =
+                            pending_seek_done ? 1 : 2;
                         display_buffer[buffer_head].pitch_bytes = slot_pitch;
                         display_buffer[buffer_head].frame_bytes = slot_frame_bytes;
                         display_buffer[buffer_head].color_matrix = iMatrix;
@@ -696,7 +707,13 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         write_buffered_frame();
 
                         display_buffer[buffer_head].available_to_write = false;
+                        dc_context->decoding_flag = true;
                         display_buffer[buffer_head].frame_number = assigned_frame_num;
+                        display_buffer[buffer_head].local_frame_number =
+                            local_frame_num;
+                        display_buffer[buffer_head].frame_pts = frame_timestamp;
+                        display_buffer[buffer_head].frame_source_code =
+                            pending_seek_done ? 1 : 2;
                         display_buffer[buffer_head].pitch_bytes = slot_pitch;
                         display_buffer[buffer_head].frame_bytes = slot_frame_bytes;
                         display_buffer[buffer_head].color_matrix = iMatrix;
@@ -816,11 +833,17 @@ void image_loader(DecoderContext *dc_context,
                 // }
                 display_buffer[i].available_to_write = true;
                 display_buffer[i].frame_number = -1;
+                display_buffer[i].local_frame_number = -1;
+                display_buffer[i].frame_pts = -1;
+                display_buffer[i].frame_source_code = 0;
                 display_buffer[i].color_matrix = ColorSpaceStandard_BT709;
             }
             buffer_head = 0;
             frame_number = static_cast<int>(requested_frame);
             display_buffer[0].frame_number = -1;
+            display_buffer[0].local_frame_number = -1;
+            display_buffer[0].frame_pts = -1;
+            display_buffer[0].frame_source_code = 0;
             mark_seek_done(requested_frame);
         } else {
             if (frame_number < img_list_vector.size()) {
@@ -839,6 +862,9 @@ void image_loader(DecoderContext *dc_context,
                     display_buffer[buffer_head].available_to_write = false;
                     dc_context->decoding_flag = true;
                     display_buffer[buffer_head].frame_number = frame_number;
+                    display_buffer[buffer_head].local_frame_number = frame_number;
+                    display_buffer[buffer_head].frame_pts = -1;
+                    display_buffer[buffer_head].frame_source_code = 2;
                     display_buffer[buffer_head].pitch_bytes =
                         image_rgba.cols * static_cast<int>(image_rgba.elemSize());
                     display_buffer[buffer_head].frame_bytes = buffer_size;
@@ -863,7 +889,11 @@ void image_loader(DecoderContext *dc_context,
                     memcpy(display_buffer[buffer_head].frame, image_rgba.data,
                            buffer_size);
                     display_buffer[buffer_head].available_to_write = false;
+                    dc_context->decoding_flag = true;
                     display_buffer[buffer_head].frame_number = frame_number;
+                    display_buffer[buffer_head].local_frame_number = frame_number;
+                    display_buffer[buffer_head].frame_pts = -1;
+                    display_buffer[buffer_head].frame_source_code = 2;
                     display_buffer[buffer_head].pitch_bytes =
                         image_rgba.cols * static_cast<int>(image_rgba.elemSize());
                     display_buffer[buffer_head].frame_bytes = buffer_size;

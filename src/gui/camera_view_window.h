@@ -117,6 +117,7 @@ struct CameraViewWindowContext {
     CameraViewStimulusInsetOptions stimulus_inset_options;
 
     CameraViewTransportControlsContext transport_controls;
+    bool capture_texture_draw_trace = false;
 };
 
 struct CameraViewSubjectMaskPick {

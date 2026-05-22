@@ -127,6 +127,18 @@ To inspect clipped startup cost by phase, enable:
 CRIMSON_CLIPPED_STARTUP_TRACE=1 scripts/smoke_clipped_sleepyfish_probe.sh
 ```
 
+The trace is opt-in and should stay out of normal GUI output. Expected clipped
+startup records include `resolver_detail`, `resolver_load_ms`,
+`primary_detail`, and `primary_load_ms`. `primary_detail` reports the expensive
+detection-array phases, including frame-index reads, bbox reads, score/class
+reads, optional normalized-bbox fallback reads, optional source-kind reads, row
+append, sort/reorder, offset build, and cache/apply time.
+
+For the clipped playback/bbox synchronization investigation, the trace fields,
+diagnostic commands, root cause, and follow-up playback unification plan are
+documented in
+`docs/crimson_clipped_playback_sync_debugging.md`.
+
 Useful overrides:
 
 ```bash

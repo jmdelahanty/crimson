@@ -882,6 +882,7 @@ add_executable(palette_clipped_loader_probe
     src/zarr_loader_write.cpp
     src/zarr_loader_internal.cpp
     src/keypoint_heading_utils.cpp
+    src/zarr/clipped_detection_repository.cpp
     src/zarr/palette_clipped_resolver.cpp
 )
 target_include_directories(palette_clipped_loader_probe PRIVATE
@@ -912,6 +913,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/keypoint_fish_present_contract_chec
         src/zarr_loader_write.cpp
         src/zarr_loader_keypoint_write.cpp
         src/zarr_loader_internal.cpp
+        src/zarr/clipped_detection_repository.cpp
         src/zarr/palette_clipped_resolver.cpp
     )
     target_include_directories(keypoint_fish_present_contract_check PRIVATE
@@ -950,6 +952,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/keypoint_plot_debug_dump.cpp")
         src/zarr_loader_stimulus.cpp
         src/zarr_loader_write.cpp
         src/zarr_loader_internal.cpp
+        src/zarr/clipped_detection_repository.cpp
         src/zarr/palette_clipped_resolver.cpp
     )
     target_include_directories(keypoint_plot_debug_dump PRIVATE

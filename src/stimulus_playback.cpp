@@ -74,6 +74,9 @@ void stimulus_software_decode_process(DecoderContext *dc_context,
             for (int i = 0; i < size_of_buffer; ++i) {
                 display_buffer[i].available_to_write = true;
                 display_buffer[i].frame_number = -1;
+                display_buffer[i].local_frame_number = -1;
+                display_buffer[i].frame_pts = -1;
+                display_buffer[i].frame_source_code = 0;
             }
             buffer_head = 0;
             frame_number = static_cast<int>(requested_frame);
@@ -144,6 +147,10 @@ void stimulus_software_decode_process(DecoderContext *dc_context,
 
         display_buffer[buffer_head].available_to_write = false;
         display_buffer[buffer_head].frame_number = frame_number;
+        display_buffer[buffer_head].local_frame_number = frame_number;
+        display_buffer[buffer_head].frame_pts = -1;
+        display_buffer[buffer_head].frame_source_code =
+            pending_seek_done ? 1 : 2;
         display_buffer[buffer_head].color_matrix = ColorSpaceStandard_BT709;
         latest_decoded_frame[window_name].store(frame_number);
         dc_context->decoding_flag = true;
@@ -226,6 +233,9 @@ bool allocateStimulusBuffers(StimulusPlayback &stim) {
     for (int i = 0; i < stim.buffer_size; ++i) {
         stim.display_buffer[i].frame = nullptr;
         stim.display_buffer[i].frame_number = -1;
+        stim.display_buffer[i].local_frame_number = -1;
+        stim.display_buffer[i].frame_pts = -1;
+        stim.display_buffer[i].frame_source_code = 0;
         stim.display_buffer[i].available_to_write = true;
         stim.display_buffer[i].pitch_bytes = stim.width * 4;
         stim.display_buffer[i].frame_bytes = frame_bytes;
@@ -443,6 +453,9 @@ void releaseStimulusBufferSlot(StimulusPlayback &stim, int index) {
     }
     stim.display_buffer[index].available_to_write = true;
     stim.display_buffer[index].frame_number = -1;
+    stim.display_buffer[index].local_frame_number = -1;
+    stim.display_buffer[index].frame_pts = -1;
+    stim.display_buffer[index].frame_source_code = 0;
 }
 
 void uploadStimulusFrameToTexture(StimulusPlayback &stim, int buffer_index) {
@@ -483,6 +496,9 @@ void discardStimulusFramesOlderThan(StimulusPlayback &stim, int keep_threshold) 
             buf.frame_number < keep_threshold) {
             buf.available_to_write = true;
             buf.frame_number = -1;
+            buf.local_frame_number = -1;
+            buf.frame_pts = -1;
+            buf.frame_source_code = 0;
             ++released;
         }
     }

@@ -79,6 +79,7 @@ struct CameraViewFrameContextInput {
     const CameraParams* camera_params = nullptr;
 
     CameraViewTransportControlsContext transport_controls;
+    bool capture_texture_draw_trace = false;
 };
 
 struct PreparedCameraViewFrameContext {

@@ -245,6 +245,7 @@ void prepareCameraViewFrameContext(
         input.target_stimulus_frame,
         input.stimulus_inset_options,
         input.transport_controls,
+        input.capture_texture_draw_trace,
     };
 }
 

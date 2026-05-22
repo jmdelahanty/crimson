@@ -456,6 +456,15 @@ void PlaybackSessionController::releaseBufferedHistoryBeforeFrame(
             context_.scene->cameras[camera_idx]
                 .display_buffer[slot_idx]
                 .available_to_write = true;
+            context_.scene->cameras[camera_idx]
+                .display_buffer[slot_idx]
+                .local_frame_number = -1;
+            context_.scene->cameras[camera_idx]
+                .display_buffer[slot_idx]
+                .frame_pts = -1;
+            context_.scene->cameras[camera_idx]
+                .display_buffer[slot_idx]
+                .frame_source_code = 0;
         }
     }
 }

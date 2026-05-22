@@ -68,6 +68,33 @@ bool applyZarrCalibrationToCameraParams(const ZarrCalibrationData& calibration,
     return true;
 }
 
+void resetClippedMediaState(PaletteClippedMediaState& state) {
+    const int64_t last_presented = state.last_presented_parent_frame;
+    const int64_t pending_switch = state.pending_switch_parent_frame;
+    const bool switch_in_progress = state.switch_in_progress;
+    state = PaletteClippedMediaState();
+    state.last_presented_parent_frame = last_presented;
+    state.pending_switch_parent_frame = pending_switch;
+    state.switch_in_progress = switch_in_progress;
+}
+
+std::pair<int64_t, int64_t> parentFrameRangeForClip(
+    const std::vector<int64_t>& parent_frame_by_clip_local) {
+    int64_t first = std::numeric_limits<int64_t>::max();
+    int64_t last = -1;
+    for (const int64_t parent_frame : parent_frame_by_clip_local) {
+        if (parent_frame < 0) {
+            continue;
+        }
+        first = std::min(first, parent_frame);
+        last = std::max(last, parent_frame);
+    }
+    if (last < 0) {
+        return {-1, -1};
+    }
+    return {first, last};
+}
+
 }  // namespace
 
 MediaSessionLoader::MediaSessionLoader(const MediaSessionLoaderContext& context)
@@ -109,8 +136,7 @@ void MediaSessionLoader::stopCameraDecodersForReload() const {
     context_.decoder_context->decoding_flag = false;
     context_.decoder_context->estimated_num_frames = 0;
     if (context_.clipped_media_state != nullptr) {
-        context_.clipped_media_state->current_video_path.clear();
-        context_.clipped_media_state->parent_frame_by_clip_local.reset();
+        resetClippedMediaState(*context_.clipped_media_state);
     }
 }
 
@@ -159,9 +185,13 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(int parent_frame) const 
 
     const std::string resolved_video = resolved_video_opt->string();
     PaletteClippedMediaState* clipped_state = context_.clipped_media_state;
-    if (*context_.video_loaded && clipped_state != nullptr &&
-        clipped_state->current_video_path == resolved_video &&
-        !context_.decoder_threads->empty()) {
+    const bool requested_clip_loaded =
+        *context_.video_loaded && clipped_state != nullptr &&
+        clipped_state->selected_run_index == row->selected_run_index &&
+        parent_frame >= clipped_state->first_parent_frame &&
+        parent_frame <= clipped_state->last_parent_frame &&
+        !context_.decoder_threads->empty();
+    if (requested_clip_loaded) {
         if (context_.scene->num_cams > 0 &&
             !context_.scene->cameras.empty()) {
             std::lock_guard<std::mutex> lock(g_seek_info_mutex);
@@ -214,20 +244,42 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(int parent_frame) const 
                 context_.scene->cameras[0].display_buffer[i].available_to_write =
                     true;
                 context_.scene->cameras[0].display_buffer[i].frame_number = -1;
+                context_.scene->cameras[0].display_buffer[i].local_frame_number =
+                    -1;
+                context_.scene->cameras[0].display_buffer[i].frame_pts = -1;
+                context_.scene->cameras[0].display_buffer[i].frame_source_code =
+                    0;
             }
             context_.scene->cameras[0].last_uploaded_frame = -1;
+            context_.scene->cameras[0].last_uploaded_local_frame = -1;
+            context_.scene->cameras[0].last_uploaded_pts = -1;
             context_.scene->cameras[0].texture_has_valid_frame = false;
+            context_.scene->cameras[0].playback_staging_frame = -1;
+            context_.scene->cameras[0].playback_staging_local_frame = -1;
+            context_.scene->cameras[0].playback_staging_pts = -1;
+            context_.scene->cameras[0].playback_staging_valid = false;
         }
 
         auto frame_map = std::make_shared<const std::vector<int64_t>>(
             selected->parent_frame_by_clip_local);
+        const auto [first_parent_frame, last_parent_frame] =
+            parentFrameRangeForClip(*frame_map);
         {
             std::lock_guard<std::mutex> lock(g_seek_info_mutex);
             context_.scene->cameras[0].seek_context.frame_number_map = frame_map;
         }
         if (clipped_state != nullptr) {
             clipped_state->current_video_path = resolved_video;
+            clipped_state->clip_id = selected->clip_id;
+            clipped_state->camera_serial = selected->camera_serial;
             clipped_state->parent_frame_by_clip_local = frame_map;
+            clipped_state->selected_run_index = row->selected_run_index;
+            clipped_state->first_parent_frame = first_parent_frame;
+            clipped_state->last_parent_frame = last_parent_frame;
+            if (clipped_state->pending_switch_parent_frame != parent_frame) {
+                clipped_state->pending_switch_parent_frame = -1;
+                clipped_state->switch_in_progress = false;
+            }
         }
 
         const size_t total_parent_frames =
@@ -260,6 +312,14 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(int parent_frame) const 
                   << parent_frame << " -> " << selected->clip_id
                   << " local frame " << row->clip_local_frame_index
                   << ": " << resolved_video << std::endl;
+        if (clipped_state != nullptr && clipped_state->switch_in_progress) {
+            std::cout << "[ClippedHandoff] switch_loaded parent_frame="
+                      << parent_frame << " clip=" << selected->clip_id
+                      << " selected_run_index=" << row->selected_run_index
+                      << " local_frame=" << row->clip_local_frame_index
+                      << " range=" << first_parent_frame << "-"
+                      << last_parent_frame << std::endl;
+        }
         loadCameraCalibrationsForCurrentMedia();
         return true;
     } catch (const std::exception& e) {

@@ -27,6 +27,9 @@ enum class PictureBufferFormat {
 struct PictureBuffer {
     unsigned char *frame;
     int frame_number;
+    int local_frame_number;
+    int64_t frame_pts;
+    int frame_source_code;
     bool available_to_write;
     int pitch_bytes;
     size_t frame_bytes;

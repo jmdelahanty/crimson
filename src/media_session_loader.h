@@ -8,6 +8,7 @@
 #include <atomic>
 #include <functional>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <thread>
@@ -16,7 +17,15 @@
 
 struct PaletteClippedMediaState {
     std::string current_video_path;
+    std::string clip_id;
+    std::string camera_serial;
     std::shared_ptr<const std::vector<int64_t>> parent_frame_by_clip_local;
+    size_t selected_run_index = std::numeric_limits<size_t>::max();
+    int64_t first_parent_frame = -1;
+    int64_t last_parent_frame = -1;
+    int64_t pending_switch_parent_frame = -1;
+    bool switch_in_progress = false;
+    int64_t last_presented_parent_frame = -1;
 };
 
 struct MediaSessionLoaderContext {

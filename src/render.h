@@ -3,6 +3,7 @@
 #include "gx_helper.h"
 #include "decoder.h"
 #include <cuda_runtime_api.h>
+#include <cstdint>
 #include <cstdlib>
 #include <vector>
 
@@ -12,6 +13,35 @@ struct PBO_CUDA {
     unsigned char* cuda_buffer;
     cudaGraphicsResource_t cuda_resource;
     size_t cuda_pbo_storage_buffer_size;
+};
+
+struct CameraTextureDrawTrace {
+    bool enabled = false;
+    uint64_t queue_sequence = 0;
+    uint64_t last_logged_sequence = 0;
+
+    int view_idx = -1;
+    GLuint queued_texture_id = 0;
+    GLuint front_texture_id = 0;
+    GLuint staging_texture_id = 0;
+    GLuint front_pbo_id = 0;
+    GLuint staging_pbo_id = 0;
+
+    bool front_valid = false;
+    int front_parent_frame = -1;
+    int front_local_frame = -1;
+    int64_t front_pts = -1;
+
+    bool staging_valid = false;
+    int staging_parent_frame = -1;
+    int staging_local_frame = -1;
+    int64_t staging_pts = -1;
+
+    bool callback_observed = false;
+    int callback_count = 0;
+    GLint callback_active_texture = 0;
+    GLuint callback_bound_texture_id = 0;
+    bool callback_bound_matches_queued = false;
 };
 
 struct CameraResources {
@@ -28,14 +58,19 @@ struct CameraResources {
     PictureBuffer *display_buffer = nullptr;
     SeekInfo seek_context = {};
     int last_uploaded_frame = -1;
+    int last_uploaded_local_frame = -1;
+    int64_t last_uploaded_pts = -1;
     bool texture_has_valid_frame = false;
     int applied_preview_sampling_mode = -1;
     int playback_staging_frame = -1;
+    int playback_staging_local_frame = -1;
+    int64_t playback_staging_pts = -1;
     bool playback_staging_valid = false;
     int playback_staging_preview_sampling_mode = -1;
     int display_texture_width = 0;
     int display_texture_height = 0;
     std::vector<unsigned char> playback_preview_rgba_cpu;
+    CameraTextureDrawTrace texture_draw_trace;
 };
 
 struct render_scene
@@ -89,9 +124,13 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
         scene->cameras[j].seek_context.settled_seek_id = 0;
         scene->cameras[j].seek_context.frame_number_map.reset();
         scene->cameras[j].last_uploaded_frame = -1;
+        scene->cameras[j].last_uploaded_local_frame = -1;
+        scene->cameras[j].last_uploaded_pts = -1;
         scene->cameras[j].texture_has_valid_frame = false;
         scene->cameras[j].applied_preview_sampling_mode = -1;
         scene->cameras[j].playback_staging_frame = -1;
+        scene->cameras[j].playback_staging_local_frame = -1;
+        scene->cameras[j].playback_staging_pts = -1;
         scene->cameras[j].playback_staging_valid = false;
         scene->cameras[j].playback_staging_preview_sampling_mode = -1;
         scene->cameras[j].display_texture_width =
@@ -174,6 +213,9 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
                     PictureBufferFormat::NV12;
             }
             scene->cameras[j].display_buffer[i].frame_number = -1;
+            scene->cameras[j].display_buffer[i].local_frame_number = -1;
+            scene->cameras[j].display_buffer[i].frame_pts = -1;
+            scene->cameras[j].display_buffer[i].frame_source_code = 0;
             scene->cameras[j].display_buffer[i].available_to_write = true;
             scene->cameras[j].display_buffer[i].color_matrix =
                 ColorSpaceStandard_BT709;
