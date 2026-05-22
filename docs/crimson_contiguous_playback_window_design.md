@@ -2,10 +2,34 @@
 
 Date anchored: 2026-04-07.
 
+## Status Update
+
+As of 2026-05-22, parts of this design have landed as incremental safeguards,
+but the full active/staging playback window abstraction has not been extracted.
+
+Implemented pieces:
+
+- `PlaybackSessionController::resumeFromBufferedFrame()` supports soft resume
+  when the selected frame is inside the newest contiguous buffered span.
+- Resume from an older sparse island now uses a camera re-anchor path that can
+  skip the hard stimulus seek.
+- Paused-browse and seek-settle stimulus updates are guarded so stimulus does
+  not chase transient browse/settle frames.
+- Clipped collection playback has a frame-keyed target clamp and release path
+  so it does not advance into missing ring slots after clipped seek/rebase.
+
+Still pending:
+
+- an explicit `ActivePlaybackWindow` / `PlaybackStagingWindow` runtime model
+- a shared frame-keyed buffer helper used by both clipped and non-clipped
+  playback
+- windowed history/lookahead retention and decoder watermarks
+- formal sparse-browse cache semantics
+
 ## Problem Summary
 
-Current camera playback uses a forward-consumption ring buffer. The paused
-buffer browser now makes the real occupancy visible: it often contains sparse
+Camera playback still mostly uses a forward-consumption ring buffer. The paused
+buffer browser makes the real occupancy visible: it often contains sparse
 islands of decoded frames rather than one contiguous playable neighborhood.
 
 That makes two things clear:

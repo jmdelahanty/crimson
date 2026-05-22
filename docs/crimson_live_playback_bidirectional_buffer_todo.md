@@ -2,6 +2,15 @@
 
 Date anchored: 2026-02-10.
 
+## Status Update
+
+As of 2026-05-22, clipped collection playback has a narrow frame-keyed
+target-selection and frame-number release guard to avoid clipped seek/rebase
+desynchronization. This TODO still applies to the broader live playback path:
+there is not yet a shared active playback window with explicit
+history/lookahead retention, decoder watermarks, slot states, or a reusable
+frame index.
+
 Related docs:
 
 - `docs/crimson_contiguous_playback_window_design.md`

@@ -2,7 +2,7 @@
 
 <!-- handoff-meta
 status: draft
-last_updated: 2026-05-19
+last_updated: 2026-05-22
 -->
 
 ## Purpose
@@ -24,6 +24,17 @@ The short version:
   penalties.
 
 ## Current Crimson Read Shape
+
+Status note, 2026-05-22:
+
+- Crimson's clipped detection aggregation is now factored into
+  `src/zarr/clipped_detection_repository.*`, but it is still a custom clipped
+  read path.
+- Clipped playback now has Crimson-side frame-keyed buffer guards so the
+  presented frame, bbox lookup, and clip resolver stay synchronized during
+  playback.
+- This does not replace the need for a Palette materialized parent-timeline
+  detection surface. Startup still has to aggregate selected per-clip runs.
 
 Non-clipped datasets:
 

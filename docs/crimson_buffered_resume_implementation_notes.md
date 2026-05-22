@@ -10,7 +10,40 @@ Related docs:
 - `docs/crimson_contiguous_playback_window_design.md`
 - `docs/crimson_live_playback_bidirectional_buffer_todo.md`
 
-## What Exists Today
+## Status Update
+
+As of 2026-05-22, this document should be read as historical investigation plus
+the design rationale for the current incremental implementation. Several "what
+exists today" details below describe the April 2026 state before the buffered
+resume and clipped playback sync fixes.
+
+Current implementation:
+
+- `applyPlaybackToggle()` no longer sends every browsed resume through the full
+  generic camera+stimulus hard-seek path.
+- If the browsed frame is inside the newest contiguous buffered span,
+  `resumeFromBufferedFrame()` performs a soft resume by frame number.
+- If the browsed frame is outside that span, Crimson uses a camera re-anchor
+  seek with `skip_stimulus_hard_seek=true`.
+- The per-tick stimulus alignment lookup is frozen during paused buffer
+  browsing and seek settle, which removes the two-writer stimulus race described
+  below.
+- Clipped playback now has a frame-keyed target clamp and frame-number-based
+  release path in `src/red.cpp`, so the clipped presenter does not advance into
+  missing ring slots after clipped seek/rebase.
+
+Remaining gap:
+
+- the full shared active/staging playback window model is still not extracted
+- non-clipped live playback still has older ring-offset advancement in the
+  steady playback loop
+- frame-keyed buffer lookup/release should move into a tested helper instead of
+  staying inline in `src/red.cpp`
+
+Line numbers in the historical sections below are April-era anchors and should
+be rechecked before making code edits.
+
+## April 2026 Baseline
 
 ### Pause-intent tracking
 
@@ -38,7 +71,7 @@ ps.buffer_browsed_since_pause =
 
 Both fields are reset on pause (line ~385-386) and after resume (line ~378).
 
-### The three resume paths in applyPlaybackToggle
+### The original three resume paths in applyPlaybackToggle
 
 `PlaybackSessionController::applyPlaybackToggle()` in
 `src/playback_session_controller.cpp:355-391` has two branches when resuming
@@ -65,7 +98,7 @@ This is the fast, smooth path. Camera decode just picks up from wherever the
 decoder left off. Stimulus follows via the per-tick alignment lookup at
 `red.cpp:1439-1448`. No SeekState machine involvement.
 
-#### Path 2: Browsed-resume via full hard seek (the one that's rough)
+#### Original Path 2: Browsed-resume via full hard seek
 
 Condition: `browsed_since_pause` (user browsed to a different buffered frame
 after pausing, then pressed play).
@@ -109,20 +142,29 @@ This is used by `stepFrames()` (comma/period keys during active playback are
 paused-step, not buffer browsing) and by explicit paused seeks. It skips camera
 decoder recreation and only issues a stimulus seek if alignment exists.
 
-This path is NOT used for play-resume because `applyPlaybackToggle` calls
+In the April baseline, this path was NOT used for play-resume because
+`applyPlaybackToggle` called
 `seekToFrame(resume_frame, false, true)` — the `false` skips this branch.
 
-### Which path is actually used for browsed-resume?
+### Which path was originally used for browsed-resume?
 
-**Path 2.** Full hard seek. Every time.
+Historical April 2026 answer: **Path 2.** Full hard seek. Every time.
 
-That is the problem. The user browsed 15 frames backward in a buffer that
-already contains the frame, and we respond by recreating every camera decoder
-and issuing a full stimulus hard-seek through the two-phase settle machine.
+Current May 2026 behavior:
 
-## Per-Tick Stimulus Alignment
+- newest contiguous span: `resumeFromBufferedFrame(resume_frame)`
+- older sparse island: `seekToFrame(resume_frame, false, true, true)`, which
+  re-anchors cameras and skips the hard stimulus seek
+- normal pause/play without browsing: `syncPlaybackStartToCurrentFrame()`
 
-Every render tick in `red.cpp:1439-1448`:
+That was the problem. The user browsed 15 frames backward in a buffer that
+already contained the frame, and the April code responded by recreating every
+camera decoder and issuing a full stimulus hard-seek through the two-phase
+settle machine.
+
+## April Baseline Per-Tick Stimulus Alignment
+
+In the April baseline, every render tick in `red.cpp:1439-1448` did this:
 
 ```cpp
 if (zarr_loaded && zarr_loader.hasStimulusAlignment()) {
@@ -149,14 +191,14 @@ freeze (guard the lookup with `ps.play_video || !ps.pause_seeked`) would make
 the intent clearer and prevent downstream code from accidentally consuming the
 drifted value.
 
-## Stimulus Is Not Actually Frozen During Paused Browsing
+## Historical: Stimulus Was Not Actually Frozen During Paused Browsing
 
-The design docs say "stimulus should not follow paused inspection clicks." But
-tracing the actual code reveals stimulus is only **partially** frozen — and
-during Path 2 resume, stimulus can briefly show a frame that does not match
-what the camera is displaying.
+The design docs said "stimulus should not follow paused inspection clicks."
+Tracing the April baseline revealed stimulus was only **partially** frozen, and
+during original Path 2 resume, stimulus could briefly show a frame that did not
+match what the camera was displaying.
 
-### What happens during paused browsing
+### What happened during paused browsing
 
 Three things interact:
 
@@ -222,7 +264,7 @@ state:
 The user sees stimulus sometimes follow and sometimes not, depending on what
 the stimulus decoder happened to have buffered. This is not the design intent.
 
-### What happens during Path 2 resume specifically
+### What happened during original Path 2 resume specifically
 
 When the user presses play from a browsed frame and Path 2 fires:
 
@@ -269,7 +311,7 @@ whichever value it sees. This can produce:
 Whether the user notices depends on how fast cameras settle. On fast machines
 it may be one frame; on loaded systems it could be several.
 
-### Bottom line for Jadewise's question
+### Historical bottom line for Jadewise's question
 
 **No.** During Path 2 resume, the stimulus frame shown can briefly NOT match
 the camera frame the eye sees, because:
@@ -282,7 +324,7 @@ And even before resume, during paused browsing itself, stimulus is not
 reliably frozen — it follows browsing when the aligned frame happens to be in
 the stimulus buffer, and stays put when it is not.
 
-### What this means for the proposed fix
+### What this meant for the proposed fix
 
 The `resumeFromBufferedFrame()` approach avoids this problem because:
 
@@ -291,17 +333,17 @@ The `resumeFromBufferedFrame()` approach avoids this problem because:
 - The per-tick alignment runs on the next tick with the correct camera frame
 - There is no race between two writers of `current_stimulus_frame`
 
-The optional stimulus freeze during paused browsing (guarding the lookup with
-`ps.play_video || !ps.pause_seeked`) would additionally prevent the
-inconsistent follow behavior during browsing itself.
+The current code also freezes stimulus alignment during paused browsing and
+seek settle, which prevents the inconsistent follow behavior during browsing
+itself.
 
-## Proposed Change: resumeFromBufferedFrame()
+## Implemented Increment: resumeFromBufferedFrame()
 
-Add a new method that sits between `syncPlaybackStartToCurrentFrame()` (too
-simple — does not reset the target frame) and `seekToFrame()` (too heavy —
-recreates decoders and hard-seeks stimulus).
+The current code has a method that sits between
+`syncPlaybackStartToCurrentFrame()` (too simple for browsed resume) and
+`seekToFrame()` (too heavy when it recreates decoders and hard-seeks stimulus).
 
-### What it should do
+### What it does
 
 1. Reset the playback clock to the browsed frame (same math as
    `syncPlaybackStartToCurrentFrame`, but from `resume_frame` instead of
@@ -339,7 +381,7 @@ path.
 
 ### Change to applyPlaybackToggle
 
-Replace:
+The original proposed replacement was:
 
 ```cpp
 if (browsed_since_pause) {
@@ -347,7 +389,7 @@ if (browsed_since_pause) {
 }
 ```
 
-With:
+with:
 
 ```cpp
 if (browsed_since_pause) {
@@ -355,23 +397,29 @@ if (browsed_since_pause) {
 }
 ```
 
-### Optional: freeze stimulus during paused browsing
+### Implemented: freeze stimulus during paused browsing and seek settle
 
-Guard the per-tick stimulus alignment lookup so it does not run during paused
-buffer browsing:
+The per-tick stimulus alignment lookup now skips paused buffer browsing and
+seek-settle windows:
 
 ```cpp
+const bool freeze_stimulus_during_paused_browse =
+    !ps.play_video && ps.pause_seeked && ps.buffer_browsed_since_pause;
+const bool freeze_stimulus_during_seek =
+    seek_progress.state == SeekState::WaitingCameras ||
+    seek_progress.state == SeekState::WaitingStimulus;
+
 if (zarr_loaded && zarr_loader.hasStimulusAlignment()) {
-    if (ps.play_video || !ps.pause_seeked) {
-        // ... existing alignment lookup ...
+    if (!freeze_stimulus_during_paused_browse &&
+        !freeze_stimulus_during_seek) {
+        // ... alignment lookup ...
     }
-    // else: paused browsing — keep stimulus frozen at pre-browse value
 }
 ```
 
 This prevents `ps.current_stimulus_frame` from silently drifting to match
-browsed frames. The value would only update when playback is active or when a
-real seek completes.
+browsed frames or transient seek-settle frames. The value updates again when
+playback is active or the seek has settled.
 
 ## Relationship to Larger Design
 
@@ -387,7 +435,7 @@ staging windows are implemented:
 
 But none of that is needed for this incremental step.
 
-## Update: Why Soft Resume Stalls at the Old Frontier
+## Historical Update: Why Soft Resume Stalls at the Old Frontier
 
 Date: 2026-04-07. After implementing `resumeFromBufferedFrame()`.
 
@@ -466,11 +514,16 @@ islands: 15489..15492 and 15588. User browses to frame 15490. Presses play.
 
 ### The core issue
 
-The ring buffer has no frame-indexed lookup for playback. Playback advances
-`read_head` sequentially through slot indices, assuming the decoder filled
-them in order from a nearby starting point. After a soft resume to a different
-position, that assumption breaks — `read_head` is positioned at a slot in a
-sparse island, but the decoder is producing frames far ahead.
+At the time of this April investigation, the ring buffer had no frame-indexed
+lookup in the active playback advancement path. Playback advanced `read_head`
+sequentially through slot indices, assuming the decoder filled them in order
+from a nearby starting point. After a soft resume to a different position, that
+assumption broke: `read_head` was positioned at a slot in a sparse island, but
+the decoder was producing frames far ahead.
+
+The current clipped playback path now has a frame-keyed guard for target
+selection and release. The broader non-clipped/live playback path still needs
+that logic extracted and unified.
 
 Playback hits the end of the sparse island and either:
 - jumps to whatever frame happens to be in the next slot (stutter)

@@ -2,6 +2,34 @@
 
 Date anchored: 2026-04-07.
 
+## Status Update
+
+As of 2026-05-22, the first-pass buffered resume behavior exists, but the
+explicit `BufferedResumePoint` struct described below was not added as a
+separate state object.
+
+Current implementation:
+
+- `PlaybackSessionController::resumeFromBufferedFrame()` resets the playback
+  clock from the selected frame, finds the exact buffered slot, sets
+  `read_head`, and re-enables stimulus decode without a hard stimulus seek.
+- `applyPlaybackToggle()` uses `resumeFromBufferedFrame()` only when the
+  selected frame is inside the newest contiguous buffered span.
+- If the selected frame is in an older sparse island, `applyPlaybackToggle()`
+  uses a camera re-anchor seek with `skip_stimulus_hard_seek=true`.
+- The per-tick stimulus alignment lookup is frozen during paused buffer
+  browsing and seek settle.
+- Clipped collection playback additionally has frame-keyed target selection and
+  frame-number-based slot release to avoid advancing into missing ring slots.
+
+Remaining design work:
+
+- pull the frame lookup/release helpers out of `src/red.cpp` and the controller
+  into a tested playback-buffer module
+- make non-clipped live playback use the same frame-keyed helper after tests
+- decide whether an explicit `BufferedResumePoint` object is still worthwhile
+  once the larger active/staging playback window model exists
+
 Related docs:
 
 - `docs/crimson_contiguous_playback_window_design.md`
@@ -16,13 +44,13 @@ is immediate and does not require a full seek.
 The problem appears when the user presses play again from one of those buffered
 frames.
 
-Current behavior and recent experiments show two failure modes:
+The April baseline and follow-up experiments showed two failure modes:
 
 - if playback simply restarts its clock without a real seek, playback can stop
   at the old buffered tail instead of continuing forward from the selected
   frame
 - if playback resumes through the full camera+stimulus seek path, camera resume
-  becomes correct but stimulus playback and seek smoothness can regress
+  can become correct while stimulus playback and seek smoothness regress
 
 The root issue is architectural:
 
@@ -212,7 +240,11 @@ Trackbar drag and buffered browsing should remain distinct:
 - paused browsing may directly choose buffered frames
 - active playback drag should not continuously trigger hard seek/reseek cycles
 
-## Implementation Plan
+## Original Implementation Plan
+
+This plan is partially implemented by the status update above. The remaining
+useful pieces are the explicit state cleanup, presenter hinting, and broader
+active-window extraction.
 
 ### Phase 1: Add explicit buffered resume state
 
