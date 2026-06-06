@@ -12,6 +12,23 @@ std::string stimulusJsonStringAttr(const json& attrs, const char* key) {
     return {};
 }
 
+std::string stimulusJsonScalarStringAttr(const json& attrs, const char* key) {
+    if (!attrs.contains(key)) {
+        return {};
+    }
+    const auto& value = attrs[key];
+    if (value.is_string()) {
+        return value.get<std::string>();
+    }
+    if (value.is_number_integer()) {
+        return std::to_string(value.get<int64_t>());
+    }
+    if (value.is_number_unsigned()) {
+        return std::to_string(value.get<uint64_t>());
+    }
+    return {};
+}
+
 int32_t stimulusJsonIntAttr(const json& attrs, const char* key) {
     if (attrs.contains(key) && attrs[key].is_number_integer()) {
         return attrs[key].get<int32_t>();
@@ -44,6 +61,388 @@ bool stimulusJsonBoolAttr(const json& attrs,
         return true;
     }
     return false;
+}
+
+bool stimulusJsonFiniteDoubleAttr(const json& attrs,
+                                  const char* key,
+                                  double& out_value) {
+    const double value = stimulusJsonDoubleAttr(attrs, key);
+    if (!std::isfinite(value)) {
+        return false;
+    }
+    out_value = value;
+    return true;
+}
+
+bool chaserUsesArenaRelativeCanvas(const ZarrDetectionData::ChaserCoordinateTransform& transform) {
+    const std::string frame = toLowerCopy(transform.coordinate_frame);
+    const std::string origin = toLowerCopy(transform.coordinate_origin);
+    return frame == "arena_relative_canvas_px" ||
+           origin == "top_left_of_active_arena";
+}
+
+void applyChaserArenaConfigMetadata(const json& attrs,
+                                    ZarrDetectionData::ChaserCoordinateTransform& transform) {
+    double value = 0.0;
+    if (stimulusJsonFiniteDoubleAttr(attrs, "arena_origin_in_canvas_x_px", value)) {
+        transform.arena_origin_canvas_x_px = value;
+        transform.has_arena_canvas_origin = true;
+    }
+    if (stimulusJsonFiniteDoubleAttr(attrs, "arena_origin_in_canvas_y_px", value)) {
+        transform.arena_origin_canvas_y_px = value;
+        transform.has_arena_canvas_origin = true;
+    }
+    if (stimulusJsonFiniteDoubleAttr(attrs, "arena_region_width_px", value)) {
+        transform.arena_region_width_px = value;
+    }
+    if (stimulusJsonFiniteDoubleAttr(attrs, "arena_region_height_px", value)) {
+        transform.arena_region_height_px = value;
+    }
+
+    double center_x = std::numeric_limits<double>::quiet_NaN();
+    double center_y = std::numeric_limits<double>::quiet_NaN();
+    double width = std::numeric_limits<double>::quiet_NaN();
+    double height = std::numeric_limits<double>::quiet_NaN();
+    stimulusJsonFiniteDoubleAttr(attrs, "arena_center_x_px", center_x);
+    stimulusJsonFiniteDoubleAttr(attrs, "arena_center_y_px", center_y);
+    stimulusJsonFiniteDoubleAttr(attrs, "arena_width_px", width);
+    stimulusJsonFiniteDoubleAttr(attrs, "arena_height_px", height);
+    if (std::isfinite(width)) {
+        transform.arena_region_width_px = width;
+    }
+    if (std::isfinite(height)) {
+        transform.arena_region_height_px = height;
+    }
+    if (std::isfinite(center_x) && std::isfinite(width) && width > 0.0) {
+        transform.arena_origin_canvas_x_px = center_x - width * 0.5;
+        transform.has_arena_canvas_origin = true;
+    }
+    if (std::isfinite(center_y) && std::isfinite(height) && height > 0.0) {
+        transform.arena_origin_canvas_y_px = center_y - height * 0.5;
+        transform.has_arena_canvas_origin = true;
+    }
+}
+
+void applyChaserStateCoordinateMetadata(const json& attrs,
+                                        ZarrDetectionData::ChaserCoordinateTransform& transform) {
+    const std::string coordinate_frame = stimulusJsonStringAttr(attrs, "coordinate_frame");
+    const std::string coordinate_origin = stimulusJsonStringAttr(attrs, "coordinate_origin");
+    if (!coordinate_frame.empty()) {
+        transform.coordinate_frame = coordinate_frame;
+    }
+    if (!coordinate_origin.empty()) {
+        transform.coordinate_origin = coordinate_origin;
+    }
+}
+
+void applyChaserCoordinateTransformToRecord(
+    const ZarrDetectionData::ChaserCoordinateTransform& transform,
+    ZarrDetectionData::ChaserStateRecord& record) {
+    record.coordinate_frame = transform.coordinate_frame;
+    record.coordinate_origin = transform.coordinate_origin;
+
+    if (!transform.valid) {
+        return;
+    }
+
+    if (chaserUsesArenaRelativeCanvas(transform)) {
+        if (transform.has_arena_canvas_origin) {
+            record.stimulus_canvas_offset_x = transform.arena_origin_canvas_x_px;
+            record.stimulus_canvas_offset_y = transform.arena_origin_canvas_y_px;
+            record.has_stimulus_canvas_offset = true;
+        }
+        return;
+    }
+
+    auto convert = [&](float tex_x, float tex_y, double& cam_x, double& cam_y) -> bool {
+        if (!std::isfinite(tex_x) || !std::isfinite(tex_y)) {
+            return false;
+        }
+        cam_x = transform.offset_x_px + static_cast<double>(tex_x) * transform.scale;
+        cam_y = transform.offset_y_px + static_cast<double>(tex_y) * transform.scale;
+        return std::isfinite(cam_x) && std::isfinite(cam_y);
+    };
+    if (!record.has_camera_coords &&
+        convert(record.chaser_pos_x, record.chaser_pos_y,
+                record.chaser_camera_x, record.chaser_camera_y)) {
+        record.has_camera_coords = true;
+    }
+    double target_cam_x = std::numeric_limits<double>::quiet_NaN();
+    double target_cam_y = std::numeric_limits<double>::quiet_NaN();
+    if (convert(record.target_pos_x, record.target_pos_y,
+                target_cam_x, target_cam_y)) {
+        record.target_camera_x = target_cam_x;
+        record.target_camera_y = target_cam_y;
+    }
+}
+
+bool stimulusJsonFiniteFloatColorAttr(const json& attrs,
+                                      const char* key,
+                                      float& out_value) {
+    double value = 0.0;
+    if (!stimulusJsonFiniteDoubleAttr(attrs, key, value)) {
+        return false;
+    }
+    out_value = std::clamp(static_cast<float>(value), 0.0f, 1.0f);
+    return true;
+}
+
+std::optional<std::array<float, 4>> parseStimulusRgbaColor(
+    const json& attrs,
+    const char* prefix) {
+    const std::string base(prefix);
+    std::array<float, 4> rgba = {1.0f, 0.0f, 0.0f, 1.0f};
+    if (!stimulusJsonFiniteFloatColorAttr(
+            attrs, (base + "_r").c_str(), rgba[0]) ||
+        !stimulusJsonFiniteFloatColorAttr(
+            attrs, (base + "_g").c_str(), rgba[1]) ||
+        !stimulusJsonFiniteFloatColorAttr(
+            attrs, (base + "_b").c_str(), rgba[2])) {
+        return std::nullopt;
+    }
+    float alpha = 1.0f;
+    if (stimulusJsonFiniteFloatColorAttr(
+            attrs, (base + "_a").c_str(), alpha)) {
+        rgba[3] = alpha;
+    }
+    return rgba;
+}
+
+std::optional<json> parseJsonObjectString(const json& value) {
+    if (value.is_object()) {
+        return value;
+    }
+    if (!value.is_string()) {
+        return std::nullopt;
+    }
+    try {
+        json parsed = json::parse(value.get<std::string>());
+        if (parsed.is_object()) {
+            return parsed;
+        }
+    } catch (const std::exception&) {
+    }
+    return std::nullopt;
+}
+
+void collectChaserColorsFromParameters(
+    const json& params,
+    std::unordered_map<int32_t, std::array<float, 4>>& colors_by_index) {
+    if (!params.is_object() || !params.contains("chasers") ||
+        !params["chasers"].is_array()) {
+        return;
+    }
+
+    const auto& chasers = params["chasers"];
+    for (size_t i = 0; i < chasers.size(); ++i) {
+        const auto& chaser = chasers[i];
+        if (!chaser.is_object()) {
+            continue;
+        }
+        auto color = parseStimulusRgbaColor(chaser, "color");
+        if (!color.has_value()) {
+            continue;
+        }
+        int32_t chaser_index = stimulusJsonIntAttr(chaser, "chaser_index");
+        if (chaser_index < 0) {
+            chaser_index = stimulusJsonIntAttr(chaser, "index");
+        }
+        if (chaser_index < 0) {
+            chaser_index = static_cast<int32_t>(i);
+        }
+        if (colors_by_index.find(chaser_index) == colors_by_index.end()) {
+            colors_by_index.emplace(chaser_index, *color);
+        }
+    }
+}
+
+int32_t chaserIndexFromProtocolEntry(const json& chaser, size_t fallback_index) {
+    int32_t chaser_index = stimulusJsonIntAttr(chaser, "chaser_index");
+    if (chaser_index < 0) {
+        chaser_index = stimulusJsonIntAttr(chaser, "index");
+    }
+    if (chaser_index < 0) {
+        chaser_index = static_cast<int32_t>(fallback_index);
+    }
+    return chaser_index;
+}
+
+void collectChaserBehaviorFromParameters(
+    const json& params,
+    std::unordered_map<int32_t, ZarrDetectionData::ChaserBehaviorMetadata>& behavior_by_index) {
+    if (!params.is_object() || !params.contains("chasers") ||
+        !params["chasers"].is_array()) {
+        return;
+    }
+
+    const auto& chasers = params["chasers"];
+    for (size_t i = 0; i < chasers.size(); ++i) {
+        const auto& chaser = chasers[i];
+        if (!chaser.is_object()) {
+            continue;
+        }
+
+        ZarrDetectionData::ChaserBehaviorMetadata metadata;
+        const int32_t behavior_mode = stimulusJsonIntAttr(chaser, "behavior_mode");
+        if (behavior_mode >= 0) {
+            metadata.behavior_mode = behavior_mode;
+            metadata.has_behavior_mode = true;
+        }
+        bool value = false;
+        if (stimulusJsonBoolAttr(chaser, "enable_chase", value)) {
+            metadata.enable_chase = value;
+            metadata.has_enable_chase = true;
+        }
+        if (stimulusJsonBoolAttr(chaser, "enable_random_movement", value)) {
+            metadata.enable_random_movement = value;
+            metadata.has_enable_random_movement = true;
+        }
+        if (!metadata.has_behavior_mode && !metadata.has_enable_chase &&
+            !metadata.has_enable_random_movement) {
+            continue;
+        }
+
+        const int32_t chaser_index = chaserIndexFromProtocolEntry(chaser, i);
+        if (behavior_by_index.find(chaser_index) == behavior_by_index.end()) {
+            behavior_by_index.emplace(chaser_index, metadata);
+        }
+    }
+}
+
+void collectChaserColorsFromProtocolObject(
+    const json& protocol,
+    std::unordered_map<int32_t, std::array<float, 4>>& colors_by_index) {
+    if (!protocol.is_object()) {
+        return;
+    }
+
+    collectChaserColorsFromParameters(protocol, colors_by_index);
+
+    if (protocol.contains("parameters")) {
+        auto parameters = parseJsonObjectString(protocol["parameters"]);
+        if (parameters.has_value()) {
+            collectChaserColorsFromParameters(*parameters, colors_by_index);
+        }
+    }
+
+    if (protocol.contains("steps") && protocol["steps"].is_array()) {
+        for (const auto& step : protocol["steps"]) {
+            collectChaserColorsFromProtocolObject(step, colors_by_index);
+        }
+    }
+}
+
+void collectChaserBehaviorFromProtocolObject(
+    const json& protocol,
+    std::unordered_map<int32_t, ZarrDetectionData::ChaserBehaviorMetadata>& behavior_by_index) {
+    if (!protocol.is_object()) {
+        return;
+    }
+
+    collectChaserBehaviorFromParameters(protocol, behavior_by_index);
+
+    if (protocol.contains("parameters")) {
+        auto parameters = parseJsonObjectString(protocol["parameters"]);
+        if (parameters.has_value()) {
+            collectChaserBehaviorFromParameters(*parameters, behavior_by_index);
+        }
+    }
+
+    if (protocol.contains("steps") && protocol["steps"].is_array()) {
+        for (const auto& step : protocol["steps"]) {
+            collectChaserBehaviorFromProtocolObject(step, behavior_by_index);
+        }
+    }
+}
+
+void mergeChaserColorMetadata(
+    const std::unordered_map<int32_t, std::array<float, 4>>& parsed_colors,
+    ZarrDetectionData& data) {
+    for (const auto& [chaser_index, color] : parsed_colors) {
+        if (data.chaser_rgba_by_index.find(chaser_index) ==
+            data.chaser_rgba_by_index.end()) {
+            data.chaser_rgba_by_index.emplace(chaser_index, color);
+        }
+    }
+    data.has_chaser_rgba_metadata = !data.chaser_rgba_by_index.empty();
+}
+
+void mergeChaserBehaviorMetadata(
+    const std::unordered_map<int32_t, ZarrDetectionData::ChaserBehaviorMetadata>& parsed_behavior,
+    ZarrDetectionData& data) {
+    for (const auto& [chaser_index, behavior] : parsed_behavior) {
+        if (data.chaser_behavior_by_index.find(chaser_index) ==
+            data.chaser_behavior_by_index.end()) {
+            data.chaser_behavior_by_index.emplace(chaser_index, behavior);
+        }
+    }
+    data.has_chaser_behavior_metadata = !data.chaser_behavior_by_index.empty();
+}
+
+void appendChaserProtocolMetadataFromProtocolString(const std::string& protocol_json,
+                                                    const char* source,
+                                                    ZarrDetectionData& data) {
+    if (protocol_json.empty()) {
+        return;
+    }
+
+    try {
+        const json protocol = json::parse(protocol_json);
+        const size_t color_before = data.chaser_rgba_by_index.size();
+        const size_t behavior_before = data.chaser_behavior_by_index.size();
+        std::unordered_map<int32_t, std::array<float, 4>> parsed_colors;
+        std::unordered_map<int32_t, ZarrDetectionData::ChaserBehaviorMetadata>
+            parsed_behavior;
+        collectChaserColorsFromProtocolObject(protocol, parsed_colors);
+        collectChaserBehaviorFromProtocolObject(protocol, parsed_behavior);
+        mergeChaserColorMetadata(parsed_colors, data);
+        mergeChaserBehaviorMetadata(parsed_behavior, data);
+        const size_t color_added = data.chaser_rgba_by_index.size() - color_before;
+        const size_t behavior_added =
+            data.chaser_behavior_by_index.size() - behavior_before;
+        if (color_added > 0) {
+            std::cout << "  [Chaser] Loaded protocol color metadata for "
+                      << color_added << " chaser(s) from " << source << std::endl;
+        }
+        if (behavior_added > 0) {
+            std::cout << "  [Chaser] Loaded protocol behavior metadata for "
+                      << behavior_added << " chaser(s) from " << source << std::endl;
+        }
+    } catch (const std::exception& e) {
+        std::cout << "  [Chaser] Failed to parse protocol chaser metadata from "
+                  << source << ": " << e.what() << std::endl;
+    }
+}
+
+void applyChaserColorMetadataToRecord(const ZarrDetectionData& data,
+                                      ZarrDetectionData::ChaserStateRecord& record) {
+    if (!data.has_chaser_rgba_metadata || record.chaser_index < 0) {
+        return;
+    }
+    auto it = data.chaser_rgba_by_index.find(record.chaser_index);
+    if (it == data.chaser_rgba_by_index.end()) {
+        return;
+    }
+    record.chaser_rgba = it->second;
+    record.has_chaser_rgba = true;
+}
+
+void applyChaserBehaviorMetadataToRecord(const ZarrDetectionData& data,
+                                         ZarrDetectionData::ChaserStateRecord& record) {
+    if (!data.has_chaser_behavior_metadata || record.chaser_index < 0) {
+        return;
+    }
+    auto it = data.chaser_behavior_by_index.find(record.chaser_index);
+    if (it == data.chaser_behavior_by_index.end()) {
+        return;
+    }
+    const auto& behavior = it->second;
+    record.behavior_mode = behavior.behavior_mode;
+    record.has_behavior_mode = behavior.has_behavior_mode;
+    record.enable_chase = behavior.enable_chase;
+    record.has_enable_chase = behavior.has_enable_chase;
+    record.enable_random_movement = behavior.enable_random_movement;
+    record.has_enable_random_movement = behavior.has_enable_random_movement;
 }
 
 bool parseStimulusStepDirectoryName(const std::string& name,
@@ -143,6 +542,185 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
     data_.stimulus_video_path.clear();
     data_.stimulus_source_h5.clear();
     data_.chaser_transform = ZarrDetectionData::ChaserCoordinateTransform();
+    data_.chaser_rgba_by_index.clear();
+    data_.has_chaser_rgba_metadata = false;
+    data_.chaser_behavior_by_index.clear();
+    data_.has_chaser_behavior_metadata = false;
+
+    std::string stimulus_created_at;
+    int64_t camera_frame_offset = 0;
+    std::vector<int32_t> camera_to_metadata_index;
+    std::vector<uint8_t> metadata_mask;
+    std::vector<int64_t> camera_to_stimulus_frame_corrected64;
+    std::vector<uint8_t> camera_stimulus_frame_interpolated;
+    std::optional<json> run_attrs = readAttrsAny(store, run_base);
+
+    if (run_attrs.has_value()) {
+        if (run_attrs->contains("created_at_utc") && (*run_attrs)["created_at_utc"].is_string()) {
+            stimulus_created_at = (*run_attrs)["created_at_utc"].get<std::string>();
+        } else if (run_attrs->contains("created_at") && (*run_attrs)["created_at"].is_string()) {
+            stimulus_created_at = (*run_attrs)["created_at"].get<std::string>();
+        }
+
+        if (run_attrs->contains("source_stimulus_video_path") &&
+            (*run_attrs)["source_stimulus_video_path"].is_string()) {
+            data_.stimulus_video_path = (*run_attrs)["source_stimulus_video_path"].get<std::string>();
+        }
+        if (run_attrs->contains("source_h5") &&
+            (*run_attrs)["source_h5"].is_string()) {
+            data_.stimulus_source_h5 = (*run_attrs)["source_h5"].get<std::string>();
+        }
+        if (run_attrs->contains("protocol_json") &&
+            (*run_attrs)["protocol_json"].is_string()) {
+            appendChaserProtocolMetadataFromProtocolString(
+                (*run_attrs)["protocol_json"].get<std::string>(),
+                "run protocol_json",
+                data_);
+        }
+    }
+
+    auto parseCoordinateTransform = [&]() {
+        bool saw_coordinate_metadata = false;
+        try {
+            if (run_attrs.has_value() &&
+                run_attrs->contains("coordinate_transform") &&
+                (*run_attrs)["coordinate_transform"].is_string()) {
+                saw_coordinate_metadata = true;
+                auto transform_json =
+                    json::parse((*run_attrs)["coordinate_transform"].get<std::string>());
+                if (transform_json.contains("texture_dimensions") &&
+                    transform_json["texture_dimensions"].is_array()) {
+                    const auto& dims = transform_json["texture_dimensions"];
+                    if (dims.size() == 2) {
+                        data_.chaser_transform.texture_width = dims[0].get<double>();
+                        data_.chaser_transform.texture_height = dims[1].get<double>();
+                    }
+                }
+                if (transform_json.contains("camera_dimensions") &&
+                    transform_json["camera_dimensions"].is_array()) {
+                    const auto& dims = transform_json["camera_dimensions"];
+                    if (dims.size() == 2) {
+                        data_.chaser_transform.camera_width = dims[0].get<double>();
+                        data_.chaser_transform.camera_height = dims[1].get<double>();
+                    }
+                }
+                if (transform_json.contains("texture_to_camera_scale") &&
+                    transform_json["texture_to_camera_scale"].is_number()) {
+                    data_.chaser_transform.scale =
+                        transform_json["texture_to_camera_scale"].get<double>();
+                }
+                applyChaserStateCoordinateMetadata(transform_json, data_.chaser_transform);
+            }
+
+            if (run_attrs.has_value() &&
+                run_attrs->contains("arena_config_json") &&
+                (*run_attrs)["arena_config_json"].is_string()) {
+                saw_coordinate_metadata = true;
+                auto arena_json =
+                    json::parse((*run_attrs)["arena_config_json"].get<std::string>());
+                std::string active_camera_id;
+                if (arena_json.is_object()) {
+                    active_camera_id =
+                        stimulusJsonScalarStringAttr(arena_json, "active_camera_id");
+                }
+                if (active_camera_id.empty() && run_attrs.has_value()) {
+                    active_camera_id =
+                        stimulusJsonScalarStringAttr(*run_attrs, "active_camera_id");
+                }
+                auto apply_arena_config_candidate = [&](const json& candidate) {
+                    double value = 0.0;
+                    if (stimulusJsonFiniteDoubleAttr(candidate, "sub_arena_x_px", value)) {
+                        data_.chaser_transform.offset_x_px = value;
+                    }
+                    if (stimulusJsonFiniteDoubleAttr(candidate, "sub_arena_y_px", value)) {
+                        data_.chaser_transform.offset_y_px = value;
+                    }
+                    if (stimulusJsonFiniteDoubleAttr(candidate, "sub_arena_width_px", value) &&
+                        value > 0.0 && data_.chaser_transform.texture_width > 0.0) {
+                        data_.chaser_transform.scale =
+                            value / data_.chaser_transform.texture_width;
+                    }
+                    applyChaserArenaConfigMetadata(candidate, data_.chaser_transform);
+                };
+                if (arena_json.is_object()) {
+                    apply_arena_config_candidate(arena_json);
+                    if (arena_json.contains("camera_calibrations") &&
+                        arena_json["camera_calibrations"].is_array()) {
+                        for (const auto& candidate : arena_json["camera_calibrations"]) {
+                            if (!candidate.is_object()) {
+                                continue;
+                            }
+                            const std::string candidate_camera_id =
+                                stimulusJsonScalarStringAttr(candidate, "camera_id");
+                            if (!active_camera_id.empty() &&
+                                !candidate_camera_id.empty() &&
+                                candidate_camera_id != active_camera_id) {
+                                continue;
+                            }
+                            apply_arena_config_candidate(candidate);
+                        }
+                    }
+                }
+            }
+        } catch (const std::exception& e) {
+            std::cout << "  [Chaser] Failed to parse coordinate_transform metadata: "
+                      << e.what() << std::endl;
+        }
+
+        if (auto chaser_attrs =
+                readAttrsAny(store, run_base + "tracking_data/chaser_states")) {
+            saw_coordinate_metadata = true;
+            applyChaserStateCoordinateMetadata(*chaser_attrs, data_.chaser_transform);
+        } else if (auto interpolated_attrs =
+                       readAttrsAny(store, run_base + "tracking_data/chaser_states_interpolated")) {
+            saw_coordinate_metadata = true;
+            applyChaserStateCoordinateMetadata(*interpolated_attrs, data_.chaser_transform);
+        }
+
+        if (auto arena_geometry_attrs =
+                readAttrsAny(store, run_base + "calibration/arena_geometry")) {
+            saw_coordinate_metadata = true;
+            applyChaserStateCoordinateMetadata(*arena_geometry_attrs, data_.chaser_transform);
+            applyChaserArenaConfigMetadata(*arena_geometry_attrs, data_.chaser_transform);
+        }
+
+        if (data_.chaser_transform.texture_width <= 0.0) {
+            data_.chaser_transform.texture_width = 358.0;
+        }
+        if (data_.chaser_transform.texture_height <= 0.0) {
+            data_.chaser_transform.texture_height = 358.0;
+        }
+        if (data_.chaser_transform.scale <= 0.0) {
+            if (data_.chaser_transform.camera_width > 0.0) {
+                data_.chaser_transform.scale =
+                    data_.chaser_transform.camera_width / data_.chaser_transform.texture_width;
+            } else {
+                data_.chaser_transform.scale = 1.0;
+            }
+        }
+        data_.chaser_transform.valid =
+            saw_coordinate_metadata ||
+            !data_.chaser_transform.coordinate_frame.empty() ||
+            data_.chaser_transform.has_arena_canvas_origin;
+
+        if (data_.chaser_transform.valid) {
+            std::cout << "  [Chaser] Coordinate metadata frame='"
+                      << data_.chaser_transform.coordinate_frame
+                      << "' origin='" << data_.chaser_transform.coordinate_origin
+                      << "' texture=" << data_.chaser_transform.texture_width
+                      << "x" << data_.chaser_transform.texture_height
+                      << " scale=" << data_.chaser_transform.scale;
+            if (data_.chaser_transform.has_arena_canvas_origin) {
+                std::cout << " arena_origin_canvas=("
+                          << data_.chaser_transform.arena_origin_canvas_x_px
+                          << "," << data_.chaser_transform.arena_origin_canvas_y_px
+                          << ")";
+            }
+            std::cout << std::endl;
+        }
+    };
+
+    parseCoordinateTransform();
 
     loadStimulusStepsForRun(store, run_base, latest_run);
 
@@ -165,96 +743,6 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
     }
     if (!loadChaserStatesInterpolated(store, run_base)) {
         std::cout << "  [ChaserInterp] No interpolated chaser data for run '" << latest_run << "'" << std::endl;
-    }
-
-    std::string stimulus_created_at;
-    int64_t camera_frame_offset = 0;
-    std::vector<int32_t> camera_to_metadata_index;
-    std::vector<uint8_t> metadata_mask;
-    std::vector<int64_t> camera_to_stimulus_frame_corrected64;
-    std::vector<uint8_t> camera_stimulus_frame_interpolated;
-
-    if (auto run_attrs = readAttrsAny(store, run_base)) {
-        if (run_attrs->contains("created_at_utc") && (*run_attrs)["created_at_utc"].is_string()) {
-            stimulus_created_at = (*run_attrs)["created_at_utc"].get<std::string>();
-        } else if (run_attrs->contains("created_at") && (*run_attrs)["created_at"].is_string()) {
-            stimulus_created_at = (*run_attrs)["created_at"].get<std::string>();
-        }
-
-        if (run_attrs->contains("source_stimulus_video_path") &&
-            (*run_attrs)["source_stimulus_video_path"].is_string()) {
-            data_.stimulus_video_path = (*run_attrs)["source_stimulus_video_path"].get<std::string>();
-        }
-        if (run_attrs->contains("source_h5") &&
-            (*run_attrs)["source_h5"].is_string()) {
-            data_.stimulus_source_h5 = (*run_attrs)["source_h5"].get<std::string>();
-        }
-
-        auto parseCoordinateTransform = [&]() {
-            try {
-                if (run_attrs->contains("coordinate_transform") &&
-                    (*run_attrs)["coordinate_transform"].is_string()) {
-                    auto transform_json = json::parse((*run_attrs)["coordinate_transform"].get<std::string>());
-                    if (transform_json.contains("texture_dimensions") &&
-                        transform_json["texture_dimensions"].is_array()) {
-                        const auto& dims = transform_json["texture_dimensions"];
-                        if (dims.size() == 2) {
-                            data_.chaser_transform.texture_width = dims[0].get<double>();
-                            data_.chaser_transform.texture_height = dims[1].get<double>();
-                        }
-                    }
-                    if (transform_json.contains("camera_dimensions") &&
-                        transform_json["camera_dimensions"].is_array()) {
-                        const auto& dims = transform_json["camera_dimensions"];
-                        if (dims.size() == 2) {
-                            data_.chaser_transform.camera_width = dims[0].get<double>();
-                            data_.chaser_transform.camera_height = dims[1].get<double>();
-                        }
-                    }
-                    if (transform_json.contains("texture_to_camera_scale") &&
-                        transform_json["texture_to_camera_scale"].is_number()) {
-                        data_.chaser_transform.scale = transform_json["texture_to_camera_scale"].get<double>();
-                    }
-                }
-                if (run_attrs->contains("arena_config_json") &&
-                    (*run_attrs)["arena_config_json"].is_string()) {
-                    auto arena_json = json::parse((*run_attrs)["arena_config_json"].get<std::string>());
-                    if (arena_json.contains("sub_arena_x_px") && arena_json["sub_arena_x_px"].is_number()) {
-                        data_.chaser_transform.offset_x_px = arena_json["sub_arena_x_px"].get<double>();
-                    }
-                    if (arena_json.contains("sub_arena_y_px") && arena_json["sub_arena_y_px"].is_number()) {
-                        data_.chaser_transform.offset_y_px = arena_json["sub_arena_y_px"].get<double>();
-                    }
-                    if (arena_json.contains("sub_arena_width_px") && arena_json["sub_arena_width_px"].is_number()) {
-                        double sub_width = arena_json["sub_arena_width_px"].get<double>();
-                        if (sub_width > 0.0 && data_.chaser_transform.texture_width > 0.0) {
-                            data_.chaser_transform.scale = sub_width / data_.chaser_transform.texture_width;
-                        }
-                    }
-                }
-            } catch (const std::exception& e) {
-                std::cout << "  [Chaser] Failed to parse coordinate_transform metadata: "
-                          << e.what() << std::endl;
-            }
-
-            if (data_.chaser_transform.texture_width <= 0.0) {
-                data_.chaser_transform.texture_width = 358.0;
-            }
-            if (data_.chaser_transform.texture_height <= 0.0) {
-                data_.chaser_transform.texture_height = 358.0;
-            }
-            if (data_.chaser_transform.scale <= 0.0) {
-                if (data_.chaser_transform.camera_width > 0.0) {
-                    data_.chaser_transform.scale =
-                        data_.chaser_transform.camera_width / data_.chaser_transform.texture_width;
-                } else {
-                    data_.chaser_transform.scale = 1.0;
-                }
-            }
-            data_.chaser_transform.valid = true;
-        };
-
-        parseCoordinateTransform();
     }
 
     if (auto align_attrs = readAttrsAny(store, run_base + "frame_alignment")) {
@@ -580,6 +1068,10 @@ bool ZarrDetectionLoader::loadStimulusStepsForRun(
         step.duration_s = stimulusJsonDoubleAttr(*step_attrs, "duration_s");
         step.raw_protocol_params_json =
             stimulusJsonStringAttr(*step_attrs, "raw_protocol_params_json");
+        appendChaserProtocolMetadataFromProtocolString(
+            step.raw_protocol_params_json,
+            "step raw_protocol_params_json",
+            data_);
 
         if (auto moving_attrs =
                 read_step_attrs(appendPath(step_base, "moving_grating"))) {
@@ -1368,27 +1860,9 @@ bool ZarrDetectionLoader::loadChaserStates(const ts::kvstore::KvStore& store,
         record.timestamp_ns_session = timestamps_ns[i];
         record.is_chasing = is_chasing_raw[i];
         record.texture_space = true;
-        if (data_.chaser_transform.valid) {
-            auto convert = [&](float tex_x, float tex_y, double& cam_x, double& cam_y) -> bool {
-                if (!std::isfinite(tex_x) || !std::isfinite(tex_y)) {
-                    return false;
-                }
-                cam_x = data_.chaser_transform.offset_x_px + static_cast<double>(tex_x) * data_.chaser_transform.scale;
-                cam_y = data_.chaser_transform.offset_y_px + static_cast<double>(tex_y) * data_.chaser_transform.scale;
-                return std::isfinite(cam_x) && std::isfinite(cam_y);
-            };
-            if (convert(record.chaser_pos_x, record.chaser_pos_y,
-                        record.chaser_camera_x, record.chaser_camera_y)) {
-                record.has_camera_coords = true;
-            }
-            double target_cam_x = std::numeric_limits<double>::quiet_NaN();
-            double target_cam_y = std::numeric_limits<double>::quiet_NaN();
-            if (convert(record.target_pos_x, record.target_pos_y,
-                        target_cam_x, target_cam_y)) {
-                record.target_camera_x = target_cam_x;
-                record.target_camera_y = target_cam_y;
-            }
-        }
+        applyChaserCoordinateTransformToRecord(data_.chaser_transform, record);
+        applyChaserColorMetadataToRecord(data_, record);
+        applyChaserBehaviorMetadataToRecord(data_, record);
         data_.chaser_states.push_back(std::move(record));
     }
 
@@ -1623,6 +2097,9 @@ bool ZarrDetectionLoader::loadChaserStatesInterpolated(
         record.target_camera_x = target_camera_x[i];
         record.target_camera_y = target_camera_y[i];
         record.has_camera_coords = has_camera_coords[i] != 0;
+        applyChaserCoordinateTransformToRecord(data_.chaser_transform, record);
+        applyChaserColorMetadataToRecord(data_, record);
+        applyChaserBehaviorMetadataToRecord(data_, record);
         data_.chaser_states_interpolated.push_back(record);
     }
 
@@ -2414,11 +2891,24 @@ ZarrDetectionLoader::getChaserStatesForFrame(size_t frame_id) const {
         candidate.is_chasing = src.is_chasing != 0;
         candidate.timestamp_ns_session = src.timestamp_ns_session;
         candidate.texture_space = src.texture_space;
+        candidate.coordinate_frame = src.coordinate_frame;
+        candidate.coordinate_origin = src.coordinate_origin;
+        candidate.stimulus_canvas_offset_x = src.stimulus_canvas_offset_x;
+        candidate.stimulus_canvas_offset_y = src.stimulus_canvas_offset_y;
+        candidate.has_stimulus_canvas_offset = src.has_stimulus_canvas_offset;
         candidate.chaser_camera_x = src.chaser_camera_x;
         candidate.chaser_camera_y = src.chaser_camera_y;
         candidate.target_camera_x = src.target_camera_x;
         candidate.target_camera_y = src.target_camera_y;
         candidate.has_camera_coords = src.has_camera_coords;
+        candidate.chaser_rgba = src.chaser_rgba;
+        candidate.has_chaser_rgba = src.has_chaser_rgba;
+        candidate.behavior_mode = src.behavior_mode;
+        candidate.has_behavior_mode = src.has_behavior_mode;
+        candidate.enable_chase = src.enable_chase;
+        candidate.has_enable_chase = src.has_enable_chase;
+        candidate.enable_random_movement = src.enable_random_movement;
+        candidate.has_enable_random_movement = src.has_enable_random_movement;
 
         int32_t index_key = candidate.chaser_index;
         auto it = latest_by_index.find(index_key);
@@ -2450,6 +2940,10 @@ ZarrDetectionLoader::getChaserStatesForFrame(size_t frame_id) const {
                       << " stim=" << state.stimulus_frame_num
                       << " chaser=(" << state.chaser_pos_x << "," << state.chaser_pos_y << ")"
                       << " target=(" << state.target_pos_x << "," << state.target_pos_y << ")"
+                      << " frame='" << state.coordinate_frame << "'"
+                      << " origin='" << state.coordinate_origin << "'"
+                      << " canvas_offset=(" << state.stimulus_canvas_offset_x
+                      << "," << state.stimulus_canvas_offset_y << ")"
                       << " cam=(" << state.chaser_camera_x << "," << state.chaser_camera_y << ")"
                       << " has_cam=" << (state.has_camera_coords ? "Y" : "N")
                       << std::endl;
@@ -2472,6 +2966,13 @@ ZarrDetectionLoader::getChaserStatesForFrame(size_t frame_id) const {
                       << " is_chasing=" << (state.is_chasing ? "true" : "false")
                       << " timestamp_ns=" << state.timestamp_ns_session
                       << " space=" << (state.texture_space ? "texture" : "camera")
+                      << " frame='" << state.coordinate_frame << "'"
+                      << " origin='" << state.coordinate_origin << "'";
+            if (state.has_stimulus_canvas_offset) {
+                std::cout << " canvas_offset=(" << state.stimulus_canvas_offset_x
+                          << "," << state.stimulus_canvas_offset_y << ")";
+            }
+            std::cout
                       << std::endl;
             if (state.has_camera_coords) {
                 std::cout << "      camera_chaser=(" << state.chaser_camera_x << "," << state.chaser_camera_y << ")"
@@ -2515,11 +3016,24 @@ ZarrDetectionLoader::getChaserStatesForStimulusFrame(int32_t stimulus_frame) con
         candidate.is_chasing = src.is_chasing != 0;
         candidate.timestamp_ns_session = src.timestamp_ns_session;
         candidate.texture_space = src.texture_space;
+        candidate.coordinate_frame = src.coordinate_frame;
+        candidate.coordinate_origin = src.coordinate_origin;
+        candidate.stimulus_canvas_offset_x = src.stimulus_canvas_offset_x;
+        candidate.stimulus_canvas_offset_y = src.stimulus_canvas_offset_y;
+        candidate.has_stimulus_canvas_offset = src.has_stimulus_canvas_offset;
         candidate.chaser_camera_x = src.chaser_camera_x;
         candidate.chaser_camera_y = src.chaser_camera_y;
         candidate.target_camera_x = src.target_camera_x;
         candidate.target_camera_y = src.target_camera_y;
         candidate.has_camera_coords = src.has_camera_coords;
+        candidate.chaser_rgba = src.chaser_rgba;
+        candidate.has_chaser_rgba = src.has_chaser_rgba;
+        candidate.behavior_mode = src.behavior_mode;
+        candidate.has_behavior_mode = src.has_behavior_mode;
+        candidate.enable_chase = src.enable_chase;
+        candidate.has_enable_chase = src.has_enable_chase;
+        candidate.enable_random_movement = src.enable_random_movement;
+        candidate.has_enable_random_movement = src.has_enable_random_movement;
 
         int32_t key = candidate.chaser_index;
         auto it = latest_by_index.find(key);
@@ -2590,11 +3104,24 @@ ZarrDetectionLoader::getChaserInterpolatedStatesForStimulusFrame(int32_t stimulu
         candidate.is_chasing = src.is_chasing != 0;
         candidate.timestamp_ns_session = src.timestamp_ns_session;
         candidate.texture_space = src.texture_space;
+        candidate.coordinate_frame = src.coordinate_frame;
+        candidate.coordinate_origin = src.coordinate_origin;
+        candidate.stimulus_canvas_offset_x = src.stimulus_canvas_offset_x;
+        candidate.stimulus_canvas_offset_y = src.stimulus_canvas_offset_y;
+        candidate.has_stimulus_canvas_offset = src.has_stimulus_canvas_offset;
         candidate.chaser_camera_x = src.chaser_camera_x;
         candidate.chaser_camera_y = src.chaser_camera_y;
         candidate.target_camera_x = src.target_camera_x;
         candidate.target_camera_y = src.target_camera_y;
         candidate.has_camera_coords = src.has_camera_coords;
+        candidate.chaser_rgba = src.chaser_rgba;
+        candidate.has_chaser_rgba = src.has_chaser_rgba;
+        candidate.behavior_mode = src.behavior_mode;
+        candidate.has_behavior_mode = src.has_behavior_mode;
+        candidate.enable_chase = src.enable_chase;
+        candidate.has_enable_chase = src.has_enable_chase;
+        candidate.enable_random_movement = src.enable_random_movement;
+        candidate.has_enable_random_movement = src.has_enable_random_movement;
 
         int32_t key = candidate.chaser_index;
         auto it = latest_by_index.find(key);

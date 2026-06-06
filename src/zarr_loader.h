@@ -42,9 +42,10 @@ struct ZarrCalibrationData {
     std::string source_h5;
     std::string source_stimulus_run;
     std::string homography_source;
+    std::string homography_matrix_direction;
     std::string experimental_area_shape;
 
-    // Palette contract: projector/texture pixels -> camera pixels.
+    // Normalized Palette contract: projector/texture/canvas pixels -> camera pixels.
     std::array<double, 9> homography_projector_to_camera = {};
 
     double pixel_to_mm = std::numeric_limits<double>::quiet_NaN();
@@ -700,11 +701,24 @@ struct ZarrDetectionData {
         int64_t timestamp_ns_session = 0;
         uint8_t is_chasing = 0;
         bool texture_space = true;
+        std::string coordinate_frame;
+        std::string coordinate_origin;
+        double stimulus_canvas_offset_x = 0.0;
+        double stimulus_canvas_offset_y = 0.0;
+        bool has_stimulus_canvas_offset = false;
         double chaser_camera_x = std::numeric_limits<double>::quiet_NaN();
         double chaser_camera_y = std::numeric_limits<double>::quiet_NaN();
         double target_camera_x = std::numeric_limits<double>::quiet_NaN();
         double target_camera_y = std::numeric_limits<double>::quiet_NaN();
         bool has_camera_coords = false;
+        std::array<float, 4> chaser_rgba = {1.0f, 0.0f, 0.0f, 1.0f};
+        bool has_chaser_rgba = false;
+        int32_t behavior_mode = -1;
+        bool has_behavior_mode = false;
+        bool enable_chase = false;
+        bool has_enable_chase = false;
+        bool enable_random_movement = false;
+        bool has_enable_random_movement = false;
     };
     std::vector<ChaserStateRecord> chaser_states;
     std::vector<std::vector<size_t>> chaser_states_by_camera_frame;
@@ -713,6 +727,18 @@ struct ZarrDetectionData {
     std::vector<ChaserStateRecord> chaser_states_interpolated;
     std::vector<std::vector<size_t>> chaser_states_interpolated_by_stimulus_frame;
     bool has_chaser_states_interpolated = false;
+    std::unordered_map<int32_t, std::array<float, 4>> chaser_rgba_by_index;
+    bool has_chaser_rgba_metadata = false;
+    struct ChaserBehaviorMetadata {
+        int32_t behavior_mode = -1;
+        bool has_behavior_mode = false;
+        bool enable_chase = false;
+        bool has_enable_chase = false;
+        bool enable_random_movement = false;
+        bool has_enable_random_movement = false;
+    };
+    std::unordered_map<int32_t, ChaserBehaviorMetadata> chaser_behavior_by_index;
+    bool has_chaser_behavior_metadata = false;
 
     struct ChaserCoordinateTransform {
         double texture_width = 0.0;
@@ -722,6 +748,13 @@ struct ZarrDetectionData {
         double scale = 1.0;
         double offset_x_px = 0.0;
         double offset_y_px = 0.0;
+        std::string coordinate_frame;
+        std::string coordinate_origin;
+        double arena_origin_canvas_x_px = 0.0;
+        double arena_origin_canvas_y_px = 0.0;
+        double arena_region_width_px = 0.0;
+        double arena_region_height_px = 0.0;
+        bool has_arena_canvas_origin = false;
         bool valid = false;
     } chaser_transform;
 
@@ -1284,11 +1317,24 @@ public:
         bool is_chasing = false;
         int64_t timestamp_ns_session = 0;
         bool texture_space = true;
+        std::string coordinate_frame;
+        std::string coordinate_origin;
+        double stimulus_canvas_offset_x = 0.0;
+        double stimulus_canvas_offset_y = 0.0;
+        bool has_stimulus_canvas_offset = false;
         double chaser_camera_x = std::numeric_limits<double>::quiet_NaN();
         double chaser_camera_y = std::numeric_limits<double>::quiet_NaN();
         double target_camera_x = std::numeric_limits<double>::quiet_NaN();
         double target_camera_y = std::numeric_limits<double>::quiet_NaN();
         bool has_camera_coords = false;
+        std::array<float, 4> chaser_rgba = {1.0f, 0.0f, 0.0f, 1.0f};
+        bool has_chaser_rgba = false;
+        int32_t behavior_mode = -1;
+        bool has_behavior_mode = false;
+        bool enable_chase = false;
+        bool has_enable_chase = false;
+        bool enable_random_movement = false;
+        bool has_enable_random_movement = false;
     };
     std::vector<ChaserBoundingBox> getChaserBoundingBoxesForFrame(size_t frame_id) const;
     std::vector<ChaserState> getChaserStatesForFrame(size_t frame_id) const;

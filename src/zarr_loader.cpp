@@ -72,6 +72,48 @@ double finiteOrNaN(std::optional<double> value) {
     return std::numeric_limits<double>::quiet_NaN();
 }
 
+bool applyHomographyPoint(const std::array<double, 9>& h,
+                          double x,
+                          double y,
+                          double& out_x,
+                          double& out_y) {
+    const double w = h[6] * x + h[7] * y + h[8];
+    if (!std::isfinite(w) || std::abs(w) < 1e-12) {
+        return false;
+    }
+    out_x = (h[0] * x + h[1] * y + h[2]) / w;
+    out_y = (h[3] * x + h[4] * y + h[5]) / w;
+    return std::isfinite(out_x) && std::isfinite(out_y);
+}
+
+bool invertHomography3x3(const std::array<double, 9>& h,
+                         std::array<double, 9>& inv) {
+    const double det =
+        h[0] * (h[4] * h[8] - h[5] * h[7]) -
+        h[1] * (h[3] * h[8] - h[5] * h[6]) +
+        h[2] * (h[3] * h[7] - h[4] * h[6]);
+    if (!std::isfinite(det) || std::abs(det) < 1e-18) {
+        return false;
+    }
+    const double inv_det = 1.0 / det;
+    inv[0] = (h[4] * h[8] - h[5] * h[7]) * inv_det;
+    inv[1] = (h[2] * h[7] - h[1] * h[8]) * inv_det;
+    inv[2] = (h[1] * h[5] - h[2] * h[4]) * inv_det;
+    inv[3] = (h[5] * h[6] - h[3] * h[8]) * inv_det;
+    inv[4] = (h[0] * h[8] - h[2] * h[6]) * inv_det;
+    inv[5] = (h[2] * h[3] - h[0] * h[5]) * inv_det;
+    inv[6] = (h[3] * h[7] - h[4] * h[6]) * inv_det;
+    inv[7] = (h[1] * h[6] - h[0] * h[7]) * inv_det;
+    inv[8] = (h[0] * h[4] - h[1] * h[3]) * inv_det;
+    return true;
+}
+
+double squaredDistance(double ax, double ay, double bx, double by) {
+    const double dx = ax - bx;
+    const double dy = ay - by;
+    return dx * dx + dy * dy;
+}
+
 std::string extractCameraIdFromName(const std::string& camera_name_or_id) {
     const auto cam_pos = camera_name_or_id.find("Cam");
     if (cam_pos != std::string::npos) {
@@ -173,11 +215,12 @@ std::string zarrDataTypeName(const json& node_meta) {
 std::optional<ZarrCalibrationData> buildCalibrationFromAttrs(
     const json& attrs,
     const std::string& source_group,
-    const std::array<double, 9>& homography_projector_to_camera,
+    const std::array<double, 9>& raw_homography_matrix,
     std::string& status_message) {
     ZarrCalibrationData calibration;
     calibration.source_group = source_group;
-    calibration.homography_projector_to_camera = homography_projector_to_camera;
+    calibration.homography_projector_to_camera = raw_homography_matrix;
+    calibration.homography_matrix_direction = "projector_to_camera";
     calibration.active_camera_id = jsonStringAttr(attrs, "active_camera_id");
     calibration.primary_camera_id = jsonStringAttr(attrs, "primary_camera_id");
     calibration.source_h5 = jsonStringAttr(attrs, "source_h5");
@@ -231,6 +274,69 @@ std::optional<ZarrCalibrationData> buildCalibrationFromAttrs(
     calibration.sub_arena_height_px =
         finiteOrNaN(jsonNumberAttr(attrs, "sub_arena_height_px"));
 
+    const double ref_camera_x =
+        finiteOrNaN(jsonNumberAttr(attrs, "direction_mapping_ref_camera_x"));
+    const double ref_camera_y =
+        finiteOrNaN(jsonNumberAttr(attrs, "direction_mapping_ref_camera_y"));
+    const double ref_canvas_x =
+        finiteOrNaN(jsonNumberAttr(attrs, "direction_mapping_ref_canvas_x"));
+    const double ref_canvas_y =
+        finiteOrNaN(jsonNumberAttr(attrs, "direction_mapping_ref_canvas_y"));
+    if (std::isfinite(ref_camera_x) && std::isfinite(ref_camera_y) &&
+        std::isfinite(ref_canvas_x) && std::isfinite(ref_canvas_y)) {
+        std::array<double, 9> inverse_homography = {};
+        double mapped_x = std::numeric_limits<double>::quiet_NaN();
+        double mapped_y = std::numeric_limits<double>::quiet_NaN();
+        double raw_as_projector_to_camera_x = std::numeric_limits<double>::quiet_NaN();
+        double raw_as_projector_to_camera_y = std::numeric_limits<double>::quiet_NaN();
+        double inverse_mapped_x = std::numeric_limits<double>::quiet_NaN();
+        double inverse_mapped_y = std::numeric_limits<double>::quiet_NaN();
+        const bool has_inverse =
+            invertHomography3x3(raw_homography_matrix, inverse_homography);
+        const bool raw_maps_camera_to_canvas =
+            applyHomographyPoint(raw_homography_matrix,
+                                 ref_camera_x,
+                                 ref_camera_y,
+                                 mapped_x,
+                                 mapped_y);
+        const bool raw_maps_canvas_to_camera =
+            applyHomographyPoint(raw_homography_matrix,
+                                 ref_canvas_x,
+                                 ref_canvas_y,
+                                 raw_as_projector_to_camera_x,
+                                 raw_as_projector_to_camera_y);
+        const bool inverse_maps_canvas_to_camera =
+            has_inverse &&
+            applyHomographyPoint(inverse_homography,
+                                 ref_canvas_x,
+                                 ref_canvas_y,
+                                 inverse_mapped_x,
+                                 inverse_mapped_y);
+        if (raw_maps_camera_to_canvas &&
+            raw_maps_canvas_to_camera &&
+            inverse_maps_canvas_to_camera) {
+            const double camera_to_canvas_error =
+                squaredDistance(mapped_x, mapped_y, ref_canvas_x, ref_canvas_y);
+            const double raw_projector_to_camera_error =
+                squaredDistance(raw_as_projector_to_camera_x,
+                                raw_as_projector_to_camera_y,
+                                ref_camera_x,
+                                ref_camera_y);
+            const double inverse_canvas_to_camera_error =
+                squaredDistance(inverse_mapped_x,
+                                inverse_mapped_y,
+                                ref_camera_x,
+                                ref_camera_y);
+            if (camera_to_canvas_error < 25.0 &&
+                inverse_canvas_to_camera_error < 25.0 &&
+                camera_to_canvas_error < raw_projector_to_camera_error) {
+                calibration.homography_projector_to_camera = inverse_homography;
+                calibration.homography_matrix_direction =
+                    "camera_to_projector_inverted";
+            }
+        }
+    }
+
     if (!std::isfinite(calibration.pixel_to_mm) &&
         !std::isfinite(calibration.pixels_per_mm_camera)) {
         status_message = "Zarr calibration at '" + source_group +
@@ -283,17 +389,18 @@ std::optional<ZarrCalibrationData> ZarrDetectionLoader::loadCalibrationForCamera
     }
     const auto store = store_result.value();
 
-    std::vector<std::string> candidate_groups = {
-        "analysis/calibration",
-        "calibration",
-    };
+    std::vector<std::string> candidate_groups;
     if (!requested_camera_id.empty()) {
-        candidate_groups.push_back("calibration/cameras/" + requested_camera_id);
         const std::string stimulus_run = getStimulusRunName();
         if (!stimulus_run.empty()) {
             candidate_groups.push_back("analysis/stimulus_runs/" + stimulus_run +
                                        "/calibration/" + requested_camera_id);
         }
+    }
+    candidate_groups.push_back("analysis/calibration");
+    candidate_groups.push_back("calibration");
+    if (!requested_camera_id.empty()) {
+        candidate_groups.push_back("calibration/cameras/" + requested_camera_id);
     }
 
     std::vector<std::string> misses;
@@ -330,6 +437,9 @@ std::optional<ZarrCalibrationData> ZarrDetectionLoader::loadCalibrationForCamera
         }
         if (!calibration->homography_source.empty()) {
             status << " homography_source='" << calibration->homography_source << "'";
+        }
+        if (!calibration->homography_matrix_direction.empty()) {
+            status << " homography_direction='" << calibration->homography_matrix_direction << "'";
         }
         status_message = status.str();
         return calibration;

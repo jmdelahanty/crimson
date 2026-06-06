@@ -51,6 +51,25 @@ Regardless of mapping variant we always try to load:
 - `video_metadata/frame_metadata` columns (`stimulus_frame_num`, `triggering_camera_frame_id`) as
   a fallback for the legacy mapping and for cross-referencing events/chaser tracks.
 
+## Stimulus Timeline UI Surfaces
+
+Crimson intentionally keeps two stimulus timeline surfaces because they serve different workflows:
+
+| Surface | Code | Role |
+|---------|------|------|
+| Stimulus Event Timeline | `src/gui/stimulus_event_timeline_window.cpp` | Dedicated stimulus inspection window. Shows event-type filters, a larger event timeline, canonical step details, and a scrollable event list. Event clicks and list selections request a seek to the resolved camera frame. |
+| Analysis Timeline Stimulus Context | `src/gui/analysis_timeline_stimulus_context.cpp` | Compact contextual row embedded in the Analysis Timeline. Its job is to align stimulus steps/events visually with motion, eye-angle, tail, and other analysis traces. |
+
+The dedicated Stimulus Event Timeline is the richer event browser. It owns event selection state,
+filter controls, and the event-list table. The embedded Stimulus Context should stay lightweight
+and analysis-oriented: it is a reference lane for comparing stimulus timing against other traces,
+not a replacement for the event browser.
+
+When adding interactions, keep the surfaces consistent but not identical. Click-to-seek on an
+event is appropriate for both surfaces because it uses the same resolved camera-frame target.
+Detailed filtering, long labels, and event-table affordances belong in the dedicated Stimulus
+Event Timeline unless there is a clear analysis-trace workflow that needs them inline.
+
 ## Chaser Data Sets
 
 Each run can expose multiple chaser-tracking datasets under `tracking_data/`:
