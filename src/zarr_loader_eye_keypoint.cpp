@@ -401,6 +401,7 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
     data_.roi_offset_y.clear();
     data_.roi_width_px.clear();
     data_.roi_height_px.clear();
+    stopEyeMaskPrefetchWorker();
     clearEyeMaskState(data_);
     data_.eye_angle_run_name.clear();
     data_.eye_angle_frame_indices.clear();
@@ -1267,6 +1268,7 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
 bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
     const ts::kvstore::KvStore& store,
     size_t roi_count) {
+    stopEyeMaskPrefetchWorker();
     clearEyeMaskState(data_);
 
     if (data_.layout != ZarrLayoutType::kPaletteRuns) {
@@ -2240,6 +2242,7 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
 
 bool ZarrDetectionLoader::loadRefinedEyeMaskData(const ts::kvstore::KvStore& store,
                                                  size_t roi_count) {
+    stopEyeMaskPrefetchWorker();
     clearEyeMaskState(data_);
 
     if (data_.layout != ZarrLayoutType::kPaletteRuns) {
@@ -4274,6 +4277,57 @@ void ZarrDetectionLoader::prefetchAdjacentEyeMaskChunks(size_t chunk_id) const {
     }
 }
 
+void ZarrDetectionLoader::stopEyeMaskPrefetchWorker() const {
+    bool should_join = false;
+    {
+        std::lock_guard<std::mutex> prefetch_lock(eye_mask_prefetch_mutex_);
+        eye_mask_prefetch_stop_requested_ = true;
+        eye_mask_prefetch_queue_.clear();
+        should_join = eye_mask_prefetch_worker_.joinable();
+    }
+    eye_mask_prefetch_cv_.notify_all();
+
+    if (should_join) {
+        eye_mask_prefetch_worker_.join();
+    }
+
+    {
+        std::lock_guard<std::mutex> prefetch_lock(eye_mask_prefetch_mutex_);
+        eye_mask_prefetch_stop_requested_ = false;
+        eye_mask_prefetch_queue_.clear();
+    }
+    {
+        std::lock_guard<std::mutex> cache_lock(*data_.mask_chunk_cache_mutex);
+        data_.mask_chunk_loads_in_flight.clear();
+    }
+}
+
+void ZarrDetectionLoader::eyeMaskPrefetchWorkerLoop() const {
+    for (;;) {
+        size_t chunk_id = std::numeric_limits<size_t>::max();
+        {
+            std::unique_lock<std::mutex> prefetch_lock(
+                eye_mask_prefetch_mutex_);
+            eye_mask_prefetch_cv_.wait(prefetch_lock, [&]() {
+                return eye_mask_prefetch_stop_requested_ ||
+                       !eye_mask_prefetch_queue_.empty();
+            });
+            if (eye_mask_prefetch_stop_requested_) {
+                return;
+            }
+            chunk_id = eye_mask_prefetch_queue_.front();
+            eye_mask_prefetch_queue_.pop_front();
+        }
+
+        ensureEyeMaskChunk(chunk_id, /*allow_prefetch=*/false);
+        {
+            std::lock_guard<std::mutex> cache_lock(
+                *data_.mask_chunk_cache_mutex);
+            data_.mask_chunk_loads_in_flight.erase(chunk_id);
+        }
+    }
+}
+
 void ZarrDetectionLoader::requestEyeMaskChunkPrefetch(size_t chunk_id) const {
     if (!data_.eye_masks_loaded || data_.eye_mask_roi_count == 0) {
         return;
@@ -4301,11 +4355,37 @@ void ZarrDetectionLoader::requestEyeMaskChunkPrefetch(size_t chunk_id) const {
         data_.mask_chunk_loads_in_flight.insert(chunk_id);
     }
 
-    std::thread([this, chunk_id]() {
-        ensureEyeMaskChunk(chunk_id, /*allow_prefetch=*/false);
+    std::vector<size_t> dropped_chunks;
+    bool queued = false;
+    {
+        std::lock_guard<std::mutex> prefetch_lock(eye_mask_prefetch_mutex_);
+        if (!eye_mask_prefetch_stop_requested_) {
+            while (eye_mask_prefetch_queue_.size() >=
+                   kEyeMaskPrefetchQueueCapacity) {
+                dropped_chunks.push_back(eye_mask_prefetch_queue_.front());
+                eye_mask_prefetch_queue_.pop_front();
+            }
+            if (!eye_mask_prefetch_worker_.joinable()) {
+                eye_mask_prefetch_worker_ = std::thread(
+                    &ZarrDetectionLoader::eyeMaskPrefetchWorkerLoop, this);
+            }
+            eye_mask_prefetch_queue_.push_back(chunk_id);
+            queued = true;
+        }
+    }
+
+    if (!dropped_chunks.empty() || !queued) {
         std::lock_guard<std::mutex> cache_lock(*data_.mask_chunk_cache_mutex);
-        data_.mask_chunk_loads_in_flight.erase(chunk_id);
-    }).detach();
+        for (size_t dropped_chunk : dropped_chunks) {
+            data_.mask_chunk_loads_in_flight.erase(dropped_chunk);
+        }
+        if (!queued) {
+            data_.mask_chunk_loads_in_flight.erase(chunk_id);
+        }
+    }
+    if (queued) {
+        eye_mask_prefetch_cv_.notify_one();
+    }
 }
 
 bool ZarrDetectionLoader::readRefinedSubjectMaskComponentRow(

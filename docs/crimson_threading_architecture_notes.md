@@ -33,8 +33,8 @@ Long-lived media workers include:
 
 Short-lived or ad hoc background work includes:
 
-- detached refined mask chunk prefetch threads in
-  `src/zarr_loader_eye_keypoint.cpp`
+- an owned refined mask chunk prefetch worker in
+  `ZarrDetectionLoader`
 - `std::async` work for some write workflows
 - YOLO worker threads on legacy detection paths
 
@@ -53,7 +53,7 @@ decoder worker threads
 
 Zarr/mask code
   -> mostly synchronous reads on demand
-  -> refined mask chunks can be prefetched by detached helper threads
+  -> refined mask chunks can be prefetched by a bounded loader-owned worker
 ```
 
 than to a formal actor model, job system, or reactive pipeline.
@@ -125,10 +125,10 @@ but the protocol is not represented as one object with explicit operations like
 This increases the cost of changing seek behavior because correctness depends
 on all paths preserving the same informal sequence.
 
-### Detached Mask Prefetch Threads
+### Mask Prefetch Worker
 
-The refined mask chunk prefetch path in `src/zarr_loader_eye_keypoint.cpp`
-creates detached threads that capture `this`:
+The refined mask chunk prefetch path used to create detached threads that
+captured `this`:
 
 ```text
 requestEyeMaskChunkPrefetch(...)
@@ -144,6 +144,11 @@ threads have two architectural problems:
 
 This is the part most likely to cause future trouble if more Zarr readers adopt
 the same pattern.
+
+Current status: this has been replaced with a loader-owned worker. Prefetch
+requests now go through a bounded queue, duplicate suppression still uses the
+existing in-flight chunk set, and the worker is stopped and joined before
+archive reload, mask-state clear, and loader destruction.
 
 ## Performance Interpretation
 
@@ -187,9 +192,9 @@ GUI releases displayed slot back to writer
 
 This does not need to change the actual frame storage buffers.
 
-### 2. Replace Detached Mask Prefetch With An Owned Worker
+### 2. Keep Mask Prefetch Owned
 
-Use a small loader-owned or archive-session-owned prefetch executor:
+The refined mask path now uses a small loader-owned prefetch executor:
 
 - one worker thread is enough initially
 - bounded queue of chunk IDs
@@ -197,7 +202,7 @@ Use a small loader-owned or archive-session-owned prefetch executor:
 - cancellation on archive unload
 - joined during loader/session teardown
 
-The public behavior can stay the same:
+The public behavior stays the same:
 
 ```text
 ensure current chunk synchronously
@@ -234,8 +239,7 @@ immutable or explicitly synchronized data that the GUI thread consumes.
    one decode path.
 2. Convert the main camera decoder path to use explicit slot publish/release.
 3. Convert image loader and stimulus playback to the same slot API.
-4. Introduce an owned mask prefetch worker and remove detached prefetch
-   threads.
+4. Keep the owned mask prefetch worker covered by reload/shutdown smoke tests.
 5. Add shutdown/load-unload tests or smoke tooling that exercises archive reload
    while prefetch is active.
 6. Move global decode maps into a runtime object once the synchronization

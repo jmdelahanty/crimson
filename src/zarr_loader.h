@@ -9,17 +9,19 @@
 #include <tensorstore/kvstore/kvstore.h>
 #include <tensorstore/open.h>
 #include <array>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <vector>
 #include <string>
 #include <optional>
-#include <deque>
 #include <filesystem>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <set>
+#include <thread>
 #include <unordered_map>
 #include <nlohmann/json.hpp>
 #include "h5_loader.h"  // For LoggedBoundingBox structure compatibility
@@ -837,6 +839,7 @@ public:
     static constexpr size_t kEyeMaskChunkCacheCapacity = 3;
     static constexpr size_t kRleEyeMaskChunkRows = 32;
     static constexpr size_t kRleEyeMaskChunkCacheCapacity = 8;
+    static constexpr size_t kEyeMaskPrefetchQueueCapacity = 8;
 
     enum class DetectionDataset {
         RawDetect = 0,
@@ -1703,6 +1706,11 @@ private:
     std::string requested_eye_angle_run_name_;
     std::string requested_stimulus_run_name_;
     DetectionDataset active_dataset_ = DetectionDataset::RawDetect;
+    mutable std::mutex eye_mask_prefetch_mutex_;
+    mutable std::condition_variable eye_mask_prefetch_cv_;
+    mutable std::deque<size_t> eye_mask_prefetch_queue_;
+    mutable std::thread eye_mask_prefetch_worker_;
+    mutable bool eye_mask_prefetch_stop_requested_ = false;
     
     // Loading functions
     bool loadStandardFormat(const ts::kvstore::KvStore& store);
@@ -1769,6 +1777,8 @@ private:
     bool ensureEyeMaskChunk(size_t chunk_id, bool allow_prefetch = true) const;
     void prefetchAdjacentEyeMaskChunks(size_t chunk_id) const;
     void requestEyeMaskChunkPrefetch(size_t chunk_id) const;
+    void stopEyeMaskPrefetchWorker() const;
+    void eyeMaskPrefetchWorkerLoop() const;
     bool populateEyeMaskEntry(size_t roi_index, FrameDetections::EyeMask& out_mask) const;
     bool populateSubjectShapeEntry(size_t roi_index,
                                    FrameDetections::SubjectShape& out_shape) const;

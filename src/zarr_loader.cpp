@@ -356,6 +356,7 @@ ZarrDetectionLoader::ZarrDetectionLoader() {
 }
 
 ZarrDetectionLoader::~ZarrDetectionLoader() {
+    stopEyeMaskPrefetchWorker();
     // TensorStore handles cleanup automatically
 }
 
@@ -468,6 +469,7 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
                                        std::string& error_message) {
     try {
         // Clear any previous data
+        stopEyeMaskPrefetchWorker();
         data_ = ZarrDetectionData();
         clipped_resolver_.clear();
         active_dataset_ = DetectionDataset::RawDetect;
