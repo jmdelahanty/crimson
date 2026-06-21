@@ -2415,18 +2415,21 @@ std::string ZarrDetectionLoader::formatStimulusEvent(
 }
 
 void ZarrDetectionLoader::clearStimulusEventTimelineCache() {
+    data_.stimulus_event_labels.clear();
     data_.stimulus_event_timeline.clear();
     ++data_.stimulus_event_timeline_generation;
 }
 
 void ZarrDetectionLoader::rebuildStimulusEventTimelineCache(
     const std::vector<int32_t>* stimulus_to_camera_map) {
+    data_.stimulus_event_labels.clear();
     data_.stimulus_event_timeline.clear();
     if (!data_.has_stimulus_events) {
         ++data_.stimulus_event_timeline_generation;
         return;
     }
 
+    data_.stimulus_event_labels.reserve(data_.stimulus_events.size());
     data_.stimulus_event_timeline.reserve(data_.stimulus_events.size());
     for (size_t idx = 0; idx < data_.stimulus_events.size(); ++idx) {
         const auto& entry = data_.stimulus_events[idx];
@@ -2440,12 +2443,15 @@ void ZarrDetectionLoader::rebuildStimulusEventTimelineCache(
             }
         }
 
+        const std::string label = formatStimulusEvent(entry);
+        data_.stimulus_event_labels.push_back(label);
+
         ZarrDetectionData::StimulusEventSummary summary;
         summary.source_event_index = idx;
         summary.stimulus_frame_num = entry.stimulus_frame_num;
         summary.camera_frame_id = camera_frame;
         summary.event_type_id = entry.event_type_id;
-        summary.label = formatStimulusEvent(entry);
+        summary.label = label;
         data_.stimulus_event_timeline.push_back(std::move(summary));
     }
 
@@ -2473,12 +2479,19 @@ std::vector<std::string> ZarrDetectionLoader::getStimulusEventsForFrame(
     if (!data_.has_stimulus_events) {
         return result;
     }
+    auto append_label = [&](size_t idx) {
+        if (idx >= data_.stimulus_events.size()) {
+            return;
+        }
+        if (idx < data_.stimulus_event_labels.size()) {
+            result.push_back(data_.stimulus_event_labels[idx]);
+            return;
+        }
+        result.push_back(formatStimulusEvent(data_.stimulus_events[idx]));
+    };
     if (frame_id < data_.stimulus_events_by_camera_frame.size()) {
         for (size_t idx : data_.stimulus_events_by_camera_frame[frame_id]) {
-            if (idx >= data_.stimulus_events.size()) {
-                continue;
-            }
-            result.push_back(formatStimulusEvent(data_.stimulus_events[idx]));
+            append_label(idx);
         }
     }
     if (!result.empty()) {
@@ -2486,10 +2499,7 @@ std::vector<std::string> ZarrDetectionLoader::getStimulusEventsForFrame(
     }
     if (frame_id < data_.stimulus_events_by_frame.size()) {
         for (size_t idx : data_.stimulus_events_by_frame[frame_id]) {
-            if (idx >= data_.stimulus_events.size()) {
-                continue;
-            }
-            result.push_back(formatStimulusEvent(data_.stimulus_events[idx]));
+            append_label(idx);
         }
     }
     return result;

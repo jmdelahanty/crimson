@@ -5,9 +5,12 @@
 #include "zarr_loader.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <sstream>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -107,6 +110,215 @@ std::string stimulusStepDisplayLabel(
     return label.str();
 }
 
+double durationMs(std::chrono::steady_clock::duration duration) {
+    return std::chrono::duration<double, std::milli>(duration).count();
+}
+
+double frameToTimelineTime(int32_t frame, double video_fps) {
+    const int32_t clamped = frame >= 0 ? frame : 0;
+    return (video_fps > 0.0) ? static_cast<double>(clamped) / video_fps
+                             : static_cast<double>(clamped);
+}
+
+int32_t resolveTimelineTargetFrame(
+    const StimulusEventTimelineWindowContext& context,
+    const ZarrDetectionLoader::StimulusEventSummary& evt) {
+    if (evt.camera_frame_id >= 0) {
+        return evt.camera_frame_id;
+    }
+    if (evt.stimulus_frame_num >= 0) {
+        if (auto mapped = context.zarr_loader.getCameraFrameForStimulusFrame(
+                evt.stimulus_frame_num, true)) {
+            return *mapped;
+        }
+    }
+    return evt.stimulus_frame_num;
+}
+
+std::string stimulusTimelineRowLabel(
+    const ZarrDetectionLoader::StimulusEventSummary& evt,
+    int32_t resolved_frame) {
+    std::ostringstream row_label;
+    if (resolved_frame >= 0) {
+        row_label << "Cam " << resolved_frame;
+        if (evt.camera_frame_id >= 0 && evt.camera_frame_id != resolved_frame) {
+            row_label << " (Event Cam " << evt.camera_frame_id << ")";
+        }
+        if (evt.stimulus_frame_num >= 0 &&
+            evt.stimulus_frame_num != resolved_frame) {
+            row_label << " (Stim " << evt.stimulus_frame_num << ")";
+        }
+    } else {
+        row_label << "Stim " << evt.stimulus_frame_num;
+    }
+    row_label << "  " << evt.label;
+    return row_label.str();
+}
+
+bool stimulusTimelineCacheMatches(
+    const StimulusEventTimelineWindowState::PreparedTimelineCache& cache,
+    const StimulusEventTimelineWindowContext& context,
+    const std::vector<ZarrDetectionLoader::StimulusEventSummary>& timeline,
+    const std::vector<ZarrDetectionData::StimulusStep>& steps) {
+    return cache.valid &&
+           cache.archive_path == context.zarr_loader.getArchivePath() &&
+           cache.timeline_generation ==
+               context.zarr_loader.getStimulusEventTimelineGeneration() &&
+           cache.timeline_count == timeline.size() &&
+           cache.step_count == steps.size() &&
+           cache.total_frames == context.zarr_loader.getTotalFrames() &&
+           cache.video_fps == context.video_fps;
+}
+
+const StimulusEventTimelineWindowState::PreparedTimelineCache&
+prepareStimulusTimelineCache(
+    const StimulusEventTimelineWindowContext& context,
+    StimulusEventTimelineWindowState& state,
+    const std::vector<ZarrDetectionLoader::StimulusEventSummary>& timeline,
+    const std::vector<ZarrDetectionData::StimulusStep>& steps) {
+    if (stimulusTimelineCacheMatches(state.prepared_cache,
+                                     context,
+                                     timeline,
+                                     steps)) {
+        return state.prepared_cache;
+    }
+
+    const auto rebuild_start = std::chrono::steady_clock::now();
+    auto& cache = state.prepared_cache;
+    cache = StimulusEventTimelineWindowState::PreparedTimelineCache{};
+    cache.archive_path = context.zarr_loader.getArchivePath();
+    cache.timeline_generation =
+        context.zarr_loader.getStimulusEventTimelineGeneration();
+    cache.timeline_count = timeline.size();
+    cache.step_count = steps.size();
+    cache.total_frames = context.zarr_loader.getTotalFrames();
+    cache.video_fps = context.video_fps;
+    cache.x_values.resize(timeline.size());
+    cache.y_values.assign(timeline.size(), 0.0);
+    cache.display_frames.resize(timeline.size());
+    cache.row_labels.reserve(timeline.size());
+
+    std::unordered_map<int32_t, size_t> type_index_by_id;
+    for (size_t i = 0; i < timeline.size(); ++i) {
+        const auto& evt = timeline[i];
+        const int32_t frame = resolveTimelineTargetFrame(context, evt);
+        if (evt.camera_frame_id < 0) {
+            ++cache.missing_camera_count;
+        }
+        cache.display_frames[i] = frame;
+        cache.x_values[i] = frameToTimelineTime(frame, context.video_fps);
+        cache.row_labels.push_back(stimulusTimelineRowLabel(evt, frame));
+
+        auto type_it = type_index_by_id.find(evt.event_type_id);
+        if (type_it == type_index_by_id.end()) {
+            const size_t type_index = cache.type_series.size();
+            type_index_by_id[evt.event_type_id] = type_index;
+            cache.event_type_labels.emplace_back(
+                evt.event_type_id, stimulusEventTypeLabel(evt.label));
+
+            StimulusEventTimelineWindowState::CachedTypeSeries series;
+            series.event_type_id = evt.event_type_id;
+            series.type_label = cache.event_type_labels.back().second;
+            cache.type_series.push_back(std::move(series));
+            type_it = type_index_by_id.find(evt.event_type_id);
+        }
+
+        auto& series = cache.type_series[type_it->second];
+        series.x_values.push_back(cache.x_values[i]);
+        series.y_values.push_back(0.0);
+    }
+
+    std::unordered_map<int32_t, bool> next_filter;
+    next_filter.reserve(cache.event_type_labels.size());
+    for (const auto& entry : cache.event_type_labels) {
+        const int32_t event_type_id = entry.first;
+        auto existing = state.event_type_filter.find(event_type_id);
+        next_filter[event_type_id] =
+            (existing != state.event_type_filter.end()) ? existing->second
+                                                        : true;
+    }
+    state.event_type_filter = std::move(next_filter);
+    state.filter_initialized = true;
+
+    double default_max_time =
+        (context.video_fps > 0.0)
+            ? static_cast<double>(std::max<size_t>(1, cache.total_frames)) /
+                  context.video_fps
+            : static_cast<double>(std::max<size_t>(1, cache.total_frames));
+    for (int32_t frame : cache.display_frames) {
+        if (frame >= 0) {
+            default_max_time =
+                std::max(default_max_time,
+                         frameToTimelineTime(frame + 1, context.video_fps));
+        }
+    }
+    for (const auto& step : steps) {
+        if (step.start_camera_frame >= 0) {
+            default_max_time =
+                std::max(default_max_time,
+                         frameToTimelineTime(step.start_camera_frame,
+                                             context.video_fps));
+        }
+        if (step.end_camera_frame >= 0) {
+            default_max_time =
+                std::max(default_max_time,
+                         frameToTimelineTime(step.end_camera_frame + 1,
+                                             context.video_fps));
+        }
+    }
+
+    cache.timeline_min_time = 0.0;
+    cache.timeline_max_time = default_max_time;
+    if (!cache.x_values.empty()) {
+        auto minmax =
+            std::minmax_element(cache.x_values.begin(), cache.x_values.end());
+        cache.timeline_min_time = *minmax.first;
+        cache.timeline_max_time = std::max(default_max_time, *minmax.second);
+    }
+    for (const auto& step : steps) {
+        if (step.start_camera_frame >= 0) {
+            cache.timeline_min_time =
+                std::min(cache.timeline_min_time,
+                         frameToTimelineTime(step.start_camera_frame,
+                                             context.video_fps));
+        }
+        if (step.end_camera_frame >= 0) {
+            cache.timeline_max_time =
+                std::max(cache.timeline_max_time,
+                         frameToTimelineTime(step.end_camera_frame + 1,
+                                             context.video_fps));
+        }
+    }
+    if (cache.timeline_max_time <= cache.timeline_min_time) {
+        cache.timeline_max_time = cache.timeline_min_time + 0.5;
+    }
+
+    cache.timeline_signature = timeline.size() + steps.size() * 65537u;
+    if (!cache.display_frames.empty()) {
+        auto signature_value = [](int32_t frame) -> size_t {
+            return static_cast<size_t>(std::max(frame, 0));
+        };
+        cache.timeline_signature =
+            cache.timeline_signature * 1315423911u +
+            signature_value(cache.display_frames.front());
+        cache.timeline_signature =
+            cache.timeline_signature * 2654435761u +
+            signature_value(cache.display_frames.back());
+    }
+
+    cache.rebuild_ms =
+        durationMs(std::chrono::steady_clock::now() - rebuild_start);
+    cache.valid = true;
+
+    std::cout << "  [StimulusTimelineCache] rebuilt events="
+              << cache.timeline_count << ", steps=" << cache.step_count
+              << ", types=" << cache.type_series.size()
+              << ", missing_camera_ids=" << cache.missing_camera_count
+              << ", fps=" << cache.video_fps
+              << ", rebuild_ms=" << cache.rebuild_ms << std::endl;
+    return cache;
+}
+
 }  // namespace
 
 StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
@@ -172,17 +384,8 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
         return result;
     }
 
-    std::unordered_map<int32_t, std::string> event_type_labels;
-    for (const auto& evt : timeline) {
-        if (event_type_labels.find(evt.event_type_id) == event_type_labels.end()) {
-            event_type_labels[evt.event_type_id] =
-                stimulusEventTypeLabel(evt.label);
-            if (!state.filter_initialized) {
-                state.event_type_filter[evt.event_type_id] = true;
-            }
-        }
-    }
-    state.filter_initialized = true;
+    const auto& cache =
+        prepareStimulusTimelineCache(context, state, timeline, steps);
 
     if (state.selected_event_idx >= static_cast<int>(timeline.size())) {
         state.selected_event_idx = -1;
@@ -251,79 +454,6 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
         ImGui::TextUnformatted("Canonical stimulus steps unavailable.");
     }
 
-    auto resolveTimelineTargetFrame =
-        [&](const ZarrDetectionLoader::StimulusEventSummary& evt) -> int32_t {
-        if (evt.camera_frame_id >= 0) {
-            return evt.camera_frame_id;
-        }
-        if (evt.stimulus_frame_num >= 0) {
-            if (auto mapped = context.zarr_loader.getCameraFrameForStimulusFrame(
-                    evt.stimulus_frame_num, true)) {
-                return *mapped;
-            }
-        }
-        return evt.stimulus_frame_num;
-    };
-
-    std::vector<double> x_values(timeline.size());
-    std::vector<double> y_values(timeline.size(), 0.0);
-    std::vector<int32_t> display_frames(timeline.size());
-    for (size_t i = 0; i < timeline.size(); ++i) {
-        const auto& evt = timeline[i];
-        int32_t frame = resolveTimelineTargetFrame(evt);
-        display_frames[i] = frame;
-        int32_t clamped = frame >= 0 ? frame : 0;
-        x_values[i] = (context.video_fps > 0.0)
-                          ? static_cast<double>(clamped) / context.video_fps
-                          : static_cast<double>(clamped);
-    }
-
-    size_t timeline_signature = timeline.size() + steps.size() * 65537u;
-    if (!timeline.empty()) {
-        auto signature_value = [&](int32_t frame) -> size_t {
-            return static_cast<size_t>(std::max(frame, 0));
-        };
-        timeline_signature = timeline_signature * 1315423911u +
-                             signature_value(display_frames.front());
-        timeline_signature = timeline_signature * 2654435761u +
-                             signature_value(display_frames.back());
-    }
-
-    double default_max_time =
-        (context.video_fps > 0.0)
-            ? static_cast<double>(
-                  std::max<size_t>(1, context.zarr_loader.getTotalFrames())) /
-                  context.video_fps
-            : static_cast<double>(
-                  std::max<size_t>(1, context.zarr_loader.getTotalFrames()));
-    for (int32_t frame : display_frames) {
-        if (frame >= 0) {
-            double candidate =
-                (context.video_fps > 0.0)
-                    ? static_cast<double>(frame + 1) / context.video_fps
-                    : static_cast<double>(frame + 1);
-            default_max_time = std::max(default_max_time, candidate);
-        }
-    }
-    for (const auto& step : steps) {
-        if (step.start_camera_frame >= 0) {
-            const double candidate =
-                (context.video_fps > 0.0)
-                    ? static_cast<double>(step.start_camera_frame) /
-                          context.video_fps
-                    : static_cast<double>(step.start_camera_frame);
-            default_max_time = std::max(default_max_time, candidate);
-        }
-        if (step.end_camera_frame >= 0) {
-            const double candidate =
-                (context.video_fps > 0.0)
-                    ? static_cast<double>(step.end_camera_frame + 1) /
-                          context.video_fps
-                    : static_cast<double>(step.end_camera_frame + 1);
-            default_max_time = std::max(default_max_time, candidate);
-        }
-    }
-
     ImGui::Spacing();
     ImGui::Checkbox("Scrolling Window (±s)##stimulus",
                     &context.scroll_state.enabled);
@@ -360,38 +490,12 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
                       context.video_fps
                 : static_cast<double>(context.current_frame_num);
 
-        double timeline_min_time = 0.0;
-        double timeline_max_time = default_max_time;
-        if (!x_values.empty()) {
-            auto minmax = std::minmax_element(x_values.begin(), x_values.end());
-            timeline_min_time = *minmax.first;
-            timeline_max_time = std::max(default_max_time, *minmax.second);
-        }
-        for (const auto& step : steps) {
-            if (step.start_camera_frame >= 0) {
-                const double x =
-                    (context.video_fps > 0.0)
-                        ? static_cast<double>(step.start_camera_frame) /
-                              context.video_fps
-                        : static_cast<double>(step.start_camera_frame);
-                timeline_min_time = std::min(timeline_min_time, x);
-            }
-            if (step.end_camera_frame >= 0) {
-                const double x =
-                    (context.video_fps > 0.0)
-                        ? static_cast<double>(step.end_camera_frame + 1) /
-                              context.video_fps
-                        : static_cast<double>(step.end_camera_frame + 1);
-                timeline_max_time = std::max(timeline_max_time, x);
-            }
-        }
-        if (timeline_max_time <= timeline_min_time) {
-            timeline_max_time = timeline_min_time + 0.5;
-        }
+        const double timeline_min_time = cache.timeline_min_time;
+        const double timeline_max_time = cache.timeline_max_time;
 
         bool reset_limits =
             (!context.scroll_state.enabled && context.scroll_state.prev_enabled) ||
-            (timeline_signature != state.cached_timeline_signature);
+            (cache.timeline_signature != state.cached_timeline_signature);
 
         if (context.scroll_state.enabled && current_time >= 0.0 &&
             timeline_max_time > timeline_min_time) {
@@ -399,7 +503,7 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
                 0.1f, context.scroll_state.window_half_span_s));
             double window_min = current_time - half_span;
             double window_max = current_time + half_span;
-            if (!x_values.empty()) {
+            if (!cache.x_values.empty()) {
                 window_min = std::max(window_min, timeline_min_time);
                 window_max = std::min(window_max, timeline_max_time);
             } else {
@@ -420,13 +524,13 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
                                     window_min,
                                     window_max,
                                     ImGuiCond_Always);
-            state.cached_timeline_signature = timeline_signature;
+            state.cached_timeline_signature = cache.timeline_signature;
         } else if (reset_limits) {
             ImPlot::SetupAxisLimits(ImAxis_X1,
                                     timeline_min_time,
                                     timeline_max_time,
                                     ImGuiCond_Always);
-            state.cached_timeline_signature = timeline_signature;
+            state.cached_timeline_signature = cache.timeline_signature;
         }
 
         ImDrawList* draw_list = ImPlot::GetPlotDrawList();
@@ -461,31 +565,22 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
             }
         }
 
-        for (const auto& [event_type_id, type_label] : event_type_labels) {
-            if (!state.event_type_filter[event_type_id]) {
+        for (const auto& series : cache.type_series) {
+            if (!state.event_type_filter[series.event_type_id]) {
                 continue;
             }
 
-            std::vector<double> type_x_values;
-            std::vector<double> type_y_values;
-            for (size_t i = 0; i < timeline.size(); ++i) {
-                if (timeline[i].event_type_id == event_type_id) {
-                    type_x_values.push_back(x_values[i]);
-                    type_y_values.push_back(y_values[i]);
-                }
-            }
-
-            if (!type_x_values.empty()) {
-                ImVec4 color = getStimulusEventTypeColor(event_type_id);
+            if (!series.x_values.empty()) {
+                ImVec4 color = getStimulusEventTypeColor(series.event_type_id);
                 ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle,
                                            6.0f,
                                            color,
                                            1.5f,
                                            ImVec4(0, 0, 0, 0));
-                ImPlot::PlotScatter(type_label.c_str(),
-                                    type_x_values.data(),
-                                    type_y_values.data(),
-                                    static_cast<int>(type_x_values.size()));
+                ImPlot::PlotScatter(series.type_label.c_str(),
+                                    series.x_values.data(),
+                                    series.y_values.data(),
+                                    static_cast<int>(series.x_values.size()));
             }
         }
 
@@ -499,9 +594,10 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
         if (ImPlot::IsPlotHovered()) {
             ImVec2 mouse_pos = ImGui::GetIO().MousePos;
             float best_distance = kSelectionRadiusPx;
-            for (size_t i = 0; i < x_values.size(); ++i) {
+            for (size_t i = 0; i < cache.x_values.size(); ++i) {
                 ImVec2 event_pixels =
-                    ImPlot::PlotToPixels(ImPlotPoint(x_values[i], y_values[i]));
+                    ImPlot::PlotToPixels(
+                        ImPlotPoint(cache.x_values[i], cache.y_values[i]));
                 float dx = mouse_pos.x - event_pixels.x;
                 float dy = mouse_pos.y - event_pixels.y;
                 float distance = std::sqrt(dx * dx + dy * dy);
@@ -514,7 +610,8 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
             if (hovered_event_idx != -1 &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 state.selected_event_idx = hovered_event_idx;
-                const int target_frame = display_frames[hovered_event_idx];
+                const int target_frame =
+                    cache.display_frames[hovered_event_idx];
                 if (target_frame >= 0) {
                     result.seek_target_frame = target_frame;
                 }
@@ -523,11 +620,12 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
 
         if (hovered_event_idx != -1) {
             const auto& hovered_evt = timeline[hovered_event_idx];
-            const int32_t resolved_frame = display_frames[hovered_event_idx];
+            const int32_t resolved_frame =
+                cache.display_frames[hovered_event_idx];
             const int32_t camera_frame = hovered_evt.camera_frame_id;
             const int32_t stim_frame = hovered_evt.stimulus_frame_num;
             if (resolved_frame >= 0) {
-                double event_time = x_values[hovered_event_idx];
+                double event_time = cache.x_values[hovered_event_idx];
                 if (camera_frame >= 0 && camera_frame != resolved_frame) {
                     ImGui::SetTooltip(
                         "Camera Frame %d (resolved)\nEvent Camera Frame %d\nStimulus Frame %d\nTime %.3f s\n%s",
@@ -552,15 +650,15 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
             } else {
                 ImGui::SetTooltip("Frame %d\nTime %.3f s\n%s",
                                   std::max(stim_frame, 0),
-                                  x_values[hovered_event_idx],
+                                  cache.x_values[hovered_event_idx],
                                   hovered_evt.label.c_str());
             }
         }
 
         if (state.selected_event_idx >= 0 &&
-            state.selected_event_idx < static_cast<int>(x_values.size())) {
-            double selected_x = x_values[state.selected_event_idx];
-            double selected_y = y_values[state.selected_event_idx];
+            state.selected_event_idx < static_cast<int>(cache.x_values.size())) {
+            double selected_x = cache.x_values[state.selected_event_idx];
+            double selected_y = cache.y_values[state.selected_event_idx];
             ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond,
                                        9.0f,
                                        ImVec4(1.0f, 0.5f, 0.2f, 1.0f),
@@ -593,7 +691,7 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
                           col_count,
                           ImGuiTableFlags_SizingStretchSame)) {
         int col_idx = 0;
-        for (const auto& [event_type_id, type_label] : event_type_labels) {
+        for (const auto& [event_type_id, type_label] : cache.event_type_labels) {
             if (col_idx % col_count == 0) {
                 ImGui::TableNextRow();
             }
@@ -620,27 +718,13 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
     ImGui::SeparatorText("Event List");
     ImGui::BeginChild("##stimulus_event_list", ImVec2(0, 200), true);
     for (size_t i = 0; i < timeline.size(); ++i) {
-        const auto& evt = timeline[i];
-        int32_t resolved_frame = display_frames[i];
-        std::ostringstream row_label;
-        if (resolved_frame >= 0) {
-            row_label << "Cam " << resolved_frame;
-            if (evt.camera_frame_id >= 0 && evt.camera_frame_id != resolved_frame) {
-                row_label << " (Event Cam " << evt.camera_frame_id << ")";
-            }
-            if (evt.stimulus_frame_num >= 0 &&
-                evt.stimulus_frame_num != resolved_frame) {
-                row_label << " (Stim " << evt.stimulus_frame_num << ")";
-            }
-        } else {
-            row_label << "Stim " << evt.stimulus_frame_num;
-        }
-        row_label << "  " << evt.label;
         ImGui::PushID(static_cast<int>(i));
         bool is_selected = (state.selected_event_idx == static_cast<int>(i));
-        if (ImGui::Selectable(row_label.str().c_str(), is_selected)) {
+        const char* row_label =
+            (i < cache.row_labels.size()) ? cache.row_labels[i].c_str() : "";
+        if (ImGui::Selectable(row_label, is_selected)) {
             state.selected_event_idx = static_cast<int>(i);
-            int target_frame = display_frames[i];
+            int target_frame = cache.display_frames[i];
             if (target_frame >= 0) {
                 result.seek_target_frame = target_frame;
             }
@@ -652,7 +736,8 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
     if (state.selected_event_idx >= 0 &&
         state.selected_event_idx < static_cast<int>(timeline.size())) {
         const auto& evt = timeline[state.selected_event_idx];
-        const int32_t resolved_frame = display_frames[state.selected_event_idx];
+        const int32_t resolved_frame =
+            cache.display_frames[state.selected_event_idx];
         ImGui::Separator();
         ImGui::Text("Selected Event:");
         if (resolved_frame >= 0) {

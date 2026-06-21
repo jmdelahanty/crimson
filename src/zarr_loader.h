@@ -514,6 +514,7 @@ struct ZarrDetectionData {
         std::string label;
     };
     std::vector<EventLogEntry> stimulus_events;
+    std::vector<std::string> stimulus_event_labels;
     std::vector<StimulusEventSummary> stimulus_event_timeline;
     size_t stimulus_event_timeline_generation = 0;
     std::unordered_map<int32_t, std::string> event_type_names;
