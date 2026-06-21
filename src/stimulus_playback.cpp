@@ -1,6 +1,9 @@
 #include "stimulus_playback.h"
 #include "debug_flags.h"
+#include "frame_slot.h"
 #include <atomic>
+#include <algorithm>
+#include <optional>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
 
@@ -72,11 +75,7 @@ void stimulus_software_decode_process(DecoderContext *dc_context,
 
         if (has_seek_request) {
             for (int i = 0; i < size_of_buffer; ++i) {
-                display_buffer[i].available_to_write = true;
-                display_buffer[i].frame_number = -1;
-                display_buffer[i].local_frame_number = -1;
-                display_buffer[i].frame_pts = -1;
-                display_buffer[i].frame_source_code = 0;
+                frameSlotReleaseForReuse(display_buffer[i]);
             }
             buffer_head = 0;
             frame_number = static_cast<int>(requested_frame);
@@ -100,11 +99,16 @@ void stimulus_software_decode_process(DecoderContext *dc_context,
             continue;
         }
 
-        while (!display_buffer[buffer_head].available_to_write &&
-               !(dc_context->stop_flag) && !seek_requested()) {
+        std::optional<FrameSlotWriteLease> write_lease;
+        while (!(dc_context->stop_flag) && !seek_requested()) {
+            write_lease = frameSlotAcquireWritable(display_buffer[buffer_head]);
+            if (write_lease.has_value()) {
+                break;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
-        if (dc_context->stop_flag || seek_requested()) {
+        if (!write_lease.has_value() || dc_context->stop_flag ||
+            seek_requested()) {
             continue;
         }
 
@@ -137,21 +141,24 @@ void stimulus_software_decode_process(DecoderContext *dc_context,
         }
 
         if (use_cpu_buffer) {
-            std::memcpy(display_buffer[buffer_head].frame, frame_rgba.data, frame_bytes);
+            std::memcpy(write_lease->frame(), frame_rgba.data, frame_bytes);
         } else {
             checkCudaStatus(
-                cudaMemcpy(display_buffer[buffer_head].frame, frame_rgba.data,
+                cudaMemcpy(write_lease->frame(), frame_rgba.data,
                            frame_bytes, cudaMemcpyHostToDevice),
                 "Stimulus software decode cudaMemcpy failed");
         }
 
-        display_buffer[buffer_head].available_to_write = false;
-        display_buffer[buffer_head].frame_number = frame_number;
-        display_buffer[buffer_head].local_frame_number = frame_number;
-        display_buffer[buffer_head].frame_pts = -1;
-        display_buffer[buffer_head].frame_source_code =
-            pending_seek_done ? 1 : 2;
-        display_buffer[buffer_head].color_matrix = ColorSpaceStandard_BT709;
+        FrameSlotMetadata metadata;
+        metadata.frame_number = frame_number;
+        metadata.local_frame_number = frame_number;
+        metadata.frame_pts = -1;
+        metadata.frame_source_code = pending_seek_done ? 1 : 2;
+        metadata.pitch_bytes = width * 4;
+        metadata.frame_bytes = frame_bytes;
+        metadata.color_matrix = ColorSpaceStandard_BT709;
+        metadata.format = PictureBufferFormat::RGBA32;
+        write_lease->publish(metadata);
         latest_decoded_frame[window_name].store(frame_number);
         dc_context->decoding_flag = true;
 
@@ -179,6 +186,7 @@ void destroyStimulusPlayback(StimulusPlayback &stim) {
     stim.demuxer.reset();
     if (stim.display_buffer) {
         for (int i = 0; i < stim.buffer_size; ++i) {
+            frameSlotDestroy(stim.display_buffer[i]);
             if (stim.display_buffer[i].frame) {
                 if (stim.use_cpu_buffer) {
                     free(stim.display_buffer[i].frame);
@@ -241,11 +249,14 @@ bool allocateStimulusBuffers(StimulusPlayback &stim) {
         stim.display_buffer[i].frame_bytes = frame_bytes;
         stim.display_buffer[i].color_matrix = ColorSpaceStandard_BT709;
         stim.display_buffer[i].format = PictureBufferFormat::RGBA32;
+        stim.display_buffer[i].frame_slot_state = nullptr;
+        frameSlotInitialize(stim.display_buffer[i]);
         if (stim.use_cpu_buffer) {
             stim.display_buffer[i].frame =
                 static_cast<unsigned char *>(malloc(frame_bytes));
             if (!stim.display_buffer[i].frame) {
-                for (int j = 0; j < i; ++j) {
+                for (int j = 0; j <= i; ++j) {
+                    frameSlotDestroy(stim.display_buffer[j]);
                     if (stim.display_buffer[j].frame) {
                         free(stim.display_buffer[j].frame);
                         stim.display_buffer[j].frame = nullptr;
@@ -263,6 +274,7 @@ bool allocateStimulusBuffers(StimulusPlayback &stim) {
                            frame_bytes);
             if (err != cudaSuccess) {
                 for (int j = 0; j <= i; ++j) {
+                    frameSlotDestroy(stim.display_buffer[j]);
                     if (stim.display_buffer[j].frame) {
                         cudaFree(stim.display_buffer[j].frame);
                         stim.display_buffer[j].frame = nullptr;
@@ -415,15 +427,15 @@ int findStimulusBuffer(const StimulusPlayback &stim,
     int best_distance = std::numeric_limits<int>::max();
     int best_frame = std::numeric_limits<int>::min();
     for (int i = 0; i < stim.buffer_size; ++i) {
-        const PictureBuffer &buf = stim.display_buffer[i];
-        if (buf.available_to_write || buf.frame_number < 0) {
+        auto metadata = frameSlotSnapshotReadable(stim.display_buffer[i]);
+        if (!metadata) {
             continue;
         }
-        if (buf.frame_number == target_frame) {
+        if (metadata->frame_number == target_frame) {
             return i;
         }
 
-        const int frame_num = buf.frame_number;
+        const int frame_num = metadata->frame_number;
         const int distance = (frame_num > target_frame)
                                  ? (frame_num - target_frame)
                                  : (target_frame - frame_num);
@@ -451,11 +463,7 @@ void releaseStimulusBufferSlot(StimulusPlayback &stim, int index) {
     if (!stim.display_buffer || index < 0 || index >= stim.buffer_size) {
         return;
     }
-    stim.display_buffer[index].available_to_write = true;
-    stim.display_buffer[index].frame_number = -1;
-    stim.display_buffer[index].local_frame_number = -1;
-    stim.display_buffer[index].frame_pts = -1;
-    stim.display_buffer[index].frame_source_code = 0;
+    frameSlotReleaseForReuse(stim.display_buffer[index]);
 }
 
 void uploadStimulusFrameToTexture(StimulusPlayback &stim, int buffer_index) {
@@ -464,16 +472,21 @@ void uploadStimulusFrameToTexture(StimulusPlayback &stim, int buffer_index) {
         return;
     }
 
-    PictureBuffer &buffer = stim.display_buffer[buffer_index];
-    if (buffer.available_to_write || !buffer.frame) {
+    auto read_lease = frameSlotAcquireReadable(stim.display_buffer[buffer_index]);
+    if (!read_lease.has_value() || !read_lease->frame()) {
         return;
     }
 
     size_t frame_bytes =
         static_cast<size_t>(stim.width) * static_cast<size_t>(stim.height) * 4;
+    const size_t copy_bytes =
+        read_lease->metadata().frame_bytes > 0
+            ? std::min(read_lease->metadata().frame_bytes, frame_bytes)
+            : frame_bytes;
     cudaMemcpyKind kind =
         stim.use_cpu_buffer ? cudaMemcpyHostToDevice : cudaMemcpyDeviceToDevice;
-    checkCudaStatus(cudaMemcpy(stim.pbo.cuda_buffer, buffer.frame, frame_bytes, kind),
+    checkCudaStatus(cudaMemcpy(stim.pbo.cuda_buffer, read_lease->frame(),
+                               copy_bytes, kind),
                     "Stimulus cudaMemcpy failed");
 
     bind_pbo(&stim.pbo.pbo);
@@ -482,6 +495,7 @@ void uploadStimulusFrameToTexture(StimulusPlayback &stim, int buffer_index) {
     unbind_pbo();
     unbind_texture();
 
+    read_lease->release();
     releaseStimulusBufferSlot(stim, buffer_index);
 }
 
@@ -491,14 +505,9 @@ void discardStimulusFramesOlderThan(StimulusPlayback &stim, int keep_threshold) 
     }
     int released = 0;
     for (int i = 0; i < stim.buffer_size; ++i) {
-        auto &buf = stim.display_buffer[i];
-        if (!buf.available_to_write && buf.frame_number >= 0 &&
-            buf.frame_number < keep_threshold) {
-            buf.available_to_write = true;
-            buf.frame_number = -1;
-            buf.local_frame_number = -1;
-            buf.frame_pts = -1;
-            buf.frame_source_code = 0;
+        auto metadata = frameSlotSnapshotReadable(stim.display_buffer[i]);
+        if (metadata && metadata->frame_number < keep_threshold) {
+            frameSlotReleaseForReuse(stim.display_buffer[i]);
             ++released;
         }
     }
@@ -514,9 +523,9 @@ int getOldestStimulusFrame(const StimulusPlayback &stim) {
     }
     int oldest = std::numeric_limits<int>::max();
     for (int i = 0; i < stim.buffer_size; ++i) {
-        const auto &buf = stim.display_buffer[i];
-        if (!buf.available_to_write && buf.frame_number >= 0) {
-            oldest = std::min(oldest, buf.frame_number);
+        auto metadata = frameSlotSnapshotReadable(stim.display_buffer[i]);
+        if (metadata) {
+            oldest = std::min(oldest, metadata->frame_number);
         }
     }
     return oldest;
@@ -528,9 +537,9 @@ int getNewestStimulusFrame(const StimulusPlayback &stim) {
     }
     int newest = -1;
     for (int i = 0; i < stim.buffer_size; ++i) {
-        const auto &buf = stim.display_buffer[i];
-        if (!buf.available_to_write && buf.frame_number >= 0) {
-            newest = std::max(newest, buf.frame_number);
+        auto metadata = frameSlotSnapshotReadable(stim.display_buffer[i]);
+        if (metadata) {
+            newest = std::max(newest, metadata->frame_number);
         }
     }
     return newest;

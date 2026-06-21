@@ -2,6 +2,7 @@
 #include "AppDecUtils.h"
 #include "global.h"
 #include "debug_flags.h"
+#include "frame_slot.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -345,11 +346,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                 //     decoder_clear_buffer_with_constant_image(display_buffer[i].frame,
                 //     3208, 2200);
                 // }
-                display_buffer[i].available_to_write = true;
-                display_buffer[i].frame_number = -1;
-                display_buffer[i].local_frame_number = -1;
-                display_buffer[i].frame_pts = -1;
-                display_buffer[i].frame_source_code = 0;
+                frameSlotResetForWrite(display_buffer[i]);
                 if (display_buffer[i].frame_bytes > 0 &&
                     display_buffer[i].frame) {
                     if (use_cpu_buffer) {
@@ -360,7 +357,6 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                                       display_buffer[i].frame_bytes));
                     }
                 }
-                display_buffer[i].color_matrix = ColorSpaceStandard_BT709;
             }
             // Flush parser/display-queue state before seek discontinuity so
             // stale pre-seek frames cannot leak into post-seek output.
@@ -526,10 +522,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                 // real frame lands in the ring buffer.
                 latest_decoded_frame[cam_name].store(-1);
             }
-            display_buffer[0].frame_number = -1;
-            display_buffer[0].local_frame_number = -1;
-            display_buffer[0].frame_pts = -1;
-            display_buffer[0].frame_source_code = 0;
+            frameSlotResetForWrite(display_buffer[0]);
             // If no frame is currently queued (or this window is not actively
             // decoding), acknowledge seek completion now.  When nFrameReturned
             // is zero there is nothing to write, so deferring would leave
@@ -618,15 +611,32 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                     const int assigned_frame_num =
                         publishFrameNumberInt(static_cast<uint64_t>(
                             local_frame_num));
-                    const PictureBufferFormat slot_format =
-                        display_buffer[buffer_head].format;
+                    const auto wait_start = std::chrono::steady_clock::now();
+                    std::optional<FrameSlotWriteLease> write_lease;
+                    while (!(dc_context->stop_flag) && !seek_requested()) {
+                        write_lease =
+                            frameSlotAcquireWritable(display_buffer[buffer_head]);
+                        if (write_lease.has_value()) {
+                            break;
+                        }
+                        // The queue is full until the GUI releases this slot.
+                        std::this_thread::sleep_for(
+                            std::chrono::milliseconds(1));
+                    }
+                    decode_wait_ms += decoder_duration_ms(
+                        std::chrono::steady_clock::now() - wait_start);
+                    if (!write_lease.has_value()) {
+                        continue;
+                    }
+
+                    PictureBuffer& writable_slot = write_lease->slot();
+                    const PictureBufferFormat slot_format = writable_slot.format;
                     const int slot_pitch =
-                        display_buffer[buffer_head].pitch_bytes > 0
-                            ? display_buffer[buffer_head].pitch_bytes
-                            : dec->GetWidth();
+                        writable_slot.pitch_bytes > 0 ? writable_slot.pitch_bytes
+                                                       : dec->GetWidth();
                     const size_t slot_frame_bytes =
-                        display_buffer[buffer_head].frame_bytes > 0
-                            ? display_buffer[buffer_head].frame_bytes
+                        writable_slot.frame_bytes > 0
+                            ? writable_slot.frame_bytes
                             : static_cast<size_t>(dec->GetFrameSize());
                     auto convert_to_rgba = [&]() {
                         const auto convert_start = std::chrono::steady_clock::now();
@@ -641,15 +651,15 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         const auto write_start = std::chrono::steady_clock::now();
                         if (use_cpu_buffer) {
                             decoder_get_image_from_gpu(
-                                pTmpImage, display_buffer[buffer_head].frame,
+                                pTmpImage, writable_slot.frame,
                                 4 * dec->GetWidth(), dec->GetHeight());
                         } else if (slot_format ==
                                    PictureBufferFormat::RGBA32) {
-                            cudaMemcpy(display_buffer[buffer_head].frame,
+                            cudaMemcpy(writable_slot.frame,
                                        (uint8_t *)pTmpImage, size_in_bytes,
                                        cudaMemcpyDeviceToDevice);
                         } else {
-                            cudaMemcpy(display_buffer[buffer_head].frame,
+                            cudaMemcpy(writable_slot.frame,
                                        pFrame, slot_frame_bytes,
                                        cudaMemcpyDeviceToDevice);
                         }
@@ -659,79 +669,34 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                     if (slot_format == PictureBufferFormat::RGBA32) {
                         convert_to_rgba();
                     }
-                    if (nFrame == 0) {
-                        write_buffered_frame();
-                        display_buffer[buffer_head].available_to_write = false;
-                        dc_context->decoding_flag = true;
-                        display_buffer[buffer_head].frame_number = assigned_frame_num;
-                        display_buffer[buffer_head].local_frame_number =
-                            local_frame_num;
-                        display_buffer[buffer_head].frame_pts = frame_timestamp;
-                        display_buffer[buffer_head].frame_source_code =
-                            pending_seek_done ? 1 : 2;
-                        display_buffer[buffer_head].pitch_bytes = slot_pitch;
-                        display_buffer[buffer_head].frame_bytes = slot_frame_bytes;
-                        display_buffer[buffer_head].color_matrix = iMatrix;
-                        latest_decoded_frame[cam_name].store(assigned_frame_num);
-                        if (pending_seek_done) {
-                            const bool marked =
-                                mark_seek_done(static_cast<uint64_t>(local_frame_num));
-                            if (pending_seek_was_accurate) {
-                                if (crimson_seek_debug_logs_enabled()) std::cout << "[SeekAccurate] cam=" << cam_name
-                                          << " request id=" << pending_seek_id
-                                          << " done_on_frame_write frame="
-                                          << assigned_frame_num
-                                          << " marked=" << (marked ? "true" : "false")
-                                          << std::endl;
-                            }
-                            pending_seek_done = false;
-                            pending_seek_was_accurate = false;
-                        }
-                    } else {
-                        const auto wait_start = std::chrono::steady_clock::now();
-                        while (
-                            !display_buffer[buffer_head].available_to_write &&
-                            !(dc_context->stop_flag) &&
-                            !seek_requested()) {
-                            // if the next frame hasn't been displayed, the
-                            // queue is full, sleep std::cout << "thread wait, "
-                            // << display_buffer[buffer_head].available_to_write
-                            // << ", " << buffer_head << ", " <<
-                            // display_buffer[buffer_head].frame_number <<
-                            // std::endl;
-                            std::this_thread::sleep_for(
-                                std::chrono::milliseconds(1));
-                        }
-                        decode_wait_ms += decoder_duration_ms(
-                            std::chrono::steady_clock::now() - wait_start);
-                        write_buffered_frame();
+                    write_buffered_frame();
 
-                        display_buffer[buffer_head].available_to_write = false;
-                        dc_context->decoding_flag = true;
-                        display_buffer[buffer_head].frame_number = assigned_frame_num;
-                        display_buffer[buffer_head].local_frame_number =
-                            local_frame_num;
-                        display_buffer[buffer_head].frame_pts = frame_timestamp;
-                        display_buffer[buffer_head].frame_source_code =
-                            pending_seek_done ? 1 : 2;
-                        display_buffer[buffer_head].pitch_bytes = slot_pitch;
-                        display_buffer[buffer_head].frame_bytes = slot_frame_bytes;
-                        display_buffer[buffer_head].color_matrix = iMatrix;
-                        latest_decoded_frame[cam_name].store(assigned_frame_num);
-                        if (pending_seek_done) {
-                            const bool marked =
-                                mark_seek_done(static_cast<uint64_t>(local_frame_num));
-                            if (pending_seek_was_accurate) {
-                                if (crimson_seek_debug_logs_enabled()) std::cout << "[SeekAccurate] cam=" << cam_name
-                                          << " request id=" << pending_seek_id
-                                          << " done_on_frame_write frame="
-                                          << assigned_frame_num
-                                          << " marked=" << (marked ? "true" : "false")
-                                          << std::endl;
-                            }
-                            pending_seek_done = false;
-                            pending_seek_was_accurate = false;
+                    FrameSlotMetadata published_metadata;
+                    published_metadata.frame_number = assigned_frame_num;
+                    published_metadata.local_frame_number = local_frame_num;
+                    published_metadata.frame_pts = frame_timestamp;
+                    published_metadata.frame_source_code =
+                        pending_seek_done ? 1 : 2;
+                    published_metadata.pitch_bytes = slot_pitch;
+                    published_metadata.frame_bytes = slot_frame_bytes;
+                    published_metadata.color_matrix = iMatrix;
+                    published_metadata.format = slot_format;
+                    write_lease->publish(published_metadata);
+                    dc_context->decoding_flag = true;
+                    latest_decoded_frame[cam_name].store(assigned_frame_num);
+                    if (pending_seek_done) {
+                        const bool marked =
+                            mark_seek_done(static_cast<uint64_t>(local_frame_num));
+                        if (pending_seek_was_accurate) {
+                            if (crimson_seek_debug_logs_enabled()) std::cout << "[SeekAccurate] cam=" << cam_name
+                                      << " request id=" << pending_seek_id
+                                      << " done_on_frame_write frame="
+                                      << assigned_frame_num
+                                      << " marked=" << (marked ? "true" : "false")
+                                      << std::endl;
                         }
+                        pending_seek_done = false;
+                        pending_seek_was_accurate = false;
                     }
                     decoder_perf->nv12_to_rgba_ms.store(decode_convert_ms);
                     decoder_perf->buffer_wait_ms.store(decode_wait_ms);

@@ -174,12 +174,33 @@ synchronization at the existing boundaries.
 
 ### 1. Make Buffer Slot State Explicit
 
-Replace plain shared `PictureBuffer` metadata with either:
+Replace plain shared `PictureBuffer` metadata with a small owner for slot
+state. The preferred shape is a `FrameSlotRing` or equivalent wrapper that owns
+the synchronization and returns short-lived read/write handles:
 
-- atomics for simple state fields, or
-- a small `FrameSlotState` guarded by a slot-level mutex, or
-- a single-producer/single-consumer ring abstraction with acquire/release
-  methods
+```text
+WriteLease lease = slots.acquireWritable()
+decoder writes pixels into lease.buffer()
+lease.publish(metadata)
+
+ReadLease lease = slots.acquireReadable(target_frame)
+GUI uploads lease.buffer() using lease.metadata()
+lease.release()
+```
+
+The important part is the acquire/publish/release contract, not the lease type
+itself. Leases are useful as RAII handles, but they should be handles for
+explicit state transitions:
+
+- `acquireWritable` reserves a slot for a decoder.
+- `publish` makes complete pixel data and metadata visible together.
+- `cancel` returns an unpublished slot after decode failure or interruption.
+- `acquireReadable` gives the GUI a stable view of a ready slot.
+- `release` marks the read handle complete.
+- `releaseForReuse` returns a displayed/history slot to the writer.
+
+This avoids making half-written metadata visible, and it gives error paths a
+different transition from successful decode.
 
 The goal is to make these operations explicit:
 
@@ -190,7 +211,22 @@ GUI acquires readable slot
 GUI releases displayed slot back to writer
 ```
 
-This does not need to change the actual frame storage buffers.
+The lease must not hold a global lock while decoding or while uploading to the
+GPU. The lock or atomic protocol should protect slot state and metadata
+publication, while the heavy pixel work continues to use the existing storage
+buffers.
+
+Current status: `FrameSlotState` and read/write leases have been introduced as
+a sidecar on `PictureBuffer`. The main camera video decoder publishes through
+`FrameSlotWriteLease`, camera presentation acquires `FrameSlotReadLease`, and
+the primary playback release paths call `frameSlotReleaseForReuse`. Remaining
+legacy paths, including image-sequence loading, stimulus playback, and assorted
+debug/inspection scans, still need migration before the old raw metadata fields
+can be treated as compatibility-only. `--playback-smoke START:END` now provides
+an app-side smoke hook that seeks, starts playback, waits for the camera
+presenter to display the end frame, and exits with pass/fail status. The
+CPU-only `frame_slot_tests` CTest target covers lease reservation,
+publish/cancel, multi-reader blocking, and a threaded publish/read/reuse loop.
 
 ### 2. Keep Mask Prefetch Owned
 
@@ -235,10 +271,10 @@ immutable or explicitly synchronized data that the GUI thread consumes.
 
 ## Suggested Refactor Sequence
 
-1. Add a `FrameSlotState` wrapper around `PictureBuffer` metadata and convert
-   one decode path.
-2. Convert the main camera decoder path to use explicit slot publish/release.
-3. Convert image loader and stimulus playback to the same slot API.
+1. Keep the `FrameSlotState` wrapper covered by `frame_slot_tests` and
+   `--playback-smoke` runs.
+2. Convert image loader and stimulus playback to the same slot API.
+3. Convert remaining debug/inspection scans to metadata snapshots.
 4. Keep the owned mask prefetch worker covered by reload/shutdown smoke tests.
 5. Add shutdown/load-unload tests or smoke tooling that exercises archive reload
    while prefetch is active.

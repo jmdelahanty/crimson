@@ -1,6 +1,7 @@
 #include "gui/stimulus_playback_windows.h"
 
 #include "debug_flags.h"
+#include "frame_slot.h"
 #include "global.h"
 #include "imgui.h"
 #include "zarr_loader.h"
@@ -193,8 +194,11 @@ StimulusPlaybackPresentationResult updateStimulusPlaybackPresentation(
             findStimulusBuffer(stimulus_player, target_stimulus_frame);
         int candidate_frame = -1;
         if (candidate_index >= 0 && stimulus_player.display_buffer) {
-            candidate_frame =
-                stimulus_player.display_buffer[candidate_index].frame_number;
+            auto metadata = frameSlotSnapshotReadable(
+                stimulus_player.display_buffer[candidate_index]);
+            if (metadata.has_value()) {
+                candidate_frame = metadata->frame_number;
+            }
         }
         if (!isStimulusFrameClose(candidate_frame, target_stimulus_frame)) {
             decoder_requested = true;
@@ -219,8 +223,12 @@ StimulusPlaybackPresentationResult updateStimulusPlaybackPresentation(
         int buffer_index =
             findStimulusBuffer(stimulus_player, target_stimulus_frame);
         if (buffer_index != -1) {
-            const int buffered_frame =
-                stimulus_player.display_buffer[buffer_index].frame_number;
+            int buffered_frame = -1;
+            auto metadata = frameSlotSnapshotReadable(
+                stimulus_player.display_buffer[buffer_index]);
+            if (metadata.has_value()) {
+                buffered_frame = metadata->frame_number;
+            }
             if (isStimulusFrameClose(buffered_frame, target_stimulus_frame)) {
                 uploadStimulusFrameToTexture(stimulus_player, buffer_index);
                 stimulus_player.last_displayed_frame = buffered_frame;
@@ -371,11 +379,12 @@ StimulusPlaybackDebugWindowsResult drawStimulusPlaybackDebugWindows(
         if (stimulus_player.display_buffer && stimulus_player.buffer_size > 0) {
             stimulus_buffer_items.reserve(stimulus_player.buffer_size);
             for (int i = 0; i < stimulus_player.buffer_size; ++i) {
-                const auto& slot = stimulus_player.display_buffer[i];
-                if (slot.available_to_write || slot.frame_number < 0) {
+                auto metadata =
+                    frameSlotSnapshotReadable(stimulus_player.display_buffer[i]);
+                if (!metadata.has_value() || metadata->frame_number < 0) {
                     continue;
                 }
-                stimulus_buffer_items.push_back({i, slot.frame_number});
+                stimulus_buffer_items.push_back({i, metadata->frame_number});
             }
         }
         std::sort(stimulus_buffer_items.begin(), stimulus_buffer_items.end(),

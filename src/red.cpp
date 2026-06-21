@@ -218,6 +218,21 @@ struct ClippedBoundarySmokeConfig {
     bool completed = false;
 };
 
+struct PlaybackSmokeConfig {
+    bool enabled = false;
+    int start_frame = -1;
+    int end_frame = -1;
+    double timeout_s = 20.0;
+    std::chrono::steady_clock::time_point start_time{};
+    bool started = false;
+    bool completed = false;
+    int presented_count = 0;
+    int last_presented_frame = -1;
+    int max_presented_frame = -1;
+    int last_presented_slot = -1;
+    int last_view_idx = -1;
+};
+
 struct ClippedTextureDumpConfig {
     bool enabled = false;
     int parent_frame = -1;
@@ -747,6 +762,7 @@ int main(int argc, char **argv) {
     double cli_frame_cap_fps = 0.0;
     bool mask_perf_log_enabled = true;
     bool cli_show_eye_masks = false;
+    PlaybackSmokeConfig playback_smoke;
     ClippedBoundarySmokeConfig clipped_boundary_smoke;
     int app_exit_code = 0;
     const std::filesystem::path argv0_path = (argc > 0) ? argv[0] : "";
@@ -881,6 +897,41 @@ int main(int argc, char **argv) {
             clipped_boundary_smoke.end_frame = end_frame;
             continue;
         }
+        if (arg == "--playback-smoke") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value for --playback-smoke"
+                          << std::endl;
+                return 1;
+            }
+            int start_frame = -1;
+            int end_frame = -1;
+            if (!parseFrameRangeArgument(argv[++i], start_frame, end_frame)) {
+                std::cerr << "Invalid --playback-smoke value; expected "
+                             "START:END with END >= START"
+                          << std::endl;
+                return 1;
+            }
+            playback_smoke.enabled = true;
+            playback_smoke.start_frame = start_frame;
+            playback_smoke.end_frame = end_frame;
+            continue;
+        }
+        if (arg == "--playback-smoke-timeout") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value for --playback-smoke-timeout"
+                          << std::endl;
+                return 1;
+            }
+            double parsed = 0.0;
+            if (!parseDoubleArgument(argv[++i], parsed) || parsed <= 0.0) {
+                std::cerr << "Invalid --playback-smoke-timeout value; "
+                             "expected a positive number of seconds"
+                          << std::endl;
+                return 1;
+            }
+            playback_smoke.timeout_s = parsed;
+            continue;
+        }
         if (arg == "--no-mask-perf-log") {
             mask_perf_log_enabled = false;
             continue;
@@ -940,6 +991,13 @@ int main(int argc, char **argv) {
                      "--frame-cap-fps; capping at 60 FPS to avoid an "
                      "uncapped render loop."
                   << std::endl;
+    }
+
+    if (playback_smoke.enabled && clipped_boundary_smoke.enabled) {
+        std::cerr << "--playback-smoke and --clipped-boundary-smoke cannot be "
+                     "used in the same run"
+                  << std::endl;
+        return 1;
     }
 
     // Mutual exclusion: --recording takes precedence over --zarr
@@ -1687,8 +1745,9 @@ int main(int argc, char **argv) {
             if (stimulus_player.display_buffer != nullptr &&
                 stimulus_player.buffer_size > 0) {
                 for (int i = 0; i < stimulus_player.buffer_size; ++i) {
-                    const auto& slot = stimulus_player.display_buffer[i];
-                    if (!slot.available_to_write && slot.frame_number >= 0) {
+                    auto metadata = frameSlotSnapshotReadable(
+                        stimulus_player.display_buffer[i]);
+                    if (metadata.has_value() && metadata->frame_number >= 0) {
                         stimulus_buffered_frames++;
                     }
                 }
@@ -1875,6 +1934,60 @@ int main(int argc, char **argv) {
                  {"summary", clipped_frame_trace_stats.summaryJson()}},
             /*force_flush=*/true);
     };
+
+    if (playback_smoke.enabled) {
+        if (!video_loaded) {
+            std::cerr << "[PlaybackSmoke] requested but no video is loaded"
+                      << std::endl;
+            return 2;
+        }
+        if (input_is_imgs) {
+            std::cerr << "[PlaybackSmoke] image-sequence input is not "
+                         "supported by this smoke"
+                      << std::endl;
+            return 2;
+        }
+        if (scene == nullptr || scene->num_cams <= 0 ||
+            scene->size_of_buffer <= 0) {
+            std::cerr << "[PlaybackSmoke] requested but camera buffers are not "
+                         "initialized"
+                      << std::endl;
+            return 2;
+        }
+        if (zarr_loaded && zarr_loader.getTotalFrames() > 0) {
+            const int max_frame =
+                static_cast<int>(std::min<size_t>(
+                    zarr_loader.getTotalFrames() - 1,
+                    static_cast<size_t>(std::numeric_limits<int>::max())));
+            if (playback_smoke.end_frame > max_frame) {
+                std::cerr << "[PlaybackSmoke] end frame "
+                          << playback_smoke.end_frame
+                          << " is outside loaded recording max frame "
+                          << max_frame << std::endl;
+                return 2;
+            }
+        }
+        playback_smoke.started = true;
+        playback_smoke.start_time = std::chrono::steady_clock::now();
+        playback_session_controller.seekToFrame(
+            playback_smoke.start_frame,
+            /*prefer_buffer_when_paused=*/false,
+            /*force_inaccurate=*/true,
+            /*skip_stimulus_hard_seek=*/true);
+        if (!ps.play_video) {
+            applyPlaybackToggleForPerf();
+        }
+        writePlaybackTraceEvent(
+            "playback_smoke_started",
+            {{"start_frame", playback_smoke.start_frame},
+             {"end_frame", playback_smoke.end_frame},
+             {"timeout_s", playback_smoke.timeout_s}},
+            playback_session_controller.getVisibleCameraIndex());
+        std::cout << "[PlaybackSmoke] started range="
+                  << playback_smoke.start_frame << "-"
+                  << playback_smoke.end_frame
+                  << " timeout_s=" << playback_smoke.timeout_s << std::endl;
+    }
 
     if (clipped_boundary_smoke.enabled) {
         if (!zarr_loaded || !zarr_loader.hasClippedCollection()) {
@@ -2193,6 +2306,53 @@ int main(int argc, char **argv) {
 
         // Poll and handle events (inputs, window resize, etc.)
         glfwPollEvents();
+        if (playback_smoke.enabled && playback_smoke.started &&
+            !playback_smoke.completed &&
+            std::chrono::duration<double>(
+                std::chrono::steady_clock::now() -
+                playback_smoke.start_time)
+                    .count() > playback_smoke.timeout_s) {
+            int latest_decoded = -1;
+            const int visible_idx =
+                playback_session_controller.getVisibleCameraIndex();
+            if (visible_idx >= 0 &&
+                visible_idx < static_cast<int>(camera_names.size())) {
+                auto latest_it =
+                    latest_decoded_frame.find(camera_names[visible_idx]);
+                if (latest_it != latest_decoded_frame.end()) {
+                    latest_decoded = latest_it->second.load();
+                }
+            }
+            std::cerr << "[PlaybackSmoke] TIMEOUT target_frame="
+                      << playback_smoke.end_frame
+                      << " current_frame=" << current_frame_num
+                      << " to_display_frame=" << ps.to_display_frame_number
+                      << " last_presented="
+                      << playback_smoke.last_presented_frame
+                      << " max_presented="
+                      << playback_smoke.max_presented_frame
+                      << " presented_count="
+                      << playback_smoke.presented_count
+                      << " latest_decoded=" << latest_decoded << std::endl;
+            writePlaybackTraceEvent(
+                "playback_smoke_timeout",
+                {{"start_frame", playback_smoke.start_frame},
+                 {"end_frame", playback_smoke.end_frame},
+                 {"current_frame", current_frame_num},
+                 {"to_display_frame", ps.to_display_frame_number},
+                 {"last_presented", playback_smoke.last_presented_frame},
+                 {"max_presented", playback_smoke.max_presented_frame},
+                 {"presented_count", playback_smoke.presented_count},
+                 {"latest_decoded", latest_decoded}},
+                visible_idx,
+                ps.to_display_frame_number,
+                -1,
+                playback_smoke.last_presented_slot,
+                playback_smoke.last_presented_frame,
+                current_frame_num);
+            app_exit_code = 3;
+            glfwSetWindowShouldClose(window->render_target, GLFW_TRUE);
+        }
         if (clipped_boundary_smoke.enabled &&
             clipped_boundary_smoke.started &&
             !clipped_boundary_smoke.completed &&
@@ -5097,6 +5257,63 @@ int main(int argc, char **argv) {
                         }
                     }
 
+                    if (playback_smoke.enabled && playback_smoke.started &&
+                        !playback_smoke.completed &&
+                        has_presented_camera_frame) {
+                        playback_smoke.last_presented_frame = presented_frame;
+                        playback_smoke.max_presented_frame =
+                            std::max(playback_smoke.max_presented_frame,
+                                     presented_frame);
+                        playback_smoke.last_presented_slot = presented_slot;
+                        playback_smoke.last_view_idx = j;
+                        ++playback_smoke.presented_count;
+                        if (presented_frame >= playback_smoke.end_frame) {
+                            playback_smoke.completed = true;
+                            const double elapsed_s =
+                                std::chrono::duration<double>(
+                                    std::chrono::steady_clock::now() -
+                                    playback_smoke.start_time)
+                                    .count();
+                            std::cout << "[PlaybackSmoke] PASS "
+                                      << "start_frame="
+                                      << playback_smoke.start_frame
+                                      << " end_frame="
+                                      << playback_smoke.end_frame
+                                      << " presented_frame="
+                                      << presented_frame
+                                      << " presented_slot="
+                                      << presented_slot
+                                      << " view_idx=" << j
+                                      << " presented_count="
+                                      << playback_smoke.presented_count
+                                      << " elapsed_s=" << elapsed_s
+                                      << std::endl;
+                            writePlaybackTraceEvent(
+                                "playback_smoke_pass",
+                                {{"start_frame",
+                                  playback_smoke.start_frame},
+                                 {"end_frame", playback_smoke.end_frame},
+                                 {"presented_frame", presented_frame},
+                                 {"presented_slot", presented_slot},
+                                 {"presented_count",
+                                  playback_smoke.presented_count},
+                                 {"elapsed_s", elapsed_s}},
+                                j,
+                                camera_view_presenter_context
+                                    .target_display_frame,
+                                camera_view_presenter_context
+                                    .preferred_paused_slot,
+                                presented_slot,
+                                presented_frame,
+                                camera_view_presenter_result
+                                    .resolved_current_frame_num,
+                                prewarm_playback_textures);
+                            app_exit_code = 0;
+                            glfwSetWindowShouldClose(window->render_target,
+                                                     GLFW_TRUE);
+                        }
+                    }
+
                     if (clipped_boundary_smoke.enabled &&
                         clipped_boundary_smoke.started &&
                         !clipped_boundary_smoke.completed &&
@@ -6190,27 +6407,19 @@ int main(int argc, char **argv) {
                             for (int slot_idx = 0;
                                  slot_idx < scene->size_of_buffer;
                                  ++slot_idx) {
-                                const auto& visible_slot =
-                                    scene->cameras[visible_idx]
-                                        .display_buffer[slot_idx];
-                                if (visible_slot.available_to_write ||
-                                    visible_slot.frame_number < 0 ||
-                                    visible_slot.frame_number >= frame_to_show) {
+                                auto visible_metadata =
+                                    frameSlotSnapshotReadable(
+                                        scene->cameras[visible_idx]
+                                            .display_buffer[slot_idx]);
+                                if (!visible_metadata ||
+                                    visible_metadata->frame_number >=
+                                        frame_to_show) {
                                     continue;
                                 }
                                 for (int j = 0; j < scene->num_cams; j++) {
-                                    scene->cameras[j]
-                                        .display_buffer[slot_idx]
-                                        .available_to_write = true;
-                                    scene->cameras[j]
-                                        .display_buffer[slot_idx]
-                                        .local_frame_number = -1;
-                                    scene->cameras[j]
-                                        .display_buffer[slot_idx]
-                                        .frame_pts = -1;
-                                    scene->cameras[j]
-                                        .display_buffer[slot_idx]
-                                        .frame_source_code = 0;
+                                    frameSlotReleaseForReuse(
+                                        scene->cameras[j]
+                                            .display_buffer[slot_idx]);
                                 }
                             }
                             if (clipped_target_slot < 0) {
@@ -6230,13 +6439,8 @@ int main(int argc, char **argv) {
                             int index =
                                 (ps.read_head + offset) % scene->size_of_buffer;
                             for (int j = 0; j < scene->num_cams; j++) {
-                                scene->cameras[j].display_buffer[index].available_to_write =
-                                    true;
-                                scene->cameras[j].display_buffer[index].local_frame_number =
-                                    -1;
-                                scene->cameras[j].display_buffer[index].frame_pts = -1;
-                                scene->cameras[j].display_buffer[index].frame_source_code =
-                                    0;
+                                frameSlotReleaseForReuse(
+                                    scene->cameras[j].display_buffer[index]);
                             }
                         }
 

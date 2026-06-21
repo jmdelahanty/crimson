@@ -241,14 +241,8 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(int parent_frame) const 
                                          *context_.label_buffer_size);
         } else {
             for (u32 i = 0; i < context_.scene->size_of_buffer; ++i) {
-                context_.scene->cameras[0].display_buffer[i].available_to_write =
-                    true;
-                context_.scene->cameras[0].display_buffer[i].frame_number = -1;
-                context_.scene->cameras[0].display_buffer[i].local_frame_number =
-                    -1;
-                context_.scene->cameras[0].display_buffer[i].frame_pts = -1;
-                context_.scene->cameras[0].display_buffer[i].frame_source_code =
-                    0;
+                frameSlotReleaseForReuse(
+                    context_.scene->cameras[0].display_buffer[i]);
             }
             context_.scene->cameras[0].last_uploaded_frame = -1;
             context_.scene->cameras[0].last_uploaded_local_frame = -1;

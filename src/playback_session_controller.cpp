@@ -1,4 +1,5 @@
 #include "playback_session_controller.h"
+#include "frame_slot.h"
 
 #include <algorithm>
 #include <chrono>
@@ -97,8 +98,9 @@ int PlaybackSessionController::countBufferedStimulusFrames() const {
     }
     int valid = 0;
     for (int i = 0; i < context_.stimulus_player->buffer_size; ++i) {
-        const auto& slot = context_.stimulus_player->display_buffer[i];
-        if (!slot.available_to_write && slot.frame_number >= 0) {
+        auto metadata =
+            frameSlotSnapshotReadable(context_.stimulus_player->display_buffer[i]);
+        if (metadata.has_value() && metadata->frame_number >= 0) {
             ++valid;
         }
     }
@@ -445,26 +447,15 @@ void PlaybackSessionController::releaseBufferedHistoryBeforeFrame(
 
     for (int slot_idx = 0; slot_idx < context_.scene->size_of_buffer;
          ++slot_idx) {
-        const auto& visible_slot =
-            context_.scene->cameras[cam_idx].display_buffer[slot_idx];
-        if (visible_slot.available_to_write || visible_slot.frame_number < 0 ||
-            visible_slot.frame_number >= frame) {
+        auto visible_metadata = frameSlotSnapshotReadable(
+            context_.scene->cameras[cam_idx].display_buffer[slot_idx]);
+        if (!visible_metadata || visible_metadata->frame_number >= frame) {
             continue;
         }
         for (int camera_idx = 0; camera_idx < context_.scene->num_cams;
              ++camera_idx) {
-            context_.scene->cameras[camera_idx]
-                .display_buffer[slot_idx]
-                .available_to_write = true;
-            context_.scene->cameras[camera_idx]
-                .display_buffer[slot_idx]
-                .local_frame_number = -1;
-            context_.scene->cameras[camera_idx]
-                .display_buffer[slot_idx]
-                .frame_pts = -1;
-            context_.scene->cameras[camera_idx]
-                .display_buffer[slot_idx]
-                .frame_source_code = 0;
+            frameSlotReleaseForReuse(
+                context_.scene->cameras[camera_idx].display_buffer[slot_idx]);
         }
     }
 }

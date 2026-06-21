@@ -24,6 +24,8 @@ enum class PictureBufferFormat {
     NV12 = 1,
 };
 
+struct FrameSlotState;
+
 struct PictureBuffer {
     unsigned char *frame;
     int frame_number;
@@ -35,6 +37,7 @@ struct PictureBuffer {
     size_t frame_bytes;
     int color_matrix;
     PictureBufferFormat format;
+    FrameSlotState *frame_slot_state;
 };
 
 struct DecoderContext {

@@ -71,6 +71,23 @@ Suggested visual assertions:
 `scripts/gui_smoke_stimulus_inset.sh` launches `redgui` against a canary Zarr
 and asserts stimulus-step/inset startup logs.
 
+`scripts/gui_smoke_playback.sh` launches `redgui` against a canary Zarr and uses
+the app-side playback hook:
+
+```bash
+./release/redgui \
+  --zarr <analysis.zarr> \
+  --playback-smoke 0:120 \
+  --playback-smoke-timeout 20 \
+  --swap-interval 0 \
+  --frame-cap-fps 120 \
+  --no-mask-perf-log
+```
+
+The app seeks to the start frame, starts playback, waits until the camera
+presenter actually displays at least the end frame, logs `[PlaybackSmoke] PASS`,
+and exits nonzero on timeout.
+
 `scripts/gui_smoke_compact_swim_bouts.sh` launches `redgui` against the feeding
 canary by default and asserts that:
 

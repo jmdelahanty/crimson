@@ -659,6 +659,24 @@ target_compile_definitions(crimson_decode_smoke PRIVATE
     CRIMSON_GIT_COMMIT="${CRIMSON_GIT_COMMIT}"
 )
 
+add_executable(frame_slot_tests
+    tools/frame_slot_tests.cpp
+    src/frame_slot.cpp
+)
+target_include_directories(frame_slot_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nvcodec
+    ${CUDA_INCLUDE_DIRS}
+    ${OpenCV_INCLUDE_DIRS}
+    ${FFMPEG_INCLUDE_DIRS}
+)
+target_link_libraries(frame_slot_tests PRIVATE
+    Threads::Threads
+)
+target_compile_features(frame_slot_tests PRIVATE cxx_std_17)
+enable_testing()
+add_test(NAME frame_slot_tests COMMAND frame_slot_tests)
+
 # --- Source Files ---
 # CUDA sources
 set(CUDA_SOURCES "")
