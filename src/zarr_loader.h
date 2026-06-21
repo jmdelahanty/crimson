@@ -948,6 +948,7 @@ public:
     const std::string& getEyeMaskWarning() const { return data_.eye_masks_warning; }
     bool eyeMasksUseRefinedSubjectMasks() const { return data_.eye_masks_from_refined_subject_masks; }
     bool eyeMasksUseTolerantMetadata() const { return data_.eye_masks_tolerant_metadata; }
+    bool warmEyeMaskCacheForFrame(size_t frame_id) const;
     const std::array<std::string, 2>& getEyeMaskChannelLabels() const {
         return data_.eye_mask_channel_labels;
     }
@@ -1526,7 +1527,9 @@ public:
     FrameDetections getRawDetections(size_t frame_id,
                                      bool use_interpolated = true,
                                      bool include_eye_masks = false,
-                                     bool include_subject_shapes = false) const;
+                                     bool include_subject_shapes = false,
+                                     bool suppress_subject_mask_smoke_log =
+                                         false) const;
 
     struct SubjectShapeQcFilterOptions {
         bool any_invalid = true;

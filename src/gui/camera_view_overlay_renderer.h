@@ -156,6 +156,14 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
     const CameraViewMaskOverlayOptions& options,
     const CameraViewSubjectMaskPreview* edit_preview = nullptr);
 
+CameraViewMaskPerfMetrics prewarmCameraViewEyeMaskOverlayTextures(
+    const ZarrDetectionLoader::FrameDetections& mask_details,
+    const std::string& smoothing_run_id,
+    const CameraViewMaskOverlayOptions& options,
+    bool prewarm_full_overlay,
+    const CameraViewActiveRoiInsetOptions* active_roi_inset_options = nullptr,
+    const CameraViewSubjectMaskPreview* edit_preview = nullptr);
+
 void drawCameraViewActiveRoiInsetOverlay(
     unsigned int camera_texture_id,
     int image_width_px,

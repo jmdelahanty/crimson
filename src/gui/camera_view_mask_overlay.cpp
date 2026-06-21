@@ -355,6 +355,187 @@ bool previewReplacesComponent(
            preview->binary_mask != nullptr;
 }
 
+bool validMaskForTexturePrewarm(
+    const ZarrDetectionLoader::FrameDetections::EyeMask& mask_info) {
+    return mask_info.valid && mask_info.roi_index >= 0 && mask_info.rows > 0 &&
+           mask_info.cols > 0 && mask_info.roi_width > 0.0f &&
+           mask_info.roi_height > 0.0f && std::isfinite(mask_info.offset_x) &&
+           std::isfinite(mask_info.offset_y);
+}
+
+void prewarmMaskTexturePixels(const std::string& smoothing_run_id,
+                              const ZarrDetectionLoader::FrameDetections::
+                                  EyeMask& mask_info,
+                              const std::string& layer_key,
+                              const std::vector<uint32_t>& pixels,
+                              const ImVec4& color,
+                              CameraViewMaskPerfMetrics& metrics) {
+    if (pixels.empty()) {
+        return;
+    }
+    const GLuint texture_id = eyeMaskTextureCache().getOrCreatePixels(
+        smoothing_run_id,
+        mask_info.roi_index,
+        layer_key,
+        mask_info.rows,
+        mask_info.cols,
+        pixels,
+        color,
+        &metrics);
+    if (texture_id != 0) {
+        metrics.component_fill_count++;
+    }
+}
+
+void prewarmFullMaskTextures(
+    const ZarrDetectionLoader::FrameDetections::EyeMask& mask_info,
+    const std::string& smoothing_run_id,
+    const CameraViewMaskOverlayOptions& options,
+    const CameraViewSubjectMaskPreview* edit_preview,
+    CameraViewMaskPerfMetrics& metrics) {
+    for (const auto& component : mask_info.subject_mask_components) {
+        if (!component.valid || component.pixel_indices.empty() ||
+            isEyeMaskComponent(component.label) ||
+            !shouldDrawSubjectMaskComponent(component.label, options) ||
+            previewReplacesComponent(edit_preview, mask_info, component.label)) {
+            continue;
+        }
+        const std::string layer_key =
+            "component:" + component.label + ":" +
+            std::to_string(component.channel_index);
+        prewarmMaskTexturePixels(smoothing_run_id,
+                                 mask_info,
+                                 layer_key,
+                                 component.pixel_indices,
+                                 subjectMaskComponentColor(component.label),
+                                 metrics);
+    }
+
+    for (int eye = 0; eye < 2; ++eye) {
+        if ((eye == 0 && !options.show_eye_left) ||
+            (eye == 1 && !options.show_eye_right)) {
+            continue;
+        }
+        const std::string eye_label = eye == 0 ? "eye_left" : "eye_right";
+        if (previewReplacesComponent(edit_preview, mask_info, eye_label)) {
+            continue;
+        }
+        ImVec4 base_color = eye == 0
+                                ? ImVec4(0.2f, 0.6f, 1.0f, 0.35f)
+                                : ImVec4(1.0f, 0.3f, 0.6f, 0.35f);
+        const GLuint texture_id = eyeMaskTextureCache().getOrCreate(
+            smoothing_run_id, mask_info, eye, base_color, &metrics);
+        if (texture_id != 0) {
+            metrics.component_fill_count++;
+        }
+    }
+
+    if (edit_preview != nullptr && edit_preview->active &&
+        edit_preview->dirty && edit_preview->roi_index == mask_info.roi_index &&
+        !edit_preview->component_name.empty() &&
+        shouldDrawSubjectMaskComponent(edit_preview->component_name, options)) {
+        std::vector<uint32_t> pixels = previewPixelIndices(*edit_preview);
+        ImVec4 preview_color =
+            subjectMaskComponentColor(edit_preview->component_name);
+        preview_color.w = std::max(preview_color.w, 0.62f);
+        const std::string layer_key =
+            "preview:" + edit_preview->component_name + ":" +
+            std::to_string(edit_preview->revision);
+        prewarmMaskTexturePixels(smoothing_run_id,
+                                 mask_info,
+                                 layer_key,
+                                 pixels,
+                                 preview_color,
+                                 metrics);
+    }
+}
+
+void prewarmInsetMaskTextures(
+    const ZarrDetectionLoader::FrameDetections::EyeMask& mask_info,
+    const std::string& smoothing_run_id,
+    const CameraViewMaskOverlayOptions& mask_options,
+    const CameraViewActiveRoiInsetOptions& inset_options,
+    const CameraViewSubjectMaskPreview* edit_preview,
+    CameraViewMaskPerfMetrics& metrics) {
+    if (!inset_options.show_inset) {
+        return;
+    }
+    auto find_component = [&](const std::string& label) {
+        return std::find_if(
+            mask_info.subject_mask_components.begin(),
+            mask_info.subject_mask_components.end(),
+            [&](const ZarrDetectionLoader::FrameDetections::EyeMask::
+                    SubjectMaskComponent& component) {
+                return component.label == label;
+            });
+    };
+    auto component_visible = [&](const std::string& label) {
+        if (!inset_options.mirror_enabled_overlays &&
+            !mask_options.highlighted_component_name.empty()) {
+            return label == mask_options.highlighted_component_name;
+        }
+        return shouldDrawSubjectMaskComponent(label, mask_options);
+    };
+    auto prewarm_pixels = [&](const std::string& label,
+                              const std::vector<uint32_t>& pixels,
+                              const std::string& layer_suffix,
+                              float min_alpha) {
+        if (pixels.empty()) {
+            return;
+        }
+        ImVec4 overlay_color = subjectMaskComponentColor(label);
+        overlay_color.w = std::max(overlay_color.w, min_alpha);
+        prewarmMaskTexturePixels(smoothing_run_id,
+                                 mask_info,
+                                 "roi_inset:" + label + ":" + layer_suffix,
+                                 pixels,
+                                 overlay_color,
+                                 metrics);
+    };
+
+    constexpr const char* kDrawOrder[] = {
+        "subject_body",
+        "swim_bladder",
+        "eye_left",
+        "eye_right",
+    };
+    for (const char* label_cstr : kDrawOrder) {
+        const std::string label(label_cstr);
+        if (!component_visible(label)) {
+            continue;
+        }
+        const auto component_it = find_component(label);
+        const bool component_present =
+            component_it != mask_info.subject_mask_components.end() &&
+            component_it->valid;
+        if (previewReplacesComponent(edit_preview, mask_info, label) &&
+            edit_preview != nullptr) {
+            const std::vector<uint32_t> preview_pixels =
+                previewPixelIndices(*edit_preview);
+            prewarm_pixels(label,
+                           preview_pixels,
+                           "preview:" +
+                               std::to_string(edit_preview->revision),
+                           0.70f);
+            continue;
+        }
+        if (component_present) {
+            prewarm_pixels(label,
+                           component_it->pixel_indices,
+                           "component:" +
+                               std::to_string(component_it->channel_index),
+                           0.46f);
+            continue;
+        }
+        if (label == "eye_left" && !mask_info.pixel_indices[0].empty()) {
+            prewarm_pixels(label, mask_info.pixel_indices[0], "legacy_eye:0", 0.46f);
+        } else if (label == "eye_right" &&
+                   !mask_info.pixel_indices[1].empty()) {
+            prewarm_pixels(label, mask_info.pixel_indices[1], "legacy_eye:1", 0.46f);
+        }
+    }
+}
+
 }  // namespace
 
 const char* cameraViewMaskOverlayModeLabel(CameraViewMaskOverlayMode mode) {
@@ -946,6 +1127,68 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
                 ImVec2(6.0f, 6.0f));
             metrics.selected_highlight_drawn = true;
         }
+    }
+    return finish();
+}
+
+CameraViewMaskPerfMetrics prewarmCameraViewEyeMaskOverlayTextures(
+    const ZarrDetectionLoader::FrameDetections& mask_details,
+    const std::string& smoothing_run_id,
+    const CameraViewMaskOverlayOptions& options,
+    bool prewarm_full_overlay,
+    const CameraViewActiveRoiInsetOptions* active_roi_inset_options,
+    const CameraViewSubjectMaskPreview* edit_preview) {
+    CameraViewMaskPerfMetrics metrics;
+    metrics.attempted = true;
+    metrics.mode = cameraViewMaskOverlayModeLabel(options.mode);
+    const auto total_start = std::chrono::steady_clock::now();
+
+    auto finish = [&]() -> CameraViewMaskPerfMetrics {
+        metrics.total_draw_ms +=
+            durationMs(std::chrono::steady_clock::now() - total_start);
+        return metrics;
+    };
+
+    resetCameraViewEyeAngleOverlaySmoothing(smoothing_run_id);
+    eyeMaskTextureCache().resetIfSourceChanged(smoothing_run_id);
+    if (!mask_details.includes_eye_masks || mask_details.eye_masks.empty()) {
+        return finish();
+    }
+
+    metrics.roi_count = static_cast<int>(mask_details.eye_masks.size());
+    const bool prewarm_inset =
+        active_roi_inset_options != nullptr &&
+        active_roi_inset_options->show_inset;
+    int32_t inset_roi_index = options.highlighted_roi_index;
+    const ZarrDetectionLoader::FrameDetections::EyeMask* inset_mask = nullptr;
+
+    for (const auto& mask_info : mask_details.eye_masks) {
+        if (!validMaskForTexturePrewarm(mask_info)) {
+            continue;
+        }
+        metrics.visible_roi_count++;
+        if (prewarm_full_overlay) {
+            prewarmFullMaskTextures(mask_info,
+                                    smoothing_run_id,
+                                    options,
+                                    edit_preview,
+                                    metrics);
+        }
+        if (!prewarm_inset || inset_mask != nullptr) {
+            continue;
+        }
+        if (inset_roi_index < 0 || mask_info.roi_index == inset_roi_index) {
+            inset_mask = &mask_info;
+        }
+    }
+
+    if (prewarm_inset && inset_mask != nullptr) {
+        prewarmInsetMaskTextures(*inset_mask,
+                                 smoothing_run_id,
+                                 options,
+                                 *active_roi_inset_options,
+                                 edit_preview,
+                                 metrics);
     }
     return finish();
 }

@@ -86,6 +86,21 @@ void frameSlotReleaseForReuse(PictureBuffer& slot) {
     frameSlotResetForWrite(slot);
 }
 
+bool frameSlotTryReleaseForReuse(PictureBuffer& slot,
+                                  int expected_frame_number) {
+    FrameSlotState* state = ensureState(slot);
+    std::lock_guard<std::mutex> lock(state->mutex);
+    if (slot.available_to_write || slot.frame_number < 0 ||
+        state->phase != FrameSlotPhase::Ready || state->active_readers > 0 ||
+        slot.frame_number != expected_frame_number) {
+        return false;
+    }
+    clearPublishedMetadata(slot);
+    slot.available_to_write = true;
+    state->phase = FrameSlotPhase::Writable;
+    return true;
+}
+
 bool frameSlotIsWritable(const PictureBuffer& slot) {
     FrameSlotState* state = slot.frame_slot_state;
     if (state == nullptr) {

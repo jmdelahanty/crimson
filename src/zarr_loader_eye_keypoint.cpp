@@ -4388,6 +4388,53 @@ void ZarrDetectionLoader::requestEyeMaskChunkPrefetch(size_t chunk_id) const {
     }
 }
 
+bool ZarrDetectionLoader::warmEyeMaskCacheForFrame(size_t frame_id) const {
+    if (!data_.eye_masks_loaded || data_.eye_mask_roi_count == 0) {
+        return false;
+    }
+
+    bool found_roi = false;
+    size_t roi_index = 0;
+    if (data_.eye_masks_from_refined_subject_masks &&
+        frame_id < data_.refined_subject_mask_rows_by_frame.size()) {
+        for (size_t mask_row :
+             data_.refined_subject_mask_rows_by_frame[frame_id]) {
+            if (mask_row < data_.eye_mask_roi_count) {
+                roi_index = mask_row;
+                found_roi = true;
+                break;
+            }
+        }
+    }
+
+    if (!found_roi && frame_id + 1 < data_.frame_offsets.size()) {
+        const size_t start = data_.frame_offsets[frame_id];
+        const size_t end = data_.frame_offsets[frame_id + 1];
+        for (size_t detection_idx = start; detection_idx < end;
+             ++detection_idx) {
+            if (detection_idx >= data_.mask_roi_indices.size()) {
+                break;
+            }
+            const int32_t candidate_roi = data_.mask_roi_indices[detection_idx];
+            if (candidate_roi >= 0 &&
+                static_cast<size_t>(candidate_roi) < data_.eye_mask_roi_count) {
+                roi_index = static_cast<size_t>(candidate_roi);
+                found_roi = true;
+                break;
+            }
+        }
+    }
+
+    if (!found_roi) {
+        return false;
+    }
+
+    if (data_.eye_mask_chunk_rows == 0) {
+        return false;
+    }
+    return ensureEyeMaskChunk(roi_index / data_.eye_mask_chunk_rows);
+}
+
 bool ZarrDetectionLoader::readRefinedSubjectMaskComponentRow(
     size_t roi_index,
     const std::string& component_name,

@@ -1189,7 +1189,8 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
     size_t frame_id,
     bool use_interpolated,
     bool include_eye_masks,
-    bool include_subject_shapes) const {
+    bool include_subject_shapes,
+    bool suppress_subject_mask_smoke_log) const {
     
     FrameDetections result;
     result.frame_id = frame_id;
@@ -1594,6 +1595,7 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
             const auto& mask_rows =
                 data_.refined_subject_mask_rows_by_frame[frame_id];
             const bool should_smoke_log =
+                !suppress_subject_mask_smoke_log &&
                 !mask_rows.empty() &&
                 data_.refined_subject_mask_smoke_logged_frames.size() < 4 &&
                 data_.refined_subject_mask_smoke_logged_frames

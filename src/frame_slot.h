@@ -21,6 +21,8 @@ void frameSlotInitialize(PictureBuffer& slot);
 void frameSlotDestroy(PictureBuffer& slot);
 void frameSlotResetForWrite(PictureBuffer& slot);
 void frameSlotReleaseForReuse(PictureBuffer& slot);
+bool frameSlotTryReleaseForReuse(PictureBuffer& slot,
+                                  int expected_frame_number);
 bool frameSlotIsWritable(const PictureBuffer& slot);
 std::optional<FrameSlotMetadata> frameSlotSnapshotReadable(
     const PictureBuffer& slot);
