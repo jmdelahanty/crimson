@@ -1204,6 +1204,7 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
     std::string events_base = run_base + "events/";
     bool has_column_layout = arrayExists(store, events_base + "stimulus_frame_num");
     bool has_structured_layout = arrayExists(store, run_base + "events");
+    clearStimulusEventTimelineCache();
 
     std::cout << "  [StimulusEvents] Inspecting run '" << run_base << "'" << std::endl;
     std::cout << "    events_base='" << events_base << "'" << std::endl;
@@ -1316,6 +1317,9 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
             std::cout << "  No stimulus events found for run '" << run_base
                       << "'" << std::endl;
         }
+        rebuildStimulusEventTimelineCache(has_frame_mapping
+                                              ? &stimulus_to_camera_map
+                                              : nullptr);
         return data_.has_stimulus_events;
     };
 
@@ -1360,6 +1364,7 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
             data_.stimulus_events_by_frame.clear();
             data_.stimulus_events_by_camera_frame.clear();
             data_.has_stimulus_events = false;
+            clearStimulusEventTimelineCache();
             return true;
         }
 
@@ -1439,6 +1444,7 @@ bool ZarrDetectionLoader::loadStimulusEventsForRun(const ts::kvstore::KvStore& s
         data_.stimulus_events_by_frame.clear();
         data_.stimulus_events_by_camera_frame.clear();
         data_.has_stimulus_events = false;
+        clearStimulusEventTimelineCache();
         std::cout << "  [StimulusEvents] Structured layout absent and column layout failed"
                   << std::endl;
         return false;
@@ -2408,6 +2414,59 @@ std::string ZarrDetectionLoader::formatStimulusEvent(
     return label;
 }
 
+void ZarrDetectionLoader::clearStimulusEventTimelineCache() {
+    data_.stimulus_event_timeline.clear();
+    ++data_.stimulus_event_timeline_generation;
+}
+
+void ZarrDetectionLoader::rebuildStimulusEventTimelineCache(
+    const std::vector<int32_t>* stimulus_to_camera_map) {
+    data_.stimulus_event_timeline.clear();
+    if (!data_.has_stimulus_events) {
+        ++data_.stimulus_event_timeline_generation;
+        return;
+    }
+
+    data_.stimulus_event_timeline.reserve(data_.stimulus_events.size());
+    for (size_t idx = 0; idx < data_.stimulus_events.size(); ++idx) {
+        const auto& entry = data_.stimulus_events[idx];
+        int32_t camera_frame = entry.camera_frame_id;
+        if (camera_frame < 0 && stimulus_to_camera_map != nullptr &&
+            entry.stimulus_frame_num >= 0) {
+            const auto frame_index =
+                static_cast<size_t>(entry.stimulus_frame_num);
+            if (frame_index < stimulus_to_camera_map->size()) {
+                camera_frame = (*stimulus_to_camera_map)[frame_index];
+            }
+        }
+
+        ZarrDetectionData::StimulusEventSummary summary;
+        summary.source_event_index = idx;
+        summary.stimulus_frame_num = entry.stimulus_frame_num;
+        summary.camera_frame_id = camera_frame;
+        summary.event_type_id = entry.event_type_id;
+        summary.label = formatStimulusEvent(entry);
+        data_.stimulus_event_timeline.push_back(std::move(summary));
+    }
+
+    std::sort(data_.stimulus_event_timeline.begin(),
+              data_.stimulus_event_timeline.end(),
+              [](const ZarrDetectionData::StimulusEventSummary& a,
+                 const ZarrDetectionData::StimulusEventSummary& b) {
+                  if (a.stimulus_frame_num != b.stimulus_frame_num) {
+                      return a.stimulus_frame_num < b.stimulus_frame_num;
+                  }
+                  if (a.camera_frame_id != b.camera_frame_id) {
+                      return a.camera_frame_id < b.camera_frame_id;
+                  }
+                  if (a.event_type_id != b.event_type_id) {
+                      return a.event_type_id < b.event_type_id;
+                  }
+                  return a.source_event_index < b.source_event_index;
+              });
+    ++data_.stimulus_event_timeline_generation;
+}
+
 std::vector<std::string> ZarrDetectionLoader::getStimulusEventsForFrame(
     size_t frame_id) const {
     std::vector<std::string> result;
@@ -2436,32 +2495,9 @@ std::vector<std::string> ZarrDetectionLoader::getStimulusEventsForFrame(
     return result;
 }
 
-std::vector<ZarrDetectionLoader::StimulusEventSummary>
+const std::vector<ZarrDetectionLoader::StimulusEventSummary>&
 ZarrDetectionLoader::getStimulusEventTimeline() const {
-    std::vector<StimulusEventSummary> result;
-    if (!data_.has_stimulus_events) {
-        return result;
-    }
-
-    result.reserve(data_.stimulus_events.size());
-    for (const auto& entry : data_.stimulus_events) {
-        StimulusEventSummary summary;
-        summary.stimulus_frame_num = entry.stimulus_frame_num;
-        summary.camera_frame_id = entry.camera_frame_id;
-        summary.event_type_id = entry.event_type_id;
-        summary.label = formatStimulusEvent(entry);
-        result.push_back(std::move(summary));
-    }
-
-    std::sort(result.begin(), result.end(),
-              [](const StimulusEventSummary& a,
-                 const StimulusEventSummary& b) {
-                  if (a.stimulus_frame_num == b.stimulus_frame_num) {
-                      return a.event_type_id < b.event_type_id;
-                  }
-                  return a.stimulus_frame_num < b.stimulus_frame_num;
-              });
-    return result;
+    return data_.stimulus_event_timeline;
 }
 
 const ZarrDetectionData::StimulusStep*

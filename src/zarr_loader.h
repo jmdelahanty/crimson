@@ -235,9 +235,32 @@ struct ZarrDetectionData {
         "eye_right"};
     std::vector<std::string> refined_subject_mask_labels;
     std::vector<uint8_t> refined_subject_mask_available_channels;
+    std::string refined_subject_mask_label_schema_id;
+    std::string refined_subject_mask_source_crop_run;
+    std::vector<int32_t> refined_subject_mask_frame_indices;
+    std::vector<int64_t> refined_subject_mask_source_crop_row_ids;
+    std::vector<float> refined_subject_mask_offset_x;
+    std::vector<float> refined_subject_mask_offset_y;
+    std::vector<float> refined_subject_mask_roi_width_px;
+    std::vector<float> refined_subject_mask_roi_height_px;
+    std::vector<int32_t> refined_subject_mask_source_crop_frame_indices;
+    std::vector<uint8_t> refined_subject_mask_crop_frame_match;
+    std::vector<std::vector<size_t>> refined_subject_mask_rows_by_frame;
+    bool refined_subject_mask_row_position_fallback = false;
+    bool refined_subject_mask_dense_masks_used = false;
+    bool refined_subject_mask_rle_masks_used = false;
+    mutable std::set<int32_t> refined_subject_mask_smoke_logged_frames;
+    mutable size_t refined_subject_mask_rle_smoke_log_count = 0;
     struct RefinedSubjectMaskComponentInfo {
         std::string label;
         size_t channel_index = std::numeric_limits<size_t>::max();
+        bool rle_available = false;
+        ts::TensorStore<uint32_t, 1> rle_counts_store;
+        size_t rle_counts_count = 0;
+        std::vector<int64_t> rle_indptr;
+        std::vector<uint8_t> rle_present;
+        std::vector<int32_t> rle_area_px;
+        std::vector<std::array<int32_t, 4>> rle_bbox_xyxy;
         bool contours_available = false;
         bool contour_attrs_compatible = false;
         std::string contour_warning;
@@ -481,7 +504,16 @@ struct ZarrDetectionData {
         std::string name_or_context;
         std::string details_json;
     };
+    struct StimulusEventSummary {
+        size_t source_event_index = std::numeric_limits<size_t>::max();
+        int32_t stimulus_frame_num = -1;
+        int32_t camera_frame_id = -1;
+        int32_t event_type_id = -1;
+        std::string label;
+    };
     std::vector<EventLogEntry> stimulus_events;
+    std::vector<StimulusEventSummary> stimulus_event_timeline;
+    size_t stimulus_event_timeline_generation = 0;
     std::unordered_map<int32_t, std::string> event_type_names;
     std::vector<std::vector<size_t>> stimulus_events_by_frame;
     std::vector<std::vector<size_t>> stimulus_events_by_camera_frame;
@@ -803,6 +835,8 @@ public:
     ZarrDetectionLoader();
     ~ZarrDetectionLoader();
     static constexpr size_t kEyeMaskChunkCacheCapacity = 3;
+    static constexpr size_t kRleEyeMaskChunkRows = 32;
+    static constexpr size_t kRleEyeMaskChunkCacheCapacity = 8;
 
     enum class DetectionDataset {
         RawDetect = 0,
@@ -822,6 +856,18 @@ public:
     }
     const std::string& getRequestedSubjectShapeRunName() const {
         return requested_subject_shape_run_name_;
+    }
+    void setRequestedRefinedSubjectMaskRunName(const std::string& run_name) {
+        requested_refined_subject_mask_run_name_ = run_name;
+    }
+    const std::string& getRequestedRefinedSubjectMaskRunName() const {
+        return requested_refined_subject_mask_run_name_;
+    }
+    void setRequestedRefinedSubjectMaskStorage(const std::string& storage) {
+        requested_refined_subject_mask_storage_ = storage;
+    }
+    const std::string& getRequestedRefinedSubjectMaskStorage() const {
+        return requested_refined_subject_mask_storage_;
     }
     void setRequestedTailKinematicsRunName(const std::string& run_name) {
         requested_tail_kinematics_run_name_ = run_name;
@@ -959,13 +1005,11 @@ public:
     const std::string& getStimulusSourceH5() const { return data_.stimulus_source_h5; }
     bool hasStimulusEvents() const { return data_.has_stimulus_events; }
     std::vector<std::string> getStimulusEventsForFrame(size_t frame_id) const;
-    struct StimulusEventSummary {
-        int32_t stimulus_frame_num = -1;
-        int32_t camera_frame_id = -1;
-        int32_t event_type_id = -1;
-        std::string label;
-    };
-    std::vector<StimulusEventSummary> getStimulusEventTimeline() const;
+    using StimulusEventSummary = ZarrDetectionData::StimulusEventSummary;
+    const std::vector<StimulusEventSummary>& getStimulusEventTimeline() const;
+    size_t getStimulusEventTimelineGeneration() const {
+        return data_.stimulus_event_timeline_generation;
+    }
     bool hasStimulusSteps() const { return data_.has_stimulus_steps; }
     const std::vector<ZarrDetectionData::StimulusStep>& getStimulusSteps()
         const {
@@ -1653,6 +1697,8 @@ private:
     ts::Context context_;
     std::string root_path_;
     std::string requested_subject_shape_run_name_;
+    std::string requested_refined_subject_mask_run_name_;
+    std::string requested_refined_subject_mask_storage_;
     std::string requested_tail_kinematics_run_name_;
     std::string requested_eye_angle_run_name_;
     std::string requested_stimulus_run_name_;
@@ -1799,6 +1845,9 @@ private:
         size_t frame_id
     ) const;
     std::string formatStimulusEvent(const ZarrDetectionData::EventLogEntry& entry) const;
+    void clearStimulusEventTimelineCache();
+    void rebuildStimulusEventTimelineCache(
+        const std::vector<int32_t>* stimulus_to_camera_map = nullptr);
 
     std::optional<int32_t> resolveStimulusMetadataIndex(
         const std::vector<int32_t>& mapping,

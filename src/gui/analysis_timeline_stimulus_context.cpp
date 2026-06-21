@@ -26,14 +26,14 @@ double frameToTimelineX(int32_t frame, double video_fps) {
 int32_t resolveStimulusEventFrame(
     const ZarrDetectionLoader& loader,
     const ZarrDetectionLoader::StimulusEventSummary& event) {
+    if (event.camera_frame_id >= 0) {
+        return event.camera_frame_id;
+    }
     if (event.stimulus_frame_num >= 0) {
         if (auto mapped = loader.getCameraFrameForStimulusFrame(
                 event.stimulus_frame_num, true)) {
             return *mapped;
         }
-    }
-    if (event.camera_frame_id >= 0) {
-        return event.camera_frame_id;
     }
     return event.stimulus_frame_num;
 }
@@ -166,7 +166,7 @@ void drawCurrentTimeMarker(double current_time) {
 void drawAnalysisTimelineStimulusContext(
     const AnalysisTimelineStimulusContextInput& context) {
     const auto& steps = context.zarr_loader.getStimulusSteps();
-    const auto events = context.zarr_loader.getStimulusEventTimeline();
+    const auto& events = context.zarr_loader.getStimulusEventTimeline();
     if (steps.empty() && events.empty()) {
         ImGui::TextDisabled("Stimulus context unavailable.");
         return;

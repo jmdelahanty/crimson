@@ -733,6 +733,8 @@ int main(int argc, char **argv) {
     std::string cli_zarr_override_path;
     std::string cli_recording_path;
     std::string cli_subject_shape_run;
+    std::string cli_refined_subject_mask_run;
+    std::string cli_refined_subject_mask_storage;
     std::string cli_tail_kinematics_run;
     std::string cli_eye_angle_run;
     std::string cli_stimulus_run;
@@ -744,6 +746,7 @@ int main(int argc, char **argv) {
     int cli_mask_perf_sample_every = 10;
     double cli_frame_cap_fps = 0.0;
     bool mask_perf_log_enabled = true;
+    bool cli_show_eye_masks = false;
     ClippedBoundarySmokeConfig clipped_boundary_smoke;
     int app_exit_code = 0;
     const std::filesystem::path argv0_path = (argc > 0) ? argv[0] : "";
@@ -774,6 +777,28 @@ int main(int argc, char **argv) {
                 return 1;
             }
             cli_subject_shape_run = argv[++i];
+            continue;
+        }
+        if (arg == "--refined-subject-mask-run") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value for --refined-subject-mask-run"
+                          << std::endl;
+                return 1;
+            }
+            cli_refined_subject_mask_run = argv[++i];
+            continue;
+        }
+        if (arg == "--refined-subject-mask-storage") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value for --refined-subject-mask-storage"
+                          << std::endl;
+                return 1;
+            }
+            cli_refined_subject_mask_storage = argv[++i];
+            continue;
+        }
+        if (arg == "--show-subject-masks" || arg == "--show-eye-masks") {
+            cli_show_eye_masks = true;
             continue;
         }
         if (arg == "--tail-kinematics-run") {
@@ -956,6 +981,14 @@ int main(int argc, char **argv) {
     if (!cli_subject_shape_run.empty()) {
         zarr_loader.setRequestedSubjectShapeRunName(cli_subject_shape_run);
     }
+    if (!cli_refined_subject_mask_run.empty()) {
+        zarr_loader.setRequestedRefinedSubjectMaskRunName(
+            cli_refined_subject_mask_run);
+    }
+    if (!cli_refined_subject_mask_storage.empty()) {
+        zarr_loader.setRequestedRefinedSubjectMaskStorage(
+            cli_refined_subject_mask_storage);
+    }
     if (!cli_tail_kinematics_run.empty()) {
         zarr_loader.setRequestedTailKinematicsRunName(
             cli_tail_kinematics_run);
@@ -982,7 +1015,7 @@ int main(int argc, char **argv) {
     bool cpu_buffer_toggle = true;
     bool show_keypoint_markers = true;
     bool show_heading_arrows = true;
-    bool show_eye_masks = false;
+    bool show_eye_masks = cli_show_eye_masks;
     bool show_subject_body_mask = true;
     bool show_eye_left_mask = true;
     bool show_eye_right_mask = true;

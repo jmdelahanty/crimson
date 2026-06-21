@@ -585,6 +585,10 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
                           << data_.keypoints_run_name << "'" << std::endl;
             } else {
                 std::cout << "  No keypoint heading data available" << std::endl;
+                if (loadRefinedSubjectMaskEyeData(store, 0)) {
+                    std::cout << "  Loaded refined subject masks from '"
+                              << data_.eye_masks_run_name << "'" << std::endl;
+                }
             }
             if (loadSubjectShapeData(store)) {
                 std::cout << "  Loaded subject shape run '"

@@ -1238,6 +1238,10 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
         const bool can_use_eye_masks =
             include_eye_masks && !want_interpolated &&
             ((data_.has_eye_masks && data_.eye_masks_loaded) || has_roi_metadata);
+        const bool use_refined_subject_mask_frame_lookup =
+            can_use_eye_masks &&
+            data_.eye_masks_from_refined_subject_masks &&
+            !data_.refined_subject_mask_rows_by_frame.empty();
         const bool can_use_subject_shapes =
             include_subject_shapes && !want_interpolated &&
             data_.subject_shape.loaded && has_roi_metadata;
@@ -1259,7 +1263,13 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
             result.heading_valid.reserve(end - start);
         }
         if (can_use_eye_masks) {
-            result.eye_masks.reserve(end - start);
+            if (use_refined_subject_mask_frame_lookup &&
+                frame_id < data_.refined_subject_mask_rows_by_frame.size()) {
+                result.eye_masks.reserve(
+                    data_.refined_subject_mask_rows_by_frame[frame_id].size());
+            } else {
+                result.eye_masks.reserve(end - start);
+            }
             result.includes_eye_masks = true;
         }
         if (can_use_subject_shapes) {
@@ -1396,7 +1406,7 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                 result.heading_valid.push_back(valid);
             }
 
-            if (can_use_eye_masks) {
+            if (can_use_eye_masks && !use_refined_subject_mask_frame_lookup) {
                 FrameDetections::EyeMask mask_entry;
                 mask_entry.offset_x =
                     (idx < data_.roi_offset_x.size()) ? data_.roi_offset_x[idx] : nan_value;
@@ -1579,6 +1589,131 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
             }
         }
 
+        if (use_refined_subject_mask_frame_lookup &&
+            frame_id < data_.refined_subject_mask_rows_by_frame.size()) {
+            const auto& mask_rows =
+                data_.refined_subject_mask_rows_by_frame[frame_id];
+            const bool should_smoke_log =
+                !mask_rows.empty() &&
+                data_.refined_subject_mask_smoke_logged_frames.size() < 4 &&
+                data_.refined_subject_mask_smoke_logged_frames
+                    .insert(static_cast<int32_t>(frame_id))
+                    .second;
+
+            auto labelsSummary = [&]() -> std::string {
+                std::ostringstream oss;
+                for (size_t label_idx = 0;
+                     label_idx < data_.refined_subject_mask_labels.size();
+                     ++label_idx) {
+                    if (label_idx > 0) {
+                        oss << ",";
+                    }
+                    oss << data_.refined_subject_mask_labels[label_idx];
+                }
+                return oss.str();
+            };
+            auto availableSummary = [&]() -> std::string {
+                std::ostringstream oss;
+                for (size_t channel_idx = 0;
+                     channel_idx <
+                     data_.refined_subject_mask_available_channels.size();
+                     ++channel_idx) {
+                    if (channel_idx > 0) {
+                        oss << ",";
+                    }
+                    oss << (data_.refined_subject_mask_available_channels[channel_idx]
+                                ? "1"
+                                : "0");
+                }
+                return oss.str();
+            };
+
+            const std::string labels_summary =
+                should_smoke_log ? labelsSummary() : std::string();
+            const std::string available_summary =
+                should_smoke_log ? availableSummary() : std::string();
+            size_t smoke_logged_rows = 0;
+            for (size_t row_idx = 0; row_idx < mask_rows.size(); ++row_idx) {
+                const size_t mask_row = mask_rows[row_idx];
+                if (mask_row >= data_.eye_mask_roi_count ||
+                    mask_row >= data_.refined_subject_mask_offset_x.size() ||
+                    mask_row >= data_.refined_subject_mask_offset_y.size() ||
+                    mask_row >=
+                        data_.refined_subject_mask_roi_width_px.size() ||
+                    mask_row >=
+                        data_.refined_subject_mask_roi_height_px.size() ||
+                    mask_row >=
+                        data_.refined_subject_mask_crop_frame_match.size() ||
+                    data_.refined_subject_mask_crop_frame_match[mask_row] == 0) {
+                    continue;
+                }
+
+                FrameDetections::EyeMask mask_entry;
+                mask_entry.offset_x =
+                    data_.refined_subject_mask_offset_x[mask_row];
+                mask_entry.offset_y =
+                    data_.refined_subject_mask_offset_y[mask_row];
+                mask_entry.roi_width =
+                    data_.refined_subject_mask_roi_width_px[mask_row];
+                mask_entry.roi_height =
+                    data_.refined_subject_mask_roi_height_px[mask_row];
+                mask_entry.rows = static_cast<int>(data_.eye_mask_height);
+                mask_entry.cols = static_cast<int>(data_.eye_mask_width);
+                mask_entry.roi_index = static_cast<int32_t>(mask_row);
+
+                const bool offsets_valid =
+                    std::isfinite(mask_entry.offset_x) &&
+                    std::isfinite(mask_entry.offset_y);
+                const bool dims_valid =
+                    mask_entry.roi_width > 0.0f &&
+                    mask_entry.roi_height > 0.0f;
+                if (offsets_valid && dims_valid) {
+                    populateEyeMaskEntry(mask_row, mask_entry);
+                }
+
+                if (should_smoke_log && smoke_logged_rows < 3) {
+                    const int64_t crop_row =
+                        mask_row < data_.refined_subject_mask_source_crop_row_ids.size()
+                            ? data_.refined_subject_mask_source_crop_row_ids[mask_row]
+                            : -1;
+                    const int32_t crop_frame =
+                        mask_row <
+                                data_.refined_subject_mask_source_crop_frame_indices.size()
+                            ? data_.refined_subject_mask_source_crop_frame_indices[mask_row]
+                            : -1;
+                    const bool crop_frame_matched =
+                        mask_row < data_.refined_subject_mask_crop_frame_match.size() &&
+                        data_.refined_subject_mask_crop_frame_match[mask_row] != 0;
+                    std::cout
+                        << "[SUBJECT_MASK_SMOKE] displayed_frame="
+                        << frame_id
+                        << " mask_row=" << mask_row
+                        << " source_crop_row_id=" << crop_row
+                        << " crop_frame=" << crop_frame
+                        << " roi_top_left=(" << mask_entry.offset_x << ","
+                        << mask_entry.offset_y << ")"
+                        << " mask_labels=[" << labels_summary << "]"
+                        << " available_channels=[" << available_summary << "]"
+                        << " path="
+                        << (data_.refined_subject_mask_dense_masks_used
+                                ? "dense_masks_roi"
+                                : (data_.refined_subject_mask_rle_masks_used
+                                       ? "mask_rle"
+                                       : "fallback"))
+                        << " row_position_fallback="
+                        << (data_.refined_subject_mask_row_position_fallback
+                                ? "yes"
+                                : "no")
+                        << " crop_frame_match="
+                        << (crop_frame_matched ? "yes" : "no")
+                        << std::endl;
+                    ++smoke_logged_rows;
+                }
+
+                result.eye_masks.push_back(std::move(mask_entry));
+            }
+        }
+
         result.is_interpolated = isFrameInterpolated(frame_id);
         return result;
     }
@@ -1721,6 +1856,31 @@ ZarrDetectionLoader::getCropRoiMetadataForRoiIndex(int32_t roi_index) const {
         return metadata;
     }
 
+    if (data_.eye_masks_from_refined_subject_masks &&
+        static_cast<size_t>(roi_index) <
+            data_.refined_subject_mask_offset_x.size()) {
+        const size_t mask_row = static_cast<size_t>(roi_index);
+        metadata.valid = true;
+        metadata.offset_x = data_.refined_subject_mask_offset_x[mask_row];
+        metadata.offset_y = data_.refined_subject_mask_offset_y[mask_row];
+        if (mask_row < data_.refined_subject_mask_roi_width_px.size()) {
+            metadata.roi_width =
+                data_.refined_subject_mask_roi_width_px[mask_row];
+        }
+        if (mask_row < data_.refined_subject_mask_roi_height_px.size()) {
+            metadata.roi_height =
+                data_.refined_subject_mask_roi_height_px[mask_row];
+        }
+        metadata.has_crop_metadata =
+            std::isfinite(metadata.offset_x) &&
+            std::isfinite(metadata.offset_y) &&
+            metadata.roi_width > 0.0f &&
+            metadata.roi_height > 0.0f;
+        if (metadata.has_crop_metadata) {
+            return metadata;
+        }
+    }
+
     auto fill_from_detection_row = [&](size_t det_row) {
         metadata.valid = true;
         if (det_row < data_.roi_offset_x.size()) {
@@ -1824,10 +1984,42 @@ ZarrDetectionLoader::getMaskRoiMetadataForFrameDetection(
     bool use_interpolated) const {
     KeypointRoiMetadata metadata;
 
-    // Mask ROI rows are aligned to the non-interpolated detection order.
-    // Synthetic interpolated rows do not have a stable refined-mask row identity.
+    // Modern refined subject masks use frame_indices/source_crop_row_ids.
+    // Legacy mask ROI rows are aligned to the non-interpolated detection order.
     if (use_interpolated) {
         return metadata;
+    }
+    if (data_.eye_masks_from_refined_subject_masks &&
+        frame_id < data_.refined_subject_mask_rows_by_frame.size()) {
+        const auto& mask_rows =
+            data_.refined_subject_mask_rows_by_frame[frame_id];
+        if (detection_idx < mask_rows.size()) {
+            const size_t mask_row = mask_rows[detection_idx];
+            metadata.roi_index = static_cast<int32_t>(mask_row);
+            metadata.valid = true;
+            if (mask_row < data_.refined_subject_mask_offset_x.size()) {
+                metadata.offset_x =
+                    data_.refined_subject_mask_offset_x[mask_row];
+            }
+            if (mask_row < data_.refined_subject_mask_offset_y.size()) {
+                metadata.offset_y =
+                    data_.refined_subject_mask_offset_y[mask_row];
+            }
+            if (mask_row < data_.refined_subject_mask_roi_width_px.size()) {
+                metadata.roi_width =
+                    data_.refined_subject_mask_roi_width_px[mask_row];
+            }
+            if (mask_row < data_.refined_subject_mask_roi_height_px.size()) {
+                metadata.roi_height =
+                    data_.refined_subject_mask_roi_height_px[mask_row];
+            }
+            metadata.has_crop_metadata =
+                std::isfinite(metadata.offset_x) &&
+                std::isfinite(metadata.offset_y) &&
+                metadata.roi_width > 0.0f &&
+                metadata.roi_height > 0.0f;
+            return metadata;
+        }
     }
     if (data_.mask_roi_indices.empty()) {
         return metadata;

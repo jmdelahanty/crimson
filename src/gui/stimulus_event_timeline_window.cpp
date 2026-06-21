@@ -118,7 +118,7 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
         return result;
     }
 
-    auto timeline = context.zarr_loader.getStimulusEventTimeline();
+    const auto& timeline = context.zarr_loader.getStimulusEventTimeline();
     const auto& steps = context.zarr_loader.getStimulusSteps();
     if (timeline.size() != state.last_logged_timeline_count) {
         size_t missing_camera = 0;
@@ -253,14 +253,14 @@ StimulusEventTimelineWindowResult drawStimulusEventTimelineWindow(
 
     auto resolveTimelineTargetFrame =
         [&](const ZarrDetectionLoader::StimulusEventSummary& evt) -> int32_t {
+        if (evt.camera_frame_id >= 0) {
+            return evt.camera_frame_id;
+        }
         if (evt.stimulus_frame_num >= 0) {
             if (auto mapped = context.zarr_loader.getCameraFrameForStimulusFrame(
                     evt.stimulus_frame_num, true)) {
                 return *mapped;
             }
-        }
-        if (evt.camera_frame_id >= 0) {
-            return evt.camera_frame_id;
         }
         return evt.stimulus_frame_num;
     };

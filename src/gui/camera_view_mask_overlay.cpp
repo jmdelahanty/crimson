@@ -428,8 +428,7 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
         return finish();
     }
 
-    const size_t mask_count =
-        std::min(mask_details.eye_masks.size(), mask_details.boxes.size());
+    const size_t mask_count = mask_details.eye_masks.size();
     metrics.roi_count = static_cast<int>(mask_count);
     if (mask_count == 0) {
         return finish();
@@ -863,10 +862,18 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
             if (draw_axes_and_angles) {
                 const auto* shape =
                     findSubjectShapeForMask(det_idx, mask_info.roi_index);
+                const std::array<float, 4> mask_box =
+                    det_idx < mask_details.boxes.size()
+                        ? mask_details.boxes[det_idx]
+                        : std::array<float, 4>{
+                              mask_info.offset_x,
+                              mask_info.offset_y,
+                              mask_info.offset_x + mask_info.roi_width,
+                              mask_info.offset_y + mask_info.roi_height};
                 drawCameraViewEyeAngleOverlayForEye(
                     mask_info,
                     shape,
-                    mask_details.boxes[det_idx],
+                    mask_box,
                     eye,
                     base_id,
                     base_color,

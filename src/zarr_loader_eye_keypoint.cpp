@@ -1,4 +1,5 @@
 #include "zarr_loader_internal.h"
+#include "debug_flags.h"
 #include <iostream>
 #include <thread>
 
@@ -24,6 +25,22 @@ void clearEyeMaskState(ZarrDetectionData& data) {
     data.eye_mask_channel_labels = {"eye_left", "eye_right"};
     data.refined_subject_mask_labels.clear();
     data.refined_subject_mask_available_channels.clear();
+    data.refined_subject_mask_label_schema_id.clear();
+    data.refined_subject_mask_source_crop_run.clear();
+    data.refined_subject_mask_frame_indices.clear();
+    data.refined_subject_mask_source_crop_row_ids.clear();
+    data.refined_subject_mask_offset_x.clear();
+    data.refined_subject_mask_offset_y.clear();
+    data.refined_subject_mask_roi_width_px.clear();
+    data.refined_subject_mask_roi_height_px.clear();
+    data.refined_subject_mask_source_crop_frame_indices.clear();
+    data.refined_subject_mask_crop_frame_match.clear();
+    data.refined_subject_mask_rows_by_frame.clear();
+    data.refined_subject_mask_row_position_fallback = false;
+    data.refined_subject_mask_dense_masks_used = false;
+    data.refined_subject_mask_rle_masks_used = false;
+    data.refined_subject_mask_smoke_logged_frames.clear();
+    data.refined_subject_mask_rle_smoke_log_count = 0;
     data.refined_subject_mask_overlay_components.clear();
     data.eye_mask_feret_axes_major.clear();
     data.eye_mask_feret_axes_minor.clear();
@@ -93,6 +110,25 @@ std::string jsonStringAttr(const nlohmann::json& attrs,
     return {};
 }
 
+bool jsonBoolAttr(const nlohmann::json& attrs, const char* key) {
+    if (!attrs.contains(key)) {
+        return false;
+    }
+    const auto& value = attrs[key];
+    if (value.is_boolean()) {
+        return value.get<bool>();
+    }
+    if (value.is_number_integer()) {
+        return value.get<int64_t>() != 0;
+    }
+    if (value.is_string()) {
+        std::string text = toLowerCopy(value.get<std::string>());
+        return text == "1" || text == "true" || text == "yes" ||
+               text == "y" || text == "on";
+    }
+    return false;
+}
+
 int jsonIntAttr(const nlohmann::json& attrs, const char* key) {
     if (attrs.contains(key) && attrs[key].is_number_integer()) {
         return attrs[key].get<int>();
@@ -115,6 +151,70 @@ std::vector<std::string> jsonStringVector(const nlohmann::json& obj,
         }
     }
     return values;
+}
+
+std::vector<int64_t> jsonIntVector(const nlohmann::json& obj,
+                                   const char* key) {
+    std::vector<int64_t> values;
+    if (!obj.contains(key) || !obj[key].is_array()) {
+        return values;
+    }
+    for (const auto& item : obj[key]) {
+        if (item.is_number_integer()) {
+            values.push_back(item.get<int64_t>());
+        } else if (item.is_number()) {
+            values.push_back(static_cast<int64_t>(item.get<double>()));
+        }
+    }
+    return values;
+}
+
+std::string safeMaskRleComponentName(const std::string& component_name) {
+    std::string safe;
+    safe.reserve(component_name.size());
+    for (char ch : component_name) {
+        const unsigned char uch = static_cast<unsigned char>(ch);
+        if (std::isalnum(uch) || ch == '_' || ch == '-' || ch == '.') {
+            safe.push_back(ch);
+        } else {
+            safe.push_back('_');
+        }
+    }
+    while (!safe.empty() && safe.front() == '_') {
+        safe.erase(safe.begin());
+    }
+    while (!safe.empty() && safe.back() == '_') {
+        safe.pop_back();
+    }
+    if (safe.empty()) {
+        safe = "component";
+    }
+    return safe;
+}
+
+std::string maskRleComponentGroupName(size_t component_index,
+                                      const std::string& component_name,
+                                      bool zero_padded) {
+    std::ostringstream oss;
+    if (zero_padded) {
+        oss << std::setw(2) << std::setfill('0') << component_index;
+    } else {
+        oss << component_index;
+    }
+    oss << "_" << safeMaskRleComponentName(component_name);
+    return oss.str();
+}
+
+bool subjectMaskChunkPerfLogsEnabled() {
+    static const bool enabled =
+        crimson_env_flag_enabled("CRIMSON_SUBJECT_MASK_CHUNK_PERF");
+    return enabled;
+}
+
+double elapsedMsSince(std::chrono::steady_clock::time_point start) {
+    return std::chrono::duration<double, std::milli>(
+               std::chrono::steady_clock::now() - start)
+        .count();
 }
 
 void appendEyeAngleWarning(
@@ -1173,83 +1273,216 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
         return false;
     }
 
-    std::string latest_run;
-    if (auto group_attrs = readAttrsAny(store, "refined_subject_masks_runs")) {
-        latest_run = extractLatestRunName(*group_attrs);
+    const std::string requested_run = requested_refined_subject_mask_run_name_;
+    const bool request_latest = requested_run == "latest";
+    const bool request_review_latest =
+        requested_run == "review-status-latest" ||
+        requested_run == "review_status_latest" ||
+        requested_run == "review-status" ||
+        requested_run == "review_status";
+    const bool explicit_named_run =
+        !requested_run.empty() && !request_latest && !request_review_latest;
+
+    std::vector<std::string> run_candidates;
+    auto add_candidate = [&](const std::string& run_name) {
+        if (run_name.empty()) {
+            return;
+        }
+        if (std::find(run_candidates.begin(), run_candidates.end(), run_name) ==
+            run_candidates.end()) {
+            run_candidates.push_back(run_name);
+        }
+    };
+
+    std::optional<nlohmann::json> group_attrs =
+        readAttrsAny(store, "refined_subject_masks_runs");
+    if (explicit_named_run) {
+        add_candidate(requested_run);
+    } else if (group_attrs.has_value()) {
+        if (request_review_latest) {
+            add_candidate(jsonStringAttr(
+                *group_attrs, "refined_subject_mask_review_status_latest"));
+            add_candidate(extractLatestRunName(*group_attrs));
+        } else {
+            add_candidate(extractLatestRunName(*group_attrs));
+            add_candidate(jsonStringAttr(
+                *group_attrs, "refined_subject_mask_review_status_latest"));
+        }
     }
 
-    if (latest_run.empty() && !root_path_.empty()) {
+    if (run_candidates.empty() && !root_path_.empty()) {
         auto fs_candidates = collect_runs_fs(
             root_path_,
             "refined_subject_masks_runs",
             {"masks_roi"});
-        if (!fs_candidates.empty()) {
-            latest_run = fs_candidates.back();
+        for (auto it = fs_candidates.rbegin(); it != fs_candidates.rend(); ++it) {
+            add_candidate(*it);
         }
     }
 
-    if (latest_run.empty()) {
+    if (run_candidates.empty()) {
         return false;
     }
 
-    const std::string run_base =
-        "refined_subject_masks_runs/" + latest_run + "/";
-    auto run_attrs = readAttrsAny(store, run_base);
-    if (!run_attrs.has_value()) {
-        std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
-                  << latest_run
-                  << "' has no readable attrs; falling back to legacy eye masks."
+    std::string latest_run;
+    std::string run_base;
+    std::optional<nlohmann::json> run_attrs;
+    for (const auto& candidate : run_candidates) {
+        const std::string candidate_base =
+            "refined_subject_masks_runs/" + candidate + "/";
+        auto attrs = readAttrsAny(store, candidate_base);
+        if (attrs.has_value()) {
+            latest_run = candidate;
+            run_base = candidate_base;
+            run_attrs = std::move(attrs);
+            break;
+        }
+        if (explicit_named_run) {
+            std::cout << "[SUBJECT_MASK_WARNING] requested refined_subject_masks run '"
+                      << candidate
+                      << "' has no readable attrs; falling back to legacy eye masks."
+                      << std::endl;
+            return false;
+        }
+    }
+    if (latest_run.empty() || !run_attrs.has_value()) {
+        std::cout << "[SUBJECT_MASK_WARNING] no readable refined_subject_masks run found; "
+                     "falling back to legacy eye masks."
                   << std::endl;
         return false;
     }
+
+    std::string storage_request =
+        toLowerCopy(requested_refined_subject_mask_storage_);
+    const bool force_rle =
+        storage_request == "rle" || storage_request == "mask_rle" ||
+        storage_request == "component_rle_v1";
+    const bool force_dense =
+        storage_request == "dense" || storage_request == "masks_roi" ||
+        storage_request == "dense_uint8";
+    if (!storage_request.empty() && storage_request != "auto" &&
+        !force_rle && !force_dense) {
+        std::cout << "  [SUBJECT_MASK_WARNING] Unknown refined subject-mask storage request '"
+                  << requested_refined_subject_mask_storage_
+                  << "'; using dense-first auto mode." << std::endl;
+    }
+
+    std::optional<nlohmann::json> rle_attrs =
+        readAttrsAny(store, run_base + "mask_rle");
 
     std::vector<std::string> mask_labels =
         extractStringListAttr(*run_attrs, "mask_labels");
+    if (mask_labels.empty() && rle_attrs.has_value()) {
+        mask_labels = extractStringListAttr(*rle_attrs, "component_names");
+    }
     if (mask_labels.empty()) {
         std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
                   << latest_run
-                  << "' missing mask_labels; falling back to legacy eye masks."
+                  << "' missing mask_labels/component_names; falling back to legacy eye masks."
                   << std::endl;
         return false;
     }
 
-    auto masks_store_result =
-        openArrayAny<uint8_t, 4>(store, run_base + "masks_roi", context_);
-    if (!masks_store_result.ok()) {
-        std::cout << "[SUBJECT_MASK_WARNING] Failed to open refined subject masks for run '"
-                  << latest_run << "': "
-                  << masks_store_result.status().ToString()
-                  << "; falling back to legacy eye masks." << std::endl;
+    ts::TensorStore<uint8_t, 4> dense_masks_store;
+    bool dense_masks_available = false;
+    if (!force_rle) {
+        auto masks_store_result =
+            openArrayAny<uint8_t, 4>(store, run_base + "masks_roi", context_);
+        if (masks_store_result.ok()) {
+            dense_masks_store = masks_store_result.value();
+            dense_masks_available = true;
+        } else if (force_dense || !rle_attrs.has_value()) {
+            std::cout << "[SUBJECT_MASK_WARNING] Failed to open refined subject masks for run '"
+                      << latest_run << "': "
+                      << masks_store_result.status().ToString()
+                      << "; falling back to legacy eye masks." << std::endl;
+            return false;
+        }
+    }
+
+    const bool use_rle_masks = !dense_masks_available;
+    if (use_rle_masks && !rle_attrs.has_value()) {
+        std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
+                  << latest_run
+                  << "' has no dense masks_roi and no compact mask_rle; falling back to legacy eye masks."
+                  << std::endl;
+        return false;
+    }
+    if (use_rle_masks && jsonBoolAttr(*run_attrs, "mask_rle_stale")) {
+        std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
+                  << latest_run
+                  << "' has mask_rle_stale=true; rejecting compact RLE by default."
+                  << std::endl;
         return false;
     }
 
-    auto domain = masks_store_result.value().domain();
-    auto shape = domain.shape();
-    if (shape.size() != 4) {
-        std::cout << "[SUBJECT_MASK_WARNING] Unexpected masks_roi rank in refined_subject_masks run '"
-                  << latest_run << "' (expected 4, got " << shape.size()
-                  << "); falling back to legacy eye masks." << std::endl;
-        return false;
+    size_t roi_dim = 0;
+    size_t channel_dim = 0;
+    size_t mask_rows = 0;
+    size_t mask_cols = 0;
+    if (dense_masks_available) {
+        auto domain = dense_masks_store.domain();
+        auto shape = domain.shape();
+        if (shape.size() != 4) {
+            std::cout << "[SUBJECT_MASK_WARNING] Unexpected masks_roi rank in refined_subject_masks run '"
+                      << latest_run << "' (expected 4, got " << shape.size()
+                      << "); falling back to legacy eye masks." << std::endl;
+            return false;
+        }
+        roi_dim = static_cast<size_t>(shape[0]);
+        channel_dim = static_cast<size_t>(shape[1]);
+        mask_rows = static_cast<size_t>(shape[2]);
+        mask_cols = static_cast<size_t>(shape[3]);
+    } else {
+        if (jsonStringAttr(*rle_attrs, "schema_id") !=
+                "palette_mask_rle_binary_v1" ||
+            jsonStringAttr(*rle_attrs, "mask_encoding") !=
+                "coco_rle_fortran_v1" ||
+            jsonStringAttr(*rle_attrs, "mask_value_semantics") !=
+                "binary_0_1" ||
+            jsonStringAttr(*rle_attrs, "layout") != "component_groups") {
+            std::cout << "[SUBJECT_MASK_WARNING] compact mask_rle attrs for run '"
+                      << latest_run
+                      << "' do not match palette_mask_rle_binary_v1/component_groups."
+                      << std::endl;
+            return false;
+        }
+        const auto shape_hw = jsonIntVector(*rle_attrs, "encoded_shape_hw");
+        const int rle_rows_attr = jsonIntAttr(*rle_attrs, "n_rows");
+        const int rle_component_count = jsonIntAttr(*rle_attrs, "component_count");
+        if (shape_hw.size() != 2 || shape_hw[0] <= 0 || shape_hw[1] <= 0 ||
+            rle_rows_attr <= 0 || rle_component_count <= 0) {
+            std::cout << "[SUBJECT_MASK_WARNING] compact mask_rle attrs for run '"
+                      << latest_run
+                      << "' are missing encoded_shape_hw/n_rows/component_count."
+                      << std::endl;
+            return false;
+        }
+        roi_dim = static_cast<size_t>(rle_rows_attr);
+        channel_dim = static_cast<size_t>(rle_component_count);
+        mask_rows = static_cast<size_t>(shape_hw[0]);
+        mask_cols = static_cast<size_t>(shape_hw[1]);
+        if (mask_labels.size() != channel_dim) {
+            std::vector<std::string> rle_component_names =
+                extractStringListAttr(*rle_attrs, "component_names");
+            if (rle_component_names.size() == channel_dim) {
+                mask_labels = std::move(rle_component_names);
+            }
+        }
+        if (mask_labels.size() != channel_dim) {
+            std::cout << "[SUBJECT_MASK_WARNING] compact mask_rle component_names length for run '"
+                      << latest_run << "' is " << mask_labels.size()
+                      << " but component_count is " << channel_dim << "."
+                      << std::endl;
+            return false;
+        }
     }
-
-    const size_t roi_dim = static_cast<size_t>(shape[0]);
-    const size_t channel_dim = static_cast<size_t>(shape[1]);
-    const size_t mask_rows = static_cast<size_t>(shape[2]);
-    const size_t mask_cols = static_cast<size_t>(shape[3]);
 
     if (roi_dim == 0 || channel_dim == 0 || mask_rows == 0 || mask_cols == 0) {
         std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
                   << latest_run
                   << "' has empty masks_roi dimensions; falling back to legacy eye masks."
                   << std::endl;
-        return false;
-    }
-
-    if (roi_count > 0 && roi_dim != roi_count) {
-        std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
-                  << latest_run << "' masks_roi row count (" << roi_dim
-                  << ") does not match keypoint ROI count (" << roi_count
-                  << "); falling back to legacy eye masks." << std::endl;
         return false;
     }
 
@@ -1263,20 +1496,21 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
 
     const size_t left_channel = find_label("eye_left");
     const size_t right_channel = find_label("eye_right");
-    if (left_channel == kInvalidMaskChannel &&
-        right_channel == kInvalidMaskChannel) {
-        std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
-                  << latest_run
-                  << "' has no eye_left/eye_right labels; falling back to legacy eye masks."
-                  << std::endl;
-        return false;
-    }
 
     std::vector<uint8_t> available_channels;
     bool available_loaded =
         readBoolArray(store, run_base + "available_channels", available_channels);
     bool tolerant_metadata = false;
     std::string warning;
+    auto appendWarningText = [&](const std::string& message) {
+        if (message.empty()) {
+            return;
+        }
+        if (!warning.empty()) {
+            warning += " ";
+        }
+        warning += message;
+    };
     if (!available_loaded || available_channels.size() != channel_dim) {
         const size_t observed_available_count = available_channels.size();
         available_channels.assign(channel_dim, 1);
@@ -1290,7 +1524,7 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
                 << " did not match masks_roi channel count " << channel_dim;
         }
         oss << "; treating labeled channels as readable for UI inspection.";
-        warning = oss.str();
+        appendWarningText(oss.str());
     }
 
     auto channel_is_available = [&](size_t channel) -> bool {
@@ -1305,21 +1539,242 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
 
     const bool left_available = channel_is_available(left_channel);
     const bool right_available = channel_is_available(right_channel);
-    if (!left_available && !right_available) {
+
+    if (roi_count > 0 && roi_dim != roi_count) {
+        std::ostringstream oss;
+        oss << "masks_roi row count " << roi_dim
+            << " does not match keypoint ROI count " << roi_count
+            << "; using frame_indices/source_crop_row_ids for placement.";
+        appendWarningText(oss.str());
+    }
+
+    std::vector<int32_t> mask_frame_indices;
+    bool row_position_fallback = false;
+    const bool frame_indices_loaded =
+        readInt32Array(store, run_base + "frame_indices", mask_frame_indices);
+    if (!frame_indices_loaded || mask_frame_indices.size() != roi_dim) {
+        if (roi_count > 0 && roi_dim == roi_count &&
+            !data_.mask_roi_indices.empty() && !data_.frame_indices.empty()) {
+            row_position_fallback = true;
+            mask_frame_indices.assign(roi_dim, -1);
+            for (size_t det_row = 0;
+                 det_row < data_.mask_roi_indices.size() &&
+                 det_row < data_.frame_indices.size();
+                 ++det_row) {
+                const int32_t mask_row = data_.mask_roi_indices[det_row];
+                if (mask_row < 0 ||
+                    static_cast<size_t>(mask_row) >= mask_frame_indices.size()) {
+                    continue;
+                }
+                if (mask_frame_indices[static_cast<size_t>(mask_row)] < 0) {
+                    mask_frame_indices[static_cast<size_t>(mask_row)] =
+                        data_.frame_indices[det_row];
+                }
+            }
+            appendWarningText(
+                "frame_indices missing or mismatched; used legacy detection-row alignment fallback.");
+        } else {
+            std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
+                      << latest_run
+                      << "' missing mandatory frame_indices; falling back to legacy eye masks."
+                      << std::endl;
+            return false;
+        }
+    }
+
+    std::string source_crop_run =
+        NormalizeCropRunName(jsonStringAttr(*run_attrs, "source_crop_run"));
+    if (source_crop_run.empty() && !data_.keypoints_source_crop_run.empty()) {
+        source_crop_run = NormalizeCropRunName(data_.keypoints_source_crop_run);
+        row_position_fallback = true;
+        appendWarningText(
+            "source_crop_run missing; using keypoint source_crop_run legacy fallback.");
+    }
+    if (source_crop_run.empty()) {
         std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
                   << latest_run
-                  << "' has eye labels but neither eye channel is available; falling back to legacy eye masks."
+                  << "' missing source_crop_run; cannot place ROI-local masks."
                   << std::endl;
         return false;
     }
 
+    const std::string crop_base = "crop_runs/" + source_crop_run + "/";
+    std::vector<int32_t> crop_frame_indices;
+    if (!readInt32Array(store, crop_base + "frame_indices", crop_frame_indices)) {
+        std::cout << "[SUBJECT_MASK_WARNING] source crop run '"
+                  << source_crop_run
+                  << "' missing frame_indices; cannot verify mask crop rows."
+                  << std::endl;
+        return false;
+    }
+
+    std::vector<std::array<float, 2>> crop_offsets;
+    auto readCropOffsets = [&](auto type_token) -> bool {
+        using Source = decltype(type_token);
+        auto coords_store = openArrayAny<Source, 2>(
+            store, crop_base + "roi_coordinates_full", context_);
+        if (!coords_store.ok()) {
+            return false;
+        }
+        auto coords_result = ts::Read(coords_store.value()).result();
+        if (!coords_result.ok()) {
+            return false;
+        }
+        auto coords = coords_result.value();
+        const auto coords_shape = coords.shape();
+        if (coords_shape.size() != 2 || coords_shape[1] < 2) {
+            return false;
+        }
+        const size_t crop_rows = static_cast<size_t>(coords_shape[0]);
+        crop_offsets.resize(crop_rows);
+        for (size_t row = 0; row < crop_rows; ++row) {
+            crop_offsets[row] = {
+                static_cast<float>(
+                    coords(static_cast<ts::Index>(row), static_cast<ts::Index>(0))),
+                static_cast<float>(
+                    coords(static_cast<ts::Index>(row), static_cast<ts::Index>(1)))};
+        }
+        return true;
+    };
+    if (!readCropOffsets(int32_t{}) &&
+        !readCropOffsets(float{}) &&
+        !readCropOffsets(double{})) {
+        std::cout << "[SUBJECT_MASK_WARNING] source crop run '"
+                  << source_crop_run
+                  << "' missing readable roi_coordinates_full; cannot place ROI-local masks."
+                  << std::endl;
+        return false;
+    }
+
+    float roi_width_px = static_cast<float>(mask_cols);
+    float roi_height_px = static_cast<float>(mask_rows);
+    if (auto crop_attrs = readAttrsAny(store, crop_base)) {
+        if (crop_attrs->contains("roi_size") && (*crop_attrs)["roi_size"].is_array() &&
+            (*crop_attrs)["roi_size"].size() >= 2) {
+            const auto& roi_size = (*crop_attrs)["roi_size"];
+            if (roi_size[0].is_number() && roi_size[1].is_number()) {
+                roi_height_px = static_cast<float>(roi_size[0].get<double>());
+                roi_width_px = static_cast<float>(roi_size[1].get<double>());
+            }
+        }
+    }
+
+    std::vector<int64_t> source_crop_row_ids;
+    const bool source_crop_rows_loaded =
+        readInt64Array(store,
+                       run_base + "source_crop_row_ids",
+                       source_crop_row_ids);
+    if (!source_crop_rows_loaded || source_crop_row_ids.size() != roi_dim) {
+        if (roi_dim <= crop_offsets.size() &&
+            roi_dim <= crop_frame_indices.size()) {
+            source_crop_row_ids.resize(roi_dim);
+            for (size_t row = 0; row < roi_dim; ++row) {
+                source_crop_row_ids[row] = static_cast<int64_t>(row);
+            }
+            row_position_fallback = true;
+            appendWarningText(
+                "source_crop_row_ids missing or mismatched; used legacy row-position fallback.");
+        } else {
+            std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
+                      << latest_run
+                      << "' missing mandatory source_crop_row_ids; cannot place masks."
+                      << std::endl;
+            return false;
+        }
+    }
+
+    std::vector<float> refined_offset_x(
+        roi_dim, std::numeric_limits<float>::quiet_NaN());
+    std::vector<float> refined_offset_y(
+        roi_dim, std::numeric_limits<float>::quiet_NaN());
+    std::vector<float> refined_roi_width(roi_dim, roi_width_px);
+    std::vector<float> refined_roi_height(roi_dim, roi_height_px);
+    std::vector<int32_t> refined_crop_frame(roi_dim, -1);
+    std::vector<uint8_t> crop_frame_match(roi_dim, 0);
+    size_t out_of_bounds_crop_rows = 0;
+    size_t crop_frame_mismatches = 0;
+    size_t valid_placements = 0;
+    int32_t max_mask_frame = -1;
+    for (size_t mask_row = 0; mask_row < roi_dim; ++mask_row) {
+        const int32_t mask_frame =
+            mask_row < mask_frame_indices.size() ? mask_frame_indices[mask_row] : -1;
+        if (mask_frame >= 0) {
+            max_mask_frame = std::max(max_mask_frame, mask_frame);
+        }
+        const int64_t crop_row =
+            mask_row < source_crop_row_ids.size()
+                ? source_crop_row_ids[mask_row]
+                : -1;
+        if (crop_row < 0 ||
+            static_cast<size_t>(crop_row) >= crop_offsets.size() ||
+            static_cast<size_t>(crop_row) >= crop_frame_indices.size()) {
+            ++out_of_bounds_crop_rows;
+            continue;
+        }
+        refined_crop_frame[mask_row] =
+            crop_frame_indices[static_cast<size_t>(crop_row)];
+        if (refined_crop_frame[mask_row] != mask_frame) {
+            ++crop_frame_mismatches;
+            continue;
+        }
+        const auto offset = crop_offsets[static_cast<size_t>(crop_row)];
+        if (!std::isfinite(offset[0]) || !std::isfinite(offset[1]) ||
+            roi_width_px <= 0.0f || roi_height_px <= 0.0f) {
+            continue;
+        }
+        refined_offset_x[mask_row] = offset[0];
+        refined_offset_y[mask_row] = offset[1];
+        refined_roi_width[mask_row] = roi_width_px;
+        refined_roi_height[mask_row] = roi_height_px;
+        crop_frame_match[mask_row] = 1;
+        ++valid_placements;
+    }
+    if (valid_placements == 0) {
+        std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
+                  << latest_run
+                  << "' had no mask rows with verified source crop placement."
+                  << std::endl;
+        return false;
+    }
+    if (out_of_bounds_crop_rows > 0) {
+        appendWarningText(
+            std::to_string(out_of_bounds_crop_rows) +
+            " mask rows referenced out-of-bounds source_crop_row_ids.");
+    }
+    if (crop_frame_mismatches > 0) {
+        appendWarningText(
+            std::to_string(crop_frame_mismatches) +
+            " mask rows failed crop frame verification and will not be displayed.");
+    }
+
+    std::vector<std::vector<size_t>> mask_rows_by_frame;
+    const size_t frame_lookup_size = std::max<size_t>(
+        data_.total_frames,
+        max_mask_frame >= 0 ? static_cast<size_t>(max_mask_frame) + 1 : 0);
+    mask_rows_by_frame.resize(frame_lookup_size);
+    for (size_t mask_row = 0; mask_row < roi_dim; ++mask_row) {
+        const int32_t frame =
+            mask_row < mask_frame_indices.size() ? mask_frame_indices[mask_row] : -1;
+        if (frame < 0 || static_cast<size_t>(frame) >= mask_rows_by_frame.size() ||
+            crop_frame_match[mask_row] == 0) {
+            continue;
+        }
+        mask_rows_by_frame[static_cast<size_t>(frame)].push_back(mask_row);
+    }
+
     data_.mask_chunk_cache.clear();
-    data_.eye_masks_store = masks_store_result.value();
+    data_.eye_masks_store = dense_masks_available
+        ? dense_masks_store
+        : ts::TensorStore<uint8_t, 4>();
     data_.eye_masks_run_name = latest_run;
     data_.eye_masks_source_label = tolerant_metadata
-        ? "Refined subject masks (metadata inferred)"
-        : "Refined subject masks";
-    data_.eye_masks_source_path = run_base + "masks_roi";
+        ? (use_rle_masks
+               ? "Refined subject masks RLE (metadata inferred)"
+               : "Refined subject masks (metadata inferred)")
+        : (use_rle_masks ? "Refined subject masks RLE"
+                         : "Refined subject masks");
+    data_.eye_masks_source_path =
+        use_rle_masks ? run_base + "mask_rle" : run_base + "masks_roi";
     data_.eye_masks_warning = warning;
     data_.eye_masks_from_refined_subject_masks = true;
     data_.eye_masks_tolerant_metadata = tolerant_metadata;
@@ -1334,6 +1789,23 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
     data_.eye_mask_channel_labels = {"eye_left", "eye_right"};
     data_.refined_subject_mask_labels = mask_labels;
     data_.refined_subject_mask_available_channels = available_channels;
+    data_.refined_subject_mask_label_schema_id =
+        jsonStringAttr(*run_attrs, "label_schema_id");
+    data_.refined_subject_mask_source_crop_run = source_crop_run;
+    data_.refined_subject_mask_frame_indices = std::move(mask_frame_indices);
+    data_.refined_subject_mask_source_crop_row_ids =
+        std::move(source_crop_row_ids);
+    data_.refined_subject_mask_offset_x = std::move(refined_offset_x);
+    data_.refined_subject_mask_offset_y = std::move(refined_offset_y);
+    data_.refined_subject_mask_roi_width_px = std::move(refined_roi_width);
+    data_.refined_subject_mask_roi_height_px = std::move(refined_roi_height);
+    data_.refined_subject_mask_source_crop_frame_indices =
+        std::move(refined_crop_frame);
+    data_.refined_subject_mask_crop_frame_match = std::move(crop_frame_match);
+    data_.refined_subject_mask_rows_by_frame = std::move(mask_rows_by_frame);
+    data_.refined_subject_mask_row_position_fallback = row_position_fallback;
+    data_.refined_subject_mask_dense_masks_used = dense_masks_available;
+    data_.refined_subject_mask_rle_masks_used = use_rle_masks;
     data_.refined_subject_mask_overlay_components.clear();
     const size_t component_label_count =
         std::min(mask_labels.size(), channel_dim);
@@ -1345,6 +1817,165 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
             ZarrDetectionData::RefinedSubjectMaskComponentInfo{
                 mask_labels[channel],
                 channel});
+    }
+
+    auto readRleBbox =
+        [&](const std::string& path,
+            std::vector<std::array<int32_t, 4>>& out) -> bool {
+        auto bbox_store = openArrayAny<int32_t, 2>(store, path, context_);
+        if (!bbox_store.ok()) {
+            return false;
+        }
+        auto bbox_result = ts::Read(bbox_store.value()).result();
+        if (!bbox_result.ok()) {
+            return false;
+        }
+        auto bbox = bbox_result.value();
+        auto bbox_shape = bbox.shape();
+        if (bbox_shape.size() != 2 ||
+            bbox_shape[0] != static_cast<ts::Index>(roi_dim) ||
+            bbox_shape[1] < 4) {
+            return false;
+        }
+        out.resize(roi_dim);
+        for (size_t row = 0; row < roi_dim; ++row) {
+            for (size_t xy = 0; xy < 4; ++xy) {
+                out[row][xy] = bbox(static_cast<ts::Index>(row),
+                                    static_cast<ts::Index>(xy));
+            }
+        }
+        return true;
+    };
+
+    auto findRleComponentBase =
+        [&](size_t component_index,
+            const std::string& component_name) -> std::string {
+        const std::string rle_components_base =
+            run_base + "mask_rle/components/";
+        std::vector<std::string> candidates = {
+            rle_components_base +
+                maskRleComponentGroupName(component_index,
+                                          component_name,
+                                          true) +
+                "/",
+            rle_components_base +
+                maskRleComponentGroupName(component_index,
+                                          component_name,
+                                          false) +
+                "/",
+        };
+        auto attrs_match = [&](const nlohmann::json& attrs) -> bool {
+            const std::string attr_name =
+                jsonStringAttr(attrs, "component_name");
+            const int attr_index = jsonIntAttr(attrs, "component_index");
+            return (attr_name.empty() || attr_name == component_name) &&
+                   (attr_index < 0 ||
+                    static_cast<size_t>(attr_index) == component_index);
+        };
+        for (const auto& candidate : candidates) {
+            if (auto attrs = readAttrsAny(store, candidate)) {
+                if (attrs_match(*attrs)) {
+                    return candidate;
+                }
+            }
+        }
+        if (!root_path_.empty()) {
+            try {
+                const std::filesystem::path components_path =
+                    std::filesystem::path(root_path_) / run_base /
+                    "mask_rle" / "components";
+                if (std::filesystem::exists(components_path)) {
+                    for (const auto& entry :
+                         std::filesystem::directory_iterator(components_path)) {
+                        if (!entry.is_directory()) {
+                            continue;
+                        }
+                        const std::string rel =
+                            rle_components_base +
+                            entry.path().filename().string() + "/";
+                        if (auto attrs = readAttrsAny(store, rel)) {
+                            if (attrs_match(*attrs)) {
+                                return rel;
+                            }
+                        }
+                    }
+                }
+            } catch (const std::exception&) {
+            }
+        }
+        return {};
+    };
+
+    auto loadRleComponent =
+        [&](ZarrDetectionData::RefinedSubjectMaskComponentInfo& component)
+            -> bool {
+        const std::string component_base =
+            findRleComponentBase(component.channel_index, component.label);
+        if (component_base.empty()) {
+            std::cout << "  [SUBJECT_MASK_WARNING] compact mask_rle component '"
+                      << component.label << "' was not found." << std::endl;
+            return false;
+        }
+        auto counts_store =
+            openArrayAny<uint32_t, 1>(store, component_base + "counts", context_);
+        if (!counts_store.ok()) {
+            std::cout << "  [SUBJECT_MASK_WARNING] compact mask_rle component '"
+                      << component.label << "' has no readable counts: "
+                      << counts_store.status().ToString() << std::endl;
+            return false;
+        }
+        const auto counts_shape = counts_store.value().domain().shape();
+        if (counts_shape.size() != 1) {
+            std::cout << "  [SUBJECT_MASK_WARNING] compact mask_rle component '"
+                      << component.label << "' counts rank is not 1."
+                      << std::endl;
+            return false;
+        }
+        std::vector<int64_t> indptr;
+        std::vector<uint8_t> present;
+        std::vector<int32_t> area_px;
+        if (!readInt64Array(store, component_base + "indptr", indptr) ||
+            !readBoolArray(store, component_base + "present", present) ||
+            !readInt32Array(store, component_base + "area_px", area_px)) {
+            std::cout << "  [SUBJECT_MASK_WARNING] compact mask_rle component '"
+                      << component.label
+                      << "' is missing indptr/present/area_px arrays."
+                      << std::endl;
+            return false;
+        }
+        if (indptr.size() != roi_dim + 1 || present.size() != roi_dim ||
+            area_px.size() != roi_dim) {
+            std::cout << "  [SUBJECT_MASK_WARNING] compact mask_rle component '"
+                      << component.label
+                      << "' row arrays do not match mask row count "
+                      << roi_dim << "." << std::endl;
+            return false;
+        }
+        component.rle_counts_store = counts_store.value();
+        component.rle_counts_count =
+            static_cast<size_t>(std::max<ts::Index>(0, counts_shape[0]));
+        component.rle_indptr = std::move(indptr);
+        component.rle_present = std::move(present);
+        component.rle_area_px = std::move(area_px);
+        readRleBbox(component_base + "bbox_xyxy", component.rle_bbox_xyxy);
+        component.rle_available = true;
+        return true;
+    };
+
+    if (use_rle_masks) {
+        size_t rle_component_count = 0;
+        for (auto& component : data_.refined_subject_mask_overlay_components) {
+            if (loadRleComponent(component)) {
+                ++rle_component_count;
+            }
+        }
+        if (rle_component_count == 0) {
+            std::cout << "[SUBJECT_MASK_WARNING] compact mask_rle for run '"
+                      << latest_run
+                      << "' had no readable components; falling back to legacy eye masks."
+                      << std::endl;
+            return false;
+        }
     }
 
     auto loadComponentContours =
@@ -1560,28 +2191,41 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
     data_.eye_masks_have_feret_axes = left_geometry_ok || right_geometry_ok;
 
     data_.eye_mask_chunk_rows = 0;
-    auto chunk_layout_result = data_.eye_masks_store.chunk_layout();
-    if (chunk_layout_result.ok()) {
-        const auto& chunk_layout = chunk_layout_result.value();
-        auto chunk_shape = chunk_layout.read_chunk_shape();
-        if (!chunk_shape.empty()) {
-            auto chunk_size = chunk_shape[0];
-            if (chunk_size > 0) {
-                data_.eye_mask_chunk_rows =
-                    static_cast<size_t>(chunk_size);
+    if (dense_masks_available) {
+        auto chunk_layout_result = data_.eye_masks_store.chunk_layout();
+        if (chunk_layout_result.ok()) {
+            const auto& chunk_layout = chunk_layout_result.value();
+            auto chunk_shape = chunk_layout.read_chunk_shape();
+            if (!chunk_shape.empty()) {
+                auto chunk_size = chunk_shape[0];
+                if (chunk_size > 0) {
+                    data_.eye_mask_chunk_rows =
+                        static_cast<size_t>(chunk_size);
+                }
             }
         }
     }
-    if (data_.eye_mask_chunk_rows == 0) {
-        data_.eye_mask_chunk_rows = std::min<size_t>(roi_dim, 512);
+    if (use_rle_masks) {
+        data_.eye_mask_chunk_rows =
+            std::min<size_t>(roi_dim, kRleEyeMaskChunkRows);
+    } else if (data_.eye_mask_chunk_rows == 0) {
+        data_.eye_mask_chunk_rows =
+            std::min<size_t>(roi_dim, 512);
     }
 
     std::cout << "  Refined subject mask run '" << latest_run
-              << "' loaded for eye overlay (labels: "
+              << "' loaded for eye overlay (source: "
+              << (use_rle_masks ? "mask_rle" : "masks_roi")
+              << "; labels: "
               << joinMaskLabels(mask_labels) << "; eye_left channel "
               << (left_available ? std::to_string(left_channel) : "unavailable")
               << ", eye_right channel "
               << (right_available ? std::to_string(right_channel) : "unavailable")
+              << "; source_crop_run " << source_crop_run
+              << "; verified placements " << valid_placements << "/"
+              << roi_dim
+              << "; row-position fallback "
+              << (row_position_fallback ? "yes" : "no")
               << "; ellipse axes "
               << (data_.eye_masks_have_feret_axes ? "loaded" : "unavailable")
               << "; contours " << contour_component_count << "/"
@@ -2999,6 +3643,9 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
     if (!data_.eye_masks_loaded || data_.eye_mask_roi_count == 0) {
         return false;
     }
+    const bool chunk_perf_log = subjectMaskChunkPerfLogsEnabled();
+    const auto ensure_start = std::chrono::steady_clock::now();
+    const bool use_rle_masks = data_.refined_subject_mask_rle_masks_used;
 
     bool cache_hit = false;
     {
@@ -3020,6 +3667,17 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
         }
     }
     if (cache_hit) {
+        if (chunk_perf_log) {
+            std::cout << "[SUBJECT_MASK_CHUNK_PERF] source="
+                      << (use_rle_masks ? "mask_rle" : "masks_roi")
+                      << " chunk_id=" << chunk_id
+                      << " cache_hit=yes"
+                      << " allow_prefetch="
+                      << (allow_prefetch ? "yes" : "no")
+                      << " thread=" << std::this_thread::get_id()
+                      << " total_ms=" << elapsedMsSince(ensure_start)
+                      << std::endl;
+        }
         if (allow_prefetch) {
             prefetchAdjacentEyeMaskChunks(chunk_id);
         }
@@ -3035,30 +3693,30 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
     size_t chunk_end =
         std::min(chunk_start + chunk_rows, data_.eye_mask_roi_count);
 
-    auto slice = data_.eye_masks_store |
-                 ts::Dims(0).HalfOpenInterval(
-                     static_cast<ts::Index>(chunk_start),
-                     static_cast<ts::Index>(chunk_end));
-    auto read_result = ts::Read(slice).result();
-    if (!read_result.ok()) {
-        std::cerr << "[EYE_MASK_WARNING] Failed to read mask chunk "
-                  << chunk_id << ": " << read_result.status().ToString()
-                  << std::endl;
-        return false;
-    }
-
-    auto array = read_result.value();
-    auto shape = array.shape();
-    if (shape.size() != 4) {
-        std::cerr << "[EYE_MASK_WARNING] Unexpected mask chunk rank ("
-                  << shape.size() << ")" << std::endl;
-        return false;
-    }
-
-    size_t chunk_len = static_cast<size_t>(shape[0]);
-    size_t channels = static_cast<size_t>(shape[1]);
-    size_t rows = static_cast<size_t>(shape[2]);
-    size_t cols = static_cast<size_t>(shape[3]);
+    size_t chunk_len = chunk_end - chunk_start;
+    size_t channels = data_.refined_subject_mask_labels.size();
+    size_t rows = data_.eye_mask_height;
+    size_t cols = data_.eye_mask_width;
+    double rle_row_scan_ms = 0.0;
+    double rle_counts_read_ms = 0.0;
+    double rle_counts_copy_ms = 0.0;
+    double rle_decode_ms = 0.0;
+    double component_copy_ms = 0.0;
+    double dense_read_ms = 0.0;
+    double dense_collect_ms = 0.0;
+    double contour_row_scan_ms = 0.0;
+    double contour_read_ms = 0.0;
+    double contour_copy_ms = 0.0;
+    size_t rle_components_available = 0;
+    size_t rle_components_with_rows = 0;
+    size_t rle_rows_present = 0;
+    size_t rle_rows_decoded = 0;
+    size_t rle_count_values_read = 0;
+    size_t rle_foreground_pixels = 0;
+    size_t contour_components_with_rows = 0;
+    size_t contour_rows_loaded = 0;
+    size_t contour_points_loaded = 0;
+    size_t dense_nonzero_pixels = 0;
 
     ZarrDetectionData::EyeMaskChunkCacheEntry entry;
     entry.chunk_id = chunk_id;
@@ -3070,69 +3728,19 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
     if (component_count > 0) {
         entry.component_pixel_indices.resize(chunk_len);
         entry.component_contours_xy.resize(chunk_len);
-    }
-
-    const uint8_t* base_ptr =
-        static_cast<const uint8_t*>(array.byte_strided_origin_pointer());
-    auto byte_strides = array.byte_strides();
-    if (byte_strides.size() != 4) {
-        std::cerr << "[EYE_MASK_WARNING] Unexpected mask chunk stride rank ("
-                  << byte_strides.size() << ")" << std::endl;
-        return false;
-    }
-
-    const ts::Index stride_roi = byte_strides[0];
-    const ts::Index stride_channel = byte_strides[1];
-    const ts::Index stride_row = byte_strides[2];
-    const ts::Index stride_col = byte_strides[3];
-
-    auto collectChannelPixels =
-        [&](const uint8_t* roi_ptr,
-            size_t source_channel,
-            std::vector<uint32_t>& indices_vec) {
-            indices_vec.clear();
-            indices_vec.reserve(256);
-            if (source_channel == kInvalidMaskChannel ||
-                source_channel >= channels) {
-                return;
-            }
-
-            const auto channel_offset =
-                stride_channel * static_cast<ts::Index>(source_channel);
-            const uint8_t* channel_ptr = roi_ptr + channel_offset;
-            for (size_t r = 0; r < rows; ++r) {
-                const auto row_offset =
-                    stride_row * static_cast<ts::Index>(r);
-                const uint8_t* row_ptr = channel_ptr + row_offset;
-                for (size_t c = 0; c < cols; ++c) {
-                    const auto col_offset =
-                        stride_col * static_cast<ts::Index>(c);
-                    const uint8_t* elem_ptr = row_ptr + col_offset;
-                    if (*elem_ptr != 0) {
-                        indices_vec.push_back(
-                            static_cast<uint32_t>(r * cols + c));
-                    }
-                }
-            }
-        };
-
-    for (size_t roi = 0; roi < chunk_len; ++roi) {
-        const auto roi_offset =
-            stride_roi * static_cast<ts::Index>(roi);
-        const uint8_t* roi_ptr = base_ptr + roi_offset;
-
-        if (component_count > 0) {
-            auto& components_for_roi = entry.component_pixel_indices[roi];
-            components_for_roi.resize(component_count);
+        for (size_t roi = 0; roi < chunk_len; ++roi) {
+            entry.component_pixel_indices[roi].resize(component_count);
             entry.component_contours_xy[roi].resize(component_count);
-            for (size_t component = 0; component < component_count; ++component) {
-                collectChannelPixels(
-                    roi_ptr,
-                    data_.refined_subject_mask_overlay_components[component]
-                        .channel_index,
-                    components_for_roi[component]);
-            }
+        }
+    }
 
+    auto copyEyePixelsFromComponents = [&]() {
+        if (component_count == 0) {
+            return;
+        }
+        for (size_t roi = 0; roi < chunk_len; ++roi) {
+            const auto& components_for_roi =
+                entry.component_pixel_indices[roi];
             for (size_t eye = 0; eye < 2; ++eye) {
                 auto& indices_vec = entry.pixel_indices[roi][eye];
                 const size_t source_channel =
@@ -3153,18 +3761,328 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
                     std::distance(
                         data_.refined_subject_mask_overlay_components.begin(),
                         component_it));
+                if (component_index >= components_for_roi.size()) {
+                    indices_vec.clear();
+                    continue;
+                }
                 indices_vec = components_for_roi[component_index];
             }
-            continue;
+        }
+    };
+
+    if (use_rle_masks) {
+        const size_t total_pixels = rows * cols;
+        auto decodeRleToPixelIndices =
+            [&](const uint32_t* counts,
+                size_t n_counts,
+                std::vector<uint32_t>& indices_vec,
+                size_t& count_sum,
+                size_t& decoded_area) -> bool {
+            indices_vec.clear();
+            indices_vec.reserve(256);
+            count_sum = 0;
+            decoded_area = 0;
+            size_t offset = 0;
+            uint8_t value = 0;
+            for (size_t idx = 0; idx < n_counts; ++idx) {
+                const size_t count = static_cast<size_t>(counts[idx]);
+                if (offset + count > total_pixels) {
+                    return false;
+                }
+                if (value != 0 && count > 0) {
+                    indices_vec.reserve(indices_vec.size() + count);
+                    for (size_t flat = offset; flat < offset + count; ++flat) {
+                        const size_t y = flat % rows;
+                        const size_t x = flat / rows;
+                        indices_vec.push_back(
+                            static_cast<uint32_t>(y * cols + x));
+                    }
+                    decoded_area += count;
+                }
+                offset += count;
+                value = static_cast<uint8_t>(1 - value);
+            }
+            count_sum = offset;
+            return offset == total_pixels;
+        };
+
+        for (size_t component = 0; component < component_count; ++component) {
+            const auto& component_info =
+                data_.refined_subject_mask_overlay_components[component];
+            if (!component_info.rle_available ||
+                component_info.rle_indptr.size() < data_.eye_mask_roi_count + 1 ||
+                component_info.rle_present.size() < data_.eye_mask_roi_count ||
+                component_info.rle_area_px.size() < data_.eye_mask_roi_count) {
+                continue;
+            }
+            ++rle_components_available;
+
+            int64_t read_start = std::numeric_limits<int64_t>::max();
+            int64_t read_end = 0;
+            std::vector<uint8_t> row_has_rle(chunk_len, 0);
+            const auto row_scan_start = std::chrono::steady_clock::now();
+            for (size_t local_roi = 0; local_roi < chunk_len; ++local_roi) {
+                const size_t absolute_roi = chunk_start + local_roi;
+                if (absolute_roi >= data_.eye_mask_roi_count ||
+                    component_info.rle_present[absolute_roi] == 0) {
+                    continue;
+                }
+                const int64_t start = component_info.rle_indptr[absolute_roi];
+                const int64_t stop = component_info.rle_indptr[absolute_roi + 1];
+                if (start < 0 || stop < start ||
+                    static_cast<uint64_t>(stop) >
+                        static_cast<uint64_t>(component_info.rle_counts_count)) {
+                    std::cerr << "[SUBJECT_MASK_RLE_WARNING] Invalid RLE indptr for component '"
+                              << component_info.label << "' row "
+                              << absolute_roi << std::endl;
+                    continue;
+                }
+                if (stop == start) {
+                    continue;
+                }
+                row_has_rle[local_roi] = 1;
+                ++rle_rows_present;
+                read_start = std::min(read_start, start);
+                read_end = std::max(read_end, stop);
+            }
+            rle_row_scan_ms += elapsedMsSince(row_scan_start);
+
+            if (read_start == std::numeric_limits<int64_t>::max() ||
+                read_end <= read_start) {
+                continue;
+            }
+            ++rle_components_with_rows;
+
+            auto counts_slice = component_info.rle_counts_store |
+                ts::Dims(0).HalfOpenInterval(
+                    static_cast<ts::Index>(read_start),
+                    static_cast<ts::Index>(read_end));
+            const auto counts_read_start = std::chrono::steady_clock::now();
+            auto counts_result = ts::Read(counts_slice).result();
+            rle_counts_read_ms += elapsedMsSince(counts_read_start);
+            if (!counts_result.ok()) {
+                std::cerr << "[SUBJECT_MASK_RLE_WARNING] Failed to read RLE counts for component '"
+                          << component_info.label << "': "
+                          << counts_result.status().ToString()
+                          << std::endl;
+                continue;
+            }
+
+            auto counts_array = counts_result.value();
+            auto counts_shape = counts_array.shape();
+            auto counts_strides = counts_array.byte_strides();
+            if (counts_shape.size() != 1 || counts_strides.size() != 1) {
+                std::cerr << "[SUBJECT_MASK_RLE_WARNING] Unexpected RLE counts shape for component '"
+                          << component_info.label << "'" << std::endl;
+                continue;
+            }
+            const uint32_t* counts_origin =
+                static_cast<const uint32_t*>(
+                    counts_array.byte_strided_origin_pointer());
+            const uint8_t* counts_base =
+                reinterpret_cast<const uint8_t*>(counts_origin);
+            const ts::Index stride_count = counts_strides[0];
+            auto countValue = [&](size_t local_count) -> uint32_t {
+                const uint8_t* ptr = counts_base +
+                    stride_count * static_cast<ts::Index>(local_count);
+                return *reinterpret_cast<const uint32_t*>(ptr);
+            };
+            const size_t counts_len = static_cast<size_t>(counts_shape[0]);
+            std::vector<uint32_t> local_counts(counts_len);
+            const auto counts_copy_start = std::chrono::steady_clock::now();
+            for (size_t idx = 0; idx < counts_len; ++idx) {
+                local_counts[idx] = countValue(idx);
+            }
+            rle_counts_copy_ms += elapsedMsSince(counts_copy_start);
+            rle_count_values_read += counts_len;
+
+            for (size_t local_roi = 0; local_roi < chunk_len; ++local_roi) {
+                if (row_has_rle[local_roi] == 0) {
+                    continue;
+                }
+                const size_t absolute_roi = chunk_start + local_roi;
+                const int64_t start = component_info.rle_indptr[absolute_roi];
+                const int64_t stop = component_info.rle_indptr[absolute_roi + 1];
+                const int64_t local_start = start - read_start;
+                const int64_t local_stop = stop - read_start;
+                if (local_start < 0 || local_stop < local_start ||
+                    static_cast<size_t>(local_stop) > local_counts.size()) {
+                    continue;
+                }
+                auto& components_for_roi =
+                    entry.component_pixel_indices[local_roi];
+                components_for_roi.resize(component_count);
+                entry.component_contours_xy[local_roi].resize(component_count);
+                size_t count_sum = 0;
+                size_t decoded_area = 0;
+                const auto decode_start = std::chrono::steady_clock::now();
+                const bool decoded = decodeRleToPixelIndices(
+                    local_counts.data() + static_cast<size_t>(local_start),
+                    static_cast<size_t>(local_stop - local_start),
+                    components_for_roi[component],
+                    count_sum,
+                    decoded_area);
+                rle_decode_ms += elapsedMsSince(decode_start);
+                const int32_t expected_area =
+                    component_info.rle_area_px[absolute_roi];
+                if (!decoded) {
+                    components_for_roi[component].clear();
+                    std::cerr << "[SUBJECT_MASK_RLE_WARNING] RLE decode failed for component '"
+                              << component_info.label << "' row "
+                              << absolute_roi << " (count sum "
+                              << count_sum << ", expected " << total_pixels
+                              << ")" << std::endl;
+                    continue;
+                }
+                ++rle_rows_decoded;
+                rle_foreground_pixels += decoded_area;
+                if (expected_area >= 0 &&
+                    decoded_area != static_cast<size_t>(expected_area)) {
+                    std::cerr << "[SUBJECT_MASK_RLE_WARNING] RLE decoded area mismatch for component '"
+                              << component_info.label << "' row "
+                              << absolute_roi << ": decoded "
+                              << decoded_area << ", area_px "
+                              << expected_area << std::endl;
+                }
+                if (data_.refined_subject_mask_rle_smoke_log_count < 12) {
+                    const float offset_x =
+                        absolute_roi < data_.refined_subject_mask_offset_x.size()
+                            ? data_.refined_subject_mask_offset_x[absolute_roi]
+                            : std::numeric_limits<float>::quiet_NaN();
+                    const float offset_y =
+                        absolute_roi < data_.refined_subject_mask_offset_y.size()
+                            ? data_.refined_subject_mask_offset_y[absolute_roi]
+                            : std::numeric_limits<float>::quiet_NaN();
+                    std::cout << "[SUBJECT_MASK_RLE_SMOKE] mask_row="
+                              << absolute_roi
+                              << " component=" << component_info.label
+                              << " rle_count_sum=" << count_sum
+                              << " decoded_area=" << decoded_area
+                              << " area_px=" << expected_area
+                              << " placement_xy=(" << offset_x << ","
+                              << offset_y << ")";
+                    if (absolute_roi < component_info.rle_bbox_xyxy.size()) {
+                        const auto bbox =
+                            component_info.rle_bbox_xyxy[absolute_roi];
+                        std::cout << " bbox_xyxy=[" << bbox[0] << ","
+                                  << bbox[1] << "," << bbox[2] << ","
+                                  << bbox[3] << "]";
+                    }
+                    std::cout << std::endl;
+                    ++data_.refined_subject_mask_rle_smoke_log_count;
+                }
+            }
+        }
+        const auto copy_start = std::chrono::steady_clock::now();
+        copyEyePixelsFromComponents();
+        component_copy_ms += elapsedMsSince(copy_start);
+    } else {
+        auto slice = data_.eye_masks_store |
+                     ts::Dims(0).HalfOpenInterval(
+                         static_cast<ts::Index>(chunk_start),
+                         static_cast<ts::Index>(chunk_end));
+        const auto dense_read_start = std::chrono::steady_clock::now();
+        auto read_result = ts::Read(slice).result();
+        dense_read_ms += elapsedMsSince(dense_read_start);
+        if (!read_result.ok()) {
+            std::cerr << "[EYE_MASK_WARNING] Failed to read mask chunk "
+                      << chunk_id << ": " << read_result.status().ToString()
+                      << std::endl;
+            return false;
         }
 
-        for (size_t eye = 0; eye < 2; ++eye) {
-            auto& indices_vec = entry.pixel_indices[roi][eye];
-            collectChannelPixels(
-                roi_ptr,
-                data_.eye_mask_channel_indices[eye],
-                indices_vec);
+        auto array = read_result.value();
+        auto shape = array.shape();
+        if (shape.size() != 4) {
+            std::cerr << "[EYE_MASK_WARNING] Unexpected mask chunk rank ("
+                      << shape.size() << ")" << std::endl;
+            return false;
         }
+
+        chunk_len = static_cast<size_t>(shape[0]);
+        channels = static_cast<size_t>(shape[1]);
+        rows = static_cast<size_t>(shape[2]);
+        cols = static_cast<size_t>(shape[3]);
+
+        const uint8_t* base_ptr =
+            static_cast<const uint8_t*>(array.byte_strided_origin_pointer());
+        auto byte_strides = array.byte_strides();
+        if (byte_strides.size() != 4) {
+            std::cerr << "[EYE_MASK_WARNING] Unexpected mask chunk stride rank ("
+                      << byte_strides.size() << ")" << std::endl;
+            return false;
+        }
+
+        const ts::Index stride_roi = byte_strides[0];
+        const ts::Index stride_channel = byte_strides[1];
+        const ts::Index stride_row = byte_strides[2];
+        const ts::Index stride_col = byte_strides[3];
+
+        auto collectChannelPixels =
+            [&](const uint8_t* roi_ptr,
+                size_t source_channel,
+                std::vector<uint32_t>& indices_vec) {
+                indices_vec.clear();
+                indices_vec.reserve(256);
+                if (source_channel == kInvalidMaskChannel ||
+                    source_channel >= channels) {
+                    return;
+                }
+
+                const auto channel_offset =
+                    stride_channel * static_cast<ts::Index>(source_channel);
+                const uint8_t* channel_ptr = roi_ptr + channel_offset;
+                for (size_t r = 0; r < rows; ++r) {
+                    const auto row_offset =
+                        stride_row * static_cast<ts::Index>(r);
+                    const uint8_t* row_ptr = channel_ptr + row_offset;
+                    for (size_t c = 0; c < cols; ++c) {
+                        const auto col_offset =
+                            stride_col * static_cast<ts::Index>(c);
+                        const uint8_t* elem_ptr = row_ptr + col_offset;
+                        if (*elem_ptr != 0) {
+                            indices_vec.push_back(
+                                static_cast<uint32_t>(r * cols + c));
+                        }
+                    }
+                }
+            };
+
+        for (size_t roi = 0; roi < chunk_len; ++roi) {
+            const auto roi_offset =
+                stride_roi * static_cast<ts::Index>(roi);
+            const uint8_t* roi_ptr = base_ptr + roi_offset;
+            const auto collect_start = std::chrono::steady_clock::now();
+
+            if (component_count > 0) {
+                auto& components_for_roi = entry.component_pixel_indices[roi];
+                components_for_roi.resize(component_count);
+                entry.component_contours_xy[roi].resize(component_count);
+                for (size_t component = 0; component < component_count; ++component) {
+                    collectChannelPixels(
+                        roi_ptr,
+                        data_.refined_subject_mask_overlay_components[component]
+                            .channel_index,
+                        components_for_roi[component]);
+                    dense_nonzero_pixels += components_for_roi[component].size();
+                }
+                dense_collect_ms += elapsedMsSince(collect_start);
+                continue;
+            }
+
+            for (size_t eye = 0; eye < 2; ++eye) {
+                auto& indices_vec = entry.pixel_indices[roi][eye];
+                collectChannelPixels(
+                    roi_ptr,
+                    data_.eye_mask_channel_indices[eye],
+                    indices_vec);
+                dense_nonzero_pixels += indices_vec.size();
+            }
+            dense_collect_ms += elapsedMsSince(collect_start);
+        }
+        const auto copy_start = std::chrono::steady_clock::now();
+        copyEyePixelsFromComponents();
+        component_copy_ms += elapsedMsSince(copy_start);
     }
 
     for (size_t component = 0; component < component_count; ++component) {
@@ -3180,6 +4098,7 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
         int64_t read_start = std::numeric_limits<int64_t>::max();
         int64_t read_end = 0;
         std::vector<uint8_t> row_has_contour(chunk_len, 0);
+        const auto contour_scan_start = std::chrono::steady_clock::now();
         for (size_t local_roi = 0; local_roi < chunk_len; ++local_roi) {
             const size_t absolute_roi = chunk_start + local_roi;
             if (absolute_roi >= data_.eye_mask_roi_count ||
@@ -3199,20 +4118,25 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
                 continue;
             }
             row_has_contour[local_roi] = 1;
+            ++contour_rows_loaded;
             read_start = std::min(read_start, start);
             read_end = std::max(read_end, end);
         }
+        contour_row_scan_ms += elapsedMsSince(contour_scan_start);
 
         if (read_start == std::numeric_limits<int64_t>::max() ||
             read_end <= read_start) {
             continue;
         }
+        ++contour_components_with_rows;
 
         auto contour_slice = component_info.contour_points_store |
             ts::Dims(0).HalfOpenInterval(
                 static_cast<ts::Index>(read_start),
                 static_cast<ts::Index>(read_end));
+        const auto contour_read_start = std::chrono::steady_clock::now();
         auto contour_result = ts::Read(contour_slice).result();
+        contour_read_ms += elapsedMsSince(contour_read_start);
         if (!contour_result.ok()) {
             std::cerr << "[SUBJECT_MASK_WARNING] Failed to read contour chunk for component '"
                       << component_info.label << "': "
@@ -3261,6 +4185,7 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
                 entry.component_contours_xy[local_roi][component];
             contour_points.clear();
             contour_points.reserve(static_cast<size_t>(length));
+            const auto contour_copy_start = std::chrono::steady_clock::now();
             for (int32_t point = 0; point < length; ++point) {
                 const size_t local_point =
                     static_cast<size_t>(local_start + point);
@@ -3273,6 +4198,8 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
                     contour_points.push_back({x, y});
                 }
             }
+            contour_copy_ms += elapsedMsSince(contour_copy_start);
+            contour_points_loaded += contour_points.size();
         }
     }
 
@@ -3286,13 +4213,50 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
                 return cache_entry.chunk_id == chunk_id;
             });
         if (existing == cache.end()) {
-            if (cache.size() >= kEyeMaskChunkCacheCapacity) {
+            const size_t cache_capacity = use_rle_masks
+                ? kRleEyeMaskChunkCacheCapacity
+                : kEyeMaskChunkCacheCapacity;
+            if (cache.size() >= cache_capacity) {
                 cache.erase(cache.begin());
             }
             cache.push_back(std::move(entry));
         }
     }
 
+    if (chunk_perf_log) {
+        std::cout << "[SUBJECT_MASK_CHUNK_PERF] source="
+                  << (use_rle_masks ? "mask_rle" : "masks_roi")
+                  << " chunk_id=" << chunk_id
+                  << " chunk_start=" << chunk_start
+                  << " chunk_len=" << chunk_len
+                  << " components=" << component_count
+                  << " cache_hit=no"
+                  << " allow_prefetch=" << (allow_prefetch ? "yes" : "no")
+                  << " thread=" << std::this_thread::get_id()
+                  << " rle_components_available=" << rle_components_available
+                  << " rle_components_with_rows=" << rle_components_with_rows
+                  << " rle_rows_present=" << rle_rows_present
+                  << " rle_rows_decoded=" << rle_rows_decoded
+                  << " rle_count_values_read=" << rle_count_values_read
+                  << " rle_foreground_pixels=" << rle_foreground_pixels
+                  << " rle_row_scan_ms=" << rle_row_scan_ms
+                  << " rle_counts_read_ms=" << rle_counts_read_ms
+                  << " rle_counts_copy_ms=" << rle_counts_copy_ms
+                  << " rle_decode_ms=" << rle_decode_ms
+                  << " dense_read_ms=" << dense_read_ms
+                  << " dense_collect_ms=" << dense_collect_ms
+                  << " dense_nonzero_pixels=" << dense_nonzero_pixels
+                  << " component_copy_ms=" << component_copy_ms
+                  << " contour_components_with_rows="
+                  << contour_components_with_rows
+                  << " contour_rows_loaded=" << contour_rows_loaded
+                  << " contour_points_loaded=" << contour_points_loaded
+                  << " contour_row_scan_ms=" << contour_row_scan_ms
+                  << " contour_read_ms=" << contour_read_ms
+                  << " contour_copy_ms=" << contour_copy_ms
+                  << " total_ms=" << elapsedMsSince(ensure_start)
+                  << std::endl;
+    }
     if (allow_prefetch) {
         prefetchAdjacentEyeMaskChunks(chunk_id);
     }
@@ -3370,6 +4334,9 @@ bool ZarrDetectionLoader::readRefinedSubjectMaskComponentRow(
     }
     if (component_name.empty()) {
         return fail("No refined subject-mask component selected.");
+    }
+    if (data_.refined_subject_mask_rle_masks_used) {
+        return fail("Compact mask_rle rows are display-only here; materialize dense masks_roi before editing this refined subject-mask run.");
     }
 
     auto component_it = std::find_if(
