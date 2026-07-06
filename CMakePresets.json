@@ -21,6 +21,7 @@
       "hidden": true,
         "cacheVariables": {
           "CUDA_TOOLKIT_ROOT_DIR": "$env{CRIMSON_CUDA_TOOLKIT_ROOT}",
+          "CUDAToolkit_ROOT": "$env{CRIMSON_CUDA_TOOLKIT_ROOT}",
           "OpenCV_DIR": "$env{CRIMSON_OPENCV_DIR}",
           "FFMPEG_ROOT": "$env{CRIMSON_FFMPEG_ROOT}",
           "TENSORRT_ROOT": "$env{CRIMSON_TENSORRT_ROOT}",
