@@ -98,6 +98,31 @@ function Require-Command {
     }
 }
 
+function Invoke-NativeCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Command,
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Arguments
+    )
+
+    & $Command @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Command failed with exit code ${LASTEXITCODE}: $Command $($Arguments -join ' ')"
+    }
+}
+
+function Require-ExistingPath {
+    param(
+        [string]$Label,
+        [string]$PathValue
+    )
+
+    if (-not (Test-Path -LiteralPath $PathValue)) {
+        throw "$Label not found: $PathValue"
+    }
+}
+
 if ([string]::IsNullOrWhiteSpace($OpenCvRoot)) {
     $OpenCvRoot = Join-Path $ThirdPartyRoot "opencv-install-4.10.0-x64"
 }
@@ -137,12 +162,12 @@ Invoke-Step "Tool check" {
     if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
         Write-Host "ninja was not found in PATH. This is OK only if CMake can still find Ninja from the active Visual Studio developer shell."
     }
-    cmake --version
+    Invoke-NativeCommand cmake --version
 }
 
 if (-not $SkipSubmodules) {
     Invoke-Step "Submodules" {
-        git -C $RepoRoot submodule update --init --recursive
+        Invoke-NativeCommand git -C $RepoRoot submodule update --init --recursive
     }
 }
 
@@ -164,14 +189,22 @@ if (-not $SkipDependencySetup) {
 }
 
 if (-not $SkipConfigure) {
+    Invoke-Step "Required dependency roots" {
+        Require-ExistingPath -Label "CUDA Toolkit root" -PathValue $CudaToolkitRoot
+        Require-ExistingPath -Label "CUDA nvcc" -PathValue (Join-Path $CudaToolkitRoot "bin/nvcc.exe")
+        Require-ExistingPath -Label "TensorRT root" -PathValue $TensorRtRoot
+    }
+}
+
+if (-not $SkipConfigure) {
     Invoke-Step "Configure" {
-        cmake --preset $Preset
+        Invoke-NativeCommand cmake --preset $Preset
     }
 }
 
 if (-not $SkipBuild) {
     Invoke-Step "Build" {
-        cmake --build $BuildDir --config $Configuration
+        Invoke-NativeCommand cmake --build $BuildDir --config $Configuration
     }
 }
 
@@ -180,7 +213,7 @@ if (-not $SkipInstall) {
         if ($CleanInstall -and (Test-Path -LiteralPath $InstallPrefixPath)) {
             Remove-Item -LiteralPath $InstallPrefixPath -Recurse -Force
         }
-        cmake --install $BuildDir --config $Configuration --prefix $InstallPrefixPath
+        Invoke-NativeCommand cmake --install $BuildDir --config $Configuration --prefix $InstallPrefixPath
     }
 }
 
