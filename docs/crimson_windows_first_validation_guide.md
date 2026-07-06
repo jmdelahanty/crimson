@@ -63,6 +63,7 @@ Install or verify these first:
 - Windows SDK
 - CMake
 - Ninja
+- Python 3
 - vcpkg
 - current NVIDIA driver
 - CUDA Toolkit `12.4`
@@ -73,6 +74,41 @@ Recommended Visual Studio components:
 - MSVC v143 toolset
 - Windows 10 or Windows 11 SDK
 - C++ CMake tools for Windows
+
+Python is needed during configure because TensorStore's CMake path uses Python
+while generating its build files. It is not a run-only Crimson application
+dependency. If Python is missing, install it with one of:
+
+```powershell
+winget install --id Python.Python.3.12 -e
+```
+
+or:
+
+```powershell
+winget install --id Python.Python.3.11 -e
+```
+
+Then open a fresh x64 Developer PowerShell and verify:
+
+```powershell
+python --version
+```
+
+If `python` is not on `PATH`, the build helper also tries the Windows `py -3`
+launcher. You can verify that path with:
+
+```powershell
+py -3 --version
+```
+
+If Python is installed in a non-standard location, pass it explicitly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 `
+  -Python3Executable "C:\Path\To\python.exe" `
+  -CleanInstall
+```
 
 Recommended Git setting:
 

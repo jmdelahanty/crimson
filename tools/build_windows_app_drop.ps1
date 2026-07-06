@@ -14,6 +14,7 @@ param(
     [string]$VcpkgRoot = "C:/src/vcpkg",
     [string]$VcpkgTriplet = "x64-windows",
     [string]$VcpkgBinDir,
+    [string]$Python3Executable,
     [switch]$SkipDependencySetup,
     [switch]$SkipSubmodules,
     [switch]$SkipConfigure,
@@ -125,6 +126,43 @@ function Resolve-VcpkgToolchainFile {
     return $null
 }
 
+function Resolve-Python3Executable {
+    param(
+        [string]$ExplicitExecutable
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitExecutable)) {
+        if (Test-Path -LiteralPath $ExplicitExecutable) {
+            return [System.IO.Path]::GetFullPath($ExplicitExecutable)
+        }
+        return $ExplicitExecutable
+    }
+
+    foreach ($name in @("python", "python3")) {
+        $command = Get-Command $name -ErrorAction SilentlyContinue
+        if ($command) {
+            return $command.Source
+        }
+    }
+
+    $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
+    if ($pyLauncher) {
+        try {
+            $output = & $pyLauncher.Source -3 -c "import sys; print(sys.executable)" 2>$null
+            if ($LASTEXITCODE -eq 0 -and $output) {
+                $resolved = ($output | Select-Object -First 1)
+                if ($resolved -and (Test-Path -LiteralPath $resolved)) {
+                    return [System.IO.Path]::GetFullPath($resolved)
+                }
+            }
+        } catch {
+            # Fall through to the null result below.
+        }
+    }
+
+    return $null
+}
+
 function Invoke-Step {
     param(
         [string]$Label,
@@ -191,6 +229,7 @@ if ([string]::IsNullOrWhiteSpace($VcpkgBinDir)) {
 
 $OpenCvDir = Resolve-OpenCvConfigDir -ExplicitConfigDir $OpenCvDir -Root $OpenCvRoot
 $VcpkgToolchainFile = Resolve-VcpkgToolchainFile -Root $VcpkgRoot -BinDir $VcpkgBinDir
+$Python3ExecutablePath = Resolve-Python3Executable -ExplicitExecutable $Python3Executable
 $InstallPrefixPath = if ([System.IO.Path]::IsPathRooted($InstallPrefix)) {
     [System.IO.Path]::GetFullPath($InstallPrefix)
 } else {
@@ -211,7 +250,11 @@ Invoke-Step "Tool check" {
     if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
         Write-Host "ninja was not found in PATH. This is OK only if CMake can still find Ninja from the active Visual Studio developer shell."
     }
+    if (-not $Python3ExecutablePath) {
+        throw "Python 3 was not found. Install Python 3 or pass -Python3Executable to this script. TensorStore requires Python during CMake configure."
+    }
     Invoke-NativeCommand -Executable cmake -Arguments @("--version")
+    Invoke-NativeCommand -Executable $Python3ExecutablePath -Arguments @("--version")
 }
 
 if (-not $SkipSubmodules) {
@@ -248,6 +291,7 @@ if (-not $SkipConfigure) {
         } else {
             Write-Warning "Vcpkg toolchain not found. GLEW, glfw3, zlib, and HDF5 must be discoverable by another CMake search path. To install the default source-build packages, run: powershell -ExecutionPolicy Bypass -File .\tools\setup_windows_vcpkg.ps1"
         }
+        Write-Host "Python 3: $Python3ExecutablePath"
     }
 }
 
@@ -257,6 +301,9 @@ if (-not $SkipConfigure) {
         if ($VcpkgToolchainFile) {
             $configureArgs += "-DCMAKE_TOOLCHAIN_FILE=$VcpkgToolchainFile"
             $configureArgs += "-DVCPKG_TARGET_TRIPLET=$VcpkgTriplet"
+        }
+        if ($Python3ExecutablePath) {
+            $configureArgs += "-DPython3_EXECUTABLE=$Python3ExecutablePath"
         }
         Invoke-NativeCommand -Executable cmake -Arguments $configureArgs
     }
