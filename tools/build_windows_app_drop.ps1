@@ -4,6 +4,7 @@ param(
     [ValidateSet("Debug", "Release", "RelWithDebInfo", "MinSizeRel")]
     [string]$Configuration = "Release",
     [string]$InstallPrefix = "dist/Crimson",
+    [string]$BuildDir,
     [string]$ThirdPartyRoot = "C:/third_party",
     [string]$CudaToolkitRoot = "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4",
     [string]$OpenCvRoot,
@@ -282,6 +283,26 @@ function Resolve-NasmExecutable {
     return $null
 }
 
+function Get-DefaultBuildDir {
+    param(
+        [string]$PresetName
+    )
+
+    $shortPresetName = switch ($PresetName) {
+        "windows-trt10-cuda12.4-no-sfm" { "w124n"; break }
+        "windows-trt10-cuda12.4" { "w124"; break }
+        default {
+            $sanitized = $PresetName -replace "[^A-Za-z0-9]+", ""
+            if ($sanitized.Length -gt 24) {
+                $sanitized = $sanitized.Substring(0, 24)
+            }
+            $sanitized.ToLowerInvariant()
+        }
+    }
+
+    return Join-Path $RepoRoot ("build/" + $shortPresetName)
+}
+
 function Invoke-Step {
     param(
         [string]$Label,
@@ -345,6 +366,9 @@ if ([string]::IsNullOrWhiteSpace($VideoCodecSdkRoot)) {
 if ([string]::IsNullOrWhiteSpace($VcpkgBinDir)) {
     $VcpkgBinDir = Join-Path $VcpkgRoot ("installed/" + $VcpkgTriplet + "/bin")
 }
+if ([string]::IsNullOrWhiteSpace($BuildDir)) {
+    $BuildDir = Get-DefaultBuildDir -PresetName $Preset
+}
 
 $OpenCvDir = Resolve-OpenCvConfigDir -ExplicitConfigDir $OpenCvDir -Root $OpenCvRoot
 $VcpkgToolchainFile = Resolve-VcpkgToolchainFile -Root $VcpkgRoot -BinDir $VcpkgBinDir
@@ -355,13 +379,17 @@ $InstallPrefixPath = if ([System.IO.Path]::IsPathRooted($InstallPrefix)) {
 } else {
     [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $InstallPrefix))
 }
-$BuildDir = Join-Path $RepoRoot ("build/" + $Preset)
+$BuildDirPath = if ([System.IO.Path]::IsPathRooted($BuildDir)) {
+    [System.IO.Path]::GetFullPath($BuildDir)
+} else {
+    [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $BuildDir))
+}
 
 Write-Host "Crimson Windows app-drop build"
 Write-Host "  repo:          $RepoRoot"
 Write-Host "  preset:        $Preset"
 Write-Host "  config:        $Configuration"
-Write-Host "  build dir:     $BuildDir"
+Write-Host "  build dir:     $BuildDirPath"
 Write-Host "  install root:  $InstallPrefixPath"
 
 Invoke-Step "Tool check" {
@@ -422,7 +450,7 @@ if (-not $SkipConfigure) {
 
 if (-not $SkipConfigure) {
     Invoke-Step "Configure" {
-        $configureArgs = @("--preset", $Preset)
+        $configureArgs = @("--preset", $Preset, "-S", $RepoRoot, "-B", $BuildDirPath)
         if ($VcpkgToolchainFile) {
             $configureArgs += "-DCMAKE_TOOLCHAIN_FILE=$VcpkgToolchainFile"
             $configureArgs += "-DVCPKG_TARGET_TRIPLET=$VcpkgTriplet"
@@ -439,7 +467,7 @@ if (-not $SkipConfigure) {
 
 if (-not $SkipBuild) {
     Invoke-Step "Build" {
-        Invoke-NativeCommand -Executable cmake -Arguments @("--build", $BuildDir, "--config", $Configuration)
+        Invoke-NativeCommand -Executable cmake -Arguments @("--build", $BuildDirPath, "--config", $Configuration)
     }
 }
 
@@ -448,7 +476,7 @@ if (-not $SkipInstall) {
         if ($CleanInstall -and (Test-Path -LiteralPath $InstallPrefixPath)) {
             Remove-Item -LiteralPath $InstallPrefixPath -Recurse -Force
         }
-        Invoke-NativeCommand -Executable cmake -Arguments @("--install", $BuildDir, "--config", $Configuration, "--prefix", $InstallPrefixPath)
+        Invoke-NativeCommand -Executable cmake -Arguments @("--install", $BuildDirPath, "--config", $Configuration, "--prefix", $InstallPrefixPath)
     }
 }
 

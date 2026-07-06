@@ -277,6 +277,8 @@ The helper:
 - validates required dependency roots
 - passes vcpkg, Python, and NASM paths to CMake
 - configures `windows-trt10-cuda12.4-no-sfm`
+- uses a short default build tree, currently `build\w124n`, to avoid
+  TensorStore-generated Windows object path limits
 - builds Release
 - installs to `dist\Crimson`
 - runs `dist\Crimson\check_crimson_runtime.ps1`
@@ -285,6 +287,7 @@ Useful overrides:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 `
+  -BuildDir "C:\src\crimson\build\w124n" `
   -ThirdPartyRoot "D:\third_party" `
   -VcpkgRoot "D:\src\vcpkg" `
   -Python3Executable "C:\Path\To\python.exe" `
@@ -295,7 +298,17 @@ powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 `
 If a configure failure used stale cache entries, clear the build directory:
 
 ```powershell
-Remove-Item -Recurse -Force .\build\windows-trt10-cuda12.4-no-sfm -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force .\build\w124n -ErrorAction SilentlyContinue
+```
+
+If CMake fails during generation with `CMAKE_OBJECT_PATH_MAX` warnings from
+TensorStore, protobuf, or `lpm-build`, the path to the build tree is too long.
+Use a short build directory:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 `
+  -BuildDir "C:\src\crimson\build\w124n" `
+  -CleanInstall
 ```
 
 Launch the staged app:

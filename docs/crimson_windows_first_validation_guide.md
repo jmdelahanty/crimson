@@ -176,6 +176,22 @@ Reason:
 - Crimson pulls in deep dependency trees
 - Windows path-length issues are avoidable and not worth tripping over
 
+The TensorStore configure path also generates very long object names. The build
+helper therefore uses a short default build directory, currently:
+
+```text
+build\w124n
+```
+
+If CMake fails during the generate step with `CMAKE_OBJECT_PATH_MAX` warnings,
+override the build tree explicitly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 `
+  -BuildDir "C:\src\crimson\build\w124n" `
+  -CleanInstall
+```
+
 If the laptop uses hybrid graphics:
 
 - make sure you can force apps to the NVIDIA GPU from Windows graphics settings
@@ -526,6 +542,8 @@ That script:
 
 - updates submodules
 - loads dependency roots through `tools/set_windows_dependency_roots.ps1`
+- uses a short default build tree, currently `build\w124n`, to avoid
+  TensorStore-generated Windows object path limits
 - configures `windows-trt10-cuda12.4-no-sfm`
 - builds `Release`
 - installs to `dist\Crimson`
