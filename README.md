@@ -132,6 +132,20 @@ For repeat use on the validated Windows stack, prefer the helper script:
 . .\tools\set_windows_dependency_roots.ps1
 ```
 
+If PowerShell reports that running scripts is disabled, allow scripts for only
+the current shell and rerun the helper:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+. .\tools\set_windows_dependency_roots.ps1
+```
+
+For a persistent per-user setting, use:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
+
 It sets the `CRIMSON_*` dependency roots and prepends the common runtime DLL
 directories to `PATH` for the current PowerShell session.
 
