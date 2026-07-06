@@ -174,10 +174,27 @@ function Resolve-Python3Executable {
         }
     }
 
+    $pyLauncherCandidates = @()
     $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
     if ($pyLauncher) {
+        $pyLauncherCandidates += $pyLauncher.Source
+    }
+    if ($env:LOCALAPPDATA) {
+        $pyLauncherCandidates += (Join-Path $env:LOCALAPPDATA "Programs/Python/Launcher/py.exe")
+    }
+    if ($env:SystemRoot) {
+        $pyLauncherCandidates += (Join-Path $env:SystemRoot "py.exe")
+    }
+    if ($env:ProgramFiles) {
+        $pyLauncherCandidates += (Join-Path $env:ProgramFiles "Python Launcher/py.exe")
+    }
+
+    foreach ($pyLauncherPath in ($pyLauncherCandidates | Select-Object -Unique)) {
+        if (-not (Test-Path -LiteralPath $pyLauncherPath)) {
+            continue
+        }
         try {
-            $output = & $pyLauncher.Source -3 -c "import sys; print(sys.executable)" 2>$null
+            $output = & $pyLauncherPath -3 -c "import sys; print(sys.executable)" 2>$null
             if ($LASTEXITCODE -eq 0 -and $output) {
                 $resolved = ($output | Select-Object -First 1)
                 if ($resolved -and (Test-Path -LiteralPath $resolved)) {
