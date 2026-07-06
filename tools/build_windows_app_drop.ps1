@@ -246,7 +246,7 @@ if (-not $SkipConfigure) {
         if ($VcpkgToolchainFile) {
             Write-Host "Vcpkg toolchain: $VcpkgToolchainFile"
         } else {
-            Write-Warning "Vcpkg toolchain not found. GLEW, glfw3, and HDF5 must be discoverable by another CMake search path."
+            Write-Warning "Vcpkg toolchain not found. GLEW, glfw3, and HDF5 must be discoverable by another CMake search path. To install the default source-build packages, run: powershell -ExecutionPolicy Bypass -File .\tools\setup_windows_vcpkg.ps1"
         }
     }
 }

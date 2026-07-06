@@ -119,7 +119,7 @@ C:\src\vcpkg
 C:\src\vcpkg\installed\x64-windows\bin
 ```
 
-First-time setup:
+Manual first-time setup:
 
 ```powershell
 cd C:\src
@@ -127,6 +127,27 @@ git clone https://github.com/microsoft/vcpkg.git
 cd C:\src\vcpkg
 .\bootstrap-vcpkg.bat
 .\vcpkg.exe install glew:x64-windows glfw3:x64-windows 'hdf5[cpp]:x64-windows'
+```
+
+Or use Crimson's helper from the Crimson repo root:
+
+```powershell
+cd C:\src\crimson
+powershell -ExecutionPolicy Bypass -File .\tools\setup_windows_vcpkg.ps1
+```
+
+The helper clones `https://github.com/microsoft/vcpkg.git` into
+`C:\src\vcpkg` if needed, bootstraps `vcpkg.exe`, and installs:
+
+- `glew:x64-windows`
+- `glfw3:x64-windows`
+- `hdf5[cpp]:x64-windows`
+
+If vcpkg is stored elsewhere:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\setup_windows_vcpkg.ps1 `
+  -VcpkgRoot "D:\src\vcpkg"
 ```
 
 The one-command Crimson build helper passes
