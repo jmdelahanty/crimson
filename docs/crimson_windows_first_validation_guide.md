@@ -414,13 +414,25 @@ Prepare:
 At minimum, the root should provide headers and libraries in a structure that
 matches the CMake hints Crimson uses.
 
+Required source-build files:
+
+```text
+C:\third_party\ffmpeg-nvidia\include\libavformat\avformat.h
+C:\third_party\ffmpeg-nvidia\lib\avformat.lib
+C:\third_party\ffmpeg-nvidia\lib\avcodec.lib
+C:\third_party\ffmpeg-nvidia\lib\avutil.lib
+C:\third_party\ffmpeg-nvidia\lib\swscale.lib
+C:\third_party\ffmpeg-nvidia\lib\swresample.lib
+```
+
 If you build FFmpeg with Media Autobuild Suite, stage it into Crimson's
 expected layout by running this from a Visual Studio developer shell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\stage_windows_ffmpeg_nvidia.ps1 `
   -MediaAutobuildRoot C:\src\media-autobuild_suite\local64 `
-  -OutputRoot C:\third_party\ffmpeg-nvidia
+  -OutputRoot C:\third_party\ffmpeg-nvidia `
+  -CleanOutput
 ```
 
 That script:
@@ -544,6 +556,7 @@ That script:
 - loads dependency roots through `tools/set_windows_dependency_roots.ps1`
 - uses a short default build tree, currently `build\w124n`, to avoid
   TensorStore-generated Windows object path limits
+- validates FFmpeg headers/import libraries and NVIDIA codec import libraries
 - configures `windows-trt10-cuda12.4-no-sfm`
 - builds `Release`
 - installs to `dist\Crimson`

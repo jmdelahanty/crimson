@@ -235,6 +235,28 @@ C:\third_party\TensorRT-10.0.1.6
 
 If local paths differ, pass overrides to `tools\build_windows_app_drop.ps1`.
 
+For source builds, `C:\third_party\ffmpeg-nvidia` must be a development layout,
+not only a runtime `bin` folder. It must contain:
+
+```text
+C:\third_party\ffmpeg-nvidia\include\libavformat\avformat.h
+C:\third_party\ffmpeg-nvidia\lib\avformat.lib
+C:\third_party\ffmpeg-nvidia\lib\avcodec.lib
+C:\third_party\ffmpeg-nvidia\lib\avutil.lib
+C:\third_party\ffmpeg-nvidia\lib\swscale.lib
+C:\third_party\ffmpeg-nvidia\lib\swresample.lib
+```
+
+If using Media Autobuild Suite, stage that layout from an x64 Visual Studio
+developer shell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\stage_windows_ffmpeg_nvidia.ps1 `
+  -MediaAutobuildRoot C:\src\media-autobuild_suite\local64 `
+  -OutputRoot C:\third_party\ffmpeg-nvidia `
+  -CleanOutput
+```
+
 ### vcpkg
 
 Install Crimson's current vcpkg package set:
@@ -275,6 +297,7 @@ The helper:
 - sets dependency roots
 - verifies CMake, Git, Python, and NASM
 - validates required dependency roots
+- validates FFmpeg headers/import libraries and NVIDIA codec import libraries
 - passes vcpkg, Python, and NASM paths to CMake
 - configures `windows-trt10-cuda12.4-no-sfm`
 - uses a short default build tree, currently `build\w124n`, to avoid

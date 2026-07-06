@@ -103,6 +103,20 @@ function(crimson_tensorstore_use_system_if_target option_name target_name)
     endif()
 endfunction()
 
+function(crimson_require_found variable_name description)
+    set(value "${${variable_name}}")
+    if(NOT value OR value MATCHES "-NOTFOUND$")
+        message(FATAL_ERROR
+            "${description} was not found.\n"
+            "  ${variable_name}=${value}\n"
+            "  FFMPEG_ROOT=${FFMPEG_ROOT}\n"
+            "  VIDEO_CODEC_SDK_ROOT=${VIDEO_CODEC_SDK_ROOT}\n"
+            "  Hint: On Windows, FFmpeg must provide development headers and "
+            "MSVC import libraries, not only runtime DLLs. If using Media "
+            "Autobuild Suite, run tools/stage_windows_ffmpeg_nvidia.ps1.")
+    endif()
+endfunction()
+
 # --- Dependency discovery roots ---
 if(NOT OpenCV_DIR AND DEFINED ENV{OpenCV_DIR} AND NOT "$ENV{OpenCV_DIR}" STREQUAL "")
     set(OpenCV_DIR "$ENV{OpenCV_DIR}")
@@ -178,6 +192,10 @@ if(VIDEO_CODEC_SDK_ROOT)
         "${VIDEO_CODEC_SDK_ROOT}/lib/x64"
         "${VIDEO_CODEC_SDK_ROOT}/Lib"
         "${VIDEO_CODEC_SDK_ROOT}/lib")
+endif()
+if(WIN32)
+    list(APPEND CRIMSON_VIDEO_CODEC_SDK_LIBRARY_HINTS
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/nvcodec/x64")
 endif()
 
 set(CRIMSON_NV_CODEC_LIBRARY_HINTS
@@ -321,6 +339,12 @@ find_library(AVCODEC_LIBRARY avcodec HINTS ${CRIMSON_FFMPEG_LIBRARY_HINTS})
 find_library(AVUTIL_LIBRARY avutil HINTS ${CRIMSON_FFMPEG_LIBRARY_HINTS})
 find_library(SWSCALE_LIBRARY swscale HINTS ${CRIMSON_FFMPEG_LIBRARY_HINTS})
 find_library(SWRESAMPLE_LIBRARY swresample HINTS ${CRIMSON_FFMPEG_LIBRARY_HINTS})
+crimson_require_found(AVFORMAT_INCLUDE_DIR "FFmpeg headers")
+crimson_require_found(AVFORMAT_LIBRARY "FFmpeg avformat import library")
+crimson_require_found(AVCODEC_LIBRARY "FFmpeg avcodec import library")
+crimson_require_found(AVUTIL_LIBRARY "FFmpeg avutil import library")
+crimson_require_found(SWSCALE_LIBRARY "FFmpeg swscale import library")
+crimson_require_found(SWRESAMPLE_LIBRARY "FFmpeg swresample import library")
 set(FFMPEG_INCLUDE_DIRS ${AVFORMAT_INCLUDE_DIR})
 set(FFMPEG_LIBRARIES ${AVFORMAT_LIBRARY} ${AVCODEC_LIBRARY} ${AVUTIL_LIBRARY} ${SWSCALE_LIBRARY} ${SWRESAMPLE_LIBRARY})
 
@@ -330,6 +354,7 @@ find_library(NVENC_LIBRARY
     NAMES nvidia-encode nvencodeapi
     HINTS ${CRIMSON_NV_CODEC_LIBRARY_HINTS}
 )
+crimson_require_found(NVENC_LIBRARY "NVIDIA nvencodeapi import library")
 
 # NVML headers (from libnvidia-ml-dev OR CUDA Toolkit)
 find_path(NVML_INCLUDE_DIR nvml.h
@@ -347,6 +372,7 @@ endif()
 # --- CUDA Libraries ---
 find_library(CUDA_DRIVER NAMES cuda nvcuda HINTS ${CRIMSON_CUDA_LIBRARY_HINTS})
 find_library(NVCUVID_LIBRARY NAMES nvcuvid HINTS ${CRIMSON_NV_CODEC_LIBRARY_HINTS})
+crimson_require_found(NVCUVID_LIBRARY "NVIDIA nvcuvid import library")
 
 # NPP Libraries
 find_library(NPPC_LIBRARY NAMES nppc HINTS ${CRIMSON_CUDA_LIBRARY_HINTS})

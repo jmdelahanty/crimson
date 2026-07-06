@@ -346,6 +346,78 @@ function Require-ExistingPath {
     }
 }
 
+function Require-OneExistingPath {
+    param(
+        [string]$Label,
+        [string[]]$Candidates,
+        [string]$Hint
+    )
+
+    foreach ($candidate in $Candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+        if (Test-Path -LiteralPath $candidate) {
+            return [System.IO.Path]::GetFullPath($candidate)
+        }
+    }
+
+    Write-Host "$Label not found. Checked:"
+    foreach ($candidate in $Candidates) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+            Write-Host "  $candidate"
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($Hint)) {
+        throw "$Label not found. $Hint"
+    }
+    throw "$Label not found."
+}
+
+function Require-FfmpegDevelopmentFiles {
+    param(
+        [string]$Root
+    )
+
+    Require-ExistingPath -Label "FFmpeg root" -PathValue $Root
+    Require-ExistingPath -Label "FFmpeg avformat header" -PathValue (Join-Path $Root "include/libavformat/avformat.h")
+
+    foreach ($libraryName in @("avformat", "avcodec", "avutil", "swscale", "swresample")) {
+        Require-ExistingPath `
+            -Label "FFmpeg $libraryName import library" `
+            -PathValue (Join-Path $Root ("lib/" + $libraryName + ".lib"))
+    }
+}
+
+function Require-NvidiaCodecImportLibrary {
+    param(
+        [string]$LibraryName,
+        [string]$VideoCodecSdkRootValue
+    )
+
+    $candidates = @(
+        (Join-Path $RepoRoot ("third_party/nvcodec/x64/" + $LibraryName + ".lib"))
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($VideoCodecSdkRootValue)) {
+        $candidates += @(
+            (Join-Path $VideoCodecSdkRootValue ("Lib/win/x64/" + $LibraryName + ".lib")),
+            (Join-Path $VideoCodecSdkRootValue ("lib/win/x64/" + $LibraryName + ".lib")),
+            (Join-Path $VideoCodecSdkRootValue ("Lib/x64/" + $LibraryName + ".lib")),
+            (Join-Path $VideoCodecSdkRootValue ("lib/x64/" + $LibraryName + ".lib")),
+            (Join-Path $VideoCodecSdkRootValue ("Lib/" + $LibraryName + ".lib")),
+            (Join-Path $VideoCodecSdkRootValue ("lib/" + $LibraryName + ".lib"))
+        )
+    }
+
+    $resolvedLibrary = Require-OneExistingPath `
+        -Label "NVIDIA $LibraryName import library" `
+        -Candidates $candidates `
+        -Hint "Install/extract the NVIDIA Video Codec SDK or keep the repo's third_party\nvcodec import libraries available."
+    return $resolvedLibrary
+}
+
 if ([string]::IsNullOrWhiteSpace($OpenCvRoot)) {
     $OpenCvRoot = Join-Path $ThirdPartyRoot "opencv-install-4.10.0-x64"
 }
@@ -438,6 +510,9 @@ if (-not $SkipConfigure) {
         Require-ExistingPath -Label "CUDA nvcc" -PathValue (Join-Path $CudaToolkitRoot "bin/nvcc.exe")
         Require-ExistingPath -Label "OpenCV CMake config" -PathValue (Join-Path $OpenCvDir "OpenCVConfig.cmake")
         Require-ExistingPath -Label "TensorRT root" -PathValue $TensorRtRoot
+        Require-FfmpegDevelopmentFiles -Root $FfmpegRoot
+        Require-NvidiaCodecImportLibrary -LibraryName "nvcuvid" -VideoCodecSdkRootValue $VideoCodecSdkRoot | Out-Null
+        Require-NvidiaCodecImportLibrary -LibraryName "nvencodeapi" -VideoCodecSdkRootValue $VideoCodecSdkRoot | Out-Null
         if ($VcpkgToolchainFile) {
             Write-Host "Vcpkg toolchain: $VcpkgToolchainFile"
         } else {
