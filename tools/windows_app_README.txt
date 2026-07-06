@@ -54,6 +54,12 @@ Notes
 - Keep the `.dll` files next to `redgui.exe` in `bin\`.
 - Do not copy only `redgui.exe`.
 - Do not move files out of this folder by hand.
+- Run-only users should not need to install the CUDA Toolkit. They need a
+  compatible NVIDIA driver; this app drop should contain the runtime DLLs
+  Crimson needs.
+- If a machine is also being used to build Crimson from source, install the
+  CUDA Toolkit separately and avoid replacing the display driver unless that is
+  an intentional machine-maintenance step.
 - If Windows reports a missing `.dll`, report the exact filename.
 - If Crimson hard-crashes, check `%LOCALAPPDATA%\Crimson\CrashDumps` for a
   `.dmp` file and matching `.txt` sidecar.

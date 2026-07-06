@@ -197,6 +197,34 @@ If this fails, fix the driver/runtime environment first. Crimson may compile
 against CUDA Toolkit `12.4`, but a run-only app primarily needs a compatible
 NVIDIA driver and the DLLs bundled with the app drop.
 
+Do not install the full CUDA Toolkit as a routine run-only troubleshooting
+step. The toolkit is a build prerequisite because it provides `nvcc.exe`,
+headers, import libraries, and development libraries. A published app drop
+should carry the runtime DLLs it needs next to `redgui.exe`.
+
+If a build-from-source machine does need CUDA Toolkit `12.4`, install it
+without replacing the user's display driver unless the existing driver is too
+old. In the graphical installer, use a custom install and deselect the driver.
+In silent mode, list only toolkit subpackages and omit `Display.Driver`, for
+example:
+
+```powershell
+.\cuda_12.4.0_551.61_windows.exe -s `
+  nvcc_12.4 `
+  cudart_12.4 `
+  npp_12.4 `
+  npp_dev_12.4 `
+  nvml_dev_12.4 `
+  visual_studio_integration_12.4 `
+  -n
+```
+
+If the driver is too old for the target CUDA runtime, handle the driver update
+as an explicit separate machine-maintenance step. NVIDIA documents
+`Display.Driver` as a separate CUDA installer subpackage in the CUDA 12.4
+Windows installation guide:
+`https://docs.nvidia.com/cuda/archive/12.4.0/cuda-installation-guide-microsoft-windows/index.html`
+
 ### Identify Missing DLLs
 
 From a Visual Studio Developer PowerShell:

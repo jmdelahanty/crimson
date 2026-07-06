@@ -158,6 +158,36 @@ Install:
 
 - CUDA Toolkit `12.4`
 
+Build-from-source machines need the CUDA Toolkit because CMake must find
+`nvcc.exe` and the CUDA development libraries. This is separate from the
+NVIDIA display driver. Do not use the default/express CUDA installer path on a
+user workstation if the goal is only to add the build toolkit.
+
+Driver-preserving install options:
+
+- in the graphical installer, choose a custom installation and deselect the
+  NVIDIA display driver / `Display.Driver` component
+- in silent mode, install only the toolkit subpackages Crimson needs and omit
+  `Display.Driver`
+
+Example silent install shape for CUDA `12.4`:
+
+```powershell
+.\cuda_12.4.0_551.61_windows.exe -s `
+  nvcc_12.4 `
+  cudart_12.4 `
+  npp_12.4 `
+  npp_dev_12.4 `
+  nvml_dev_12.4 `
+  visual_studio_integration_12.4 `
+  -n
+```
+
+The important constraint is that `Display.Driver` is not listed. If the
+existing NVIDIA driver is too old, update it as an explicit separate machine
+maintenance step rather than as a hidden side effect of Crimson dependency
+setup.
+
 Verify:
 
 ```powershell
@@ -236,10 +266,16 @@ Remember:
 
 - `nvidia-smi` reports driver-side CUDA capability
 - `nvcc --version` reports the toolkit Crimson compiles against
+- the `CUDA Version` printed by `nvidia-smi` is not proof that the CUDA Toolkit
+  is installed
+- a run-only Crimson app drop should need a compatible NVIDIA driver and the
+  DLLs bundled with the app, not a full CUDA Toolkit install
 
 See:
 
 - [docs/crimson_cuda_driver_toolkit_and_presets.md](/home/delahantyj@hhmi.org/gitrepos/crimson/docs/crimson_cuda_driver_toolkit_and_presets.md)
+- NVIDIA CUDA 12.4 Windows install guide:
+  `https://docs.nvidia.com/cuda/archive/12.4.0/cuda-installation-guide-microsoft-windows/index.html`
 
 ---
 
