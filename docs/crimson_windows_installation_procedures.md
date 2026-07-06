@@ -247,6 +247,32 @@ C:\third_party\ffmpeg-nvidia\lib\swscale.lib
 C:\third_party\ffmpeg-nvidia\lib\swresample.lib
 ```
 
+The FFmpeg root is the directory that directly contains `bin`, `include`, and
+`lib`. Some dependency archives unzip with an extra nested directory. This is
+wrong for the default helper path:
+
+```text
+C:\third_party\ffmpeg-nvidia\ffmpeg-nvidia\bin
+C:\third_party\ffmpeg-nvidia\ffmpeg-nvidia\include
+C:\third_party\ffmpeg-nvidia\ffmpeg-nvidia\lib
+```
+
+Flatten it to:
+
+```text
+C:\third_party\ffmpeg-nvidia\bin
+C:\third_party\ffmpeg-nvidia\include
+C:\third_party\ffmpeg-nvidia\lib
+```
+
+Alternatively, pass the nested root explicitly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 `
+  -FfmpegRoot "C:\third_party\ffmpeg-nvidia\ffmpeg-nvidia" `
+  -CleanInstall
+```
+
 If using Media Autobuild Suite, stage that layout from an x64 Visual Studio
 developer shell:
 
@@ -422,6 +448,12 @@ OpenCV config not found:
 
 - `OpenCV_DIR` must contain `OpenCVConfig.cmake`
 - the helper searches common nested archive layouts
+
+FFmpeg headers or import libraries not found:
+
+- `FFMPEG_ROOT` must directly contain `bin`, `include`, and `lib`
+- avoid nested extraction such as `ffmpeg-nvidia\ffmpeg-nvidia\include`
+- run `tools\check_windows_build_dependency_paths.cmd`
 
 vcpkg package errors:
 

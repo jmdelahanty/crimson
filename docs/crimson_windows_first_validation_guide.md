@@ -290,6 +290,10 @@ Suggested meanings:
 - `C:\third_party\ffmpeg-nvidia`
   - FFmpeg root for the Windows validation stack
 
+For FFmpeg, the root must directly contain `bin`, `include`, and `lib`. If an
+archive unzips as `C:\third_party\ffmpeg-nvidia\ffmpeg-nvidia\...`, flatten it
+or pass the nested root with `-FfmpegRoot`.
+
 ---
 
 ## Step 3: Clone the Repo with Submodules
@@ -423,6 +427,23 @@ C:\third_party\ffmpeg-nvidia\lib\avcodec.lib
 C:\third_party\ffmpeg-nvidia\lib\avutil.lib
 C:\third_party\ffmpeg-nvidia\lib\swscale.lib
 C:\third_party\ffmpeg-nvidia\lib\swresample.lib
+```
+
+The default helper expects those files directly under
+`C:\third_party\ffmpeg-nvidia`. If the archive unzipped one level too deep, the
+checker will fail until the directory is flattened:
+
+```text
+wrong: C:\third_party\ffmpeg-nvidia\ffmpeg-nvidia\include
+right: C:\third_party\ffmpeg-nvidia\include
+```
+
+The nested layout can also be used explicitly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 `
+  -FfmpegRoot "C:\third_party\ffmpeg-nvidia\ffmpeg-nvidia" `
+  -CleanInstall
 ```
 
 If you build FFmpeg with Media Autobuild Suite, stage it into Crimson's
