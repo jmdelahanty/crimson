@@ -282,6 +282,20 @@ helper script from the repo root:
 . .\tools\set_windows_dependency_roots.ps1
 ```
 
+If PowerShell reports that running scripts is disabled on this system, allow
+scripts for only the current shell and rerun the helper:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+. .\tools\set_windows_dependency_roots.ps1
+```
+
+For a persistent per-user setting, use:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
+
 The helper script also prepends the common runtime DLL directories to `PATH`
 for the current PowerShell session so `redgui.exe` can be launched from the
 same shell without an extra manual `PATH` edit.
@@ -301,6 +315,50 @@ Alternative:
 - store machine-local overrides in `CMakeUserPresets.json`
 
 That file is ignored by git.
+
+---
+
+## Fast Path: Build A Staged App Drop
+
+From a Visual Studio Developer PowerShell in the repo root, the helper script
+can run the normal no-SFM bring-up path end to end:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 -CleanInstall
+```
+
+That script:
+
+- updates submodules
+- loads dependency roots through `tools/set_windows_dependency_roots.ps1`
+- configures `windows-trt10-cuda12.4-no-sfm`
+- builds `Release`
+- installs to `dist\Crimson`
+- runs `dist\Crimson\check_crimson_runtime.ps1`
+
+To launch after a successful build:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 -SkipConfigure -SkipBuild -SkipInstall -Launch
+```
+
+Or build and launch in one pass:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 -CleanInstall -Launch
+```
+
+Useful overrides:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 `
+  -ThirdPartyRoot "D:\third_party" `
+  -InstallPrefix "D:\CrimsonStage\Crimson" `
+  -CleanInstall
+```
+
+If the fast path fails, continue with the manual steps below and report the
+first failing section header plus the first real error block.
 
 ---
 

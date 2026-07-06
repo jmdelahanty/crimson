@@ -31,12 +31,27 @@ function Resolve-OpenCvRuntimeDirs {
     }
 
     $candidates = @(
-        (Join-Path $PathValue "x64\vc17\bin")
+        (Join-Path $PathValue "x64\vc17\bin"),
+        (Join-Path $PathValue "bin")
     )
 
     $leaf = Split-Path -Leaf $PathValue
     if ($leaf -ieq "lib") {
         $candidates += (Join-Path (Split-Path -Parent $PathValue) "bin")
+    }
+
+    $cursor = $PathValue
+    for ($i = 0; $i -lt 4; $i++) {
+        if ([string]::IsNullOrWhiteSpace($cursor)) {
+            break
+        }
+        $candidates += (Join-Path $cursor "x64\vc17\bin")
+        $candidates += (Join-Path $cursor "bin")
+        $parent = Split-Path -Parent $cursor
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $cursor) {
+            break
+        }
+        $cursor = $parent
     }
 
     return $candidates
