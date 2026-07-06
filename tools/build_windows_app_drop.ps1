@@ -62,6 +62,17 @@ function Resolve-OpenCvConfigDir {
             (Join-Path $Root "build"),
             $Root
         )
+
+        if (Test-Path -LiteralPath $Root) {
+            foreach ($child in (Get-ChildItem -LiteralPath $Root -Directory -ErrorAction SilentlyContinue)) {
+                $candidates += @(
+                    (Join-Path $child.FullName "lib/cmake/opencv4"),
+                    (Join-Path $child.FullName "x64/vc17/lib"),
+                    (Join-Path $child.FullName "build"),
+                    $child.FullName
+                )
+            }
+        }
     }
 
     foreach ($candidate in $candidates) {
@@ -191,6 +202,7 @@ if (-not $SkipConfigure) {
     Invoke-Step "Required dependency roots" {
         Require-ExistingPath -Label "CUDA Toolkit root" -PathValue $CudaToolkitRoot
         Require-ExistingPath -Label "CUDA nvcc" -PathValue (Join-Path $CudaToolkitRoot "bin/nvcc.exe")
+        Require-ExistingPath -Label "OpenCV CMake config" -PathValue (Join-Path $OpenCvDir "OpenCVConfig.cmake")
         Require-ExistingPath -Label "TensorRT root" -PathValue $TensorRtRoot
     }
 }
