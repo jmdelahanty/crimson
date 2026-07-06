@@ -11,7 +11,9 @@ param(
     [string]$FfmpegRoot,
     [string]$VideoCodecSdkRoot,
     [string]$TensorRtRoot,
-    [string]$VcpkgBinDir = "C:/src/vcpkg/installed/x64-windows/bin",
+    [string]$VcpkgRoot = "C:/src/vcpkg",
+    [string]$VcpkgTriplet = "x64-windows",
+    [string]$VcpkgBinDir,
     [switch]$SkipDependencySetup,
     [switch]$SkipSubmodules,
     [switch]$SkipConfigure,
@@ -90,6 +92,39 @@ function Resolve-OpenCvConfigDir {
     return $Root
 }
 
+function Resolve-VcpkgToolchainFile {
+    param(
+        [string]$Root,
+        [string]$BinDir
+    )
+
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($Root)) {
+        $candidates += (Join-Path $Root "scripts/buildsystems/vcpkg.cmake")
+    }
+
+    $cursor = $BinDir
+    for ($i = 0; $i -lt 5; $i++) {
+        if ([string]::IsNullOrWhiteSpace($cursor)) {
+            break
+        }
+        $candidates += (Join-Path $cursor "scripts/buildsystems/vcpkg.cmake")
+        $parent = Split-Path -Parent $cursor
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $cursor) {
+            break
+        }
+        $cursor = $parent
+    }
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate) {
+            return [System.IO.Path]::GetFullPath($candidate)
+        }
+    }
+
+    return $null
+}
+
 function Invoke-Step {
     param(
         [string]$Label,
@@ -150,8 +185,12 @@ if ([string]::IsNullOrWhiteSpace($VideoCodecSdkRoot)) {
         ) `
         -Fallback (Join-Path $ThirdPartyRoot "Video_Codec_SDK_13.0.19")
 }
+if ([string]::IsNullOrWhiteSpace($VcpkgBinDir)) {
+    $VcpkgBinDir = Join-Path $VcpkgRoot ("installed/" + $VcpkgTriplet + "/bin")
+}
 
 $OpenCvDir = Resolve-OpenCvConfigDir -ExplicitConfigDir $OpenCvDir -Root $OpenCvRoot
+$VcpkgToolchainFile = Resolve-VcpkgToolchainFile -Root $VcpkgRoot -BinDir $VcpkgBinDir
 $InstallPrefixPath = if ([System.IO.Path]::IsPathRooted($InstallPrefix)) {
     [System.IO.Path]::GetFullPath($InstallPrefix)
 } else {
@@ -204,12 +243,22 @@ if (-not $SkipConfigure) {
         Require-ExistingPath -Label "CUDA nvcc" -PathValue (Join-Path $CudaToolkitRoot "bin/nvcc.exe")
         Require-ExistingPath -Label "OpenCV CMake config" -PathValue (Join-Path $OpenCvDir "OpenCVConfig.cmake")
         Require-ExistingPath -Label "TensorRT root" -PathValue $TensorRtRoot
+        if ($VcpkgToolchainFile) {
+            Write-Host "Vcpkg toolchain: $VcpkgToolchainFile"
+        } else {
+            Write-Warning "Vcpkg toolchain not found. GLEW, glfw3, and HDF5 must be discoverable by another CMake search path."
+        }
     }
 }
 
 if (-not $SkipConfigure) {
     Invoke-Step "Configure" {
-        Invoke-NativeCommand -Executable cmake -Arguments @("--preset", $Preset)
+        $configureArgs = @("--preset", $Preset)
+        if ($VcpkgToolchainFile) {
+            $configureArgs += "-DCMAKE_TOOLCHAIN_FILE=$VcpkgToolchainFile"
+            $configureArgs += "-DVCPKG_TARGET_TRIPLET=$VcpkgTriplet"
+        }
+        Invoke-NativeCommand -Executable cmake -Arguments $configureArgs
     }
 }
 

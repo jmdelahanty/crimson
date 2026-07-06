@@ -63,6 +63,7 @@ Install or verify these first:
 - Windows SDK
 - CMake
 - Ninja
+- vcpkg
 - current NVIDIA driver
 - CUDA Toolkit `12.4`
 
@@ -103,6 +104,35 @@ Windows x64 + MSVC 2022 + CUDA 12.4 + TensorRT 10.0.1.6 + OpenCV 4.10.0
 Source-build machines need the full build stack above. Run-only user machines
 should only need a supported Windows release, a compatible NVIDIA GPU/driver,
 and the published Crimson app drop with its runtime DLLs bundled.
+
+### vcpkg Packages
+
+Crimson's Windows source build uses vcpkg for non-NVIDIA C/C++ dependencies
+such as GLEW, GLFW, and HDF5. A missing `GLEW` configure error usually means
+vcpkg is absent, the packages have not been installed, or CMake was not given
+the vcpkg toolchain file.
+
+Default source-build layout:
+
+```text
+C:\src\vcpkg
+C:\src\vcpkg\installed\x64-windows\bin
+```
+
+First-time setup:
+
+```powershell
+cd C:\src
+git clone https://github.com/microsoft/vcpkg.git
+cd C:\src\vcpkg
+.\bootstrap-vcpkg.bat
+.\vcpkg.exe install glew:x64-windows glfw3:x64-windows 'hdf5[cpp]:x64-windows'
+```
+
+The one-command Crimson build helper passes
+`C:\src\vcpkg\scripts\buildsystems\vcpkg.cmake` to CMake automatically when it
+exists. If vcpkg is installed somewhere else, pass `-VcpkgRoot` and
+`-VcpkgTriplet` to `tools\build_windows_app_drop.ps1`.
 
 ---
 
