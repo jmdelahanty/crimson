@@ -225,6 +225,12 @@ endfunction()
 
 set(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "")
 if(WIN32)
+    if(CUDA_TOOLKIT_ROOT_DIR)
+        crimson_append_existing_dir(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "${CUDA_TOOLKIT_ROOT_DIR}/bin")
+    endif()
+    if(CUDAToolkit_ROOT)
+        crimson_append_existing_dir(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "${CUDAToolkit_ROOT}/bin")
+    endif()
     crimson_append_existing_dir(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "${FFMPEG_ROOT}/bin")
     crimson_append_existing_dir(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "${TENSORRT_ROOT}/bin")
     crimson_append_existing_dir(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "${TENSORRT_ROOT}/lib")
@@ -932,8 +938,19 @@ if(WIN32)
     set(CRIMSON_WINDOWS_IGNORED_UNRESOLVED_RUNTIME_DLLS
         "AzureAttestManager.dll"
         "AzureAttestNormal.dll"
+        "DeclaredConfiguration.dll"
+        "dmenterprisediagnostics.dll"
+        "EDPCSP.dll"
+        "EFSCORE.dll"
+        "FVESKYBACKUP.dll"
+        "HwReqChk.dll"
         "HvsiFileTrust.dll"
+        "LSASRV.dll"
+        "ngcrecovery.dll"
         "PdmUtilities.dll"
+        "policymanagerprecheck.dll"
+        "SAMSRV.dll"
+        "VCRUNTIME140_1.dll"
         "wpaxholder.dll"
     )
     set(_crimson_windows_runtime_dep_script
