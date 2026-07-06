@@ -87,6 +87,7 @@ simplelogger::Logger *logger =
     simplelogger::LoggerFactory::CreateConsoleLogger();
 
 #include "ui_path_config.h"
+#include "windows_crash_dump.h"
 #include "zarr_bbox_edit.h"
 
 std::vector<std::mutex> g_mutexes(MAX_VIEWS);
@@ -741,6 +742,113 @@ void pollPendingKeypointWrite(
     status_out = result.success_status;
 }
 
+std::optional<int> ParseCudaDeviceIndexString(const std::string& value) {
+    if (value.empty()) {
+        return std::nullopt;
+    }
+
+    try {
+        size_t consumed = 0;
+        const int parsed = std::stoi(value, &consumed);
+        if (consumed != value.size() || parsed < 0) {
+            return std::nullopt;
+        }
+        return parsed;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+std::optional<std::filesystem::path> GetCudaDeviceConfigPath() {
+    if (const char* explicit_path = std::getenv("CRIMSON_CUDA_DEVICE_CONFIG");
+        explicit_path && *explicit_path != '\0') {
+        return std::filesystem::path(explicit_path);
+    }
+
+#ifdef _WIN32
+    if (const char* localappdata = std::getenv("LOCALAPPDATA");
+        localappdata && *localappdata != '\0') {
+        return std::filesystem::path(localappdata) / "Crimson" / "config" /
+               "cuda_device.json";
+    }
+    if (const char* appdata = std::getenv("APPDATA");
+        appdata && *appdata != '\0') {
+        return std::filesystem::path(appdata) / "crimson" / "cuda_device.json";
+    }
+#else
+    if (const char* xdg_config_home = std::getenv("XDG_CONFIG_HOME");
+        xdg_config_home && *xdg_config_home != '\0') {
+        return std::filesystem::path(xdg_config_home) / "crimson" /
+               "cuda_device.json";
+    }
+#endif
+
+    if (const char* home = std::getenv("HOME"); home && *home != '\0') {
+        return std::filesystem::path(home) / ".config" / "crimson" /
+               "cuda_device.json";
+    }
+    return std::nullopt;
+}
+
+std::optional<int> LoadSavedCudaDeviceIndex(
+    const std::filesystem::path& config_path,
+    std::string& source_description) {
+    if (config_path.empty()) {
+        return std::nullopt;
+    }
+
+    std::ifstream config_stream(config_path);
+    if (!config_stream.is_open()) {
+        return std::nullopt;
+    }
+
+    try {
+        json payload = json::parse(config_stream);
+        auto selected_index = payload.find("selected_cuda_device_index");
+        if (selected_index == payload.end() || !selected_index->is_number_integer()) {
+            return std::nullopt;
+        }
+        const int parsed = selected_index->get<int>();
+        if (parsed < 0) {
+            return std::nullopt;
+        }
+        source_description = config_path.string();
+        return parsed;
+    } catch (const std::exception& exc) {
+        std::cerr << "[CudaDevice] Ignoring unreadable saved CUDA device config "
+                  << config_path << ": " << exc.what() << std::endl;
+        return std::nullopt;
+    }
+}
+
+int ResolveCudaDeviceIndex() {
+    if (const char* env_device = std::getenv("CRIMSON_CUDA_DEVICE_INDEX");
+        env_device && *env_device != '\0') {
+        if (auto parsed = ParseCudaDeviceIndexString(std::string(env_device))) {
+            std::cout << "[CudaDevice] Using GPU " << *parsed
+                      << " from CRIMSON_CUDA_DEVICE_INDEX" << std::endl;
+            return *parsed;
+        }
+        std::cerr << "[CudaDevice] Ignoring invalid CRIMSON_CUDA_DEVICE_INDEX="
+                  << env_device << std::endl;
+    }
+
+    if (auto config_path = GetCudaDeviceConfigPath()) {
+        std::string source_description;
+        if (auto saved_index =
+                LoadSavedCudaDeviceIndex(*config_path, source_description)) {
+            std::cout << "[CudaDevice] Using GPU " << *saved_index
+                      << " from " << source_description << std::endl;
+            return *saved_index;
+        }
+    }
+
+    constexpr int default_cuda_device_index = 0;
+    std::cout << "[CudaDevice] Using default GPU "
+              << default_cuda_device_index << std::endl;
+    return default_cuda_device_index;
+}
+
 
 
 }  // namespace
@@ -767,6 +875,7 @@ int main(int argc, char **argv) {
     ClippedBoundarySmokeConfig clipped_boundary_smoke;
     int app_exit_code = 0;
     const std::filesystem::path argv0_path = (argc > 0) ? argv[0] : "";
+    InstallWindowsCrashHandler(argv0_path);
     std::error_code cwd_error;
     const std::filesystem::path cwd = std::filesystem::current_path(cwd_error);
     for (int i = 1; i < argc; ++i) {
@@ -1023,7 +1132,7 @@ int main(int argc, char **argv) {
     window->render_target_title = (char *)malloc(100);  // window title
     window->glsl_version = (char *)malloc(100);
 
-    constexpr int kCudaDeviceIndex = 0;
+    const int kCudaDeviceIndex = ResolveCudaDeviceIndex();
     render_initialize_target(window, kCudaDeviceIndex, argv0_path);
 
     render_scene *scene = new render_scene();

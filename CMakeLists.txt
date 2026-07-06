@@ -115,6 +115,12 @@ if(NOT TENSORRT_ROOT AND DEFINED ENV{TENSORRT_ROOT} AND NOT "$ENV{TENSORRT_ROOT}
 endif()
 set(TENSORRT_ROOT "${TENSORRT_ROOT}" CACHE PATH "Path to the TensorRT installation root")
 
+if(NOT CRIMSON_VCPKG_BIN_DIR AND DEFINED ENV{CRIMSON_VCPKG_BIN_DIR} AND NOT "$ENV{CRIMSON_VCPKG_BIN_DIR}" STREQUAL "")
+    set(CRIMSON_VCPKG_BIN_DIR "$ENV{CRIMSON_VCPKG_BIN_DIR}")
+endif()
+set(CRIMSON_VCPKG_BIN_DIR "${CRIMSON_VCPKG_BIN_DIR}" CACHE PATH
+    "Optional vcpkg runtime DLL directory for Windows packaging")
+
 if(NOT FFMPEG_ROOT AND DEFINED ENV{FFMPEG_ROOT} AND NOT "$ENV{FFMPEG_ROOT}" STREQUAL "")
     set(FFMPEG_ROOT "$ENV{FFMPEG_ROOT}")
 endif()
@@ -186,6 +192,34 @@ if(TENSORRT_ROOT)
         "${TENSORRT_ROOT}/lib"
         "${TENSORRT_ROOT}/lib64"
         "${TENSORRT_ROOT}/lib/x64")
+endif()
+
+function(crimson_append_existing_dir list_var dir_path)
+    if(NOT dir_path)
+        return()
+    endif()
+    if(EXISTS "${dir_path}")
+        list(APPEND ${list_var} "${dir_path}")
+        list(REMOVE_DUPLICATES ${list_var})
+        set(${list_var} "${${list_var}}" PARENT_SCOPE)
+    endif()
+endfunction()
+
+set(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "")
+if(WIN32)
+    crimson_append_existing_dir(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "${FFMPEG_ROOT}/bin")
+    crimson_append_existing_dir(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "${TENSORRT_ROOT}/bin")
+    crimson_append_existing_dir(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "${TENSORRT_ROOT}/lib")
+    crimson_append_existing_dir(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "${CRIMSON_VCPKG_BIN_DIR}")
+
+    if(OpenCV_DIR)
+        crimson_append_existing_dir(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "${OpenCV_DIR}/x64/vc17/bin")
+        get_filename_component(CRIMSON_OPENCV_DIR_LEAF "${OpenCV_DIR}" NAME)
+        if(CRIMSON_OPENCV_DIR_LEAF STREQUAL "lib")
+            get_filename_component(CRIMSON_OPENCV_DIR_PARENT "${OpenCV_DIR}" DIRECTORY)
+            crimson_append_existing_dir(CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS "${CRIMSON_OPENCV_DIR_PARENT}/bin")
+        endif()
+    endif()
 endif()
 
 # --- Set RPATH for relocatable installs ---
@@ -771,6 +805,10 @@ target_link_libraries(redgui PRIVATE
 )
 crimson_configure_parquet_support(redgui)
 
+if(WIN32)
+    target_link_libraries(redgui PRIVATE Dbghelp)
+endif()
+
 # Add NVML if enabled
 if(ENABLE_NVML)
     if(NVML_LIBRARY)
@@ -821,16 +859,106 @@ foreach(FONT_FILE ${FONT_FILES})
 endforeach()
 
 # --- Install Rules ---
+set(CRIMSON_INSTALL_RUNTIME_DESTINATION ${CMAKE_INSTALL_BINDIR})
+
 if(WIN32)
-    set(CRIMSON_INSTALL_RUNTIME_DESTINATION ".")
-else()
-    set(CRIMSON_INSTALL_RUNTIME_DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(TARGETS redgui
+        RUNTIME DESTINATION ${CRIMSON_INSTALL_RUNTIME_DESTINATION}
+        COMPONENT core
+    )
+
+    install(PROGRAMS
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/install_crimson.ps1
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/install_crimson.cmd
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_crimson_runtime.ps1
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_crimson_runtime.cmd
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/set_crimson_cuda_device.ps1
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/set_crimson_cuda_device.cmd
+        DESTINATION .
+        COMPONENT core
+    )
+    install(FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/windows_app_README.txt
+        DESTINATION .
+        RENAME README.txt
+        COMPONENT core
+    )
+
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ${CRIMSON_INSTALL_RUNTIME_DESTINATION})
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_COMPONENT core)
+    include(InstallRequiredSystemLibraries)
+    if(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
+        install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
+            DESTINATION ${CRIMSON_INSTALL_RUNTIME_DESTINATION}
+            COMPONENT core
+        )
+    endif()
+
+    set(CRIMSON_WINDOWS_IGNORED_UNRESOLVED_RUNTIME_DLLS
+        "AzureAttestManager.dll"
+        "AzureAttestNormal.dll"
+        "HvsiFileTrust.dll"
+        "PdmUtilities.dll"
+        "wpaxholder.dll"
+    )
+    set(_crimson_windows_runtime_dep_script
+        "${CMAKE_CURRENT_BINARY_DIR}/install_windows_runtime_deps_$<CONFIG>.cmake")
+    set(_crimson_windows_runtime_dep_script_content [=[
+set(_crimson_runtime_executable "$<TARGET_FILE:redgui>")
+set(_crimson_runtime_destination "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/@CRIMSON_INSTALL_RUNTIME_DESTINATION@")
+set(_crimson_runtime_dependency_search_dirs "@CRIMSON_RUNTIME_DEPENDENCY_SEARCH_DIRS@")
+set(_crimson_ignored_unresolved_runtime_dlls "@CRIMSON_WINDOWS_IGNORED_UNRESOLVED_RUNTIME_DLLS@")
+
+file(GET_RUNTIME_DEPENDENCIES
+    RESOLVED_DEPENDENCIES_VAR _crimson_resolved_runtime_deps
+    UNRESOLVED_DEPENDENCIES_VAR _crimson_unresolved_runtime_deps
+    EXECUTABLES "${_crimson_runtime_executable}"
+    DIRECTORIES ${_crimson_runtime_dependency_search_dirs}
+    PRE_EXCLUDE_REGEXES
+        "api-ms-win-.*"
+        "ext-ms-.*"
+    POST_EXCLUDE_REGEXES
+        ".*[Ww]indows[\\/](System32|SysWOW64)[\\/].*"
+)
+
+set(_crimson_remaining_unresolved_runtime_deps "")
+foreach(_crimson_runtime_dep IN LISTS _crimson_unresolved_runtime_deps)
+    get_filename_component(_crimson_runtime_dep_name "${_crimson_runtime_dep}" NAME)
+    list(FIND _crimson_ignored_unresolved_runtime_dlls "${_crimson_runtime_dep_name}" _crimson_ignored_runtime_dep_index)
+    if(_crimson_ignored_runtime_dep_index EQUAL -1)
+        list(APPEND _crimson_remaining_unresolved_runtime_deps "${_crimson_runtime_dep_name}")
+    endif()
+endforeach()
+
+if(_crimson_remaining_unresolved_runtime_deps)
+    list(REMOVE_DUPLICATES _crimson_remaining_unresolved_runtime_deps)
+    string(REPLACE ";" "\n  " _crimson_unresolved_runtime_dep_message "${_crimson_remaining_unresolved_runtime_deps}")
+    message(FATAL_ERROR "Could not resolve runtime dependencies:\n  ${_crimson_unresolved_runtime_dep_message}")
 endif()
 
-install(TARGETS redgui
-    RUNTIME DESTINATION ${CRIMSON_INSTALL_RUNTIME_DESTINATION}
-    COMPONENT core
-)
+if(_crimson_resolved_runtime_deps)
+    list(REMOVE_DUPLICATES _crimson_resolved_runtime_deps)
+    file(INSTALL
+        DESTINATION "${_crimson_runtime_destination}"
+        TYPE FILE
+        FOLLOW_SYMLINK_CHAIN
+        FILES ${_crimson_resolved_runtime_deps}
+    )
+endif()
+]=])
+    string(CONFIGURE "${_crimson_windows_runtime_dep_script_content}"
+        _crimson_windows_runtime_dep_script_content @ONLY)
+    file(GENERATE
+        OUTPUT "${_crimson_windows_runtime_dep_script}"
+        CONTENT "${_crimson_windows_runtime_dep_script_content}"
+    )
+    install(SCRIPT "${_crimson_windows_runtime_dep_script}" COMPONENT core)
+else()
+    install(TARGETS redgui
+        RUNTIME DESTINATION ${CRIMSON_INSTALL_RUNTIME_DESTINATION}
+        COMPONENT core
+    )
+endif()
 
 install(DIRECTORY ${FONT_SOURCE_DIR}/
     DESTINATION ${CMAKE_INSTALL_DATADIR}/crimson/fonts
