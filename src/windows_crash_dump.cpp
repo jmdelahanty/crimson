@@ -12,8 +12,8 @@
 #include <system_error>
 
 #ifdef _WIN32
-#include <dbghelp.h>
 #include <windows.h>
+#include <dbghelp.h>
 
 namespace {
 
