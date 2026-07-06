@@ -3,7 +3,7 @@ param(
     [string]$VcpkgRoot = "C:/src/vcpkg",
     [string]$Triplet = "x64-windows",
     [string]$VcpkgRepository = "https://github.com/microsoft/vcpkg.git",
-    [string[]]$Packages = @("glew", "glfw3", "hdf5[cpp]"),
+    [string[]]$Packages = @("glew", "glfw3", "zlib", "hdf5[cpp]"),
     [switch]$SkipClone,
     [switch]$SkipBootstrap,
     [switch]$CleanBuildtreesAfterInstall

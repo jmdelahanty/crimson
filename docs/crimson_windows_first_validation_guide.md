@@ -108,9 +108,10 @@ and the published Crimson app drop with its runtime DLLs bundled.
 ### vcpkg Packages
 
 Crimson's Windows source build uses vcpkg for non-NVIDIA C/C++ dependencies
-such as GLEW, GLFW, and HDF5. A missing `GLEW` configure error usually means
-vcpkg is absent, the packages have not been installed, or CMake was not given
-the vcpkg toolchain file.
+such as GLEW, GLFW, zlib, and HDF5. A missing `GLEW` configure error usually
+means vcpkg is absent, the packages have not been installed, or CMake was not
+given the vcpkg toolchain file. A missing `ZLIB` error during HDF5 discovery
+usually means `zlib:x64-windows` is absent from the same vcpkg triplet.
 
 Default source-build layout:
 
@@ -126,7 +127,7 @@ cd C:\src
 git clone https://github.com/microsoft/vcpkg.git
 cd C:\src\vcpkg
 .\bootstrap-vcpkg.bat
-.\vcpkg.exe install glew:x64-windows glfw3:x64-windows 'hdf5[cpp]:x64-windows'
+.\vcpkg.exe install glew:x64-windows glfw3:x64-windows zlib:x64-windows 'hdf5[cpp]:x64-windows'
 ```
 
 Or use Crimson's helper from the Crimson repo root:
@@ -141,6 +142,7 @@ The helper clones `https://github.com/microsoft/vcpkg.git` into
 
 - `glew:x64-windows`
 - `glfw3:x64-windows`
+- `zlib:x64-windows`
 - `hdf5[cpp]:x64-windows`
 
 If vcpkg is stored elsewhere:
