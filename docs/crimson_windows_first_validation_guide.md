@@ -435,11 +435,24 @@ powershell -ExecutionPolicy Bypass -File .\tools\stage_windows_ffmpeg_nvidia.ps1
   -CleanOutput
 ```
 
-That script:
+The staging script:
 
 - verifies that the FFmpeg build exposes CUDA/NVENC
 - copies headers and runtime DLLs into `C:\third_party\ffmpeg-nvidia`
 - generates MSVC import libraries from the suite's `.def` files using `lib.exe`
+
+Check the staged FFmpeg/NVIDIA codec paths without running the full build:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\check_windows_build_dependency_paths.ps1
+```
+
+To also check whether the Media Autobuild Suite source tree is available:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\check_windows_build_dependency_paths.ps1 `
+  -CheckMediaAutobuild
+```
 
 ### Driver Check
 

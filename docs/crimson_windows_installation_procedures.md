@@ -257,6 +257,25 @@ powershell -ExecutionPolicy Bypass -File .\tools\stage_windows_ffmpeg_nvidia.ps1
   -CleanOutput
 ```
 
+Check the FFmpeg/NVIDIA codec build paths without running a full build:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\check_windows_build_dependency_paths.ps1
+```
+
+or:
+
+```cmd
+tools\check_windows_build_dependency_paths.cmd
+```
+
+To also check whether the Media Autobuild Suite source layout is available:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\check_windows_build_dependency_paths.ps1 `
+  -CheckMediaAutobuild
+```
+
 ### vcpkg
 
 Install Crimson's current vcpkg package set:
@@ -360,6 +379,7 @@ refresh the `current` drop.
 | Script | Audience | Purpose |
 | --- | --- | --- |
 | `tools\build_windows_app_drop.ps1` | builder | configure, build, install, and runtime-check a staged app drop |
+| `tools\check_windows_build_dependency_paths.ps1` | builder | check FFmpeg development files and NVIDIA codec import-library paths |
 | `tools\setup_windows_vcpkg.ps1` | builder | clone/bootstrap vcpkg and install Crimson's vcpkg packages |
 | `tools\set_windows_dependency_roots.ps1` | builder | set `CRIMSON_*` roots and prepend runtime DLL paths in the current shell |
 | `tools\publish_windows_app_drop.ps1` | publisher | copy a staged app drop to a release/current share with metadata |
