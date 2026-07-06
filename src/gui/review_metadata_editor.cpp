@@ -2,11 +2,14 @@
 
 #include "imgui.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#if !defined(_WIN32)
 #include <pwd.h>
-#include <string>
 #include <unistd.h>
+#endif
+#include <string>
 
 namespace {
 
@@ -34,11 +37,18 @@ std::string resolveDefaultReviewer() {
         return env_logname;
     }
 
+    const char* env_username = std::getenv("USERNAME");
+    if (env_username != nullptr && env_username[0] != '\0') {
+        return env_username;
+    }
+
+#if !defined(_WIN32)
     if (passwd* pw = getpwuid(getuid())) {
         if (pw->pw_name != nullptr && pw->pw_name[0] != '\0') {
             return pw->pw_name;
         }
     }
+#endif
 
     return {};
 }
