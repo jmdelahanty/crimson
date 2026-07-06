@@ -393,12 +393,13 @@ After a successful staged install:
 powershell -ExecutionPolicy Bypass -File .\tools\publish_windows_app_drop.ps1 `
   -StageRoot .\dist\Crimson `
   -ShareRoot "\\SERVER\crimson\windows-app" `
-  -ReleaseName "YYYY-MM-DD_HHMMSS" `
   -PublishCurrent
 ```
 
 The publisher validates the app-drop layout, writes release metadata, and can
-refresh the `current` drop.
+refresh the `current` drop. When `-ReleaseName` is omitted, the publisher uses
+an automatic name like `YYYY-MM-DD_HHMMSS_<short-commit>` when Git metadata is
+available, falling back to `YYYY-MM-DD_HHMMSS` otherwise.
 
 ## Current Script Inventory
 

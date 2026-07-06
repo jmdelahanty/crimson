@@ -103,6 +103,17 @@ function Try-GetGitString {
     return ""
 }
 
+function New-DefaultReleaseName {
+    param([string]$CommitShort)
+
+    $timestamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
+    if (-not [string]::IsNullOrWhiteSpace($CommitShort)) {
+        return "${timestamp}_${CommitShort}"
+    }
+
+    return $timestamp
+}
+
 function Test-AppDropLayout {
     param([string]$Root)
 
@@ -135,7 +146,7 @@ $currentRoot = Join-Path $ShareRoot $CurrentName
 
 if (-not [string]::IsNullOrWhiteSpace($ReleaseName) -or $PublishCurrent -or $ArchiveExistingCurrent) {
     if ([string]::IsNullOrWhiteSpace($ReleaseName)) {
-        $ReleaseName = Get-Date -Format "yyyy-MM-dd_HHmmss"
+        $ReleaseName = New-DefaultReleaseName -CommitShort $repoCommitShort
     }
 
     $releasesRoot = Join-Path $ShareRoot $ReleasesDirName
@@ -195,7 +206,7 @@ if (-not [string]::IsNullOrWhiteSpace($ReleaseName) -or $PublishCurrent -or $Arc
     }
 } else {
     $effectiveReleaseName = if ([string]::IsNullOrWhiteSpace($ReleaseName)) {
-        Get-Date -Format "yyyy-MM-dd_HHmmss"
+        New-DefaultReleaseName -CommitShort $repoCommitShort
     } else {
         $ReleaseName
     }
