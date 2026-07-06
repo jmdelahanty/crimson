@@ -131,17 +131,46 @@ function Resolve-Python3Executable {
         [string]$ExplicitExecutable
     )
 
+    function Test-PythonCandidate {
+        param([string]$Executable)
+
+        if ([string]::IsNullOrWhiteSpace($Executable)) {
+            return $null
+        }
+
+        try {
+            $output = & $Executable -c "import sys; print(sys.executable)" 2>$null
+            if ($LASTEXITCODE -eq 0 -and $output) {
+                $resolved = ($output | Select-Object -First 1)
+                if ($resolved -and (Test-Path -LiteralPath $resolved)) {
+                    return [System.IO.Path]::GetFullPath($resolved)
+                }
+                return $Executable
+            }
+        } catch {
+            # Fall through to the null result below.
+        }
+
+        return $null
+    }
+
     if (-not [string]::IsNullOrWhiteSpace($ExplicitExecutable)) {
         if (Test-Path -LiteralPath $ExplicitExecutable) {
-            return [System.IO.Path]::GetFullPath($ExplicitExecutable)
+            $resolvedExplicit = Test-PythonCandidate -Executable ([System.IO.Path]::GetFullPath($ExplicitExecutable))
+            if ($resolvedExplicit) {
+                return $resolvedExplicit
+            }
         }
-        return $ExplicitExecutable
+        return Test-PythonCandidate -Executable $ExplicitExecutable
     }
 
     foreach ($name in @("python", "python3")) {
         $command = Get-Command $name -ErrorAction SilentlyContinue
         if ($command) {
-            return $command.Source
+            $resolved = Test-PythonCandidate -Executable $command.Source
+            if ($resolved) {
+                return $resolved
+            }
         }
     }
 
