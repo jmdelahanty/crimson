@@ -101,14 +101,13 @@ function Require-Command {
 function Invoke-NativeCommand {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Command,
-        [Parameter(ValueFromRemainingArguments = $true)]
-        [string[]]$Arguments
+        [string]$Executable,
+        [string[]]$Arguments = @()
     )
 
-    & $Command @Arguments
+    & $Executable @Arguments
     if ($LASTEXITCODE -ne 0) {
-        throw "Command failed with exit code ${LASTEXITCODE}: $Command $($Arguments -join ' ')"
+        throw "Command failed with exit code ${LASTEXITCODE}: $Executable $($Arguments -join ' ')"
     }
 }
 
@@ -162,12 +161,12 @@ Invoke-Step "Tool check" {
     if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
         Write-Host "ninja was not found in PATH. This is OK only if CMake can still find Ninja from the active Visual Studio developer shell."
     }
-    Invoke-NativeCommand cmake --version
+    Invoke-NativeCommand -Executable cmake -Arguments @("--version")
 }
 
 if (-not $SkipSubmodules) {
     Invoke-Step "Submodules" {
-        Invoke-NativeCommand git -C $RepoRoot submodule update --init --recursive
+        Invoke-NativeCommand -Executable git -Arguments @("-C", $RepoRoot, "submodule", "update", "--init", "--recursive")
     }
 }
 
@@ -198,13 +197,13 @@ if (-not $SkipConfigure) {
 
 if (-not $SkipConfigure) {
     Invoke-Step "Configure" {
-        Invoke-NativeCommand cmake --preset $Preset
+        Invoke-NativeCommand -Executable cmake -Arguments @("--preset", $Preset)
     }
 }
 
 if (-not $SkipBuild) {
     Invoke-Step "Build" {
-        Invoke-NativeCommand cmake --build $BuildDir --config $Configuration
+        Invoke-NativeCommand -Executable cmake -Arguments @("--build", $BuildDir, "--config", $Configuration)
     }
 }
 
@@ -213,7 +212,7 @@ if (-not $SkipInstall) {
         if ($CleanInstall -and (Test-Path -LiteralPath $InstallPrefixPath)) {
             Remove-Item -LiteralPath $InstallPrefixPath -Recurse -Force
         }
-        Invoke-NativeCommand cmake --install $BuildDir --config $Configuration --prefix $InstallPrefixPath
+        Invoke-NativeCommand -Executable cmake -Arguments @("--install", $BuildDir, "--config", $Configuration, "--prefix", $InstallPrefixPath)
     }
 }
 
