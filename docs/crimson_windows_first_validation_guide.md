@@ -89,6 +89,21 @@ If the laptop uses hybrid graphics:
 - make sure you can force apps to the NVIDIA GPU from Windows graphics settings
   or the NVIDIA control panel
 
+### Supported Matrix
+
+Do not validate Windows by trying every possible dependency combination. Pick
+the intended supported stack and make failures explicit against that stack.
+
+Current target:
+
+```text
+Windows x64 + MSVC 2022 + CUDA 12.4 + TensorRT 10.0.1.6 + OpenCV 4.10.0
+```
+
+Source-build machines need the full build stack above. Run-only user machines
+should only need a supported Windows release, a compatible NVIDIA GPU/driver,
+and the published Crimson app drop with its runtime DLLs bundled.
+
 ---
 
 ## Step 2: Pick a Clean Directory Layout

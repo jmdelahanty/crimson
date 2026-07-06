@@ -20,6 +20,21 @@ Quick runtime check:
 Default install location:
 - `%LOCALAPPDATA%\Crimson`
 
+Supported stack
+---------------
+
+This app drop was built and packaged against one supported Windows dependency
+stack. It is not meant to be rebuilt or reconfigured on each user machine.
+
+Run-only users provide:
+- a supported Windows x64 machine
+- a compatible NVIDIA GPU and driver
+
+The app drop provides:
+- `redgui.exe`
+- the runtime DLLs matched to the build stack
+- fonts, config, and helper scripts
+
 How to launch after install
 ---------------------------
 

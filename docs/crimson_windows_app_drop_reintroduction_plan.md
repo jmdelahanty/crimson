@@ -103,6 +103,30 @@ drop. It should not require Visual Studio, CUDA Toolkit, TensorRT, source-build
 dependency archives, or `C:\third_party` if the app drop was published
 correctly.
 
+## Supported Matrix, Not Every Combination
+
+Crimson should not try to produce or support a separate Windows build for every
+possible mix of CUDA, TensorRT, OpenCV, NVIDIA driver, Windows release, and
+Visual Studio toolchain. The practical model is a small supported matrix:
+
+```text
+Windows x64 + MSVC 2022 + CUDA 12.4 + TensorRT 10.0.1.6 + OpenCV 4.10.0
+```
+
+The build/publish machine owns that dependency stack. The staged app drop then
+bundles the runtime DLLs that match that stack. A run-only user owns only the
+stable machine prerequisites:
+
+- supported Windows x64 release
+- compatible NVIDIA GPU
+- compatible NVIDIA display driver
+
+This is why runtime DLL bundling is a release requirement. It moves dependency
+precision to the publisher instead of asking each user machine to recreate the
+source-build stack. NVIDIA driver compatibility still matters, but Crimson does
+not need a build per driver version when the driver is new enough for the
+packaged CUDA runtime.
+
 ## What The Old Installer Did
 
 The older `install_crimson.ps1` was a copier and validator:
