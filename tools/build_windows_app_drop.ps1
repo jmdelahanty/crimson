@@ -261,6 +261,10 @@ function Resolve-NasmExecutable {
     }
 
     $candidates = @()
+    if ($env:LOCALAPPDATA) {
+        $candidates += (Join-Path $env:LOCALAPPDATA "bin/NASM/nasm.exe")
+        $candidates += (Join-Path $env:LOCALAPPDATA "Programs/NASM/nasm.exe")
+    }
     if ($env:ProgramFiles) {
         $candidates += (Join-Path $env:ProgramFiles "NASM/nasm.exe")
     }

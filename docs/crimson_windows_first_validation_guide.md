@@ -135,6 +135,27 @@ Then open a fresh x64 Developer PowerShell and verify:
 nasm -v
 ```
 
+On some machines, the winget NASM installer places `nasm.exe` under the user
+profile but does not add it to `PATH`. Check:
+
+```powershell
+Test-Path "$env:LOCALAPPDATA\bin\NASM\nasm.exe"
+& "$env:LOCALAPPDATA\bin\NASM\nasm.exe" -v
+```
+
+The Crimson build helper probes this location directly. You can also add it to
+your user `PATH`:
+
+```powershell
+$nasmDir = "$env:LOCALAPPDATA\bin\NASM"
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if (($userPath -split ';') -notcontains $nasmDir) {
+  [Environment]::SetEnvironmentVariable("Path", "$userPath;$nasmDir", "User")
+}
+```
+
+Open a new terminal after changing `PATH`.
+
 If NASM is installed in a non-standard location, pass it explicitly:
 
 ```powershell
