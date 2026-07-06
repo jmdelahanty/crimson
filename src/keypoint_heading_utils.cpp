@@ -10,6 +10,8 @@ namespace {
 
 using json = nlohmann::json;
 
+constexpr double kPi = 3.141592653589793238462643383279502884;
+
 std::unordered_map<std::string, int> buildLabelIndex(
     const std::vector<std::string>& keypoint_labels) {
     std::unordered_map<std::string, int> label_to_index;
@@ -303,7 +305,7 @@ bool evaluateKeypointHeadingDegrees(
         return false;
     }
 
-    out_heading_deg = std::atan2(-dy, dx) * 180.0 / M_PI;
+    out_heading_deg = std::atan2(-dy, dx) * 180.0 / kPi;
     if (out_origin != nullptr) {
         *out_origin = origin;
     }

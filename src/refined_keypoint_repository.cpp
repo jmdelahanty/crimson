@@ -26,6 +26,7 @@ using json = nlohmann::json;
 constexpr size_t kLegacyGeometryKeypointCount = 3;
 constexpr size_t kKeypointCoordDims = 2;
 constexpr size_t kMaxStaleIndexHistory = 2048;
+constexpr double kPi = 3.141592653589793238462643383279502884;
 
 enum class KeypointEditMode {
     ManualCorrection,
@@ -227,7 +228,7 @@ KeypointGeometryMetrics computeGeometryMetrics(
             return std::numeric_limits<double>::quiet_NaN();
         }
         const double cosine = std::clamp(numerator / denominator, -1.0, 1.0);
-        return std::acos(cosine) * 180.0 / M_PI;
+        return std::acos(cosine) * 180.0 / kPi;
     };
 
     const double a = edges[0];

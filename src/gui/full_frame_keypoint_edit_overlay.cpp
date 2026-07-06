@@ -9,6 +9,8 @@
 
 namespace {
 
+constexpr double kPi = 3.141592653589793238462643383279502884;
+
 bool isEditableSelection(const FullFrameKeypointEditContext& context) {
     return context.selection != nullptr && context.selection->valid &&
            context.selection->editable && context.detection_details != nullptr &&
@@ -217,7 +219,7 @@ void drawCandidateHeadingOverlay(const FullFrameKeypointEditContext& context,
     }
 
     const float image_height = context.image_height_px;
-    const float rad = static_cast<float>(heading_deg * M_PI / 180.0);
+    const float rad = static_cast<float>(heading_deg * kPi / 180.0);
     const float arrow_len =
         std::max(60.0f, std::max(context.image_width_px, context.image_height_px) * 0.07f);
     const float base_x = static_cast<float>(origin[0]);

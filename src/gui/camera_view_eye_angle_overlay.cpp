@@ -18,6 +18,9 @@
 
 namespace {
 
+constexpr double kPi = 3.141592653589793238462643383279502884;
+constexpr float kPiF = 3.141592653589793238462643383279502884f;
+
 double durationMs(std::chrono::steady_clock::duration duration) {
     return std::chrono::duration<double, std::milli>(duration).count();
 }
@@ -142,11 +145,11 @@ struct EyeOrientationSmoother {
         auto& history = histories_[roi_index][eye];
         double unwrapped = raw_angle;
         if (std::isfinite(history.last_unwrapped)) {
-            while (unwrapped - history.last_unwrapped > M_PI) {
-                unwrapped -= 2.0 * M_PI;
+            while (unwrapped - history.last_unwrapped > kPi) {
+                unwrapped -= 2.0 * kPi;
             }
-            while (unwrapped - history.last_unwrapped < -M_PI) {
-                unwrapped += 2.0 * M_PI;
+            while (unwrapped - history.last_unwrapped < -kPi) {
+                unwrapped += 2.0 * kPi;
             }
         }
         history.last_unwrapped = unwrapped;
@@ -164,12 +167,12 @@ struct EyeOrientationSmoother {
                             sorted[sorted.size() / 2]);
         }
 
-        double wrapped = std::fmod(median, 2.0 * M_PI);
-        if (wrapped <= -M_PI) {
-            wrapped += 2.0 * M_PI;
+        double wrapped = std::fmod(median, 2.0 * kPi);
+        if (wrapped <= -kPi) {
+            wrapped += 2.0 * kPi;
         }
-        if (wrapped > M_PI) {
-            wrapped -= 2.0 * M_PI;
+        if (wrapped > kPi) {
+            wrapped -= 2.0 * kPi;
         }
 
         ImVec2 smoothed(static_cast<float>(std::cos(wrapped)),
@@ -353,9 +356,9 @@ void drawCameraViewEyeAngleOverlayForEye(
                                          10.0,
                                          std::max(12.0, roi_span * 0.18));
         const double angle_rad = std::clamp(
-            static_cast<double>(angle_deg) * M_PI / 180.0, -M_PI, M_PI);
+            static_cast<double>(angle_deg) * kPi / 180.0, -kPi, kPi);
         const int steps = std::clamp(
-            static_cast<int>(std::ceil(std::fabs(angle_rad) / (M_PI / 24.0))),
+            static_cast<int>(std::ceil(std::fabs(angle_rad) / (kPi / 24.0))),
             6,
             32);
 
@@ -581,7 +584,7 @@ void drawCameraViewEyeAngleOverlayForEye(
         const float cone_length = std::clamp(roi_span * 1.15f, 90.0f, 520.0f);
         constexpr float kEyeVisualAngleDeg = 163.0f;
         const float half_angle_rad =
-            (kEyeVisualAngleDeg * 0.5f) * static_cast<float>(M_PI / 180.0);
+            (kEyeVisualAngleDeg * 0.5f) * (kPiF / 180.0f);
         constexpr int kConeSteps = 30;
 
         std::vector<ImVec2> cone_points;
@@ -689,7 +692,7 @@ void drawCameraViewEyeAngleOverlayForEye(
                                    -1.0f,
                                    1.0f);
                     label_value_deg =
-                        std::acos(dot) * static_cast<float>(180.0 / M_PI);
+                        std::acos(dot) * static_cast<float>(180.0 / kPi);
                     if (std::isfinite(label_value_deg)) {
                         std::snprintf(vergence_label,
                                       sizeof(vergence_label),

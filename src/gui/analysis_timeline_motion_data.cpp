@@ -9,6 +9,8 @@
 
 namespace {
 
+constexpr double kPi = 3.141592653589793238462643383279502884;
+
 bool isFiniteFloatValue(float value) {
     return std::isfinite(static_cast<double>(value));
 }
@@ -307,15 +309,14 @@ AnalysisTimelineMotionHeadingStats computeHeadingStats(
         double sum_cos = 0.0;
         double sum_sin = 0.0;
         for (double deg : *heading_for_stats) {
-            const double rad = deg * static_cast<double>(M_PI) / 180.0;
+            const double rad = deg * kPi / 180.0;
             sum_cos += std::cos(rad);
             sum_sin += std::sin(rad);
         }
         stats.valid = true;
         stats.count = heading_for_stats->size();
         const double mean_rad = std::atan2(sum_sin, sum_cos);
-        stats.circular_mean_deg =
-            mean_rad * 180.0 / static_cast<double>(M_PI);
+        stats.circular_mean_deg = mean_rad * 180.0 / kPi;
         stats.mean_resultant_length =
             std::sqrt(sum_cos * sum_cos + sum_sin * sum_sin) /
             static_cast<double>(stats.count);
