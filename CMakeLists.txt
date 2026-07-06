@@ -248,7 +248,7 @@ find_package(OpenCV REQUIRED)  # Will use OpenCV_DIR set above
 find_package(GLEW REQUIRED)
 find_package(glfw3 REQUIRED)
 find_package(Threads REQUIRED)
-find_package(HDF5 REQUIRED COMPONENTS CXX HL)
+find_package(HDF5 REQUIRED COMPONENTS CXX)
 if(CRIMSON_ENABLE_PARQUET)
     find_package(Arrow CONFIG QUIET)
     find_package(Parquet CONFIG QUIET)
@@ -808,7 +808,6 @@ target_link_libraries(redgui PRIVATE
 
     # HDF5 Libraries
     ${HDF5_CXX_LIBRARIES}
-    ${HDF5_HL_LIBRARIES}
 
     # System Libraries
     Threads::Threads
@@ -1052,7 +1051,6 @@ target_link_libraries(palette_clipped_loader_probe PRIVATE
     Threads::Threads
     ${OpenCV_LIBS}
     ${HDF5_CXX_LIBRARIES}
-    ${HDF5_HL_LIBRARIES}
 )
 target_compile_features(palette_clipped_loader_probe PRIVATE cxx_std_17)
 crimson_configure_parquet_support(palette_clipped_loader_probe)
@@ -1083,7 +1081,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/keypoint_fish_present_contract_chec
         Threads::Threads
         ${OpenCV_LIBS}
         ${HDF5_CXX_LIBRARIES}
-        ${HDF5_HL_LIBRARIES}
     )
     target_compile_features(keypoint_fish_present_contract_check PRIVATE cxx_std_17)
     crimson_configure_parquet_support(keypoint_fish_present_contract_check)
@@ -1122,7 +1119,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/keypoint_plot_debug_dump.cpp")
         Threads::Threads
         ${OpenCV_LIBS}
         ${HDF5_CXX_LIBRARIES}
-        ${HDF5_HL_LIBRARIES}
     )
     target_compile_features(keypoint_plot_debug_dump PRIVATE cxx_std_17)
     crimson_configure_parquet_support(keypoint_plot_debug_dump)
