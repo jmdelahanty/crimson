@@ -15,6 +15,7 @@ param(
     [string]$VcpkgTriplet = "x64-windows",
     [string]$VcpkgBinDir,
     [string]$Python3Executable,
+    [string]$NasmExecutable,
     [switch]$SkipDependencySetup,
     [switch]$SkipSubmodules,
     [switch]$SkipConfigure,
@@ -209,6 +210,74 @@ function Resolve-Python3Executable {
     return $null
 }
 
+function Resolve-NasmExecutable {
+    param(
+        [string]$ExplicitExecutable
+    )
+
+    function Test-NasmCandidate {
+        param([string]$Executable)
+
+        if ([string]::IsNullOrWhiteSpace($Executable)) {
+            return $null
+        }
+        if (-not (Test-Path -LiteralPath $Executable)) {
+            return $null
+        }
+
+        try {
+            & $Executable -v 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                return [System.IO.Path]::GetFullPath($Executable)
+            }
+        } catch {
+            # Fall through to the null result below.
+        }
+
+        return $null
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitExecutable)) {
+        $resolvedExplicit = Test-NasmCandidate -Executable $ExplicitExecutable
+        if ($resolvedExplicit) {
+            return $resolvedExplicit
+        }
+        return $ExplicitExecutable
+    }
+
+    if ($env:ASM_NASM) {
+        $resolvedEnv = Test-NasmCandidate -Executable $env:ASM_NASM
+        if ($resolvedEnv) {
+            return $resolvedEnv
+        }
+    }
+
+    $command = Get-Command nasm -ErrorAction SilentlyContinue
+    if ($command) {
+        $resolvedCommand = Test-NasmCandidate -Executable $command.Source
+        if ($resolvedCommand) {
+            return $resolvedCommand
+        }
+    }
+
+    $candidates = @()
+    if ($env:ProgramFiles) {
+        $candidates += (Join-Path $env:ProgramFiles "NASM/nasm.exe")
+    }
+    if (${env:ProgramFiles(x86)}) {
+        $candidates += (Join-Path ${env:ProgramFiles(x86)} "NASM/nasm.exe")
+    }
+
+    foreach ($candidate in $candidates) {
+        $resolved = Test-NasmCandidate -Executable $candidate
+        if ($resolved) {
+            return $resolved
+        }
+    }
+
+    return $null
+}
+
 function Invoke-Step {
     param(
         [string]$Label,
@@ -276,6 +345,7 @@ if ([string]::IsNullOrWhiteSpace($VcpkgBinDir)) {
 $OpenCvDir = Resolve-OpenCvConfigDir -ExplicitConfigDir $OpenCvDir -Root $OpenCvRoot
 $VcpkgToolchainFile = Resolve-VcpkgToolchainFile -Root $VcpkgRoot -BinDir $VcpkgBinDir
 $Python3ExecutablePath = Resolve-Python3Executable -ExplicitExecutable $Python3Executable
+$NasmExecutablePath = Resolve-NasmExecutable -ExplicitExecutable $NasmExecutable
 $InstallPrefixPath = if ([System.IO.Path]::IsPathRooted($InstallPrefix)) {
     [System.IO.Path]::GetFullPath($InstallPrefix)
 } else {
@@ -299,8 +369,12 @@ Invoke-Step "Tool check" {
     if (-not $Python3ExecutablePath) {
         throw "Python 3 was not found. Install Python 3 or pass -Python3Executable to this script. TensorStore requires Python during CMake configure."
     }
+    if (-not $NasmExecutablePath) {
+        throw "NASM was not found. Install NASM or pass -NasmExecutable to this script. TensorStore requires NASM during CMake configure."
+    }
     Invoke-NativeCommand -Executable cmake -Arguments @("--version")
     Invoke-NativeCommand -Executable $Python3ExecutablePath -Arguments @("--version")
+    Invoke-NativeCommand -Executable $NasmExecutablePath -Arguments @("-v")
 }
 
 if (-not $SkipSubmodules) {
@@ -338,6 +412,7 @@ if (-not $SkipConfigure) {
             Write-Warning "Vcpkg toolchain not found. GLEW, glfw3, zlib, and HDF5 must be discoverable by another CMake search path. To install the default source-build packages, run: powershell -ExecutionPolicy Bypass -File .\tools\setup_windows_vcpkg.ps1"
         }
         Write-Host "Python 3: $Python3ExecutablePath"
+        Write-Host "NASM: $NasmExecutablePath"
     }
 }
 
@@ -350,6 +425,9 @@ if (-not $SkipConfigure) {
         }
         if ($Python3ExecutablePath) {
             $configureArgs += "-DPython3_EXECUTABLE=$Python3ExecutablePath"
+        }
+        if ($NasmExecutablePath) {
+            $configureArgs += "-DCMAKE_ASM_NASM_COMPILER=$NasmExecutablePath"
         }
         Invoke-NativeCommand -Executable cmake -Arguments $configureArgs
     }

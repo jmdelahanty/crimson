@@ -64,6 +64,7 @@ Install or verify these first:
 - CMake
 - Ninja
 - Python 3
+- NASM
 - vcpkg
 - current NVIDIA driver
 - CUDA Toolkit `12.4`
@@ -107,6 +108,38 @@ If Python is installed in a non-standard location, pass it explicitly:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 `
   -Python3Executable "C:\Path\To\python.exe" `
+  -CleanInstall
+```
+
+NASM is needed during configure/build because TensorStore pulls in generated
+third-party code that enables CMake's `ASM_NASM` language. It is not a run-only
+Crimson application dependency.
+
+Install options:
+
+```powershell
+winget search NASM
+winget install --id NASM.NASM -e
+```
+
+If the winget package ID is unavailable on the machine, download the Windows
+64-bit installer from the official NASM release page:
+
+```text
+https://www.nasm.us/pub/nasm/releasebuilds/3.02/win64/
+```
+
+Then open a fresh x64 Developer PowerShell and verify:
+
+```powershell
+nasm -v
+```
+
+If NASM is installed in a non-standard location, pass it explicitly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows_app_drop.ps1 `
+  -NasmExecutable "C:\Path\To\nasm.exe" `
   -CleanInstall
 ```
 
