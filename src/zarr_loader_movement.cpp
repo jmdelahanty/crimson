@@ -349,6 +349,36 @@ bool matchesPreferredSwimBoutSource(
                {source_swim_bout_run, source_swim_bout_speed_level}) > 0;
 }
 
+std::vector<ZarrDetectionData::MovementSeries> movementCompatibilityStubs(
+    const std::vector<ZarrDetectionData::MovementSeries>& series) {
+    std::vector<ZarrDetectionData::MovementSeries> stubs;
+    stubs.reserve(series.size());
+    for (const auto& source : series) {
+        ZarrDetectionData::MovementSeries stub;
+        stub.category = source.category;
+        stub.run_name = source.run_name;
+        stub.track_id = source.track_id;
+        stub.speed_level = source.speed_level;
+        stubs.push_back(std::move(stub));
+    }
+    return stubs;
+}
+
+std::vector<ZarrDetectionData::SwimBoutSeries> swimBoutCompatibilityStubs(
+    const std::vector<ZarrDetectionData::SwimBoutSeries>& series) {
+    std::vector<ZarrDetectionData::SwimBoutSeries> stubs;
+    stubs.reserve(series.size());
+    for (const auto& source : series) {
+        ZarrDetectionData::SwimBoutSeries stub;
+        stub.run_name = source.run_name;
+        stub.speed_level = source.speed_level;
+        stub.is_latest_run = source.is_latest_run;
+        stub.is_default_level = source.is_default_level;
+        stubs.push_back(std::move(stub));
+    }
+    return stubs;
+}
+
 }  // namespace
 
 bool ZarrDetectionLoader::loadMovementData(const ts::kvstore::KvStore& store) {
@@ -358,7 +388,6 @@ bool ZarrDetectionLoader::loadMovementData(const ts::kvstore::KvStore& store) {
     data_.movement_crop_run_name.clear();
     data_.swim_bout_series.clear();
     data_.bout_kinematics_series.clear();
-    data_.crop_data = {};
 
     const bool trace_startup = startupTraceEnabled();
     auto trace_mark = std::chrono::steady_clock::now();
@@ -408,6 +437,686 @@ bool ZarrDetectionLoader::loadMovementData(const ts::kvstore::KvStore& store) {
     }
     traceStep("loadMovementCropRun");
     return data_.has_movement_data;
+}
+
+bool ZarrDetectionLoader::discoverMovementData(
+    const ts::kvstore::KvStore& store) {
+    movement_data_discovered_ = false;
+    movement_data_load_error_.clear();
+
+    auto hasRunCandidates = [&](const std::string& group_path) -> bool {
+        if (auto group_attrs = readGroupAttrs(store, group_path)) {
+            if (!extractLatestRunName(*group_attrs).empty()) {
+                return true;
+            }
+        }
+        if (!root_path_.empty()) {
+            auto runs = collect_runs_fs(root_path_, group_path, {});
+            if (!runs.empty()) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    const std::vector<std::string> track_kinematics_scopes = {
+        "analysis/track_kinematics_runs/offline",
+        "analysis/track_kinematics_runs/online_refined",
+        "analysis/track_kinematics_runs/online",
+    };
+    for (const auto& scope : track_kinematics_scopes) {
+        if (hasRunCandidates(scope)) {
+            movement_data_discovered_ = true;
+            return true;
+        }
+    }
+
+    const std::vector<std::string> legacy_movement_scopes = {
+        "analysis/movement_runs/offline",
+        "analysis/movement_runs/online_refined",
+        "analysis/movement_runs/online",
+    };
+    for (const auto& scope : legacy_movement_scopes) {
+        if (hasRunCandidates(scope)) {
+            movement_data_discovered_ = true;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+ZarrDetectionLoader::MovementLoadResult
+ZarrDetectionLoader::loadMovementDataForArchive(
+    const std::string& archive_path,
+    const std::string& keypoints_source_crop_run,
+    double fps,
+    int image_width,
+    int image_height,
+    uint64_t generation) {
+    MovementLoadResult result;
+    result.stage = MovementLoadStage::Full;
+    result.generation = generation;
+    result.archive_path = archive_path;
+
+    const auto load_start = std::chrono::steady_clock::now();
+    try {
+        if (archive_path.empty()) {
+            result.error_message = "archive path is unavailable";
+            return result;
+        }
+
+        ZarrDetectionLoader scratch;
+        scratch.root_path_ = archive_path;
+        scratch.data_.keypoints_source_crop_run = keypoints_source_crop_run;
+        scratch.data_.fps = fps;
+        scratch.data_.image_width = image_width;
+        scratch.data_.image_height = image_height;
+
+        const std::string kvstore_path =
+            normalizeKvstoreFileRootPath(archive_path);
+        auto spec_result = ts::kvstore::Spec::FromJson({
+            {"driver", "file"},
+            {"path", kvstore_path},
+        });
+        if (!spec_result.ok()) {
+            result.error_message =
+                "failed to create kvstore spec: " +
+                spec_result.status().ToString();
+            return result;
+        }
+
+        auto store_result =
+            ts::kvstore::Open(spec_result.value(), scratch.context_).result();
+        if (!store_result.ok()) {
+            result.error_message =
+                "failed to open kvstore: " + store_result.status().ToString();
+            return result;
+        }
+
+        if (!scratch.loadMovementData(store_result.value())) {
+            result.error_message =
+                "movement analysis runs were discovered but no readable dataset loaded";
+            result.elapsed_ms = elapsedMilliseconds(
+                load_start, std::chrono::steady_clock::now());
+            return result;
+        }
+
+        result.ok = true;
+        result.has_movement_data = scratch.data_.has_movement_data;
+        result.movement_selected_index = scratch.data_.movement_selected_index;
+        result.movement_series = std::move(scratch.data_.movement_series);
+        result.swim_bout_series = std::move(scratch.data_.swim_bout_series);
+        result.bout_kinematics_series =
+            std::move(scratch.data_.bout_kinematics_series);
+        result.movement_crop_run_name =
+            std::move(scratch.data_.movement_crop_run_name);
+        result.crop_data = std::move(scratch.data_.crop_data);
+        result.elapsed_ms = elapsedMilliseconds(
+            load_start, std::chrono::steady_clock::now());
+        return result;
+    } catch (const std::exception& e) {
+        result.error_message =
+            std::string("movement analysis load failed: ") + e.what();
+    } catch (...) {
+        result.error_message = "movement analysis load failed";
+    }
+    result.elapsed_ms = elapsedMilliseconds(
+        load_start, std::chrono::steady_clock::now());
+    return result;
+}
+
+ZarrDetectionLoader::MovementLoadResult
+ZarrDetectionLoader::loadMovementTrackDataForArchive(
+    const std::string& archive_path,
+    const std::string& keypoints_source_crop_run,
+    double fps,
+    int image_width,
+    int image_height,
+    uint64_t generation) {
+    MovementLoadResult result;
+    result.stage = MovementLoadStage::TrackKinematics;
+    result.generation = generation;
+    result.archive_path = archive_path;
+
+    const auto load_start = std::chrono::steady_clock::now();
+    try {
+        if (archive_path.empty()) {
+            result.error_message = "archive path is unavailable";
+            return result;
+        }
+
+        ZarrDetectionLoader scratch;
+        scratch.root_path_ = archive_path;
+        scratch.data_.keypoints_source_crop_run = keypoints_source_crop_run;
+        scratch.data_.fps = fps;
+        scratch.data_.image_width = image_width;
+        scratch.data_.image_height = image_height;
+
+        const std::string kvstore_path =
+            normalizeKvstoreFileRootPath(archive_path);
+        auto spec_result = ts::kvstore::Spec::FromJson({
+            {"driver", "file"},
+            {"path", kvstore_path},
+        });
+        if (!spec_result.ok()) {
+            result.error_message =
+                "failed to create kvstore spec: " +
+                spec_result.status().ToString();
+            return result;
+        }
+
+        auto store_result =
+            ts::kvstore::Open(spec_result.value(), scratch.context_).result();
+        if (!store_result.ok()) {
+            result.error_message =
+                "failed to open kvstore: " + store_result.status().ToString();
+            return result;
+        }
+
+        const bool trace_startup = startupTraceEnabled();
+        auto trace_mark = std::chrono::steady_clock::now();
+        auto traceStep = [&](const char* label) {
+            if (!trace_startup) {
+                return;
+            }
+            const auto now = std::chrono::steady_clock::now();
+            std::cout << "  [StartupTrace] " << label << " "
+                      << elapsedMilliseconds(trace_mark, now) << " ms"
+                      << std::endl;
+            trace_mark = now;
+        };
+
+        scratch.data_.has_movement_data = false;
+        scratch.data_.movement_series.clear();
+        scratch.data_.movement_selected_index = std::numeric_limits<size_t>::max();
+        scratch.data_.movement_crop_run_name.clear();
+        const bool loaded_track_kinematics =
+            scratch.loadTrackKinematicsData(store_result.value());
+        traceStep("loadTrackKinematicsData");
+        const bool loaded_legacy =
+            scratch.loadLegacyMovementData(store_result.value());
+        traceStep("loadLegacyMovementData");
+        if (!loaded_track_kinematics && !loaded_legacy) {
+            result.error_message =
+                "movement analysis runs were discovered but no readable dataset loaded";
+            result.elapsed_ms = elapsedMilliseconds(
+                load_start, std::chrono::steady_clock::now());
+            return result;
+        }
+
+        scratch.finalizeMovementSelection();
+        traceStep("finalizeMovementSelection");
+        if (scratch.data_.has_movement_data) {
+            std::string crop_candidate = scratch.data_.movement_crop_run_name;
+            if (crop_candidate.empty() &&
+                !scratch.data_.keypoints_source_crop_run.empty()) {
+                crop_candidate =
+                    NormalizeCropRunName(scratch.data_.keypoints_source_crop_run);
+            }
+            if (!crop_candidate.empty()) {
+                scratch.loadMovementCropRunMetadata(store_result.value(),
+                                                    crop_candidate);
+                if (eagerCropImagesEnabled()) {
+                    scratch.loadMovementCropRun(store_result.value(),
+                                                crop_candidate);
+                }
+            }
+            if (!crop_candidate.empty() && trace_startup &&
+                !eagerCropImagesEnabled()) {
+                std::cout << "  [StartupTrace] deferred crop image preload for '"
+                          << crop_candidate << "'" << std::endl;
+            }
+        }
+        traceStep("loadMovementCropRun");
+
+        result.ok = scratch.data_.has_movement_data;
+        result.has_movement_data = scratch.data_.has_movement_data;
+        result.movement_selected_index = scratch.data_.movement_selected_index;
+        result.movement_series = std::move(scratch.data_.movement_series);
+        result.movement_crop_run_name =
+            std::move(scratch.data_.movement_crop_run_name);
+        result.crop_data = std::move(scratch.data_.crop_data);
+        result.elapsed_ms = elapsedMilliseconds(
+            load_start, std::chrono::steady_clock::now());
+        return result;
+    } catch (const std::exception& e) {
+        result.error_message =
+            std::string("movement track load failed: ") + e.what();
+    } catch (...) {
+        result.error_message = "movement track load failed";
+    }
+    result.elapsed_ms = elapsedMilliseconds(
+        load_start, std::chrono::steady_clock::now());
+    return result;
+}
+
+ZarrDetectionLoader::MovementLoadResult
+ZarrDetectionLoader::loadMovementSwimBoutDataForArchive(
+    const std::string& archive_path,
+    std::vector<ZarrDetectionData::MovementSeries> movement_stubs,
+    uint64_t generation) {
+    MovementLoadResult result;
+    result.stage = MovementLoadStage::SwimBouts;
+    result.generation = generation;
+    result.archive_path = archive_path;
+
+    const auto load_start = std::chrono::steady_clock::now();
+    try {
+        if (archive_path.empty()) {
+            result.error_message = "archive path is unavailable";
+            return result;
+        }
+
+        ZarrDetectionLoader scratch;
+        scratch.root_path_ = archive_path;
+        scratch.data_.movement_series = std::move(movement_stubs);
+
+        const std::string kvstore_path =
+            normalizeKvstoreFileRootPath(archive_path);
+        auto spec_result = ts::kvstore::Spec::FromJson({
+            {"driver", "file"},
+            {"path", kvstore_path},
+        });
+        if (!spec_result.ok()) {
+            result.error_message =
+                "failed to create kvstore spec: " +
+                spec_result.status().ToString();
+            return result;
+        }
+        auto store_result =
+            ts::kvstore::Open(spec_result.value(), scratch.context_).result();
+        if (!store_result.ok()) {
+            result.error_message =
+                "failed to open kvstore: " + store_result.status().ToString();
+            return result;
+        }
+
+        const bool trace_startup = startupTraceEnabled();
+        auto trace_mark = std::chrono::steady_clock::now();
+        scratch.loadSwimBoutData(store_result.value());
+        if (trace_startup) {
+            const auto now = std::chrono::steady_clock::now();
+            std::cout << "  [StartupTrace] loadSwimBoutData "
+                      << elapsedMilliseconds(trace_mark, now) << " ms"
+                      << std::endl;
+        }
+
+        result.ok = true;
+        result.swim_bout_series = std::move(scratch.data_.swim_bout_series);
+        result.elapsed_ms = elapsedMilliseconds(
+            load_start, std::chrono::steady_clock::now());
+        return result;
+    } catch (const std::exception& e) {
+        result.error_message =
+            std::string("swim-bout load failed: ") + e.what();
+    } catch (...) {
+        result.error_message = "swim-bout load failed";
+    }
+    result.elapsed_ms = elapsedMilliseconds(
+        load_start, std::chrono::steady_clock::now());
+    return result;
+}
+
+ZarrDetectionLoader::MovementLoadResult
+ZarrDetectionLoader::loadMovementBoutKinematicsDataForArchive(
+    const std::string& archive_path,
+    std::vector<ZarrDetectionData::MovementSeries> movement_stubs,
+    std::vector<ZarrDetectionData::SwimBoutSeries> swim_bout_stubs,
+    uint64_t generation) {
+    MovementLoadResult result;
+    result.stage = MovementLoadStage::BoutKinematics;
+    result.generation = generation;
+    result.archive_path = archive_path;
+
+    const auto load_start = std::chrono::steady_clock::now();
+    try {
+        if (archive_path.empty()) {
+            result.error_message = "archive path is unavailable";
+            return result;
+        }
+
+        ZarrDetectionLoader scratch;
+        scratch.root_path_ = archive_path;
+        scratch.data_.movement_series = std::move(movement_stubs);
+        scratch.data_.swim_bout_series = std::move(swim_bout_stubs);
+
+        const std::string kvstore_path =
+            normalizeKvstoreFileRootPath(archive_path);
+        auto spec_result = ts::kvstore::Spec::FromJson({
+            {"driver", "file"},
+            {"path", kvstore_path},
+        });
+        if (!spec_result.ok()) {
+            result.error_message =
+                "failed to create kvstore spec: " +
+                spec_result.status().ToString();
+            return result;
+        }
+        auto store_result =
+            ts::kvstore::Open(spec_result.value(), scratch.context_).result();
+        if (!store_result.ok()) {
+            result.error_message =
+                "failed to open kvstore: " + store_result.status().ToString();
+            return result;
+        }
+
+        const bool trace_startup = startupTraceEnabled();
+        auto trace_mark = std::chrono::steady_clock::now();
+        scratch.loadBoutKinematicsData(store_result.value());
+        if (trace_startup) {
+            const auto now = std::chrono::steady_clock::now();
+            std::cout << "  [StartupTrace] loadBoutKinematicsData "
+                      << elapsedMilliseconds(trace_mark, now) << " ms"
+                      << std::endl;
+        }
+
+        result.ok = true;
+        result.bout_kinematics_series =
+            std::move(scratch.data_.bout_kinematics_series);
+        result.elapsed_ms = elapsedMilliseconds(
+            load_start, std::chrono::steady_clock::now());
+        return result;
+    } catch (const std::exception& e) {
+        result.error_message =
+            std::string("bout-kinematics load failed: ") + e.what();
+    } catch (...) {
+        result.error_message = "bout-kinematics load failed";
+    }
+    result.elapsed_ms = elapsedMilliseconds(
+        load_start, std::chrono::steady_clock::now());
+    return result;
+}
+
+void ZarrDetectionLoader::publishMovementLoadResult(
+    MovementLoadResult&& result) {
+    switch (result.stage) {
+        case MovementLoadStage::Full:
+        case MovementLoadStage::TrackKinematics: {
+            data_.movement_series = std::move(result.movement_series);
+            if (result.stage == MovementLoadStage::Full) {
+                data_.swim_bout_series = std::move(result.swim_bout_series);
+                data_.bout_kinematics_series =
+                    std::move(result.bout_kinematics_series);
+            } else {
+                data_.swim_bout_series.clear();
+                data_.bout_kinematics_series.clear();
+            }
+            data_.movement_crop_run_name =
+                std::move(result.movement_crop_run_name);
+            data_.movement_selected_index = result.movement_selected_index;
+            data_.has_movement_data = result.has_movement_data;
+
+            if (result.crop_data.metadata_loaded) {
+                const bool keep_loaded_same_run =
+                    data_.crop_data.loaded &&
+                    data_.crop_data.run_name == result.crop_data.run_name;
+                if (!keep_loaded_same_run) {
+                    data_.crop_data = std::move(result.crop_data);
+                }
+            }
+            const size_t dataset_count = getMovementSeriesCount();
+            const size_t selected_index = getSelectedMovementSeriesIndex();
+            const auto* series = getMovementSeries(selected_index);
+            std::cout << "  [MovementLazyLoad] Loaded " << dataset_count
+                      << " movement dataset"
+                      << (dataset_count == 1 ? "" : "s");
+            if (series != nullptr) {
+                std::cout << "; default '" << series->category << "/"
+                          << series->run_name << "' (track "
+                          << series->track_id << ")";
+            }
+            std::cout << " in " << result.elapsed_ms << " ms" << std::endl;
+            break;
+        }
+        case MovementLoadStage::SwimBouts:
+            data_.swim_bout_series = std::move(result.swim_bout_series);
+            std::cout << "  [MovementLazyLoad] Loaded "
+                      << data_.swim_bout_series.size()
+                      << " swim-bout candidate"
+                      << (data_.swim_bout_series.size() == 1 ? "" : "s")
+                      << " in " << result.elapsed_ms << " ms" << std::endl;
+            break;
+        case MovementLoadStage::BoutKinematics:
+            data_.bout_kinematics_series =
+                std::move(result.bout_kinematics_series);
+            std::cout << "  [MovementLazyLoad] Loaded "
+                      << data_.bout_kinematics_series.size()
+                      << " bout-kinematics candidate"
+                      << (data_.bout_kinematics_series.size() == 1 ? "" : "s")
+                      << " in " << result.elapsed_ms << " ms" << std::endl;
+            break;
+    }
+    movement_data_load_error_.clear();
+    movement_data_load_status_.clear();
+}
+
+void ZarrDetectionLoader::startMovementDataLoadStage(
+    MovementLoadStage stage) {
+    const uint64_t generation = movement_data_load_generation_;
+    const std::string archive_path = root_path_;
+    switch (stage) {
+        case MovementLoadStage::Full:
+            movement_data_load_status_ =
+                "Loading deferred movement analysis data...";
+            movement_data_load_future_ = std::async(
+                std::launch::async,
+                [archive_path,
+                 keypoints_source_crop_run = data_.keypoints_source_crop_run,
+                 fps = data_.fps,
+                 image_width = data_.image_width,
+                 image_height = data_.image_height,
+                 generation]() {
+                    return ZarrDetectionLoader::loadMovementDataForArchive(
+                        archive_path,
+                        keypoints_source_crop_run,
+                        fps,
+                        image_width,
+                        image_height,
+                        generation);
+                });
+            break;
+        case MovementLoadStage::TrackKinematics:
+            movement_data_load_status_ = "Loading track kinematics...";
+            movement_data_load_future_ = std::async(
+                std::launch::async,
+                [archive_path,
+                 keypoints_source_crop_run = data_.keypoints_source_crop_run,
+                 fps = data_.fps,
+                 image_width = data_.image_width,
+                 image_height = data_.image_height,
+                 generation]() {
+                    return ZarrDetectionLoader::loadMovementTrackDataForArchive(
+                        archive_path,
+                        keypoints_source_crop_run,
+                        fps,
+                        image_width,
+                        image_height,
+                        generation);
+                });
+            break;
+        case MovementLoadStage::SwimBouts: {
+            movement_data_load_status_ = "Loading swim-bout candidates...";
+            auto movement_stubs = movementCompatibilityStubs(data_.movement_series);
+            movement_data_load_future_ = std::async(
+                std::launch::async,
+                [archive_path,
+                 movement_stubs = std::move(movement_stubs),
+                 generation]() mutable {
+                    return ZarrDetectionLoader::loadMovementSwimBoutDataForArchive(
+                        archive_path,
+                        std::move(movement_stubs),
+                        generation);
+                });
+            break;
+        }
+        case MovementLoadStage::BoutKinematics: {
+            movement_data_load_status_ = "Loading bout-kinematics metrics...";
+            auto movement_stubs = movementCompatibilityStubs(data_.movement_series);
+            auto swim_bout_stubs =
+                swimBoutCompatibilityStubs(data_.swim_bout_series);
+            movement_data_load_future_ = std::async(
+                std::launch::async,
+                [archive_path,
+                 movement_stubs = std::move(movement_stubs),
+                 swim_bout_stubs = std::move(swim_bout_stubs),
+                 generation]() mutable {
+                    return ZarrDetectionLoader::
+                        loadMovementBoutKinematicsDataForArchive(
+                            archive_path,
+                            std::move(movement_stubs),
+                            std::move(swim_bout_stubs),
+                            generation);
+                });
+            break;
+        }
+    }
+}
+
+void ZarrDetectionLoader::waitForDeferredMovementDataLoad() {
+    if (movement_data_load_future_.valid()) {
+        movement_data_load_future_.wait();
+        movement_data_load_future_ = std::future<MovementLoadResult>();
+    }
+    movement_data_load_status_.clear();
+}
+
+bool ZarrDetectionLoader::loadDeferredMovementData(
+    std::string* error_message) {
+    if (error_message != nullptr) {
+        error_message->clear();
+    }
+    movement_data_load_error_.clear();
+
+    if (movement_data_load_future_.valid()) {
+        while (movement_data_load_future_.valid()) {
+            movement_data_load_future_.wait();
+            updateDeferredMovementDataLoad(error_message);
+        }
+        return hasMovementData();
+    }
+    if (hasMovementData()) {
+        return true;
+    }
+    if (!movement_data_discovered_) {
+        movement_data_load_error_ = "no deferred movement data was discovered";
+        if (error_message != nullptr) {
+            *error_message = movement_data_load_error_;
+        }
+        return false;
+    }
+    if (root_path_.empty()) {
+        movement_data_load_error_ = "archive path is unavailable";
+        if (error_message != nullptr) {
+            *error_message = movement_data_load_error_;
+        }
+        return false;
+    }
+
+    std::cout << "  [MovementLazyLoad] Loading deferred movement analysis data"
+              << std::endl;
+    const uint64_t generation = ++movement_data_load_generation_;
+    auto result = loadMovementDataForArchive(root_path_,
+                                             data_.keypoints_source_crop_run,
+                                             data_.fps,
+                                             data_.image_width,
+                                             data_.image_height,
+                                             generation);
+    if (!result.ok) {
+        movement_data_load_error_ = result.error_message;
+        if (error_message != nullptr) {
+            *error_message = movement_data_load_error_;
+        }
+        std::cout << "  [MovementLazyLoad] Failed: "
+                  << movement_data_load_error_ << std::endl;
+        return false;
+    }
+    publishMovementLoadResult(std::move(result));
+    return true;
+}
+
+bool ZarrDetectionLoader::startDeferredMovementDataLoad(
+    std::string* error_message) {
+    if (error_message != nullptr) {
+        error_message->clear();
+    }
+
+    updateDeferredMovementDataLoad(error_message);
+    if (hasMovementData()) {
+        return true;
+    }
+    if (movement_data_load_future_.valid()) {
+        return true;
+    }
+    if (!movement_data_discovered_) {
+        movement_data_load_error_ = "no deferred movement data was discovered";
+        if (error_message != nullptr) {
+            *error_message = movement_data_load_error_;
+        }
+        return false;
+    }
+    if (root_path_.empty()) {
+        movement_data_load_error_ = "archive path is unavailable";
+        if (error_message != nullptr) {
+            *error_message = movement_data_load_error_;
+        }
+        return false;
+    }
+
+    movement_data_load_error_.clear();
+    ++movement_data_load_generation_;
+
+    std::cout << "  [MovementLazyLoad] Loading deferred movement analysis data"
+              << std::endl;
+    startMovementDataLoadStage(MovementLoadStage::TrackKinematics);
+    return true;
+}
+
+bool ZarrDetectionLoader::updateDeferredMovementDataLoad(
+    std::string* error_message) {
+    if (error_message != nullptr) {
+        error_message->clear();
+    }
+    if (!movement_data_load_future_.valid()) {
+        return false;
+    }
+    if (movement_data_load_future_.wait_for(std::chrono::milliseconds(0)) !=
+        std::future_status::ready) {
+        return false;
+    }
+
+    MovementLoadResult result = movement_data_load_future_.get();
+    if (result.generation != movement_data_load_generation_ ||
+        result.archive_path != root_path_) {
+        return true;
+    }
+    if (!result.ok) {
+        movement_data_load_error_ = result.error_message;
+        movement_data_load_status_.clear();
+        if (error_message != nullptr) {
+            *error_message = movement_data_load_error_;
+        }
+        std::cout << "  [MovementLazyLoad] Failed: "
+                  << movement_data_load_error_ << std::endl;
+        return true;
+    }
+
+    const MovementLoadStage completed_stage = result.stage;
+    publishMovementLoadResult(std::move(result));
+    if (completed_stage == MovementLoadStage::TrackKinematics &&
+        hasMovementData() && !root_path_.empty()) {
+        startMovementDataLoadStage(MovementLoadStage::SwimBouts);
+    } else if (completed_stage == MovementLoadStage::SwimBouts &&
+               hasMovementData() && !root_path_.empty()) {
+        startMovementDataLoadStage(MovementLoadStage::BoutKinematics);
+    }
+    return true;
+}
+
+bool ZarrDetectionLoader::isDeferredMovementDataLoadInProgress() const {
+    return movement_data_load_future_.valid() &&
+           movement_data_load_future_.wait_for(std::chrono::milliseconds(0)) !=
+               std::future_status::ready;
 }
 
 bool ZarrDetectionLoader::loadTrackKinematicsData(

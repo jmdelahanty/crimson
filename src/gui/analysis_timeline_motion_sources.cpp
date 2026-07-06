@@ -142,6 +142,31 @@ bool isCompatibleBoutKinematicsSeries(
 const ZarrDetectionData::MovementSeries* renderMovementDatasetUI(
     ZarrDetectionLoader& zarr_loader,
     const char* combo_label) {
+    zarr_loader.updateDeferredMovementDataLoad();
+    if (zarr_loader.isDeferredMovementDataLoadInProgress()) {
+        const std::string& load_status =
+            zarr_loader.getDeferredMovementLoadStatus();
+        ImGui::TextDisabled("%s",
+                            load_status.empty()
+                                ? "Track kinematics are loading..."
+                                : load_status.c_str());
+    }
+    const std::string& load_error =
+        zarr_loader.getDeferredMovementLoadError();
+    if (!load_error.empty()) {
+        ImGui::TextWrapped("Movement load failed: %s",
+                           load_error.c_str());
+    }
+    if (zarr_loader.hasDeferredMovementData()) {
+        if (!zarr_loader.isDeferredMovementDataLoadInProgress()) {
+            ImGui::TextDisabled("Track kinematics are available but not loaded.");
+            if (ImGui::Button("Load Track Kinematics")) {
+                std::string error;
+                zarr_loader.startDeferredMovementDataLoad(&error);
+            }
+        }
+    }
+
     size_t series_count = zarr_loader.getMovementSeriesCount();
     size_t selected_index = zarr_loader.getSelectedMovementSeriesIndex();
     const auto* selected_series = zarr_loader.getMovementSeries(selected_index);

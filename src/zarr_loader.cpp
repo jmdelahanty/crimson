@@ -22,6 +22,37 @@ double elapsedMs(std::chrono::steady_clock::time_point start) {
         .count();
 }
 
+bool startupTraceEnabled() {
+    const char* value = std::getenv("CRIMSON_STARTUP_TRACE");
+    return value != nullptr && std::string(value) == "1";
+}
+
+struct StartupTraceTimer {
+    explicit StartupTraceTimer(bool enabled)
+        : enabled(enabled),
+          start(std::chrono::steady_clock::now()),
+          last(start) {}
+
+    void step(const char* label) {
+        if (!enabled) {
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        const double step_ms =
+            std::chrono::duration<double, std::milli>(now - last).count();
+        const double total_ms =
+            std::chrono::duration<double, std::milli>(now - start).count();
+        std::cout << "  [StartupTrace] " << label
+                  << " step_ms=" << step_ms
+                  << " total_ms=" << total_ms << std::endl;
+        last = now;
+    }
+
+    bool enabled = false;
+    std::chrono::steady_clock::time_point start;
+    std::chrono::steady_clock::time_point last;
+};
+
 std::optional<double> jsonNumberAttr(const json& attrs, const char* key) {
     if (!attrs.contains(key)) {
         return std::nullopt;
@@ -356,6 +387,8 @@ ZarrDetectionLoader::ZarrDetectionLoader() {
 }
 
 ZarrDetectionLoader::~ZarrDetectionLoader() {
+    waitForDeferredMovementDataLoad();
+    stopRefinedSubjectMaskOptionalOverlayWorker();
     stopEyeMaskPrefetchWorker();
     // TensorStore handles cleanup automatically
 }
@@ -468,9 +501,26 @@ std::optional<ZarrCalibrationData> ZarrDetectionLoader::loadCalibrationForCamera
 bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
                                        std::string& error_message) {
     try {
+        StartupTraceTimer startup_trace(startupTraceEnabled());
         // Clear any previous data
+        waitForDeferredMovementDataLoad();
+        ++movement_data_load_generation_;
+        stopRefinedSubjectMaskOptionalOverlayWorker();
         stopEyeMaskPrefetchWorker();
         data_ = ZarrDetectionData();
+        movement_data_discovered_ = false;
+        movement_data_load_error_.clear();
+        movement_data_load_status_.clear();
+        {
+            std::lock_guard<std::mutex> overlay_lock(
+                refined_subject_mask_optional_overlay_mutex_);
+            ++refined_subject_mask_optional_overlay_generation_;
+            refined_subject_mask_optional_overlay_requested_ = false;
+            refined_subject_mask_optional_overlay_loading_ = false;
+            refined_subject_mask_optional_overlay_loaded_ = false;
+            refined_subject_mask_optional_overlay_failed_ = false;
+            refined_subject_mask_optional_overlay_error_.clear();
+        }
         clipped_resolver_.clear();
         active_dataset_ = DetectionDataset::RawDetect;
         
@@ -504,6 +554,7 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
             return false;
         }
         auto store = store_result.value();
+        startup_trace.step("open_kvstore");
 
         // Debug probes to help diagnose layout selection.
         {
@@ -565,6 +616,7 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
                           << probe.status().ToString() << std::endl;
             }
         }
+        startup_trace.step("probe_detect_runs");
 
         bool loaded_palette_layout = false;
 
@@ -575,35 +627,68 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
                             palette_error.what();
             return false;
         }
+        startup_trace.step("load_detection_runs");
 
         if (loaded_palette_layout) {
             if (!loadRefinedDetectionsAsPrimary(store)) {
                 std::cout << "  Refined detect runs not found or could not be loaded; "
                           << "using base detect_runs data" << std::endl;
             }
+            startup_trace.step("load_refined_detections");
 
-            if (loadKeypointHeadingData(store)) {
+            const bool loaded_keypoints = loadKeypointHeadingData(store);
+            startup_trace.step("load_keypoint_heading_data");
+            if (loaded_keypoints) {
                 std::cout << "  Loaded keypoint headings from '"
                           << data_.keypoints_run_name << "'" << std::endl;
             } else {
                 std::cout << "  No keypoint heading data available" << std::endl;
-                if (loadRefinedSubjectMaskEyeData(store, 0)) {
+            }
+
+            size_t keypoint_roi_count = 0;
+            if (loaded_keypoints) {
+                for (int32_t roi_index : data_.keypoint_roi_indices) {
+                    if (roi_index >= 0) {
+                        keypoint_roi_count =
+                            std::max(keypoint_roi_count,
+                                     static_cast<size_t>(roi_index) + 1);
+                    }
+                }
+            }
+
+            if (!data_.has_eye_masks) {
+                if (loadRefinedSubjectMaskEyeData(store,
+                                                  keypoint_roi_count)) {
                     std::cout << "  Loaded refined subject masks from '"
                               << data_.eye_masks_run_name << "'" << std::endl;
                 }
             }
+            startup_trace.step("load_refined_subject_masks");
+
+            if (loaded_keypoints && !data_.has_eye_masks) {
+                loadRefinedEyeMaskData(store, keypoint_roi_count);
+            }
+            startup_trace.step("load_legacy_eye_masks");
+
+            if (loaded_keypoints && !data_.has_eye_angles) {
+                loadEyeAngleData(store, keypoint_roi_count);
+            }
+            startup_trace.step("load_eye_angle_data");
+
             if (loadSubjectShapeData(store)) {
                 std::cout << "  Loaded subject shape run '"
                           << data_.subject_shape.run_name << "'" << std::endl;
             } else {
                 std::cout << "  No subject shape data available" << std::endl;
             }
+            startup_trace.step("load_subject_shape");
             if (loadTailKinematicsData(store)) {
                 std::cout << "  Loaded tail kinematics run '"
                           << data_.tail_kinematics.run_name << "'" << std::endl;
             } else {
                 std::cout << "  No tail kinematics data available" << std::endl;
             }
+            startup_trace.step("load_tail_kinematics");
         } else {
             std::cout << "  detect_runs layout not found; opening in metadata/stimulus-only mode"
                       << std::endl;
@@ -613,6 +698,7 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
         if (!loadMetadata(store)) {
             std::cout << "  Warning: Could not read raw_video metadata" << std::endl;
         }
+        startup_trace.step("load_metadata");
 
         std::string clipped_error;
         const bool clipped_startup_trace =
@@ -652,6 +738,7 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
             std::cout << "  Clipped collection resolver unavailable: "
                       << clipped_error << std::endl;
         }
+        startup_trace.step("load_clipped_collection");
         
         // Validate we have essential data
         if (data_.total_frames == 0) {
@@ -693,22 +780,15 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
         } else {
             std::cout << "  No interpolation data available in 'interpolation_runs'" << std::endl;
         }
+        startup_trace.step("load_interpolation_runs");
 
-        if (loadMovementData(store)) {
-            size_t dataset_count = getMovementSeriesCount();
-            size_t selected_index = getSelectedMovementSeriesIndex();
-            const auto* series = getMovementSeries(selected_index);
-            if (series) {
-                std::cout << "  Loaded " << dataset_count << " movement dataset"
-                          << (dataset_count == 1 ? "" : "s") << "; default '"
-                          << series->category << "/" << series->run_name
-                          << "' (track " << series->track_id << ")" << std::endl;
-            } else {
-                std::cout << "  Loaded movement analysis data" << std::endl;
-            }
+        if (discoverMovementData(store)) {
+            std::cout << "  Deferred movement analysis data load"
+                      << std::endl;
         } else {
             std::cout << "  No movement analysis data available" << std::endl;
         }
+        startup_trace.step("discover_movement_data");
 
         // Standalone crop loading fallback: keep crop metadata available for
         // live cropping, but avoid reading persisted roi_images unless
@@ -744,6 +824,7 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
                 }
             }
         }
+        startup_trace.step("load_crop_metadata");
         if (data_.crop_data.metadata_loaded && !data_.crop_data.loaded &&
             eagerCropImagesEnabled()) {
             if (loadMovementCropRun(store, data_.crop_data.run_name)) {
@@ -753,6 +834,7 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
                           << data_.crop_data.width << ")" << std::endl;
             }
         }
+        startup_trace.step("load_eager_crop_images");
 
         std::cout << "Successfully loaded zarr file: " << filepath << std::endl;
         std::cout << "  Total frames: " << data_.total_frames << std::endl;

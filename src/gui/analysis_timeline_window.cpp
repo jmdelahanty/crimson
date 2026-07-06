@@ -657,6 +657,8 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
         !heading_per_second_degrees.empty() &&
         !heading_per_second_time.empty() &&
         heading_per_second_degrees.size() == heading_per_second_time.size();
+    const bool has_deferred_movement =
+        context.zarr_loader.hasDeferredMovementData();
     const std::string primary_speed_label =
         context.zarr_loader.getMovementPrimarySpeedLabel();
     const std::string primary_speed_units =
@@ -678,7 +680,7 @@ void drawAnalysisTimelineWindow(const AnalysisTimelineWindowContext& context,
         context.zarr_loader.hasStimulusSteps() ||
         context.zarr_loader.hasStimulusEvents();
 
-    if (!has_track_timeline && !has_eye_angle_timeline &&
+    if (!has_track_timeline && !has_deferred_movement && !has_eye_angle_timeline &&
         !has_tail_kinematics_timeline && !has_stimulus_context) {
         ImGui::TextUnformatted("No analysis timeline data available.");
         ImGui::End();

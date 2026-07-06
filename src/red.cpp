@@ -6393,6 +6393,7 @@ int main(int argc, char **argv) {
         // Analysis timeline window
         if (zarr_loaded &&
             (zarr_loader.hasMovementData() ||
+             zarr_loader.hasDeferredMovementData() ||
              zarr_loader.hasEyeAngleAnalysisData() ||
              zarr_loader.hasTailKinematicsData() ||
              zarr_loader.hasStimulusSteps() ||
@@ -6760,6 +6761,10 @@ int main(int argc, char **argv) {
                         false);
                 }
             }
+        }
+
+        if (zarr_loaded) {
+            zarr_loader.requestRefinedSubjectMaskOptionalOverlayPrefetch();
         }
 
         if (cli_frame_cap_fps > 0.0) {

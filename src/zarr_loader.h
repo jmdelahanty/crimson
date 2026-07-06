@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <future>
 #include <vector>
 #include <string>
 #include <optional>
@@ -948,6 +949,8 @@ public:
     const std::string& getEyeMaskWarning() const { return data_.eye_masks_warning; }
     bool eyeMasksUseRefinedSubjectMasks() const { return data_.eye_masks_from_refined_subject_masks; }
     bool eyeMasksUseTolerantMetadata() const { return data_.eye_masks_tolerant_metadata; }
+    void requestRefinedSubjectMaskOptionalOverlayPrefetch();
+    std::string getRefinedSubjectMaskOptionalOverlayStatus() const;
     bool warmEyeMaskCacheForFrame(size_t frame_id) const;
     const std::array<std::string, 2>& getEyeMaskChannelLabels() const {
         return data_.eye_mask_channel_labels;
@@ -1139,6 +1142,19 @@ public:
     // Movement analysis accessors
     bool hasMovementData() const {
         return getSelectedMovementSeries() != nullptr;
+    }
+    bool hasDeferredMovementData() const {
+        return movement_data_discovered_ && !hasMovementData();
+    }
+    bool loadDeferredMovementData(std::string* error_message = nullptr);
+    bool startDeferredMovementDataLoad(std::string* error_message = nullptr);
+    bool updateDeferredMovementDataLoad(std::string* error_message = nullptr);
+    bool isDeferredMovementDataLoadInProgress() const;
+    const std::string& getDeferredMovementLoadError() const {
+        return movement_data_load_error_;
+    }
+    const std::string& getDeferredMovementLoadStatus() const {
+        return movement_data_load_status_;
     }
     const std::vector<float>& getMovementTimeSeconds() const {
         static const std::vector<float> kEmpty;
@@ -1710,6 +1726,42 @@ private:
     std::string requested_eye_angle_run_name_;
     std::string requested_stimulus_run_name_;
     DetectionDataset active_dataset_ = DetectionDataset::RawDetect;
+    bool movement_data_discovered_ = false;
+    std::string movement_data_load_error_;
+    enum class MovementLoadStage {
+        Full,
+        TrackKinematics,
+        SwimBouts,
+        BoutKinematics,
+    };
+    struct MovementLoadResult {
+        bool ok = false;
+        MovementLoadStage stage = MovementLoadStage::Full;
+        uint64_t generation = 0;
+        std::string archive_path;
+        std::string error_message;
+        double elapsed_ms = 0.0;
+        bool has_movement_data = false;
+        size_t movement_selected_index = std::numeric_limits<size_t>::max();
+        std::vector<ZarrDetectionData::MovementSeries> movement_series;
+        std::vector<ZarrDetectionData::SwimBoutSeries> swim_bout_series;
+        std::vector<ZarrDetectionData::BoutKinematicsSeries>
+            bout_kinematics_series;
+        std::string movement_crop_run_name;
+        ZarrDetectionData::CropImageData crop_data;
+    };
+    uint64_t movement_data_load_generation_ = 0;
+    std::string movement_data_load_status_;
+    std::future<MovementLoadResult> movement_data_load_future_;
+    mutable std::mutex refined_subject_mask_optional_overlay_mutex_;
+    mutable std::thread refined_subject_mask_optional_overlay_worker_;
+    uint64_t refined_subject_mask_optional_overlay_generation_ = 0;
+    bool refined_subject_mask_optional_overlay_requested_ = false;
+    bool refined_subject_mask_optional_overlay_loading_ = false;
+    bool refined_subject_mask_optional_overlay_loaded_ = false;
+    bool refined_subject_mask_optional_overlay_failed_ = false;
+    std::string refined_subject_mask_optional_overlay_error_;
+    mutable size_t refined_subject_mask_optional_overlay_publish_generation_ = 0;
     mutable std::mutex eye_mask_prefetch_mutex_;
     mutable std::condition_variable eye_mask_prefetch_cv_;
     mutable std::deque<size_t> eye_mask_prefetch_queue_;
@@ -1776,17 +1828,51 @@ private:
     bool loadSubjectShapeData(const ts::kvstore::KvStore& store);
     bool loadTailKinematicsData(const ts::kvstore::KvStore& store);
     bool loadRefinedSubjectMaskEyeData(const ts::kvstore::KvStore& store, size_t roi_count);
+    bool loadRefinedSubjectMaskOptionalOverlayData(
+        uint64_t generation,
+        const std::string& archive_path,
+        std::string* error_message);
     bool loadRefinedEyeMaskData(const ts::kvstore::KvStore& store, size_t roi_count);
     const ZarrDetectionData::EyeMaskChunkCacheEntry* findEyeMaskChunk(size_t chunk_id) const;
-    bool ensureEyeMaskChunk(size_t chunk_id, bool allow_prefetch = true) const;
+    bool ensureEyeMaskChunk(size_t chunk_id,
+                            bool allow_prefetch = true,
+                            bool force_reload = false) const;
     void prefetchAdjacentEyeMaskChunks(size_t chunk_id) const;
     void requestEyeMaskChunkPrefetch(size_t chunk_id) const;
     void stopEyeMaskPrefetchWorker() const;
+    void stopRefinedSubjectMaskOptionalOverlayWorker();
     void eyeMaskPrefetchWorkerLoop() const;
     bool populateEyeMaskEntry(size_t roi_index, FrameDetections::EyeMask& out_mask) const;
     bool populateSubjectShapeEntry(size_t roi_index,
                                    FrameDetections::SubjectShape& out_shape) const;
     bool loadMovementData(const ts::kvstore::KvStore& store);
+    static MovementLoadResult loadMovementDataForArchive(
+        const std::string& archive_path,
+        const std::string& keypoints_source_crop_run,
+        double fps,
+        int image_width,
+        int image_height,
+        uint64_t generation);
+    static MovementLoadResult loadMovementTrackDataForArchive(
+        const std::string& archive_path,
+        const std::string& keypoints_source_crop_run,
+        double fps,
+        int image_width,
+        int image_height,
+        uint64_t generation);
+    static MovementLoadResult loadMovementSwimBoutDataForArchive(
+        const std::string& archive_path,
+        std::vector<ZarrDetectionData::MovementSeries> movement_stubs,
+        uint64_t generation);
+    static MovementLoadResult loadMovementBoutKinematicsDataForArchive(
+        const std::string& archive_path,
+        std::vector<ZarrDetectionData::MovementSeries> movement_stubs,
+        std::vector<ZarrDetectionData::SwimBoutSeries> swim_bout_stubs,
+        uint64_t generation);
+    void publishMovementLoadResult(MovementLoadResult&& result);
+    void startMovementDataLoadStage(MovementLoadStage stage);
+    void waitForDeferredMovementDataLoad();
+    bool discoverMovementData(const ts::kvstore::KvStore& store);
     bool loadSpeedRunMovement(const ts::kvstore::KvStore& store);
     bool loadTrackKinematicsData(const ts::kvstore::KvStore& store);
     bool loadSwimBoutData(const ts::kvstore::KvStore& store);

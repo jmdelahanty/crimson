@@ -223,6 +223,11 @@ void drawEyeMaskSection(const FrameDebugWindowContext& context,
         ImGui::Text("  Contours: %zu/%zu components",
                     contour_components,
                     components.size());
+        const std::string optional_overlay_status =
+            context.zarr_loader.getRefinedSubjectMaskOptionalOverlayStatus();
+        if (!optional_overlay_status.empty()) {
+            ImGui::TextDisabled("  %s", optional_overlay_status.c_str());
+        }
 
         ImGui::Checkbox("Subject body", &result.show_subject_body_mask);
         ImGui::SameLine();
