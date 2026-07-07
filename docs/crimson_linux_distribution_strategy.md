@@ -394,6 +394,33 @@ Useful stricter check on a real GPU/display machine:
 dist/Crimson/check_crimson_runtime.sh --require-nvidia-smi --require-gl
 ```
 
+Dependency audit manifest:
+
+```bash
+dist/Crimson/check_crimson_runtime.sh \
+  --write-dependency-manifest dist/Crimson/dependency_manifest.json
+```
+
+Release-mode audit:
+
+```bash
+dist/Crimson/check_crimson_runtime.sh \
+  --mode release \
+  --write-dependency-manifest dist/Crimson/dependency_manifest.json \
+  --require-nvidia-smi \
+  --require-gl
+```
+
+The build helper can run the same check during staging:
+
+```bash
+tools/build_linux_app_drop.sh \
+  --dependency-manifest dist/Crimson/dependency_manifest.json
+```
+
+Use `CRIMSON_ALLOWED_RUNTIME_ROOTS` only when a release intentionally depends on
+an admin-managed module/runtime root instead of app-local bundled libraries.
+
 Current limitation: this first slice creates and checks a staged app tree, but
 it does not yet bundle private Linux shared libraries. A smoke install on the
 current workstation still showed absolute dependency paths in `RUNPATH`, such

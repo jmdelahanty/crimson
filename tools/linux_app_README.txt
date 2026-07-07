@@ -30,6 +30,19 @@ If a real GUI display is available, add:
 
   ./check_crimson_runtime.sh --require-nvidia-smi --require-gl
 
+To write a dependency audit manifest:
+
+  ./check_crimson_runtime.sh --write-dependency-manifest dependency_manifest.json
+
+Developer checks allow absolute managed-workstation dependency roots as
+warnings. Release checks are stricter:
+
+  ./check_crimson_runtime.sh --mode release --write-dependency-manifest dependency_manifest.json
+
+If release mode should allow a managed module/runtime root, set:
+
+  CRIMSON_ALLOWED_RUNTIME_ROOTS=/path/to/runtime/root1:/path/to/runtime/root2
+
 Run-only users need a compatible NVIDIA display driver and access to the data
 they want to open. They should not need the CUDA Toolkit, TensorRT SDK, OpenCV
 development tree, FFmpeg headers, or a compiler just to launch a complete app

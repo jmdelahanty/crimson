@@ -13,6 +13,8 @@ skip_configure=0
 skip_build=0
 skip_install=0
 skip_runtime_check=0
+runtime_check_mode="dev"
+dependency_manifest=""
 require_nvidia_smi=0
 require_gl=0
 clean_install=0
@@ -35,6 +37,9 @@ Options:
   --skip-build              Do not run cmake build.
   --skip-install            Do not run cmake install.
   --skip-runtime-check      Do not run check_crimson_runtime.sh.
+  --runtime-check-mode MODE Runtime check policy: dev or release. Default: dev.
+  --dependency-manifest PATH
+                            Write a JSON dependency manifest during runtime check.
   --require-nvidia-smi      Runtime check fails if nvidia-smi is unavailable.
   --require-gl              Runtime check fails if no GL/X probe succeeds.
   --launch                  Launch the staged app through bin/crimson.
@@ -180,6 +185,14 @@ while [ "$#" -gt 0 ]; do
             skip_runtime_check=1
             shift
             ;;
+        --runtime-check-mode)
+            runtime_check_mode="${2:-}"
+            shift 2
+            ;;
+        --dependency-manifest)
+            dependency_manifest="${2:-}"
+            shift 2
+            ;;
         --require-nvidia-smi)
             require_nvidia_smi=1
             shift
@@ -213,6 +226,14 @@ if [ -z "$preset" ]; then
     echo "--preset requires a non-empty value" >&2
     exit 2
 fi
+
+case "$runtime_check_mode" in
+    dev|release) ;;
+    *)
+        echo "--runtime-check-mode must be 'dev' or 'release', got: $runtime_check_mode" >&2
+        exit 2
+        ;;
+esac
 
 if [ -z "$build_dir" ]; then
     build_dir="build/$preset"
@@ -280,7 +301,10 @@ if [ "$skip_runtime_check" -eq 0 ]; then
         echo "Runtime check script not found or not executable: $check_script" >&2
         exit 1
     fi
-    check_args=("$check_script" --app-root "$install_prefix_abs")
+    check_args=("$check_script" --app-root "$install_prefix_abs" --mode "$runtime_check_mode")
+    if [ -n "$dependency_manifest" ]; then
+        check_args+=(--write-dependency-manifest "$(absolute_path "$dependency_manifest")")
+    fi
     if [ "$require_nvidia_smi" -eq 1 ]; then
         check_args+=(--require-nvidia-smi)
     fi
