@@ -13,11 +13,28 @@ Expected layout:
   share/crimson/config/
   etc/crimson/runtime_roots.env
   check_crimson_runtime.sh
+  install_crimson.sh
   release.json
 
 Recommended launch path:
 
   ./bin/crimson --zarr /path/to/archive.zarr
+
+To copy this app drop into your user account:
+
+  ./install_crimson.sh --replace-existing --create-symlink
+
+Default install location:
+
+  ~/.local/share/Crimson
+
+Default symlink when --create-symlink is used:
+
+  ~/bin/crimson
+
+Then launch with:
+
+  ~/bin/crimson --zarr /path/to/archive.zarr
 
 The launcher resolves the install root and prepends app-local private library
 directories to LD_LIBRARY_PATH before starting bin/redgui. Hybrid Linux drops

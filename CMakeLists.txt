@@ -1039,6 +1039,7 @@ else()
     if(UNIX AND NOT APPLE)
         install(PROGRAMS
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_crimson_runtime.sh
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/install_crimson.sh
             DESTINATION .
             COMPONENT core
         )

@@ -386,6 +386,8 @@ unless explicitly skipped.
     include Ada RTX 40-series `sm_89`.
 12. [done] Make the CMake NVENC dependency optional until an encode/export
     target actually needs it.
+13. [done] Add Linux user installer:
+    `tools/install_crimson.sh`.
 
 ## Practical Near-Term Plan
 
@@ -579,6 +581,33 @@ tools/publish_linux_current_app_drop.sh --dry-run
 
 Use `--share-root <path>` to publish to a different group location, for example
 a Johnson lab staging area.
+
+User install from a published app drop is handled by the Linux installer script:
+
+```bash
+/groups/ahrens/ahrenslab/crimson/linux-app/current/install_crimson.sh \
+  --replace-existing \
+  --create-symlink
+```
+
+By default this copies the app drop to:
+
+```text
+~/.local/share/Crimson
+```
+
+and `--create-symlink` creates:
+
+```text
+~/bin/crimson -> ~/.local/share/Crimson/bin/crimson
+```
+
+The installer runs `check_crimson_runtime.sh --mode release` against the source
+app drop before copying and against the installed copy afterward. Use
+`--require-nvidia-smi` and `--require-gl` when installing on the target machine
+and you want the install to fail unless the local NVIDIA/display stack is ready.
+Use `--source-root <path>` to install from a staging or test app drop instead
+of the default published current root.
 
 Current default limitation: the hybrid app drop still carries absolute managed
 roots for TensorRT and CUDA in `etc/crimson/runtime_roots.env`. OpenCV and

@@ -177,6 +177,7 @@ test_app_drop_layout() {
     require_executable "$root/bin/redgui" "redgui"
     require_executable "$root/bin/crimson" "crimson launcher"
     require_executable "$root/check_crimson_runtime.sh" "check_crimson_runtime.sh"
+    require_executable "$root/install_crimson.sh" "install_crimson.sh"
     require_path "$root/README.txt" "README.txt"
     require_path "$root/release.json" "release.json"
     require_path "$root/share/crimson/fonts" "Fonts directory"
