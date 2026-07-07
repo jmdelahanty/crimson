@@ -1010,6 +1010,26 @@ else()
         RUNTIME DESTINATION ${CRIMSON_INSTALL_RUNTIME_DESTINATION}
         COMPONENT core
     )
+
+    if(UNIX AND NOT APPLE)
+        install(PROGRAMS
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_crimson_runtime.sh
+            DESTINATION .
+            COMPONENT core
+        )
+        install(PROGRAMS
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/crimson_linux_launcher.sh
+            DESTINATION ${CMAKE_INSTALL_BINDIR}
+            RENAME crimson
+            COMPONENT core
+        )
+        install(FILES
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/linux_app_README.txt
+            DESTINATION .
+            RENAME README.txt
+            COMPONENT core
+        )
+    endif()
 endif()
 
 install(DIRECTORY ${FONT_SOURCE_DIR}/

@@ -10,6 +10,7 @@ Related docs:
 - [docs/crimson_supported_dependency_stack_matrix.md](/home/delahantyj@hhmi.org/gitrepos/crimson-ui-monolith/docs/crimson_supported_dependency_stack_matrix.md)
 - [docs/crimson_cuda_driver_toolkit_and_presets.md](/home/delahantyj@hhmi.org/gitrepos/crimson-ui-monolith/docs/crimson_cuda_driver_toolkit_and_presets.md)
 - [docs/crimson_packaging_and_distribution_plan.md](/home/delahantyj@hhmi.org/gitrepos/crimson-ui-monolith/docs/crimson_packaging_and_distribution_plan.md)
+- [docs/crimson_linux_distribution_strategy.md](/home/delahantyj@hhmi.org/gitrepos/crimson-ui-monolith/docs/crimson_linux_distribution_strategy.md)
 - [docs/crimson_windows_installation_procedures.md](/home/delahantyj@hhmi.org/gitrepos/crimson-ui-monolith/docs/crimson_windows_installation_procedures.md)
 
 ## Current Reality
@@ -48,6 +49,13 @@ TensorRT 10.0.1.6
 OpenCV 4.10.0
 FFmpeg/NVIDIA codec development root
 ```
+
+Current workstations may expose those dependencies through `/opt`,
+`/usr/local`, environment variables, or module-style setup. That is acceptable
+for developers, but the user-facing Linux path should move toward a staged app
+drop with executable-relative resources and controlled runtime library search.
+See [docs/crimson_linux_distribution_strategy.md](/home/delahantyj@hhmi.org/gitrepos/crimson-ui-monolith/docs/crimson_linux_distribution_strategy.md)
+for the concrete plan.
 
 The near-term Ubuntu work should be:
 
