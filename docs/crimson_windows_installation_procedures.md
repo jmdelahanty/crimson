@@ -401,11 +401,30 @@ refresh the `current` drop. When `-ReleaseName` is omitted, the publisher uses
 an automatic name like `YYYY-MM-DD_HHMMSS_<short-commit>` when Git metadata is
 available, falling back to `YYYY-MM-DD_HHMMSS` otherwise.
 
+To build, run the staged runtime check, and publish in one command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build_check_publish_windows_app_drop.ps1 `
+  -ShareRoot "\\SERVER\crimson\windows-app" `
+  -PublishCurrent `
+  -ArchiveExistingCurrent `
+  -RequireNvidiaSmi
+```
+
+The chain script forwards the common source-build options from
+`build_windows_app_drop.ps1`, runs `check_crimson_runtime.ps1` against the
+staged app, and then calls `publish_windows_app_drop.ps1`. Pass `-CleanInstall`
+when you want to remove and recreate `dist\Crimson` before staging.
+The staged runtime check may warn that `release.json` and `install_metadata.json`
+are missing; `release.json` is created by the publish step, and
+`install_metadata.json` is created by the user install step.
+
 ## Current Script Inventory
 
 | Script | Audience | Purpose |
 | --- | --- | --- |
 | `tools\build_windows_app_drop.ps1` | builder | configure, build, install, and runtime-check a staged app drop |
+| `tools\build_check_publish_windows_app_drop.ps1` | publisher | build, check, and publish a staged app drop in one command |
 | `tools\check_windows_build_dependency_paths.ps1` | builder | check FFmpeg development files and NVIDIA codec import-library paths |
 | `tools\setup_windows_vcpkg.ps1` | builder | clone/bootstrap vcpkg and install Crimson's vcpkg packages |
 | `tools\set_windows_dependency_roots.ps1` | builder | set `CRIMSON_*` roots and prepend runtime DLL paths in the current shell |
