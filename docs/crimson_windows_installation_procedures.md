@@ -235,6 +235,10 @@ C:\third_party\TensorRT-10.0.1.6
 
 If local paths differ, pass overrides to `tools\build_windows_app_drop.ps1`.
 
+For the current GUI playback build, Crimson requires the Video Codec SDK/CUDA
+decode import library path for `nvcuvid`. `nvencodeapi` is only required when a
+future encode/export target is enabled with `CRIMSON_ENABLE_NVENC=ON`.
+
 For source builds, `C:\third_party\ffmpeg-nvidia` must be a development layout,
 not only a runtime `bin` folder. It must contain:
 

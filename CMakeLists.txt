@@ -8,6 +8,7 @@ option(ENABLE_NVML "Link against NVIDIA Management Library (NVML)" ON)
 option(CRIMSON_INSTALL_DEV_TOOLS "Install diagnostic and developer helper executables" OFF)
 option(CRIMSON_ENABLE_SFM "Enable OpenCV SFM-based triangulation workflows" ON)
 option(CRIMSON_ENABLE_PARQUET "Enable Arrow/Parquet support for Palette clipped frame maps" OFF)
+option(CRIMSON_ENABLE_NVENC "Require/link NVIDIA NVENC encode API for future annotated video export support" OFF)
 
 # Set output directory for executables
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/release)
@@ -354,14 +355,6 @@ crimson_require_found(SWRESAMPLE_LIBRARY "FFmpeg swresample import library")
 set(FFMPEG_INCLUDE_DIRS ${AVFORMAT_INCLUDE_DIR})
 set(FFMPEG_LIBRARIES ${AVFORMAT_LIBRARY} ${AVCODEC_LIBRARY} ${AVUTIL_LIBRARY} ${SWSCALE_LIBRARY} ${SWRESAMPLE_LIBRARY})
 
-# --- NVIDIA Libraries ---
-# NVENC (Video Codec SDK runtime)
-find_library(NVENC_LIBRARY
-    NAMES nvidia-encode nvencodeapi
-    HINTS ${CRIMSON_NV_CODEC_LIBRARY_HINTS}
-)
-crimson_require_found(NVENC_LIBRARY "NVIDIA nvencodeapi import library")
-
 # NVML headers (from libnvidia-ml-dev OR CUDA Toolkit)
 find_path(NVML_INCLUDE_DIR nvml.h
     HINTS ${CRIMSON_CUDA_INCLUDE_HINTS}
@@ -379,6 +372,17 @@ endif()
 find_library(CUDA_DRIVER NAMES cuda nvcuda HINTS ${CRIMSON_CUDA_LIBRARY_HINTS})
 find_library(NVCUVID_LIBRARY NAMES nvcuvid HINTS ${CRIMSON_NV_CODEC_LIBRARY_HINTS})
 crimson_require_found(NVCUVID_LIBRARY "NVIDIA nvcuvid import library")
+
+# NVENC is only needed by future video encode/export paths, not GUI playback.
+if(CRIMSON_ENABLE_NVENC)
+    find_library(NVENC_LIBRARY
+        NAMES nvidia-encode nvencodeapi
+        HINTS ${CRIMSON_NV_CODEC_LIBRARY_HINTS}
+    )
+    crimson_require_found(NVENC_LIBRARY "NVIDIA nvencodeapi import library")
+else()
+    set(NVENC_LIBRARY "")
+endif()
 
 # NPP Libraries
 find_library(NPPC_LIBRARY NAMES nppc HINTS ${CRIMSON_CUDA_LIBRARY_HINTS})
@@ -831,7 +835,6 @@ target_link_libraries(redgui PRIVATE
     ${CUDA_LIBRARIES}
     ${CUDA_DRIVER}
     ${NVCUVID_LIBRARY}
-    ${NVENC_LIBRARY}
     ${NPPC_LIBRARY}
     ${NPPIG_LIBRARY}
     ${NPPICC_LIBRARY}
@@ -860,6 +863,13 @@ target_link_libraries(redgui PRIVATE
     Threads::Threads
 )
 crimson_configure_parquet_support(redgui)
+
+if(CRIMSON_ENABLE_NVENC)
+    target_link_libraries(redgui PRIVATE ${NVENC_LIBRARY})
+    target_compile_definitions(redgui PRIVATE CRIMSON_ENABLE_NVENC=1)
+else()
+    target_compile_definitions(redgui PRIVATE CRIMSON_ENABLE_NVENC=0)
+endif()
 
 if(WIN32)
     target_link_libraries(redgui PRIVATE Dbghelp)
@@ -1070,6 +1080,7 @@ message(STATUS "  OpenCV Dir: ${OpenCV_DIR}")
 message(STATUS "  Expected OpenCV Version: ${CRIMSON_EXPECT_OPENCV_VERSION}")
 message(STATUS "  OpenCV SFM Triangulation: ${CRIMSON_ENABLE_SFM}")
 message(STATUS "  Arrow/Parquet Clipped Maps: ${CRIMSON_ENABLE_PARQUET}")
+message(STATUS "  NVENC Video Export Support: ${CRIMSON_ENABLE_NVENC}")
 message(STATUS "  FFmpeg Directory: ${FFMPEG_ROOT}")
 message(STATUS "  Video Codec SDK Root: ${VIDEO_CODEC_SDK_ROOT}")
 message(STATUS "  Install Prefix: ${CMAKE_INSTALL_PREFIX}")

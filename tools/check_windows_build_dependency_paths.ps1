@@ -103,6 +103,28 @@ function Test-OneRequiredPath {
     return $false
 }
 
+function Test-OneOptionalPath {
+    param(
+        [string]$Category,
+        [string]$Name,
+        [string[]]$Candidates
+    )
+
+    foreach ($candidate in $Candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+        if (Test-Path -LiteralPath $candidate) {
+            Add-Ok -Category $Category -Name $Name -Details $candidate
+            return $true
+        }
+    }
+
+    $checked = ($Candidates | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "; "
+    Add-Warn -Category $Category -Name $Name -Details "missing; checked: $checked"
+    return $false
+}
+
 function Get-NvidiaCodecLibraryCandidates {
     param(
         [string]$LibraryName
@@ -153,7 +175,7 @@ Test-OptionalPath -Category "nvidia-codec" -Name "Video Codec SDK root" -PathVal
 Test-OptionalPath -Category "nvidia-codec" -Name "SDK Interface directory" -PathValue (Join-Path $VideoCodecSdkRoot "Interface") | Out-Null
 Test-RequiredPath -Category "nvidia-codec" -Name "vendored nvcodec headers" -PathValue (Join-Path $RepoRoot "third_party\nvcodec\nvcuvid.h") | Out-Null
 Test-OneRequiredPath -Category "nvidia-codec" -Name "nvcuvid import library" -Candidates (Get-NvidiaCodecLibraryCandidates -LibraryName "nvcuvid") | Out-Null
-Test-OneRequiredPath -Category "nvidia-codec" -Name "nvencodeapi import library" -Candidates (Get-NvidiaCodecLibraryCandidates -LibraryName "nvencodeapi") | Out-Null
+Test-OneOptionalPath -Category "nvidia-codec" -Name "nvencodeapi import library (future encode/export)" -Candidates (Get-NvidiaCodecLibraryCandidates -LibraryName "nvencodeapi") | Out-Null
 
 if ($CheckMediaAutobuild) {
     Test-RequiredPath -Category "media-autobuild" -Name "local64 root" -PathValue $MediaAutobuildRoot | Out-Null

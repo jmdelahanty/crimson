@@ -91,10 +91,10 @@ The current Crimson GUI playback path is a decode path:
 
 NVENC is the NVIDIA encode API. It is not required for today's normal GUI
 playback app-drop unless a built target actually references NVENC encode
-symbols. Some build configuration still discovers an NVENC library because the
-repo has historically treated the NVIDIA Video Codec SDK as one dependency
-surface, but the release runtime audit should be based on the installed binary's
-observed dependency closure, not on a future export feature.
+symbols. Crimson's default build leaves `CRIMSON_ENABLE_NVENC=OFF`, so it does
+not require or link `libnvidia-encode.so.1` for playback. Enable
+`CRIMSON_ENABLE_NVENC` only for a future encode/export target that actually
+uses NVIDIA's encode API.
 
 A future "export annotated clip" component should be treated as a separate
 encoding path. That feature would likely render frames with masks, keypoints,
@@ -384,8 +384,8 @@ unless explicitly skipped.
 11. Update `CMAKE_CUDA_ARCHITECTURES` before broad release. The current source
     sets `80;86`, which covers Ampere-class targets but does not explicitly
     include Ada RTX 40-series `sm_89`.
-12. Make the CMake NVENC dependency optional until an encode/export target
-    actually needs it.
+12. [done] Make the CMake NVENC dependency optional until an encode/export
+    target actually needs it.
 
 ## Practical Near-Term Plan
 

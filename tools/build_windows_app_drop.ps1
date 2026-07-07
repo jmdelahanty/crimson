@@ -512,7 +512,6 @@ if (-not $SkipConfigure) {
         Require-ExistingPath -Label "TensorRT root" -PathValue $TensorRtRoot
         Require-FfmpegDevelopmentFiles -Root $FfmpegRoot
         Require-NvidiaCodecImportLibrary -LibraryName "nvcuvid" -VideoCodecSdkRootValue $VideoCodecSdkRoot | Out-Null
-        Require-NvidiaCodecImportLibrary -LibraryName "nvencodeapi" -VideoCodecSdkRootValue $VideoCodecSdkRoot | Out-Null
         if ($VcpkgToolchainFile) {
             Write-Host "Vcpkg toolchain: $VcpkgToolchainFile"
         } else {
