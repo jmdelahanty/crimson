@@ -25,6 +25,11 @@ FFmpeg with NVIDIA codec support
 NVIDIA Video Codec SDK headers/import libraries
 ```
 
+In this document, "NVIDIA codec support" currently means hardware-assisted
+playback/decode for the Crimson GUI. The maintained GUI app-drop needs the
+NVDEC/CUVID side of the NVIDIA video stack to read H.264/H.265 recordings. It
+does not currently encode video during normal playback.
+
 The shared presets are:
 
 ```text
@@ -73,6 +78,38 @@ A run-only user should not need the CUDA Toolkit, TensorRT SDK, OpenCV
 development tree, FFmpeg development headers, or a compiler just to launch
 Crimson. If the user has a different CUDA Toolkit installed on the machine, the
 installed app should not accidentally bind to it.
+
+## Decode Path vs Future Encode Path
+
+The current Crimson GUI playback path is a decode path:
+
+- FFmpeg/OpenCV select and open the recording containers.
+- Crimson's NVIDIA decode path uses NVDEC/CUVID APIs from the driver-provided
+  `libnvcuvid.so.1`.
+- CUDA/GL interop and CUDA/NPP runtime libraries support upload, conversion,
+  inference, and rendering.
+
+NVENC is the NVIDIA encode API. It is not required for today's normal GUI
+playback app-drop unless a built target actually references NVENC encode
+symbols. Some build configuration still discovers an NVENC library because the
+repo has historically treated the NVIDIA Video Codec SDK as one dependency
+surface, but the release runtime audit should be based on the installed binary's
+observed dependency closure, not on a future export feature.
+
+A future "export annotated clip" component should be treated as a separate
+encoding path. That feature would likely render frames with masks, keypoints,
+tracks, and other overlays, then write an output movie using either FFmpeg's
+NVENC encoder or direct NVENC APIs. When that component is implemented:
+
+- `libnvidia-encode.so.1` becomes a runtime driver dependency for the export
+  binary or plugin.
+- The runtime checker should add an encode/export smoke test, not only an
+  `ldd` check.
+- Packaging should keep `libnvidia-encode.so.1` host-resolved like
+  `libcuda.so.1` and `libnvcuvid.so.1`, because it is tied to the installed
+  NVIDIA driver.
+- The dependency manifest should distinguish current playback/decode
+  requirements from optional clip-export/encode requirements.
 
 ## Driver Compatibility Policy
 
@@ -542,6 +579,7 @@ Do not bundle:
 | --- | --- |
 | `libcuda.so.1` | NVIDIA driver API library; must match installed host driver |
 | `libnvcuvid.so.1` | NVIDIA video decode driver library; must match installed host driver |
+| `libnvidia-encode.so.1` | NVIDIA video encode driver library; future clip export dependency, not current playback requirement |
 
 ## Experimental NVIDIA Runtime Bundle
 
@@ -573,8 +611,9 @@ Experimental design:
 4. Remove `/usr/local/TensorRT-10.0.1.6` and `/usr/local/cuda-12.4` from
    `etc/crimson/runtime_roots.env` if every non-driver NVIDIA runtime library
    resolves from `lib/crimson/private`.
-5. Keep `libcuda.so.1` and `libnvcuvid.so.1` host-resolved and classify them as
-   `driver` in the dependency manifest.
+5. Keep `libcuda.so.1`, `libnvcuvid.so.1`, and future encode-path
+   `libnvidia-encode.so.1` host-resolved and classify them as `driver` in the
+   dependency manifest.
 6. Add a runtime-check mode or manifest assertion for "fully bundled NVIDIA
    runtime except driver", failing if TensorRT/NPP resolves from `/usr/local`.
 7. Validate with more than `ldd`:
@@ -618,7 +657,7 @@ Initial classification policy:
 
 | Class | Examples | Release behavior |
 | --- | --- | --- |
-| `driver` | `libcuda.so.1`, NVIDIA driver-owned GL/driver libraries | require from host |
+| `driver` | `libcuda.so.1`, `libnvcuvid.so.1`, future `libnvidia-encode.so.1`, NVIDIA driver-owned GL/driver libraries | require from host |
 | `system` | glibc, libstdc++, pthread, dl, common Ubuntu base libraries | require from host |
 | `bundle-candidate` | TensorRT, OpenCV, FFmpeg, NPP/CUDA-adjacent runtime libraries after redistribution review | copy/select deliberately |
 | `unexpected` | libraries from user home paths, wrong `/opt` tree, mismatched FFmpeg/OpenCV stack | warn in dev, fail in release |
