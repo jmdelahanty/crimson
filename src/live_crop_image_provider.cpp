@@ -315,7 +315,8 @@ bool LiveCropImageProvider::fillCropFromDeviceNv12(
                           aligned_width * 4,
                           aligned_width,
                           aligned_height,
-                          frame_source_.color_matrix);
+                          frame_source_.color_matrix,
+                          frame_source_.color_range);
 
     const int sub_x = region.copy_x0 - aligned_x0;
     const int sub_y = region.copy_y0 - aligned_y0;

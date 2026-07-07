@@ -13,9 +13,11 @@
 
 __constant__ float matYuv2Rgb[3][3];
 __constant__ float matRgb2Yuv[3][3];
+__constant__ int yuvBlack;
+__constant__ int yuvChromaMid;
 
 
-void inline GetConstants(int iMatrix, float &wr, float &wb, int &black, int &white, int &max) {
+void inline GetConstants(int iMatrix, int colorRange, float &wr, float &wb, int &black, int &white, int &max) {
     black = 16; white = 235;
     max = 255;
 
@@ -47,12 +49,17 @@ void inline GetConstants(int iMatrix, float &wr, float &wb, int &black, int &whi
         max = (1 << 16) - 1;
         break;
     }
+
+    if (colorRange == ColorRange_JPEG) {
+        black = 0;
+        white = max;
+    }
 }
 
-void SetMatYuv2Rgb(int iMatrix) {
+void SetMatYuv2Rgb(int iMatrix, int colorRange = ColorRange_Unspecified) {
     float wr, wb;
     int black, white, max;
-    GetConstants(iMatrix, wr, wb, black, white, max);
+    GetConstants(iMatrix, colorRange, wr, wb, black, white, max);
     float mat[3][3] = {
         1.0f, 0.0f, (1.0f - wr) / 0.5f,
         1.0f, -wb * (1.0f - wb) / 0.5f / (1 - wb - wr), -wr * (1 - wr) / 0.5f / (1 - wb - wr),
@@ -64,12 +71,15 @@ void SetMatYuv2Rgb(int iMatrix) {
         }
     }
     cudaMemcpyToSymbol(matYuv2Rgb, mat, sizeof(mat));
+    cudaMemcpyToSymbol(yuvBlack, &black, sizeof(black));
+    const int chroma_mid = (max + 1) / 2;
+    cudaMemcpyToSymbol(yuvChromaMid, &chroma_mid, sizeof(chroma_mid));
 }
 
 void SetMatRgb2Yuv(int iMatrix) {
     float wr, wb;
     int black, white, max;
-    GetConstants(iMatrix, wr, wb, black, white, max);
+    GetConstants(iMatrix, ColorRange_Unspecified, wr, wb, black, white, max);
     float mat[3][3] = {
         wr, 1.0f - wb - wr, wb,
         -0.5f * wr / (1.0f - wb), -0.5f * (1 - wb - wr) / (1.0f - wb), 0.5f,
@@ -90,10 +100,7 @@ __device__ static T Clamp(T x, T lower, T upper) {
 
 template<class Rgb, class YuvUnit>
 __device__ inline Rgb YuvToRgbForPixel(YuvUnit y, YuvUnit u, YuvUnit v) {
-    const int 
-        low = 1 << (sizeof(YuvUnit) * 8 - 4),
-        mid = 1 << (sizeof(YuvUnit) * 8 - 1);
-    float fy = (int)y - low, fu = (int)u - mid, fv = (int)v - mid;
+    float fy = (int)y - yuvBlack, fu = (int)u - yuvChromaMid, fv = (int)v - yuvChromaMid;
     const float maxf = (1 << sizeof(YuvUnit) * 8) - 1.0f;
     YuvUnit 
         r = (YuvUnit)Clamp(matYuv2Rgb[0][0] * fy + matYuv2Rgb[0][1] * fu + matYuv2Rgb[0][2] * fv, 0.0f, maxf),
@@ -221,8 +228,8 @@ __global__ static void Yuv444ToRgbPlanarKernel(uint8_t *pYuv, int nYuvPitch, uin
 }
 
 template <class COLOR32>
-void Nv12ToColor32(uint8_t *dpNv12, int nNv12Pitch, uint8_t *dpBgra, int nBgraPitch, int nWidth, int nHeight, int iMatrix) {
-    SetMatYuv2Rgb(iMatrix);
+void Nv12ToColor32(uint8_t *dpNv12, int nNv12Pitch, uint8_t *dpBgra, int nBgraPitch, int nWidth, int nHeight, int iMatrix, int colorRange) {
+    SetMatYuv2Rgb(iMatrix, colorRange);
     YuvToRgbKernel<uchar2, COLOR32, uint2>
         <<<dim3((nWidth + 63) / 32 / 2, (nHeight + 3) / 2 / 2), dim3(32, 2)>>>
         (dpNv12, nNv12Pitch, dpBgra, nBgraPitch, nWidth, nHeight);
@@ -317,8 +324,8 @@ void YUV444P16ToColorPlanar(uint8_t *dpYUV444, int nPitch, uint8_t *dpBgrp, int 
 }
 
 // Explicit Instantiation
-template void Nv12ToColor32<BGRA32>(uint8_t *dpNv12, int nNv12Pitch, uint8_t *dpBgra, int nBgraPitch, int nWidth, int nHeight, int iMatrix);
-template void Nv12ToColor32<RGBA32>(uint8_t *dpNv12, int nNv12Pitch, uint8_t *dpBgra, int nBgraPitch, int nWidth, int nHeight, int iMatrix);
+template void Nv12ToColor32<BGRA32>(uint8_t *dpNv12, int nNv12Pitch, uint8_t *dpBgra, int nBgraPitch, int nWidth, int nHeight, int iMatrix, int colorRange);
+template void Nv12ToColor32<RGBA32>(uint8_t *dpNv12, int nNv12Pitch, uint8_t *dpBgra, int nBgraPitch, int nWidth, int nHeight, int iMatrix, int colorRange);
 template void Nv12ToColor64<BGRA64>(uint8_t *dpNv12, int nNv12Pitch, uint8_t *dpBgra, int nBgraPitch, int nWidth, int nHeight, int iMatrix);
 template void Nv12ToColor64<RGBA64>(uint8_t *dpNv12, int nNv12Pitch, uint8_t *dpBgra, int nBgraPitch, int nWidth, int nHeight, int iMatrix);
 template void YUV444ToColor32<BGRA32>(uint8_t *dpYUV444, int nPitch, uint8_t *dpBgra, int nBgraPitch, int nWidth, int nHeight, int iMatrix);

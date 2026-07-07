@@ -14,6 +14,7 @@ struct FrameSlotMetadata {
     int pitch_bytes = 0;
     size_t frame_bytes = 0;
     int color_matrix = ColorSpaceStandard_BT709;
+    int color_range = ColorRange_Unspecified;
     PictureBufferFormat format = PictureBufferFormat::RGBA32;
 };
 

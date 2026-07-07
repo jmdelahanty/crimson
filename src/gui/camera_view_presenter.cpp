@@ -20,6 +20,7 @@ struct Nv12PlaybackPresenter {
     GLint luma_texture_location = -1;
     GLint chroma_texture_location = -1;
     GLint yuv_matrix_location = -1;
+    GLint luma_offset_location = -1;
 };
 
 double durationMs(std::chrono::steady_clock::duration delta) {
@@ -70,10 +71,11 @@ void ensureNv12PlaybackPresenter(Nv12PlaybackPresenter* presenter) {
         uniform sampler2D uLumaTex;
         uniform sampler2D uChromaTex;
         uniform mat3 uYuvToRgb;
+        uniform float uLumaOffset;
         varying vec2 vUV;
 
         void main() {
-            float y = texture2D(uLumaTex, vUV).r * 255.0 - 16.0;
+            float y = texture2D(uLumaTex, vUV).r * 255.0 - uLumaOffset;
             vec2 uv = texture2D(uChromaTex, vUV).rg * 255.0 -
                       vec2(128.0, 128.0);
             vec3 rgb = clamp(uYuvToRgb * vec3(y, uv), 0.0, 1.0);
@@ -113,6 +115,8 @@ void ensureNv12PlaybackPresenter(Nv12PlaybackPresenter* presenter) {
         glGetUniformLocation(presenter->program, "uChromaTex");
     presenter->yuv_matrix_location =
         glGetUniformLocation(presenter->program, "uYuvToRgb");
+    presenter->luma_offset_location =
+        glGetUniformLocation(presenter->program, "uLumaOffset");
 
     const float quad_vertices[] = {
         -1.0f, -1.0f, 0.0f, 0.0f, 1.0f,  -1.0f, 1.0f, 0.0f,
@@ -135,7 +139,10 @@ void ensureNv12PlaybackPresenter(Nv12PlaybackPresenter* presenter) {
     glBindVertexArray(0);
 }
 
-void fillNv12YuvToRgbMatrix(int color_matrix, float matrix_out[9]) {
+void fillNv12YuvToRgbMatrix(int color_matrix,
+                            int color_range,
+                            float matrix_out[9],
+                            float* luma_offset_out) {
     float wr = 0.2126f;
     float wb = 0.0722f;
     switch (color_matrix) {
@@ -162,7 +169,12 @@ void fillNv12YuvToRgbMatrix(int color_matrix, float matrix_out[9]) {
         break;
     }
 
-    const float scale = 1.0f / 219.0f;
+    const float black = colorRangeIsFull(color_range) ? 0.0f : 16.0f;
+    const float white = colorRangeIsFull(color_range) ? 255.0f : 235.0f;
+    const float scale = 1.0f / (white - black);
+    if (luma_offset_out != nullptr) {
+        *luma_offset_out = black;
+    }
     const float one_minus_wb_wr = 1.0f - wb - wr;
     matrix_out[0] = scale;
     matrix_out[1] = 0.0f;
@@ -182,7 +194,8 @@ void presentNv12PboToTexture(const CameraResources& camera,
                              GLuint destination_texture,
                              Nv12PlaybackPresenter* presenter,
                              int nv12_pitch_bytes,
-                             int color_matrix) {
+                             int color_matrix,
+                             int color_range) {
     ensureNv12PlaybackPresenter(presenter);
 
     const int image_width = static_cast<int>(camera.image_width);
@@ -244,9 +257,12 @@ void presentNv12PboToTexture(const CameraResources& camera,
     glUseProgram(presenter->program);
 
     float yuv_to_rgb[9];
-    fillNv12YuvToRgbMatrix(color_matrix, yuv_to_rgb);
+    float luma_offset = 16.0f;
+    fillNv12YuvToRgbMatrix(color_matrix, color_range, yuv_to_rgb,
+                           &luma_offset);
     glUniformMatrix3fv(presenter->yuv_matrix_location, 1, GL_TRUE,
                        yuv_to_rgb);
+    glUniform1f(presenter->luma_offset_location, luma_offset);
 
     glUniform1i(presenter->luma_texture_location, 0);
     glUniform1i(presenter->chroma_texture_location, 1);
@@ -362,7 +378,7 @@ void presentNv12SlotToTexture(CameraResources& camera,
         camera, surface_pbo, destination_texture, &getNv12PlaybackPresenter(),
         metadata.pitch_bytes > 0 ? metadata.pitch_bytes
                                  : static_cast<int>(camera.image_width),
-        metadata.color_matrix);
+        metadata.color_matrix, metadata.color_range);
     if (perf != nullptr) {
         perf->texture_upload_ms +=
             durationMs(std::chrono::steady_clock::now() - texture_upload_start);
@@ -639,7 +655,8 @@ CameraViewPresenterResult presentCameraViewFrame(
                             4 * static_cast<int>(camera.image_width),
                             static_cast<int>(camera.image_width),
                             static_cast<int>(camera.image_height),
-                            metadata.color_matrix);
+                            metadata.color_matrix,
+                            metadata.color_range);
                         result.perf.display_convert_ms += durationMs(
                             std::chrono::steady_clock::now() - convert_start);
                     } else {
@@ -734,7 +751,8 @@ CameraViewPresenterResult presentCameraViewFrame(
                     4 * static_cast<int>(camera.image_width),
                     static_cast<int>(camera.image_width),
                     static_cast<int>(camera.image_height),
-                    metadata.color_matrix);
+                    metadata.color_matrix,
+                    metadata.color_range);
                 result.perf.display_convert_ms +=
                     durationMs(std::chrono::steady_clock::now() - convert_start);
             } else {

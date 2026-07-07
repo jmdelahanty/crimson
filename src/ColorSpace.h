@@ -15,6 +15,18 @@ typedef enum ColorSpaceStandard {
     ColorSpaceStandard_BT2020C = 10
 } ColorSpaceStandard;
 
+// Matches FFmpeg AVColorRange values without exposing FFmpeg headers to
+// render-facing metadata structs.
+typedef enum ColorRange {
+    ColorRange_Unspecified = 0,
+    ColorRange_MPEG = 1,
+    ColorRange_JPEG = 2
+} ColorRange;
+
+inline bool colorRangeIsFull(int color_range) {
+    return color_range == ColorRange_JPEG;
+}
+
 union BGRA32 {
     uint32_t d;
     uchar4 v;

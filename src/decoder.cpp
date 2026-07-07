@@ -78,6 +78,10 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
     createCudaContext(&cuContext, dc_context->gpu_index, 0);
     size_t nVideoBytes = 0;
     PacketData pktinfo;
+    const int stream_color_space =
+        static_cast<int>(demuxer->GetColorSpace());
+    const int stream_color_range =
+        static_cast<int>(demuxer->GetColorRange());
 
     const cudaVideoCodec codec_id = FFmpeg2NvCodecId(demuxer->GetVideoCodec());
     auto make_decoder = [&]() {
@@ -104,7 +108,9 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
               << " recreate_decoder_on_seek="
               << (recreate_decoder_on_seek ? "true" : "false")
               << " boundary_fallback="
-              << (allow_boundary_fallback ? "true" : "false") << std::endl;
+              << (allow_boundary_fallback ? "true" : "false")
+              << " ffmpeg_color_space=" << stream_color_space
+              << " ffmpeg_color_range=" << stream_color_range << std::endl;
     int nWidth = 0, nHeight = 0;
 
     int nFrameReturned = 0, nFrame = 0, iMatrix = 0;
@@ -643,7 +649,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         Nv12ToColor32<RGBA32>(
                             pFrame, dec->GetWidth(), (uint8_t *)pTmpImage,
                             4 * dec->GetWidth(), dec->GetWidth(),
-                            dec->GetHeight(), iMatrix);
+                            dec->GetHeight(), iMatrix, stream_color_range);
                         decode_convert_ms += decoder_duration_ms(
                             std::chrono::steady_clock::now() - convert_start);
                     };
@@ -680,6 +686,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                     published_metadata.pitch_bytes = slot_pitch;
                     published_metadata.frame_bytes = slot_frame_bytes;
                     published_metadata.color_matrix = iMatrix;
+                    published_metadata.color_range = stream_color_range;
                     published_metadata.format = slot_format;
                     write_lease->publish(published_metadata);
                     dc_context->decoding_flag = true;
@@ -802,6 +809,7 @@ void image_loader(DecoderContext *dc_context,
                 display_buffer[i].frame_pts = -1;
                 display_buffer[i].frame_source_code = 0;
                 display_buffer[i].color_matrix = ColorSpaceStandard_BT709;
+                display_buffer[i].color_range = ColorRange_Unspecified;
             }
             buffer_head = 0;
             frame_number = static_cast<int>(requested_frame);
@@ -835,6 +843,8 @@ void image_loader(DecoderContext *dc_context,
                     display_buffer[buffer_head].frame_bytes = buffer_size;
                     display_buffer[buffer_head].color_matrix =
                         ColorSpaceStandard_BT709;
+                    display_buffer[buffer_head].color_range =
+                        ColorRange_Unspecified;
                     display_buffer[buffer_head].format =
                         PictureBufferFormat::RGBA32;
                 } else {
@@ -864,6 +874,8 @@ void image_loader(DecoderContext *dc_context,
                     display_buffer[buffer_head].frame_bytes = buffer_size;
                     display_buffer[buffer_head].color_matrix =
                         ColorSpaceStandard_BT709;
+                    display_buffer[buffer_head].color_range =
+                        ColorRange_Unspecified;
                     display_buffer[buffer_head].format =
                         PictureBufferFormat::RGBA32;
                 }

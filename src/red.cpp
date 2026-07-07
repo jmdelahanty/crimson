@@ -6180,6 +6180,8 @@ int main(int argc, char **argv) {
                                 slot.pitch_bytes;
                             live_crop_frame_source.color_matrix =
                                 slot.color_matrix;
+                            live_crop_frame_source.color_range =
+                                slot.color_range;
                             if (scene->use_cpu_buffer &&
                                 slot.format == PictureBufferFormat::RGBA32) {
                                 live_crop_frame_source.storage =

@@ -220,6 +220,8 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
             scene->cameras[j].display_buffer[i].available_to_write = true;
             scene->cameras[j].display_buffer[i].color_matrix =
                 ColorSpaceStandard_BT709;
+            scene->cameras[j].display_buffer[i].color_range =
+                ColorRange_Unspecified;
             scene->cameras[j].display_buffer[i].frame_slot_state = nullptr;
             frameSlotInitialize(scene->cameras[j].display_buffer[i]);
         }

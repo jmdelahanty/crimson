@@ -26,6 +26,7 @@ FrameSlotMetadata metadataFromSlot(const PictureBuffer& slot) {
     metadata.pitch_bytes = slot.pitch_bytes;
     metadata.frame_bytes = slot.frame_bytes;
     metadata.color_matrix = slot.color_matrix;
+    metadata.color_range = slot.color_range;
     metadata.format = slot.format;
     return metadata;
 }
@@ -38,6 +39,7 @@ void applyMetadata(PictureBuffer& slot, const FrameSlotMetadata& metadata) {
     slot.pitch_bytes = metadata.pitch_bytes;
     slot.frame_bytes = metadata.frame_bytes;
     slot.color_matrix = metadata.color_matrix;
+    slot.color_range = metadata.color_range;
     slot.format = metadata.format;
 }
 
@@ -47,6 +49,7 @@ void clearPublishedMetadata(PictureBuffer& slot) {
     slot.frame_pts = -1;
     slot.frame_source_code = 0;
     slot.color_matrix = ColorSpaceStandard_BT709;
+    slot.color_range = ColorRange_Unspecified;
 }
 
 FrameSlotState* ensureState(PictureBuffer& slot) {

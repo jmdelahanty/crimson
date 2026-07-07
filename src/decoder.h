@@ -36,6 +36,7 @@ struct PictureBuffer {
     int pitch_bytes;
     size_t frame_bytes;
     int color_matrix;
+    int color_range;
     PictureBufferFormat format;
     FrameSlotState *frame_slot_state;
 };

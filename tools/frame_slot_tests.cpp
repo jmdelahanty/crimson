@@ -39,6 +39,7 @@ PictureBuffer makeSlot(std::vector<unsigned char>& storage) {
     slot.pitch_bytes = 4;
     slot.frame_bytes = storage.size();
     slot.color_matrix = ColorSpaceStandard_BT709;
+    slot.color_range = ColorRange_Unspecified;
     slot.format = PictureBufferFormat::RGBA32;
     slot.frame_slot_state = nullptr;
     frameSlotInitialize(slot);
@@ -54,6 +55,7 @@ FrameSlotMetadata makeMetadata(int frame_number, size_t frame_bytes) {
     metadata.pitch_bytes = 4;
     metadata.frame_bytes = frame_bytes;
     metadata.color_matrix = ColorSpaceStandard_BT709;
+    metadata.color_range = ColorRange_JPEG;
     metadata.format = PictureBufferFormat::RGBA32;
     return metadata;
 }
@@ -78,10 +80,12 @@ void testPublishReadRelease() {
     CHECK(snapshot->frame_number == 7);
     CHECK(snapshot->local_frame_number == 1007);
     CHECK(snapshot->frame_pts == 70);
+    CHECK(snapshot->color_range == ColorRange_JPEG);
 
     auto read = frameSlotAcquireReadable(slot);
     CHECK(read.has_value());
     CHECK(read->metadata().frame_number == 7);
+    CHECK(read->metadata().color_range == ColorRange_JPEG);
     CHECK(read->slot().frame[0] == 42);
     CHECK(!frameSlotAcquireWritable(slot).has_value());
 
@@ -251,6 +255,7 @@ void publishStimulusStyleFrame(PictureBuffer& slot, int frame_number,
     metadata.pitch_bytes = slot.pitch_bytes;
     metadata.frame_bytes = slot.frame_bytes;
     metadata.color_matrix = ColorSpaceStandard_BT709;
+    metadata.color_range = ColorRange_Unspecified;
     metadata.format = PictureBufferFormat::RGBA32;
     write->publish(metadata);
 }

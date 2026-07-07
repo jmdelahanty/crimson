@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ColorSpace.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <cmath>
@@ -81,6 +83,7 @@ struct CropFrameSource {
     int height = 0;
     int pitch_bytes = 0;
     int color_matrix = 0;
+    int color_range = ColorRange_Unspecified;
     CropFrameStorage storage = CropFrameStorage::None;
     unsigned int texture_id = 0;
     int texture_width = 0;
