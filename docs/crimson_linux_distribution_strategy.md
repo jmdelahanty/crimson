@@ -342,11 +342,12 @@ NVIDIA driver, not from the app. CUDA runtime and CUDA toolkit libraries need a
 deliberate policy per release because bundling permissions and driver
 compatibility matter.
 
-## Runtime Checker Needed
+## Runtime Checker
 
-Linux needs a `check_crimson_runtime.sh` equivalent to the Windows checker.
+Linux now has `tools/check_crimson_runtime.sh`, installed into each app drop as
+`check_crimson_runtime.sh`.
 
-It should report:
+It reports:
 
 - Crimson release metadata and install root
 - `redgui` exists and is executable
@@ -358,28 +359,33 @@ It should report:
 - whether required resources under `share/crimson` exist
 - whether a GUI smoke can launch when a real display is available
 
-This checker should be part of every app drop and should run before publish.
+This checker is part of every app drop and runs in the Linux publish helper
+unless explicitly skipped.
 
 ## Stability Work Needed
 
-1. Add Linux build/stage helper:
+1. [done] Add Linux build/stage helper:
    `tools/build_linux_app_drop.sh`.
-2. Add Linux runtime checker:
+2. [done] Add Linux runtime checker:
    `tools/check_crimson_runtime.sh`.
-3. Add Linux publish helper after the staged tree is proven:
+3. [done] Add Linux publish helper after the staged tree is proven:
    `tools/publish_linux_app_drop.sh`.
-4. Ensure `cmake --install` stages all required resources under one prefix.
-5. Confirm executable-relative resource lookup for fonts, config, and models.
-6. Confirm RPATH points to install-relative private library directories.
-7. Decide which third-party libraries are bundled versus system/module
+4. [done] Add Linux build/check/publish chain helper:
+   `tools/build_check_publish_linux_app_drop.sh`.
+5. Ensure `cmake --install` stages all required resources under one prefix.
+6. Confirm executable-relative resource lookup for fonts, config, and models.
+7. Confirm RPATH points to install-relative private library directories.
+8. Decide which third-party libraries are bundled versus system/module
    requirements.
-8. Record release metadata:
+9. Record release metadata:
    commit, branch, preset, dependency versions, CUDA architectures, minimum
    driver, build host, build time.
-9. Run GUI smoke from the staged install, not only from the build tree.
-10. Update `CMAKE_CUDA_ARCHITECTURES` before broad release. The current source
+10. Run GUI smoke from the staged install, not only from the build tree.
+11. Update `CMAKE_CUDA_ARCHITECTURES` before broad release. The current source
     sets `80;86`, which covers Ampere-class targets but does not explicitly
     include Ada RTX 40-series `sm_89`.
+12. Make the CMake NVENC dependency optional until an encode/export target
+    actually needs it.
 
 ## Practical Near-Term Plan
 
@@ -400,8 +406,10 @@ The repo now has the first Linux app-drop helpers:
 
 ```bash
 tools/build_linux_app_drop.sh
+tools/build_check_publish_linux_app_drop.sh
 tools/check_crimson_runtime.sh
 tools/crimson_linux_launcher.sh
+tools/publish_linux_app_drop.sh
 ```
 
 The CMake install rules stage:
@@ -518,6 +526,34 @@ tools/build_linux_app_drop.sh \
 
 Use `CRIMSON_ALLOWED_RUNTIME_ROOTS` only when a release intentionally depends on
 an admin-managed module/runtime root instead of app-local bundled libraries.
+
+Publish the staged app drop to a shared release root:
+
+```bash
+tools/publish_linux_app_drop.sh \
+  --stage-root dist/Crimson \
+  --share-root /groups/ahrens/ahrenslab/crimson/linux-app \
+  --publish-current \
+  --archive-existing-current
+```
+
+This validates the staged layout, runs `check_crimson_runtime.sh --mode release`
+against the staged app, writes `dependency_manifest.json`, creates a versioned
+release under `releases/<release-name>`, refreshes `current` when requested, and
+writes `latest.json` at the publish root.
+
+To build, check, and publish in one command:
+
+```bash
+CRIMSON_ALLOWED_RUNTIME_ROOTS=/usr/local/TensorRT-10.0.1.6:/usr/local/cuda-12.4 \
+tools/build_check_publish_linux_app_drop.sh \
+  --build-dir build/linux-app-drop-opencv-ffmpeg-nvidia-hybrid \
+  --clean-install \
+  --bundle-opencv-ffmpeg \
+  --share-root /groups/ahrens/ahrenslab/crimson/linux-app \
+  --publish-current \
+  --archive-existing-current
+```
 
 Current limitation: the hybrid app drop still carries absolute managed roots
 for TensorRT and CUDA in `etc/crimson/runtime_roots.env`. OpenCV and FFmpeg are
