@@ -492,6 +492,110 @@ runtime libraries where redistribution and driver compatibility are clear, then
 reduce the external expectations to the NVIDIA display/compute driver and
 documented system libraries.
 
+## NVIDIA Runtime Redistribution Review
+
+Vendor software being free to download does not automatically mean Crimson can
+redistribute the same binaries. End users downloading CUDA or TensorRT directly
+accept NVIDIA's license terms at the source. If Crimson copies those binaries
+into an app drop, Crimson becomes part of the distribution chain and must follow
+the vendor's redistribution terms, third-party notice requirements, export
+requirements, and support boundaries.
+
+For CUDA, the public CUDA EULA lists redistributable Linux runtime components in
+Attachment A. That list includes CUDA runtime and NPP libraries such as
+`libcudart.so`, `libnppc.so`, `libnppig.so`, `libnppidei.so`, and
+`libnppial.so`, subject to the EULA's distribution requirements. The EULA is at:
+
+```text
+https://docs.nvidia.com/cuda/eula/index.html
+```
+
+TensorRT is less clear from the local package alone. The installed TensorRT
+README points to NVIDIA's TensorRT software license agreement:
+
+```text
+/usr/local/TensorRT-10.0.1.6/doc/Readme.txt
+https://docs.nvidia.com/deeplearning/tensorrt/sla/
+```
+
+Before publishing a Crimson app drop outside controlled internal machines,
+confirm whether TensorRT runtime libraries may be redistributed with Crimson and
+which notices must accompany them. Keep NVIDIA driver libraries external even if
+some license text allows redistribution: `libcuda.so.1`, `libnvcuvid.so.1`, and
+related driver libraries are tied to the installed driver/kernel stack and
+should come from the host.
+
+Current hybrid external bundle candidates from the release manifest are:
+
+| Library | Current source | Notes |
+| --- | --- | --- |
+| `libnvinfer.so.10` | `/usr/local/TensorRT-10.0.1.6/lib` | TensorRT runtime; confirm redistribution terms |
+| `libnvinfer_plugin.so.10` | `/usr/local/TensorRT-10.0.1.6/lib` | TensorRT plugin runtime; confirm redistribution terms |
+| `libnppc.so.12` | `/usr/local/cuda-12.4/lib64` | CUDA/NPP runtime; appears in CUDA redistributable list |
+| `libnppig.so.12` | `/usr/local/cuda-12.4/lib64` | CUDA/NPP runtime; appears in CUDA redistributable list |
+| `libnppidei.so.12` | `/usr/local/cuda-12.4/lib64` | CUDA/NPP runtime; appears in CUDA redistributable list |
+| `libnppial.so.12` | `/usr/local/cuda-12.4/lib64` | CUDA/NPP runtime; appears in CUDA redistributable list |
+
+Do not bundle:
+
+| Library | Reason |
+| --- | --- |
+| `libcuda.so.1` | NVIDIA driver API library; must match installed host driver |
+| `libnvcuvid.so.1` | NVIDIA video decode driver library; must match installed host driver |
+
+## Experimental NVIDIA Runtime Bundle
+
+Add this behind an explicit app-drop flag, not as default release behavior:
+
+```bash
+tools/build_linux_app_drop.sh \
+  --bundle-opencv-ffmpeg \
+  --bundle-nvidia-runtime \
+  --runtime-check-mode release \
+  --dependency-manifest dist/Crimson/dependency_manifest.json
+```
+
+Experimental design:
+
+1. Copy only the observed runtime closure:
+   - `libnvinfer.so*`
+   - `libnvinfer_plugin.so*`
+   - `libnppc.so*`
+   - `libnppig.so*`
+   - `libnppidei.so*`
+   - `libnppial.so*`
+2. Preserve symlink chains with `cp -a`.
+3. Copy NVIDIA license/notice material into `dist/Crimson/share/crimson/legal/`
+   where available:
+   - CUDA EULA or local CUDA notices
+   - TensorRT `doc/Readme.txt`
+   - TensorRT `doc/Acknowledgements.txt`
+4. Remove `/usr/local/TensorRT-10.0.1.6` and `/usr/local/cuda-12.4` from
+   `etc/crimson/runtime_roots.env` if every non-driver NVIDIA runtime library
+   resolves from `lib/crimson/private`.
+5. Keep `libcuda.so.1` and `libnvcuvid.so.1` host-resolved and classify them as
+   `driver` in the dependency manifest.
+6. Add a runtime-check mode or manifest assertion for "fully bundled NVIDIA
+   runtime except driver", failing if TensorRT/NPP resolves from `/usr/local`.
+7. Validate with more than `ldd`:
+   - release runtime audit with `LD_LIBRARY_PATH` and
+     `CRIMSON_ALLOWED_RUNTIME_ROOTS` unset
+   - decode smoke that exercises `libnvcuvid.so.1`
+   - TensorRT inference smoke that loads a real engine/model path used by
+     Crimson
+   - GUI smoke on an authenticated X display
+
+Blockers that would stop promotion from experimental to release:
+
+- TensorRT redistribution terms are not approved for Crimson's distribution
+  path.
+- Required NVIDIA runtime libraries are loaded lazily and missing from the
+  initial manifest.
+- Bundled TensorRT is incompatible with Crimson's serialized engines.
+- The user's NVIDIA driver is older than the bundled CUDA/TensorRT runtime
+  requires.
+- Package size is unacceptable for the deployment channel.
+
 ## Next Slice: Bundle Audit Before Bundling
 
 Do not start by blindly copying every shared library reported by `ldd`.
