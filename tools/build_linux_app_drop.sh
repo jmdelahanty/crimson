@@ -143,6 +143,31 @@ write_release_metadata() {
     } > "$release_path"
 }
 
+write_runtime_roots_config() {
+    local install_root="$1"
+    local config_dir="$install_root/etc/crimson"
+    local config_file="$config_dir/runtime_roots.env"
+    local runtime_root
+    local old_ifs
+
+    if [ -z "${CRIMSON_ALLOWED_RUNTIME_ROOTS:-}" ]; then
+        rm -f -- "$config_file"
+        return
+    fi
+
+    mkdir -p -- "$config_dir"
+    : > "$config_file"
+
+    old_ifs="$IFS"
+    IFS=:
+    for runtime_root in ${CRIMSON_ALLOWED_RUNTIME_ROOTS:-}; do
+        if [ -n "$runtime_root" ]; then
+            printf '%s\n' "$runtime_root" >> "$config_file"
+        fi
+    done
+    IFS="$old_ifs"
+}
+
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --preset)
@@ -292,6 +317,7 @@ if [ "$skip_install" -eq 0 ]; then
     fi
     run_command cmake --install "$build_dir_abs" --prefix "$install_prefix_abs"
     write_release_metadata "$install_prefix_abs" "$build_dir_abs"
+    write_runtime_roots_config "$install_prefix_abs"
 fi
 
 if [ "$skip_runtime_check" -eq 0 ]; then

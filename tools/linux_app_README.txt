@@ -18,9 +18,12 @@ Recommended launch path:
   ./bin/crimson --zarr /path/to/archive.zarr
 
 The launcher resolves the install root and prepends app-local private library
-directories to LD_LIBRARY_PATH before starting bin/redgui. Set
+directories to LD_LIBRARY_PATH before starting bin/redgui. If the build script
+was run with CRIMSON_ALLOWED_RUNTIME_ROOTS, those managed roots are also written
+to etc/crimson/runtime_roots.env and loaded by the launcher. Set
 CRIMSON_LINUX_STRICT_RUNTIME=1 to avoid inheriting an existing LD_LIBRARY_PATH,
-or set CRIMSON_EXTRA_LD_LIBRARY_PATH to append a managed module/runtime root.
+or set CRIMSON_EXTRA_LD_LIBRARY_PATH to append another managed module/runtime
+root.
 
 Before handing this app drop to a user, run:
 

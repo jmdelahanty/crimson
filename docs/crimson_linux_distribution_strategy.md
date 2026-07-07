@@ -411,6 +411,50 @@ dist/Crimson/check_crimson_runtime.sh \
   --require-gl
 ```
 
+Release mode sanitizes the library search used for `ldd`: it ignores the
+caller's ambient `LD_LIBRARY_PATH` and uses only app-local library directories
+plus any explicit `CRIMSON_ALLOWED_RUNTIME_ROOTS`. Developer mode keeps the
+inherited `LD_LIBRARY_PATH` for convenience, but reports it and warns when it
+contains developer roots such as `/opt`, `/usr/local`, or `$HOME`.
+
+The first clean release audit on this workstation showed that `/opt/crimson`
+OpenCV and `/opt/orange` OpenCV both resolve `opencv_videoio` against the
+system FFmpeg 60 ABI, while Crimson itself links directly against the custom
+Orange FFmpeg/NVIDIA 58 ABI. That mixed FFmpeg stack is not a releasable state.
+
+Because Crimson's intended Linux video stack is the custom FFmpeg/NVIDIA root,
+rebuild OpenCV so its `videoio` module uses the same FFmpeg ABI:
+
+```bash
+tools/build_opencv_ffmpeg_nvidia_linux.sh \
+  --ffmpeg-root /opt/orange/lib/ffmpeg-nvidia \
+  --install-prefix /opt/crimson/lib/opencv-ffmpeg-nvidia
+```
+
+The helper installs into a validation prefix by default instead of overwriting
+`/opt/crimson/lib/opencv`. It forces `PKG_CONFIG_PATH` to the FFmpeg/NVIDIA
+root and validates the result by checking that `opencv_version --verbose`
+reports FFmpeg 58/56/5/3 libraries and that `libopencv_videoio.so.410` directly
+needs `libavcodec.so.58` and `libavformat.so.58`.
+
+After that succeeds, point Crimson at the rebuilt OpenCV:
+
+```bash
+export CRIMSON_OPENCV_DIR=/opt/crimson/lib/opencv-ffmpeg-nvidia/lib/cmake/opencv4
+export CRIMSON_FFMPEG_ROOT=/opt/orange/lib/ffmpeg-nvidia
+```
+
+Then rebuild the app drop and rerun the sanitized audit. Until private
+libraries are bundled into the app tree, release-mode audits should explicitly
+declare the admin-managed runtime roots they are validating:
+
+```bash
+CRIMSON_ALLOWED_RUNTIME_ROOTS=/opt/crimson/lib/opencv-ffmpeg-nvidia/lib:/opt/orange/lib/ffmpeg-nvidia/lib:/usr/local/TensorRT-10.0.1.6:/usr/local/cuda-12.4 \
+dist/Crimson/check_crimson_runtime.sh \
+  --mode release \
+  --write-dependency-manifest dist/Crimson/dependency_manifest.json
+```
+
 The build helper can run the same check during staging:
 
 ```bash

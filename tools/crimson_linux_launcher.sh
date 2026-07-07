@@ -22,15 +22,42 @@ if [ ! -x "$redgui" ]; then
 fi
 
 runtime_paths=()
+append_runtime_path() {
+    local candidate="$1"
+    local existing
+
+    if [ -d "$candidate" ]; then
+        candidate="$(cd -- "$candidate" && pwd)"
+    else
+        return
+    fi
+
+    for existing in "${runtime_paths[@]}"; do
+        if [ "$existing" = "$candidate" ]; then
+            return
+        fi
+    done
+
+    runtime_paths+=("$candidate")
+}
+
 for candidate in \
     "$app_root/lib" \
     "$app_root/lib64" \
     "$app_root/lib/crimson/private" \
     "$app_root/lib64/crimson/private"; do
-    if [ -d "$candidate" ]; then
-        runtime_paths+=("$candidate")
-    fi
+    append_runtime_path "$candidate"
 done
+
+runtime_roots_file="$app_root/etc/crimson/runtime_roots.env"
+if [ -r "$runtime_roots_file" ]; then
+    while IFS= read -r candidate || [ -n "$candidate" ]; do
+        case "$candidate" in
+            ""|\#*) continue ;;
+        esac
+        append_runtime_path "$candidate"
+    done < "$runtime_roots_file"
+fi
 
 if [ -n "${CRIMSON_EXTRA_LD_LIBRARY_PATH:-}" ]; then
     runtime_paths+=("$CRIMSON_EXTRA_LD_LIBRARY_PATH")
