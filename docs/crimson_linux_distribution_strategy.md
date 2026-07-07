@@ -455,13 +455,22 @@ tools/build_linux_app_drop.sh \
   --clean-install \
   --bundle-opencv-ffmpeg \
   --runtime-check-mode release \
-  --write-dependency-manifest dist/Crimson/dependency_manifest.json
+  --dependency-manifest dist/Crimson/dependency_manifest.json
 ```
 
 `--bundle-opencv-ffmpeg` copies `libopencv*.so*`, `libav*.so*`, and
 `libsw*.so*` into `dist/Crimson/lib/crimson/private`. It also omits the bundled
 OpenCV/FFmpeg roots from `dist/Crimson/etc/crimson/runtime_roots.env`, so the
 launcher only carries the remaining managed roots such as TensorRT and CUDA.
+Managed roots are expanded at launch/audit time to common library directories
+such as `lib`, `lib64`, and `targets/x86_64-linux/lib`.
+The app-drop helper also cleans the installed executable `RUNPATH` to:
+
+```text
+$ORIGIN:$ORIGIN/../lib:$ORIGIN/../lib/crimson/private
+```
+
+Release-mode checks fail if absolute `RUNPATH` entries remain.
 
 The build helper can also run the default developer check during staging:
 
@@ -474,15 +483,14 @@ Use `CRIMSON_ALLOWED_RUNTIME_ROOTS` only when a release intentionally depends on
 an admin-managed module/runtime root instead of app-local bundled libraries.
 
 Current limitation: the hybrid app drop still carries absolute managed roots
-for TensorRT and CUDA, and the executable may still contain absolute `RUNPATH`
-entries from imported/prebuilt link metadata. The launcher and release audit
-prefer app-local libraries first, but this is not yet the final relocatable
-user-install model.
+for TensorRT and CUDA in `etc/crimson/runtime_roots.env`. OpenCV and FFmpeg are
+app-local, and the executable `RUNPATH` is install-relative, but this is not yet
+the final relocatable user-install model.
 
 The next hardening slice should extend the bundle boundary to TensorRT and CUDA
 runtime libraries where redistribution and driver compatibility are clear, then
-reduce the executable `RUNPATH` to `$ORIGIN` entries plus documented system
-driver expectations.
+reduce the external expectations to the NVIDIA display/compute driver and
+documented system libraries.
 
 ## Next Slice: Bundle Audit Before Bundling
 

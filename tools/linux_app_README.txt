@@ -23,7 +23,8 @@ The launcher resolves the install root and prepends app-local private library
 directories to LD_LIBRARY_PATH before starting bin/redgui. Hybrid Linux drops
 bundle OpenCV and FFmpeg under lib/crimson/private, while remaining managed
 runtime roots such as TensorRT and CUDA are written to
-etc/crimson/runtime_roots.env and loaded by the launcher. Set
+etc/crimson/runtime_roots.env and expanded to common library subdirectories by
+the launcher. Set
 CRIMSON_LINUX_STRICT_RUNTIME=1 to avoid inheriting an existing LD_LIBRARY_PATH,
 or set CRIMSON_EXTRA_LD_LIBRARY_PATH to append another managed module/runtime
 root.
@@ -41,7 +42,8 @@ To write a dependency audit manifest:
   ./check_crimson_runtime.sh --write-dependency-manifest dependency_manifest.json
 
 Developer checks allow absolute managed-workstation dependency roots as
-warnings. Release checks are stricter:
+warnings. Release checks are stricter and fail if absolute RUNPATH entries
+remain:
 
   ./check_crimson_runtime.sh --mode release --write-dependency-manifest dependency_manifest.json
 

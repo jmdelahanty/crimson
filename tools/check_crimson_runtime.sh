@@ -142,6 +142,16 @@ append_runtime_search_path() {
     fi
 }
 
+append_runtime_search_root() {
+    local root="$1"
+
+    append_runtime_search_path "$root"
+    append_runtime_search_path "$root/lib"
+    append_runtime_search_path "$root/lib64"
+    append_runtime_search_path "$root/targets/x86_64-linux/lib"
+    append_runtime_search_path "$root/targets/x86_64-linux/lib64"
+}
+
 append_runtime_roots_file() {
     local roots_file="$1"
     local path_value
@@ -151,7 +161,7 @@ append_runtime_roots_file() {
         case "$path_value" in
             ""|\#*) continue ;;
         esac
-        append_runtime_search_path "$path_value"
+        append_runtime_search_root "$path_value"
     done < "$roots_file"
 }
 
@@ -169,7 +179,7 @@ build_release_ld_library_path() {
     old_ifs="$IFS"
     IFS=:
     for allowed_root in ${CRIMSON_ALLOWED_RUNTIME_ROOTS:-}; do
-        append_runtime_search_path "$allowed_root"
+        append_runtime_search_root "$allowed_root"
     done
     IFS="$old_ifs"
 
@@ -615,7 +625,11 @@ if [ -x "$redgui" ]; then
             add_ok "linking" "RPATH/RUNPATH" "$rpath_summary"
             absolute_rpath="$(printf '%s\n' "$rpath_summary" | grep -Eo '(/opt|/usr/local|/home)[^]:; ]*' | sort -u | paste -sd ';' -)"
             if [ -n "$absolute_rpath" ]; then
-                add_warn "linking" "Absolute RUNPATH" "$absolute_rpath"
+                if [ "$mode" = "release" ]; then
+                    add_fail "linking" "Absolute RUNPATH" "$absolute_rpath"
+                else
+                    add_warn "linking" "Absolute RUNPATH" "$absolute_rpath"
+                fi
             fi
         else
             add_warn "linking" "RPATH/RUNPATH" "no RPATH/RUNPATH recorded"

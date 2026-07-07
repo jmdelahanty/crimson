@@ -20,6 +20,7 @@ require_gl=0
 clean_install=0
 launch=0
 bundle_opencv_ffmpeg=0
+clean_runpath=1
 extra_cmake_args=()
 bundled_runtime_roots=()
 
@@ -46,6 +47,7 @@ Options:
   --require-gl              Runtime check fails if no GL/X probe succeeds.
   --bundle-opencv-ffmpeg    Copy OpenCV and FFmpeg shared libraries into the
                             app drop. CUDA/TensorRT remain managed roots.
+  --skip-runpath-cleanup    Do not patch the installed Linux executable RUNPATH.
   --launch                  Launch the staged app through bin/crimson.
   -h, --help                Show this help.
 
@@ -283,6 +285,53 @@ bundle_opencv_ffmpeg_runtime() {
     echo "  $bundle_dir"
 }
 
+read_elf_runpath() {
+    local executable="$1"
+
+    readelf -d "$executable" 2>/dev/null \
+        | sed -n 's/^.*Library r.*path: \[\(.*\)\].*$/\1/p' \
+        | head -n 1
+}
+
+clean_installed_runpath() {
+    local install_root="$1"
+    local executable="$install_root/bin/redgui"
+    local desired_runpath='$ORIGIN:$ORIGIN/../lib:$ORIGIN/../lib/crimson/private'
+    local current_runpath
+    local updated_runpath
+
+    [ -x "$executable" ] || { echo "installed executable not found: $executable" >&2; exit 1; }
+    command -v readelf >/dev/null 2>&1 || { echo "readelf is required for RUNPATH cleanup" >&2; exit 1; }
+
+    current_runpath="$(read_elf_runpath "$executable")"
+    if [ "$current_runpath" = "$desired_runpath" ]; then
+        echo "Installed RUNPATH already clean:"
+        echo "  $desired_runpath"
+        return
+    fi
+
+    if command -v patchelf >/dev/null 2>&1; then
+        run_command patchelf --set-rpath "$desired_runpath" "$executable"
+    else
+        run_command cmake \
+            -D "CRIMSON_RPATH_FILE=$executable" \
+            -D "CRIMSON_OLD_RPATH=$current_runpath" \
+            -D "CRIMSON_NEW_RPATH=$desired_runpath" \
+            -P "$repo_root/tools/patch_linux_runpath.cmake"
+    fi
+
+    updated_runpath="$(read_elf_runpath "$executable")"
+    if [ "$updated_runpath" != "$desired_runpath" ]; then
+        echo "RUNPATH cleanup failed:" >&2
+        echo "  expected: $desired_runpath" >&2
+        echo "  actual:   ${updated_runpath:-<none>}" >&2
+        exit 1
+    fi
+
+    echo "Cleaned installed RUNPATH:"
+    echo "  $updated_runpath"
+}
+
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --preset)
@@ -343,6 +392,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --bundle-opencv-ffmpeg)
             bundle_opencv_ffmpeg=1
+            shift
+            ;;
+        --skip-runpath-cleanup)
+            clean_runpath=0
             shift
             ;;
         --launch)
@@ -435,6 +488,10 @@ if [ "$skip_install" -eq 0 ]; then
         rm -rf -- "$install_prefix_abs"
     fi
     run_command cmake --install "$build_dir_abs" --prefix "$install_prefix_abs"
+    if [ "$clean_runpath" -eq 1 ]; then
+        run_step "Clean installed RUNPATH"
+        clean_installed_runpath "$install_prefix_abs"
+    fi
     if [ "$bundle_opencv_ffmpeg" -eq 1 ]; then
         run_step "Bundle OpenCV/FFmpeg runtime"
         bundle_opencv_ffmpeg_runtime "$install_prefix_abs" "$build_dir_abs"

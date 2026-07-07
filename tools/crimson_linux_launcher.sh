@@ -41,6 +41,16 @@ append_runtime_path() {
     runtime_paths+=("$candidate")
 }
 
+append_runtime_root() {
+    local root="$1"
+
+    append_runtime_path "$root"
+    append_runtime_path "$root/lib"
+    append_runtime_path "$root/lib64"
+    append_runtime_path "$root/targets/x86_64-linux/lib"
+    append_runtime_path "$root/targets/x86_64-linux/lib64"
+}
+
 for candidate in \
     "$app_root/lib" \
     "$app_root/lib64" \
@@ -55,7 +65,7 @@ if [ -r "$runtime_roots_file" ]; then
         case "$candidate" in
             ""|\#*) continue ;;
         esac
-        append_runtime_path "$candidate"
+        append_runtime_root "$candidate"
     done < "$runtime_roots_file"
 fi
 
