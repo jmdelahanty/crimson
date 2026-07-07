@@ -20,6 +20,7 @@ require_gl=0
 clean_install=0
 launch=0
 bundle_opencv_ffmpeg=0
+bundle_nvidia_runtime=0
 clean_runpath=1
 extra_cmake_args=()
 bundled_runtime_roots=()
@@ -47,6 +48,10 @@ Options:
   --require-gl              Runtime check fails if no GL/X probe succeeds.
   --bundle-opencv-ffmpeg    Copy OpenCV and FFmpeg shared libraries into the
                             app drop. CUDA/TensorRT remain managed roots.
+  --bundle-nvidia-runtime   Experimental: copy observed non-driver NVIDIA
+                            runtime libs into the app drop. Currently bundles
+                            TensorRT libnvinfer* and CUDA NPP libs used by
+                            redgui; driver libs remain host-resolved.
   --skip-runpath-cleanup    Do not patch the installed Linux executable RUNPATH.
   --launch                  Launch the staged app through bin/crimson.
   -h, --help                Show this help.
@@ -248,6 +253,16 @@ copy_library_family() {
     fi
 }
 
+copy_optional_file() {
+    local source_path="$1"
+    local destination_dir="$2"
+
+    if [ -r "$source_path" ]; then
+        mkdir -p -- "$destination_dir"
+        cp -a -- "$source_path" "$destination_dir/"
+    fi
+}
+
 bundle_opencv_ffmpeg_runtime() {
     local install_root="$1"
     local build_root="$2"
@@ -283,6 +298,69 @@ bundle_opencv_ffmpeg_runtime() {
 
     echo "Bundled OpenCV/FFmpeg runtime libraries into:"
     echo "  $bundle_dir"
+}
+
+bundle_nvidia_runtime_libraries() {
+    local install_root="$1"
+    local build_root="$2"
+    local cache_file="$build_root/CMakeCache.txt"
+    local tensorrt_root
+    local cuda_root
+    local tensorrt_lib_dir
+    local cuda_lib_dir
+    local bundle_dir="$install_root/lib/crimson/private"
+    local legal_dir="$install_root/share/crimson/legal/nvidia"
+
+    tensorrt_root="$(cache_value "TENSORRT_ROOT" "$cache_file")"
+    cuda_root="$(cache_value "CUDA_TOOLKIT_ROOT_DIR" "$cache_file")"
+    if [ -z "$cuda_root" ]; then
+        cuda_root="$(cache_value "CUDAToolkit_ROOT" "$cache_file")"
+    fi
+
+    [ -n "$tensorrt_root" ] || { echo "TENSORRT_ROOT not found in $cache_file" >&2; exit 1; }
+    [ -n "$cuda_root" ] || { echo "CUDA toolkit root not found in $cache_file" >&2; exit 1; }
+
+    if [ -d "$tensorrt_root/lib" ]; then
+        tensorrt_lib_dir="$tensorrt_root/lib"
+    elif [ -d "$tensorrt_root/lib64" ]; then
+        tensorrt_lib_dir="$tensorrt_root/lib64"
+    else
+        echo "TensorRT lib dir not found under: $tensorrt_root" >&2
+        exit 1
+    fi
+
+    if [ -d "$cuda_root/lib64" ]; then
+        cuda_lib_dir="$cuda_root/lib64"
+    elif [ -d "$cuda_root/targets/x86_64-linux/lib" ]; then
+        cuda_lib_dir="$cuda_root/targets/x86_64-linux/lib"
+    else
+        echo "CUDA lib dir not found under: $cuda_root" >&2
+        exit 1
+    fi
+
+    mkdir -p -- "$bundle_dir"
+
+    copy_library_family "$tensorrt_lib_dir" "$bundle_dir" "libnvinfer.so*" 1
+    copy_library_family "$tensorrt_lib_dir" "$bundle_dir" "libnvinfer_plugin.so*" 1
+    copy_library_family "$cuda_lib_dir" "$bundle_dir" "libnppc.so*" 1
+    copy_library_family "$cuda_lib_dir" "$bundle_dir" "libnppig.so*" 1
+    copy_library_family "$cuda_lib_dir" "$bundle_dir" "libnppidei.so*" 1
+    copy_library_family "$cuda_lib_dir" "$bundle_dir" "libnppial.so*" 1
+
+    copy_optional_file "$tensorrt_root/doc/Readme.txt" "$legal_dir/tensorrt"
+    copy_optional_file "$tensorrt_root/doc/Acknowledgements.txt" "$legal_dir/tensorrt"
+    copy_optional_file "$cuda_root/EULA.txt" "$legal_dir/cuda"
+    copy_optional_file "$cuda_root/doc/EULA.txt" "$legal_dir/cuda"
+    copy_optional_file "$cuda_root/doc/CopyrightAndLicenses" "$legal_dir/cuda"
+
+    append_bundled_runtime_root "$tensorrt_lib_dir"
+    append_bundled_runtime_root "$tensorrt_root"
+    append_bundled_runtime_root "$cuda_lib_dir"
+    append_bundled_runtime_root "$cuda_root"
+
+    echo "Bundled experimental NVIDIA runtime libraries into:"
+    echo "  $bundle_dir"
+    echo "Driver libraries remain host-resolved: libcuda.so.1, libnvcuvid.so.1, libnvidia-encode.so.1"
 }
 
 read_elf_runpath() {
@@ -394,6 +472,10 @@ while [ "$#" -gt 0 ]; do
             bundle_opencv_ffmpeg=1
             shift
             ;;
+        --bundle-nvidia-runtime)
+            bundle_nvidia_runtime=1
+            shift
+            ;;
         --skip-runpath-cleanup)
             clean_runpath=0
             shift
@@ -496,6 +578,10 @@ if [ "$skip_install" -eq 0 ]; then
         run_step "Bundle OpenCV/FFmpeg runtime"
         bundle_opencv_ffmpeg_runtime "$install_prefix_abs" "$build_dir_abs"
     fi
+    if [ "$bundle_nvidia_runtime" -eq 1 ]; then
+        run_step "Bundle experimental NVIDIA runtime"
+        bundle_nvidia_runtime_libraries "$install_prefix_abs" "$build_dir_abs"
+    fi
     write_release_metadata "$install_prefix_abs" "$build_dir_abs"
     write_runtime_roots_config "$install_prefix_abs"
 fi
@@ -517,7 +603,7 @@ if [ "$skip_runtime_check" -eq 0 ]; then
     if [ "$require_gl" -eq 1 ]; then
         check_args+=(--require-gl)
     fi
-    if [ "$bundle_opencv_ffmpeg" -eq 1 ]; then
+    if [ "$bundle_opencv_ffmpeg" -eq 1 ] || [ "$bundle_nvidia_runtime" -eq 1 ]; then
         run_command env -u CRIMSON_ALLOWED_RUNTIME_ROOTS "${check_args[@]}"
     else
         run_command "${check_args[@]}"

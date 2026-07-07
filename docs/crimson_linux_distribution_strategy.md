@@ -555,15 +555,16 @@ tools/build_check_publish_linux_app_drop.sh \
   --archive-existing-current
 ```
 
-Current limitation: the hybrid app drop still carries absolute managed roots
-for TensorRT and CUDA in `etc/crimson/runtime_roots.env`. OpenCV and FFmpeg are
-app-local, and the executable `RUNPATH` is install-relative, but this is not yet
-the final relocatable user-install model.
+Current default limitation: the hybrid app drop still carries absolute managed
+roots for TensorRT and CUDA in `etc/crimson/runtime_roots.env`. OpenCV and
+FFmpeg are app-local, and the executable `RUNPATH` is install-relative, but this
+default path is not yet the final relocatable user-install model.
 
-The next hardening slice should extend the bundle boundary to TensorRT and CUDA
-runtime libraries where redistribution and driver compatibility are clear, then
-reduce the external expectations to the NVIDIA display/compute driver and
-documented system libraries.
+There is also an explicit experimental NVIDIA runtime bundle path. It copies
+the observed TensorRT and CUDA/NPP runtime libraries into the app drop and
+keeps the NVIDIA driver libraries host-resolved. Treat this as a hardening and
+validation path until redistribution terms, GUI smoke, decode smoke, and
+TensorRT inference smoke are all signed off.
 
 ## NVIDIA Runtime Redistribution Review
 
@@ -619,7 +620,8 @@ Do not bundle:
 
 ## Experimental NVIDIA Runtime Bundle
 
-Add this behind an explicit app-drop flag, not as default release behavior:
+The app-drop helper has an explicit flag for this path. It is intentionally not
+default release behavior yet:
 
 ```bash
 tools/build_linux_app_drop.sh \
@@ -631,7 +633,8 @@ tools/build_linux_app_drop.sh \
 
 Experimental design:
 
-1. Copy only the observed runtime closure:
+1. Copy only the observed runtime closure into
+   `dist/Crimson/lib/crimson/private`:
    - `libnvinfer.so*`
    - `libnvinfer_plugin.so*`
    - `libnppc.so*`
@@ -644,21 +647,35 @@ Experimental design:
    - CUDA EULA or local CUDA notices
    - TensorRT `doc/Readme.txt`
    - TensorRT `doc/Acknowledgements.txt`
-4. Remove `/usr/local/TensorRT-10.0.1.6` and `/usr/local/cuda-12.4` from
+4. Omit `/usr/local/TensorRT-10.0.1.6` and `/usr/local/cuda-12.4` from
    `etc/crimson/runtime_roots.env` if every non-driver NVIDIA runtime library
    resolves from `lib/crimson/private`.
 5. Keep `libcuda.so.1`, `libnvcuvid.so.1`, and future encode-path
    `libnvidia-encode.so.1` host-resolved and classify them as `driver` in the
    dependency manifest.
-6. Add a runtime-check mode or manifest assertion for "fully bundled NVIDIA
-   runtime except driver", failing if TensorRT/NPP resolves from `/usr/local`.
-7. Validate with more than `ldd`:
+6. Validate with more than `ldd`:
    - release runtime audit with `LD_LIBRARY_PATH` and
      `CRIMSON_ALLOWED_RUNTIME_ROOTS` unset
    - decode smoke that exercises `libnvcuvid.so.1`
    - TensorRT inference smoke that loads a real engine/model path used by
      Crimson
    - GUI smoke on an authenticated X display
+
+The one-command build/check/publish wrapper forwards the same flag:
+
+```bash
+tools/build_check_publish_linux_app_drop.sh \
+  --bundle-opencv-ffmpeg \
+  --bundle-nvidia-runtime \
+  --share-root /groups/ahrens/ahrenslab/crimson/linux-app \
+  --publish-current \
+  --archive-existing-current
+```
+
+When `--bundle-nvidia-runtime` is enabled, the build helper runs the runtime
+checker with ambient `CRIMSON_ALLOWED_RUNTIME_ROOTS` unset. This catches
+accidental success caused by the developer shell still pointing at `/usr/local`
+or `/opt`.
 
 Blockers that would stop promotion from experimental to release:
 
@@ -671,10 +688,11 @@ Blockers that would stop promotion from experimental to release:
   requires.
 - Package size is unacceptable for the deployment channel.
 
-## Next Slice: Bundle Audit Before Bundling
+## Bundle Audit Policy
 
-Do not start by blindly copying every shared library reported by `ldd`.
-Instead, add a bundle-audit mode first.
+Do not blindly copy every shared library reported by `ldd`. The checker
+classifies dependencies first, then the app-drop helpers copy only known
+families that Crimson intentionally owns.
 
 Goals:
 
@@ -698,28 +716,29 @@ Initial classification policy:
 | `bundle-candidate` | TensorRT, OpenCV, FFmpeg, NPP/CUDA-adjacent runtime libraries after redistribution review | copy/select deliberately |
 | `unexpected` | libraries from user home paths, wrong `/opt` tree, mismatched FFmpeg/OpenCV stack | warn in dev, fail in release |
 
-Implementation checklist:
+Current status:
 
-1. Extend `check_crimson_runtime.sh` with `--mode dev|release`, defaulting to
-   `dev`.
-2. Add `--write-dependency-manifest <path>` that records:
+1. [done] Extend `check_crimson_runtime.sh` with `--mode dev|release`,
+   defaulting to `dev`.
+2. [done] Add `--write-dependency-manifest <path>` that records:
    - library soname
    - resolved path
    - classification
    - owning root
    - whether it is allowed in release mode
-3. Add root consistency checks for:
+3. [done] Add root consistency checks for:
    - OpenCV libraries
    - FFmpeg libraries
    - TensorRT libraries
    - CUDA/NPP runtime libraries
-4. Make release mode fail on absolute private dependency roots unless the root
-   is explicitly allowed by policy.
-5. Only after the manifest is stable, add a packaging copy step that copies
-   `bundle-candidate` libraries into `lib/crimson/private`.
-6. Re-run `ldd` after copying and verify the final app drop resolves the copied
-   libraries through `$ORIGIN` paths.
-7. Run GUI smoke from `dist/Crimson/bin/crimson`, not from the build tree.
+4. [done] Make release mode fail on absolute private dependency roots unless
+   the root is explicitly allowed by policy.
+5. [done] Add guarded packaging copy steps for the known OpenCV/FFmpeg and
+   TensorRT/NPP bundle-candidate families.
+6. [done] Re-run `ldd` after copying and verify the final app drop resolves
+   the copied libraries through `$ORIGIN` paths during publish checks.
+7. [todo] Run GUI smoke from the staged or published app drop, not only from
+   the build tree.
 
 Then validate on at least:
 
