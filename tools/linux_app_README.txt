@@ -8,8 +8,10 @@ Expected layout:
 
   bin/redgui
   bin/crimson
+  lib/crimson/private/
   share/crimson/fonts/
   share/crimson/config/
+  etc/crimson/runtime_roots.env
   check_crimson_runtime.sh
   release.json
 
@@ -18,9 +20,10 @@ Recommended launch path:
   ./bin/crimson --zarr /path/to/archive.zarr
 
 The launcher resolves the install root and prepends app-local private library
-directories to LD_LIBRARY_PATH before starting bin/redgui. If the build script
-was run with CRIMSON_ALLOWED_RUNTIME_ROOTS, those managed roots are also written
-to etc/crimson/runtime_roots.env and loaded by the launcher. Set
+directories to LD_LIBRARY_PATH before starting bin/redgui. Hybrid Linux drops
+bundle OpenCV and FFmpeg under lib/crimson/private, while remaining managed
+runtime roots such as TensorRT and CUDA are written to
+etc/crimson/runtime_roots.env and loaded by the launcher. Set
 CRIMSON_LINUX_STRICT_RUNTIME=1 to avoid inheriting an existing LD_LIBRARY_PATH,
 or set CRIMSON_EXTRA_LD_LIBRARY_PATH to append another managed module/runtime
 root.

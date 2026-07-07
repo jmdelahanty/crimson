@@ -444,18 +444,26 @@ export CRIMSON_OPENCV_DIR=/opt/crimson/lib/opencv-ffmpeg-nvidia/lib/cmake/opencv
 export CRIMSON_FFMPEG_ROOT=/opt/orange/lib/ffmpeg-nvidia
 ```
 
-Then rebuild the app drop and rerun the sanitized audit. Until private
-libraries are bundled into the app tree, release-mode audits should explicitly
-declare the admin-managed runtime roots they are validating:
+Then rebuild the app drop. The current recommended hybrid package bundles
+OpenCV and FFmpeg into the app tree, while leaving TensorRT and CUDA as
+admin-managed runtime roots:
 
 ```bash
 CRIMSON_ALLOWED_RUNTIME_ROOTS=/opt/crimson/lib/opencv-ffmpeg-nvidia/lib:/opt/orange/lib/ffmpeg-nvidia/lib:/usr/local/TensorRT-10.0.1.6:/usr/local/cuda-12.4 \
-dist/Crimson/check_crimson_runtime.sh \
-  --mode release \
+tools/build_linux_app_drop.sh \
+  --build-dir build/linux-app-drop-opencv-ffmpeg-nvidia-hybrid \
+  --clean-install \
+  --bundle-opencv-ffmpeg \
+  --runtime-check-mode release \
   --write-dependency-manifest dist/Crimson/dependency_manifest.json
 ```
 
-The build helper can run the same check during staging:
+`--bundle-opencv-ffmpeg` copies `libopencv*.so*`, `libav*.so*`, and
+`libsw*.so*` into `dist/Crimson/lib/crimson/private`. It also omits the bundled
+OpenCV/FFmpeg roots from `dist/Crimson/etc/crimson/runtime_roots.env`, so the
+launcher only carries the remaining managed roots such as TensorRT and CUDA.
+
+The build helper can also run the default developer check during staging:
 
 ```bash
 tools/build_linux_app_drop.sh \
@@ -465,18 +473,16 @@ tools/build_linux_app_drop.sh \
 Use `CRIMSON_ALLOWED_RUNTIME_ROOTS` only when a release intentionally depends on
 an admin-managed module/runtime root instead of app-local bundled libraries.
 
-Current limitation: this first slice creates and checks a staged app tree, but
-it does not yet bundle private Linux shared libraries. A smoke install on the
-current workstation still showed absolute dependency paths in `RUNPATH`, such
-as `/opt/crimson`, `/opt/orange`, and `/usr/local/TensorRT-10.0.1.6`, ahead of
-the `$ORIGIN` entries. That is acceptable as a diagnostic first slice, but not
-the final relocatable user-install model.
+Current limitation: the hybrid app drop still carries absolute managed roots
+for TensorRT and CUDA, and the executable may still contain absolute `RUNPATH`
+entries from imported/prebuilt link metadata. The launcher and release audit
+prefer app-local libraries first, but this is not yet the final relocatable
+user-install model.
 
-The next hardening slice should decide whether Linux releases use:
-
-- bundled private shared libraries under `lib/crimson/private`,
-- an explicit module/runtime root selected by `bin/crimson`, or
-- both, with the runtime checker enforcing whichever policy the release uses.
+The next hardening slice should extend the bundle boundary to TensorRT and CUDA
+runtime libraries where redistribution and driver compatibility are clear, then
+reduce the executable `RUNPATH` to `$ORIGIN` entries plus documented system
+driver expectations.
 
 ## Next Slice: Bundle Audit Before Bundling
 

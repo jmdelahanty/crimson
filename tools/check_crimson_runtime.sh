@@ -142,6 +142,19 @@ append_runtime_search_path() {
     fi
 }
 
+append_runtime_roots_file() {
+    local roots_file="$1"
+    local path_value
+
+    [ -r "$roots_file" ] || return
+    while IFS= read -r path_value || [ -n "$path_value" ]; do
+        case "$path_value" in
+            ""|\#*) continue ;;
+        esac
+        append_runtime_search_path "$path_value"
+    done < "$roots_file"
+}
+
 build_release_ld_library_path() {
     local allowed_root
     local old_ifs
@@ -151,6 +164,7 @@ build_release_ld_library_path() {
     append_runtime_search_path "$app_root/lib64"
     append_runtime_search_path "$app_root/lib/crimson/private"
     append_runtime_search_path "$app_root/lib64/crimson/private"
+    append_runtime_roots_file "$app_root/etc/crimson/runtime_roots.env"
 
     old_ifs="$IFS"
     IFS=:
@@ -196,6 +210,9 @@ def emit(status, name, details):
 
 def split_env_paths(name):
     value = os.environ.get(name, "")
+    return [os.path.realpath(p) for p in value.split(":") if p]
+
+def split_runtime_paths(value):
     return [os.path.realpath(p) for p in value.split(":") if p]
 
 def is_under(path, roots):
@@ -357,7 +374,8 @@ system_roots = tuple(os.path.realpath(p) for p in (
     "/usr/lib64",
     "/usr/lib/x86_64-linux-gnu",
 ))
-allowed_roots = [app_root] + split_env_paths("CRIMSON_ALLOWED_RUNTIME_ROOTS")
+allowed_roots = [app_root] + split_runtime_paths(runtime_ld_library_path) + split_env_paths("CRIMSON_ALLOWED_RUNTIME_ROOTS")
+allowed_roots = list(dict.fromkeys(allowed_roots))
 
 def classify(soname):
     if soname.startswith(driver_prefixes):

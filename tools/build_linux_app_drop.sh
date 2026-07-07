@@ -19,7 +19,9 @@ require_nvidia_smi=0
 require_gl=0
 clean_install=0
 launch=0
+bundle_opencv_ffmpeg=0
 extra_cmake_args=()
+bundled_runtime_roots=()
 
 usage() {
     cat <<'EOF'
@@ -42,6 +44,8 @@ Options:
                             Write a JSON dependency manifest during runtime check.
   --require-nvidia-smi      Runtime check fails if nvidia-smi is unavailable.
   --require-gl              Runtime check fails if no GL/X probe succeeds.
+  --bundle-opencv-ffmpeg    Copy OpenCV and FFmpeg shared libraries into the
+                            app drop. CUDA/TensorRT remain managed roots.
   --launch                  Launch the staged app through bin/crimson.
   -h, --help                Show this help.
 
@@ -88,6 +92,58 @@ cache_value() {
         return 0
     fi
     grep -E "^${key}(:[A-Za-z]+)?=" "$cache_file" 2>/dev/null | head -n 1 | sed 's/^[^=]*=//' || true
+}
+
+canonical_existing_path() {
+    local path_value="$1"
+    if [ -d "$path_value" ]; then
+        cd -- "$path_value" && pwd
+    elif [ -e "$path_value" ]; then
+        local parent
+        local name
+        parent="$(dirname -- "$path_value")"
+        name="$(basename -- "$path_value")"
+        printf '%s/%s\n' "$(cd -- "$parent" && pwd)" "$name"
+    else
+        printf '%s\n' "$path_value"
+    fi
+}
+
+append_bundled_runtime_root() {
+    local root="$1"
+    local existing
+
+    [ -n "$root" ] || return
+    root="$(canonical_existing_path "$root")"
+    for existing in "${bundled_runtime_roots[@]}"; do
+        if [ "$existing" = "$root" ]; then
+            return
+        fi
+    done
+    bundled_runtime_roots+=("$root")
+}
+
+path_contains_or_equals() {
+    local parent="$1"
+    local child="$2"
+
+    parent="$(canonical_existing_path "$parent")"
+    child="$(canonical_existing_path "$child")"
+    [ "$child" = "$parent" ] || [[ "$child" = "$parent"/* ]]
+}
+
+is_bundled_runtime_root() {
+    local candidate="$1"
+    local bundled_root
+
+    [ -n "$candidate" ] || return 1
+    for bundled_root in "${bundled_runtime_roots[@]}"; do
+        if path_contains_or_equals "$candidate" "$bundled_root" \
+            || path_contains_or_equals "$bundled_root" "$candidate"; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 write_release_metadata() {
@@ -161,11 +217,70 @@ write_runtime_roots_config() {
     old_ifs="$IFS"
     IFS=:
     for runtime_root in ${CRIMSON_ALLOWED_RUNTIME_ROOTS:-}; do
-        if [ -n "$runtime_root" ]; then
+        if [ -n "$runtime_root" ] && ! is_bundled_runtime_root "$runtime_root"; then
             printf '%s\n' "$runtime_root" >> "$config_file"
         fi
     done
     IFS="$old_ifs"
+}
+
+copy_library_family() {
+    local source_dir="$1"
+    local destination_dir="$2"
+    local pattern="$3"
+    local required="${4:-1}"
+    local matched=0
+    local lib_path
+
+    shopt -s nullglob
+    for lib_path in "$source_dir"/$pattern; do
+        matched=1
+        cp -a -- "$lib_path" "$destination_dir/"
+    done
+    shopt -u nullglob
+
+    if [ "$matched" -eq 0 ]; then
+        if [ "$required" -eq 1 ]; then
+            echo "warning: no libraries matched $source_dir/$pattern" >&2
+        fi
+    fi
+}
+
+bundle_opencv_ffmpeg_runtime() {
+    local install_root="$1"
+    local build_root="$2"
+    local cache_file="$build_root/CMakeCache.txt"
+    local opencv_dir
+    local ffmpeg_root
+    local opencv_lib_dir
+    local ffmpeg_lib_dir
+    local bundle_dir="$install_root/lib/crimson/private"
+
+    opencv_dir="$(cache_value "OpenCV_DIR" "$cache_file")"
+    ffmpeg_root="$(cache_value "FFMPEG_ROOT" "$cache_file")"
+    [ -n "$opencv_dir" ] || { echo "OpenCV_DIR not found in $cache_file" >&2; exit 1; }
+    [ -n "$ffmpeg_root" ] || { echo "FFMPEG_ROOT not found in $cache_file" >&2; exit 1; }
+
+    opencv_lib_dir="$(dirname -- "$(dirname -- "$opencv_dir")")"
+    ffmpeg_lib_dir="$ffmpeg_root/lib"
+
+    [ -d "$opencv_lib_dir" ] || { echo "OpenCV lib dir not found: $opencv_lib_dir" >&2; exit 1; }
+    [ -d "$ffmpeg_lib_dir" ] || { echo "FFmpeg lib dir not found: $ffmpeg_lib_dir" >&2; exit 1; }
+
+    mkdir -p -- "$bundle_dir"
+
+    copy_library_family "$opencv_lib_dir" "$bundle_dir" "libopencv*.so*" 1
+    copy_library_family "$ffmpeg_lib_dir" "$bundle_dir" "libav*.so*" 1
+    copy_library_family "$ffmpeg_lib_dir" "$bundle_dir" "libsw*.so*" 1
+    copy_library_family "$ffmpeg_lib_dir" "$bundle_dir" "libpostproc*.so*" 0
+
+    append_bundled_runtime_root "$opencv_lib_dir"
+    append_bundled_runtime_root "$(dirname -- "$opencv_lib_dir")"
+    append_bundled_runtime_root "$ffmpeg_lib_dir"
+    append_bundled_runtime_root "$ffmpeg_root"
+
+    echo "Bundled OpenCV/FFmpeg runtime libraries into:"
+    echo "  $bundle_dir"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -224,6 +339,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --require-gl)
             require_gl=1
+            shift
+            ;;
+        --bundle-opencv-ffmpeg)
+            bundle_opencv_ffmpeg=1
             shift
             ;;
         --launch)
@@ -316,6 +435,10 @@ if [ "$skip_install" -eq 0 ]; then
         rm -rf -- "$install_prefix_abs"
     fi
     run_command cmake --install "$build_dir_abs" --prefix "$install_prefix_abs"
+    if [ "$bundle_opencv_ffmpeg" -eq 1 ]; then
+        run_step "Bundle OpenCV/FFmpeg runtime"
+        bundle_opencv_ffmpeg_runtime "$install_prefix_abs" "$build_dir_abs"
+    fi
     write_release_metadata "$install_prefix_abs" "$build_dir_abs"
     write_runtime_roots_config "$install_prefix_abs"
 fi
@@ -337,7 +460,11 @@ if [ "$skip_runtime_check" -eq 0 ]; then
     if [ "$require_gl" -eq 1 ]; then
         check_args+=(--require-gl)
     fi
-    run_command "${check_args[@]}"
+    if [ "$bundle_opencv_ffmpeg" -eq 1 ]; then
+        run_command env -u CRIMSON_ALLOWED_RUNTIME_ROOTS "${check_args[@]}"
+    else
+        run_command "${check_args[@]}"
+    fi
 fi
 
 if [ "$launch" -eq 1 ]; then
