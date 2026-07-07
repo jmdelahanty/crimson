@@ -555,6 +555,31 @@ tools/build_check_publish_linux_app_drop.sh \
   --archive-existing-current
 ```
 
+For the current validated bundled Linux app-drop defaults, use the preset
+wrapper instead of typing the full command:
+
+```bash
+tools/publish_linux_current_app_drop.sh
+```
+
+The wrapper defaults to publishing:
+
+```text
+/groups/ahrens/ahrenslab/crimson/linux-app/current
+/groups/ahrens/ahrenslab/crimson/linux-app/releases/<release-name>
+```
+
+It bundles OpenCV, FFmpeg, TensorRT, and CUDA/NPP runtime libraries into the
+app drop, while keeping NVIDIA driver libraries host-resolved. To inspect the
+delegated command without publishing:
+
+```bash
+tools/publish_linux_current_app_drop.sh --dry-run
+```
+
+Use `--share-root <path>` to publish to a different group location, for example
+a Johnson lab staging area.
+
 Current default limitation: the hybrid app drop still carries absolute managed
 roots for TensorRT and CUDA in `etc/crimson/runtime_roots.env`. OpenCV and
 FFmpeg are app-local, and the executable `RUNPATH` is install-relative, but this
