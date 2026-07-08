@@ -558,6 +558,7 @@ void accumulateCameraViewMaskPerfMetrics(CameraViewMaskPerfMetrics& dst,
     }
     dst.roi_count += src.roi_count;
     dst.visible_roi_count += src.visible_roi_count;
+    dst.invalid_roi_count += src.invalid_roi_count;
     dst.component_fill_count += src.component_fill_count;
     dst.fallback_scatter_count += src.fallback_scatter_count;
     dst.texture_cache_hits += src.texture_cache_hits;
@@ -656,6 +657,7 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
             !std::isfinite(mask_info.offset_y) || mask_info.roi_width <= 0.0f ||
             mask_info.roi_height <= 0.0f || mask_info.rows <= 0 ||
             mask_info.cols <= 0) {
+            metrics.invalid_roi_count++;
             continue;
         }
         metrics.visible_roi_count++;

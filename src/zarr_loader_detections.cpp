@@ -1190,7 +1190,8 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
     bool use_interpolated,
     bool include_eye_masks,
     bool include_subject_shapes,
-    bool suppress_subject_mask_smoke_log) const {
+    bool suppress_subject_mask_smoke_log,
+    bool allow_blocking_eye_mask_load) const {
     
     FrameDetections result;
     result.frame_id = frame_id;
@@ -1430,7 +1431,11 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                     roi_lookup >= 0 &&
                     static_cast<size_t>(roi_lookup) < data_.eye_mask_roi_count &&
                     offsets_valid && dims_valid) {
-                    populateEyeMaskEntry(static_cast<size_t>(roi_lookup), mask_entry);
+                    populateEyeMaskEntry(
+                        static_cast<size_t>(roi_lookup),
+                        mask_entry,
+                        allow_blocking_eye_mask_load,
+                        !allow_blocking_eye_mask_load);
                 }
                 if (data_.has_eye_angles && roi_lookup >= 0) {
                     size_t roi_idx = static_cast<size_t>(roi_lookup);
@@ -1670,7 +1675,10 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                     mask_entry.roi_width > 0.0f &&
                     mask_entry.roi_height > 0.0f;
                 if (offsets_valid && dims_valid) {
-                    populateEyeMaskEntry(mask_row, mask_entry);
+                    populateEyeMaskEntry(mask_row,
+                                         mask_entry,
+                                         allow_blocking_eye_mask_load,
+                                         !allow_blocking_eye_mask_load);
                 }
 
                 if (should_smoke_log && smoke_logged_rows < 3) {
@@ -1699,9 +1707,11 @@ ZarrDetectionLoader::FrameDetections ZarrDetectionLoader::getRawDetections(
                         << " path="
                         << (data_.refined_subject_mask_dense_masks_used
                                 ? "dense_masks_roi"
-                                : (data_.refined_subject_mask_rle_masks_used
-                                       ? "mask_rle"
-                                       : "fallback"))
+                                : (data_.refined_subject_mask_bitpacked_masks_used
+                                       ? "mask_bitpacked"
+                                       : (data_.refined_subject_mask_rle_masks_used
+                                              ? "mask_rle"
+                                              : "fallback")))
                         << " row_position_fallback="
                         << (data_.refined_subject_mask_row_position_fallback
                                 ? "yes"

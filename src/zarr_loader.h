@@ -226,6 +226,7 @@ struct ZarrDetectionData {
     bool eye_masks_from_refined_subject_masks = false;
     bool eye_masks_tolerant_metadata = false;
     ts::TensorStore<uint8_t, 4> eye_masks_store;
+    ts::TensorStore<uint8_t, 4> eye_masks_bitpacked_store;
     size_t eye_mask_roi_count = 0;
     size_t eye_mask_height = 0;
     size_t eye_mask_width = 0;
@@ -251,6 +252,7 @@ struct ZarrDetectionData {
     std::vector<std::vector<size_t>> refined_subject_mask_rows_by_frame;
     bool refined_subject_mask_row_position_fallback = false;
     bool refined_subject_mask_dense_masks_used = false;
+    bool refined_subject_mask_bitpacked_masks_used = false;
     bool refined_subject_mask_rle_masks_used = false;
     mutable std::set<int32_t> refined_subject_mask_smoke_logged_frames;
     mutable size_t refined_subject_mask_rle_smoke_log_count = 0;
@@ -951,6 +953,8 @@ public:
     bool eyeMasksUseTolerantMetadata() const { return data_.eye_masks_tolerant_metadata; }
     void requestRefinedSubjectMaskOptionalOverlayPrefetch();
     std::string getRefinedSubjectMaskOptionalOverlayStatus() const;
+    bool requestEyeMaskCacheForFrame(size_t frame_id,
+                                     size_t lookahead_frames = 0) const;
     bool warmEyeMaskCacheForFrame(size_t frame_id) const;
     const std::array<std::string, 2>& getEyeMaskChannelLabels() const {
         return data_.eye_mask_channel_labels;
@@ -1545,7 +1549,9 @@ public:
                                      bool include_eye_masks = false,
                                      bool include_subject_shapes = false,
                                      bool suppress_subject_mask_smoke_log =
-                                         false) const;
+                                         false,
+                                     bool allow_blocking_eye_mask_load =
+                                         true) const;
 
     struct SubjectShapeQcFilterOptions {
         bool any_invalid = true;
@@ -1842,7 +1848,10 @@ private:
     void stopEyeMaskPrefetchWorker() const;
     void stopRefinedSubjectMaskOptionalOverlayWorker();
     void eyeMaskPrefetchWorkerLoop() const;
-    bool populateEyeMaskEntry(size_t roi_index, FrameDetections::EyeMask& out_mask) const;
+    bool populateEyeMaskEntry(size_t roi_index,
+                              FrameDetections::EyeMask& out_mask,
+                              bool allow_blocking_load = true,
+                              bool request_prefetch_on_miss = true) const;
     bool populateSubjectShapeEntry(size_t roi_index,
                                    FrameDetections::SubjectShape& out_shape) const;
     bool loadMovementData(const ts::kvstore::KvStore& store);

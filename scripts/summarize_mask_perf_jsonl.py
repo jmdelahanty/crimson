@@ -90,6 +90,42 @@ def mean_finite(values: Iterable[float | int | None]) -> float | None:
     return sum(finite) / len(finite)
 
 
+def mask_work_value(row: dict[str, Any], path: str) -> float | int | None:
+    value = get_nested(row, f"mask_work.{path}")
+    if value is not None:
+        return value
+    if path == "estimated_total_ms":
+        load = get_nested(row, "mask_data_load_ms") or 0.0
+        draw = get_nested(row, "metrics.total_draw_ms") or 0.0
+        return load + draw
+    if path == "data_load_ms":
+        return get_nested(row, "mask_data_load_ms")
+    if path == "overlay_draw_ms":
+        return get_nested(row, "metrics.total_draw_ms")
+    if path == "texture_total_ms":
+        return (get_nested(row, "metrics.texture_lookup_ms") or 0.0) + (
+            get_nested(row, "metrics.texture_upload_ms") or 0.0
+        )
+    if path == "contour_total_ms":
+        return (get_nested(row, "metrics.contour_build_ms") or 0.0) + (
+            get_nested(row, "metrics.contour_draw_ms") or 0.0
+        )
+    if path == "cpu_overlay_detail_ms":
+        return (
+            (get_nested(row, "metrics.fill_draw_ms") or 0.0)
+            + (mask_work_value(row, "contour_total_ms") or 0.0)
+            + (get_nested(row, "metrics.axis_draw_ms") or 0.0)
+            + (get_nested(row, "metrics.pick_ms") or 0.0)
+        )
+    return None
+
+
+def timing_value(row: dict[str, Any], path: str) -> float | int | None:
+    if path.startswith("mask_work."):
+        return mask_work_value(row, path.removeprefix("mask_work."))
+    return get_nested(row, path)
+
+
 def print_observed_rates(rows: list[dict[str, Any]]) -> None:
     runs = [run for run in contiguous_runs(rows) if len(run) >= 10]
     if not runs:
@@ -361,7 +397,7 @@ def print_playback_prewarm(rows: list[dict[str, Any]], top: int) -> None:
 def print_timing_group(title: str, rows: list[dict[str, Any]], fields: list[tuple[str, str]]) -> None:
     print(f"\n{title}")
     for label, path in fields:
-        print(f"{label}: {summarize(get_nested(row, path) for row in rows)}")
+        print(f"{label}: {summarize(timing_value(row, path) for row in rows)}")
 
 
 def main() -> int:
@@ -418,6 +454,16 @@ def main() -> int:
     print_playback_warmup(rows, args.top)
 
     mask_fields = [
+        ("mask_estimated_total_ms", "mask_work.estimated_total_ms"),
+        ("mask_work_data_load_ms", "mask_work.data_load_ms"),
+        ("mask_work_overlay_draw_ms", "mask_work.overlay_draw_ms"),
+        ("mask_work_texture_total_ms", "mask_work.texture_total_ms"),
+        ("mask_work_contour_total_ms", "mask_work.contour_total_ms"),
+        ("mask_work_cpu_overlay_detail_ms", "mask_work.cpu_overlay_detail_ms"),
+        ("mask_work_roi_count", "mask_work.roi_count"),
+        ("mask_work_visible_roi_count", "mask_work.visible_roi_count"),
+        ("mask_work_invalid_roi_count", "mask_work.invalid_roi_count"),
+        ("mask_work_component_fill_count", "mask_work.component_fill_count"),
         ("frame_loop_ms", "frame_loop_ms"),
         ("mask_data_load_ms", "mask_data_load_ms"),
         ("mask_total_draw_ms", "metrics.total_draw_ms"),
@@ -430,6 +476,10 @@ def main() -> int:
         ("pick_ms", "metrics.pick_ms"),
     ]
     print_timing_group("mask timings", rows, mask_fields)
+    print(
+        "mask dominant stages:",
+        dict(Counter(get_path(row, "mask_work.dominant_stage") for row in rows)),
+    )
 
     frame_fields = [
         ("camera_upload_ms", "frame_perf.camera_pipeline.upload_ms"),
@@ -527,6 +577,12 @@ def main() -> int:
         if not subset:
             continue
         print_timing_group(f"mask timings play_video={play_value}", subset, mask_fields)
+        print(
+            f"mask dominant stages play_video={play_value}:",
+            dict(
+                Counter(get_path(row, "mask_work.dominant_stage") for row in subset)
+            ),
+        )
         if any(get_nested(row, "frame_perf.frame_loop_ms") is not None for row in subset):
             print_timing_group(f"frame timings play_video={play_value}", subset, frame_fields)
             print_timing_group(
@@ -541,7 +597,9 @@ def main() -> int:
     ]
     for row in top_rows:
         print(
-            "frame={frame} play={play} loop={loop:.3f} mask={mask:.3f} "
+            "frame={frame} play={play} loop={loop:.3f} "
+            "mask_total={mask_total:.3f} mask_load={mask_load:.3f} "
+            "mask_overlay={mask_overlay:.3f} mask_stage={mask_stage} "
             "ui={ui:.3f} imgui={imgui:.3f} gl={gl:.3f} swap={swap:.3f} "
             "cap_sleep={cap_sleep:.3f} "
             "camera_upload={cam_upload:.3f} prewarm={prewarm:.3f} "
@@ -559,7 +617,10 @@ def main() -> int:
                 frame=row.get("current_frame_num"),
                 play=row.get("play_video"),
                 loop=get_nested(row, "frame_loop_ms") or 0.0,
-                mask=get_nested(row, "metrics.total_draw_ms") or 0.0,
+                mask_total=mask_work_value(row, "estimated_total_ms") or 0.0,
+                mask_load=mask_work_value(row, "data_load_ms") or 0.0,
+                mask_overlay=mask_work_value(row, "overlay_draw_ms") or 0.0,
+                mask_stage=get_path(row, "mask_work.dominant_stage"),
                 ui=get_nested(row, "frame_perf.ui.build_ms") or 0.0,
                 imgui=get_nested(row, "frame_perf.ui.imgui_render_ms") or 0.0,
                 gl=get_nested(row, "frame_perf.render.gl_draw_ms") or 0.0,

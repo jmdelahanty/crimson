@@ -87,6 +87,7 @@ json maskPerfMetricsToJson(const CameraViewMaskPerfMetrics& metrics) {
         {"mode", metrics.mode.empty() ? json(nullptr) : json(metrics.mode)},
         {"roi_count", metrics.roi_count},
         {"visible_roi_count", metrics.visible_roi_count},
+        {"invalid_roi_count", metrics.invalid_roi_count},
         {"component_fill_count", metrics.component_fill_count},
         {"fallback_scatter_count", metrics.fallback_scatter_count},
         {"texture_cache_hits", metrics.texture_cache_hits},
@@ -111,6 +112,65 @@ json maskPerfMetricsToJson(const CameraViewMaskPerfMetrics& metrics) {
         {"axis_draw_ms", metrics.axis_draw_ms},
         {"pick_ms", metrics.pick_ms},
         {"total_draw_ms", metrics.total_draw_ms},
+    };
+}
+
+json maskWorkToJson(double mask_data_load_ms,
+                    const CameraViewMaskPerfMetrics& metrics) {
+    const double texture_total_ms =
+        metrics.texture_lookup_ms + metrics.texture_upload_ms;
+    const double contour_total_ms =
+        metrics.contour_build_ms + metrics.contour_draw_ms;
+    const double cpu_overlay_detail_ms =
+        metrics.fill_draw_ms + contour_total_ms + metrics.axis_draw_ms +
+        metrics.pick_ms;
+    const double estimated_total_ms =
+        mask_data_load_ms + metrics.total_draw_ms;
+    const double other_overlay_ms =
+        std::max(0.0,
+                 metrics.total_draw_ms - texture_total_ms -
+                     cpu_overlay_detail_ms);
+
+    std::string dominant_stage = "none";
+    double dominant_stage_ms = 0.0;
+    auto consider_stage = [&](const char* label, double value) {
+        if (std::isfinite(value) && value > dominant_stage_ms) {
+            dominant_stage = label;
+            dominant_stage_ms = value;
+        }
+    };
+    consider_stage("data_load", mask_data_load_ms);
+    consider_stage("texture", texture_total_ms);
+    consider_stage("contour", contour_total_ms);
+    consider_stage("fill", metrics.fill_draw_ms);
+    consider_stage("axis", metrics.axis_draw_ms);
+    consider_stage("pick", metrics.pick_ms);
+    consider_stage("other_overlay", other_overlay_ms);
+
+    return json{
+        {"estimated_total_ms", estimated_total_ms},
+        {"data_load_ms", mask_data_load_ms},
+        {"overlay_draw_ms", metrics.total_draw_ms},
+        {"texture_total_ms", texture_total_ms},
+        {"texture_lookup_ms", metrics.texture_lookup_ms},
+        {"texture_upload_ms", metrics.texture_upload_ms},
+        {"cpu_overlay_detail_ms", cpu_overlay_detail_ms},
+        {"fill_draw_ms", metrics.fill_draw_ms},
+        {"contour_total_ms", contour_total_ms},
+        {"contour_build_ms", metrics.contour_build_ms},
+        {"contour_draw_ms", metrics.contour_draw_ms},
+        {"axis_draw_ms", metrics.axis_draw_ms},
+        {"pick_ms", metrics.pick_ms},
+        {"other_overlay_ms", other_overlay_ms},
+        {"dominant_stage", dominant_stage},
+        {"dominant_stage_ms", dominant_stage_ms},
+        {"roi_count", metrics.roi_count},
+        {"visible_roi_count", metrics.visible_roi_count},
+        {"invalid_roi_count", metrics.invalid_roi_count},
+        {"component_fill_count", metrics.component_fill_count},
+        {"texture_uploads", metrics.texture_uploads},
+        {"texture_cache_hits", metrics.texture_cache_hits},
+        {"texture_cache_misses", metrics.texture_cache_misses},
     };
 }
 
@@ -902,6 +962,8 @@ void writeMaskPerfLogSample(MaskPerfLogWriter& writer,
              ? json(nullptr)
              : json(context.selected_component_name)},
         {"mask_data_load_ms", context.mask_data_load_ms},
+        {"mask_work",
+         maskWorkToJson(context.mask_data_load_ms, context.metrics)},
         {"metrics", maskPerfMetricsToJson(context.metrics)},
     };
     if (context.frame_perf != nullptr) {

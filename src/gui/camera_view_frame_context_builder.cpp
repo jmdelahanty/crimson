@@ -212,7 +212,10 @@ void prepareCameraViewFrameContext(
             prepared.mask_details = input.zarr_loader->getRawDetections(
                 input.current_frame_num,
                 /*use_interpolated=*/false,
-                /*include_eye_masks=*/true);
+                /*include_eye_masks=*/true,
+                /*include_subject_shapes=*/false,
+                /*suppress_subject_mask_smoke_log=*/false,
+                input.allow_blocking_eye_mask_load);
             prepared.mask_data_load_ms += durationMs(
                 std::chrono::steady_clock::now() - mask_load_start);
             mask_details = &*prepared.mask_details;

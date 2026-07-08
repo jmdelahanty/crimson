@@ -1622,6 +1622,7 @@ int main(int argc, char **argv) {
         };
     prewarmEyeMaskOverlayTexturesForPlayback("cli_bootstrap",
                                              current_frame_num);
+    constexpr size_t kPlaybackMaskPrefetchLookaheadFrames = 1024;
     auto clippedPlaybackEventStateJson = [&]() -> json {
         auto nullableInt = [](int value) -> json {
             return value >= 0 ? json(value) : json(nullptr);
@@ -2990,13 +2991,22 @@ int main(int argc, char **argv) {
                     include_subject_shapes_in_details ||
                     dataset_has_synthetic_boxes;
                 if (need_details) {
+                    const bool allow_blocking_eye_mask_load = !ps.play_video;
+                    if (include_eye_masks_in_details &&
+                        !allow_blocking_eye_mask_load) {
+                        zarr_loader.requestEyeMaskCacheForFrame(
+                            static_cast<size_t>(std::max(current_frame_num, 0)),
+                            kPlaybackMaskPrefetchLookaheadFrames);
+                    }
                     const auto details_load_start =
                         std::chrono::steady_clock::now();
                     detection_details =
                         zarr_loader.getRawDetections(current_frame_num,
                                                      false,
                                                      include_eye_masks_in_details,
-                                                     include_subject_shapes_in_details);
+                                                     include_subject_shapes_in_details,
+                                                     false,
+                                                     allow_blocking_eye_mask_load);
                     if (include_eye_masks_in_details) {
                         frame_mask_data_load_ms += durationMs(
                             std::chrono::steady_clock::now() -
@@ -4330,13 +4340,24 @@ int main(int argc, char **argv) {
                             bbox_edit_resolve_start);
                         frame_bbox_display_count =
                             static_cast<int>(zarr_boxes.size());
+                        const bool allow_blocking_eye_mask_load =
+                            !ps.play_video;
+                        if (camera_details_include_eye_masks &&
+                            !allow_blocking_eye_mask_load &&
+                            zarr_bbox_query_frame >= 0) {
+                            zarr_loader.requestEyeMaskCacheForFrame(
+                                static_cast<size_t>(zarr_bbox_query_frame),
+                                kPlaybackMaskPrefetchLookaheadFrames);
+                        }
                         const auto detection_load_start =
                             std::chrono::steady_clock::now();
                         detection_details = zarr_loader.getRawDetections(
                             zarr_bbox_query_frame,
                             false,
                             camera_details_include_eye_masks,
-                            camera_details_include_subject_shapes);
+                            camera_details_include_subject_shapes,
+                            false,
+                            allow_blocking_eye_mask_load);
                         const double raw_detections_ms = durationMs(
                             std::chrono::steady_clock::now() -
                             detection_load_start);
@@ -4706,6 +4727,8 @@ int main(int argc, char **argv) {
                     camera_context_input.can_draw_headings = can_draw_headings;
                     camera_context_input.can_draw_eye_masks =
                         can_draw_eye_masks;
+                    camera_context_input.allow_blocking_eye_mask_load =
+                        !ps.play_video;
                     camera_context_input.show_subject_body_mask =
                         show_subject_body_mask;
                     camera_context_input.show_eye_left_mask =

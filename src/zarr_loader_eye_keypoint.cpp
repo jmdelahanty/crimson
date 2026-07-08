@@ -44,6 +44,7 @@ void clearEyeMaskState(ZarrDetectionData& data) {
     data.eye_masks_loaded = false;
     data.has_eye_masks = false;
     data.eye_masks_store = ts::TensorStore<uint8_t, 4>();
+    data.eye_masks_bitpacked_store = ts::TensorStore<uint8_t, 4>();
     data.eye_mask_roi_count = 0;
     data.eye_mask_height = 0;
     data.eye_mask_width = 0;
@@ -65,6 +66,7 @@ void clearEyeMaskState(ZarrDetectionData& data) {
     data.refined_subject_mask_rows_by_frame.clear();
     data.refined_subject_mask_row_position_fallback = false;
     data.refined_subject_mask_dense_masks_used = false;
+    data.refined_subject_mask_bitpacked_masks_used = false;
     data.refined_subject_mask_rle_masks_used = false;
     data.refined_subject_mask_smoke_logged_frames.clear();
     data.refined_subject_mask_rle_smoke_log_count = 0;
@@ -1696,13 +1698,20 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
     }
 
     if (run_candidates.empty() && !root_path_.empty()) {
-        auto fs_candidates = collect_runs_fs(
-            root_path_,
-            "refined_subject_masks_runs",
-            {"masks_roi"});
-        for (auto it = fs_candidates.rbegin(); it != fs_candidates.rend(); ++it) {
-            add_candidate(*it);
-        }
+        auto add_fs_candidates = [&](std::initializer_list<std::string> paths) {
+            auto fs_candidates = collect_runs_fs(
+                root_path_,
+                "refined_subject_masks_runs",
+                paths);
+            for (auto it = fs_candidates.rbegin();
+                 it != fs_candidates.rend();
+                 ++it) {
+                add_candidate(*it);
+            }
+        };
+        add_fs_candidates({"masks_roi"});
+        add_fs_candidates({"mask_bitpacked/masks_packed"});
+        add_fs_candidates({"mask_rle"});
     }
 
     if (run_candidates.empty()) {
@@ -1746,18 +1755,28 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
     const bool force_dense =
         storage_request == "dense" || storage_request == "masks_roi" ||
         storage_request == "dense_uint8";
+    const bool force_bitpacked =
+        storage_request == "bitpacked" || storage_request == "mask_bitpacked" ||
+        storage_request == "bitpacked_v1" ||
+        storage_request == "bitpacked_binary_v1";
     if (!storage_request.empty() && storage_request != "auto" &&
-        !force_rle && !force_dense) {
+        !force_rle && !force_dense && !force_bitpacked) {
         std::cout << "  [SUBJECT_MASK_WARNING] Unknown refined subject-mask storage request '"
                   << requested_refined_subject_mask_storage_
                   << "'; using dense-first auto mode." << std::endl;
     }
 
+    std::optional<nlohmann::json> bitpacked_attrs =
+        readAttrsAny(store, run_base + "mask_bitpacked");
     std::optional<nlohmann::json> rle_attrs =
         readAttrsAny(store, run_base + "mask_rle");
 
     std::vector<std::string> mask_labels =
         extractStringListAttr(*run_attrs, "mask_labels");
+    if (mask_labels.empty() && bitpacked_attrs.has_value()) {
+        mask_labels =
+            extractStringListAttr(*bitpacked_attrs, "component_names");
+    }
     if (mask_labels.empty() && rle_attrs.has_value()) {
         mask_labels = extractStringListAttr(*rle_attrs, "component_names");
     }
@@ -1771,14 +1790,16 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
     trace.step("read_attrs_and_labels");
 
     ts::TensorStore<uint8_t, 4> dense_masks_store;
+    ts::TensorStore<uint8_t, 4> bitpacked_masks_store;
     bool dense_masks_available = false;
-    if (!force_rle) {
+    bool bitpacked_masks_available = false;
+    if (!force_rle && !force_bitpacked) {
         auto masks_store_result =
             openArrayAny<uint8_t, 4>(store, run_base + "masks_roi", context_);
         if (masks_store_result.ok()) {
             dense_masks_store = masks_store_result.value();
             dense_masks_available = true;
-        } else if (force_dense || !rle_attrs.has_value()) {
+        } else if (force_dense) {
             std::cout << "[SUBJECT_MASK_WARNING] Failed to open refined subject masks for run '"
                       << latest_run << "': "
                       << masks_store_result.status().ToString()
@@ -1787,11 +1808,36 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
         }
     }
 
-    const bool use_rle_masks = !dense_masks_available;
+    if (!dense_masks_available && !force_rle && !force_dense) {
+        auto bitpacked_store_result = openArrayAny<uint8_t, 4>(
+            store, run_base + "mask_bitpacked/masks_packed", context_);
+        if (bitpacked_store_result.ok()) {
+            bitpacked_masks_store = bitpacked_store_result.value();
+            bitpacked_masks_available = true;
+        } else if (force_bitpacked) {
+            std::cout << "[SUBJECT_MASK_WARNING] Failed to open compact mask_bitpacked for run '"
+                      << latest_run << "': "
+                      << bitpacked_store_result.status().ToString()
+                      << "; falling back to legacy eye masks." << std::endl;
+            return false;
+        }
+    }
+
+    const bool use_bitpacked_masks =
+        !dense_masks_available && bitpacked_masks_available;
+    const bool use_rle_masks =
+        !dense_masks_available && !bitpacked_masks_available;
+    if (use_bitpacked_masks && !bitpacked_attrs.has_value()) {
+        std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
+                  << latest_run
+                  << "' has mask_bitpacked/masks_packed but no readable mask_bitpacked attrs; falling back to legacy eye masks."
+                  << std::endl;
+        return false;
+    }
     if (use_rle_masks && !rle_attrs.has_value()) {
         std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
                   << latest_run
-                  << "' has no dense masks_roi and no compact mask_rle; falling back to legacy eye masks."
+                  << "' has no dense masks_roi, compact mask_bitpacked, or compact mask_rle; falling back to legacy eye masks."
                   << std::endl;
         return false;
     }
@@ -1820,6 +1866,73 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
         channel_dim = static_cast<size_t>(shape[1]);
         mask_rows = static_cast<size_t>(shape[2]);
         mask_cols = static_cast<size_t>(shape[3]);
+    } else if (use_bitpacked_masks) {
+        if (jsonStringAttr(*bitpacked_attrs, "schema_id") !=
+                "palette_mask_bitpacked_binary_v1" ||
+            jsonStringAttr(*bitpacked_attrs, "mask_encoding") !=
+                "bitpacked_binary_v1" ||
+            jsonStringAttr(*bitpacked_attrs, "mask_value_semantics") !=
+                "binary_0_1" ||
+            jsonStringAttr(*bitpacked_attrs, "layout") !=
+                "packed_width_array" ||
+            jsonStringAttr(*bitpacked_attrs, "packed_axis") != "width") {
+            std::cout << "[SUBJECT_MASK_WARNING] compact mask_bitpacked attrs for run '"
+                      << latest_run
+                      << "' do not match palette_mask_bitpacked_binary_v1/packed_width_array."
+                      << std::endl;
+            return false;
+        }
+        const std::string bit_order =
+            jsonStringAttr(*bitpacked_attrs, "packed_bitorder");
+        if (!bit_order.empty() && bit_order != "little") {
+            std::cout << "[SUBJECT_MASK_WARNING] compact mask_bitpacked for run '"
+                      << latest_run
+                      << "' uses unsupported packed_bitorder '" << bit_order
+                      << "'." << std::endl;
+            return false;
+        }
+        const auto logical_shape =
+            jsonIntVector(*bitpacked_attrs, "logical_shape");
+        const auto encoded_shape =
+            jsonIntVector(*bitpacked_attrs, "encoded_shape");
+        auto packed_domain = bitpacked_masks_store.domain();
+        auto packed_shape = packed_domain.shape();
+        if (logical_shape.size() != 4 || encoded_shape.size() != 4 ||
+            packed_shape.size() != 4 ||
+            logical_shape[0] <= 0 || logical_shape[1] <= 0 ||
+            logical_shape[2] <= 0 || logical_shape[3] <= 0 ||
+            encoded_shape[0] != logical_shape[0] ||
+            encoded_shape[1] != logical_shape[1] ||
+            encoded_shape[2] != logical_shape[2] ||
+            encoded_shape[3] != (logical_shape[3] + 7) / 8 ||
+            packed_shape[0] != encoded_shape[0] ||
+            packed_shape[1] != encoded_shape[1] ||
+            packed_shape[2] != encoded_shape[2] ||
+            packed_shape[3] != encoded_shape[3]) {
+            std::cout << "[SUBJECT_MASK_WARNING] compact mask_bitpacked shape metadata for run '"
+                      << latest_run
+                      << "' is missing or inconsistent with masks_packed."
+                      << std::endl;
+            return false;
+        }
+        roi_dim = static_cast<size_t>(logical_shape[0]);
+        channel_dim = static_cast<size_t>(logical_shape[1]);
+        mask_rows = static_cast<size_t>(logical_shape[2]);
+        mask_cols = static_cast<size_t>(logical_shape[3]);
+        if (mask_labels.size() != channel_dim) {
+            std::vector<std::string> bitpacked_component_names =
+                extractStringListAttr(*bitpacked_attrs, "component_names");
+            if (bitpacked_component_names.size() == channel_dim) {
+                mask_labels = std::move(bitpacked_component_names);
+            }
+        }
+        if (mask_labels.size() != channel_dim) {
+            std::cout << "[SUBJECT_MASK_WARNING] compact mask_bitpacked component_names length for run '"
+                      << latest_run << "' is " << mask_labels.size()
+                      << " but logical_shape channel count is "
+                      << channel_dim << "." << std::endl;
+            return false;
+        }
     } else {
         if (jsonStringAttr(*rle_attrs, "schema_id") !=
                 "palette_mask_rle_binary_v1" ||
@@ -1868,11 +1981,14 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
     if (roi_dim == 0 || channel_dim == 0 || mask_rows == 0 || mask_cols == 0) {
         std::cout << "[SUBJECT_MASK_WARNING] refined_subject_masks run '"
                   << latest_run
-                  << "' has empty masks_roi dimensions; falling back to legacy eye masks."
+                  << "' has empty mask dimensions; falling back to legacy eye masks."
                   << std::endl;
         return false;
     }
-    trace.step(use_rle_masks ? "setup_rle_store" : "setup_dense_store");
+    trace.step(use_rle_masks
+                   ? "setup_rle_store"
+                   : (use_bitpacked_masks ? "setup_bitpacked_store"
+                                          : "setup_dense_store"));
 
     auto find_label = [&](const std::string& label) -> size_t {
         auto it = std::find(mask_labels.begin(), mask_labels.end(), label);
@@ -2154,19 +2270,29 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
     }
     trace.step("verify_placements");
 
+    const char* mask_storage_surface =
+        use_rle_masks ? "mask_rle"
+                      : (use_bitpacked_masks ? "mask_bitpacked" : "masks_roi");
     data_.mask_chunk_cache.clear();
     data_.eye_masks_store = dense_masks_available
         ? dense_masks_store
+        : ts::TensorStore<uint8_t, 4>();
+    data_.eye_masks_bitpacked_store = use_bitpacked_masks
+        ? bitpacked_masks_store
         : ts::TensorStore<uint8_t, 4>();
     data_.eye_masks_run_name = latest_run;
     data_.eye_masks_source_label = tolerant_metadata
         ? (use_rle_masks
                ? "Refined subject masks RLE (metadata inferred)"
-               : "Refined subject masks (metadata inferred)")
-        : (use_rle_masks ? "Refined subject masks RLE"
-                         : "Refined subject masks");
+               : (use_bitpacked_masks
+                      ? "Refined subject masks bitpacked (metadata inferred)"
+                      : "Refined subject masks (metadata inferred)"))
+        : (use_rle_masks
+               ? "Refined subject masks RLE"
+               : (use_bitpacked_masks ? "Refined subject masks bitpacked"
+                                      : "Refined subject masks"));
     data_.eye_masks_source_path =
-        use_rle_masks ? run_base + "mask_rle" : run_base + "masks_roi";
+        run_base + mask_storage_surface;
     data_.eye_masks_warning = warning;
     data_.eye_masks_from_refined_subject_masks = true;
     data_.eye_masks_tolerant_metadata = tolerant_metadata;
@@ -2197,6 +2323,7 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
     data_.refined_subject_mask_rows_by_frame = std::move(mask_rows_by_frame);
     data_.refined_subject_mask_row_position_fallback = row_position_fallback;
     data_.refined_subject_mask_dense_masks_used = dense_masks_available;
+    data_.refined_subject_mask_bitpacked_masks_used = use_bitpacked_masks;
     data_.refined_subject_mask_rle_masks_used = use_rle_masks;
     data_.refined_subject_mask_overlay_components.clear();
     const size_t component_label_count =
@@ -2609,6 +2736,20 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
                 }
             }
         }
+    } else if (use_bitpacked_masks) {
+        auto chunk_layout_result =
+            data_.eye_masks_bitpacked_store.chunk_layout();
+        if (chunk_layout_result.ok()) {
+            const auto& chunk_layout = chunk_layout_result.value();
+            auto chunk_shape = chunk_layout.read_chunk_shape();
+            if (!chunk_shape.empty()) {
+                auto chunk_size = chunk_shape[0];
+                if (chunk_size > 0) {
+                    data_.eye_mask_chunk_rows =
+                        static_cast<size_t>(chunk_size);
+                }
+            }
+        }
     }
     if (use_rle_masks) {
         data_.eye_mask_chunk_rows =
@@ -2621,7 +2762,7 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
 
     std::cout << "  Refined subject mask run '" << latest_run
               << "' loaded for eye overlay (source: "
-              << (use_rle_masks ? "mask_rle" : "masks_roi")
+              << mask_storage_surface
               << "; labels: "
               << joinMaskLabels(mask_labels) << "; eye_left channel "
               << (left_available ? std::to_string(left_channel) : "unavailable")
@@ -4070,6 +4211,12 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
     const bool chunk_perf_log = subjectMaskChunkPerfLogsEnabled();
     const auto ensure_start = std::chrono::steady_clock::now();
     const bool use_rle_masks = data_.refined_subject_mask_rle_masks_used;
+    const bool use_bitpacked_masks =
+        data_.refined_subject_mask_bitpacked_masks_used;
+    const char* mask_storage_surface =
+        use_rle_masks ? "mask_rle"
+                      : (use_bitpacked_masks ? "mask_bitpacked"
+                                             : "masks_roi");
 
     bool cache_hit = false;
     {
@@ -4093,7 +4240,7 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
     if (cache_hit) {
         if (chunk_perf_log) {
             std::cout << "[SUBJECT_MASK_CHUNK_PERF] source="
-                      << (use_rle_masks ? "mask_rle" : "masks_roi")
+                      << mask_storage_surface
                       << " chunk_id=" << chunk_id
                       << " cache_hit=yes"
                       << " force_reload=" << (force_reload ? "yes" : "no")
@@ -4138,6 +4285,8 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
     double component_copy_ms = 0.0;
     double dense_read_ms = 0.0;
     double dense_collect_ms = 0.0;
+    double bitpacked_read_ms = 0.0;
+    double bitpacked_unpack_ms = 0.0;
     double contour_row_scan_ms = 0.0;
     double contour_read_ms = 0.0;
     double contour_copy_ms = 0.0;
@@ -4147,6 +4296,7 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
     size_t rle_rows_decoded = 0;
     size_t rle_count_values_read = 0;
     size_t rle_foreground_pixels = 0;
+    size_t bitpacked_foreground_pixels = 0;
     size_t contour_components_with_rows = 0;
     size_t contour_rows_loaded = 0;
     size_t contour_points_loaded = 0;
@@ -4408,6 +4558,134 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
         const auto copy_start = std::chrono::steady_clock::now();
         copyEyePixelsFromComponents();
         component_copy_ms += elapsedMsSince(copy_start);
+    } else if (use_bitpacked_masks) {
+        auto slice = data_.eye_masks_bitpacked_store |
+                     ts::Dims(0).HalfOpenInterval(
+                         static_cast<ts::Index>(chunk_start),
+                         static_cast<ts::Index>(chunk_end));
+        const auto bitpacked_read_start = std::chrono::steady_clock::now();
+        auto read_result = ts::Read(slice).result();
+        bitpacked_read_ms += elapsedMsSince(bitpacked_read_start);
+        if (!read_result.ok()) {
+            std::cerr << "[SUBJECT_MASK_WARNING] Failed to read bitpacked mask chunk "
+                      << chunk_id << ": "
+                      << read_result.status().ToString() << std::endl;
+            return false;
+        }
+
+        auto array = read_result.value();
+        auto shape = array.shape();
+        if (shape.size() != 4) {
+            std::cerr << "[SUBJECT_MASK_WARNING] Unexpected bitpacked mask chunk rank ("
+                      << shape.size() << ")" << std::endl;
+            return false;
+        }
+
+        chunk_len = static_cast<size_t>(shape[0]);
+        channels = static_cast<size_t>(shape[1]);
+        rows = static_cast<size_t>(shape[2]);
+        const size_t packed_cols = static_cast<size_t>(shape[3]);
+        const size_t required_packed_cols = (cols + 7) / 8;
+        if (packed_cols < required_packed_cols) {
+            std::cerr << "[SUBJECT_MASK_WARNING] Bitpacked mask chunk has packed width "
+                      << packed_cols << " but logical width " << cols
+                      << " requires " << required_packed_cols << " bytes."
+                      << std::endl;
+            return false;
+        }
+
+        const uint8_t* base_ptr =
+            static_cast<const uint8_t*>(array.byte_strided_origin_pointer());
+        auto byte_strides = array.byte_strides();
+        if (byte_strides.size() != 4) {
+            std::cerr << "[SUBJECT_MASK_WARNING] Unexpected bitpacked mask chunk stride rank ("
+                      << byte_strides.size() << ")" << std::endl;
+            return false;
+        }
+
+        const ts::Index stride_roi = byte_strides[0];
+        const ts::Index stride_channel = byte_strides[1];
+        const ts::Index stride_row = byte_strides[2];
+        const ts::Index stride_col = byte_strides[3];
+
+        auto collectPackedChannelPixels =
+            [&](const uint8_t* roi_ptr,
+                size_t source_channel,
+                std::vector<uint32_t>& indices_vec) {
+                indices_vec.clear();
+                indices_vec.reserve(256);
+                if (source_channel == kInvalidMaskChannel ||
+                    source_channel >= channels) {
+                    return;
+                }
+
+                const auto channel_offset =
+                    stride_channel * static_cast<ts::Index>(source_channel);
+                const uint8_t* channel_ptr = roi_ptr + channel_offset;
+                for (size_t r = 0; r < rows; ++r) {
+                    const auto row_offset =
+                        stride_row * static_cast<ts::Index>(r);
+                    const uint8_t* row_ptr = channel_ptr + row_offset;
+                    for (size_t packed_x = 0;
+                         packed_x < required_packed_cols;
+                         ++packed_x) {
+                        const auto col_offset =
+                            stride_col * static_cast<ts::Index>(packed_x);
+                        const uint8_t byte = *(row_ptr + col_offset);
+                        if (byte == 0) {
+                            continue;
+                        }
+                        for (size_t bit = 0; bit < 8; ++bit) {
+                            const size_t x = packed_x * 8 + bit;
+                            if (x >= cols) {
+                                break;
+                            }
+                            if ((byte & static_cast<uint8_t>(1u << bit)) != 0) {
+                                indices_vec.push_back(
+                                    static_cast<uint32_t>(r * cols + x));
+                            }
+                        }
+                    }
+                }
+            };
+
+        for (size_t roi = 0; roi < chunk_len; ++roi) {
+            const auto roi_offset =
+                stride_roi * static_cast<ts::Index>(roi);
+            const uint8_t* roi_ptr = base_ptr + roi_offset;
+            const auto unpack_start = std::chrono::steady_clock::now();
+
+            if (component_count > 0) {
+                auto& components_for_roi = entry.component_pixel_indices[roi];
+                components_for_roi.resize(component_count);
+                entry.component_contours_xy[roi].resize(component_count);
+                for (size_t component = 0;
+                     component < component_count;
+                     ++component) {
+                    collectPackedChannelPixels(
+                        roi_ptr,
+                        overlay_components[component].channel_index,
+                        components_for_roi[component]);
+                    bitpacked_foreground_pixels +=
+                        components_for_roi[component].size();
+                }
+                bitpacked_unpack_ms += elapsedMsSince(unpack_start);
+                continue;
+            }
+
+            for (size_t eye = 0; eye < 2; ++eye) {
+                auto& indices_vec = entry.pixel_indices[roi][eye];
+                collectPackedChannelPixels(
+                    roi_ptr,
+                    data_.eye_mask_channel_indices[eye],
+                    indices_vec);
+                bitpacked_foreground_pixels += indices_vec.size();
+            }
+            bitpacked_unpack_ms += elapsedMsSince(unpack_start);
+        }
+        const auto copy_start = std::chrono::steady_clock::now();
+        copyEyePixelsFromComponents();
+        component_copy_ms += elapsedMsSince(copy_start);
     } else {
         auto slice = data_.eye_masks_store |
                      ts::Dims(0).HalfOpenInterval(
@@ -4651,7 +4929,7 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
             cache.erase(existing);
             cache.push_back(std::move(entry));
         } else if (existing == cache.end()) {
-            const size_t cache_capacity = use_rle_masks
+            const size_t cache_capacity = (use_rle_masks || use_bitpacked_masks)
                 ? kRleEyeMaskChunkCacheCapacity
                 : kEyeMaskChunkCacheCapacity;
             if (cache.size() >= cache_capacity) {
@@ -4666,7 +4944,7 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
 
     if (chunk_perf_log) {
         std::cout << "[SUBJECT_MASK_CHUNK_PERF] source="
-                  << (use_rle_masks ? "mask_rle" : "masks_roi")
+                  << mask_storage_surface
                   << " chunk_id=" << chunk_id
                   << " chunk_start=" << chunk_start
                   << " chunk_len=" << chunk_len
@@ -4688,6 +4966,10 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
                   << " dense_read_ms=" << dense_read_ms
                   << " dense_collect_ms=" << dense_collect_ms
                   << " dense_nonzero_pixels=" << dense_nonzero_pixels
+                  << " bitpacked_read_ms=" << bitpacked_read_ms
+                  << " bitpacked_unpack_ms=" << bitpacked_unpack_ms
+                  << " bitpacked_foreground_pixels="
+                  << bitpacked_foreground_pixels
                   << " component_copy_ms=" << component_copy_ms
                   << " contour_components_with_rows="
                   << contour_components_with_rows
@@ -4827,6 +5109,77 @@ void ZarrDetectionLoader::requestEyeMaskChunkPrefetch(size_t chunk_id) const {
     }
 }
 
+bool ZarrDetectionLoader::requestEyeMaskCacheForFrame(
+    size_t frame_id,
+    size_t lookahead_frames) const {
+    if (!data_.eye_masks_loaded || data_.eye_mask_roi_count == 0 ||
+        data_.eye_mask_chunk_rows == 0) {
+        return false;
+    }
+
+    const size_t chunk_rows = data_.eye_mask_chunk_rows;
+    const size_t max_frame =
+        data_.total_frames > 0
+            ? data_.total_frames - 1
+            : std::numeric_limits<size_t>::max();
+    if (frame_id > max_frame) {
+        return false;
+    }
+    const size_t end_frame =
+        lookahead_frames > max_frame - frame_id
+            ? max_frame
+            : frame_id + lookahead_frames;
+
+    std::set<size_t> chunk_ids;
+    auto add_roi = [&](size_t roi_index) {
+        if (roi_index < data_.eye_mask_roi_count) {
+            chunk_ids.insert(roi_index / chunk_rows);
+        }
+    };
+    auto collect_frame = [&](size_t frame) {
+        if (data_.eye_masks_from_refined_subject_masks &&
+            frame < data_.refined_subject_mask_rows_by_frame.size()) {
+            for (size_t mask_row :
+                 data_.refined_subject_mask_rows_by_frame[frame]) {
+                add_roi(mask_row);
+            }
+            return;
+        }
+
+        if (frame + 1 >= data_.frame_offsets.size()) {
+            return;
+        }
+        const size_t start = data_.frame_offsets[frame];
+        const size_t end = data_.frame_offsets[frame + 1];
+        for (size_t detection_idx = start; detection_idx < end;
+             ++detection_idx) {
+            if (detection_idx >= data_.mask_roi_indices.size()) {
+                break;
+            }
+            const int32_t roi_index = data_.mask_roi_indices[detection_idx];
+            if (roi_index >= 0) {
+                add_roi(static_cast<size_t>(roi_index));
+            }
+        }
+    };
+
+    for (size_t frame = frame_id; frame <= end_frame; ++frame) {
+        collect_frame(frame);
+        if (frame == std::numeric_limits<size_t>::max()) {
+            break;
+        }
+    }
+    size_t queued_chunks = 0;
+    for (size_t chunk_id : chunk_ids) {
+        if (queued_chunks >= kEyeMaskPrefetchQueueCapacity) {
+            break;
+        }
+        requestEyeMaskChunkPrefetch(chunk_id);
+        ++queued_chunks;
+    }
+    return !chunk_ids.empty();
+}
+
 bool ZarrDetectionLoader::warmEyeMaskCacheForFrame(size_t frame_id) const {
     if (!data_.eye_masks_loaded || data_.eye_mask_roi_count == 0) {
         return false;
@@ -4901,8 +5254,9 @@ bool ZarrDetectionLoader::readRefinedSubjectMaskComponentRow(
     if (component_name.empty()) {
         return fail("No refined subject-mask component selected.");
     }
-    if (data_.refined_subject_mask_rle_masks_used) {
-        return fail("Compact mask_rle rows are display-only here; materialize dense masks_roi before editing this refined subject-mask run.");
+    if (data_.refined_subject_mask_rle_masks_used ||
+        data_.refined_subject_mask_bitpacked_masks_used) {
+        return fail("Compact refined subject-mask rows are display-only here; materialize dense masks_roi before editing this refined subject-mask run.");
     }
 
     ZarrDetectionData::RefinedSubjectMaskComponentInfo selected_component;
@@ -4991,15 +5345,48 @@ bool ZarrDetectionLoader::readRefinedSubjectMaskComponentRow(
 }
 
 bool ZarrDetectionLoader::populateEyeMaskEntry(
-    size_t roi_index, FrameDetections::EyeMask& out_mask) const {
+    size_t roi_index,
+    FrameDetections::EyeMask& out_mask,
+    bool allow_blocking_load,
+    bool request_prefetch_on_miss) const {
     if (!data_.eye_masks_loaded || roi_index >= data_.eye_mask_roi_count) {
         return false;
     }
     size_t chunk_rows =
         data_.eye_mask_chunk_rows > 0 ? data_.eye_mask_chunk_rows : 512;
     size_t chunk_id = roi_index / chunk_rows;
-    if (!ensureEyeMaskChunk(chunk_id)) {
-        return false;
+    if (allow_blocking_load) {
+        if (!ensureEyeMaskChunk(chunk_id)) {
+            return false;
+        }
+    } else {
+        bool cache_hit = false;
+        {
+            std::lock_guard<std::mutex> cache_lock(
+                *data_.mask_chunk_cache_mutex);
+            auto& cache = data_.mask_chunk_cache;
+            auto it = std::find_if(
+                cache.begin(),
+                cache.end(),
+                [&](const ZarrDetectionData::EyeMaskChunkCacheEntry& entry) {
+                    return entry.chunk_id == chunk_id;
+                });
+            if (it != cache.end()) {
+                if (std::next(it) != cache.end()) {
+                    ZarrDetectionData::EyeMaskChunkCacheEntry entry =
+                        std::move(*it);
+                    cache.erase(it);
+                    cache.push_back(std::move(entry));
+                }
+                cache_hit = true;
+            }
+        }
+        if (!cache_hit) {
+            if (request_prefetch_on_miss) {
+                requestEyeMaskChunkPrefetch(chunk_id);
+            }
+            return false;
+        }
     }
     out_mask.rows = static_cast<int>(data_.eye_mask_height);
     out_mask.cols = static_cast<int>(data_.eye_mask_width);

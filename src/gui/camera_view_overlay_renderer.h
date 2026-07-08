@@ -25,6 +25,7 @@ struct CameraViewMaskPerfMetrics {
     std::string mode;
     int roi_count = 0;
     int visible_roi_count = 0;
+    int invalid_roi_count = 0;
     int component_fill_count = 0;
     int fallback_scatter_count = 0;
     int texture_cache_hits = 0;

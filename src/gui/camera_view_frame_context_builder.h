@@ -52,6 +52,7 @@ struct CameraViewFrameContextInput {
 
     bool can_draw_headings = false;
     bool can_draw_eye_masks = false;
+    bool allow_blocking_eye_mask_load = true;
     bool show_subject_body_mask = true;
     bool show_eye_left_mask = true;
     bool show_eye_right_mask = true;
