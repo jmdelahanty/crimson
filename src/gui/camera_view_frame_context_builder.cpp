@@ -57,13 +57,6 @@ bool subjectMaskBrushInputEnabled(const CameraViewFrameContextInput& input) {
            input.zarr_loader->eyeMasksUseRefinedSubjectMasks();
 }
 
-bool eyeMaskRoiInsetEnabled(const CameraViewFrameContextInput& input) {
-    return input.zarr_loaded && input.zarr_loader != nullptr &&
-           input.frame_debug_state != nullptr &&
-           input.frame_debug_state->active_roi_inset_options.show_inset &&
-           input.zarr_loader->hasEyeMasks();
-}
-
 CameraViewSubjectMaskPreview buildSubjectMaskPreview(
     const SubjectMaskEditSession* session) {
     CameraViewSubjectMaskPreview preview;
@@ -210,8 +203,7 @@ void prepareCameraViewFrameContext(
         heading_details = detection_details;
     }
 
-    if ((input.can_draw_eye_masks || eyeMaskRoiInsetEnabled(input)) &&
-        zarr_available) {
+    if (input.can_draw_eye_masks && zarr_available) {
         if (detection_details != nullptr &&
             detection_details->includes_eye_masks) {
             mask_details = detection_details;

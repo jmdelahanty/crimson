@@ -1550,8 +1550,8 @@ int main(int argc, char **argv) {
             }
             const bool prewarm_full_overlay = show_eye_masks;
             const bool prewarm_inset =
-                frame_debug_window_state
-                    .active_roi_inset_options.show_inset;
+                prewarm_full_overlay &&
+                frame_debug_window_state.active_roi_inset_options.show_inset;
             if (!prewarm_full_overlay && !prewarm_inset) {
                 return;
             }
