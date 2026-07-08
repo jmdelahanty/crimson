@@ -778,6 +778,25 @@ struct ZarrDetectionData {
     std::unordered_map<int32_t, ChaserBehaviorMetadata> chaser_behavior_by_index;
     bool has_chaser_behavior_metadata = false;
 
+    struct ChaserDistancePolarData {
+        bool loaded = false;
+        std::string run_name;
+        std::string component_name;
+        std::string coordinate_frame;
+        std::string angle_convention;
+        std::vector<int64_t> camera_frame_ids;
+        std::unordered_map<int64_t, size_t> row_by_camera_frame;
+        std::vector<int32_t> chaser_indices;
+        std::vector<float> bearing_deg;    // row-major [frame, chaser]
+        std::vector<float> distance_mm;    // row-major [frame, chaser]
+        std::vector<uint8_t> valid;        // row-major [frame, chaser]
+        std::vector<std::array<float, 4>> chaser_rgba;
+        size_t row_count = 0;
+        size_t chaser_count = 0;
+        float radial_max_mm = std::numeric_limits<float>::quiet_NaN();
+    };
+    ChaserDistancePolarData chaser_distance_polar;
+
     struct ChaserCoordinateTransform {
         double texture_width = 0.0;
         double texture_height = 0.0;
@@ -1033,6 +1052,32 @@ public:
     }
     const ZarrDetectionData::StimulusStep* getStimulusStepForFrame(
         int32_t camera_frame) const;
+    struct ChaserDistancePolarPoint {
+        int32_t chaser_index = -1;
+        float distance_mm = std::numeric_limits<float>::quiet_NaN();
+        float bearing_deg = std::numeric_limits<float>::quiet_NaN();
+        std::array<float, 4> rgba = {1.0f, 0.0f, 0.0f, 1.0f};
+        bool has_rgba = false;
+    };
+    struct ChaserDistancePolarFrame {
+        bool available = false;
+        int64_t camera_frame_id = -1;
+        std::string run_name;
+        std::string component_name;
+        float radial_max_mm = std::numeric_limits<float>::quiet_NaN();
+        std::vector<ChaserDistancePolarPoint> points;
+    };
+    bool hasChaserDistancePolarData() const {
+        return data_.chaser_distance_polar.loaded;
+    }
+    const std::string& getChaserDistancePolarRunName() const {
+        return data_.chaser_distance_polar.run_name;
+    }
+    const std::string& getChaserDistancePolarComponentName() const {
+        return data_.chaser_distance_polar.component_name;
+    }
+    ChaserDistancePolarFrame getChaserDistancePolarFrame(
+        int64_t camera_frame) const;
     bool hasRefinedDetections() const {
         return data_.has_interpolation && data_.latest_interpolation.has_flat_detections;
     }
@@ -1824,6 +1869,7 @@ private:
     bool loadChaserBoundingBoxes(const ts::kvstore::KvStore& store, const std::string& run_base);
     bool loadChaserStatesInterpolated(const ts::kvstore::KvStore& store,
                                       const std::string& run_base);
+    bool loadChaserDistancePolarData(const ts::kvstore::KvStore& store);
     bool loadStimulusFrameMetadataMapping(const ts::kvstore::KvStore& store,
                                           const std::string& run_base,
                                           std::vector<int32_t>& stimulus_to_camera);

@@ -782,6 +782,15 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
         }
         startup_trace.step("load_interpolation_runs");
 
+        if (loadChaserDistancePolarData(store)) {
+            std::cout << "  Chaser-distance polar inset data available"
+                      << std::endl;
+        } else {
+            std::cout << "  No chaser-distance polar inset data available"
+                      << std::endl;
+        }
+        startup_trace.step("load_chaser_distance_polar");
+
         if (discoverMovementData(store)) {
             std::cout << "  Deferred movement analysis data load"
                       << std::endl;

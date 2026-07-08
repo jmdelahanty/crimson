@@ -70,6 +70,8 @@ struct CameraViewFrameContextInput {
     float movement_trail_seconds = 2.0f;
     bool movement_trail_valid_samples_only = true;
     CameraViewStimulusInsetOptions stimulus_inset_options;
+    CameraViewChaserDistancePolarInsetOptions
+        chaser_distance_polar_inset_options;
     const StimulusPlayback* stimulus_player = nullptr;
     int target_stimulus_frame = -1;
 
@@ -89,6 +91,8 @@ struct PreparedCameraViewFrameContext {
     std::optional<ZarrDetectionLoader::MovementFrameSample>
         movement_frame_sample;
     std::vector<ZarrDetectionLoader::MovementTrailPoint> movement_trail_points;
+    ZarrDetectionLoader::ChaserDistancePolarFrame
+        chaser_distance_polar_frame;
     CameraViewWindowContext context;
     double mask_data_load_ms = 0.0;
 };

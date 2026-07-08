@@ -29,6 +29,21 @@ std::string stimulusJsonScalarStringAttr(const json& attrs, const char* key) {
     return {};
 }
 
+std::string latestCompleteFirstRunName(const json& attrs) {
+    const char* keys[] = {
+        "latest_complete",
+        "latest_completed",
+        "latest_success",
+        "latest",
+    };
+    for (const char* key : keys) {
+        if (attrs.contains(key) && attrs[key].is_string()) {
+            return attrs[key].get<std::string>();
+        }
+    }
+    return {};
+}
+
 int32_t stimulusJsonIntAttr(const json& attrs, const char* key) {
     if (attrs.contains(key) && attrs[key].is_number_integer()) {
         return attrs[key].get<int32_t>();
@@ -223,6 +238,104 @@ std::optional<json> parseJsonObjectString(const json& value) {
     } catch (const std::exception&) {
     }
     return std::nullopt;
+}
+
+int hexNibble(char c) {
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'f') {
+        return 10 + c - 'a';
+    }
+    if (c >= 'A' && c <= 'F') {
+        return 10 + c - 'A';
+    }
+    return -1;
+}
+
+std::optional<std::array<float, 4>> parseHexRgbaColor(std::string text) {
+    if (!text.empty() && text[0] == '#') {
+        text.erase(text.begin());
+    }
+    if (text.size() != 6 && text.size() != 8) {
+        return std::nullopt;
+    }
+    auto read_byte = [&](size_t offset) -> std::optional<int> {
+        const int hi = hexNibble(text[offset]);
+        const int lo = hexNibble(text[offset + 1]);
+        if (hi < 0 || lo < 0) {
+            return std::nullopt;
+        }
+        return hi * 16 + lo;
+    };
+    auto r = read_byte(0);
+    auto g = read_byte(2);
+    auto b = read_byte(4);
+    if (!r || !g || !b) {
+        return std::nullopt;
+    }
+    int a = 255;
+    if (text.size() == 8) {
+        auto alpha = read_byte(6);
+        if (!alpha) {
+            return std::nullopt;
+        }
+        a = *alpha;
+    }
+    return std::array<float, 4>{
+        static_cast<float>(*r) / 255.0f,
+        static_cast<float>(*g) / 255.0f,
+        static_cast<float>(*b) / 255.0f,
+        static_cast<float>(a) / 255.0f,
+    };
+}
+
+std::unordered_map<int32_t, std::array<float, 4>>
+collectChaserHexColorsFromSummary(const json& attrs) {
+    std::unordered_map<int32_t, std::array<float, 4>> colors;
+    if (!attrs.contains("summary") || !attrs["summary"].is_object()) {
+        return colors;
+    }
+    const auto& summary = attrs["summary"];
+    if (!summary.contains("chaser_color_hex") ||
+        !summary["chaser_color_hex"].is_object()) {
+        return colors;
+    }
+    for (auto it = summary["chaser_color_hex"].begin();
+         it != summary["chaser_color_hex"].end();
+         ++it) {
+        if (!it.value().is_string()) {
+            continue;
+        }
+        int32_t chaser_index = -1;
+        try {
+            chaser_index = static_cast<int32_t>(std::stoi(it.key()));
+        } catch (const std::exception&) {
+            continue;
+        }
+        auto color = parseHexRgbaColor(it.value().get<std::string>());
+        if (color.has_value()) {
+            colors[chaser_index] = *color;
+        }
+    }
+    return colors;
+}
+
+std::array<float, 4> fallbackChaserColor(int32_t chaser_index) {
+    static const std::array<std::array<float, 4>, 8> kPalette = {{
+        {1.00f, 0.12f, 0.10f, 1.0f},
+        {0.10f, 0.32f, 1.00f, 1.0f},
+        {0.10f, 0.78f, 0.32f, 1.0f},
+        {1.00f, 0.68f, 0.10f, 1.0f},
+        {0.70f, 0.24f, 0.95f, 1.0f},
+        {0.05f, 0.75f, 0.85f, 1.0f},
+        {0.95f, 0.25f, 0.58f, 1.0f},
+        {0.82f, 0.82f, 0.18f, 1.0f},
+    }};
+    const size_t index = static_cast<size_t>(
+        std::max<int32_t>(0, chaser_index)) %
+        kPalette.size();
+    return kPalette[index];
 }
 
 void collectChaserColorsFromParameters(
@@ -2829,6 +2942,317 @@ std::optional<int32_t> ZarrDetectionLoader::getFirstStimulusFrameNumber(
                          interp.first_stimulus_frame,
                          interp.first_metadata_index_with_stimulus,
                          interp.camera_to_metadata_index);
+}
+
+bool ZarrDetectionLoader::loadChaserDistancePolarData(
+    const ts::kvstore::KvStore& store) {
+    data_.chaser_distance_polar = ZarrDetectionData::ChaserDistancePolarData{};
+
+    std::string run_name;
+    if (auto group_attrs =
+            readAttrsAny(store, "analysis/chaser_distance_runs")) {
+        run_name = latestCompleteFirstRunName(*group_attrs);
+    }
+    if (run_name.empty()) {
+        auto candidates = collect_runs_fs(root_path_,
+                                          "analysis/chaser_distance_runs",
+                                          {"frames/camera_frame_id",
+                                           "distances/distance_mm"});
+        if (!candidates.empty()) {
+            run_name = candidates.back();
+        }
+    }
+    if (run_name.empty()) {
+        return false;
+    }
+
+    const std::string run_base =
+        "analysis/chaser_distance_runs/" + run_name + "/";
+    auto run_attrs = readAttrsAny(store, run_base);
+
+    std::string component_name;
+    const std::string egocentric_group = run_base + "egocentric_bearing";
+    if (auto ego_attrs = readAttrsAny(store, egocentric_group)) {
+        component_name = latestCompleteFirstRunName(*ego_attrs);
+    }
+    if (component_name.empty()) {
+        auto candidates = collect_runs_fs(
+            root_path_,
+            "analysis/chaser_distance_runs/" + run_name + "/egocentric_bearing",
+            {"per_chaser/bearing_deg",
+             "per_chaser/distance_mm",
+             "per_chaser/valid"});
+        if (!candidates.empty()) {
+            component_name = candidates.back();
+        }
+    }
+    if (component_name.empty()) {
+        std::cout << "  [ChaserDistancePolar] Run '" << run_name
+                  << "' has no persisted egocentric_bearing component"
+                  << std::endl;
+        return false;
+    }
+
+    const std::string component_base =
+        run_base + "egocentric_bearing/" + component_name + "/";
+    auto component_attrs = readAttrsAny(store, component_base);
+
+    auto readFloat2D = [&](const std::string& path,
+                           std::vector<float>& out,
+                           size_t& rows_out,
+                           size_t& cols_out) -> bool {
+        auto attempt = [&](auto type_token) -> bool {
+            using Source = decltype(type_token);
+            auto open_result = openArrayAny<Source, 2>(store, path, context_);
+            if (!open_result.ok()) {
+                return false;
+            }
+            auto array_result = ts::Read(open_result.value()).result();
+            if (!array_result.ok()) {
+                return false;
+            }
+            auto array = array_result.value();
+            if (array.rank() != 2 || array.shape()[0] < 0 ||
+                array.shape()[1] <= 0) {
+                return false;
+            }
+            rows_out = static_cast<size_t>(array.shape()[0]);
+            cols_out = static_cast<size_t>(array.shape()[1]);
+            out.assign(rows_out * cols_out,
+                       std::numeric_limits<float>::quiet_NaN());
+            for (size_t row = 0; row < rows_out; ++row) {
+                for (size_t col = 0; col < cols_out; ++col) {
+                    out[row * cols_out + col] =
+                        static_cast<float>(array(static_cast<ts::Index>(row),
+                                                 static_cast<ts::Index>(col)));
+                }
+            }
+            return true;
+        };
+        return attempt(float{}) || attempt(double{});
+    };
+
+    auto readBool2D = [&](const std::string& path,
+                          std::vector<uint8_t>& out,
+                          size_t& rows_out,
+                          size_t& cols_out) -> bool {
+        auto open_result = openArrayAny<bool, 2>(store, path, context_);
+        if (!open_result.ok()) {
+            return false;
+        }
+        auto array_result = ts::Read(open_result.value()).result();
+        if (!array_result.ok()) {
+            return false;
+        }
+        auto array = array_result.value();
+        if (array.rank() != 2 || array.shape()[0] < 0 ||
+            array.shape()[1] <= 0) {
+            return false;
+        }
+        rows_out = static_cast<size_t>(array.shape()[0]);
+        cols_out = static_cast<size_t>(array.shape()[1]);
+        out.assign(rows_out * cols_out, uint8_t{0});
+        for (size_t row = 0; row < rows_out; ++row) {
+            for (size_t col = 0; col < cols_out; ++col) {
+                out[row * cols_out + col] =
+                    array(static_cast<ts::Index>(row),
+                          static_cast<ts::Index>(col))
+                        ? uint8_t{1}
+                        : uint8_t{0};
+            }
+        }
+        return true;
+    };
+
+    ZarrDetectionData::ChaserDistancePolarData polar;
+    polar.run_name = run_name;
+    polar.component_name = component_name;
+    if (run_attrs.has_value()) {
+        polar.coordinate_frame =
+            stimulusJsonStringAttr(*run_attrs, "coordinate_frame");
+    }
+    if (component_attrs.has_value()) {
+        polar.angle_convention =
+            stimulusJsonStringAttr(*component_attrs, "angle_convention");
+        if (polar.angle_convention.empty() &&
+            component_attrs->contains("parameters") &&
+            (*component_attrs)["parameters"].is_object()) {
+            polar.angle_convention = stimulusJsonStringAttr(
+                (*component_attrs)["parameters"], "angle_convention");
+        }
+    }
+
+    if (!readInt64Array(store,
+                        component_base + "frames/camera_frame_id",
+                        polar.camera_frame_ids)) {
+        if (!readInt64Array(store,
+                            run_base + "frames/camera_frame_id",
+                            polar.camera_frame_ids)) {
+            std::cout << "  [ChaserDistancePolar] Missing camera_frame_id for "
+                      << run_name << " / " << component_name << std::endl;
+            return false;
+        }
+    }
+    if (polar.camera_frame_ids.empty()) {
+        return false;
+    }
+
+    if (!readInt32Array(store,
+                        component_base + "per_chaser/chaser_index",
+                        polar.chaser_indices)) {
+        if (!readInt32Array(store,
+                            run_base + "chasers/chaser_index",
+                            polar.chaser_indices)) {
+            std::cout << "  [ChaserDistancePolar] Missing chaser_index for "
+                      << run_name << " / " << component_name << std::endl;
+            return false;
+        }
+    }
+    if (polar.chaser_indices.empty()) {
+        return false;
+    }
+
+    size_t bearing_rows = 0;
+    size_t bearing_cols = 0;
+    size_t distance_rows = 0;
+    size_t distance_cols = 0;
+    size_t valid_rows = 0;
+    size_t valid_cols = 0;
+    if (!readFloat2D(component_base + "per_chaser/bearing_deg",
+                     polar.bearing_deg,
+                     bearing_rows,
+                     bearing_cols) ||
+        !readFloat2D(component_base + "per_chaser/distance_mm",
+                     polar.distance_mm,
+                     distance_rows,
+                     distance_cols) ||
+        !readBool2D(component_base + "per_chaser/valid",
+                    polar.valid,
+                    valid_rows,
+                    valid_cols)) {
+        std::cout << "  [ChaserDistancePolar] Could not read persisted "
+                  << "egocentric arrays for " << run_name << " / "
+                  << component_name << std::endl;
+        return false;
+    }
+
+    polar.row_count = polar.camera_frame_ids.size();
+    polar.chaser_count = polar.chaser_indices.size();
+    const bool shapes_match =
+        bearing_rows == polar.row_count &&
+        distance_rows == polar.row_count &&
+        valid_rows == polar.row_count &&
+        bearing_cols == polar.chaser_count &&
+        distance_cols == polar.chaser_count &&
+        valid_cols == polar.chaser_count;
+    if (!shapes_match) {
+        std::cout << "  [ChaserDistancePolar] Shape mismatch for "
+                  << run_name << " / " << component_name
+                  << " frames=" << polar.row_count
+                  << " chasers=" << polar.chaser_count
+                  << " bearing=" << bearing_rows << "x" << bearing_cols
+                  << " distance=" << distance_rows << "x" << distance_cols
+                  << " valid=" << valid_rows << "x" << valid_cols
+                  << std::endl;
+        return false;
+    }
+
+    polar.row_by_camera_frame.reserve(polar.camera_frame_ids.size());
+    for (size_t row = 0; row < polar.camera_frame_ids.size(); ++row) {
+        polar.row_by_camera_frame.emplace(polar.camera_frame_ids[row], row);
+    }
+
+    auto component_hex_colors =
+        component_attrs.has_value()
+            ? collectChaserHexColorsFromSummary(*component_attrs)
+            : std::unordered_map<int32_t, std::array<float, 4>>{};
+    polar.chaser_rgba.resize(polar.chaser_count);
+    for (size_t col = 0; col < polar.chaser_count; ++col) {
+        const int32_t chaser_index = polar.chaser_indices[col];
+        auto protocol_color = data_.chaser_rgba_by_index.find(chaser_index);
+        if (protocol_color != data_.chaser_rgba_by_index.end()) {
+            polar.chaser_rgba[col] = protocol_color->second;
+            continue;
+        }
+        auto component_color = component_hex_colors.find(chaser_index);
+        if (component_color != component_hex_colors.end()) {
+            polar.chaser_rgba[col] = component_color->second;
+            continue;
+        }
+        polar.chaser_rgba[col] = fallbackChaserColor(chaser_index);
+    }
+
+    polar.radial_max_mm = 0.0f;
+    for (size_t i = 0; i < polar.distance_mm.size(); ++i) {
+        if (i >= polar.valid.size() || polar.valid[i] == 0) {
+            continue;
+        }
+        const float value = polar.distance_mm[i];
+        if (std::isfinite(value) && value > polar.radial_max_mm) {
+            polar.radial_max_mm = value;
+        }
+    }
+    if (!(std::isfinite(polar.radial_max_mm) && polar.radial_max_mm > 0.0f)) {
+        polar.radial_max_mm = 1.0f;
+    }
+
+    polar.loaded = true;
+    data_.chaser_distance_polar = std::move(polar);
+    std::cout << "  [ChaserDistancePolar] Loaded run '" << run_name
+              << "' component '" << component_name << "' ("
+              << data_.chaser_distance_polar.row_count << " frames, "
+              << data_.chaser_distance_polar.chaser_count
+              << " chaser columns, max radius "
+              << data_.chaser_distance_polar.radial_max_mm << " mm)"
+              << std::endl;
+    return true;
+}
+
+ZarrDetectionLoader::ChaserDistancePolarFrame
+ZarrDetectionLoader::getChaserDistancePolarFrame(
+    int64_t camera_frame) const {
+    ChaserDistancePolarFrame frame;
+    const auto& polar = data_.chaser_distance_polar;
+    if (!polar.loaded) {
+        return frame;
+    }
+
+    frame.available = true;
+    frame.camera_frame_id = camera_frame;
+    frame.run_name = polar.run_name;
+    frame.component_name = polar.component_name;
+    frame.radial_max_mm = polar.radial_max_mm;
+
+    auto row_it = polar.row_by_camera_frame.find(camera_frame);
+    if (row_it == polar.row_by_camera_frame.end()) {
+        return frame;
+    }
+    const size_t row = row_it->second;
+    for (size_t col = 0; col < polar.chaser_count; ++col) {
+        const size_t offset = row * polar.chaser_count + col;
+        if (offset >= polar.valid.size() || polar.valid[offset] == 0 ||
+            offset >= polar.distance_mm.size() ||
+            offset >= polar.bearing_deg.size()) {
+            continue;
+        }
+        const float distance = polar.distance_mm[offset];
+        const float bearing = polar.bearing_deg[offset];
+        if (!std::isfinite(distance) || !std::isfinite(bearing)) {
+            continue;
+        }
+        ChaserDistancePolarPoint point;
+        point.chaser_index =
+            col < polar.chaser_indices.size() ? polar.chaser_indices[col]
+                                              : static_cast<int32_t>(col);
+        point.distance_mm = distance;
+        point.bearing_deg = bearing;
+        if (col < polar.chaser_rgba.size()) {
+            point.rgba = polar.chaser_rgba[col];
+            point.has_rgba = true;
+        }
+        frame.points.push_back(point);
+    }
+    return frame;
 }
 
 std::vector<ZarrDetectionLoader::ChaserBoundingBox>

@@ -1199,6 +1199,9 @@ CameraViewWindowResult drawCameraViewWindowContents(
         drawCameraViewStimulusInsetOverlay(context.stimulus_player,
                                            context.target_stimulus_frame,
                                            context.stimulus_inset_options);
+        drawCameraViewChaserDistancePolarInsetOverlay(
+            context.chaser_distance_polar_frame,
+            context.chaser_distance_polar_inset_options);
         if (context.active_roi_inset_options.show_inset &&
             (context.mask_details != nullptr ||
              context.active_roi_inset_target.valid)) {

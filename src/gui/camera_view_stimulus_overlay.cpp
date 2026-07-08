@@ -733,3 +733,153 @@ void drawCameraViewStimulusInsetOverlay(
                            label_text.c_str());
     }
 }
+
+void drawCameraViewChaserDistancePolarInsetOverlay(
+    const ZarrDetectionLoader::ChaserDistancePolarFrame& polar_frame,
+    const CameraViewChaserDistancePolarInsetOptions& options) {
+    if (!options.show_inset || !polar_frame.available) {
+        return;
+    }
+
+    const ImVec2 plot_pos = ImPlot::GetPlotPos();
+    const ImVec2 plot_size = ImPlot::GetPlotSize();
+    if (plot_size.x < 160.0f || plot_size.y < 160.0f) {
+        return;
+    }
+
+    constexpr float kPad = 8.0f;
+    const float max_width = std::min(plot_size.x - 24.0f, plot_size.x * 0.32f);
+    float graph_size =
+        std::clamp(options.width_px, 140.0f, std::max(140.0f, max_width));
+    const float requested_readout_height =
+        options.show_readout ? std::min(72.0f,
+                                        25.0f + 16.0f *
+                                                    std::max<size_t>(
+                                                        1,
+                                                        polar_frame.points.size()))
+                             : 0.0f;
+    const float max_height = plot_size.y - 24.0f;
+    if (graph_size + requested_readout_height + kPad * 2.0f > max_height) {
+        graph_size = std::max(112.0f,
+                              max_height - requested_readout_height -
+                                  kPad * 2.0f);
+    }
+    if (graph_size < 96.0f) {
+        return;
+    }
+    const float readout_height =
+        options.show_readout
+            ? std::min(requested_readout_height,
+                       std::max(0.0f, max_height - graph_size - kPad * 2.0f))
+            : 0.0f;
+    const float box_width = graph_size + kPad * 2.0f;
+    const float box_height = graph_size + readout_height + kPad * 2.0f;
+    const ImVec2 box_min(plot_pos.x + plot_size.x - box_width - 12.0f,
+                         plot_pos.y + 12.0f);
+    const ImVec2 box_max(box_min.x + box_width, box_min.y + box_height);
+
+    ImDrawList* draw_list = ImPlot::GetPlotDrawList();
+    const int background_alpha = static_cast<int>(
+        std::clamp(options.opacity, 0.15f, 1.0f) * 225.0f);
+    draw_list->AddRectFilled(box_min,
+                             box_max,
+                             IM_COL32(4, 8, 14, background_alpha),
+                             6.0f);
+    draw_list->AddRect(box_min, box_max, IM_COL32(110, 205, 205, 210), 6.0f);
+
+    const ImVec2 graph_min(box_min.x + kPad, box_min.y + kPad);
+    const ImVec2 center(graph_min.x + graph_size * 0.5f,
+                        graph_min.y + graph_size * 0.5f);
+    const float label_margin = options.show_labels ? 24.0f : 12.0f;
+    const float radius = std::max(20.0f, graph_size * 0.5f - label_margin);
+
+    const ImU32 grid = IM_COL32(150, 185, 205, 120);
+    const ImU32 axis = IM_COL32(190, 220, 230, 150);
+    draw_list->AddCircle(center, radius * 0.5f, grid, 72, 1.0f);
+    draw_list->AddCircle(center, radius, grid, 96, 1.2f);
+    draw_list->AddLine(ImVec2(center.x, center.y - radius),
+                       ImVec2(center.x, center.y + radius),
+                       axis,
+                       1.0f);
+    draw_list->AddLine(ImVec2(center.x - radius, center.y),
+                       ImVec2(center.x + radius, center.y),
+                       axis,
+                       1.0f);
+
+    if (options.show_labels) {
+        auto add_centered_label = [&](const char* label, ImVec2 pos) {
+            const ImVec2 text_size = ImGui::CalcTextSize(label);
+            draw_list->AddText(
+                ImVec2(pos.x - text_size.x * 0.5f,
+                       pos.y - text_size.y * 0.5f),
+                IM_COL32(225, 238, 255, 235),
+                label);
+        };
+        add_centered_label("front", ImVec2(center.x, center.y - radius - 12.0f));
+        add_centered_label("left", ImVec2(center.x - radius - 15.0f, center.y));
+        add_centered_label("right", ImVec2(center.x + radius + 17.0f, center.y));
+        add_centered_label("behind",
+                           ImVec2(center.x, center.y + radius + 12.0f));
+    }
+
+    const float radial_max =
+        std::isfinite(polar_frame.radial_max_mm) &&
+                polar_frame.radial_max_mm > 0.0f
+            ? polar_frame.radial_max_mm * 1.05f
+            : 1.0f;
+    for (const auto& point : polar_frame.points) {
+        const float distance =
+            std::clamp(point.distance_mm, 0.0f, radial_max);
+        const float r = radius * (distance / radial_max);
+        constexpr float kDegToRad = 3.14159265358979323846f / 180.0f;
+        const float theta_rad =
+            (-90.0f - point.bearing_deg) * kDegToRad;
+        const ImVec2 pos(center.x + r * std::cos(theta_rad),
+                         center.y + r * std::sin(theta_rad));
+        ImVec4 color = point.has_rgba ? rgbaToImVec4(point.rgba)
+                                      : ImVec4(1.0f, 0.1f, 0.1f, 1.0f);
+        color.w = 1.0f;
+        const ImU32 fill = ImGui::ColorConvertFloat4ToU32(color);
+        draw_list->AddCircleFilled(pos, 5.0f, fill, 20);
+        draw_list->AddCircle(pos, 5.0f, IM_COL32(0, 0, 0, 230), 20, 1.3f);
+    }
+
+    if (!options.show_readout) {
+        return;
+    }
+
+    const ImVec2 readout_pos(graph_min.x, graph_min.y + graph_size + 2.0f);
+    std::ostringstream title;
+    title << "Chaser bearing f=" << polar_frame.camera_frame_id;
+    const std::string title_text = title.str();
+    draw_list->AddText(readout_pos,
+                       IM_COL32(230, 245, 250, 245),
+                       title_text.c_str());
+
+    float y = readout_pos.y + 16.0f;
+    if (polar_frame.points.empty()) {
+        draw_list->AddText(ImVec2(readout_pos.x, y),
+                           IM_COL32(170, 185, 195, 235),
+                           "No valid chaser sample");
+        return;
+    }
+    for (const auto& point : polar_frame.points) {
+        if (y > box_max.y - 16.0f) {
+            break;
+        }
+        std::ostringstream line;
+        line << "c" << point.chaser_index << " "
+             << std::fixed << std::setprecision(1)
+             << point.distance_mm << " mm  "
+             << std::showpos << point.bearing_deg << std::noshowpos
+             << " deg";
+        const std::string line_text = line.str();
+        ImVec4 color = point.has_rgba ? rgbaToImVec4(point.rgba)
+                                      : ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+        color.w = 1.0f;
+        draw_list->AddText(ImVec2(readout_pos.x, y),
+                           ImGui::ColorConvertFloat4ToU32(color),
+                           line_text.c_str());
+        y += 15.0f;
+    }
+}

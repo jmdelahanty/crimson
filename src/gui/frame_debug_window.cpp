@@ -32,6 +32,8 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
     result.movement_trail_valid_samples_only =
         context.movement_trail_valid_samples_only;
     result.stimulus_inset_options = context.stimulus_inset_options;
+    result.chaser_distance_polar_inset_options =
+        context.chaser_distance_polar_inset_options;
     result.show_stimulus_debug_windows =
         context.show_stimulus_debug_windows;
 

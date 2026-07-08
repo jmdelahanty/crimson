@@ -116,6 +116,8 @@ struct CameraViewWindowContext {
     const StimulusPlayback* stimulus_player = nullptr;
     int target_stimulus_frame = -1;
     CameraViewStimulusInsetOptions stimulus_inset_options;
+    ZarrDetectionLoader::ChaserDistancePolarFrame chaser_distance_polar_frame;
+    CameraViewChaserDistancePolarInsetOptions chaser_distance_polar_inset_options;
 
     CameraViewTransportControlsContext transport_controls;
     bool capture_texture_draw_trace = false;

@@ -136,6 +136,14 @@ struct CameraViewStimulusInsetOptions {
     bool show_frame_label = true;
 };
 
+struct CameraViewChaserDistancePolarInsetOptions {
+    bool show_inset = true;
+    float width_px = 220.0f;
+    float opacity = 0.86f;
+    bool show_readout = true;
+    bool show_labels = true;
+};
+
 std::vector<FullFrameRectOverlayItem> buildCameraViewBoundingBoxOverlayItems(
     const std::vector<LoggedBoundingBox>& zarr_boxes,
     const ZarrDetectionLoader::FrameDetections& detection_details,
@@ -224,3 +232,7 @@ void drawCameraViewStimulusInsetOverlay(
     const StimulusPlayback* stimulus_player,
     int target_stimulus_frame,
     const CameraViewStimulusInsetOptions& options);
+
+void drawCameraViewChaserDistancePolarInsetOverlay(
+    const ZarrDetectionLoader::ChaserDistancePolarFrame& polar_frame,
+    const CameraViewChaserDistancePolarInsetOptions& options);

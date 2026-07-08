@@ -99,6 +99,8 @@ struct FrameDebugWindowContext {
     float movement_trail_seconds = 2.0f;
     bool movement_trail_valid_samples_only = true;
     CameraViewStimulusInsetOptions stimulus_inset_options;
+    CameraViewChaserDistancePolarInsetOptions
+        chaser_distance_polar_inset_options;
     bool show_stimulus_debug_windows = false;
 };
 
@@ -135,6 +137,8 @@ struct FrameDebugWindowResult {
     float movement_trail_seconds = 2.0f;
     bool movement_trail_valid_samples_only = true;
     CameraViewStimulusInsetOptions stimulus_inset_options;
+    CameraViewChaserDistancePolarInsetOptions
+        chaser_distance_polar_inset_options;
     bool show_stimulus_debug_windows = false;
     bool request_prev_subject_shape_qc_frame = false;
     bool request_next_subject_shape_qc_frame = false;

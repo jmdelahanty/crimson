@@ -1196,6 +1196,8 @@ int main(int argc, char **argv) {
     float movement_trail_seconds = 2.0f;
     bool movement_trail_valid_samples_only = true;
     CameraViewStimulusInsetOptions stimulus_inset_options;
+    CameraViewChaserDistancePolarInsetOptions
+        chaser_distance_polar_inset_options;
     bool show_stimulus_debug_windows = false;
     CameraViewMaskOverlayMode mask_overlay_mode =
         CameraViewMaskOverlayMode::Review;
@@ -3064,6 +3066,7 @@ int main(int argc, char **argv) {
                 movement_trail_seconds,
                 movement_trail_valid_samples_only,
                 stimulus_inset_options,
+                chaser_distance_polar_inset_options,
                 show_stimulus_debug_windows,
             };
             const FrameDebugWindowResult frame_debug_result =
@@ -3097,6 +3100,8 @@ int main(int argc, char **argv) {
                 frame_debug_result.movement_trail_valid_samples_only;
             stimulus_inset_options =
                 frame_debug_result.stimulus_inset_options;
+            chaser_distance_polar_inset_options =
+                frame_debug_result.chaser_distance_polar_inset_options;
             show_stimulus_debug_windows =
                 frame_debug_result.show_stimulus_debug_windows;
             active_full_frame_keypoint_selection =
@@ -4758,6 +4763,8 @@ int main(int argc, char **argv) {
                         movement_trail_valid_samples_only;
                     camera_context_input.stimulus_inset_options =
                         stimulus_inset_options;
+                    camera_context_input.chaser_distance_polar_inset_options =
+                        chaser_distance_polar_inset_options;
                     camera_context_input.stimulus_player =
                         stimulus_player.loaded ? &stimulus_player : nullptr;
                     camera_context_input.target_stimulus_frame =

@@ -450,6 +450,62 @@ void drawStimulusOverlaySection(const FrameDebugWindowContext& context,
     }
 }
 
+void drawChaserDistancePolarOverlaySection(
+    const FrameDebugWindowContext& context,
+    FrameDebugWindowResult& result) {
+    if (!context.zarr_loader.hasChaserDistancePolarData()) {
+        return;
+    }
+
+    result.chaser_distance_polar_inset_options =
+        context.chaser_distance_polar_inset_options;
+
+    ImGui::Separator();
+    ImGui::Text("Chaser Distance Polar Plot:");
+    ImGui::Checkbox(
+        "Camera-view polar inset",
+        &result.chaser_distance_polar_inset_options.show_inset);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Draw a fish-centered chaser distance/bearing polar plot in the camera view.");
+    }
+    ImGui::BeginDisabled(
+        !result.chaser_distance_polar_inset_options.show_inset);
+    ImGui::SetNextItemWidth(180.0f);
+    ImGui::SliderFloat("Polar inset width (px)",
+                       &result.chaser_distance_polar_inset_options.width_px,
+                       140.0f,
+                       360.0f,
+                       "%.0f");
+    result.chaser_distance_polar_inset_options.width_px =
+        std::clamp(result.chaser_distance_polar_inset_options.width_px,
+                   140.0f,
+                   360.0f);
+    ImGui::SetNextItemWidth(180.0f);
+    ImGui::SliderFloat("Polar inset opacity",
+                       &result.chaser_distance_polar_inset_options.opacity,
+                       0.20f,
+                       1.0f,
+                       "%.2f");
+    result.chaser_distance_polar_inset_options.opacity =
+        std::clamp(result.chaser_distance_polar_inset_options.opacity,
+                   0.20f,
+                   1.0f);
+    ImGui::Checkbox("Polar labels",
+                    &result.chaser_distance_polar_inset_options.show_labels);
+    ImGui::SameLine();
+    ImGui::Checkbox("Readout",
+                    &result.chaser_distance_polar_inset_options.show_readout);
+    ImGui::EndDisabled();
+    ImGui::TextWrapped("  Source: %s / %s",
+                       context.zarr_loader
+                           .getChaserDistancePolarRunName()
+                           .c_str(),
+                       context.zarr_loader
+                           .getChaserDistancePolarComponentName()
+                           .c_str());
+}
+
 }  // namespace
 
 void drawKeypointHeadingOverlayPanel(const FrameDebugWindowContext& context,
@@ -481,5 +537,6 @@ void drawEyeMaskOverlayPanel(const FrameDebugWindowContext& context,
 void drawTrackKinematicsOverlayPanel(const FrameDebugWindowContext& context,
                                      FrameDebugWindowResult& result) {
     drawTrackKinematicsOverlaySection(context, result);
+    drawChaserDistancePolarOverlaySection(context, result);
     drawStimulusOverlaySection(context, result);
 }

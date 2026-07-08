@@ -241,6 +241,12 @@ void prepareCameraViewFrameContext(
         }
     }
 
+    if (zarr_available && input.zarr_loader->hasChaserDistancePolarData()) {
+        prepared.chaser_distance_polar_frame =
+            input.zarr_loader->getChaserDistancePolarFrame(
+                input.current_frame_num);
+    }
+
     const bool full_frame_keypoint_edit_enabled =
         zarr_available && input.keypoint_tab_full_frame_edit_enabled;
     const FullFrameKeypointEditState full_frame_keypoint_edit_state =
@@ -333,6 +339,8 @@ void prepareCameraViewFrameContext(
         input.stimulus_player,
         input.target_stimulus_frame,
         input.stimulus_inset_options,
+        prepared.chaser_distance_polar_frame,
+        input.chaser_distance_polar_inset_options,
         input.transport_controls,
         input.capture_texture_draw_trace,
     };
