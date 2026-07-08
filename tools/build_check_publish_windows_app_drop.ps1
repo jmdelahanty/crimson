@@ -52,28 +52,27 @@ function Resolve-FullPath {
     return [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $PathValue))
 }
 
-function Add-OptionalArgument {
+function Add-OptionalParameter {
     param(
-        [System.Collections.ArrayList]$Arguments,
+        [hashtable]$Parameters,
         [string]$Name,
         [string]$Value
     )
 
     if (-not [string]::IsNullOrWhiteSpace($Value)) {
-        [void]$Arguments.Add($Name)
-        [void]$Arguments.Add($Value)
+        $Parameters[$Name] = $Value
     }
 }
 
-function Add-SwitchArgument {
+function Add-SwitchParameter {
     param(
-        [System.Collections.ArrayList]$Arguments,
+        [hashtable]$Parameters,
         [string]$Name,
         [bool]$Enabled
     )
 
     if ($Enabled) {
-        [void]$Arguments.Add($Name)
+        $Parameters[$Name] = $true
     }
 }
 
@@ -81,7 +80,7 @@ function Invoke-Script {
     param(
         [string]$Label,
         [string]$ScriptPath,
-        [string[]]$Arguments
+        [hashtable]$Parameters
     )
 
     if (-not (Test-Path -LiteralPath $ScriptPath)) {
@@ -90,7 +89,7 @@ function Invoke-Script {
 
     Write-Host ""
     Write-Host "== $Label =="
-    & $ScriptPath @Arguments
+    & $ScriptPath @Parameters
 }
 
 if ([string]::IsNullOrWhiteSpace($ShareRoot)) {
@@ -104,47 +103,46 @@ if ($ArchiveExistingCurrent -and -not $PublishCurrent) {
 }
 
 $InstallRoot = Resolve-FullPath -PathValue $InstallPrefix
-$buildArgs = [System.Collections.ArrayList]::new()
-[void]$buildArgs.AddRange(@(
-    "-Preset", $Preset,
-    "-Configuration", $Configuration,
-    "-InstallPrefix", $InstallPrefix,
-    "-ThirdPartyRoot", $ThirdPartyRoot,
-    "-CudaToolkitRoot", $CudaToolkitRoot,
-    "-VcpkgRoot", $VcpkgRoot,
-    "-VcpkgTriplet", $VcpkgTriplet,
-    "-SkipRuntimeCheck"
-))
-Add-OptionalArgument -Arguments $buildArgs -Name "-BuildDir" -Value $BuildDir
-Add-OptionalArgument -Arguments $buildArgs -Name "-OpenCvRoot" -Value $OpenCvRoot
-Add-OptionalArgument -Arguments $buildArgs -Name "-OpenCvDir" -Value $OpenCvDir
-Add-OptionalArgument -Arguments $buildArgs -Name "-FfmpegRoot" -Value $FfmpegRoot
-Add-OptionalArgument -Arguments $buildArgs -Name "-VideoCodecSdkRoot" -Value $VideoCodecSdkRoot
-Add-OptionalArgument -Arguments $buildArgs -Name "-TensorRtRoot" -Value $TensorRtRoot
-Add-OptionalArgument -Arguments $buildArgs -Name "-VcpkgBinDir" -Value $VcpkgBinDir
-Add-OptionalArgument -Arguments $buildArgs -Name "-Python3Executable" -Value $Python3Executable
-Add-OptionalArgument -Arguments $buildArgs -Name "-NasmExecutable" -Value $NasmExecutable
-Add-SwitchArgument -Arguments $buildArgs -Name "-SkipDependencySetup" -Enabled $SkipDependencySetup
-Add-SwitchArgument -Arguments $buildArgs -Name "-SkipSubmodules" -Enabled $SkipSubmodules
-Add-SwitchArgument -Arguments $buildArgs -Name "-SkipConfigure" -Enabled $SkipConfigure
-Add-SwitchArgument -Arguments $buildArgs -Name "-SkipBuild" -Enabled $SkipBuild
-Add-SwitchArgument -Arguments $buildArgs -Name "-SkipInstall" -Enabled $SkipInstall
-Add-SwitchArgument -Arguments $buildArgs -Name "-CleanInstall" -Enabled $CleanInstall
+$buildParams = @{
+    Preset = $Preset
+    Configuration = $Configuration
+    InstallPrefix = $InstallPrefix
+    ThirdPartyRoot = $ThirdPartyRoot
+    CudaToolkitRoot = $CudaToolkitRoot
+    VcpkgRoot = $VcpkgRoot
+    VcpkgTriplet = $VcpkgTriplet
+    SkipRuntimeCheck = $true
+}
+Add-OptionalParameter -Parameters $buildParams -Name "BuildDir" -Value $BuildDir
+Add-OptionalParameter -Parameters $buildParams -Name "OpenCvRoot" -Value $OpenCvRoot
+Add-OptionalParameter -Parameters $buildParams -Name "OpenCvDir" -Value $OpenCvDir
+Add-OptionalParameter -Parameters $buildParams -Name "FfmpegRoot" -Value $FfmpegRoot
+Add-OptionalParameter -Parameters $buildParams -Name "VideoCodecSdkRoot" -Value $VideoCodecSdkRoot
+Add-OptionalParameter -Parameters $buildParams -Name "TensorRtRoot" -Value $TensorRtRoot
+Add-OptionalParameter -Parameters $buildParams -Name "VcpkgBinDir" -Value $VcpkgBinDir
+Add-OptionalParameter -Parameters $buildParams -Name "Python3Executable" -Value $Python3Executable
+Add-OptionalParameter -Parameters $buildParams -Name "NasmExecutable" -Value $NasmExecutable
+Add-SwitchParameter -Parameters $buildParams -Name "SkipDependencySetup" -Enabled $SkipDependencySetup.IsPresent
+Add-SwitchParameter -Parameters $buildParams -Name "SkipSubmodules" -Enabled $SkipSubmodules.IsPresent
+Add-SwitchParameter -Parameters $buildParams -Name "SkipConfigure" -Enabled $SkipConfigure.IsPresent
+Add-SwitchParameter -Parameters $buildParams -Name "SkipBuild" -Enabled $SkipBuild.IsPresent
+Add-SwitchParameter -Parameters $buildParams -Name "SkipInstall" -Enabled $SkipInstall.IsPresent
+Add-SwitchParameter -Parameters $buildParams -Name "CleanInstall" -Enabled $CleanInstall.IsPresent
 
-$checkArgs = [System.Collections.ArrayList]::new()
-[void]$checkArgs.AddRange(@("-AppRoot", $InstallRoot))
-Add-SwitchArgument -Arguments $checkArgs -Name "-RequireNvidiaSmi" -Enabled $RequireNvidiaSmi
+$checkParams = @{
+    AppRoot = $InstallRoot
+}
+Add-SwitchParameter -Parameters $checkParams -Name "RequireNvidiaSmi" -Enabled $RequireNvidiaSmi.IsPresent
 
-$publishArgs = [System.Collections.ArrayList]::new()
-[void]$publishArgs.AddRange(@(
-    "-StageRoot", $InstallRoot,
-    "-ShareRoot", $ShareRoot,
-    "-CurrentName", $CurrentName,
-    "-ReleasesDirName", $ReleasesDirName
-))
-Add-OptionalArgument -Arguments $publishArgs -Name "-ReleaseName" -Value $ReleaseName
-Add-SwitchArgument -Arguments $publishArgs -Name "-PublishCurrent" -Enabled $PublishCurrent
-Add-SwitchArgument -Arguments $publishArgs -Name "-ArchiveExistingCurrent" -Enabled $ArchiveExistingCurrent
+$publishParams = @{
+    StageRoot = $InstallRoot
+    ShareRoot = $ShareRoot
+    CurrentName = $CurrentName
+    ReleasesDirName = $ReleasesDirName
+}
+Add-OptionalParameter -Parameters $publishParams -Name "ReleaseName" -Value $ReleaseName
+Add-SwitchParameter -Parameters $publishParams -Name "PublishCurrent" -Enabled $PublishCurrent.IsPresent
+Add-SwitchParameter -Parameters $publishParams -Name "ArchiveExistingCurrent" -Enabled $ArchiveExistingCurrent.IsPresent
 
 Write-Host "Crimson Windows build/check/publish"
 Write-Host "  repo:         $RepoRoot"
@@ -162,15 +160,15 @@ Write-Host "  archive current: $($ArchiveExistingCurrent.IsPresent)"
 
 Invoke-Script -Label "Build and stage app drop" `
     -ScriptPath $BuildScript `
-    -Arguments $buildArgs.ToArray()
+    -Parameters $buildParams
 
 Invoke-Script -Label "Runtime check" `
     -ScriptPath $RuntimeCheckScript `
-    -Arguments $checkArgs.ToArray()
+    -Parameters $checkParams
 
 Invoke-Script -Label "Publish app drop" `
     -ScriptPath $PublishScript `
-    -Arguments $publishArgs.ToArray()
+    -Parameters $publishParams
 
 Write-Host ""
 Write-Host "Build/check/publish complete."
