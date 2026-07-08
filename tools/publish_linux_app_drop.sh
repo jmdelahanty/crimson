@@ -168,7 +168,12 @@ copy_app_tree() {
     echo "Copying $label:"
     echo "  from: $source_root"
     echo "  to:   $target_root"
-    cp -a -- "$source_root"/. "$target_root"/
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a --no-owner --no-group --no-perms --no-times --executability \
+            -- "$source_root"/ "$target_root"/
+    else
+        cp -R -- "$source_root"/. "$target_root"/
+    fi
 }
 
 test_app_drop_layout() {
