@@ -844,6 +844,7 @@ public:
     static constexpr size_t kRleEyeMaskChunkRows = 32;
     static constexpr size_t kRleEyeMaskChunkCacheCapacity = 8;
     static constexpr size_t kEyeMaskPrefetchQueueCapacity = 8;
+    static constexpr size_t kEyeMaskPrefetchAheadChunks = 2;
 
     enum class DetectionDataset {
         RawDetect = 0,
@@ -1844,7 +1845,7 @@ private:
                             bool allow_prefetch = true,
                             bool force_reload = false) const;
     void prefetchAdjacentEyeMaskChunks(size_t chunk_id) const;
-    void requestEyeMaskChunkPrefetch(size_t chunk_id) const;
+    bool requestEyeMaskChunkPrefetch(size_t chunk_id) const;
     void stopEyeMaskPrefetchWorker() const;
     void stopRefinedSubjectMaskOptionalOverlayWorker();
     void eyeMaskPrefetchWorkerLoop() const;

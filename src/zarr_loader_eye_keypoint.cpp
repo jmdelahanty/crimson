@@ -11,6 +11,10 @@ bool startupTraceEnabled() {
     return crimson_env_flag_enabled("CRIMSON_STARTUP_TRACE");
 }
 
+bool subjectMaskPrefetchTraceEnabled() {
+    return crimson_env_flag_enabled("CRIMSON_SUBJECT_MASK_PREFETCH_TRACE");
+}
+
 struct StartupTraceSection {
     explicit StartupTraceSection(const char* prefix)
         : enabled(startupTraceEnabled()),
@@ -4993,8 +4997,13 @@ void ZarrDetectionLoader::prefetchAdjacentEyeMaskChunks(size_t chunk_id) const {
     if (chunk_id > 0) {
         requestEyeMaskChunkPrefetch(chunk_id - 1);
     }
-    if ((chunk_id + 1) * chunk_rows < data_.eye_mask_roi_count) {
-        requestEyeMaskChunkPrefetch(chunk_id + 1);
+    for (size_t ahead = 1; ahead <= kEyeMaskPrefetchAheadChunks; ++ahead) {
+        const size_t next_chunk = chunk_id + ahead;
+        if (next_chunk < chunk_id ||
+            next_chunk * chunk_rows >= data_.eye_mask_roi_count) {
+            break;
+        }
+        requestEyeMaskChunkPrefetch(next_chunk);
     }
 }
 
@@ -5026,6 +5035,7 @@ void ZarrDetectionLoader::stopEyeMaskPrefetchWorker() const {
 void ZarrDetectionLoader::eyeMaskPrefetchWorkerLoop() const {
     for (;;) {
         size_t chunk_id = std::numeric_limits<size_t>::max();
+        size_t queue_remaining = 0;
         {
             std::unique_lock<std::mutex> prefetch_lock(
                 eye_mask_prefetch_mutex_);
@@ -5038,28 +5048,41 @@ void ZarrDetectionLoader::eyeMaskPrefetchWorkerLoop() const {
             }
             chunk_id = eye_mask_prefetch_queue_.front();
             eye_mask_prefetch_queue_.pop_front();
+            queue_remaining = eye_mask_prefetch_queue_.size();
         }
 
-        ensureEyeMaskChunk(chunk_id, /*allow_prefetch=*/false);
+        const auto worker_start = std::chrono::steady_clock::now();
+        const bool loaded =
+            ensureEyeMaskChunk(chunk_id, /*allow_prefetch=*/false);
+        const double worker_ms = elapsedMsSince(worker_start);
         {
             std::lock_guard<std::mutex> cache_lock(
                 *data_.mask_chunk_cache_mutex);
             data_.mask_chunk_loads_in_flight.erase(chunk_id);
         }
+        if (subjectMaskPrefetchTraceEnabled()) {
+            std::cout << "[SUBJECT_MASK_PREFETCH] action=worker_done"
+                      << " chunk_id=" << chunk_id
+                      << " loaded=" << (loaded ? "yes" : "no")
+                      << " worker_ms=" << worker_ms
+                      << " queue_remaining_at_start=" << queue_remaining
+                      << std::endl;
+        }
     }
 }
 
-void ZarrDetectionLoader::requestEyeMaskChunkPrefetch(size_t chunk_id) const {
+bool ZarrDetectionLoader::requestEyeMaskChunkPrefetch(size_t chunk_id) const {
     if (!data_.eye_masks_loaded || data_.eye_mask_roi_count == 0) {
-        return;
+        return false;
     }
 
     size_t chunk_rows =
         data_.eye_mask_chunk_rows > 0 ? data_.eye_mask_chunk_rows : 512;
     if (chunk_id * chunk_rows >= data_.eye_mask_roi_count) {
-        return;
+        return false;
     }
 
+    const bool trace_prefetch = subjectMaskPrefetchTraceEnabled();
     {
         std::lock_guard<std::mutex> cache_lock(*data_.mask_chunk_cache_mutex);
         const bool already_cached =
@@ -5069,15 +5092,30 @@ void ZarrDetectionLoader::requestEyeMaskChunkPrefetch(size_t chunk_id) const {
                 [&](const ZarrDetectionData::EyeMaskChunkCacheEntry& entry) {
                     return entry.chunk_id == chunk_id;
                 }) != data_.mask_chunk_cache.end();
-        if (already_cached ||
-            data_.mask_chunk_loads_in_flight.count(chunk_id) != 0) {
-            return;
+        if (already_cached) {
+            if (trace_prefetch) {
+                std::cout << "[SUBJECT_MASK_PREFETCH] action=skip"
+                          << " reason=cached"
+                          << " chunk_id=" << chunk_id
+                          << std::endl;
+            }
+            return false;
+        }
+        if (data_.mask_chunk_loads_in_flight.count(chunk_id) != 0) {
+            if (trace_prefetch) {
+                std::cout << "[SUBJECT_MASK_PREFETCH] action=skip"
+                          << " reason=in_flight"
+                          << " chunk_id=" << chunk_id
+                          << std::endl;
+            }
+            return false;
         }
         data_.mask_chunk_loads_in_flight.insert(chunk_id);
     }
 
     std::vector<size_t> dropped_chunks;
     bool queued = false;
+    size_t queue_size_after = 0;
     {
         std::lock_guard<std::mutex> prefetch_lock(eye_mask_prefetch_mutex_);
         if (!eye_mask_prefetch_stop_requested_) {
@@ -5092,6 +5130,7 @@ void ZarrDetectionLoader::requestEyeMaskChunkPrefetch(size_t chunk_id) const {
             }
             eye_mask_prefetch_queue_.push_back(chunk_id);
             queued = true;
+            queue_size_after = eye_mask_prefetch_queue_.size();
         }
     }
 
@@ -5106,7 +5145,31 @@ void ZarrDetectionLoader::requestEyeMaskChunkPrefetch(size_t chunk_id) const {
     }
     if (queued) {
         eye_mask_prefetch_cv_.notify_one();
+        if (trace_prefetch) {
+            std::cout << "[SUBJECT_MASK_PREFETCH] action=queued"
+                      << " chunk_id=" << chunk_id
+                      << " queue_size=" << queue_size_after;
+            if (!dropped_chunks.empty()) {
+                std::cout << " dropped_chunks=[";
+                for (size_t idx = 0; idx < dropped_chunks.size(); ++idx) {
+                    if (idx > 0) {
+                        std::cout << ",";
+                    }
+                    std::cout << dropped_chunks[idx];
+                }
+                std::cout << "]";
+            }
+            std::cout << std::endl;
+        }
+    } else {
+        if (trace_prefetch) {
+            std::cout << "[SUBJECT_MASK_PREFETCH] action=skip"
+                      << " reason=stopped"
+                      << " chunk_id=" << chunk_id
+                      << std::endl;
+        }
     }
+    return queued;
 }
 
 bool ZarrDetectionLoader::requestEyeMaskCacheForFrame(
@@ -5131,17 +5194,18 @@ bool ZarrDetectionLoader::requestEyeMaskCacheForFrame(
             : frame_id + lookahead_frames;
 
     std::set<size_t> chunk_ids;
-    auto add_roi = [&](size_t roi_index) {
+    std::set<size_t> current_frame_chunk_ids;
+    auto add_roi_to = [&](size_t roi_index, std::set<size_t>& ids) {
         if (roi_index < data_.eye_mask_roi_count) {
-            chunk_ids.insert(roi_index / chunk_rows);
+            ids.insert(roi_index / chunk_rows);
         }
     };
-    auto collect_frame = [&](size_t frame) {
+    auto collect_frame = [&](size_t frame, std::set<size_t>& ids) {
         if (data_.eye_masks_from_refined_subject_masks &&
             frame < data_.refined_subject_mask_rows_by_frame.size()) {
             for (size_t mask_row :
                  data_.refined_subject_mask_rows_by_frame[frame]) {
-                add_roi(mask_row);
+                add_roi_to(mask_row, ids);
             }
             return;
         }
@@ -5158,24 +5222,96 @@ bool ZarrDetectionLoader::requestEyeMaskCacheForFrame(
             }
             const int32_t roi_index = data_.mask_roi_indices[detection_idx];
             if (roi_index >= 0) {
-                add_roi(static_cast<size_t>(roi_index));
+                add_roi_to(static_cast<size_t>(roi_index), ids);
             }
         }
     };
 
+    collect_frame(frame_id, current_frame_chunk_ids);
+    for (size_t chunk_id : current_frame_chunk_ids) {
+        chunk_ids.insert(chunk_id);
+        for (size_t ahead = 1; ahead <= kEyeMaskPrefetchAheadChunks; ++ahead) {
+            const size_t next_chunk = chunk_id + ahead;
+            if (next_chunk < chunk_id ||
+                next_chunk * chunk_rows >= data_.eye_mask_roi_count) {
+                break;
+            }
+            chunk_ids.insert(next_chunk);
+        }
+    }
+
     for (size_t frame = frame_id; frame <= end_frame; ++frame) {
-        collect_frame(frame);
+        collect_frame(frame, chunk_ids);
         if (frame == std::numeric_limits<size_t>::max()) {
             break;
         }
     }
     size_t queued_chunks = 0;
+    size_t attempted_chunks = 0;
     for (size_t chunk_id : chunk_ids) {
         if (queued_chunks >= kEyeMaskPrefetchQueueCapacity) {
             break;
         }
-        requestEyeMaskChunkPrefetch(chunk_id);
-        ++queued_chunks;
+        ++attempted_chunks;
+        if (requestEyeMaskChunkPrefetch(chunk_id)) {
+            ++queued_chunks;
+        }
+    }
+
+    if (subjectMaskPrefetchTraceEnabled()) {
+        std::set<size_t> covered_chunks;
+        {
+            std::lock_guard<std::mutex> cache_lock(
+                *data_.mask_chunk_cache_mutex);
+            for (const auto& entry : data_.mask_chunk_cache) {
+                covered_chunks.insert(entry.chunk_id);
+            }
+            covered_chunks.insert(data_.mask_chunk_loads_in_flight.begin(),
+                                  data_.mask_chunk_loads_in_flight.end());
+        }
+        {
+            std::lock_guard<std::mutex> prefetch_lock(
+                eye_mask_prefetch_mutex_);
+            covered_chunks.insert(eye_mask_prefetch_queue_.begin(),
+                                  eye_mask_prefetch_queue_.end());
+        }
+
+        size_t min_covered_ahead = std::numeric_limits<size_t>::max();
+        for (size_t base_chunk : current_frame_chunk_ids) {
+            size_t covered_ahead = 0;
+            for (size_t ahead = 1; ahead <= kEyeMaskPrefetchAheadChunks;
+                 ++ahead) {
+                const size_t next_chunk = base_chunk + ahead;
+                if (next_chunk < base_chunk ||
+                    next_chunk * chunk_rows >= data_.eye_mask_roi_count ||
+                    covered_chunks.count(next_chunk) == 0) {
+                    break;
+                }
+                covered_ahead = ahead;
+            }
+            min_covered_ahead =
+                std::min(min_covered_ahead, covered_ahead);
+        }
+        if (current_frame_chunk_ids.empty()) {
+            min_covered_ahead = 0;
+        }
+
+        std::cout << "[SUBJECT_MASK_PREFETCH] action=frame_request"
+                  << " frame=" << frame_id
+                  << " end_frame=" << end_frame
+                  << " current_chunks=[";
+        size_t idx = 0;
+        for (size_t chunk_id : current_frame_chunk_ids) {
+            if (idx++ > 0) {
+                std::cout << ",";
+            }
+            std::cout << chunk_id;
+        }
+        std::cout << "] collected_chunks=" << chunk_ids.size()
+                  << " attempted_chunks=" << attempted_chunks
+                  << " queued_chunks=" << queued_chunks
+                  << " covered_ahead_min=" << min_covered_ahead
+                  << std::endl;
     }
     return !chunk_ids.empty();
 }

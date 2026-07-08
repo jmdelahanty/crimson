@@ -312,6 +312,51 @@ The most useful first test is `[512, 4, 512, 64]`, followed by
 `[1024, 4, 512, 64]` if random seek latency stays acceptable. Both match
 Crimson's current all-component display path better than `[*, 1, ...]`.
 
+### Prefetch Hardening
+
+Date anchored: 2026-07-08.
+
+Cold bitpacked chunks can still arrive slowly over `/groups`, even when the
+chunk files are physically small. In one `[512, 4, 512, 64]` smoke, the first
+three chunks were around `125-137 KB` each, but chunk read times ranged from
+about `108 ms` to `380 ms`. That variance is enough to show as masks falling
+behind if Crimson waits until the current playback frame is close to a chunk
+boundary before requesting the next chunk.
+
+The prefetch path now explicitly queues the current chunk plus two future mask
+chunks when playback asks for a frame cache window. This is in addition to the
+existing frame-window scan and adjacent-chunk prefetch from synchronous chunk
+loads. The intended steady state is that the current chunk and two ahead chunks
+are either cached, queued, or in-flight before playback reaches them.
+
+Enable prefetch diagnostics with:
+
+```bash
+CRIMSON_SUBJECT_MASK_PREFETCH_TRACE=1
+```
+
+The trace logs:
+
+- queued chunks and dropped queue entries,
+- worker completion time and remaining queue depth,
+- per-frame current chunks, attempted chunks, queued chunks, and
+  `covered_ahead_min`.
+
+In the `[512, 4, 512, 64]` canary smoke, Crimson queued chunks `1` and `2`
+immediately after loading chunk `0`. Chunk `1` finished in about `150 ms`;
+chunk `2` finished in about `416 ms`. Playback was still on chunk `0`, so the
+render loop did not block or skip masks:
+
+- playback smoke: pass, frames `0:300`
+- `frame_loop_ms` p95: about `8.41 ms`
+- `mask_work.data_load_ms` p95: about `0.028 ms`
+- `mask_work.overlay_draw_ms` p95: about `0.44 ms`
+- `visible masks`: `100%`
+- `invalid masks`: `0%`
+
+This does not remove network variance. It gives the worker more time to absorb
+that variance before playback reaches the next chunk.
+
 Promotion criteria for bitpacked as a compact review cache:
 
 1. `visible masks=100%` and `invalid masks=0%` on cold 0:800 and longer
