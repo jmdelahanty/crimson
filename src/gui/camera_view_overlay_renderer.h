@@ -4,6 +4,7 @@
 #include "gui/full_frame_rect_edit_overlay.h"
 #include "zarr_bbox_edit.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -84,6 +85,20 @@ struct CameraViewActiveRoiInsetOptions {
     bool show_label = true;
     bool mirror_enabled_overlays = true;
     bool heading_normalized_view = false;
+};
+
+struct CameraViewActiveRoiInsetTarget {
+    bool valid = false;
+    float offset_x = 0.0f;
+    float offset_y = 0.0f;
+    float roi_width = 0.0f;
+    float roi_height = 0.0f;
+    int rows = 0;
+    int cols = 0;
+    int32_t roi_index = -1;
+    size_t detection_index = 0;
+    bool has_detection_index = false;
+    const char* source_label = "geometry";
 };
 
 struct CameraViewSubjectShapeOverlayOptions {
@@ -168,9 +183,10 @@ void drawCameraViewActiveRoiInsetOverlay(
     unsigned int camera_texture_id,
     int image_width_px,
     int image_height_px,
-    const ZarrDetectionLoader::FrameDetections& mask_details,
+    const ZarrDetectionLoader::FrameDetections* mask_details,
     const ZarrDetectionLoader::FrameDetections* detection_details,
     const RefinedKeypointSelection* selected_keypoint_selection,
+    const CameraViewActiveRoiInsetTarget* fallback_target,
     const std::string& smoothing_run_id,
     const CameraViewMaskOverlayOptions& mask_options,
     bool show_keypoint_markers,

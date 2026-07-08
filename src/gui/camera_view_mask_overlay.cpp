@@ -1197,16 +1197,17 @@ void drawCameraViewActiveRoiInsetOverlay(
     unsigned int camera_texture_id,
     int image_width_px,
     int image_height_px,
-    const ZarrDetectionLoader::FrameDetections& mask_details,
+    const ZarrDetectionLoader::FrameDetections* mask_details,
     const ZarrDetectionLoader::FrameDetections* detection_details,
     const RefinedKeypointSelection* selected_keypoint_selection,
+    const CameraViewActiveRoiInsetTarget* fallback_target,
     const std::string& smoothing_run_id,
     const CameraViewMaskOverlayOptions& mask_options,
     bool show_keypoint_markers,
     const CameraViewSubjectMaskPreview* edit_preview,
     const CameraViewActiveRoiInsetOptions& options) {
     if (!options.show_inset || camera_texture_id == 0 || image_width_px <= 0 ||
-        image_height_px <= 0 || !mask_details.includes_eye_masks) {
+        image_height_px <= 0) {
         return;
     }
 
@@ -1216,48 +1217,89 @@ void drawCameraViewActiveRoiInsetOverlay(
                    mask.roi_height > 0.0f && std::isfinite(mask.offset_x) &&
                    std::isfinite(mask.offset_y);
     };
-    auto find_mask_by_roi = [&](int32_t roi_index) {
-        if (roi_index < 0) {
-            return mask_details.eye_masks.end();
-        }
-        return std::find_if(
-            mask_details.eye_masks.begin(),
-            mask_details.eye_masks.end(),
-            [&](const ZarrDetectionLoader::FrameDetections::EyeMask& mask) {
-                return valid_mask(mask) && mask.roi_index == roi_index;
-            });
+    auto valid_fallback = [](const CameraViewActiveRoiInsetTarget* target) {
+        return target != nullptr && target->valid &&
+               std::isfinite(target->offset_x) &&
+               std::isfinite(target->offset_y) &&
+               std::isfinite(target->roi_width) &&
+               std::isfinite(target->roi_height) &&
+               target->roi_width > 0.0f && target->roi_height > 0.0f;
     };
-
-    auto mask_it = mask_details.eye_masks.end();
+    const ZarrDetectionLoader::FrameDetections::EyeMask* selected_mask = nullptr;
     size_t detection_index = 0;
-    if (mask_options.highlighted_roi_index >= 0) {
-        mask_it = find_mask_by_roi(mask_options.highlighted_roi_index);
-    }
-    if (mask_it == mask_details.eye_masks.end() &&
-        selected_keypoint_selection != nullptr &&
-        selected_keypoint_selection->valid) {
-        mask_it = find_mask_by_roi(selected_keypoint_selection->roi_index);
-        if (mask_it == mask_details.eye_masks.end() &&
-            selected_keypoint_selection->detection_index <
-                mask_details.eye_masks.size() &&
-            valid_mask(mask_details.eye_masks
-                           [selected_keypoint_selection->detection_index])) {
-            mask_it = mask_details.eye_masks.begin() +
-                      static_cast<std::ptrdiff_t>(
-                          selected_keypoint_selection->detection_index);
+    bool mask_backed = false;
+    if (mask_details != nullptr && mask_details->includes_eye_masks) {
+        auto find_mask_by_roi = [&](int32_t roi_index) {
+            if (roi_index < 0) {
+                return mask_details->eye_masks.end();
+            }
+            return std::find_if(
+                mask_details->eye_masks.begin(),
+                mask_details->eye_masks.end(),
+                [&](const ZarrDetectionLoader::FrameDetections::EyeMask& mask) {
+                    return valid_mask(mask) && mask.roi_index == roi_index;
+                });
+        };
+        auto mask_it = mask_details->eye_masks.end();
+        if (mask_options.highlighted_roi_index >= 0) {
+            mask_it = find_mask_by_roi(mask_options.highlighted_roi_index);
+        }
+        if (mask_it == mask_details->eye_masks.end() &&
+            selected_keypoint_selection != nullptr &&
+            selected_keypoint_selection->valid) {
+            mask_it = find_mask_by_roi(selected_keypoint_selection->roi_index);
+            if (mask_it == mask_details->eye_masks.end() &&
+                selected_keypoint_selection->detection_index <
+                    mask_details->eye_masks.size() &&
+                valid_mask(mask_details->eye_masks
+                               [selected_keypoint_selection->detection_index])) {
+                mask_it = mask_details->eye_masks.begin() +
+                          static_cast<std::ptrdiff_t>(
+                              selected_keypoint_selection->detection_index);
+            }
+        }
+        if (mask_it == mask_details->eye_masks.end()) {
+            mask_it = std::find_if(mask_details->eye_masks.begin(),
+                                   mask_details->eye_masks.end(),
+                                   valid_mask);
+        }
+        if (mask_it != mask_details->eye_masks.end()) {
+            selected_mask = &*mask_it;
+            detection_index = static_cast<size_t>(
+                std::distance(mask_details->eye_masks.begin(), mask_it));
+            mask_backed = true;
         }
     }
-    if (mask_it == mask_details.eye_masks.end()) {
-        mask_it = std::find_if(mask_details.eye_masks.begin(),
-                               mask_details.eye_masks.end(),
-                               valid_mask);
+
+    ZarrDetectionLoader::FrameDetections::EyeMask fallback_mask;
+    if (selected_mask == nullptr && valid_fallback(fallback_target)) {
+        fallback_mask.valid = true;
+        fallback_mask.rows = fallback_target->rows > 0
+                                 ? fallback_target->rows
+                                 : std::max(1, static_cast<int>(
+                                                   std::round(
+                                                       fallback_target
+                                                           ->roi_height)));
+        fallback_mask.cols = fallback_target->cols > 0
+                                 ? fallback_target->cols
+                                 : std::max(1, static_cast<int>(
+                                                   std::round(
+                                                       fallback_target
+                                                           ->roi_width)));
+        fallback_mask.offset_x = fallback_target->offset_x;
+        fallback_mask.offset_y = fallback_target->offset_y;
+        fallback_mask.roi_width = fallback_target->roi_width;
+        fallback_mask.roi_height = fallback_target->roi_height;
+        fallback_mask.roi_index = fallback_target->roi_index;
+        if (fallback_target->has_detection_index) {
+            detection_index = fallback_target->detection_index;
+        }
+        selected_mask = &fallback_mask;
     }
-    if (mask_it == mask_details.eye_masks.end()) {
+    if (selected_mask == nullptr) {
         return;
     }
-    detection_index = static_cast<size_t>(
-        std::distance(mask_details.eye_masks.begin(), mask_it));
-    const auto& mask = *mask_it;
+    const auto& mask = *selected_mask;
 
     auto resolve_heading_for_detection =
         [&](const ZarrDetectionLoader::FrameDetections* details,
@@ -1277,10 +1319,10 @@ void drawCameraViewActiveRoiInsetOverlay(
             }
             out_heading_deg = heading_deg;
             return true;
-        };
+    };
     float inset_heading_deg = 0.0f;
     const bool heading_available =
-        resolve_heading_for_detection(&mask_details, inset_heading_deg) ||
+        resolve_heading_for_detection(mask_details, inset_heading_deg) ||
         resolve_heading_for_detection(detection_details, inset_heading_deg);
     const bool use_heading_normalized =
         options.heading_normalized_view && heading_available;
@@ -1496,64 +1538,75 @@ void drawCameraViewActiveRoiInsetOverlay(
     };
 
     bool drew_preview = false;
-    constexpr const char* kDrawOrder[] = {
-        "subject_body",
-        "swim_bladder",
-        "eye_left",
-        "eye_right",
-    };
-    for (const char* label_cstr : kDrawOrder) {
-        const std::string label(label_cstr);
-        if (!component_visible(label)) {
-            continue;
-        }
-        const auto component_it = find_component(label);
-        const bool component_present =
-            component_it != mask.subject_mask_components.end() &&
-            component_it->valid;
-        if (previewReplacesComponent(edit_preview, mask, label) &&
-            edit_preview != nullptr) {
-            const std::vector<uint32_t> preview_pixels =
-                previewPixelIndices(*edit_preview);
-            draw_pixels(label,
-                        preview_pixels,
-                        "preview:" + std::to_string(edit_preview->revision),
-                        0.70f);
-            drew_preview = true;
-            continue;
-        }
-        if (component_present) {
-            draw_pixels(label,
-                        component_it->pixel_indices,
-                        "component:" +
-                            std::to_string(component_it->channel_index),
-                        0.46f);
-            if (component_it->has_contour) {
-                draw_contour(label, component_it->contour_xy, 1.8f);
+    if (mask_backed) {
+        constexpr const char* kDrawOrder[] = {
+            "subject_body",
+            "swim_bladder",
+            "eye_left",
+            "eye_right",
+        };
+        for (const char* label_cstr : kDrawOrder) {
+            const std::string label(label_cstr);
+            if (!component_visible(label)) {
+                continue;
             }
-            continue;
+            const auto component_it = find_component(label);
+            const bool component_present =
+                component_it != mask.subject_mask_components.end() &&
+                component_it->valid;
+            if (previewReplacesComponent(edit_preview, mask, label) &&
+                edit_preview != nullptr) {
+                const std::vector<uint32_t> preview_pixels =
+                    previewPixelIndices(*edit_preview);
+                draw_pixels(label,
+                            preview_pixels,
+                            "preview:" +
+                                std::to_string(edit_preview->revision),
+                            0.70f);
+                drew_preview = true;
+                continue;
+            }
+            if (component_present) {
+                draw_pixels(label,
+                            component_it->pixel_indices,
+                            "component:" +
+                                std::to_string(component_it->channel_index),
+                            0.46f);
+                if (component_it->has_contour) {
+                    draw_contour(label, component_it->contour_xy, 1.8f);
+                }
+                continue;
+            }
+            if (label == "eye_left" && !mask.pixel_indices[0].empty()) {
+                draw_pixels(label,
+                            mask.pixel_indices[0],
+                            "legacy_eye:0",
+                            0.46f);
+            } else if (label == "eye_right" &&
+                       !mask.pixel_indices[1].empty()) {
+                draw_pixels(label,
+                            mask.pixel_indices[1],
+                            "legacy_eye:1",
+                            0.46f);
+            }
         }
-        if (label == "eye_left" && !mask.pixel_indices[0].empty()) {
-            draw_pixels(label, mask.pixel_indices[0], "legacy_eye:0", 0.46f);
-        } else if (label == "eye_right" && !mask.pixel_indices[1].empty()) {
-            draw_pixels(label, mask.pixel_indices[1], "legacy_eye:1", 0.46f);
-        }
-    }
 
-    if (!mask_options.highlighted_component_name.empty()) {
-        const auto selected_component =
-            find_component(mask_options.highlighted_component_name);
-        if (selected_component != mask.subject_mask_components.end() &&
-            selected_component->has_contour) {
-            draw_contour(mask_options.highlighted_component_name,
-                         selected_component->contour_xy,
-                         2.8f);
+        if (!mask_options.highlighted_component_name.empty()) {
+            const auto selected_component =
+                find_component(mask_options.highlighted_component_name);
+            if (selected_component != mask.subject_mask_components.end() &&
+                selected_component->has_contour) {
+                draw_contour(mask_options.highlighted_component_name,
+                             selected_component->contour_xy,
+                             2.8f);
+            }
         }
     }
 
     const ZarrDetectionLoader::FrameDetections* keypoint_details =
-        detection_details != nullptr ? detection_details : &mask_details;
+        detection_details != nullptr ? detection_details : mask_details;
     if (options.mirror_enabled_overlays && show_keypoint_markers &&
+        keypoint_details != nullptr &&
         keypoint_details->has_keypoints &&
         detection_index < keypoint_details->keypoints_pixels.size()) {
         const auto& keypoints =
@@ -1642,7 +1695,14 @@ void drawCameraViewActiveRoiInsetOverlay(
                        1.4f);
 
     if (options.show_label) {
-        std::string label = "ROI " + std::to_string(mask.roi_index);
+        std::string label = mask.roi_index >= 0
+                                ? "ROI " + std::to_string(mask.roi_index)
+                                : std::string("ROI");
+        if (!mask_backed && fallback_target != nullptr &&
+            fallback_target->source_label != nullptr) {
+            label += " | ";
+            label += fallback_target->source_label;
+        }
         if (!mask_options.highlighted_component_name.empty()) {
             label += " | " +
                      shortSubjectMaskLabel(mask_options.highlighted_component_name);

@@ -1551,7 +1551,7 @@ int main(int argc, char **argv) {
             const bool prewarm_full_overlay = show_eye_masks;
             const bool prewarm_inset =
                 frame_debug_window_state
-                    .subject_mask_active_roi_inset_options.show_inset;
+                    .active_roi_inset_options.show_inset;
             if (!prewarm_full_overlay && !prewarm_inset) {
                 return;
             }
@@ -1597,8 +1597,7 @@ int main(int argc, char **argv) {
                     mask_options,
                     prewarm_full_overlay,
                     prewarm_inset
-                        ? &frame_debug_window_state
-                               .subject_mask_active_roi_inset_options
+                        ? &frame_debug_window_state.active_roi_inset_options
                         : nullptr,
                     nullptr);
                 accumulateCameraViewMaskPerfMetrics(aggregate, metrics);

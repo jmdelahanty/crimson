@@ -196,28 +196,6 @@ void drawSubjectMaskEditPreviewSection(
         ImGui::SetTooltip(
             "When enabled, left-clicking visible subject masks in the camera view selects an edit target. Turn this off to leave canvas clicks available for keypoint editing or navigation while masks stay visible.");
     }
-    ImGui::Checkbox("Show ROI inset",
-                    &state.subject_mask_active_roi_inset_options.show_inset);
-    ImGui::BeginDisabled(
-        !state.subject_mask_active_roi_inset_options.show_inset);
-    ImGui::Checkbox(
-        "Mirror enabled overlays",
-        &state.subject_mask_active_roi_inset_options.mirror_enabled_overlays);
-    ImGui::Checkbox(
-        "Heading-normalized view",
-        &state.subject_mask_active_roi_inset_options.heading_normalized_view);
-    ImGui::SliderFloat("ROI inset width",
-                       &state.subject_mask_active_roi_inset_options.width_px,
-                       120.0f,
-                       420.0f,
-                       "%.0f px");
-    state.subject_mask_active_roi_inset_options.width_px =
-        std::clamp(state.subject_mask_active_roi_inset_options.width_px,
-                   120.0f,
-                   420.0f);
-    ImGui::Checkbox("ROI inset label",
-                    &state.subject_mask_active_roi_inset_options.show_label);
-    ImGui::EndDisabled();
 
     const auto* masks =
         (context.detection_details != nullptr &&

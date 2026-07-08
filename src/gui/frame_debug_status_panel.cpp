@@ -167,6 +167,32 @@ void drawFrameOverviewSection(const FrameDebugWindowContext& context) {
     ImGui::Separator();
 }
 
+void drawActiveRoiInsetControls(FrameDebugWindowState& state) {
+    ImGui::Text("ROI Inset:");
+    ImGui::Checkbox("Show ROI inset",
+                    &state.active_roi_inset_options.show_inset);
+    ImGui::BeginDisabled(!state.active_roi_inset_options.show_inset);
+    ImGui::Checkbox(
+        "Mirror enabled overlays",
+        &state.active_roi_inset_options.mirror_enabled_overlays);
+    ImGui::Checkbox(
+        "Heading-normalized view",
+        &state.active_roi_inset_options.heading_normalized_view);
+    ImGui::SliderFloat("ROI inset width",
+                       &state.active_roi_inset_options.width_px,
+                       120.0f,
+                       420.0f,
+                       "%.0f px");
+    state.active_roi_inset_options.width_px =
+        std::clamp(state.active_roi_inset_options.width_px,
+                   120.0f,
+                   420.0f);
+    ImGui::Checkbox("ROI inset label",
+                    &state.active_roi_inset_options.show_label);
+    ImGui::EndDisabled();
+    ImGui::Separator();
+}
+
 void drawDatasetSelectionSection(const FrameDebugWindowContext& context,
                                  FrameDebugWindowResult& result) {
     if (context.detection_dataset_labels.empty()) {
@@ -343,6 +369,9 @@ void drawFrameDebugStatusPanel(const FrameDebugWindowContext& context,
         review_artifacts, ZarrDetectionLoader::ReviewArtifactKind::EyeMask);
 
     drawFrameOverviewSection(context);
+    if (context.zarr_loaded) {
+        drawActiveRoiInsetControls(state);
+    }
     if (!ImGui::BeginTabBar("##frame_inspect_data_tabs")) {
         return;
     }

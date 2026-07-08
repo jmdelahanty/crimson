@@ -94,6 +94,7 @@ struct CameraViewWindowContext {
     CameraViewMaskOverlayOptions mask_overlay_options;
     CameraViewSubjectMaskPreview subject_mask_preview;
     CameraViewActiveRoiInsetOptions active_roi_inset_options;
+    CameraViewActiveRoiInsetTarget active_roi_inset_target;
     SubjectMaskEditSession* subject_mask_edit_session = nullptr;
     SubjectMaskBrushState* subject_mask_brush_state = nullptr;
     CameraViewSubjectShapeOverlayOptions subject_shape_overlay_options;

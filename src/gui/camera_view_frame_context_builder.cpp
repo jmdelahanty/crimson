@@ -1,6 +1,8 @@
 #include "gui/camera_view_frame_context_builder.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <sstream>
 
 namespace {
@@ -55,11 +57,10 @@ bool subjectMaskBrushInputEnabled(const CameraViewFrameContextInput& input) {
            input.zarr_loader->eyeMasksUseRefinedSubjectMasks();
 }
 
-bool subjectMaskRoiInsetEnabled(const CameraViewFrameContextInput& input) {
+bool eyeMaskRoiInsetEnabled(const CameraViewFrameContextInput& input) {
     return input.zarr_loaded && input.zarr_loader != nullptr &&
            input.frame_debug_state != nullptr &&
-           input.frame_debug_state->subject_mask_active_roi_inset_options
-               .show_inset &&
+           input.frame_debug_state->active_roi_inset_options.show_inset &&
            input.zarr_loader->hasEyeMasks();
 }
 
@@ -88,7 +89,7 @@ CameraViewActiveRoiInsetOptions activeRoiInsetOptions(
         options.show_inset = false;
         return options;
     }
-    options = state->subject_mask_active_roi_inset_options;
+    options = state->active_roi_inset_options;
     return options;
 }
 
@@ -99,6 +100,98 @@ const RefinedKeypointSelection* activeFullFrameKeypointSelection(
         return nullptr;
     }
     return &**input.active_full_frame_keypoint_selection;
+}
+
+bool finitePositiveRoi(float offset_x,
+                       float offset_y,
+                       float roi_width,
+                       float roi_height) {
+    return std::isfinite(offset_x) && std::isfinite(offset_y) &&
+           std::isfinite(roi_width) && std::isfinite(roi_height) &&
+           roi_width > 0.0f && roi_height > 0.0f;
+}
+
+CameraViewActiveRoiInsetTarget makeInsetTargetFromRoiMetadata(
+    const ZarrDetectionLoader::KeypointRoiMetadata& metadata,
+    size_t detection_index,
+    const char* source_label) {
+    CameraViewActiveRoiInsetTarget target;
+    if (!metadata.valid || !metadata.has_crop_metadata ||
+        !finitePositiveRoi(metadata.offset_x,
+                           metadata.offset_y,
+                           metadata.roi_width,
+                           metadata.roi_height)) {
+        return target;
+    }
+    target.valid = true;
+    target.offset_x = metadata.offset_x;
+    target.offset_y = metadata.offset_y;
+    target.roi_width = metadata.roi_width;
+    target.roi_height = metadata.roi_height;
+    target.cols = std::max(1, static_cast<int>(std::round(metadata.roi_width)));
+    target.rows = std::max(1, static_cast<int>(std::round(metadata.roi_height)));
+    target.roi_index = metadata.roi_index;
+    target.detection_index = detection_index;
+    target.has_detection_index = true;
+    target.source_label = source_label;
+    return target;
+}
+
+CameraViewActiveRoiInsetTarget activeRoiInsetTarget(
+    const CameraViewFrameContextInput& input) {
+    const bool zarr_available = input.zarr_loaded && input.zarr_loader != nullptr;
+    const RefinedKeypointSelection* selection =
+        activeFullFrameKeypointSelection(input);
+    if (selection != nullptr && selection->valid &&
+        selection->frame_id == static_cast<size_t>(std::max(0, input.current_frame_num))) {
+        CameraViewActiveRoiInsetTarget target =
+            makeInsetTargetFromRoiMetadata(selection->roi_metadata,
+                                           selection->detection_index,
+                                           "keypoint ROI");
+        if (target.valid) {
+            return target;
+        }
+    }
+
+    auto target_for_detection = [&](size_t detection_index,
+                                    const char* source_label) {
+        if (zarr_available) {
+            CameraViewActiveRoiInsetTarget target =
+                makeInsetTargetFromRoiMetadata(
+                    input.zarr_loader->getKeypointRoiMetadataForFrameDetection(
+                        static_cast<size_t>(std::max(0, input.current_frame_num)),
+                        detection_index,
+                        false),
+                    detection_index,
+                    source_label);
+            if (target.valid) {
+                return target;
+            }
+        }
+        CameraViewActiveRoiInsetTarget target;
+        return target;
+    };
+
+    if (input.bbox_edit_state != nullptr &&
+        input.bbox_edit_state->selected_frame == input.current_frame_num &&
+        input.bbox_edit_state->selected_box >= 0 && input.zarr_boxes != nullptr &&
+        input.bbox_edit_state->selected_box <
+            static_cast<int>(input.zarr_boxes->size())) {
+        return target_for_detection(
+            static_cast<size_t>(input.bbox_edit_state->selected_box),
+            "selected bbox");
+    }
+
+    if (input.zarr_boxes != nullptr && input.zarr_boxes->size() == 1) {
+        return target_for_detection(0, "single bbox");
+    }
+
+    if (input.detection_details != nullptr &&
+        input.detection_details->boxes.size() == 1) {
+        return target_for_detection(0, "single detection");
+    }
+
+    return CameraViewActiveRoiInsetTarget{};
 }
 
 }  // namespace
@@ -117,7 +210,7 @@ void prepareCameraViewFrameContext(
         heading_details = detection_details;
     }
 
-    if ((input.can_draw_eye_masks || subjectMaskRoiInsetEnabled(input)) &&
+    if ((input.can_draw_eye_masks || eyeMaskRoiInsetEnabled(input)) &&
         zarr_available) {
         if (detection_details != nullptr &&
             detection_details->includes_eye_masks) {
@@ -219,6 +312,7 @@ void prepareCameraViewFrameContext(
             input.mask_overlay_mode},
         buildSubjectMaskPreview(input.subject_mask_edit_session),
         activeRoiInsetOptions(input.frame_debug_state),
+        activeRoiInsetTarget(input),
         input.subject_mask_edit_session,
         input.subject_mask_brush_state,
         input.subject_shape_overlay_options,

@@ -1200,14 +1200,16 @@ CameraViewWindowResult drawCameraViewWindowContents(
                                            context.target_stimulus_frame,
                                            context.stimulus_inset_options);
         if (context.active_roi_inset_options.show_inset &&
-            context.mask_details != nullptr) {
+            (context.mask_details != nullptr ||
+             context.active_roi_inset_target.valid)) {
             drawCameraViewActiveRoiInsetOverlay(
                 camera.image_texture,
                 static_cast<int>(camera.image_width),
                 static_cast<int>(camera.image_height),
-                *context.mask_details,
+                context.mask_details,
                 context.detection_details,
                 context.selected_keypoint_selection,
+                &context.active_roi_inset_target,
                 context.eye_mask_smoothing_run_id,
                 context.mask_overlay_options,
                 context.show_keypoint_markers,
