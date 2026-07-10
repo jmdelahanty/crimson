@@ -1145,6 +1145,36 @@ target_link_libraries(palette_clipped_loader_probe PRIVATE
 target_compile_features(palette_clipped_loader_probe PRIVATE cxx_std_17)
 crimson_configure_parquet_support(palette_clipped_loader_probe)
 
+add_executable(subject_mask_contour_probe EXCLUDE_FROM_ALL
+    tools/subject_mask_contour_probe.cpp
+    src/zarr_loader.cpp
+    src/zarr_loader_detections.cpp
+    src/zarr_loader_eye_keypoint.cpp
+    src/zarr_loader_movement.cpp
+    src/zarr_loader_stimulus.cpp
+    src/zarr_loader_subject_shape.cpp
+    src/zarr_loader_tail_kinematics.cpp
+    src/zarr_loader_write.cpp
+    src/zarr_loader_internal.cpp
+    src/keypoint_heading_utils.cpp
+    src/zarr/clipped_detection_repository.cpp
+    src/zarr/palette_clipped_resolver.cpp
+)
+target_include_directories(subject_mask_contour_probe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+    ${HDF5_INCLUDE_DIRS}
+)
+target_link_libraries(subject_mask_contour_probe PRIVATE
+    tensorstore::all_drivers
+    nlohmann_json::nlohmann_json
+    Threads::Threads
+    ${OpenCV_LIBS}
+    ${HDF5_CXX_LIBRARIES}
+)
+target_compile_features(subject_mask_contour_probe PRIVATE cxx_std_17)
+crimson_configure_parquet_support(subject_mask_contour_probe)
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/keypoint_fish_present_contract_check.cpp")
     add_executable(keypoint_fish_present_contract_check
         tools/keypoint_fish_present_contract_check.cpp

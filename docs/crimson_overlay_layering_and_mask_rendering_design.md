@@ -89,8 +89,9 @@ As of this design note:
 - unified refined subject masks are preferred over legacy refined eye masks
 - the full-frame mask overlay can render `subject_body`, `swim_bladder`,
   `eye_left`, and `eye_right` as texture-backed fills
-- component contours are read as optional derived caches from
-  `components/<component>/contours/{ptr,len,points_xy}` when available
+- component contours are optional derived caches; Crimson prefers fixed-K
+  `components/<component>/sampled_contours/{points_xy,valid}` and falls back to
+  `components/<component>/contours/{ptr,len,points_xy}` for historical runs
 - eye axes and angle labels are drawn from refined subject eye geometry and eye
   angle runs when available
 - keypoint markers are drawn after the mask overlay, so keypoints already appear

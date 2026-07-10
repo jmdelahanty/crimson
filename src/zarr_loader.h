@@ -267,8 +267,12 @@ struct ZarrDetectionData {
         std::vector<int32_t> rle_area_px;
         std::vector<std::array<int32_t, 4>> rle_bbox_xyxy;
         bool contours_available = false;
+        bool sampled_contours_used = false;
         bool contour_attrs_compatible = false;
         std::string contour_warning;
+        ts::TensorStore<bool, 1> sampled_contour_valid_store;
+        ts::TensorStore<float, 3> sampled_contour_points_store;
+        size_t sampled_contour_point_count = 0;
         std::vector<int64_t> contour_ptr;
         std::vector<int32_t> contour_len;
         ts::TensorStore<float, 2> contour_points_store;
@@ -1885,6 +1889,12 @@ private:
         uint64_t generation,
         const std::string& archive_path,
         std::string* error_message);
+    bool loadRefinedSubjectMaskComponentContours(
+        const ts::kvstore::KvStore& store,
+        const std::string& run_base,
+        size_t roi_count,
+        ZarrDetectionData::RefinedSubjectMaskComponentInfo& component,
+        bool log_warnings);
     bool loadRefinedEyeMaskData(const ts::kvstore::KvStore& store, size_t roi_count);
     const ZarrDetectionData::EyeMaskChunkCacheEntry* findEyeMaskChunk(size_t chunk_id) const;
     bool ensureEyeMaskChunk(size_t chunk_id,

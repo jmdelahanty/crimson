@@ -83,6 +83,21 @@ void clearEyeMaskState(ZarrDetectionData& data) {
     data.mask_chunk_loads_in_flight.clear();
 }
 
+void clearRefinedSubjectMaskContourState(
+    ZarrDetectionData::RefinedSubjectMaskComponentInfo& component) {
+    component.contours_available = false;
+    component.sampled_contours_used = false;
+    component.contour_attrs_compatible = false;
+    component.contour_warning.clear();
+    component.sampled_contour_valid_store = ts::TensorStore<bool, 1>();
+    component.sampled_contour_points_store = ts::TensorStore<float, 3>();
+    component.sampled_contour_point_count = 0;
+    component.contour_ptr.clear();
+    component.contour_len.clear();
+    component.contour_points_store = ts::TensorStore<float, 2>();
+    component.contour_points_count = 0;
+}
+
 std::vector<std::string> extractStringListAttr(const nlohmann::json& attrs,
                                                const char* key) {
     std::vector<std::string> values;
@@ -1380,6 +1395,162 @@ void ZarrDetectionLoader::requestRefinedSubjectMaskOptionalOverlayPrefetch() {
         });
 }
 
+bool ZarrDetectionLoader::loadRefinedSubjectMaskComponentContours(
+    const ts::kvstore::KvStore& store,
+    const std::string& run_base,
+    size_t roi_count,
+    ZarrDetectionData::RefinedSubjectMaskComponentInfo& component,
+    bool log_warnings) {
+    clearRefinedSubjectMaskContourState(component);
+
+    auto recordWarning = [&](const std::string& message) {
+        component.contour_warning = message;
+        if (log_warnings) {
+            std::cout
+                << "  [SUBJECT_MASK_WARNING] Refined subject mask component '"
+                << component.label << "' " << message << "." << std::endl;
+        }
+    };
+
+    const std::string component_base =
+        run_base + "components/" + component.label + "/";
+    const std::string sampled_base = component_base + "sampled_contours/";
+    auto sampled_points =
+        openArrayAny<float, 3>(store, sampled_base + "points_xy", context_);
+    if (sampled_points.ok()) {
+        const auto shape = sampled_points.value().domain().shape();
+        auto sampled_valid =
+            openArrayAny<bool, 1>(store, sampled_base + "valid", context_);
+        bool valid_shape_ok = false;
+        if (sampled_valid.ok()) {
+            const auto valid_shape = sampled_valid.value().domain().shape();
+            valid_shape_ok =
+                valid_shape.size() == 1 &&
+                valid_shape[0] == static_cast<ts::Index>(roi_count);
+        }
+        if (shape.size() == 3 &&
+            shape[0] == static_cast<ts::Index>(roi_count) &&
+            shape[1] > 1 && shape[2] >= 2 &&
+            sampled_valid.ok() && valid_shape_ok) {
+            bool attrs_compatible = false;
+            if (auto attrs = readAttrsAny(store, sampled_base)) {
+                const bool schema_ok =
+                    stringAttrMatches(*attrs,
+                                      "schema_id",
+                                      "sampled_component_contours_v1") ||
+                    stringAttrMatches(*attrs,
+                                      "contour_schema_id",
+                                      "sampled_component_contours_v1");
+                const bool coordinate_ok =
+                    !attrs->contains("coordinate_space") ||
+                    stringAttrMatches(*attrs,
+                                      "coordinate_space",
+                                      "roi_pixels");
+                const bool order_ok =
+                    !attrs->contains("point_order") ||
+                    stringAttrMatches(*attrs, "point_order", "xy");
+                const bool source_ok =
+                    !attrs->contains("source_component") ||
+                    stringAttrMatches(*attrs,
+                                      "source_component",
+                                      component.label.c_str());
+                attrs_compatible =
+                    schema_ok && coordinate_ok && order_ok && source_ok;
+                if (!attrs_compatible) {
+                    component.contour_warning =
+                        "sampled contour attrs are incomplete or not fully compatible; loading arrays tolerantly";
+                }
+            } else {
+                component.contour_warning =
+                    "sampled contour attrs are missing; loading arrays tolerantly";
+            }
+
+            component.sampled_contour_valid_store = sampled_valid.value();
+            component.sampled_contour_points_store = sampled_points.value();
+            component.sampled_contour_point_count =
+                static_cast<size_t>(shape[1]);
+            component.contours_available = true;
+            component.sampled_contours_used = true;
+            component.contour_attrs_compatible = attrs_compatible;
+            if (log_warnings && !component.contour_warning.empty()) {
+                std::cout
+                    << "  [SUBJECT_MASK_WARNING] Refined subject mask component '"
+                    << component.label << "' " << component.contour_warning
+                    << "." << std::endl;
+            }
+            return true;
+        }
+        recordWarning(
+            "sampled contour arrays are incomplete or do not match masks_roi rows; trying full ragged contours");
+    }
+
+    const std::string contour_base = component_base + "contours/";
+    std::vector<int64_t> contour_ptr;
+    std::vector<int32_t> contour_len;
+    if (!readInt64Array(store, contour_base + "ptr", contour_ptr) ||
+        !readInt32Array(store, contour_base + "len", contour_len)) {
+        return false;
+    }
+    if (contour_ptr.size() != roi_count || contour_len.size() != roi_count) {
+        recordWarning("contour ptr/len shape does not match masks_roi rows");
+        return false;
+    }
+
+    auto points_store =
+        openArrayAny<float, 2>(store, contour_base + "points_xy", context_);
+    if (!points_store.ok()) {
+        recordWarning("contour points_xy is missing or unreadable");
+        return false;
+    }
+
+    const auto points_shape = points_store.value().domain().shape();
+    if (points_shape.size() != 2 || points_shape[1] < 2) {
+        recordWarning("contour points_xy shape is not Nx2");
+        return false;
+    }
+
+    bool attrs_compatible = false;
+    if (auto attrs = readAttrsAny(store, contour_base)) {
+        const bool schema_ok =
+            stringAttrMatches(*attrs, "schema_id", "component_contours_v1") ||
+            stringAttrMatches(*attrs,
+                              "contour_schema_id",
+                              "component_contours_v1");
+        const bool coordinate_ok =
+            !attrs->contains("coordinate_space") ||
+            stringAttrMatches(*attrs, "coordinate_space", "roi_pixels");
+        const bool order_ok =
+            !attrs->contains("point_order") ||
+            stringAttrMatches(*attrs, "point_order", "xy");
+        const bool source_ok =
+            !attrs->contains("source_component") ||
+            stringAttrMatches(*attrs,
+                              "source_component",
+                              component.label.c_str());
+        attrs_compatible = schema_ok && coordinate_ok && order_ok && source_ok;
+        if (!attrs_compatible) {
+            component.contour_warning =
+                "contour attrs are incomplete or not fully compatible; loading arrays tolerantly";
+        }
+    } else {
+        component.contour_warning =
+            "contour attrs are missing; loading arrays tolerantly";
+    }
+
+    component.contour_ptr = std::move(contour_ptr);
+    component.contour_len = std::move(contour_len);
+    component.contour_points_store = points_store.value();
+    component.contour_points_count = static_cast<size_t>(points_shape[0]);
+    component.contours_available = true;
+    component.contour_attrs_compatible = attrs_compatible;
+    if (log_warnings && !component.contour_warning.empty()) {
+        std::cout << "  [SUBJECT_MASK_WARNING] Refined subject mask component '"
+                  << component.label << "' " << component.contour_warning
+                  << "." << std::endl;
+    }
+    return true;
+}
+
 bool ZarrDetectionLoader::loadRefinedSubjectMaskOptionalOverlayData(
     uint64_t generation,
     const std::string& archive_path,
@@ -1437,79 +1608,27 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskOptionalOverlayData(
 
     const std::string run_base =
         "refined_subject_masks_runs/" + run_name + "/";
+    const auto run_attrs = readAttrsAny(store, run_base);
+    const bool contours_stale =
+        run_attrs.has_value() && jsonBoolAttr(*run_attrs, "contours_stale");
     size_t contour_component_count = 0;
-    auto loadComponentContours =
-        [&](ZarrDetectionData::RefinedSubjectMaskComponentInfo& component) {
-            const std::string contour_base =
-                run_base + "components/" + component.label + "/contours/";
-
-            std::vector<int64_t> contour_ptr;
-            std::vector<int32_t> contour_len;
-            if (!readInt64Array(store, contour_base + "ptr", contour_ptr) ||
-                !readInt32Array(store, contour_base + "len", contour_len)) {
-                return;
-            }
-            if (contour_ptr.size() != roi_dim || contour_len.size() != roi_dim) {
-                component.contour_warning =
-                    "contour ptr/len shape does not match masks_roi rows";
-                return;
-            }
-
-            auto points_store =
-                openArrayAny<float, 2>(store, contour_base + "points_xy", context_);
-            if (!points_store.ok()) {
-                component.contour_warning =
-                    "contour points_xy is missing or unreadable";
-                return;
-            }
-
-            const auto points_shape = points_store.value().domain().shape();
-            if (points_shape.size() != 2 || points_shape[1] < 2) {
-                component.contour_warning =
-                    "contour points_xy shape is not Nx2";
-                return;
-            }
-
-            bool attrs_compatible = false;
-            if (auto attrs = readAttrsAny(store, contour_base)) {
-                const bool schema_ok =
-                    stringAttrMatches(*attrs, "schema_id", "component_contours_v1") ||
-                    stringAttrMatches(*attrs, "contour_schema_id", "component_contours_v1");
-                const bool coordinate_ok =
-                    !attrs->contains("coordinate_space") ||
-                    stringAttrMatches(*attrs, "coordinate_space", "roi_pixels");
-                const bool order_ok =
-                    !attrs->contains("point_order") ||
-                    stringAttrMatches(*attrs, "point_order", "xy");
-                const bool source_ok =
-                    !attrs->contains("source_component") ||
-                    stringAttrMatches(*attrs,
-                                      "source_component",
-                                      component.label.c_str());
-                attrs_compatible =
-                    schema_ok && coordinate_ok && order_ok && source_ok;
-                if (!attrs_compatible) {
-                    component.contour_warning =
-                        "contour attrs are incomplete or not fully compatible; loading arrays tolerantly";
+    size_t sampled_contour_component_count = 0;
+    size_t ragged_contour_component_count = 0;
+    if (!contours_stale) {
+        for (auto& component : components) {
+            if (loadRefinedSubjectMaskComponentContours(
+                    store, run_base, roi_dim, component, false)) {
+                ++contour_component_count;
+                if (component.sampled_contours_used) {
+                    ++sampled_contour_component_count;
+                } else {
+                    ++ragged_contour_component_count;
                 }
-            } else {
-                component.contour_warning =
-                    "contour attrs are missing; loading arrays tolerantly";
             }
-
-            component.contour_ptr = std::move(contour_ptr);
-            component.contour_len = std::move(contour_len);
-            component.contour_points_store = points_store.value();
-            component.contour_points_count =
-                static_cast<size_t>(points_shape[0]);
-            component.contours_available = true;
-            component.contour_attrs_compatible = attrs_compatible;
-        };
-
-    for (auto& component : components) {
-        loadComponentContours(component);
-        if (component.contours_available) {
-            ++contour_component_count;
+        }
+    } else {
+        for (auto& component : components) {
+            clearRefinedSubjectMaskContourState(component);
         }
     }
 
@@ -1644,7 +1763,11 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskOptionalOverlayData(
     std::cout << "  [SUBJECT_MASK_OPTIONAL_OVERLAY] Loaded optional refined subject-mask overlays for '"
               << run_name << "' (contours " << contour_component_count << "/"
               << component_total
-              << " components; ellipse axes "
+              << " components"
+              << "; sampled=" << sampled_contour_component_count
+              << "; ragged=" << ragged_contour_component_count
+              << "; stale=" << (contours_stale ? "yes" : "no")
+              << "; ellipse axes "
               << (have_axes ? "loaded" : "unavailable")
               << "; refreshed_chunks=" << refreshed_chunks
               << "; total_ms=" << elapsedMsSince(load_start)
@@ -2504,94 +2627,33 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
     trace.step("rle_components");
 
     size_t contour_component_count = 0;
+    size_t sampled_contour_component_count = 0;
+    size_t ragged_contour_component_count = 0;
     const bool eager_optional_overlays =
         crimson_env_flag_enabled("CRIMSON_EAGER_SUBJECT_MASK_OPTIONAL_OVERLAYS");
     if (eager_optional_overlays) {
-    auto loadComponentContours =
-        [&](ZarrDetectionData::RefinedSubjectMaskComponentInfo& component) {
-            const std::string contour_base =
-                run_base + "components/" + component.label + "/contours/";
-
-            std::vector<int64_t> contour_ptr;
-            std::vector<int32_t> contour_len;
-            if (!readInt64Array(store, contour_base + "ptr", contour_ptr) ||
-                !readInt32Array(store, contour_base + "len", contour_len)) {
-                return;
-            }
-            if (contour_ptr.size() != roi_dim || contour_len.size() != roi_dim) {
-                component.contour_warning =
-                    "contour ptr/len shape does not match masks_roi rows";
-                std::cout << "  [SUBJECT_MASK_WARNING] Refined subject mask component '"
-                          << component.label << "' "
-                          << component.contour_warning << "." << std::endl;
-                return;
-            }
-
-            auto points_store =
-                openArrayAny<float, 2>(store, contour_base + "points_xy", context_);
-            if (!points_store.ok()) {
-                component.contour_warning =
-                    "contour points_xy is missing or unreadable";
-                std::cout << "  [SUBJECT_MASK_WARNING] Refined subject mask component '"
-                          << component.label << "' "
-                          << component.contour_warning << ": "
-                          << points_store.status().ToString()
-                          << std::endl;
-                return;
-            }
-
-            const auto points_shape = points_store.value().domain().shape();
-            if (points_shape.size() != 2 || points_shape[1] < 2) {
-                component.contour_warning =
-                    "contour points_xy shape is not Nx2";
-                std::cout << "  [SUBJECT_MASK_WARNING] Refined subject mask component '"
-                          << component.label << "' "
-                          << component.contour_warning << "." << std::endl;
-                return;
-            }
-
-            bool attrs_compatible = false;
-            if (auto attrs = readAttrsAny(store, contour_base)) {
-                const bool schema_ok =
-                    stringAttrMatches(*attrs, "schema_id", "component_contours_v1") ||
-                    stringAttrMatches(*attrs, "contour_schema_id", "component_contours_v1");
-                const bool coordinate_ok =
-                    !attrs->contains("coordinate_space") ||
-                    stringAttrMatches(*attrs, "coordinate_space", "roi_pixels");
-                const bool order_ok =
-                    !attrs->contains("point_order") ||
-                    stringAttrMatches(*attrs, "point_order", "xy");
-                const bool source_ok =
-                    !attrs->contains("source_component") ||
-                    stringAttrMatches(*attrs,
-                                      "source_component",
-                                      component.label.c_str());
-                attrs_compatible =
-                    schema_ok && coordinate_ok && order_ok && source_ok;
-                if (!attrs_compatible) {
-                    component.contour_warning =
-                        "contour attrs are incomplete or not fully compatible; loading arrays tolerantly";
-                }
-            } else {
-                component.contour_warning =
-                    "contour attrs are missing; loading arrays tolerantly";
-            }
-
-            component.contour_ptr = std::move(contour_ptr);
-            component.contour_len = std::move(contour_len);
-            component.contour_points_store = points_store.value();
-            component.contour_points_count =
-                static_cast<size_t>(points_shape[0]);
-            component.contours_available = true;
-            component.contour_attrs_compatible = attrs_compatible;
-        };
-
     contour_component_count = 0;
-    for (auto& component : data_.refined_subject_mask_overlay_components) {
-        loadComponentContours(component);
-        if (component.contours_available) {
-            ++contour_component_count;
+    const bool contours_stale = jsonBoolAttr(*run_attrs, "contours_stale");
+    if (!contours_stale) {
+        for (auto& component : data_.refined_subject_mask_overlay_components) {
+            if (loadRefinedSubjectMaskComponentContours(
+                    store, run_base, roi_dim, component, true)) {
+                ++contour_component_count;
+                if (component.sampled_contours_used) {
+                    ++sampled_contour_component_count;
+                } else {
+                    ++ragged_contour_component_count;
+                }
+            }
         }
+    } else {
+        for (auto& component : data_.refined_subject_mask_overlay_components) {
+            clearRefinedSubjectMaskContourState(component);
+        }
+        std::cout << "  [SUBJECT_MASK_WARNING] Refined subject mask run '"
+                  << latest_run
+                  << "' has contours_stale=true; stored sampled and ragged contours are disabled."
+                  << std::endl;
     }
     trace.step("component_contours");
 
@@ -2781,7 +2843,10 @@ bool ZarrDetectionLoader::loadRefinedSubjectMaskEyeData(
               << (data_.eye_masks_have_feret_axes ? "loaded" : "unavailable")
               << "; contours " << contour_component_count << "/"
               << data_.refined_subject_mask_overlay_components.size()
-              << " components"
+              << " components; sampled=" << sampled_contour_component_count
+              << "; ragged=" << ragged_contour_component_count
+              << "; stale="
+              << (jsonBoolAttr(*run_attrs, "contours_stale") ? "yes" : "no")
               << ")" << std::endl;
     if (!warning.empty()) {
         std::cout << "  [SUBJECT_MASK_WARNING] " << warning << std::endl;
@@ -4302,6 +4367,8 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
     size_t rle_foreground_pixels = 0;
     size_t bitpacked_foreground_pixels = 0;
     size_t contour_components_with_rows = 0;
+    size_t sampled_contour_components_with_rows = 0;
+    size_t ragged_contour_components_with_rows = 0;
     size_t contour_rows_loaded = 0;
     size_t contour_points_loaded = 0;
     size_t dense_nonzero_pixels = 0;
@@ -4801,8 +4868,134 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
     for (size_t component = 0; component < component_count; ++component) {
         const auto& component_info =
             overlay_components[component];
-        if (!component_info.contours_available ||
-            component_info.contour_ptr.size() < data_.eye_mask_roi_count ||
+        if (!component_info.contours_available) {
+            continue;
+        }
+
+        if (component_info.sampled_contours_used) {
+            if (component_info.sampled_contour_point_count <= 1) {
+                continue;
+            }
+
+            auto valid_slice = component_info.sampled_contour_valid_store |
+                ts::Dims(0).HalfOpenInterval(
+                    static_cast<ts::Index>(chunk_start),
+                    static_cast<ts::Index>(chunk_end));
+            auto contour_slice = component_info.sampled_contour_points_store |
+                ts::Dims(0).HalfOpenInterval(
+                    static_cast<ts::Index>(chunk_start),
+                    static_cast<ts::Index>(chunk_end));
+            const auto contour_read_start =
+                std::chrono::steady_clock::now();
+            auto valid_future = ts::Read(valid_slice);
+            auto contour_future = ts::Read(contour_slice);
+            auto valid_result = valid_future.result();
+            auto contour_result = contour_future.result();
+            contour_read_ms += elapsedMsSince(contour_read_start);
+            if (!valid_result.ok()) {
+                std::cerr
+                    << "[SUBJECT_MASK_WARNING] Failed to read sampled contour validity chunk for component '"
+                    << component_info.label << "': "
+                    << valid_result.status().ToString() << std::endl;
+                continue;
+            }
+            if (!contour_result.ok()) {
+                std::cerr
+                    << "[SUBJECT_MASK_WARNING] Failed to read sampled contour chunk for component '"
+                    << component_info.label << "': "
+                    << contour_result.status().ToString() << std::endl;
+                continue;
+            }
+
+            auto valid_array = valid_result.value();
+            const auto valid_shape = valid_array.shape();
+            const auto valid_strides = valid_array.byte_strides();
+            auto contour_array = contour_result.value();
+            const auto contour_shape = contour_array.shape();
+            const auto contour_strides = contour_array.byte_strides();
+            if (valid_shape.size() != 1 ||
+                valid_shape[0] != static_cast<ts::Index>(chunk_len) ||
+                valid_strides.size() != 1 ||
+                contour_shape.size() != 3 ||
+                contour_shape[0] != static_cast<ts::Index>(chunk_len) ||
+                contour_shape[1] != static_cast<ts::Index>(
+                    component_info.sampled_contour_point_count) ||
+                contour_shape[2] < 2 || contour_strides.size() != 3) {
+                std::cerr
+                    << "[SUBJECT_MASK_WARNING] Unexpected sampled contour chunk shape for component '"
+                    << component_info.label << "'" << std::endl;
+                continue;
+            }
+
+            const auto* valid_origin = static_cast<const bool*>(
+                valid_array.byte_strided_origin_pointer());
+            const auto* valid_base =
+                reinterpret_cast<const uint8_t*>(valid_origin);
+            const ts::Index stride_valid_row = valid_strides[0];
+            auto validAt = [&](size_t local_roi) -> bool {
+                const uint8_t* ptr = valid_base +
+                    stride_valid_row * static_cast<ts::Index>(local_roi);
+                return *reinterpret_cast<const bool*>(ptr);
+            };
+            bool has_valid_row = false;
+            const auto contour_scan_start = std::chrono::steady_clock::now();
+            for (size_t local_roi = 0; local_roi < chunk_len; ++local_roi) {
+                if (validAt(local_roi)) {
+                    has_valid_row = true;
+                    ++contour_rows_loaded;
+                }
+            }
+            contour_row_scan_ms += elapsedMsSince(contour_scan_start);
+            if (!has_valid_row) {
+                continue;
+            }
+            ++contour_components_with_rows;
+            ++sampled_contour_components_with_rows;
+
+            const auto* contour_origin = static_cast<const float*>(
+                contour_array.byte_strided_origin_pointer());
+            const auto* contour_base =
+                reinterpret_cast<const uint8_t*>(contour_origin);
+            const ts::Index stride_row = contour_strides[0];
+            const ts::Index stride_point = contour_strides[1];
+            const ts::Index stride_xy = contour_strides[2];
+            auto pointValue = [&](size_t local_roi,
+                                  size_t point,
+                                  size_t xy) -> float {
+                const uint8_t* ptr = contour_base +
+                    stride_row * static_cast<ts::Index>(local_roi) +
+                    stride_point * static_cast<ts::Index>(point) +
+                    stride_xy * static_cast<ts::Index>(xy);
+                return *reinterpret_cast<const float*>(ptr);
+            };
+
+            const auto contour_copy_start =
+                std::chrono::steady_clock::now();
+            for (size_t local_roi = 0; local_roi < chunk_len; ++local_roi) {
+                if (!validAt(local_roi)) {
+                    continue;
+                }
+                auto& contour_points =
+                    entry.component_contours_xy[local_roi][component];
+                contour_points.clear();
+                contour_points.reserve(
+                    component_info.sampled_contour_point_count);
+                for (size_t point = 0;
+                     point < component_info.sampled_contour_point_count;
+                     ++point) {
+                    const float x = pointValue(local_roi, point, 0);
+                    const float y = pointValue(local_roi, point, 1);
+                    if (std::isfinite(x) && std::isfinite(y)) {
+                        contour_points.push_back({x, y});
+                    }
+                }
+                contour_points_loaded += contour_points.size();
+            }
+            contour_copy_ms += elapsedMsSince(contour_copy_start);
+            continue;
+        }
+
+        if (component_info.contour_ptr.size() < data_.eye_mask_roi_count ||
             component_info.contour_len.size() < data_.eye_mask_roi_count ||
             component_info.contour_points_count == 0) {
             continue;
@@ -4842,6 +5035,7 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
             continue;
         }
         ++contour_components_with_rows;
+        ++ragged_contour_components_with_rows;
 
         auto contour_slice = component_info.contour_points_store |
             ts::Dims(0).HalfOpenInterval(
@@ -4977,6 +5171,10 @@ bool ZarrDetectionLoader::ensureEyeMaskChunk(size_t chunk_id,
                   << " component_copy_ms=" << component_copy_ms
                   << " contour_components_with_rows="
                   << contour_components_with_rows
+                  << " sampled_contour_components_with_rows="
+                  << sampled_contour_components_with_rows
+                  << " ragged_contour_components_with_rows="
+                  << ragged_contour_components_with_rows
                   << " contour_rows_loaded=" << contour_rows_loaded
                   << " contour_points_loaded=" << contour_points_loaded
                   << " contour_row_scan_ms=" << contour_row_scan_ms

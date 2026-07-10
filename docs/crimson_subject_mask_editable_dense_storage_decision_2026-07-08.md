@@ -154,13 +154,25 @@ authoritative data. They are stored inside the same Zarr run, linked by
 component and mask row, but they are still derived companion arrays rather than
 the source label surface.
 
-The current contour layout is variable length:
+Historical and analysis-oriented contours use a variable-length layout:
 
 ```text
 components/<component>/contours/ptr
 components/<component>/contours/len
 components/<component>/contours/points_xy
 ```
+
+For default display reads, Crimson now prefers Palette's fixed-K derived cache:
+
+```text
+components/<component>/sampled_contours/points_xy
+components/<component>/sampled_contours/valid
+components/<component>/sampled_contours/source_point_count
+```
+
+It falls back to full ragged contours for historical runs and ignores both
+stored contour representations when `contours_stale=true`. See
+`docs/crimson_sampled_subject_mask_contour_reader_2026-07-10.md`.
 
 Editing one mask row can change that row's contour length. If `points_xy` is a
 compact flat stream and `ptr` stores cumulative offsets, then changing one row's

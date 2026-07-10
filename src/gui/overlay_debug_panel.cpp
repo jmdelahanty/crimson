@@ -220,9 +220,20 @@ void drawEyeMaskSection(const FrameDebugWindowContext& context,
                        component) {
                     return component.contours_available;
                 }));
-        ImGui::Text("  Contours: %zu/%zu components",
+        const size_t sampled_contour_components = static_cast<size_t>(
+            std::count_if(
+                components.begin(),
+                components.end(),
+                [](const ZarrDetectionData::RefinedSubjectMaskComponentInfo&
+                       component) {
+                    return component.contours_available &&
+                           component.sampled_contours_used;
+                }));
+        ImGui::Text("  Contours: %zu/%zu components (%zu sampled, %zu ragged)",
                     contour_components,
-                    components.size());
+                    components.size(),
+                    sampled_contour_components,
+                    contour_components - sampled_contour_components);
         const std::string optional_overlay_status =
             context.zarr_loader.getRefinedSubjectMaskOptionalOverlayStatus();
         if (!optional_overlay_status.empty()) {
