@@ -88,15 +88,27 @@ recording shape.
 - The authenticated GUI playback smoke loaded `sampled=4, ragged=0` and passed
   frames 0 through 120.
 
-## Production Rollout Gate
+The full production-path PRFS gate then passed with Palette LSF job
+`153053844` and refined run
+`refined_subject_masks_smart_finalizer_crimson_sampled_contour_prfs_canary_20260710_02`:
 
-Before Palette disables full ragged contours by default:
+- the published run contains 11185 files and no full-ragged contour groups;
+- publication took 125.05 seconds, versus 425.07 seconds for the 66087-file
+  reference run;
+- the probe loaded all four components as sampled and materialized frame 0;
+- the first 256-row PRFS contour window read took 57.19 ms and the adjacent
+  prefetched window took 28.64 ms;
+- authenticated GPU playback against the exact PRFS run passed frames 0 through
+  120 with `sampled=4`, `ragged=0`.
 
-1. publish one full sampled-only refined-run canary to PRFS;
-2. run `subject_mask_contour_probe` against that exact published run;
-3. record cold and warm sampled contour reads on representative row windows;
-4. visually inspect representative body, eye, and swim-bladder overlays;
-5. retain ragged fallback in Crimson for historical runs;
-6. flip Palette's production wrapper to sampled on, full ragged off.
+## Production Rollout
+
+The rollout gates are complete:
+
+1. Palette published and validated the full sampled-only PRFS canary.
+2. Crimson's probe and GPU playback read that exact run successfully.
+3. Crimson retains ragged fallback for historical runs.
+4. Palette commit `9078793` defaults production to sampled contours on and full
+   ragged contours off.
 
 No historical run needs rechunking or migration for this rollout.
