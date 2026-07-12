@@ -19,8 +19,11 @@ function(crimson_define_tensorstore_zarr_target)
         tensorstore::tensorstore
         tensorstore::kvstore_file
         tensorstore::kvstore_memory
-        tensorstore::driver_zarr
-        tensorstore::driver_zarr3)
+        tensorstore::driver_zarr_driver
+        tensorstore::driver_zarr_zstd_compressor
+        tensorstore::driver_zarr3_driver
+        tensorstore::driver_zarr3_codec_bytes
+        tensorstore::driver_zarr3_codec_zstd)
     foreach(_target IN LISTS _required_targets)
         if(NOT TARGET ${_target})
             return()
@@ -33,8 +36,11 @@ function(crimson_define_tensorstore_zarr_target)
         tensorstore::tensorstore
         tensorstore::kvstore_file
         tensorstore::kvstore_memory
-        tensorstore::driver_zarr
-        tensorstore::driver_zarr3)
+        tensorstore::driver_zarr_driver
+        tensorstore::driver_zarr_zstd_compressor
+        tensorstore::driver_zarr3_driver
+        tensorstore::driver_zarr3_codec_bytes
+        tensorstore::driver_zarr3_codec_zstd)
 endfunction()
 
 function(crimson_fetch_tensorstore)

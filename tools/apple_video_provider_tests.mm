@@ -353,6 +353,22 @@ void testRepresentativeAsset(const std::string& path,
 
 int main(int argc, char** argv) {
     @autoreleasepool {
+        if (argc == 3 && std::string(argv[1]) == "--write-fixture") {
+            const std::string output_path = argv[2];
+            [[NSFileManager defaultManager]
+                removeItemAtPath:
+                    [NSString stringWithUTF8String:output_path.c_str()]
+                          error:nil];
+            std::string fixture_error;
+            if (!writeFixture(output_path, &fixture_error)) {
+                std::cerr << "fixture creation failed: " << fixture_error
+                          << std::endl;
+                return 1;
+            }
+            std::cout << "apple_video_provider_tests: fixture=" << output_path
+                      << std::endl;
+            return 0;
+        }
         const std::string fixture = makeFixturePath();
         std::string error;
         try {

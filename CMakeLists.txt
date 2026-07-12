@@ -71,6 +71,17 @@ target_include_directories(crimson_repository_contracts PUBLIC
 )
 target_compile_features(crimson_repository_contracts PUBLIC cxx_std_17)
 
+add_library(crimson_stimulus_playback_contracts STATIC
+    src/stimulus_playback_coordinator.cpp
+)
+target_include_directories(crimson_stimulus_playback_contracts PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_features(crimson_stimulus_playback_contracts PUBLIC cxx_std_17)
+target_link_libraries(crimson_stimulus_playback_contracts PUBLIC
+    crimson_repository_contracts
+)
+
 function(crimson_add_tensorstore_repositories tensorstore_target)
     if(TARGET crimson_tensorstore_repositories)
         return()
@@ -110,6 +121,22 @@ set_target_properties(frame_slot_tests PROPERTIES
 enable_testing()
 add_test(NAME frame_slot_tests COMMAND $<TARGET_FILE:frame_slot_tests>)
 set_tests_properties(frame_slot_tests PROPERTIES LABELS "frame;portable")
+
+add_executable(stimulus_playback_coordinator_tests
+    tools/stimulus_playback_coordinator_tests.cpp
+)
+target_link_libraries(stimulus_playback_coordinator_tests PRIVATE
+    crimson_stimulus_playback_contracts
+)
+target_compile_features(stimulus_playback_coordinator_tests PRIVATE cxx_std_17)
+set_target_properties(stimulus_playback_coordinator_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME stimulus_playback_coordinator_tests
+    COMMAND $<TARGET_FILE:stimulus_playback_coordinator_tests>)
+set_tests_properties(stimulus_playback_coordinator_tests PROPERTIES
+    LABELS "playback;portable;stimulus"
+)
 
 if(CRIMSON_BUILD_NVIDIA_APP)
     enable_language(CUDA)
@@ -1372,6 +1399,31 @@ if(CRIMSON_BUILD_MACOS_APP)
         ${VIDEOTOOLBOX_FRAMEWORK}
     )
 
+    add_library(crimson_apple_stimulus_playback STATIC
+        src/platform/macos/apple_stimulus_playback_session.cpp
+    )
+    target_compile_features(crimson_apple_stimulus_playback PRIVATE cxx_std_17)
+    target_include_directories(crimson_apple_stimulus_playback PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(crimson_apple_stimulus_playback PUBLIC
+        crimson_apple_video
+        crimson_stimulus_playback_contracts
+    )
+
+    add_executable(apple_stimulus_playback_probe
+        tools/apple_stimulus_playback_probe.cpp
+    )
+    target_compile_features(apple_stimulus_playback_probe PRIVATE cxx_std_17)
+    target_link_libraries(apple_stimulus_playback_probe PRIVATE
+        crimson_tensorstore_repositories
+        crimson_apple_stimulus_playback
+        crimson::tensorstore_zarr
+    )
+    set_target_properties(apple_stimulus_playback_probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
     execute_process(
         COMMAND git rev-parse --short HEAD
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1495,6 +1547,33 @@ if(CRIMSON_BUILD_MACOS_APP)
         COMMAND $<TARGET_FILE:apple_video_provider_tests>)
     set_tests_properties(apple_video_provider_tests PROPERTIES
         LABELS "headless;macos;video"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    add_executable(apple_stimulus_playback_tests
+        tools/apple_stimulus_playback_tests.mm
+    )
+    target_compile_features(apple_stimulus_playback_tests PRIVATE cxx_std_17)
+    target_compile_options(apple_stimulus_playback_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
+    )
+    target_link_libraries(apple_stimulus_playback_tests PRIVATE
+        crimson_apple_stimulus_playback
+    )
+    set_target_properties(apple_stimulus_playback_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_dependencies(apple_stimulus_playback_tests apple_video_provider_tests)
+    set(CRIMSON_STIMULUS_VIDEO_FIXTURE
+        "${CMAKE_CURRENT_BINARY_DIR}/apple_stimulus_playback_fixture.mov")
+    add_test(NAME apple_stimulus_playback_tests
+        COMMAND ${CMAKE_COMMAND}
+            -DFIXTURE_WRITER=$<TARGET_FILE:apple_video_provider_tests>
+            -DPLAYBACK_TEST=$<TARGET_FILE:apple_stimulus_playback_tests>
+            -DVIDEO_FIXTURE=${CRIMSON_STIMULUS_VIDEO_FIXTURE}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunAppleStimulusPlaybackTest.cmake)
+    set_tests_properties(apple_stimulus_playback_tests PROPERTIES
+        LABELS "headless;macos;playback;repository;stimulus;video"
         TIMEOUT 60
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )

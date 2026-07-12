@@ -79,11 +79,11 @@ frame=139023 status=mapped source=legacy_metadata metadata=165646 stimulus=16557
 frame=139024 status=out_of_range source=none interpolated=false
 ```
 
-The narrow macOS TensorStore aggregate now links the full Zarr and Zarr3 driver
-targets so registered codecs, including Zstd, are retained. It still excludes
-unneeded cloud and gRPC drivers. The shared adapter is an object library because
-the maintained NVIDIA prebuilt TensorStore response file precedes ordinary
-static archives on the link line.
+The narrow macOS TensorStore aggregate links the Zarr and Zarr3 drivers plus
+the bytes and Zstd codecs used by the fixture and production archive. It
+excludes unrelated compression, cloud, and gRPC drivers. The shared adapter is
+an object library because the maintained NVIDIA prebuilt TensorStore response
+file precedes ordinary static archives on the link line.
 
 ## Exhaustive Legacy Parity
 
@@ -131,7 +131,6 @@ without rendering.
 ## Phase Boundary
 
 The storage contract now supplies the exact stimulus frame identity and a
-host-usable source video path. The next Phase 4 checkpoint can add a macOS
-stimulus `VideoFrameProvider`, drive it from the existing logical camera clock,
-and test decoded stimulus identities headlessly before adding composite Metal
-presentation.
+host-usable source video path. Phase 4D subsequently added a camera-driven
+macOS stimulus decode session and headless identity tests. See
+[the Phase 4D aligned stimulus decode record](crimson_macos_phase4d_aligned_stimulus_decode.md).

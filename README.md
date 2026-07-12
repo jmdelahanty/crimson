@@ -105,6 +105,9 @@ and fixture-backed TensorStore test are documented in
 Its production-Zarr parity checkpoint, including cross-mount stimulus video
 path resolution, is documented in
 [`docs/crimson_macos_phase4c_production_zarr_parity.md`](docs/crimson_macos_phase4c_production_zarr_parity.md).
+The Phase 4D camera-driven stimulus decode policy, headless identity tests, and
+production re-encode gate are documented in
+[`docs/crimson_macos_phase4d_aligned_stimulus_decode.md`](docs/crimson_macos_phase4d_aligned_stimulus_decode.md).
 
 ### How Dependency Paths Are Supplied
 

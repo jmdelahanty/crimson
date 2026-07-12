@@ -176,6 +176,9 @@
         "apple_tensorstore_zarr_tests",
         "stimulus_repository_tests",
         "stimulus_repository_probe",
+        "stimulus_playback_coordinator_tests",
+        "apple_stimulus_playback_tests",
+        "apple_stimulus_playback_probe",
         "apple_video_metal_tests",
         "apple_video_provider_tests",
         "frame_slot_tests"
