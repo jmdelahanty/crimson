@@ -63,24 +63,28 @@ For a first Windows bring-up where 3D triangulation is not needed, prefer
 `windows-trt10-cuda12.4-no-sfm`. That preset disables the OpenCV SFM-based
 triangulation path and leaves the rest of the pinned stack unchanged.
 
-### macOS Phase 1 Shell
+### macOS Native Application
 
-`macos-arm64-release` builds the provisional native Apple Silicon application
-shell with GLFW/Cocoa, ImGui, ImPlot, and Metal. It intentionally excludes
-CUDA, NVDEC, TensorRT, GLEW, OpenGL, FFmpeg, OpenCV, HDF5, and production
-Crimson runtime sources. It is a build/backend skeleton, not a session viewer
-or feature-parity release.
+`macos-arm64-release` builds the native Apple Silicon application with
+GLFW/Cocoa, ImGui, ImPlot, Metal, AVFoundation main-camera playback, and the
+TensorStore C++ Zarr drivers. It excludes the NVIDIA CUDA, NVDEC, TensorRT,
+GLEW, and OpenGL backends. Crop/stimulus playback, analysis overlays, editing,
+and inference remain later porting phases.
 
 Prerequisites and build:
 
 ```bash
-brew install cmake ninja glfw
+brew install cmake ninja glfw nasm
 git submodule update --init --recursive
 cmake --preset macos-arm64-release
 cmake --build --preset build-macos-arm64-release
 ctest --preset test-macos-arm64-headless
 ctest --preset test-macos-arm64
 ```
+
+CMake fetches and builds the pinned TensorStore C++ source for macOS. Python
+Zarr is not used. NASM is a build-time prerequisite of TensorStore's codec
+dependencies and is not required by the installed Crimson application itself.
 
 The app bundle is written to
 `build/macos-arm64-release/Crimson.app`. Keeping it inside the preset build

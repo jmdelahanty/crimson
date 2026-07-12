@@ -49,6 +49,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Threads REQUIRED)
+include(cmake/CrimsonTensorStore.cmake)
 
 add_library(crimson_frame_contracts STATIC
     src/frame_types.cpp
@@ -152,14 +153,6 @@ function(crimson_read_tensorrt_version include_dir out_var)
     endif()
 
     set(${out_var} "${tensorrt_version}" PARENT_SCOPE)
-endfunction()
-
-function(crimson_tensorstore_use_system_if_target option_name target_name)
-    if(TARGET "${target_name}")
-        set(${option_name} ON CACHE BOOL
-            "Use an installed version of the dependency when ${target_name} already exists"
-            FORCE)
-    endif()
 endfunction()
 
 function(crimson_require_found variable_name description)
@@ -647,46 +640,7 @@ if(EXISTS "${CRIMSON_PREBUILT_TENSORSTORE_BUILD_DIR}")
 endif()
 
 if(NOT CRIMSON_TENSORSTORE_IMPORTED_FROM_PREBUILT)
-include(FetchContent)
-
-# Set TensorStore options before declaring
-set(TENSORSTORE_BUILD_TESTS OFF CACHE BOOL "Build TensorStore tests" FORCE)
-set(TENSORSTORE_BUILD_EXAMPLES OFF CACHE BOOL "Build TensorStore examples" FORCE)
-set(TENSORSTORE_BUILD_PYTHON_BINDINGS OFF CACHE BOOL "Build Python bindings" FORCE)
-set(TENSORSTORE_BUILD_BENCHMARKS OFF CACHE BOOL "Build benchmarks" FORCE)
-set(TENSORSTORE_BUILD_DOC OFF CACHE BOOL "Build documentation" FORCE)
-if(WIN32)
-  # On Windows, packages discovered via vcpkg or upstream config packages can
-  # already define imported targets before TensorStore configures its vendored
-  # third-party tree. Prefer those system packages to avoid alias-target
-  # collisions in TensorStore's generated CMake.
-  # Keep TensorStore on its vendored nlohmann_json 3.11.3 for now. TensorStore
-  # 0.1.64 does not compile cleanly against the newer 3.12.x headers currently
-  # provided by vcpkg on Windows.
-  set(TENSORSTORE_USE_SYSTEM_NLOHMANN_JSON OFF CACHE BOOL
-      "Use TensorStore's vendored nlohmann_json on Windows" FORCE)
-  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_ZLIB "ZLIB::ZLIB")
-  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_OPENSSL "OpenSSL::SSL")
-  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_CURL "CURL::libcurl")
-  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_PNG "PNG::PNG")
-  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_JPEG "JPEG::JPEG")
-  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_TIFF "TIFF::TIFF")
-  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_WEBP "WebP::webp")
-  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_LIBLZMA "LibLZMA::LibLZMA")
-  crimson_tensorstore_use_system_if_target(TENSORSTORE_USE_SYSTEM_BZIP2 "BZip2::BZip2")
-endif()
-
-# Use a specific release version for stability
-FetchContent_Declare(
-    tensorstore
-    GIT_REPOSITORY https://github.com/google/tensorstore.git
-    GIT_TAG        v0.1.64  # Latest stable release as of Jan 2025
-    GIT_SHALLOW    TRUE      # Only fetch the specific tag, not full history
-    GIT_PROGRESS   TRUE      # Show download progress
-)
-
-# This will download and configure TensorStore
-FetchContent_MakeAvailable(tensorstore)
+    crimson_fetch_tensorstore()
 endif()
 
 # ============================================================================
@@ -1314,6 +1268,8 @@ endif() # CRIMSON_BUILD_NVIDIA_APP
 
 if(CRIMSON_BUILD_MACOS_APP)
     enable_language(OBJCXX)
+    message(STATUS "Configuring TensorStore for macOS Zarr support...")
+    crimson_fetch_tensorstore()
 
     if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
         message(FATAL_ERROR
@@ -1432,6 +1388,24 @@ if(CRIMSON_BUILD_MACOS_APP)
     )
 
     enable_testing()
+    add_executable(apple_tensorstore_zarr_tests
+        tools/apple_tensorstore_zarr_tests.cpp
+    )
+    target_compile_features(apple_tensorstore_zarr_tests PRIVATE cxx_std_17)
+    target_link_libraries(apple_tensorstore_zarr_tests PRIVATE
+        crimson::tensorstore_zarr
+        Threads::Threads
+    )
+    set_target_properties(apple_tensorstore_zarr_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME apple_tensorstore_zarr_tests
+        COMMAND $<TARGET_FILE:apple_tensorstore_zarr_tests>)
+    set_tests_properties(apple_tensorstore_zarr_tests PROPERTIES
+        LABELS "headless;macos;tensorstore;zarr"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
     add_executable(apple_video_provider_tests
         tools/apple_video_provider_tests.mm
     )
