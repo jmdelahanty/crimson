@@ -101,6 +101,7 @@ struct InterpolationRunData {
     std::vector<int32_t> camera_to_metadata_index_corrected;
     std::vector<int32_t> camera_to_stimulus_frame_corrected;
     std::vector<uint8_t> camera_stimulus_frame_interpolated;
+    std::vector<uint8_t> camera_frame_original;
     std::vector<uint8_t> stimulus_interpolation_mask;   // 1 = original, 0 = interpolated
     std::vector<uint8_t> frame_mask;                    // 1 = interpolated frame
     std::vector<int32_t> frame_metadata_stimulus_frames;
@@ -2015,13 +2016,6 @@ private:
     void rebuildStimulusEventTimelineCache(
         const std::vector<int32_t>* stimulus_to_camera_map = nullptr);
 
-    std::optional<int32_t> resolveStimulusMetadataIndex(
-        const std::vector<int32_t>& mapping,
-        int32_t camera_frame) const;
-    std::optional<int32_t> resolveStimulusFrame(
-        const std::vector<int32_t>& mapping,
-        const std::vector<int32_t>& frame_numbers,
-        int32_t camera_frame) const;
     std::optional<int32_t> resolveDirectStimulusFrame(int32_t camera_frame) const;
 };
 

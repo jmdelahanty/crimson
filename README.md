@@ -99,6 +99,10 @@ The backend-neutral frame metadata, surface lifetime, presentation handles, and
 portable selection tests introduced in Phase 2 are documented in
 [`docs/crimson_macos_phase2_frame_contracts.md`](docs/crimson_macos_phase2_frame_contracts.md).
 
+The Phase 4 stimulus repository contract, corrected/legacy mapping precedence,
+and fixture-backed TensorStore test are documented in
+[`docs/crimson_macos_phase4b_stimulus_repository.md`](docs/crimson_macos_phase4b_stimulus_repository.md).
+
 ### How Dependency Paths Are Supplied
 
 Shared presets in the repo define the supported stack.

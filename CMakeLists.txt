@@ -63,6 +63,14 @@ target_include_directories(crimson_frame_contracts PUBLIC
 target_link_libraries(crimson_frame_contracts PUBLIC Threads::Threads)
 target_compile_features(crimson_frame_contracts PUBLIC cxx_std_17)
 
+add_library(crimson_repository_contracts STATIC
+    src/zarr/stimulus_repository.cpp
+)
+target_include_directories(crimson_repository_contracts PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_features(crimson_repository_contracts PUBLIC cxx_std_17)
+
 add_executable(frame_slot_tests tools/frame_slot_tests.cpp)
 target_link_libraries(frame_slot_tests PRIVATE crimson_frame_contracts)
 target_compile_features(frame_slot_tests PRIVATE cxx_std_17)
@@ -788,6 +796,8 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_types.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_selection.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_slot.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/stimulus_repository.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_stimulus_repository.cpp"
 )
 
 # keypoint write path requires strict IEEE NaN semantics for contract-idempotent
@@ -828,6 +838,7 @@ target_include_directories(redgui PRIVATE
 # --- Link Libraries ---
 target_link_libraries(redgui PRIVATE
     crimson_frame_contracts
+    crimson_repository_contracts
     # CUDA and NVIDIA Libraries
     ${CUDA_LIBRARIES}
     ${CUDA_DRIVER}
@@ -1133,6 +1144,7 @@ target_include_directories(palette_clipped_loader_probe PRIVATE
     ${HDF5_INCLUDE_DIRS}
 )
 target_link_libraries(palette_clipped_loader_probe PRIVATE
+    crimson_repository_contracts
     tensorstore::all_drivers
     nlohmann_json::nlohmann_json
     Threads::Threads
@@ -1163,6 +1175,7 @@ target_include_directories(subject_mask_contour_probe PRIVATE
     ${HDF5_INCLUDE_DIRS}
 )
 target_link_libraries(subject_mask_contour_probe PRIVATE
+    crimson_repository_contracts
     tensorstore::all_drivers
     nlohmann_json::nlohmann_json
     Threads::Threads
@@ -1193,6 +1206,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/keypoint_fish_present_contract_chec
         ${HDF5_INCLUDE_DIRS}
     )
     target_link_libraries(keypoint_fish_present_contract_check PRIVATE
+        crimson_repository_contracts
         tensorstore::all_drivers
         nlohmann_json::nlohmann_json
         Threads::Threads
@@ -1231,6 +1245,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/keypoint_plot_debug_dump.cpp")
         ${HDF5_INCLUDE_DIRS}
     )
     target_link_libraries(keypoint_plot_debug_dump PRIVATE
+        crimson_repository_contracts
         tensorstore::all_drivers
         nlohmann_json::nlohmann_json
         Threads::Threads
@@ -1270,6 +1285,20 @@ if(CRIMSON_BUILD_MACOS_APP)
     enable_language(OBJCXX)
     message(STATUS "Configuring TensorStore for macOS Zarr support...")
     crimson_fetch_tensorstore()
+
+    add_library(crimson_tensorstore_repositories STATIC
+        src/zarr/tensorstore_stimulus_repository.cpp
+    )
+    target_include_directories(crimson_tensorstore_repositories PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_compile_features(crimson_tensorstore_repositories PUBLIC cxx_std_17)
+    target_link_libraries(crimson_tensorstore_repositories PUBLIC
+        crimson_repository_contracts
+    PRIVATE
+        crimson::tensorstore_zarr
+        Threads::Threads
+    )
 
     if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
         message(FATAL_ERROR
@@ -1403,6 +1432,27 @@ if(CRIMSON_BUILD_MACOS_APP)
         COMMAND $<TARGET_FILE:apple_tensorstore_zarr_tests>)
     set_tests_properties(apple_tensorstore_zarr_tests PROPERTIES
         LABELS "headless;macos;tensorstore;zarr"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    add_executable(stimulus_repository_tests
+        tools/stimulus_repository_tests.cpp
+    )
+    target_compile_features(stimulus_repository_tests PRIVATE cxx_std_17)
+    target_compile_definitions(stimulus_repository_tests PRIVATE
+        CRIMSON_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    target_link_libraries(stimulus_repository_tests PRIVATE
+        crimson_tensorstore_repositories
+        crimson::tensorstore_zarr
+    )
+    set_target_properties(stimulus_repository_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME stimulus_repository_tests
+        COMMAND $<TARGET_FILE:stimulus_repository_tests>)
+    set_tests_properties(stimulus_repository_tests PROPERTIES
+        LABELS "headless;macos;tensorstore;zarr;repository;stimulus"
         TIMEOUT 60
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )

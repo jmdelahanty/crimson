@@ -1,9 +1,37 @@
 #include "zarr_loader_internal.h"
+#include "zarr/stimulus_repository.h"
 #include <iostream>
 
 using json = nlohmann::json;
 
 namespace {
+
+crimson::zarr::StimulusMappingPreference StimulusPreference(
+    bool prefer_corrected) {
+    return prefer_corrected
+               ? crimson::zarr::StimulusMappingPreference::PreferCorrected
+               : crimson::zarr::StimulusMappingPreference::LegacyOnly;
+}
+
+crimson::zarr::StimulusAlignmentView StimulusAlignment(
+    const ZarrDetectionData& data) {
+    const auto& interp = data.latest_interpolation;
+    return {
+        interp.stimulus_run_name,
+        interp.camera_frame_offset,
+        &interp.camera_to_metadata_index,
+        &interp.camera_to_metadata_index_corrected,
+        &interp.camera_to_stimulus_frame_corrected,
+        &interp.frame_metadata_stimulus_frames,
+        &interp.frame_metadata_stimulus_frames_corrected,
+        &interp.camera_frame_original,
+        &interp.camera_stimulus_frame_interpolated,
+        data.has_stimulus_alignment_data,
+        interp.has_direct_stimulus_lookup,
+        interp.frame_metadata_loaded,
+        interp.frame_metadata_corrected_loaded,
+    };
+}
 
 std::string stimulusJsonStringAttr(const json& attrs, const char* key) {
     if (attrs.contains(key) && attrs[key].is_string()) {
@@ -1061,6 +1089,7 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
     if (has_metadata_mask) {
         stored_mask = metadata_mask;
     }
+    interp.camera_frame_original = camera_mask;
     if (has_direct_stimulus_lookup && !camera_to_stimulus_frame_corrected64.empty()) {
         interp.camera_to_stimulus_frame_corrected.resize(camera_to_stimulus_frame_corrected64.size());
         for (size_t i = 0; i < camera_to_stimulus_frame_corrected64.size(); ++i) {
@@ -2646,70 +2675,15 @@ ZarrDetectionLoader::getStimulusStepForFrame(int32_t camera_frame) const {
 }
 
 bool ZarrDetectionLoader::hasStimulusFrameMapping() const {
-    if (!data_.has_stimulus_alignment_data) {
-        return false;
-    }
-    const auto& interp = data_.latest_interpolation;
-    return interp.has_direct_stimulus_lookup ||
-           !interp.camera_to_metadata_index_corrected.empty() ||
-           !interp.camera_to_metadata_index.empty();
+    return crimson::zarr::HasStimulusMapping(StimulusAlignment(data_));
 }
 
 bool ZarrDetectionLoader::hasCorrectedStimulusFrameMapping() const {
-    if (!data_.has_stimulus_alignment_data) {
-        return false;
-    }
-    const auto& interp = data_.latest_interpolation;
-    if (interp.has_direct_stimulus_lookup &&
-        !interp.camera_to_stimulus_frame_corrected.empty()) {
-        return true;
-    }
-    return interp.frame_metadata_corrected_loaded &&
-           !interp.camera_to_metadata_index_corrected.empty() &&
-           !interp.frame_metadata_stimulus_frames_corrected.empty();
+    return crimson::zarr::HasCorrectedStimulusMapping(StimulusAlignment(data_));
 }
 
 int64_t ZarrDetectionLoader::getStimulusCameraFrameOffset() const {
     return data_.stimulus_camera_frame_offset;
-}
-
-std::optional<int32_t> ZarrDetectionLoader::resolveStimulusMetadataIndex(
-    const std::vector<int32_t>& mapping,
-    int32_t camera_frame) const {
-    if (mapping.empty() || camera_frame < 0) {
-        return std::nullopt;
-    }
-    size_t index = static_cast<size_t>(camera_frame);
-    if (index >= mapping.size()) {
-        return std::nullopt;
-    }
-    int32_t metadata_index = mapping[index];
-    if (metadata_index < 0) {
-        return std::nullopt;
-    }
-    return metadata_index;
-}
-
-std::optional<int32_t> ZarrDetectionLoader::resolveStimulusFrame(
-    const std::vector<int32_t>& mapping,
-    const std::vector<int32_t>& frame_numbers,
-    int32_t camera_frame) const {
-    if (frame_numbers.empty()) {
-        return std::nullopt;
-    }
-    auto metadata_index = resolveStimulusMetadataIndex(mapping, camera_frame);
-    if (!metadata_index) {
-        return std::nullopt;
-    }
-    size_t meta_idx = static_cast<size_t>(*metadata_index);
-    if (meta_idx >= frame_numbers.size()) {
-        return std::nullopt;
-    }
-    int32_t stimulus_frame = frame_numbers[meta_idx];
-    if (stimulus_frame < 0) {
-        return std::nullopt;
-    }
-    return stimulus_frame;
 }
 
 std::optional<int32_t> ZarrDetectionLoader::resolveDirectStimulusFrame(
@@ -2733,215 +2707,38 @@ std::optional<int32_t> ZarrDetectionLoader::resolveDirectStimulusFrame(
 std::optional<int32_t>
 ZarrDetectionLoader::getStimulusMetadataIndexForCameraFrame(int32_t camera_frame,
                                                             bool prefer_corrected) const {
-    if (!hasStimulusFrameMapping() || camera_frame < 0) {
-        return std::nullopt;
-    }
-    const auto& interp = data_.latest_interpolation;
-    if (prefer_corrected) {
-        if (auto corrected =
-                resolveStimulusMetadataIndex(interp.camera_to_metadata_index_corrected,
-                                             camera_frame)) {
-            return corrected;
-        }
-    }
-    return resolveStimulusMetadataIndex(interp.camera_to_metadata_index, camera_frame);
+    return crimson::zarr::ResolveStimulusMetadataIndex(
+        StimulusAlignment(data_), camera_frame,
+        StimulusPreference(prefer_corrected));
 }
 
 std::optional<int32_t>
 ZarrDetectionLoader::getStimulusFrameForCameraFrame(int32_t camera_frame,
                                                     bool prefer_corrected) const {
-    const auto& interp = data_.latest_interpolation;
-    if (prefer_corrected) {
-        if (auto direct = resolveDirectStimulusFrame(camera_frame)) {
-            return direct;
-        }
-    }
-    if (prefer_corrected) {
-        if (interp.frame_metadata_corrected_loaded) {
-            if (auto corrected =
-                    resolveStimulusFrame(interp.camera_to_metadata_index_corrected,
-                                         interp.frame_metadata_stimulus_frames_corrected,
-                                         camera_frame)) {
-                return corrected;
-            }
-        }
-    }
-    if (!interp.frame_metadata_loaded) {
-        return std::nullopt;
-    }
-    return resolveStimulusFrame(interp.camera_to_metadata_index,
-                                interp.frame_metadata_stimulus_frames,
-                                camera_frame);
+    return crimson::zarr::ResolveStimulusFrame(
+               StimulusAlignment(data_), camera_frame,
+               StimulusPreference(prefer_corrected))
+        .stimulus_frame;
 }
 
 std::optional<int32_t>
 ZarrDetectionLoader::getCameraFrameForStimulusFrame(int32_t stimulus_frame,
                                                     bool prefer_corrected) const {
-    if (!hasStimulusFrameMapping() || stimulus_frame < 0) {
-        return std::nullopt;
-    }
-
-    const auto& interp = data_.latest_interpolation;
-
-    auto resolve_from_direct = [&](const std::vector<int32_t>& direct)
-            -> std::optional<int32_t> {
-        if (direct.empty()) {
-            return std::nullopt;
-        }
-        for (size_t camera_idx = 0; camera_idx < direct.size(); ++camera_idx) {
-            if (direct[camera_idx] == stimulus_frame) {
-                return static_cast<int32_t>(camera_idx);
-            }
-        }
-        return std::nullopt;
-    };
-
-    auto resolve_from_metadata = [&](const std::vector<int32_t>& mapping,
-                                     const std::vector<int32_t>& frame_numbers)
-            -> std::optional<int32_t> {
-        if (mapping.empty() || frame_numbers.empty()) {
-            return std::nullopt;
-        }
-        for (size_t camera_idx = 0; camera_idx < mapping.size(); ++camera_idx) {
-            int32_t metadata_idx = mapping[camera_idx];
-            if (metadata_idx < 0) {
-                continue;
-            }
-            size_t meta_index = static_cast<size_t>(metadata_idx);
-            if (meta_index >= frame_numbers.size()) {
-                continue;
-            }
-            if (frame_numbers[meta_index] == stimulus_frame) {
-                return static_cast<int32_t>(camera_idx);
-            }
-        }
-        return std::nullopt;
-    };
-
-    if (prefer_corrected) {
-        if (interp.has_direct_stimulus_lookup) {
-            if (auto camera = resolve_from_direct(
-                    interp.camera_to_stimulus_frame_corrected)) {
-                return camera;
-            }
-        }
-        if (interp.frame_metadata_corrected_loaded) {
-            if (auto camera = resolve_from_metadata(
-                    interp.camera_to_metadata_index_corrected,
-                    interp.frame_metadata_stimulus_frames_corrected)) {
-                return camera;
-            }
-        }
-    }
-
-    if (auto camera = resolve_from_metadata(interp.camera_to_metadata_index,
-                                            interp.frame_metadata_stimulus_frames)) {
-        return camera;
-    }
-
-    return std::nullopt;
+    return crimson::zarr::ResolveCameraFrameForStimulus(
+        StimulusAlignment(data_), stimulus_frame,
+        StimulusPreference(prefer_corrected));
 }
 
 std::optional<int32_t> ZarrDetectionLoader::getFirstCameraFrameWithStimulus(
     bool prefer_corrected) const {
-    if (!hasStimulusFrameMapping()) {
-        return std::nullopt;
-    }
-    const auto& interp = data_.latest_interpolation;
-    if (prefer_corrected && interp.has_direct_stimulus_lookup) {
-        if (interp.first_camera_frame_with_stimulus_corrected >= 0) {
-            return interp.first_camera_frame_with_stimulus_corrected;
-        }
-        const auto& direct = interp.camera_to_stimulus_frame_corrected;
-        for (size_t i = 0; i < direct.size(); ++i) {
-            if (direct[i] >= 0) {
-                return static_cast<int32_t>(i);
-            }
-        }
-    }
-    auto find_first = [](const std::vector<int32_t>& mapping,
-                         int32_t cached) -> std::optional<int32_t> {
-        if (mapping.empty()) {
-            return std::nullopt;
-        }
-        if (cached >= 0) {
-            return cached;
-        }
-        for (size_t i = 0; i < mapping.size(); ++i) {
-            if (mapping[i] >= 0) {
-                return static_cast<int32_t>(i);
-            }
-        }
-        return std::nullopt;
-    };
-
-    if (prefer_corrected) {
-        if (auto corrected = find_first(interp.camera_to_metadata_index_corrected,
-                                        interp.first_camera_frame_with_stimulus_corrected)) {
-            return corrected;
-        }
-    }
-    return find_first(interp.camera_to_metadata_index,
-                      interp.first_camera_frame_with_stimulus);
+    return crimson::zarr::FirstCameraFrameWithStimulus(
+        StimulusAlignment(data_), StimulusPreference(prefer_corrected));
 }
 
 std::optional<int32_t> ZarrDetectionLoader::getFirstStimulusFrameNumber(
     bool prefer_corrected) const {
-    const auto& interp = data_.latest_interpolation;
-    if (prefer_corrected && interp.has_direct_stimulus_lookup) {
-        if (interp.first_stimulus_frame_corrected >= 0) {
-            return interp.first_stimulus_frame_corrected;
-        }
-        const auto& direct = interp.camera_to_stimulus_frame_corrected;
-        for (int32_t value : direct) {
-            if (value >= 0) {
-                return value;
-            }
-        }
-    }
-    auto resolve_first = [](const std::vector<int32_t>& frame_numbers,
-                            int32_t cached_frame,
-                            int32_t cached_meta,
-                            const std::vector<int32_t>& mapping) -> std::optional<int32_t> {
-        if (frame_numbers.empty()) {
-            return std::nullopt;
-        }
-        if (cached_frame >= 0) {
-            return cached_frame;
-        }
-        int32_t meta_idx = cached_meta;
-        if (meta_idx < 0 && !mapping.empty()) {
-            for (size_t i = 0; i < mapping.size(); ++i) {
-                if (mapping[i] >= 0) {
-                    meta_idx = mapping[i];
-                    break;
-                }
-            }
-        }
-        if (meta_idx >= 0 &&
-            static_cast<size_t>(meta_idx) < frame_numbers.size() &&
-            frame_numbers[static_cast<size_t>(meta_idx)] >= 0) {
-            return frame_numbers[static_cast<size_t>(meta_idx)];
-        }
-        return std::nullopt;
-    };
-
-    if (prefer_corrected && interp.frame_metadata_corrected_loaded) {
-        if (auto corrected = resolve_first(
-                interp.frame_metadata_stimulus_frames_corrected,
-                interp.first_stimulus_frame_corrected,
-                interp.first_metadata_index_with_stimulus_corrected,
-                interp.camera_to_metadata_index_corrected)) {
-            return corrected;
-        }
-    }
-    if (!interp.frame_metadata_loaded) {
-        return std::nullopt;
-    }
-    return resolve_first(interp.frame_metadata_stimulus_frames,
-                         interp.first_stimulus_frame,
-                         interp.first_metadata_index_with_stimulus,
-                         interp.camera_to_metadata_index);
+    return crimson::zarr::FirstStimulusFrame(
+        StimulusAlignment(data_), StimulusPreference(prefer_corrected));
 }
 
 bool ZarrDetectionLoader::loadChaserDistancePolarData(
