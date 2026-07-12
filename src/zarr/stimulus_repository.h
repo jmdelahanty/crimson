@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -37,6 +38,8 @@ struct StimulusFrameResolution {
 
 struct StimulusAlignmentData {
   std::string run_name;
+  std::string source_video_path;
+  std::string resolved_source_video_path;
   int64_t camera_frame_offset = 0;
   std::vector<int32_t> camera_to_metadata_index;
   std::vector<int32_t> camera_to_metadata_index_corrected;
@@ -68,6 +71,7 @@ struct StimulusAlignmentView {
 };
 
 StimulusAlignmentView ViewStimulusAlignment(const StimulusAlignmentData& data);
+size_t StimulusCameraFrameCount(const StimulusAlignmentView& alignment);
 
 bool HasStimulusMapping(const StimulusAlignmentView& alignment);
 bool HasCorrectedStimulusMapping(const StimulusAlignmentView& alignment);
@@ -105,6 +109,9 @@ class StimulusRepository {
   virtual ~StimulusRepository() = default;
 
   virtual const std::string& runName() const = 0;
+  virtual const std::string& sourceVideoPath() const = 0;
+  virtual const std::string& resolvedSourceVideoPath() const = 0;
+  virtual size_t cameraFrameCount() const = 0;
   virtual int64_t cameraFrameOffset() const = 0;
   virtual bool hasMapping() const = 0;
   virtual bool hasCorrectedMapping() const = 0;

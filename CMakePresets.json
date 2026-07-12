@@ -175,6 +175,7 @@
         "crimson_macos_shell",
         "apple_tensorstore_zarr_tests",
         "stimulus_repository_tests",
+        "stimulus_repository_probe",
         "apple_video_metal_tests",
         "apple_video_provider_tests",
         "frame_slot_tests"

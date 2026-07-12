@@ -1,5 +1,6 @@
 {
   "run_name": "fixture_alignment_run",
+  "source_stimulus_video_path": "/groups/johnson/johnsonlab/fixture_recording/raw/stimulus.mp4",
   "camera_frame_offset": 17,
   "arrays": {
     "camera_to_metadata_index": [-1, 0, 1, 2, 3, -1, 4],

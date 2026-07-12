@@ -1,4 +1,5 @@
 #include "zarr_loader.h"
+#include "zarr/tensorstore_stimulus_repository.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -20,6 +21,7 @@ struct ExpectedFrame {
 };
 
 struct ProbeOptions {
+    bool stimulus_repository_parity = false;
     std::optional<std::string> expected_collection;
     std::optional<size_t> expected_selected_runs;
     std::optional<size_t> expected_mapped_frames;
@@ -239,6 +241,8 @@ bool parseOptions(int argc,
                 return false;
             }
             options->expected_frames.push_back(std::move(expected));
+        } else if (arg == "--stimulus-repository-parity") {
+            options->stimulus_repository_parity = true;
         } else if (arg.rfind("--", 0) == 0) {
             if (error_message != nullptr) {
                 *error_message = "unknown option: " + arg;
@@ -256,6 +260,126 @@ bool parseOptions(int argc,
         }
     }
     return true;
+}
+
+int runStimulusRepositoryParity(const ZarrDetectionLoader& loader,
+                                const std::string& archive_path) {
+    std::string error;
+    auto archive = crimson::zarr::ArchiveContext::Open(archive_path, &error);
+    if (!archive) {
+        std::cerr << "repository archive open failed: " << error << std::endl;
+        return 4;
+    }
+    auto repository =
+        crimson::zarr::OpenStimulusRepository(archive, {}, &error);
+    if (!repository) {
+        std::cerr << "stimulus repository open failed: " << error << std::endl;
+        return 4;
+    }
+
+    size_t failures = 0;
+    auto reportMismatch = [&](const std::string& label,
+                              int64_t frame,
+                              const std::optional<int32_t>& legacy,
+                              const std::optional<int32_t>& repository_value) {
+        if (legacy == repository_value) {
+            return;
+        }
+        if (failures < 20) {
+            std::cerr << "parity mismatch " << label << " frame=" << frame
+                      << " legacy=";
+            if (legacy) {
+                std::cerr << *legacy;
+            } else {
+                std::cerr << "missing";
+            }
+            std::cerr << " repository=";
+            if (repository_value) {
+                std::cerr << *repository_value;
+            } else {
+                std::cerr << "missing";
+            }
+            std::cerr << std::endl;
+        }
+        ++failures;
+    };
+
+    if (loader.hasStimulusFrameMapping() != repository->hasMapping()) {
+        std::cerr << "parity mismatch hasMapping" << std::endl;
+        ++failures;
+    }
+    if (loader.hasCorrectedStimulusFrameMapping() !=
+        repository->hasCorrectedMapping()) {
+        std::cerr << "parity mismatch hasCorrectedMapping" << std::endl;
+        ++failures;
+    }
+    if (loader.getStimulusCameraFrameOffset() !=
+        repository->cameraFrameOffset()) {
+        std::cerr << "parity mismatch cameraFrameOffset legacy="
+                  << loader.getStimulusCameraFrameOffset()
+                  << " repository=" << repository->cameraFrameOffset()
+                  << std::endl;
+        ++failures;
+    }
+    if (loader.getStimulusVideoPath() != repository->sourceVideoPath()) {
+        std::cerr << "parity mismatch sourceVideoPath legacy='"
+                  << loader.getStimulusVideoPath() << "' repository='"
+                  << repository->sourceVideoPath() << "'" << std::endl;
+        ++failures;
+    }
+
+    const size_t compared_frames =
+        std::max(loader.getTotalFrames(), repository->cameraFrameCount()) + 1;
+    for (size_t frame = 0; frame < compared_frames; ++frame) {
+        const int32_t camera_frame = static_cast<int32_t>(frame);
+        for (bool prefer_corrected : {false, true}) {
+            const auto preference =
+                prefer_corrected
+                    ? crimson::zarr::StimulusMappingPreference::PreferCorrected
+                    : crimson::zarr::StimulusMappingPreference::LegacyOnly;
+            reportMismatch(
+                prefer_corrected ? "stimulus_corrected" : "stimulus_legacy",
+                camera_frame,
+                loader.getStimulusFrameForCameraFrame(camera_frame,
+                                                      prefer_corrected),
+                repository->resolveCameraFrame(camera_frame, preference)
+                    .stimulus_frame);
+            reportMismatch(
+                prefer_corrected ? "metadata_corrected" : "metadata_legacy",
+                camera_frame,
+                loader.getStimulusMetadataIndexForCameraFrame(
+                    camera_frame, prefer_corrected),
+                repository->metadataIndexForCameraFrame(camera_frame,
+                                                        preference));
+        }
+    }
+
+    for (bool prefer_corrected : {false, true}) {
+        const auto preference =
+            prefer_corrected
+                ? crimson::zarr::StimulusMappingPreference::PreferCorrected
+                : crimson::zarr::StimulusMappingPreference::LegacyOnly;
+        reportMismatch("first_camera", -1,
+                       loader.getFirstCameraFrameWithStimulus(prefer_corrected),
+                       repository->firstCameraFrameWithStimulus(preference));
+        reportMismatch("first_stimulus", -1,
+                       loader.getFirstStimulusFrameNumber(prefer_corrected),
+                       repository->firstStimulusFrame(preference));
+    }
+
+    if (failures != 0) {
+        std::cerr << "[StimulusRepositoryParity] FAIL mismatches=" << failures
+                  << " compared_frames=" << compared_frames << std::endl;
+        return 5;
+    }
+    std::cout << "[StimulusRepositoryParity] PASS run="
+              << repository->runName()
+              << " compared_frames=" << compared_frames
+              << " mapping_frames=" << repository->cameraFrameCount()
+              << " corrected="
+              << (repository->hasCorrectedMapping() ? "true" : "false")
+              << std::endl;
+    return 0;
 }
 
 void printFrameProbe(const ZarrDetectionLoader& loader, int64_t parent_frame) {
@@ -421,6 +545,7 @@ int main(int argc, char** argv) {
                   << "  --expect-coordinates-normalized true|false\n"
                   << "  --expect-frame parent:clip_id:clip_local"
                      "[:recording_frame_id[:min_boxes]]"
+                  << "\n  --stimulus-repository-parity"
                   << std::endl;
         return 1;
     }
@@ -437,6 +562,10 @@ int main(int argc, char** argv) {
     if (!loader.loadZarrFile(argv[1], error_message)) {
         std::cerr << "load failed: " << error_message << std::endl;
         return 2;
+    }
+
+    if (options.stimulus_repository_parity) {
+        return runStimulusRepositoryParity(loader, argv[1]);
     }
 
     if (!loader.hasClippedCollection()) {

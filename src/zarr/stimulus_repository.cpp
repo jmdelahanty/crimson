@@ -51,6 +51,15 @@ class OwnedStimulusRepository final : public StimulusRepository {
       : alignment_(std::move(alignment)) {}
 
   const std::string& runName() const override { return alignment_.run_name; }
+  const std::string& sourceVideoPath() const override {
+    return alignment_.source_video_path;
+  }
+  const std::string& resolvedSourceVideoPath() const override {
+    return alignment_.resolved_source_video_path;
+  }
+  size_t cameraFrameCount() const override {
+    return StimulusCameraFrameCount(ViewStimulusAlignment(alignment_));
+  }
   int64_t cameraFrameOffset() const override {
     return alignment_.camera_frame_offset;
   }
@@ -110,6 +119,10 @@ StimulusAlignmentView ViewStimulusAlignment(const StimulusAlignmentData& data) {
       data.legacy_metadata_available,
       data.corrected_metadata_available,
   };
+}
+
+size_t StimulusCameraFrameCount(const StimulusAlignmentView& alignment) {
+  return CameraFrameCount(alignment);
 }
 
 bool HasStimulusMapping(const StimulusAlignmentView& alignment) {

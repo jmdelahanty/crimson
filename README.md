@@ -102,6 +102,9 @@ portable selection tests introduced in Phase 2 are documented in
 The Phase 4 stimulus repository contract, corrected/legacy mapping precedence,
 and fixture-backed TensorStore test are documented in
 [`docs/crimson_macos_phase4b_stimulus_repository.md`](docs/crimson_macos_phase4b_stimulus_repository.md).
+Its production-Zarr parity checkpoint, including cross-mount stimulus video
+path resolution, is documented in
+[`docs/crimson_macos_phase4c_production_zarr_parity.md`](docs/crimson_macos_phase4c_production_zarr_parity.md).
 
 ### How Dependency Paths Are Supplied
 

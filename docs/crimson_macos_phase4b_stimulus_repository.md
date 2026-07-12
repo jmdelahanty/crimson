@@ -111,8 +111,8 @@ warnings. No new runtime dependency or warning class was introduced.
 ## Phase Boundary
 
 This checkpoint proves the repository boundary and alignment semantics without
-a production Zarr. The next checkpoint should open the representative analysis
-Zarr through `ArchiveContext`, compare repository results against the legacy
-loader at selected camera frames, and expose the resolved stimulus video path.
-Only after that parity test should the macOS viewer add a second decoded stream
-and composite presentation.
+a production Zarr. Phase 4C subsequently opened the representative analysis
+Zarr through `ArchiveContext`, compared the entire camera-frame domain against
+the legacy loader, and exposed the resolved stimulus video path. See
+[the Phase 4C production parity record](crimson_macos_phase4c_production_zarr_parity.md)
+for that validation.

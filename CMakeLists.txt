@@ -71,6 +71,36 @@ target_include_directories(crimson_repository_contracts PUBLIC
 )
 target_compile_features(crimson_repository_contracts PUBLIC cxx_std_17)
 
+function(crimson_add_tensorstore_repositories tensorstore_target)
+    if(TARGET crimson_tensorstore_repositories)
+        return()
+    endif()
+
+    add_library(crimson_tensorstore_repositories OBJECT
+        src/zarr/tensorstore_stimulus_repository.cpp
+    )
+    target_include_directories(crimson_tensorstore_repositories PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_compile_features(crimson_tensorstore_repositories PUBLIC cxx_std_17)
+    target_link_libraries(crimson_tensorstore_repositories
+        PUBLIC crimson_repository_contracts
+        PRIVATE ${tensorstore_target} Threads::Threads
+    )
+
+    add_executable(stimulus_repository_probe
+        tools/stimulus_repository_probe.cpp
+    )
+    target_compile_features(stimulus_repository_probe PRIVATE cxx_std_17)
+    target_link_libraries(stimulus_repository_probe PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(stimulus_repository_probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+endfunction()
+
 add_executable(frame_slot_tests tools/frame_slot_tests.cpp)
 target_link_libraries(frame_slot_tests PRIVATE crimson_frame_contracts)
 target_compile_features(frame_slot_tests PRIVATE cxx_std_17)
@@ -650,6 +680,7 @@ endif()
 if(NOT CRIMSON_TENSORSTORE_IMPORTED_FROM_PREBUILT)
     crimson_fetch_tensorstore()
 endif()
+crimson_add_tensorstore_repositories(tensorstore::all_drivers)
 
 # ============================================================================
 # TensorStore Zarr3 build/test-time verification
@@ -1145,6 +1176,7 @@ target_include_directories(palette_clipped_loader_probe PRIVATE
 )
 target_link_libraries(palette_clipped_loader_probe PRIVATE
     crimson_repository_contracts
+    crimson_tensorstore_repositories
     tensorstore::all_drivers
     nlohmann_json::nlohmann_json
     Threads::Threads
@@ -1285,20 +1317,7 @@ if(CRIMSON_BUILD_MACOS_APP)
     enable_language(OBJCXX)
     message(STATUS "Configuring TensorStore for macOS Zarr support...")
     crimson_fetch_tensorstore()
-
-    add_library(crimson_tensorstore_repositories STATIC
-        src/zarr/tensorstore_stimulus_repository.cpp
-    )
-    target_include_directories(crimson_tensorstore_repositories PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-    )
-    target_compile_features(crimson_tensorstore_repositories PUBLIC cxx_std_17)
-    target_link_libraries(crimson_tensorstore_repositories PUBLIC
-        crimson_repository_contracts
-    PRIVATE
-        crimson::tensorstore_zarr
-        Threads::Threads
-    )
+    crimson_add_tensorstore_repositories(crimson::tensorstore_zarr)
 
     if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
         message(FATAL_ERROR

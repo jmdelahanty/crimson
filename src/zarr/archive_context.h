@@ -20,6 +20,8 @@ class ArchiveContext {
       std::string* error_message = nullptr);
 
   const std::filesystem::path& rootPath() const;
+  std::filesystem::path resolveStoredPath(
+      const std::filesystem::path& stored_path) const;
 
  private:
   explicit ArchiveContext(std::shared_ptr<Impl> impl);

@@ -137,6 +137,13 @@ bool BuildFixtureArchive(const json& fixture,
        {"node_type", "group"},
        {"attributes", {{"latest", run_name}}}}));
   CHECK(WriteJsonFile(
+      root / base / "zarr.json",
+      {{"zarr_format", 3},
+       {"node_type", "group"},
+       {"attributes",
+        {{"source_stimulus_video_path",
+          fixture.at("source_stimulus_video_path")}}}}));
+  CHECK(WriteJsonFile(
       root / base / "frame_alignment/zarr.json",
       {{"zarr_format", 3},
        {"node_type", "group"},
@@ -231,17 +238,31 @@ bool RunTest() {
 
   TemporaryDirectory temporary_directory;
   CHECK(!temporary_directory.path().empty());
-  CHECK(BuildFixtureArchive(fixture, temporary_directory.path()));
+  const auto recording_root = temporary_directory.path() / "fixture_recording";
+  const auto archive_root = recording_root / "zarr/fixture_analysis.zarr";
+  const auto local_video = recording_root / "raw/stimulus.mp4";
+  std::filesystem::create_directories(local_video.parent_path());
+  {
+    std::ofstream output(local_video);
+    CHECK(output.good());
+  }
+  std::filesystem::create_directories(archive_root);
+  CHECK(BuildFixtureArchive(fixture, archive_root));
 
   std::string error;
   auto archive = crimson::zarr::ArchiveContext::Open(
-      temporary_directory.path(), &error);
+      archive_root, &error);
   CHECK(archive != nullptr);
-  CHECK(archive->rootPath() == temporary_directory.path());
+  CHECK(archive->rootPath() == archive_root);
   auto repository =
       crimson::zarr::OpenStimulusRepository(archive, {}, &error);
   CHECK(repository != nullptr);
   CHECK(repository->runName() == fixture.at("run_name").get<std::string>());
+  CHECK(repository->sourceVideoPath() ==
+        fixture.at("source_stimulus_video_path").get<std::string>());
+  CHECK(repository->resolvedSourceVideoPath() == local_video.string());
+  CHECK(repository->cameraFrameCount() ==
+        fixture.at("arrays").at("camera_to_metadata_index").size());
   CHECK(repository->cameraFrameOffset() ==
         fixture.at("camera_frame_offset").get<int64_t>());
   CHECK(repository->hasMapping());

@@ -211,6 +211,35 @@ const std::filesystem::path& ArchiveContext::rootPath() const {
   return impl_->root_path;
 }
 
+std::filesystem::path ArchiveContext::resolveStoredPath(
+    const std::filesystem::path& stored_path) const {
+  if (stored_path.empty() || std::filesystem::exists(stored_path)) {
+    return stored_path;
+  }
+
+  std::filesystem::path recording_root = impl_->root_path.parent_path();
+  if (recording_root.filename() == "zarr") {
+    recording_root = recording_root.parent_path();
+  }
+  if (recording_root.empty()) {
+    return stored_path;
+  }
+
+  bool found_recording = false;
+  std::filesystem::path suffix;
+  for (const auto& component : stored_path) {
+    if (!found_recording) {
+      found_recording = component == recording_root.filename();
+      continue;
+    }
+    suffix /= component;
+  }
+  if (!found_recording || suffix.empty()) {
+    return stored_path;
+  }
+  return recording_root / suffix;
+}
+
 std::unique_ptr<StimulusRepository> OpenStimulusRepository(
     const std::shared_ptr<ArchiveContext>& archive,
     const std::string& requested_run,
@@ -239,6 +268,16 @@ std::unique_ptr<StimulusRepository> OpenStimulusRepository(
   alignment.run_name = run_name;
   const std::string run_base =
       "analysis/stimulus_runs/" + run_name + "/";
+
+  if (auto attributes = ReadAttributes(impl.store, run_base)) {
+    if (attributes->contains("source_stimulus_video_path") &&
+        (*attributes)["source_stimulus_video_path"].is_string()) {
+      alignment.source_video_path =
+          (*attributes)["source_stimulus_video_path"].get<std::string>();
+      alignment.resolved_source_video_path =
+          archive->resolveStoredPath(alignment.source_video_path).string();
+    }
+  }
 
   if (auto attributes =
           ReadAttributes(impl.store, run_base + "frame_alignment")) {
@@ -294,7 +333,15 @@ std::unique_ptr<StimulusRepository> OpenStimulusRepository(
   if (!alignment.alignment_available) {
     SetError(error_message,
              "Stimulus run '" + run_name +
-                 "' has no usable corrected or legacy frame mapping");
+                 "' has no usable corrected or legacy frame mapping"
+                 " (legacy_mapping=" + (legacy_mapping ? "true" : "false") +
+                 ", legacy_frames=" + (legacy_frames ? "true" : "false") +
+                 ", corrected_mapping=" +
+                 (corrected_mapping ? "true" : "false") +
+                 ", corrected_frames=" +
+                 (corrected_frames ? "true" : "false") +
+                 ", corrected_direct=" +
+                 (corrected_direct ? "true" : "false") + ")");
     return nullptr;
   }
   return MakeStimulusRepository(std::move(alignment));
