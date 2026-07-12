@@ -1,7 +1,35 @@
 cmake_minimum_required(VERSION 3.18)
-project(redgui LANGUAGES CXX CUDA)
+project(redgui LANGUAGES CXX)
 
 include(GNUInstallDirs)
+
+if(APPLE)
+    set(CRIMSON_BUILD_NVIDIA_APP_DEFAULT OFF)
+    set(CRIMSON_BUILD_MACOS_APP_DEFAULT ON)
+else()
+    set(CRIMSON_BUILD_NVIDIA_APP_DEFAULT ON)
+    set(CRIMSON_BUILD_MACOS_APP_DEFAULT OFF)
+endif()
+
+option(CRIMSON_BUILD_NVIDIA_APP
+    "Build the maintained CUDA/NVDEC/OpenGL/TensorRT redgui application"
+    ${CRIMSON_BUILD_NVIDIA_APP_DEFAULT})
+option(CRIMSON_BUILD_MACOS_APP
+    "Build the provisional native Apple Silicon GLFW/Metal application shell"
+    ${CRIMSON_BUILD_MACOS_APP_DEFAULT})
+
+if(CRIMSON_BUILD_NVIDIA_APP AND APPLE)
+    message(FATAL_ERROR
+        "CRIMSON_BUILD_NVIDIA_APP is not supported on macOS. "
+        "Use the macOS preset or set CRIMSON_BUILD_NVIDIA_APP=OFF.")
+endif()
+if(CRIMSON_BUILD_MACOS_APP AND NOT APPLE)
+    message(FATAL_ERROR
+        "CRIMSON_BUILD_MACOS_APP requires native macOS.")
+endif()
+if(NOT CRIMSON_BUILD_NVIDIA_APP AND NOT CRIMSON_BUILD_MACOS_APP)
+    message(WARNING "No Crimson application backend is enabled.")
+endif()
 
 # ----------------------- Build toggles -----------------------
 option(ENABLE_NVML "Link against NVIDIA Management Library (NVML)" ON)
@@ -9,6 +37,8 @@ option(CRIMSON_INSTALL_DEV_TOOLS "Install diagnostic and developer helper execut
 option(CRIMSON_ENABLE_SFM "Enable OpenCV SFM-based triangulation workflows" ON)
 option(CRIMSON_ENABLE_PARQUET "Enable Arrow/Parquet support for Palette clipped frame maps" OFF)
 option(CRIMSON_ENABLE_NVENC "Require/link NVIDIA NVENC encode API for future annotated video export support" OFF)
+option(ENABLE_TENSORSTORE_ZARR3_CHECK
+    "Build and run a small runtime check to verify zarr3 driver support" ON)
 
 # Set output directory for executables
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/release)
@@ -17,6 +47,10 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/release)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+if(CRIMSON_BUILD_NVIDIA_APP)
+    enable_language(CUDA)
+
 set(CRIMSON_STRICT_NAN_COMPILE_OPTION "")
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
     set(CRIMSON_CXX_FAST_FLAGS -Ofast -ffast-math)
@@ -635,8 +669,6 @@ endif()
 # ============================================================================
 # TensorStore Zarr3 build/test-time verification
 # ============================================================================
-option(ENABLE_TENSORSTORE_ZARR3_CHECK "Build and run a small runtime check to verify zarr3 driver support" ON)
-
 if(ENABLE_TENSORSTORE_ZARR3_CHECK)
   # --------------------------------------------------------------------------
   # Create a tiny runtime checker to confirm that TensorStore's zarr3 driver is
@@ -1265,4 +1297,124 @@ if(CRIMSON_INSTALL_DEV_TOOLS)
             COMPONENT dev_tools
         )
     endif()
+endif()
+
+endif() # CRIMSON_BUILD_NVIDIA_APP
+
+if(CRIMSON_BUILD_MACOS_APP)
+    enable_language(OBJCXX)
+
+    if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
+        message(FATAL_ERROR
+            "The maintained macOS backend requires native Apple Silicon arm64.")
+    endif()
+
+    set(CRIMSON_MACOS_IMGUI_DIR
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui")
+    set(CRIMSON_MACOS_IMPLOT_DIR
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/implot")
+    if(NOT EXISTS "${CRIMSON_MACOS_IMGUI_DIR}/imgui.cpp")
+        message(FATAL_ERROR
+            "Dear ImGui is not initialized at ${CRIMSON_MACOS_IMGUI_DIR}. "
+            "Run: git submodule update --init --recursive")
+    endif()
+    if(NOT EXISTS "${CRIMSON_MACOS_IMPLOT_DIR}/implot.cpp")
+        message(FATAL_ERROR
+            "ImPlot is not initialized at ${CRIMSON_MACOS_IMPLOT_DIR}. "
+            "Run: git submodule update --init --recursive")
+    endif()
+
+    find_package(glfw3 CONFIG REQUIRED)
+    find_library(COCOA_FRAMEWORK Cocoa REQUIRED)
+    find_library(METAL_FRAMEWORK Metal REQUIRED)
+    find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
+
+    execute_process(
+        COMMAND git rev-parse --short HEAD
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE CRIMSON_MACOS_GIT_COMMIT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(NOT CRIMSON_MACOS_GIT_COMMIT)
+        set(CRIMSON_MACOS_GIT_COMMIT "unknown")
+    endif()
+
+    set(CRIMSON_MACOS_APP_SOURCES
+        src/platform/macos/crimson_macos_main.mm
+        ${CRIMSON_MACOS_IMGUI_DIR}/imgui.cpp
+        ${CRIMSON_MACOS_IMGUI_DIR}/imgui_draw.cpp
+        ${CRIMSON_MACOS_IMGUI_DIR}/imgui_tables.cpp
+        ${CRIMSON_MACOS_IMGUI_DIR}/imgui_widgets.cpp
+        ${CRIMSON_MACOS_IMGUI_DIR}/backends/imgui_impl_glfw.cpp
+        ${CRIMSON_MACOS_IMGUI_DIR}/backends/imgui_impl_metal.mm
+        ${CRIMSON_MACOS_IMPLOT_DIR}/implot.cpp
+        ${CRIMSON_MACOS_IMPLOT_DIR}/implot_items.cpp
+    )
+    set(CRIMSON_MACOS_APP_RESOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/fonts/Roboto-Regular.ttf
+        ${CMAKE_CURRENT_SOURCE_DIR}/fonts/forkawesome-webfont.ttf
+    )
+    set_source_files_properties(${CRIMSON_MACOS_APP_RESOURCES}
+        PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/fonts")
+
+    add_executable(crimson_macos_shell MACOSX_BUNDLE
+        ${CRIMSON_MACOS_APP_SOURCES}
+        ${CRIMSON_MACOS_APP_RESOURCES}
+    )
+    target_compile_features(crimson_macos_shell PRIVATE cxx_std_17)
+    target_compile_options(crimson_macos_shell PRIVATE
+        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
+    )
+    target_compile_definitions(crimson_macos_shell PRIVATE
+        CRIMSON_GIT_COMMIT="${CRIMSON_MACOS_GIT_COMMIT}"
+    )
+    target_include_directories(crimson_macos_shell PRIVATE
+        ${CRIMSON_MACOS_IMGUI_DIR}
+        ${CRIMSON_MACOS_IMGUI_DIR}/backends
+        ${CRIMSON_MACOS_IMPLOT_DIR}
+    )
+    target_link_libraries(crimson_macos_shell PRIVATE
+        glfw
+        ${COCOA_FRAMEWORK}
+        ${METAL_FRAMEWORK}
+        ${QUARTZCORE_FRAMEWORK}
+    )
+    set_target_properties(crimson_macos_shell PROPERTIES
+        OUTPUT_NAME "Crimson"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+        MACOSX_BUNDLE_BUNDLE_NAME "Crimson"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "org.hhmi.crimson"
+        MACOSX_BUNDLE_BUNDLE_VERSION "0.1.0"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "0.1.0"
+    )
+
+    enable_testing()
+    add_test(NAME crimson_macos_metal_headless
+        COMMAND $<TARGET_FILE:crimson_macos_shell> --validate-metal)
+    set_tests_properties(crimson_macos_metal_headless PROPERTIES
+        LABELS "headless;macos;metal"
+        TIMEOUT 30
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    add_test(NAME crimson_macos_shell_smoke
+        COMMAND $<TARGET_FILE:crimson_macos_shell> --smoke)
+    set_tests_properties(crimson_macos_shell_smoke PROPERTIES
+        LABELS "gui;macos;metal"
+        TIMEOUT 30
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    install(TARGETS crimson_macos_shell
+        BUNDLE DESTINATION .
+        COMPONENT core
+    )
+
+    message(STATUS "========================================")
+    message(STATUS "Crimson macOS Phase 1 Configuration")
+    message(STATUS "  Architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+    message(STATUS "  Renderer: Metal")
+    message(STATUS "  Window backend: GLFW/Cocoa")
+    message(STATUS "  Git commit: ${CRIMSON_MACOS_GIT_COMMIT}")
+    message(STATUS "========================================")
 endif()

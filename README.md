@@ -33,6 +33,7 @@ Current preset stack family:
 - `linux-trt10-cuda12.4-debug`
 - `windows-trt10-cuda12.4`
 - `windows-trt10-cuda12.4-no-sfm`
+- `macos-arm64-release`
 
 Those presets currently mean:
 
@@ -61,6 +62,34 @@ If you are confused by `nvidia-smi` showing a different CUDA version than
 For a first Windows bring-up where 3D triangulation is not needed, prefer
 `windows-trt10-cuda12.4-no-sfm`. That preset disables the OpenCV SFM-based
 triangulation path and leaves the rest of the pinned stack unchanged.
+
+### macOS Phase 1 Shell
+
+`macos-arm64-release` builds the provisional native Apple Silicon application
+shell with GLFW/Cocoa, ImGui, ImPlot, and Metal. It intentionally excludes
+CUDA, NVDEC, TensorRT, GLEW, OpenGL, FFmpeg, OpenCV, HDF5, and production
+Crimson runtime sources. It is a build/backend skeleton, not a session viewer
+or feature-parity release.
+
+Prerequisites and build:
+
+```bash
+brew install cmake ninja glfw
+git submodule update --init --recursive
+cmake --preset macos-arm64-release
+cmake --build --preset build-macos-arm64-release
+ctest --preset test-macos-arm64-headless
+ctest --preset test-macos-arm64
+```
+
+The app bundle is written to
+`build/macos-arm64-release/Crimson.app`. Keeping it inside the preset build
+directory prevents another configuration from replacing the executable used by
+CTest. The CTest suite contains a headless offscreen Metal/ImGui pixel test and
+a finite real-window GLFW/Cocoa presentation smoke. See
+[`docs/crimson_macos_phase0_inventory.md`](docs/crimson_macos_phase0_inventory.md)
+for the baseline, parity inventory, measured results, and NVIDIA validation
+commands.
 
 ### How Dependency Paths Are Supplied
 

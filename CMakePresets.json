@@ -17,6 +17,22 @@
       }
     },
     {
+      "name": "backend-nvidia",
+      "hidden": true,
+      "cacheVariables": {
+        "CRIMSON_BUILD_NVIDIA_APP": "ON",
+        "CRIMSON_BUILD_MACOS_APP": "OFF"
+      }
+    },
+    {
+      "name": "backend-macos",
+      "hidden": true,
+      "cacheVariables": {
+        "CRIMSON_BUILD_NVIDIA_APP": "OFF",
+        "CRIMSON_BUILD_MACOS_APP": "ON"
+      }
+    },
+    {
       "name": "dep-roots-from-env",
       "hidden": true,
         "cacheVariables": {
@@ -50,7 +66,8 @@
       "hidden": true,
       "inherits": [
         "base",
-        "dep-roots-from-env"
+        "dep-roots-from-env",
+        "backend-nvidia"
       ],
       "generator": "Ninja"
     },
@@ -83,7 +100,8 @@
       "hidden": true,
       "inherits": [
         "base",
-        "dep-roots-from-env"
+        "dep-roots-from-env",
+        "backend-nvidia"
       ],
       "generator": "Ninja Multi-Config"
     },
@@ -105,6 +123,20 @@
         "stack-trt10-cuda12.4-opencv4.10",
         "feature-no-sfm"
       ]
+    },
+    {
+      "name": "macos-arm64-release",
+      "displayName": "macOS Apple Silicon Release",
+      "description": "Native arm64 macOS Phase 1 GLFW/Metal application shell without CUDA, NVIDIA, OpenGL, or TensorRT dependencies.",
+      "inherits": [
+        "base",
+        "backend-macos"
+      ],
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_ARCHITECTURES": "arm64"
+      }
     }
   ],
   "buildPresets": [
@@ -135,6 +167,36 @@
       "name": "build-windows-trt10-cuda12.4-no-sfm-debug",
       "configurePreset": "windows-trt10-cuda12.4-no-sfm",
       "configuration": "Debug"
+    },
+    {
+      "name": "build-macos-arm64-release",
+      "configurePreset": "macos-arm64-release",
+      "targets": [
+        "crimson_macos_shell"
+      ]
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "test-macos-arm64-headless",
+      "displayName": "macOS Apple Silicon Headless Metal Tests",
+      "configurePreset": "macos-arm64-release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "headless"
+        }
+      }
+    },
+    {
+      "name": "test-macos-arm64",
+      "displayName": "macOS Apple Silicon All Tests",
+      "configurePreset": "macos-arm64-release",
+      "output": {
+        "outputOnFailure": true
+      }
     }
   ]
 }
