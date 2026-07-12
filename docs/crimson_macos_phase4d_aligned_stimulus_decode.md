@@ -84,10 +84,23 @@ build/macos-arm64-release/apple_stimulus_playback_probe \
   /path/to/recording_analysis.zarr 1023 1024 1025 69512 139023 139024
 ```
 
-On the representative GoodCopBadCop archive, camera 1024 mapped to and decoded
-stimulus frame 0, and camera 1025 mapped to and decoded stimulus frame 2. The
-current stimulus MP4 is known to require re-encoding and failed the midpoint
-exact-seek check. This is an input-asset gate, not accepted production parity.
+On the representative GoodCopBadCop archive, the re-encoded stimulus MP4 passed
+the production probe across the mapping extent:
+
+| Camera frame | Mapping status | Stimulus frame | Result |
+| ---: | --- | ---: | --- |
+| 1023 | missing | - | no decode requested |
+| 1024 | mapped | 0 | decoded 0 |
+| 1025 | mapped | 2 | decoded 2 |
+| 69512 | mapped | 82180 | decoded 82180 |
+| 139023 | mapped | 165578 | decoded 165578 |
+| 139024 | out of range | - | no decode requested |
+
+Measured exact-seek settlement was approximately 32 ms at the midpoint and
+46 ms at the final mapped frame while reading the network-mounted recording.
+The replacement is H.264 Main profile, 344 by 344, 120 fps, with 165579 frames.
+The probe establishes indexed decode reachability and mapping identity. It does
+not by itself compare replacement pixels with the overwritten source asset.
 
 The replacement must preserve scientific frame identity:
 
@@ -111,8 +124,8 @@ Apple Silicon macOS:
 - CTest passed 9/9;
 - the deterministic aligned-decode test passed exact metadata and luma checks;
 - the synthetic TensorStore repository test passed; and
-- the production probe passed the first two mapped identities before reaching
-  the known re-encode gate.
+- the production probe passed the first, adjacent, midpoint, and final mapped
+  identities after the stimulus video was re-encoded.
 
 Maintained NVIDIA host:
 
@@ -126,7 +139,6 @@ The NVIDIA link retained its known OpenCV/FFmpeg version-family warnings.
 ## Phase Boundary
 
 Phase 4D establishes the shared mapping-to-decoder contract and proves exact
-Apple decode identity with deterministic media. Production midstream seek parity
-remains pending replacement of the known-bad stimulus MP4 and a successful
-probe rerun. After that gate, Phase 4E can add a second Metal viewport and
-measure camera/stimulus presentation skew without introducing another clock.
+Apple decode identity with deterministic and production media. The production
+re-encode gate is closed. Phase 4E can add a second Metal viewport and measure
+camera/stimulus presentation skew without introducing another clock.
