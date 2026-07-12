@@ -52,6 +52,7 @@ __pycache__/
 *.jpg
 *.jpeg
 *.csv
+!tests/fixtures/macos_main_camera_frame_identity.csv
 *.h5
 *.zarr
 

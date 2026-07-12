@@ -15,7 +15,7 @@ option(CRIMSON_BUILD_NVIDIA_APP
     "Build the maintained CUDA/NVDEC/OpenGL/TensorRT redgui application"
     ${CRIMSON_BUILD_NVIDIA_APP_DEFAULT})
 option(CRIMSON_BUILD_MACOS_APP
-    "Build the provisional native Apple Silicon GLFW/Metal application shell"
+    "Build the native Apple Silicon Metal application"
     ${CRIMSON_BUILD_MACOS_APP_DEFAULT})
 
 if(CRIMSON_BUILD_NVIDIA_APP AND APPLE)
@@ -54,6 +54,7 @@ add_library(crimson_frame_contracts STATIC
     src/frame_types.cpp
     src/frame_selection.cpp
     src/frame_slot.cpp
+    src/playback_clock.cpp
 )
 target_include_directories(crimson_frame_contracts PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -1335,9 +1336,37 @@ if(CRIMSON_BUILD_MACOS_APP)
     endif()
 
     find_package(glfw3 CONFIG REQUIRED)
+    find_library(AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
     find_library(COCOA_FRAMEWORK Cocoa REQUIRED)
+    find_library(COREMEDIA_FRAMEWORK CoreMedia REQUIRED)
+    find_library(COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
+    find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
     find_library(METAL_FRAMEWORK Metal REQUIRED)
     find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
+    find_library(VIDEOTOOLBOX_FRAMEWORK VideoToolbox REQUIRED)
+
+    add_library(crimson_apple_video STATIC
+        src/platform/macos/apple_video_frame_provider.mm
+        src/platform/macos/apple_video_playback_buffer.cpp
+        src/platform/macos/apple_video_metal_renderer.mm
+    )
+    target_compile_features(crimson_apple_video PRIVATE cxx_std_17)
+    target_compile_options(crimson_apple_video PRIVATE
+        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
+    )
+    target_include_directories(crimson_apple_video PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(crimson_apple_video PUBLIC
+        crimson_frame_contracts
+        ${AVFOUNDATION_FRAMEWORK}
+        ${COREMEDIA_FRAMEWORK}
+        ${COREVIDEO_FRAMEWORK}
+        ${FOUNDATION_FRAMEWORK}
+        ${METAL_FRAMEWORK}
+        ${QUARTZCORE_FRAMEWORK}
+        ${VIDEOTOOLBOX_FRAMEWORK}
+    )
 
     execute_process(
         COMMAND git rev-parse --short HEAD
@@ -1352,6 +1381,7 @@ if(CRIMSON_BUILD_MACOS_APP)
 
     set(CRIMSON_MACOS_APP_SOURCES
         src/platform/macos/crimson_macos_main.mm
+        src/platform/macos/apple_video_viewer_ui.mm
         ${CRIMSON_MACOS_IMGUI_DIR}/imgui.cpp
         ${CRIMSON_MACOS_IMGUI_DIR}/imgui_draw.cpp
         ${CRIMSON_MACOS_IMGUI_DIR}/imgui_tables.cpp
@@ -1386,6 +1416,7 @@ if(CRIMSON_BUILD_MACOS_APP)
         ${CRIMSON_MACOS_IMPLOT_DIR}
     )
     target_link_libraries(crimson_macos_shell PRIVATE
+        crimson_apple_video
         glfw
         ${COCOA_FRAMEWORK}
         ${METAL_FRAMEWORK}
@@ -1401,6 +1432,49 @@ if(CRIMSON_BUILD_MACOS_APP)
     )
 
     enable_testing()
+    add_executable(apple_video_provider_tests
+        tools/apple_video_provider_tests.mm
+    )
+    target_compile_features(apple_video_provider_tests PRIVATE cxx_std_17)
+    target_compile_options(apple_video_provider_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
+    )
+    target_compile_definitions(apple_video_provider_tests PRIVATE
+        CRIMSON_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    target_link_libraries(apple_video_provider_tests PRIVATE
+        crimson_apple_video
+    )
+    set_target_properties(apple_video_provider_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME apple_video_provider_tests
+        COMMAND $<TARGET_FILE:apple_video_provider_tests>)
+    set_tests_properties(apple_video_provider_tests PROPERTIES
+        LABELS "headless;macos;video"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    add_executable(apple_video_metal_tests
+        tools/apple_video_metal_tests.mm
+    )
+    target_compile_features(apple_video_metal_tests PRIVATE cxx_std_17)
+    target_compile_options(apple_video_metal_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
+    )
+    target_link_libraries(apple_video_metal_tests PRIVATE
+        crimson_apple_video
+    )
+    set_target_properties(apple_video_metal_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME apple_video_metal_tests
+        COMMAND $<TARGET_FILE:apple_video_metal_tests>)
+    set_tests_properties(apple_video_metal_tests PROPERTIES
+        LABELS "headless;macos;metal;video"
+        TIMEOUT 30
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
     add_test(NAME crimson_macos_metal_headless
         COMMAND $<TARGET_FILE:crimson_macos_shell> --validate-metal)
     set_tests_properties(crimson_macos_metal_headless PROPERTIES
@@ -1422,7 +1496,7 @@ if(CRIMSON_BUILD_MACOS_APP)
     )
 
     message(STATUS "========================================")
-    message(STATUS "Crimson macOS Phase 1 Configuration")
+    message(STATUS "Crimson macOS Phase 3 Configuration")
     message(STATUS "  Architecture: ${CMAKE_SYSTEM_PROCESSOR}")
     message(STATUS "  Renderer: Metal")
     message(STATUS "  Window backend: GLFW/Cocoa")

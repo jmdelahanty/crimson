@@ -1,5 +1,6 @@
 #include "frame_selection.h"
 #include "frame_slot.h"
+#include "playback_clock.h"
 
 #include <atomic>
 #include <chrono>
@@ -478,6 +479,37 @@ void testSharedFrameSelectionPolicies() {
     CHECK(tie_result.frame_number == 14);
 }
 
+void testLogicalPlaybackClock() {
+    using namespace std::chrono_literals;
+    const LogicalPlaybackClock::TimePoint start{};
+    LogicalPlaybackClock clock;
+    clock.configure(100.0, 1000, start);
+    CHECK(!clock.isPlaying());
+    CHECK(clock.requestedFrame(start + 1s) == 0);
+
+    clock.play(start);
+    CHECK(clock.isPlaying());
+    CHECK(clock.requestedFrame(start + 5ms) == 0);
+    CHECK(clock.requestedFrame(start + 10ms) == 1);
+    CHECK(clock.requestedFrame(start + 1234ms) == 123);
+
+    clock.pause(start + 1234ms);
+    CHECK(!clock.isPlaying());
+    CHECK(clock.requestedFrame(start + 5s) == 123);
+
+    clock.seek(700, start + 5s);
+    CHECK(clock.requestedFrame(start + 5s) == 700);
+    clock.play(start + 5s);
+    CHECK(clock.requestedFrame(start + 5500ms) == 750);
+    clock.seek(998, start + 5500ms);
+    CHECK(clock.requestedFrame(start + 10s) == 999);
+    clock.pause(start + 10s);
+    CHECK(clock.requestedFrame(start + 20s) == 999);
+
+    clock.seek(-50, start + 20s);
+    CHECK(clock.requestedFrame(start + 20s) == 0);
+}
+
 int findNearestReadableSlot(PictureBuffer* slots, int slot_count,
                             int target_frame) {
     int best_slot = -1;
@@ -586,6 +618,7 @@ void runAllTests() {
     testExplicitPixelFormatsAndPlaneLayouts();
     testBackendSurfaceLifetimeFollowsReadLease();
     testSharedFrameSelectionPolicies();
+    testLogicalPlaybackClock();
     testStimulusStyleRingSnapshotsAndReuse();
 }
 

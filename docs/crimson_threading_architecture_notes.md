@@ -1,6 +1,6 @@
 # Crimson Threading Architecture Notes
 
-Date anchored: 2026-06-21.
+Date anchored: 2026-06-21. Updated: 2026-07-12.
 
 ## Purpose
 
@@ -227,6 +227,64 @@ an app-side smoke hook that seeks, starts playback, waits for the camera
 presenter to display the end frame, and exits with pass/fail status. The
 CPU-only `frame_slot_tests` CTest target covers lease reservation,
 publish/cancel, multi-reader blocking, and a threaded publish/read/reuse loop.
+
+#### Legacy malloc ring compatibility boundary
+
+The "legacy malloc ring" is the fixed-size per-camera queue used by the NVIDIA
+and CPU decode paths. It has two allocation layers:
+
+1. `render.h` allocates an array of `PictureBuffer` descriptors with `malloc`.
+2. Each descriptor points to a separately preallocated pixel payload: CPU RGBA
+   storage from `malloc`, or CUDA NV12 storage from `cudaMalloc`.
+
+The decoder writes the current slot, publishes its frame identity and timing,
+then advances `buffer_head` modulo the configured ring size. Presentation finds
+a suitable published slot and eventually releases old history for reuse. Pixel
+payloads are reused rather than allocated for every decoded frame.
+
+Because `malloc` does not run C++ constructors, `PictureBuffer` must remain a
+trivial type. It cannot directly contain a mutex, `std::string`,
+`std::shared_ptr`, or another member requiring construction and destruction.
+`FrameSlotState` therefore lives in a separately constructed sidecar referenced
+by the legacy descriptor. It owns the slot mutex, publication phase, reader
+count, portable metadata snapshot, and `std::shared_ptr<FrameSurface>`.
+
+There are two different resource-ownership models behind that shared surface
+interface:
+
+- The CPU/CUDA adapter is a non-owning view over a payload owned by the legacy
+  ring. A read lease prevents writers from reusing the slot while presentation
+  is reading it; manual ring teardown still frees the payload.
+- An Apple adapter owns a retained `CVPixelBuffer`. Its final reference releases
+  the native buffer, so AVFoundation may recycle its decode pool only after all
+  Crimson and Metal consumers have finished with that surface.
+
+This distinction is intentional. The portable contract shares ownership of a
+*surface handle*; it does not pretend that all backends allocate or destroy
+pixel storage in the same way.
+
+For Phase 3, new macOS code must not allocate or inspect raw `PictureBuffer`
+storage. The Apple provider should own a small bounded queue of reference-counted
+native surfaces and publish them through the Phase 2 frame contracts. The
+legacy ring remains an NVIDIA compatibility implementation, not the model for
+the Apple backend.
+
+The remaining technical debt is:
+
+- image-sequence, stimulus, and diagnostic paths still read or mutate mirrored
+  `PictureBuffer` fields without consistently using leases or snapshots;
+- allocation and teardown of the descriptor array, sidecars, CPU payloads, and
+  CUDA payloads remain distributed and manual;
+- slot selection, payload storage, and compatibility metadata are still coupled
+  through the public `PictureBuffer` layout;
+- the raw `available_to_write` mirror remains visible, making it easy for new
+  code to bypass the synchronized state machine.
+
+The safe cleanup sequence is to migrate every remaining reader and writer to
+the lease/snapshot API, centralize ring construction and teardown in one RAII
+owner, and only then make the raw fields private or remove `PictureBuffer`.
+That cleanup should preserve the allocation and reuse behavior until NVIDIA
+playback tests prove that the ownership refactor is behavior-neutral.
 
 ### 2. Keep Mask Prefetch Owned
 

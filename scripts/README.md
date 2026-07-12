@@ -1,5 +1,29 @@
 # Video Repair Scripts
 
+## macOS Playback Smoke
+
+Build the native app, then run the representative AVFoundation-to-Metal viewer
+smoke:
+
+```bash
+cmake --build --preset build-macos-arm64-release
+scripts/macos_gui_smoke_playback.sh /Volumes/recordings/cams/camera.mp4
+```
+
+Supply another camera video as the first argument or through
+`CRIMSON_MACOS_PLAYBACK_SMOKE_VIDEO`. Supply the inclusive validation range as
+the second argument or through `CRIMSON_MACOS_PLAYBACK_SMOKE_RANGE`:
+
+```bash
+scripts/macos_gui_smoke_playback.sh \
+    /Volumes/recordings/cams/camera.mp4 \
+    70000:70300
+```
+
+The app owns the logical clock. A passing record reports requested and presented
+frame identity, PTS error, bounded native-buffer depth, intentional source-frame
+skips, late presentations, process memory, and thermal state.
+
 Quick reference for fixing seekability issues in MP4 recordings read by crimson.
 
 ## Script Summary

@@ -127,7 +127,7 @@
     {
       "name": "macos-arm64-release",
       "displayName": "macOS Apple Silicon Release",
-      "description": "Native arm64 macOS Phase 1 GLFW/Metal application shell without CUDA, NVIDIA, OpenGL, or TensorRT dependencies.",
+      "description": "Native arm64 macOS Metal application with Phase 3 main-camera playback and no CUDA, NVIDIA, OpenGL, or TensorRT dependencies.",
       "inherits": [
         "base",
         "backend-macos"
@@ -173,6 +173,8 @@
       "configurePreset": "macos-arm64-release",
       "targets": [
         "crimson_macos_shell",
+        "apple_video_metal_tests",
+        "apple_video_provider_tests",
         "frame_slot_tests"
       ]
     }
