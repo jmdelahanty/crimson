@@ -1241,6 +1241,7 @@ CameraViewWindowResult drawCameraViewWindowContents(
         if (context.swap_playback_surface_after_draw) {
             const auto swap_start = std::chrono::steady_clock::now();
             std::swap(camera.image_texture, camera.playback_staging_texture);
+            render_refresh_camera_presentation_texture(&camera);
             std::swap(camera.pbo_cuda, camera.playback_staging_pbo);
             std::swap(camera.applied_preview_sampling_mode,
                       camera.playback_staging_preview_sampling_mode);

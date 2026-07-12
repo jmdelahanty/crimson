@@ -1,3 +1,4 @@
+#include "apple_metal_presentation_texture.h"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_metal.h"
@@ -201,6 +202,8 @@ int runHeadlessMetalValidation() {
       MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
   texture_descriptor.storageMode = MTLStorageModeShared;
   id<MTLTexture> texture = [device newTextureWithDescriptor:texture_descriptor];
+  AppleMetalPresentationTexture presentation_texture;
+  presentation_texture.reset(texture);
 
   MTLRenderPassDescriptor *render_pass = [MTLRenderPassDescriptor new];
   render_pass.colorAttachments[0].texture = texture;
@@ -212,7 +215,13 @@ int runHeadlessMetalValidation() {
   id<MTLCommandBuffer> command_buffer = [command_queue commandBuffer];
   id<MTLRenderCommandEncoder> encoder =
       [command_buffer renderCommandEncoderWithDescriptor:render_pass];
-  if (texture == nil || command_buffer == nil || encoder == nil) {
+  if (texture == nil || command_buffer == nil || encoder == nil ||
+      presentation_texture.descriptor().backend != PresentationBackend::Metal ||
+      presentation_texture.descriptor().pixel_format !=
+          FramePixelFormat::BGRA8 ||
+      presentation_texture.descriptor().width != static_cast<int>(width) ||
+      presentation_texture.descriptor().height != static_cast<int>(height) ||
+      presentation_texture.nativeHandle() == 0) {
     std::fprintf(
         stderr,
         "[MacMetalHeadless] Failed to allocate offscreen render state\n");
@@ -366,6 +375,7 @@ int main(int argc, char **argv) {
               CRIMSON_GIT_COMMIT, font_path->c_str());
 
   MTLRenderPassDescriptor *render_pass = [MTLRenderPassDescriptor new];
+  AppleMetalPresentationTexture presentation_texture;
   id<MTLCommandBuffer> last_command_buffer = nil;
   std::array<float, 120> frame_times_ms{};
   int frame_time_count = 0;
@@ -390,6 +400,21 @@ int main(int argc, char **argv) {
       if (drawable == nil) {
         glfwWaitEventsTimeout(0.01);
         continue;
+      }
+      presentation_texture.reset(drawable.texture);
+      if (presentation_texture.descriptor().backend !=
+              PresentationBackend::Metal ||
+          presentation_texture.descriptor().pixel_format !=
+              FramePixelFormat::BGRA8 ||
+          presentation_texture.descriptor().width !=
+              static_cast<int>(drawable.texture.width) ||
+          presentation_texture.descriptor().height !=
+              static_cast<int>(drawable.texture.height) ||
+          presentation_texture.nativeHandle() == 0) {
+        std::fprintf(
+            stderr, "[MacShell] Invalid Metal presentation texture contract\n");
+        render_failed = true;
+        break;
       }
 
       id<MTLCommandBuffer> command_buffer = [command_queue commandBuffer];

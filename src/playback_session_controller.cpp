@@ -1,4 +1,5 @@
 #include "playback_session_controller.h"
+#include "frame_selection.h"
 #include "frame_slot.h"
 
 #include <algorithm>
@@ -115,24 +116,18 @@ int PlaybackSessionController::findNearestPausedBufferSlot(
         return -1;
     }
 
-    int best_slot = -1;
-    int best_distance = std::numeric_limits<int>::max();
-    int best_frame = -1;
+    std::vector<BufferedFrameCandidate> candidates;
+    candidates.reserve(context_.scene->size_of_buffer);
     for (int i = 0; i < context_.scene->size_of_buffer; ++i) {
-        const auto& slot =
-            context_.scene->cameras[visible_idx].display_buffer[i];
-        if (slot.available_to_write || slot.frame_number < 0) {
-            continue;
-        }
-        const int distance = std::abs(slot.frame_number - target_frame);
-        if (distance < best_distance ||
-            (distance == best_distance && slot.frame_number > best_frame)) {
-            best_distance = distance;
-            best_frame = slot.frame_number;
-            best_slot = i;
+        if (auto metadata = frameSlotSnapshotReadable(
+                context_.scene->cameras[visible_idx].display_buffer[i])) {
+            candidates.push_back({i, std::move(*metadata)});
         }
     }
-    return best_slot;
+    FrameSelectionRequest request;
+    request.target_frame = target_frame;
+    request.fallback = FrameSelectionFallback::Nearest;
+    return selectBufferedFrame(candidates, request).slot_index;
 }
 
 bool PlaybackSessionController::stepPausedFrameFromBuffer(int target_frame) const {
@@ -147,15 +142,18 @@ bool PlaybackSessionController::stepPausedFrameFromBuffer(int target_frame) cons
         return false;
     }
 
-    int matched_slot = -1;
+    std::vector<BufferedFrameCandidate> candidates;
+    candidates.reserve(context_.scene->size_of_buffer);
     for (int i = 0; i < context_.scene->size_of_buffer; ++i) {
-        const auto& slot =
-            context_.scene->cameras[visible_idx].display_buffer[i];
-        if (!slot.available_to_write && slot.frame_number == target_frame) {
-            matched_slot = i;
-            break;
+        if (auto metadata = frameSlotSnapshotReadable(
+                context_.scene->cameras[visible_idx].display_buffer[i])) {
+            candidates.push_back({i, std::move(*metadata)});
         }
     }
+    FrameSelectionRequest request;
+    request.target_frame = target_frame;
+    request.fallback = FrameSelectionFallback::ExactOnly;
+    const int matched_slot = selectBufferedFrame(candidates, request).slot_index;
 
     if (matched_slot < 0) {
         return false;

@@ -10,6 +10,7 @@
 #include "imgui_impl_opengl3.h"
 #include "implot.h"
 #include "render.h"
+#include "frame_selection.h"
 #include "skeleton.h"
 #include "utils.h"
 #include "debug_flags.h"
@@ -2666,26 +2667,22 @@ int main(int argc, char **argv) {
             if (visible_idx < 0) {
                 return -1;
             }
-            auto slotMatches = [&](int slot_idx) -> bool {
-                if (slot_idx < 0 ||
-                    slot_idx >= static_cast<int>(scene->size_of_buffer)) {
-                    return false;
-                }
-                auto metadata = frameSlotSnapshotReadable(
-                    scene->cameras[visible_idx].display_buffer[slot_idx]);
-                return metadata && metadata->frame_number == target_frame;
-            };
-            if (slotMatches(preferred_slot)) {
-                return preferred_slot;
-            }
+            std::vector<BufferedFrameCandidate> candidates;
+            candidates.reserve(scene->size_of_buffer);
             for (int slot_idx = 0;
                  slot_idx < static_cast<int>(scene->size_of_buffer);
                  ++slot_idx) {
-                if (slotMatches(slot_idx)) {
-                    return slot_idx;
+                if (auto metadata = frameSlotSnapshotReadable(
+                        scene->cameras[visible_idx]
+                            .display_buffer[slot_idx])) {
+                    candidates.push_back({slot_idx, std::move(*metadata)});
                 }
             }
-            return -1;
+            FrameSelectionRequest request;
+            request.target_frame = target_frame;
+            request.preferred_slot = preferred_slot;
+            request.fallback = FrameSelectionFallback::ExactOnly;
+            return selectBufferedFrame(candidates, request).slot_index;
         };
         auto findBestBufferedFrameAtOrBefore =
             [&](int target_frame, int min_frame, int& out_slot) -> int {
@@ -2698,21 +2695,25 @@ int main(int argc, char **argv) {
             if (visible_idx < 0) {
                 return -1;
             }
-            int best_frame = -1;
+            std::vector<BufferedFrameCandidate> candidates;
+            candidates.reserve(scene->size_of_buffer);
             for (int slot_idx = 0;
                  slot_idx < static_cast<int>(scene->size_of_buffer);
                  ++slot_idx) {
-                auto metadata = frameSlotSnapshotReadable(
-                    scene->cameras[visible_idx].display_buffer[slot_idx]);
-                if (!metadata || metadata->frame_number > target_frame ||
-                    metadata->frame_number <= min_frame ||
-                    metadata->frame_number <= best_frame) {
-                    continue;
+                if (auto metadata = frameSlotSnapshotReadable(
+                        scene->cameras[visible_idx]
+                            .display_buffer[slot_idx])) {
+                    candidates.push_back({slot_idx, std::move(*metadata)});
                 }
-                best_frame = metadata->frame_number;
-                out_slot = slot_idx;
             }
-            return best_frame;
+            FrameSelectionRequest request;
+            request.target_frame = target_frame;
+            request.minimum_frame_exclusive = min_frame;
+            request.fallback = FrameSelectionFallback::LatestAtOrBefore;
+            const FrameSelectionResult selection =
+                selectBufferedFrame(candidates, request);
+            out_slot = selection.slot_index;
+            return selection.frame_number;
         };
         auto computePlaybackClockTarget = [&]() -> int {
             int frame_to_show =
@@ -4165,6 +4166,7 @@ int main(int argc, char **argv) {
                         const auto swap_start = std::chrono::steady_clock::now();
                         std::swap(camera.image_texture,
                                   camera.playback_staging_texture);
+                        render_refresh_camera_presentation_texture(&camera);
                         std::swap(camera.pbo_cuda,
                                   camera.playback_staging_pbo);
                         std::swap(camera.applied_preview_sampling_mode,
@@ -6212,15 +6214,15 @@ int main(int argc, char **argv) {
                             live_crop_frame_source.color_range =
                                 slot.color_range;
                             if (scene->use_cpu_buffer &&
-                                slot.format == PictureBufferFormat::RGBA32) {
+                                slot.format == FramePixelFormat::RGBA8) {
                                 live_crop_frame_source.storage =
                                     CropFrameStorage::HostRGBA32;
                             } else if (slot.format ==
-                                       PictureBufferFormat::RGBA32) {
+                                       FramePixelFormat::RGBA8) {
                                 live_crop_frame_source.storage =
                                     CropFrameStorage::DeviceRGBA32;
                             } else if (slot.format ==
-                                       PictureBufferFormat::NV12) {
+                                       FramePixelFormat::NV12) {
                                 live_crop_frame_source.storage =
                                     CropFrameStorage::DeviceNV12;
                             }

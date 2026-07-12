@@ -38,6 +38,7 @@ struct CameraViewPresenterPerfMetrics {
 
 struct CameraViewPresenterResult {
     unsigned char* presented_rgba_cuda_buffer = nullptr;
+    const PresentationTexture* presentation_texture = nullptr;
     bool swap_playback_surface_after_draw = false;
     int presented_slot = -1;
     int presented_frame = -1;

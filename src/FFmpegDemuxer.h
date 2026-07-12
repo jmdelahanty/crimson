@@ -22,6 +22,7 @@ extern "C" {
 
 #include "cuviddec.h"
 #include "nvcuvid.h"
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
@@ -143,6 +144,8 @@ class FFmpegDemuxer {
     double framerate;
     double avg_framerate;
     double timebase;
+    int32_t timebase_numerator;
+    int32_t timebase_denominator;
     int64_t duration;
     double fduration;
 
@@ -188,6 +191,10 @@ class FFmpegDemuxer {
     bool IsVFR() const;
 
     double GetTimebase() const;
+
+    int32_t GetTimebaseNumerator() const;
+
+    int32_t GetTimebaseDenominator() const;
 
     int64_t TsFromTime(double ts_sec);
 

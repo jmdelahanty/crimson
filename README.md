@@ -91,6 +91,10 @@ a finite real-window GLFW/Cocoa presentation smoke. See
 for the baseline, parity inventory, measured results, and NVIDIA validation
 commands.
 
+The backend-neutral frame metadata, surface lifetime, presentation handles, and
+portable selection tests introduced in Phase 2 are documented in
+[`docs/crimson_macos_phase2_frame_contracts.md`](docs/crimson_macos_phase2_frame_contracts.md).
+
 ### How Dependency Paths Are Supplied
 
 Shared presets in the repo define the supported stack.

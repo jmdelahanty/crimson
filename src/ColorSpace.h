@@ -1,31 +1,7 @@
 #pragma once
+#include "frame_types.h"
 #include <stdint.h>
 #include <cuda_runtime.h>
-
-typedef enum ColorSpaceStandard {
-    ColorSpaceStandard_BT709 = 1,
-    ColorSpaceStandard_Unspecified = 2,
-    ColorSpaceStandard_Reserved = 3,
-    ColorSpaceStandard_FCC = 4,
-    ColorSpaceStandard_BT470 = 5,
-    ColorSpaceStandard_BT601 = 6,
-    ColorSpaceStandard_SMPTE240M = 7,
-    ColorSpaceStandard_YCgCo = 8,
-    ColorSpaceStandard_BT2020 = 9,
-    ColorSpaceStandard_BT2020C = 10
-} ColorSpaceStandard;
-
-// Matches FFmpeg AVColorRange values without exposing FFmpeg headers to
-// render-facing metadata structs.
-typedef enum ColorRange {
-    ColorRange_Unspecified = 0,
-    ColorRange_MPEG = 1,
-    ColorRange_JPEG = 2
-} ColorRange;
-
-inline bool colorRangeIsFull(int color_range) {
-    return color_range == ColorRange_JPEG;
-}
 
 union BGRA32 {
     uint32_t d;

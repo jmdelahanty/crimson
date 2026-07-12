@@ -150,15 +150,23 @@ void stimulus_software_decode_process(DecoderContext *dc_context,
         }
 
         FrameSlotMetadata metadata;
+        metadata.stream_id = window_name;
         metadata.frame_number = frame_number;
         metadata.local_frame_number = frame_number;
         metadata.frame_pts = -1;
         metadata.frame_source_code = pending_seek_done ? 1 : 2;
+        metadata.width = width;
+        metadata.height = height;
         metadata.pitch_bytes = width * 4;
         metadata.frame_bytes = frame_bytes;
         metadata.color_matrix = ColorSpaceStandard_BT709;
         metadata.color_range = ColorRange_Unspecified;
-        metadata.format = PictureBufferFormat::RGBA32;
+        metadata.pixel_format = FramePixelFormat::RGBA8;
+        metadata.surface_backend =
+            use_cpu_buffer ? FrameSurfaceBackend::Cpu
+                           : FrameSurfaceBackend::NvidiaCuda;
+        metadata.ownership = FrameSurfaceOwnership::SlotOwned;
+        metadata.lifetime = FrameSurfaceLifetime::UntilReadLeaseReleased;
         write_lease->publish(metadata);
         latest_decoded_frame[window_name].store(frame_number);
         dc_context->decoding_flag = true;
@@ -250,7 +258,7 @@ bool allocateStimulusBuffers(StimulusPlayback &stim) {
         stim.display_buffer[i].frame_bytes = frame_bytes;
         stim.display_buffer[i].color_matrix = ColorSpaceStandard_BT709;
         stim.display_buffer[i].color_range = ColorRange_Unspecified;
-        stim.display_buffer[i].format = PictureBufferFormat::RGBA32;
+        stim.display_buffer[i].format = FramePixelFormat::RGBA8;
         stim.display_buffer[i].frame_slot_state = nullptr;
         frameSlotInitialize(stim.display_buffer[i]);
         if (stim.use_cpu_buffer) {

@@ -48,6 +48,29 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+find_package(Threads REQUIRED)
+
+add_library(crimson_frame_contracts STATIC
+    src/frame_types.cpp
+    src/frame_selection.cpp
+    src/frame_slot.cpp
+)
+target_include_directories(crimson_frame_contracts PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(crimson_frame_contracts PUBLIC Threads::Threads)
+target_compile_features(crimson_frame_contracts PUBLIC cxx_std_17)
+
+add_executable(frame_slot_tests tools/frame_slot_tests.cpp)
+target_link_libraries(frame_slot_tests PRIVATE crimson_frame_contracts)
+target_compile_features(frame_slot_tests PRIVATE cxx_std_17)
+set_target_properties(frame_slot_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+enable_testing()
+add_test(NAME frame_slot_tests COMMAND $<TARGET_FILE:frame_slot_tests>)
+set_tests_properties(frame_slot_tests PROPERTIES LABELS "frame;portable")
+
 if(CRIMSON_BUILD_NVIDIA_APP)
     enable_language(CUDA)
 
@@ -306,7 +329,6 @@ find_package(OpenGL REQUIRED)
 find_package(OpenCV REQUIRED)  # Will use OpenCV_DIR set above
 find_package(GLEW REQUIRED)
 find_package(glfw3 REQUIRED)
-find_package(Threads REQUIRED)
 find_package(HDF5 REQUIRED COMPONENTS CXX)
 if(CRIMSON_ENABLE_PARQUET)
     find_package(Arrow CONFIG QUIET)
@@ -786,24 +808,6 @@ target_compile_definitions(crimson_decode_smoke PRIVATE
     CRIMSON_GIT_COMMIT="${CRIMSON_GIT_COMMIT}"
 )
 
-add_executable(frame_slot_tests
-    tools/frame_slot_tests.cpp
-    src/frame_slot.cpp
-)
-target_include_directories(frame_slot_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nvcodec
-    ${CUDA_INCLUDE_DIRS}
-    ${OpenCV_INCLUDE_DIRS}
-    ${FFMPEG_INCLUDE_DIRS}
-)
-target_link_libraries(frame_slot_tests PRIVATE
-    Threads::Threads
-)
-target_compile_features(frame_slot_tests PRIVATE cxx_std_17)
-enable_testing()
-add_test(NAME frame_slot_tests COMMAND frame_slot_tests)
-
 # --- Source Files ---
 # CUDA sources
 set(CUDA_SOURCES "")
@@ -825,6 +829,11 @@ file(GLOB CPP_SOURCES CONFIGURE_DEPENDS
     "src/*.cpp"
     "src/gui/*.cpp"
     "src/zarr/*.cpp")
+list(REMOVE_ITEM CPP_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_types.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_selection.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_slot.cpp"
+)
 
 # keypoint write path requires strict IEEE NaN semantics for contract-idempotent
 # NaN-aware comparisons and writes.
@@ -863,6 +872,7 @@ target_include_directories(redgui PRIVATE
 
 # --- Link Libraries ---
 target_link_libraries(redgui PRIVATE
+    crimson_frame_contracts
     # CUDA and NVIDIA Libraries
     ${CUDA_LIBRARIES}
     ${CUDA_DRIVER}
@@ -1370,6 +1380,7 @@ if(CRIMSON_BUILD_MACOS_APP)
         CRIMSON_GIT_COMMIT="${CRIMSON_MACOS_GIT_COMMIT}"
     )
     target_include_directories(crimson_macos_shell PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CRIMSON_MACOS_IMGUI_DIR}
         ${CRIMSON_MACOS_IMGUI_DIR}/backends
         ${CRIMSON_MACOS_IMPLOT_DIR}

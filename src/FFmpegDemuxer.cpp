@@ -58,6 +58,14 @@ double FFmpegDemuxer::GetAvgFramerate() const { return avg_framerate; }
 
 double FFmpegDemuxer::GetTimebase() const { return timebase; }
 
+int32_t FFmpegDemuxer::GetTimebaseNumerator() const {
+    return timebase_numerator;
+}
+
+int32_t FFmpegDemuxer::GetTimebaseDenominator() const {
+    return timebase_denominator;
+}
+
 bool FFmpegDemuxer::IsVFR() const { return framerate != avg_framerate; }
 
 uint32_t FFmpegDemuxer::GetVideoStreamIndex() const { return videoStream; }
@@ -655,6 +663,8 @@ FFmpegDemuxer::FFmpegDemuxer(AVFormatContext *fmtcx) : fmtc(fmtcx) {
                     (double)fmtc->streams[videoStream]->avg_frame_rate.den;
     timebase = (double)fmtc->streams[videoStream]->time_base.num /
                (double)fmtc->streams[videoStream]->time_base.den;
+    timebase_numerator = fmtc->streams[videoStream]->time_base.num;
+    timebase_denominator = fmtc->streams[videoStream]->time_base.den;
     eChromaFormat = (AVPixelFormat)fmtc->streams[videoStream]->codecpar->format;
     nb_frames = fmtc->streams[videoStream]->nb_frames;
     color_space = fmtc->streams[videoStream]->codecpar->color_space;

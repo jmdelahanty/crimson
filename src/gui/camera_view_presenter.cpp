@@ -1,6 +1,7 @@
 #include "gui/camera_view_presenter.h"
 
 #include "NvCodecUtils.h"
+#include "frame_selection.h"
 
 #include <opencv2/imgproc.hpp>
 
@@ -356,7 +357,7 @@ void uploadSurfaceToTexture(PBO_CUDA& surface_pbo,
 }
 
 void presentNv12SlotToTexture(CameraResources& camera,
-                              const PictureBuffer& slot,
+                              const FrameSurface& frame_surface,
                               const FrameSlotMetadata& metadata,
                               PBO_CUDA& surface_pbo,
                               GLuint destination_texture,
@@ -366,7 +367,9 @@ void presentNv12SlotToTexture(CameraResources& camera,
                               int desired_preview_sampling_mode,
                               CameraViewPresenterPerfMetrics* perf) {
     const auto pbo_copy_start = std::chrono::steady_clock::now();
-    ck(cudaMemcpy(surface_pbo.cuda_buffer, slot.frame, metadata.frame_bytes,
+    const auto* frame = reinterpret_cast<const unsigned char*>(
+        frame_surface.nativeHandle());
+    ck(cudaMemcpy(surface_pbo.cuda_buffer, frame, metadata.frame_bytes,
                   cudaMemcpyDeviceToDevice));
     if (perf != nullptr) {
         perf->pbo_copy_ms +=
@@ -430,56 +433,20 @@ int findCameraDisplaySlotForFrame(const render_scene& scene,
         return -1;
     }
 
-    auto slotMetadata = [&](int slot_idx)
-        -> std::optional<FrameSlotMetadata> {
-        if (slot_idx < 0 || slot_idx >= static_cast<int>(scene.size_of_buffer)) {
-            return std::nullopt;
-        }
-        return frameSlotSnapshotReadable(
-            scene.cameras[cam_idx].display_buffer[slot_idx]);
-    };
-
-    if (auto preferred_metadata = slotMetadata(preferred_slot)) {
-        const int preferred_frame = preferred_metadata->frame_number;
-        if (target_frame < 0 || preferred_frame == target_frame) {
-            return preferred_slot;
-        }
-    }
-
-    int exact_slot = -1;
-    int best_lower_slot = -1;
-    int best_lower_frame = std::numeric_limits<int>::min();
-    int best_abs_slot = -1;
-    int best_abs_distance = std::numeric_limits<int>::max();
-
+    std::vector<BufferedFrameCandidate> candidates;
+    candidates.reserve(scene.size_of_buffer);
     for (int i = 0; i < static_cast<int>(scene.size_of_buffer); ++i) {
-        auto metadata = slotMetadata(i);
-        if (!metadata) {
-            continue;
-        }
-        const int frame_num = metadata->frame_number;
-        if (frame_num == target_frame) {
-            exact_slot = i;
-            break;
-        }
-        if (frame_num <= target_frame && frame_num > best_lower_frame) {
-            best_lower_frame = frame_num;
-            best_lower_slot = i;
-        }
-        const int distance = std::abs(frame_num - target_frame);
-        if (distance < best_abs_distance) {
-            best_abs_distance = distance;
-            best_abs_slot = i;
+        if (auto metadata = frameSlotSnapshotReadable(
+                scene.cameras[cam_idx].display_buffer[i])) {
+            candidates.push_back({i, std::move(*metadata)});
         }
     }
-
-    if (exact_slot >= 0) {
-        return exact_slot;
-    }
-    if (best_lower_slot >= 0) {
-        return best_lower_slot;
-    }
-    return best_abs_slot;
+    FrameSelectionRequest request;
+    request.target_frame = target_frame;
+    request.preferred_slot = preferred_slot;
+    request.fallback =
+        FrameSelectionFallback::LatestAtOrBeforeThenNearest;
+    return selectBufferedFrame(candidates, request).slot_index;
 }
 
 namespace {
@@ -493,26 +460,19 @@ int findExactCameraDisplaySlotForFrame(const render_scene& scene,
         return -1;
     }
 
-    auto slotIsExact = [&](int slot_idx) -> bool {
-        if (slot_idx < 0 ||
-            slot_idx >= static_cast<int>(scene.size_of_buffer)) {
-            return false;
-        }
-        auto metadata = frameSlotSnapshotReadable(
-            scene.cameras[cam_idx].display_buffer[slot_idx]);
-        return metadata && metadata->frame_number == target_frame;
-    };
-
-    if (slotIsExact(preferred_slot)) {
-        return preferred_slot;
-    }
-
+    std::vector<BufferedFrameCandidate> candidates;
+    candidates.reserve(scene.size_of_buffer);
     for (int i = 0; i < static_cast<int>(scene.size_of_buffer); ++i) {
-        if (slotIsExact(i)) {
-            return i;
+        if (auto metadata = frameSlotSnapshotReadable(
+                scene.cameras[cam_idx].display_buffer[i])) {
+            candidates.push_back({i, std::move(*metadata)});
         }
     }
-    return -1;
+    FrameSelectionRequest request;
+    request.target_frame = target_frame;
+    request.preferred_slot = preferred_slot;
+    request.fallback = FrameSelectionFallback::ExactOnly;
+    return selectBufferedFrame(candidates, request).slot_index;
 }
 
 }  // namespace
@@ -529,6 +489,7 @@ CameraViewPresenterResult presentCameraViewFrame(
 
     auto& camera = context.scene->cameras[context.view_idx];
     result.presented_rgba_cuda_buffer = camera.pbo_cuda.cuda_buffer;
+    result.presentation_texture = &camera.presentation_texture;
 
     auto uploadCameraFrameToTexture = [&](int slot_index,
                                           bool request_surface_swap = true) -> int {
@@ -540,8 +501,13 @@ CameraViewPresenterResult presentCameraViewFrame(
         if (!read_lease.has_value()) {
             return -1;
         }
-        const PictureBuffer& slot = read_lease->slot();
         const FrameSlotMetadata& metadata = read_lease->metadata();
+        const FrameSurface& frame_surface = read_lease->surface();
+        auto* source_frame = reinterpret_cast<unsigned char*>(
+            frame_surface.nativeHandle());
+        if (source_frame == nullptr || !frameMetadataHasValidLayout(metadata)) {
+            return -1;
+        }
         const int source_frame_number = metadata.frame_number;
         const bool playback_upload_active =
             context.play_video || context.prewarm_playback_textures;
@@ -552,7 +518,7 @@ CameraViewPresenterResult presentCameraViewFrame(
         const bool direct_nv12_playback_present_active =
             playback_upload_active && context.lightweight_playback_renderer_active &&
             !context.scene->use_cpu_buffer && !context.yolo_detection &&
-            metadata.format == PictureBufferFormat::NV12;
+            metadata.pixel_format == FramePixelFormat::NV12;
         const int desired_preview_sampling_mode =
             preview_sampling_active ? context.preview_scale_mode : 0;
         const double preview_scale =
@@ -637,17 +603,18 @@ CameraViewPresenterResult presentCameraViewFrame(
                     std::chrono::steady_clock::now();
                 if (direct_nv12_pipeline_present) {
                     presentNv12SlotToTexture(
-                        camera, slot, metadata, camera.playback_staging_pbo,
+                        camera, frame_surface, metadata,
+                        camera.playback_staging_pbo,
                         camera.playback_staging_texture,
                         &camera.playback_staging_preview_sampling_mode,
                         target_texture_width, target_texture_height,
                         desired_preview_sampling_mode, &result.perf);
                 } else {
-                    if (metadata.format == PictureBufferFormat::NV12) {
+                    if (metadata.pixel_format == FramePixelFormat::NV12) {
                         const auto convert_start =
                             std::chrono::steady_clock::now();
                         Nv12ToColor32<RGBA32>(
-                            slot.frame,
+                            source_frame,
                             metadata.pitch_bytes > 0
                                 ? metadata.pitch_bytes
                                 : static_cast<int>(camera.image_width),
@@ -663,7 +630,7 @@ CameraViewPresenterResult presentCameraViewFrame(
                         const auto pbo_copy_start =
                             std::chrono::steady_clock::now();
                         ck(cudaMemcpy(camera.playback_staging_pbo.cuda_buffer,
-                                      slot.frame,
+                                      source_frame,
                                       camera.image_width * camera.image_height * 4,
                                       cudaMemcpyDeviceToDevice));
                         result.perf.pbo_copy_ms += durationMs(
@@ -701,7 +668,7 @@ CameraViewPresenterResult presentCameraViewFrame(
         const auto upload_start = std::chrono::steady_clock::now();
         if (preview_resize_active) {
             const cv::Mat full_rgba(camera.image_height, camera.image_width,
-                                    CV_8UC4, slot.frame);
+                                    CV_8UC4, source_frame);
             camera.playback_preview_rgba_cpu.resize(
                 static_cast<size_t>(target_texture_width) *
                 static_cast<size_t>(target_texture_height) * 4);
@@ -726,7 +693,7 @@ CameraViewPresenterResult presentCameraViewFrame(
             result.presented_rgba_cuda_buffer = camera.pbo_cuda.cuda_buffer;
         } else if (context.scene->use_cpu_buffer) {
             const auto pbo_copy_start = std::chrono::steady_clock::now();
-            ck(cudaMemcpy(camera.pbo_cuda.cuda_buffer, slot.frame,
+            ck(cudaMemcpy(camera.pbo_cuda.cuda_buffer, source_frame,
                           camera.image_width * camera.image_height * 4,
                           cudaMemcpyHostToDevice));
             result.perf.pbo_copy_ms +=
@@ -735,15 +702,15 @@ CameraViewPresenterResult presentCameraViewFrame(
         } else {
             if (direct_nv12_playback_present_active) {
                 presentNv12SlotToTexture(
-                    camera, slot, metadata, camera.pbo_cuda, camera.image_texture,
-                    &camera.applied_preview_sampling_mode, target_texture_width,
-                    target_texture_height, desired_preview_sampling_mode,
-                    &result.perf);
+                    camera, frame_surface, metadata, camera.pbo_cuda,
+                    camera.image_texture, &camera.applied_preview_sampling_mode,
+                    target_texture_width, target_texture_height,
+                    desired_preview_sampling_mode, &result.perf);
                 result.presented_rgba_cuda_buffer = camera.pbo_cuda.cuda_buffer;
-            } else if (metadata.format == PictureBufferFormat::NV12) {
+            } else if (metadata.pixel_format == FramePixelFormat::NV12) {
                 const auto convert_start = std::chrono::steady_clock::now();
                 Nv12ToColor32<RGBA32>(
-                    slot.frame,
+                    source_frame,
                     metadata.pitch_bytes > 0
                         ? metadata.pitch_bytes
                         : static_cast<int>(camera.image_width),
@@ -757,7 +724,7 @@ CameraViewPresenterResult presentCameraViewFrame(
                     durationMs(std::chrono::steady_clock::now() - convert_start);
             } else {
                 const auto pbo_copy_start = std::chrono::steady_clock::now();
-                ck(cudaMemcpy(camera.pbo_cuda.cuda_buffer, slot.frame,
+                ck(cudaMemcpy(camera.pbo_cuda.cuda_buffer, source_frame,
                               camera.image_width * camera.image_height * 4,
                               cudaMemcpyDeviceToDevice));
                 result.perf.pbo_copy_ms +=

@@ -3,6 +3,7 @@
 #include "global.h"
 #include "debug_flags.h"
 #include "frame_slot.h"
+#include "ColorSpace.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -145,7 +146,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
     const bool buffer_requires_rgba =
         use_cpu_buffer || (size_of_buffer > 0 &&
                            display_buffer[0].format ==
-                               PictureBufferFormat::RGBA32);
+                               FramePixelFormat::RGBA8);
     auto seek_requested = [&]() -> bool {
         std::lock_guard<std::mutex> lock(g_seek_info_mutex);
         return seek_info->use_seek;
@@ -660,7 +661,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                                 pTmpImage, writable_slot.frame,
                                 4 * dec->GetWidth(), dec->GetHeight());
                         } else if (slot_format ==
-                                   PictureBufferFormat::RGBA32) {
+                                   FramePixelFormat::RGBA8) {
                             cudaMemcpy(writable_slot.frame,
                                        (uint8_t *)pTmpImage, size_in_bytes,
                                        cudaMemcpyDeviceToDevice);
@@ -672,22 +673,35 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         decode_write_ms += decoder_duration_ms(
                             std::chrono::steady_clock::now() - write_start);
                     };
-                    if (slot_format == PictureBufferFormat::RGBA32) {
+                    if (slot_format == FramePixelFormat::RGBA8) {
                         convert_to_rgba();
                     }
                     write_buffered_frame();
 
                     FrameSlotMetadata published_metadata;
+                    published_metadata.stream_id = cam_name;
                     published_metadata.frame_number = assigned_frame_num;
                     published_metadata.local_frame_number = local_frame_num;
                     published_metadata.frame_pts = frame_timestamp;
+                    published_metadata.time_base = {
+                        demuxer->GetTimebaseNumerator(),
+                        demuxer->GetTimebaseDenominator()};
                     published_metadata.frame_source_code =
                         pending_seek_done ? 1 : 2;
+                    published_metadata.width = dec->GetWidth();
+                    published_metadata.height = dec->GetHeight();
                     published_metadata.pitch_bytes = slot_pitch;
                     published_metadata.frame_bytes = slot_frame_bytes;
                     published_metadata.color_matrix = iMatrix;
                     published_metadata.color_range = stream_color_range;
-                    published_metadata.format = slot_format;
+                    published_metadata.pixel_format = slot_format;
+                    published_metadata.surface_backend =
+                        use_cpu_buffer ? FrameSurfaceBackend::Cpu
+                                       : FrameSurfaceBackend::NvidiaCuda;
+                    published_metadata.ownership =
+                        FrameSurfaceOwnership::SlotOwned;
+                    published_metadata.lifetime =
+                        FrameSurfaceLifetime::UntilReadLeaseReleased;
                     write_lease->publish(published_metadata);
                     dc_context->decoding_flag = true;
                     latest_decoded_frame[cam_name].store(assigned_frame_num);
@@ -803,82 +817,58 @@ void image_loader(DecoderContext *dc_context,
                 //     decoder_clear_buffer_with_constant_image(display_buffer[i].frame,
                 //     3208, 2200);
                 // }
-                display_buffer[i].available_to_write = true;
-                display_buffer[i].frame_number = -1;
-                display_buffer[i].local_frame_number = -1;
-                display_buffer[i].frame_pts = -1;
-                display_buffer[i].frame_source_code = 0;
-                display_buffer[i].color_matrix = ColorSpaceStandard_BT709;
-                display_buffer[i].color_range = ColorRange_Unspecified;
+                frameSlotResetForWrite(display_buffer[i]);
             }
             buffer_head = 0;
             frame_number = static_cast<int>(requested_frame);
-            display_buffer[0].frame_number = -1;
-            display_buffer[0].local_frame_number = -1;
-            display_buffer[0].frame_pts = -1;
-            display_buffer[0].frame_source_code = 0;
             mark_seek_done(requested_frame);
         } else {
             if (frame_number < img_list_vector.size()) {
-                if (frame_number == 0) {
-                    std::string file_name = root_dir + "/" + cam_name + "_" +
-                                            img_list_vector[frame_number];
-                    cv::Mat image = cv::imread(file_name, cv::IMREAD_COLOR);
-                    cv::Mat image_rgba;
-                    cv::cvtColor(image, image_rgba, cv::COLOR_BGR2RGBA);
-                    size_t buffer_size =
-                        image_rgba.total() *
-                        image_rgba.elemSize(); // Rows * Cols * Channels
-                    memcpy(display_buffer[buffer_head].frame, image_rgba.data,
-                           buffer_size);
-
-                    display_buffer[buffer_head].available_to_write = false;
-                    dc_context->decoding_flag = true;
-                    display_buffer[buffer_head].frame_number = frame_number;
-                    display_buffer[buffer_head].local_frame_number = frame_number;
-                    display_buffer[buffer_head].frame_pts = -1;
-                    display_buffer[buffer_head].frame_source_code = 2;
-                    display_buffer[buffer_head].pitch_bytes =
-                        image_rgba.cols * static_cast<int>(image_rgba.elemSize());
-                    display_buffer[buffer_head].frame_bytes = buffer_size;
-                    display_buffer[buffer_head].color_matrix =
-                        ColorSpaceStandard_BT709;
-                    display_buffer[buffer_head].color_range =
-                        ColorRange_Unspecified;
-                    display_buffer[buffer_head].format =
-                        PictureBufferFormat::RGBA32;
-                } else {
-                    while (!display_buffer[buffer_head].available_to_write &&
-                           !(dc_context->stop_flag) && !seek_requested()) {
-                        std::this_thread::sleep_for(
-                            std::chrono::milliseconds(1));
+                std::optional<FrameSlotWriteLease> write_lease;
+                while (!(dc_context->stop_flag) && !seek_requested()) {
+                    write_lease =
+                        frameSlotAcquireWritable(display_buffer[buffer_head]);
+                    if (write_lease.has_value()) {
+                        break;
                     }
-                    std::string file_name = root_dir + "/" + cam_name + "_" +
-                                            img_list_vector[frame_number];
-                    cv::Mat image = cv::imread(file_name, cv::IMREAD_COLOR);
-                    cv::Mat image_rgba;
-                    cv::cvtColor(image, image_rgba, cv::COLOR_BGR2RGBA);
-                    size_t buffer_size =
-                        image_rgba.total() *
-                        image_rgba.elemSize(); // Rows * Cols * Channels
-                    memcpy(display_buffer[buffer_head].frame, image_rgba.data,
-                           buffer_size);
-                    display_buffer[buffer_head].available_to_write = false;
-                    dc_context->decoding_flag = true;
-                    display_buffer[buffer_head].frame_number = frame_number;
-                    display_buffer[buffer_head].local_frame_number = frame_number;
-                    display_buffer[buffer_head].frame_pts = -1;
-                    display_buffer[buffer_head].frame_source_code = 2;
-                    display_buffer[buffer_head].pitch_bytes =
-                        image_rgba.cols * static_cast<int>(image_rgba.elemSize());
-                    display_buffer[buffer_head].frame_bytes = buffer_size;
-                    display_buffer[buffer_head].color_matrix =
-                        ColorSpaceStandard_BT709;
-                    display_buffer[buffer_head].color_range =
-                        ColorRange_Unspecified;
-                    display_buffer[buffer_head].format =
-                        PictureBufferFormat::RGBA32;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
+                if (!write_lease.has_value()) {
+                    continue;
+                }
+
+                const std::string file_name =
+                    root_dir + "/" + cam_name + "_" +
+                    img_list_vector[frame_number];
+                cv::Mat image = cv::imread(file_name, cv::IMREAD_COLOR);
+                cv::Mat image_rgba;
+                cv::cvtColor(image, image_rgba, cv::COLOR_BGR2RGBA);
+                const size_t buffer_size =
+                    image_rgba.total() * image_rgba.elemSize();
+                std::memcpy(write_lease->frame(), image_rgba.data, buffer_size);
+
+                FrameSlotMetadata metadata;
+                metadata.stream_id = cam_name;
+                metadata.frame_number = frame_number;
+                metadata.local_frame_number = frame_number;
+                metadata.frame_pts = -1;
+                metadata.frame_source_code = 2;
+                metadata.width = image_rgba.cols;
+                metadata.height = image_rgba.rows;
+                metadata.pitch_bytes =
+                    image_rgba.cols * static_cast<int>(image_rgba.elemSize());
+                metadata.frame_bytes = buffer_size;
+                metadata.color_matrix = ColorSpaceStandard_BT709;
+                metadata.color_range = ColorRange_Unspecified;
+                metadata.pixel_format = FramePixelFormat::RGBA8;
+                metadata.surface_backend =
+                    use_cpu_buffer ? FrameSurfaceBackend::Cpu
+                                   : FrameSurfaceBackend::NvidiaCuda;
+                metadata.ownership = FrameSurfaceOwnership::SlotOwned;
+                metadata.lifetime =
+                    FrameSurfaceLifetime::UntilReadLeaseReleased;
+                write_lease->publish(metadata);
+                dc_context->decoding_flag = true;
                 frame_number = frame_number + 1;
                 buffer_head = (buffer_head + 1) % size_of_buffer;
             } else {

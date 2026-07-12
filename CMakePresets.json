@@ -172,7 +172,8 @@
       "name": "build-macos-arm64-release",
       "configurePreset": "macos-arm64-release",
       "targets": [
-        "crimson_macos_shell"
+        "crimson_macos_shell",
+        "frame_slot_tests"
       ]
     }
   ],
@@ -186,7 +187,7 @@
       },
       "filter": {
         "include": {
-          "label": "headless"
+          "label": "headless|portable"
         }
       }
     },

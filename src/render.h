@@ -3,6 +3,7 @@
 #include "gx_helper.h"
 #include "decoder.h"
 #include "frame_slot.h"
+#include "platform/nvidia/nvidia_presentation_texture.h"
 #include <cuda_runtime_api.h>
 #include <cstdint>
 #include <cstdlib>
@@ -49,6 +50,7 @@ struct CameraResources {
     u32 image_width = 0;
     u32 image_height = 0;
     GLuint image_texture = 0;
+    NvidiaOpenGlPresentationTexture presentation_texture;
     GLuint nv12_luma_texture = 0;
     GLuint nv12_chroma_texture = 0;
     GLuint nv12_stage_fbo = 0;
@@ -73,6 +75,17 @@ struct CameraResources {
     std::vector<unsigned char> playback_preview_rgba_cpu;
     CameraTextureDrawTrace texture_draw_trace;
 };
+
+inline void render_refresh_camera_presentation_texture(
+    CameraResources* camera) {
+    if (camera == nullptr) {
+        return;
+    }
+    camera->presentation_texture.reset(
+        static_cast<uintptr_t>(camera->image_texture),
+        camera->display_texture_width, camera->display_texture_height,
+        FramePixelFormat::RGBA8);
+}
 
 struct render_scene
 {
@@ -195,7 +208,7 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
                 scene->cameras[j].display_buffer[i].frame_bytes =
                     rgba_frame_bytes;
                 scene->cameras[j].display_buffer[i].format =
-                    PictureBufferFormat::RGBA32;
+                    FramePixelFormat::RGBA8;
             } else {
                 // GPU-buffer mode stores compact NV12 slots and converts only
                 // the selected display frame to RGBA at presentation time.
@@ -211,7 +224,7 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
                 scene->cameras[j].display_buffer[i].frame_bytes =
                     nv12_frame_bytes;
                 scene->cameras[j].display_buffer[i].format =
-                    PictureBufferFormat::NV12;
+                    FramePixelFormat::NV12;
             }
             scene->cameras[j].display_buffer[i].frame_number = -1;
             scene->cameras[j].display_buffer[i].local_frame_number = -1;
@@ -238,6 +251,7 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); // This is required on WebGL for non power-of-two textures
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE); // Same
+        render_refresh_camera_presentation_texture(&scene->cameras[j]);
 
         glGenTextures(1, &scene->cameras[j].playback_staging_texture);
         glBindTexture(GL_TEXTURE_2D, scene->cameras[j].playback_staging_texture);
@@ -290,6 +304,7 @@ static void render_resize_camera_texture(CameraResources* camera,
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     camera->display_texture_width = texture_width;
     camera->display_texture_height = texture_height;
+    render_refresh_camera_presentation_texture(camera);
 }
 
 #endif
