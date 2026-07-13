@@ -3,12 +3,12 @@
 #include "global.h"
 #include "gui/camera_view_manual_keypoint_input.h"
 #include "gui/camera_view_overlay_renderer.h"
+#include "overlay_scene_contract.h"
 
 #include "imgui.h"
 #include "implot.h"
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -19,37 +19,11 @@
 
 namespace {
 
+using crimson::overlay::CameraOverlayLayer;
+
 double durationMs(std::chrono::steady_clock::duration delta) {
     return std::chrono::duration<double, std::milli>(delta).count();
 }
-
-enum class CameraViewOverlayLayer {
-    BoundingBoxes,
-    BoundingBoxDraft,
-    Chaser,
-    MovementTrail,
-    KeypointHeading,
-    MovementLabel,
-    SubjectMasks,
-    SubjectShape,
-    TailKinematics,
-    SubjectMaskPicking,
-    Keypoints,
-};
-
-constexpr std::array<CameraViewOverlayLayer, 11> kCameraViewOverlayOrder = {
-    CameraViewOverlayLayer::BoundingBoxes,
-    CameraViewOverlayLayer::BoundingBoxDraft,
-    CameraViewOverlayLayer::Chaser,
-    CameraViewOverlayLayer::MovementTrail,
-    CameraViewOverlayLayer::KeypointHeading,
-    CameraViewOverlayLayer::MovementLabel,
-    CameraViewOverlayLayer::SubjectMasks,
-    CameraViewOverlayLayer::SubjectShape,
-    CameraViewOverlayLayer::TailKinematics,
-    CameraViewOverlayLayer::SubjectMaskPicking,
-    CameraViewOverlayLayer::Keypoints,
-};
 
 void drawCvContours(const std::vector<cv::Rect>& boxes,
                     const std::vector<std::string>& labels,
@@ -1030,10 +1004,10 @@ CameraViewWindowResult drawCameraViewWindowContents(
 
             const std::string draft_label_suffix =
                 std::to_string(context.view_idx);
-            for (const CameraViewOverlayLayer layer :
-                 kCameraViewOverlayOrder) {
+            for (const CameraOverlayLayer layer :
+                 crimson::overlay::kCameraOverlayLayerOrder) {
                 switch (layer) {
-                    case CameraViewOverlayLayer::BoundingBoxes:
+                    case CameraOverlayLayer::BoundingBoxes:
                         if (!bounding_box_overlay_items.empty()) {
                             const auto bbox_overlay_draw_start =
                                 std::chrono::steady_clock::now();
@@ -1045,14 +1019,14 @@ CameraViewWindowResult drawCameraViewWindowContents(
                                 bbox_overlay_draw_start);
                         }
                         break;
-                    case CameraViewOverlayLayer::BoundingBoxDraft:
+                    case CameraOverlayLayer::BoundingBoxDraft:
                         drawFullFrameRectDraftOverlay(
                             result.full_frame_edit_result.state,
                             context.current_frame_num,
                             image_height_px,
                             draft_label_suffix.c_str());
                         break;
-                    case CameraViewOverlayLayer::Chaser:
+                    case CameraOverlayLayer::Chaser:
                         if (context.chaser_bboxes != nullptr &&
                             context.chaser_states != nullptr &&
                             context.camera_params != nullptr) {
@@ -1064,14 +1038,14 @@ CameraViewWindowResult drawCameraViewWindowContents(
                                 static_cast<int>(camera.image_height));
                         }
                         break;
-                    case CameraViewOverlayLayer::MovementTrail:
+                    case CameraOverlayLayer::MovementTrail:
                         if (context.movement_trail != nullptr) {
                             drawCameraViewMovementTrailOverlay(
                                 *context.movement_trail,
                                 image_height_px);
                         }
                         break;
-                    case CameraViewOverlayLayer::KeypointHeading:
+                    case CameraOverlayLayer::KeypointHeading:
                         if (context.can_draw_headings &&
                             context.heading_details != nullptr) {
                             drawCameraViewHeadingOverlay(
@@ -1079,7 +1053,7 @@ CameraViewWindowResult drawCameraViewWindowContents(
                                 image_height_px);
                         }
                         break;
-                    case CameraViewOverlayLayer::MovementLabel:
+                    case CameraOverlayLayer::MovementLabel:
                         if (context.movement_sample != nullptr) {
                             drawCameraViewMovementOverlay(
                                 *context.movement_sample,
@@ -1087,7 +1061,7 @@ CameraViewWindowResult drawCameraViewWindowContents(
                                 image_height_px);
                         }
                         break;
-                    case CameraViewOverlayLayer::SubjectMasks:
+                    case CameraOverlayLayer::SubjectMasks:
                         if (context.can_draw_eye_masks &&
                             context.mask_details != nullptr) {
                             CameraViewMaskPerfMetrics mask_perf =
@@ -1111,7 +1085,7 @@ CameraViewWindowResult drawCameraViewWindowContents(
                             }
                         }
                         break;
-                    case CameraViewOverlayLayer::SubjectShape:
+                    case CameraOverlayLayer::SubjectShape:
                         if (context.subject_shape_details != nullptr) {
                             const auto subject_shape_overlay_start =
                                 std::chrono::steady_clock::now();
@@ -1125,7 +1099,7 @@ CameraViewWindowResult drawCameraViewWindowContents(
                                     subject_shape_overlay_start);
                         }
                         break;
-                    case CameraViewOverlayLayer::TailKinematics:
+                    case CameraOverlayLayer::TailKinematics:
                         if (context.subject_shape_details != nullptr &&
                             context.tail_kinematics != nullptr) {
                             const auto tail_kinematics_overlay_start =
@@ -1141,7 +1115,7 @@ CameraViewWindowResult drawCameraViewWindowContents(
                                     tail_kinematics_overlay_start);
                         }
                         break;
-                    case CameraViewOverlayLayer::SubjectMaskPicking:
+                    case CameraOverlayLayer::SubjectMaskPicking:
                         if (context.subject_mask_pick_enabled &&
                             context.mask_details != nullptr && plot_hovered &&
                             !context.full_frame_keypoint_edit_enabled &&
@@ -1167,7 +1141,7 @@ CameraViewWindowResult drawCameraViewWindowContents(
                                 pick_start);
                         }
                         break;
-                    case CameraViewOverlayLayer::Keypoints:
+                    case CameraOverlayLayer::Keypoints:
                         if (context.detection_details != nullptr) {
                             const int keypoint_skip_detection =
                                 context.full_frame_keypoint_edit_enabled &&

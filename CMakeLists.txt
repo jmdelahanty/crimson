@@ -82,6 +82,15 @@ target_include_directories(crimson_crop_contracts PUBLIC
 )
 target_compile_features(crimson_crop_contracts PUBLIC cxx_std_17)
 
+add_library(crimson_overlay_contracts STATIC
+    src/overlay_scene_contract.cpp
+)
+target_include_directories(crimson_overlay_contracts PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_features(crimson_overlay_contracts PUBLIC cxx_std_17)
+target_link_libraries(crimson_overlay_contracts PUBLIC crimson_crop_contracts)
+
 add_library(crimson_stimulus_playback_contracts STATIC
     src/stimulus_playback_coordinator.cpp
     src/stimulus_presentation_coordinator.cpp
@@ -218,6 +227,25 @@ add_test(NAME crop_presentation_coordinator_tests
     COMMAND $<TARGET_FILE:crop_presentation_coordinator_tests>)
 set_tests_properties(crop_presentation_coordinator_tests PROPERTIES
     LABELS "crop;playback;portable;presentation"
+)
+
+add_executable(overlay_scene_contract_tests
+    tools/overlay_scene_contract_tests.cpp
+)
+target_link_libraries(overlay_scene_contract_tests PRIVATE
+    crimson_overlay_contracts
+)
+target_include_directories(overlay_scene_contract_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_compile_features(overlay_scene_contract_tests PRIVATE cxx_std_17)
+set_target_properties(overlay_scene_contract_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME overlay_scene_contract_tests
+    COMMAND $<TARGET_FILE:overlay_scene_contract_tests>)
+set_tests_properties(overlay_scene_contract_tests PROPERTIES
+    LABELS "headless;overlay;portable"
 )
 
 add_executable(stimulus_playback_coordinator_tests
@@ -970,6 +998,7 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_types.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_selection.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_slot.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/overlay_scene_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/analysis_crop_geometry_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/stimulus_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/acquisition_crop_repository.cpp"
@@ -1017,6 +1046,7 @@ target_include_directories(redgui PRIVATE
 # --- Link Libraries ---
 target_link_libraries(redgui PRIVATE
     crimson_frame_contracts
+    crimson_overlay_contracts
     crimson_repository_contracts
     # CUDA and NVIDIA Libraries
     ${CUDA_LIBRARIES}

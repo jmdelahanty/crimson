@@ -192,7 +192,8 @@
         "apple_stimulus_playback_probe",
         "apple_video_metal_tests",
         "apple_video_provider_tests",
-        "frame_slot_tests"
+        "frame_slot_tests",
+        "overlay_scene_contract_tests"
       ]
     }
   ],
