@@ -976,7 +976,7 @@ CameraViewWindowResult drawCameraViewWindowContents(
             result.full_frame_edit_result = processFullFrameRectEditInput(
                 full_frame_edit_context, context.full_frame_edit_state);
 
-            std::vector<FullFrameRectOverlayItem> bounding_box_overlay_items;
+            crimson::overlay::ReadOnlyOverlayScene bounding_box_overlay_scene;
             if (context.zarr_boxes != nullptr &&
                 context.detection_details != nullptr &&
                 context.bbox_edit_state != nullptr &&
@@ -986,12 +986,16 @@ CameraViewWindowResult drawCameraViewWindowContents(
                 const bool frame_has_bbox_edits =
                     context.bbox_edit_state->isFrameDirty(
                         context.current_frame_num);
-                bounding_box_overlay_items =
-                    buildCameraViewBoundingBoxOverlayItems(
+                bounding_box_overlay_scene =
+                    buildCameraViewBoundingBoxOverlayScene(
                         *context.zarr_boxes,
                         *context.detection_details,
                         *context.bbox_edit_state,
+                        context.view_idx,
+                        context.presented_frame,
                         context.current_frame_num,
+                        static_cast<float>(camera.image_width),
+                        image_height_px,
                         frame_has_bbox_edits,
                         context.active_dataset_has_synthetic_detections,
                         context.frame_is_interpolated);
@@ -999,7 +1003,8 @@ CameraViewWindowResult drawCameraViewWindowContents(
                     std::chrono::steady_clock::now() -
                     bbox_overlay_build_start);
                 result.perf.bbox_overlay_item_count +=
-                    static_cast<int>(bounding_box_overlay_items.size());
+                    static_cast<int>(bounding_box_overlay_scene.count(
+                        CameraOverlayLayer::BoundingBoxes));
             }
 
             const std::string draft_label_suffix =
@@ -1008,12 +1013,12 @@ CameraViewWindowResult drawCameraViewWindowContents(
                  crimson::overlay::kCameraOverlayLayerOrder) {
                 switch (layer) {
                     case CameraOverlayLayer::BoundingBoxes:
-                        if (!bounding_box_overlay_items.empty()) {
+                        if (bounding_box_overlay_scene.ready() &&
+                            !bounding_box_overlay_scene.primitives.empty()) {
                             const auto bbox_overlay_draw_start =
                                 std::chrono::steady_clock::now();
-                            drawFullFrameRectOverlays(
-                                bounding_box_overlay_items,
-                                image_height_px);
+                            drawCameraViewReadOnlyOverlayScene(
+                                bounding_box_overlay_scene, image_height_px);
                             result.perf.bbox_overlay_draw_ms += durationMs(
                                 std::chrono::steady_clock::now() -
                                 bbox_overlay_draw_start);
@@ -1050,7 +1055,11 @@ CameraViewWindowResult drawCameraViewWindowContents(
                             context.heading_details != nullptr) {
                             drawCameraViewHeadingOverlay(
                                 *context.heading_details,
-                                image_height_px);
+                                static_cast<float>(camera.image_width),
+                                image_height_px,
+                                context.view_idx,
+                                context.presented_frame,
+                                context.current_frame_num);
                         }
                         break;
                     case CameraOverlayLayer::MovementLabel:
@@ -1156,7 +1165,11 @@ CameraViewWindowResult drawCameraViewWindowContents(
                             drawCameraViewDetectionKeypointMarkers(
                                 *context.detection_details,
                                 context.show_keypoint_markers,
+                                static_cast<float>(camera.image_width),
                                 image_height_px,
+                                context.view_idx,
+                                context.presented_frame,
+                                context.current_frame_num,
                                 keypoint_skip_detection);
                         }
                         break;

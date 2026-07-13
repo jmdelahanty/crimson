@@ -1,0 +1,193 @@
+#include "platform/macos/apple_overlay_metal_renderer.h"
+#include "tests/fixtures/read_only_overlay_scene_fixture.h"
+
+#import <Metal/Metal.h>
+
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <iostream>
+#include <string>
+#include <vector>
+
+namespace {
+
+struct TestFailure {
+    std::string message;
+};
+
+#define CHECK(condition)                                                       \
+    do {                                                                       \
+        if (!(condition)) {                                                    \
+            throw TestFailure{std::string("CHECK failed: ") + #condition +   \
+                              " at " + __FILE__ + ":" +                   \
+                              std::to_string(__LINE__)};                       \
+        }                                                                      \
+    } while (false)
+
+using Pixel = std::array<uint8_t, 4>;
+
+constexpr uint32_t kWidth = 360;
+constexpr uint32_t kHeight = 220;
+constexpr Pixel kClearPixel{41, 31, 20, 255};
+
+struct RenderedImage {
+    std::vector<Pixel> pixels;
+
+    const Pixel& at(uint32_t x, uint32_t y) const {
+        return pixels[static_cast<size_t>(y) * kWidth + x];
+    }
+};
+
+bool nearChannel(uint8_t actual, int expected, int tolerance = 4) {
+    return std::abs(static_cast<int>(actual) - expected) <= tolerance;
+}
+
+bool isClear(const Pixel& pixel) {
+    return nearChannel(pixel[0], kClearPixel[0], 1) &&
+           nearChannel(pixel[1], kClearPixel[1], 1) &&
+           nearChannel(pixel[2], kClearPixel[2], 1) &&
+           pixel[3] == 255;
+}
+
+RenderedImage render(id<MTLDevice> device,
+                     id<MTLCommandQueue> queue,
+                     AppleOverlayMetalRenderer& renderer,
+                     const crimson::overlay::ReadOnlyOverlayScene& scene,
+                     const crimson::overlay::SourceViewportTransform& transform) {
+    MTLTextureDescriptor* descriptor = [MTLTextureDescriptor
+        texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                     width:kWidth
+                                    height:kHeight
+                                 mipmapped:NO];
+    descriptor.storageMode = MTLStorageModeShared;
+    descriptor.usage = MTLTextureUsageRenderTarget;
+    id<MTLTexture> target = [device newTextureWithDescriptor:descriptor];
+    CHECK(target != nil);
+    MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor new];
+    pass.colorAttachments[0].texture = target;
+    pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+    pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+    pass.colorAttachments[0].clearColor =
+        MTLClearColorMake(0.08, 0.12, 0.16, 1.0);
+    id<MTLCommandBuffer> command = [queue commandBuffer];
+    id<MTLRenderCommandEncoder> encoder =
+        [command renderCommandEncoderWithDescriptor:pass];
+    CHECK(command != nil);
+    CHECK(encoder != nil);
+    std::string error;
+    CHECK(renderer.encode(
+        scene, transform,
+        reinterpret_cast<uintptr_t>((__bridge void*)encoder), kWidth, kHeight,
+        &error));
+    [encoder endEncoding];
+    [command commit];
+    [command waitUntilCompleted];
+    CHECK(command.status == MTLCommandBufferStatusCompleted);
+
+    RenderedImage result;
+    result.pixels.resize(static_cast<size_t>(kWidth) * kHeight);
+    [target getBytes:result.pixels.data()
+          bytesPerRow:kWidth * sizeof(Pixel)
+           fromRegion:MTLRegionMake2D(0, 0, kWidth, kHeight)
+          mipmapLevel:0];
+    return result;
+}
+
+size_t changedPixelCount(const RenderedImage& image) {
+    size_t changed = 0;
+    for (const Pixel& pixel : image.pixels) {
+        changed += !isClear(pixel);
+    }
+    return changed;
+}
+
+void checkOutsideIsClear(
+    const RenderedImage& image,
+    const crimson::overlay::Rect& display) {
+    for (uint32_t y = 0; y < kHeight; ++y) {
+        for (uint32_t x = 0; x < kWidth; ++x) {
+            if (x >= display.x && x < display.x + display.width &&
+                y >= display.y && y < display.y + display.height) {
+                continue;
+            }
+            CHECK(isClear(image.at(x, y)));
+        }
+    }
+}
+
+void runTest() {
+    using namespace crimson::overlay;
+    id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+    CHECK(device != nil);
+    id<MTLCommandQueue> queue = [device newCommandQueue];
+    CHECK(queue != nil);
+    AppleOverlayMetalRenderer renderer;
+    std::string error;
+    CHECK(renderer.initialize(
+        reinterpret_cast<uintptr_t>((__bridge void*)device),
+        static_cast<uint64_t>(MTLPixelFormatBGRA8Unorm), &error));
+
+    const ReadOnlyOverlayScene scene =
+        buildReadOnlyOverlayScene(fixture::makeReadOnlyOverlayInput());
+    CHECK(scene.ready());
+    const SourceViewportTransform full{{0.0, 0.0, 640.0, 360.0},
+                                       {20.0, 20.0, 320.0, 180.0}};
+    const RenderedImage image = render(device, queue, renderer, scene, full);
+    CHECK(changedPixelCount(image) > 400);
+    checkOutsideIsClear(image, full.display);
+
+    const Pixel clean_box = image.at(110, 60);
+    CHECK(nearChannel(clean_box[0], 255));
+    CHECK(nearChannel(clean_box[1], 153));
+    CHECK(nearChannel(clean_box[2], 51));
+    const Pixel interpolated_box = image.at(220, 65);
+    CHECK(interpolated_box[0] < 15);
+    CHECK(interpolated_box[1] >= 155 && interpolated_box[1] <= 175);
+    CHECK(interpolated_box[2] >= 225 && interpolated_box[2] <= 240);
+    const Pixel heading = image.at(140, 100);
+    CHECK(heading[0] < 40);
+    CHECK(heading[1] >= 50 && heading[1] <= 75);
+    CHECK(heading[2] >= 235);
+    const Pixel marker = image.at(100, 100);
+    CHECK(marker[0] < 70);
+    CHECK(marker[1] >= 195);
+    CHECK(marker[2] >= 240);
+
+    const SourceViewportTransform zoom{{80.0, 60.0, 320.0, 180.0},
+                                       {20.0, 20.0, 320.0, 180.0}};
+    const RenderedImage zoomed = render(device, queue, renderer, scene, zoom);
+    CHECK(changedPixelCount(zoomed) > 400);
+    checkOutsideIsClear(zoomed, zoom.display);
+    CHECK(!isClear(zoomed.at(40, 40)));
+
+    auto stale_input = fixture::makeReadOnlyOverlayInput();
+    --stale_input.identity.overlay_frame;
+    const ReadOnlyOverlayScene stale = buildReadOnlyOverlayScene(stale_input);
+    CHECK(!stale.ready());
+    const RenderedImage withheld =
+        render(device, queue, renderer, stale, full);
+    CHECK(changedPixelCount(withheld) == 0);
+    renderer.reset();
+    std::cout << "apple_read_only_overlay_metal_tests: PASS primitives="
+              << scene.primitives.size() << " triangles="
+              << tessellateReadOnlyOverlayScene(scene, full).triangleCount()
+              << '\n';
+}
+
+}  // namespace
+
+int main() {
+    @autoreleasepool {
+        try {
+            runTest();
+        } catch (const TestFailure& failure) {
+            std::cerr << failure.message << '\n';
+            return 1;
+        } catch (const std::exception& exception) {
+            std::cerr << "unexpected exception: " << exception.what() << '\n';
+            return 1;
+        }
+    }
+    return 0;
+}

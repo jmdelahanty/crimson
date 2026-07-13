@@ -1,5 +1,6 @@
 #include "apple_metal_presentation_texture.h"
 #include "apple_acquisition_crop_playback_session.h"
+#include "apple_overlay_metal_renderer.h"
 #include "apple_stimulus_playback_session.h"
 #include "apple_video_metal_renderer.h"
 #include "apple_video_playback_buffer.h"
@@ -602,6 +603,7 @@ int main(int argc, char **argv) {
 
   AppleVideoPlaybackBuffer video_playback;
   AppleVideoMetalRenderer video_renderer;
+  AppleOverlayMetalRenderer overlay_renderer;
   LogicalPlaybackClock video_clock;
   AppleVideoViewerStats viewer_stats;
   std::optional<AppleDecodedVideoFrame> current_video_frame;
@@ -636,6 +638,7 @@ int main(int argc, char **argv) {
   bool crop_enabled = false;
   bool crop_failed = false;
   bool crop_smoke_end_satisfied = false;
+  uint64_t read_only_overlay_presentations = 0;
   bool pending_crop_discontinuity = true;
   int64_t last_crop_camera_request = -1;
   std::string crop_error;
@@ -645,6 +648,9 @@ int main(int argc, char **argv) {
   if (video_enabled) {
     std::string video_error;
     if (!video_renderer.initialize(
+            reinterpret_cast<uintptr_t>((__bridge void *)device),
+            static_cast<uint64_t>(layer.pixelFormat), &video_error) ||
+        !overlay_renderer.initialize(
             reinterpret_cast<uintptr_t>((__bridge void *)device),
             static_cast<uint64_t>(layer.pixelFormat), &video_error) ||
         !video_playback.open(options->video_path, "camera-main", 6,
@@ -1532,6 +1538,52 @@ int main(int argc, char **argv) {
             }
             crop_frame_encoded = true;
           }
+          if (current_crop_selection.selected() &&
+              current_crop_selection.camera_frame == metadata.frame_number &&
+              current_crop_selection.geometry &&
+              current_crop_selection.geometry->full_frame_detection) {
+            const auto &geometry = *current_crop_selection.geometry;
+            if (geometry.camera_frame == metadata.frame_number &&
+                geometry.source_width == video_playback.info().width &&
+                geometry.source_height == video_playback.info().height) {
+              const auto &box = *geometry.full_frame_detection;
+              crimson::overlay::ReadOnlyOverlayInput overlay_input;
+              overlay_input.identity = {
+                  0, metadata.frame_number, 0, geometry.camera_frame};
+              overlay_input.source_width = geometry.source_width;
+              overlay_input.source_height = geometry.source_height;
+              overlay_input.show_headings = false;
+              overlay_input.show_keypoints = false;
+              crimson::overlay::DetectionOverlayInput detection;
+              detection.box = crimson::overlay::DetectionBoxInput{
+                  {box.x, box.y, box.width, box.height}, 0,
+                  crimson::overlay::BoxProvenance::Clean};
+              overlay_input.detections.push_back(std::move(detection));
+              const auto overlay_scene =
+                  crimson::overlay::buildReadOnlyOverlayScene(overlay_input);
+              const crimson::overlay::SourceViewportTransform transform{
+                  {0.0, 0.0, overlay_input.source_width,
+                   overlay_input.source_height},
+                  {video_viewports.camera.x, video_viewports.camera.y,
+                   video_viewports.camera.width,
+                   video_viewports.camera.height}};
+              if (!overlay_renderer.encode(
+                      overlay_scene, transform,
+                      reinterpret_cast<uintptr_t>((__bridge void *)encoder),
+                      static_cast<uint32_t>(width),
+                      static_cast<uint32_t>(height), &render_error)) {
+                std::fprintf(stderr,
+                             "[AppleOverlay] Metal encode failed: %s\n",
+                             render_error.c_str());
+                render_failed = true;
+                break;
+              }
+              if (overlay_scene.ready() &&
+                  !overlay_scene.primitives.empty()) {
+                ++read_only_overlay_presentations;
+              }
+            }
+          }
           if (crop_enabled) {
             drawAppleCropPreviewOverlay(
                 video_viewports.crop, io.DisplayFramebufferScale.y,
@@ -1760,6 +1812,7 @@ int main(int argc, char **argv) {
     current_video_frame.reset();
     video_playback.close();
     video_renderer.reset();
+    overlay_renderer.reset();
   }
 
   ImGui_ImplMetal_Shutdown();
@@ -1933,6 +1986,7 @@ int main(int argc, char **argv) {
           final_crop_presentation.presented_source == expected_source;
       const bool crop_smoke_failed =
           crop_failed || !crop_smoke_end_satisfied || !source_matches ||
+          read_only_overlay_presentations == 0 ||
           final_crop_presentation.presented_crop_camera_frame !=
               options->video_smoke_end ||
           final_crop_presentation.camera_skew_frames != 0 ||
@@ -1956,7 +2010,7 @@ int main(int argc, char **argv) {
             "holds=%llu deferred=%llu max_deferred_run=%llu "
             "selection_mismatches=%llu surface_mismatches=%llu "
             "camera_skew=%+lld max_abs_camera_skew=%llu "
-            "failed_requests=%llu error=%s\n",
+            "overlay_presentations=%llu failed_requests=%llu error=%s\n",
             options->video_smoke_start, options->video_smoke_end, source_name,
             static_cast<long long>(
                 final_crop_presentation.presented_crop_camera_frame),
@@ -1981,6 +2035,8 @@ int main(int argc, char **argv) {
             static_cast<unsigned long long>(
                 final_crop_presentation.max_abs_camera_skew_frames),
             static_cast<unsigned long long>(
+                read_only_overlay_presentations),
+            static_cast<unsigned long long>(
                 final_crop_metrics.failed_requests),
             reported_crop_error.c_str());
         return 8;
@@ -1990,7 +2046,7 @@ int main(int argc, char **argv) {
           "decoded=%lld source_frame=%lld generation=%llu paired=%llu "
           "holds=%llu deferred=%llu max_deferred_run=%llu seeks=%llu "
           "follows=%llu decoder_peak=%zu camera_skew=%+lld "
-          "max_abs_camera_skew=%llu\n",
+          "max_abs_camera_skew=%llu overlay_presentations=%llu\n",
           options->video_smoke_start, options->video_smoke_end, source_name,
           static_cast<long long>(
               final_crop_presentation.presented_crop_camera_frame),
@@ -2013,7 +2069,9 @@ int main(int argc, char **argv) {
           final_crop_metrics.decoder.peak_buffered_frames,
           static_cast<long long>(final_crop_presentation.camera_skew_frames),
           static_cast<unsigned long long>(
-              final_crop_presentation.max_abs_camera_skew_frames));
+              final_crop_presentation.max_abs_camera_skew_frames),
+          static_cast<unsigned long long>(
+              read_only_overlay_presentations));
     }
     if (options->multistream_smoke) {
       const double memory_growth_mib =

@@ -84,6 +84,7 @@ target_compile_features(crimson_crop_contracts PUBLIC cxx_std_17)
 
 add_library(crimson_overlay_contracts STATIC
     src/overlay_scene_contract.cpp
+    src/read_only_overlay_scene.cpp
 )
 target_include_directories(crimson_overlay_contracts PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -245,6 +246,25 @@ set_target_properties(overlay_scene_contract_tests PROPERTIES
 add_test(NAME overlay_scene_contract_tests
     COMMAND $<TARGET_FILE:overlay_scene_contract_tests>)
 set_tests_properties(overlay_scene_contract_tests PROPERTIES
+    LABELS "headless;overlay;portable"
+)
+
+add_executable(read_only_overlay_scene_tests
+    tools/read_only_overlay_scene_tests.cpp
+)
+target_link_libraries(read_only_overlay_scene_tests PRIVATE
+    crimson_overlay_contracts
+)
+target_include_directories(read_only_overlay_scene_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_compile_features(read_only_overlay_scene_tests PRIVATE cxx_std_17)
+set_target_properties(read_only_overlay_scene_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME read_only_overlay_scene_tests
+    COMMAND $<TARGET_FILE:read_only_overlay_scene_tests>)
+set_tests_properties(read_only_overlay_scene_tests PROPERTIES
     LABELS "headless;overlay;portable"
 )
 
@@ -999,6 +1019,7 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_selection.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_slot.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/overlay_scene_contract.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/read_only_overlay_scene.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/analysis_crop_geometry_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/stimulus_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/acquisition_crop_repository.cpp"
@@ -1550,6 +1571,22 @@ if(CRIMSON_BUILD_MACOS_APP)
         ${VIDEOTOOLBOX_FRAMEWORK}
     )
 
+    add_library(crimson_apple_overlay STATIC
+        src/platform/macos/apple_overlay_metal_renderer.mm
+    )
+    target_compile_features(crimson_apple_overlay PRIVATE cxx_std_17)
+    target_compile_options(crimson_apple_overlay PRIVATE
+        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
+    )
+    target_include_directories(crimson_apple_overlay PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(crimson_apple_overlay PUBLIC
+        crimson_overlay_contracts
+        ${FOUNDATION_FRAMEWORK}
+        ${METAL_FRAMEWORK}
+    )
+
     add_library(crimson_apple_stimulus_playback STATIC
         src/platform/macos/apple_stimulus_playback_session.cpp
     )
@@ -1650,6 +1687,7 @@ if(CRIMSON_BUILD_MACOS_APP)
         ${CRIMSON_MACOS_IMPLOT_DIR}
     )
     target_link_libraries(crimson_macos_shell PRIVATE
+        crimson_apple_overlay
         crimson_apple_acquisition_crop_playback
         crimson_apple_stimulus_playback
         crimson_tensorstore_repositories
@@ -1840,6 +1878,30 @@ if(CRIMSON_BUILD_MACOS_APP)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunAppleStimulusPlaybackTest.cmake)
     set_tests_properties(apple_crop_presentation_metal_tests PROPERTIES
         LABELS "composite;crop;headless;macos;metal;playback;video"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    add_executable(apple_read_only_overlay_metal_tests
+        tools/apple_read_only_overlay_metal_tests.mm
+    )
+    target_compile_features(apple_read_only_overlay_metal_tests
+        PRIVATE cxx_std_17)
+    target_compile_options(apple_read_only_overlay_metal_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
+    )
+    target_include_directories(apple_read_only_overlay_metal_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    target_link_libraries(apple_read_only_overlay_metal_tests PRIVATE
+        crimson_apple_overlay
+    )
+    set_target_properties(apple_read_only_overlay_metal_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME apple_read_only_overlay_metal_tests
+        COMMAND $<TARGET_FILE:apple_read_only_overlay_metal_tests>)
+    set_tests_properties(apple_read_only_overlay_metal_tests PROPERTIES
+        LABELS "headless;macos;metal;overlay"
         TIMEOUT 60
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )

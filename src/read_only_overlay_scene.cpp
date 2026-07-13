@@ -1,0 +1,603 @@
+#include "read_only_overlay_scene.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <limits>
+#include <utility>
+
+namespace crimson::overlay {
+namespace {
+
+constexpr double kPi = 3.14159265358979323846;
+
+bool finite(double value) {
+    return std::isfinite(value);
+}
+
+bool finite(Point point) {
+    return finite(point.x) && finite(point.y);
+}
+
+std::string lowerCopy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char character) {
+                       return static_cast<char>(std::tolower(character));
+                   });
+    return value;
+}
+
+size_t findKeypoint(const std::vector<std::string>& labels,
+                    bool swim_bladder,
+                    bool left_eye,
+                    bool right_eye) {
+    for (size_t index = 0; index < labels.size(); ++index) {
+        const std::string label = lowerCopy(labels[index]);
+        const bool has_eye = label.find("eye") != std::string::npos;
+        const bool has_left = label.find("left") != std::string::npos;
+        const bool has_right = label.find("right") != std::string::npos;
+        const bool has_swim = label.find("swim") != std::string::npos;
+        const bool has_bladder = label.find("bladder") != std::string::npos;
+        if (swim_bladder && has_swim && has_bladder) {
+            return index;
+        }
+        if (left_eye && has_eye && has_left) {
+            return index;
+        }
+        if (right_eye && has_eye && has_right) {
+            return index;
+        }
+    }
+    return std::numeric_limits<size_t>::max();
+}
+
+Color withAlpha(Color color, float alpha) {
+    color.alpha = std::clamp(alpha, 0.0f, 1.0f);
+    return color;
+}
+
+void appendBoxPrimitive(const DetectionBoxInput& box,
+                        std::vector<Primitive>& primitives) {
+    if (!box.rect.valid()) {
+        return;
+    }
+    Color color{0.2f, 0.6f, 1.0f, 1.0f};
+    double line_width = 2.0;
+    if (box.provenance == BoxProvenance::Interpolated) {
+        color = {1.0f, 0.7f, 0.0f, 0.9f};
+        line_width = 2.5;
+    } else if (box.provenance == BoxProvenance::Manual) {
+        color = {0.0f, 0.85f, 0.65f, 1.0f};
+        line_width = 2.75;
+    }
+    if (box.selected) {
+        color = {1.0f, 0.25f, 0.95f, 1.0f};
+        line_width = 3.5;
+    } else if (box.added) {
+        color = {0.95f, 0.35f, 0.15f, 1.0f};
+        line_width = std::max(line_width, 3.0);
+    } else if (box.frame_modified) {
+        line_width = std::max(line_width, 2.5);
+    }
+
+    Primitive primitive;
+    primitive.type = PrimitiveType::Polyline;
+    primitive.layer = CameraOverlayLayer::BoundingBoxes;
+    primitive.points = {
+        {box.rect.x, box.rect.y},
+        {box.rect.x + box.rect.width, box.rect.y},
+        {box.rect.x + box.rect.width, box.rect.y + box.rect.height},
+        {box.rect.x, box.rect.y + box.rect.height},
+        {box.rect.x, box.rect.y},
+    };
+    primitive.stroke = color;
+    primitive.stroke_width_px = line_width;
+    primitive.label = "Zarr_" + std::to_string(box.class_id);
+    if (box.provenance == BoxProvenance::Interpolated) {
+        primitive.label += " [I]";
+    } else if (box.provenance == BoxProvenance::Manual) {
+        primitive.label += " [MAN]";
+    }
+    if (box.added) {
+        primitive.label += " [A]";
+    }
+    if (box.selected) {
+        primitive.label += " [S]";
+    } else if (box.frame_modified) {
+        primitive.label += " [M]";
+    }
+    primitives.push_back(std::move(primitive));
+}
+
+void appendHeadingPrimitive(const ReadOnlyOverlayInput& input,
+                            const DetectionOverlayInput& detection,
+                            size_t detection_index,
+                            std::vector<Primitive>& primitives) {
+    if (!detection.heading_valid || detection.detection_interpolated ||
+        !detection.box || !detection.box->rect.valid() ||
+        !detection.heading_origin) {
+        return;
+    }
+    const Rect& box = detection.box->rect;
+    Point start = *detection.heading_origin;
+    if (!finite(start)) {
+        start = {box.x + box.width * 0.5, box.y + box.height * 0.5};
+    }
+
+    Point end;
+    bool used_keypoints = false;
+    const size_t swim = findKeypoint(input.keypoint_labels, true, false, false);
+    const size_t left = findKeypoint(input.keypoint_labels, false, true, false);
+    const size_t right = findKeypoint(input.keypoint_labels, false, false, true);
+    if (swim != std::numeric_limits<size_t>::max() &&
+        left != std::numeric_limits<size_t>::max() &&
+        right != std::numeric_limits<size_t>::max() &&
+        swim < detection.keypoints.size() &&
+        left < detection.keypoints.size() &&
+        right < detection.keypoints.size() && finite(detection.keypoints[swim]) &&
+        finite(detection.keypoints[left]) && finite(detection.keypoints[right])) {
+        start = detection.keypoints[swim];
+        const Point eye_midpoint{
+            (detection.keypoints[left].x + detection.keypoints[right].x) * 0.5,
+            (detection.keypoints[left].y + detection.keypoints[right].y) * 0.5};
+        const double dx = eye_midpoint.x - start.x;
+        const double dy = eye_midpoint.y - start.y;
+        const double direction_length = std::hypot(dx, dy);
+        if (direction_length > 1e-3) {
+            const double box_scale = std::max(box.width, box.height) * 1.25;
+            const double frame_scale = input.source_height * 0.02;
+            const double extension = std::max(20.0, direction_length * 0.35);
+            const double arrow_length =
+                std::max(direction_length + extension,
+                         std::max(60.0, std::max(box_scale, frame_scale)));
+            const double shortened =
+                std::max(direction_length + 8.0, arrow_length * (2.0 / 3.0));
+            end = {start.x + dx / direction_length * shortened,
+                   start.y + dy / direction_length * shortened};
+            used_keypoints = true;
+        }
+    }
+
+    if (!used_keypoints) {
+        if (!detection.heading_degrees ||
+            !finite(*detection.heading_degrees)) {
+            return;
+        }
+        const double radians = *detection.heading_degrees * kPi / 180.0;
+        const double arrow_length =
+            std::max(60.0,
+                     std::max(std::max(box.width, box.height) * 1.25,
+                              input.source_height * 0.02)) *
+            (2.0 / 3.0);
+        end = {start.x + std::cos(radians) * arrow_length,
+               start.y - std::sin(radians) * arrow_length};
+    }
+
+    Primitive primitive;
+    primitive.type = PrimitiveType::Arrow;
+    primitive.layer = CameraOverlayLayer::KeypointHeading;
+    primitive.points = {start, end};
+    primitive.stroke = {1.0f, 0.25f, 0.1f, 0.95f};
+    primitive.fill = primitive.stroke;
+    primitive.stroke_width_px = 2.0;
+    primitive.arrow_head_size_px = 8.0;
+    primitive.label = "##heading_" + std::to_string(detection_index);
+    primitives.push_back(std::move(primitive));
+}
+
+void appendKeypointPrimitives(const ReadOnlyOverlayInput& input,
+                              const DetectionOverlayInput& detection,
+                              size_t detection_index,
+                              std::vector<Primitive>& primitives) {
+    for (const auto& edge : input.skeleton_edges) {
+        if (edge[0] >= detection.keypoints.size() ||
+            edge[1] >= detection.keypoints.size()) {
+            continue;
+        }
+        const Point a = detection.keypoints[edge[0]];
+        const Point b = detection.keypoints[edge[1]];
+        if (!finite(a) || !finite(b)) {
+            continue;
+        }
+        Primitive primitive;
+        primitive.type = PrimitiveType::Polyline;
+        primitive.layer = CameraOverlayLayer::Keypoints;
+        primitive.points = {a, b};
+        primitive.stroke = {1.0f, 1.0f, 1.0f, 0.63f};
+        primitive.stroke_width_px = 1.0;
+        primitive.label = "##edge_" + std::to_string(detection_index) + "_" +
+                          std::to_string(edge[0]) + "_" +
+                          std::to_string(edge[1]);
+        primitives.push_back(std::move(primitive));
+    }
+
+    if (detection.suppress_keypoint_markers) {
+        return;
+    }
+    for (size_t index = 0; index < detection.keypoints.size(); ++index) {
+        const Point point = detection.keypoints[index];
+        if (!finite(point)) {
+            continue;
+        }
+        const std::string label =
+            index < input.keypoint_labels.size() ? input.keypoint_labels[index]
+                                                 : std::string{};
+        float alpha = 1.0f;
+        if (!detection.heading_valid) {
+            alpha *= 0.4f;
+        }
+        if (detection.detection_interpolated) {
+            alpha *= 0.65f;
+        }
+        bool unusable = false;
+        if (detection.refined_keypoints) {
+            if (!detection.keypoint_usable) {
+                alpha *= 0.35f;
+                unusable = true;
+            }
+            if (detection.keypoint_detection_interpolated) {
+                alpha *= 0.65f;
+            }
+        }
+        alpha = std::clamp(alpha, 0.25f, 1.0f);
+        const Color base = keypointColor(label, index);
+
+        Primitive primitive;
+        primitive.type = PrimitiveType::Marker;
+        primitive.layer = CameraOverlayLayer::Keypoints;
+        primitive.points = {point};
+        primitive.marker_shape = keypointMarkerShape(label, index);
+        primitive.marker_size_px = keypointMarkerSizePx(label);
+        primitive.fill = withAlpha(base, base.alpha * alpha);
+        primitive.outline = withAlpha(base, std::max(alpha, 0.6f));
+        if (detection.keypoint_flip_corrected) {
+            primitive.outline = {0.0f, 0.9f, 0.9f, primitive.outline.alpha};
+        }
+        if (unusable) {
+            primitive.outline = {0.95f, 0.3f, 0.3f, primitive.outline.alpha};
+        }
+        primitive.outline_width_px = 2.0;
+        primitive.label = "##kp_" + std::to_string(detection_index) + "_" +
+                          std::to_string(index);
+        primitives.push_back(std::move(primitive));
+    }
+}
+
+void appendTriangle(ScreenMesh& mesh,
+                    Point a,
+                    Point b,
+                    Point c,
+                    Color color) {
+    mesh.triangle_vertices.push_back(
+        {static_cast<float>(a.x), static_cast<float>(a.y), color});
+    mesh.triangle_vertices.push_back(
+        {static_cast<float>(b.x), static_cast<float>(b.y), color});
+    mesh.triangle_vertices.push_back(
+        {static_cast<float>(c.x), static_cast<float>(c.y), color});
+}
+
+void appendSegment(ScreenMesh& mesh,
+                   Point a,
+                   Point b,
+                   double width,
+                   Color color) {
+    const double dx = b.x - a.x;
+    const double dy = b.y - a.y;
+    const double length = std::hypot(dx, dy);
+    if (!finite(a) || !finite(b) || !finite(width) || width <= 0.0 ||
+        length <= 1e-6) {
+        return;
+    }
+    const double half_width = width * 0.5;
+    const double nx = -dy / length * half_width;
+    const double ny = dx / length * half_width;
+    const Point a0{a.x + nx, a.y + ny};
+    const Point a1{a.x - nx, a.y - ny};
+    const Point b0{b.x + nx, b.y + ny};
+    const Point b1{b.x - nx, b.y - ny};
+    appendTriangle(mesh, a0, a1, b0, color);
+    appendTriangle(mesh, b0, a1, b1, color);
+}
+
+std::vector<Point> markerPolygon(MarkerShape shape,
+                                 Point center,
+                                 double size) {
+    switch (shape) {
+        case MarkerShape::Square:
+            return {{center.x - size, center.y - size},
+                    {center.x + size, center.y - size},
+                    {center.x + size, center.y + size},
+                    {center.x - size, center.y + size}};
+        case MarkerShape::Diamond:
+            return {{center.x, center.y - size},
+                    {center.x + size, center.y},
+                    {center.x, center.y + size},
+                    {center.x - size, center.y}};
+        case MarkerShape::TriangleUp:
+            return {{center.x, center.y - size},
+                    {center.x + size, center.y + size},
+                    {center.x - size, center.y + size}};
+        case MarkerShape::TriangleDown:
+            return {{center.x - size, center.y - size},
+                    {center.x + size, center.y - size},
+                    {center.x, center.y + size}};
+        default:
+            return {};
+    }
+}
+
+void appendPolygon(ScreenMesh& mesh,
+                   const std::vector<Point>& polygon,
+                   Color fill,
+                   Color outline,
+                   double outline_width) {
+    if (polygon.size() < 3) {
+        return;
+    }
+    for (size_t index = 1; index + 1 < polygon.size(); ++index) {
+        appendTriangle(mesh, polygon[0], polygon[index], polygon[index + 1],
+                       fill);
+    }
+    for (size_t index = 0; index < polygon.size(); ++index) {
+        appendSegment(mesh, polygon[index], polygon[(index + 1) % polygon.size()],
+                      outline_width, outline);
+    }
+}
+
+void appendCircle(ScreenMesh& mesh,
+                  Point center,
+                  double radius,
+                  Color fill,
+                  Color outline,
+                  double outline_width,
+                  size_t segments) {
+    segments = std::max<size_t>(segments, 8);
+    const double inner_radius = std::max(0.0, radius - outline_width * 0.5);
+    const double outer_radius = radius + outline_width * 0.5;
+    for (size_t index = 0; index < segments; ++index) {
+        const double a0 = 2.0 * kPi * static_cast<double>(index) / segments;
+        const double a1 =
+            2.0 * kPi * static_cast<double>(index + 1) / segments;
+        const Point inner0{center.x + std::cos(a0) * inner_radius,
+                           center.y + std::sin(a0) * inner_radius};
+        const Point inner1{center.x + std::cos(a1) * inner_radius,
+                           center.y + std::sin(a1) * inner_radius};
+        const Point outer0{center.x + std::cos(a0) * outer_radius,
+                           center.y + std::sin(a0) * outer_radius};
+        const Point outer1{center.x + std::cos(a1) * outer_radius,
+                           center.y + std::sin(a1) * outer_radius};
+        appendTriangle(mesh, center, inner0, inner1, fill);
+        appendTriangle(mesh, inner0, outer0, outer1, outline);
+        appendTriangle(mesh, inner0, outer1, inner1, outline);
+    }
+}
+
+void appendMarker(ScreenMesh& mesh,
+                  const Primitive& primitive,
+                  Point center,
+                  size_t circle_segments) {
+    if (primitive.marker_shape == MarkerShape::Circle) {
+        appendCircle(mesh, center, primitive.marker_size_px, primitive.fill,
+                     primitive.outline, primitive.outline_width_px,
+                     circle_segments);
+        return;
+    }
+    if (primitive.marker_shape == MarkerShape::Cross) {
+        const double size = primitive.marker_size_px;
+        appendSegment(mesh, {center.x - size, center.y - size},
+                      {center.x + size, center.y + size},
+                      primitive.outline_width_px, primitive.outline);
+        appendSegment(mesh, {center.x + size, center.y - size},
+                      {center.x - size, center.y + size},
+                      primitive.outline_width_px, primitive.outline);
+        return;
+    }
+    if (primitive.marker_shape == MarkerShape::Plus) {
+        const double size = primitive.marker_size_px;
+        appendSegment(mesh, {center.x - size, center.y},
+                      {center.x + size, center.y},
+                      primitive.outline_width_px, primitive.outline);
+        appendSegment(mesh, {center.x, center.y - size},
+                      {center.x, center.y + size},
+                      primitive.outline_width_px, primitive.outline);
+        return;
+    }
+    appendPolygon(mesh,
+                  markerPolygon(primitive.marker_shape, center,
+                                primitive.marker_size_px),
+                  primitive.fill, primitive.outline,
+                  primitive.outline_width_px);
+}
+
+}  // namespace
+
+bool Color::valid() const {
+    return std::isfinite(red) && std::isfinite(green) && std::isfinite(blue) &&
+           std::isfinite(alpha) && red >= 0.0f && red <= 1.0f &&
+           green >= 0.0f && green <= 1.0f && blue >= 0.0f && blue <= 1.0f &&
+           alpha >= 0.0f && alpha <= 1.0f;
+}
+
+bool ReadOnlyOverlayScene::ready() const {
+    return status == ReadOnlyOverlayBuildStatus::Ready &&
+           canComposite(identity) && source_width > 0.0 && source_height > 0.0;
+}
+
+size_t ReadOnlyOverlayScene::count(PrimitiveType type) const {
+    return static_cast<size_t>(std::count_if(
+        primitives.begin(), primitives.end(),
+        [type](const Primitive& primitive) { return primitive.type == type; }));
+}
+
+size_t ReadOnlyOverlayScene::count(CameraOverlayLayer layer) const {
+    return static_cast<size_t>(std::count_if(
+        primitives.begin(), primitives.end(),
+        [layer](const Primitive& primitive) { return primitive.layer == layer; }));
+}
+
+ReadOnlyOverlayScene buildReadOnlyOverlayScene(
+    const ReadOnlyOverlayInput& input) {
+    ReadOnlyOverlayScene scene;
+    scene.identity = input.identity;
+    scene.source_width = input.source_width;
+    scene.source_height = input.source_height;
+    if (!canComposite(input.identity)) {
+        scene.status = ReadOnlyOverlayBuildStatus::InvalidIdentity;
+        return scene;
+    }
+    if (!finite(input.source_width) || !finite(input.source_height) ||
+        input.source_width <= 0.0 || input.source_height <= 0.0) {
+        scene.status = ReadOnlyOverlayBuildStatus::InvalidDimensions;
+        return scene;
+    }
+    scene.status = ReadOnlyOverlayBuildStatus::Ready;
+
+    if (input.show_boxes) {
+        for (const auto& detection : input.detections) {
+            if (detection.box) {
+                appendBoxPrimitive(*detection.box, scene.primitives);
+            }
+        }
+    }
+    if (input.show_headings) {
+        for (size_t index = 0; index < input.detections.size(); ++index) {
+            appendHeadingPrimitive(input, input.detections[index], index,
+                                   scene.primitives);
+        }
+    }
+    if (input.show_keypoints) {
+        for (size_t index = 0; index < input.detections.size(); ++index) {
+            appendKeypointPrimitives(input, input.detections[index], index,
+                                     scene.primitives);
+        }
+    }
+    return scene;
+}
+
+Color keypointColor(const std::string& label, size_t keypoint_index) {
+    const std::string lowered = lowerCopy(label);
+    if (lowered.find("swim") != std::string::npos ||
+        lowered.find("bladder") != std::string::npos) {
+        return {1.0f, 0.85f, 0.15f, 1.0f};
+    }
+    if (lowered.find("left") != std::string::npos) {
+        return {0.3f, 0.95f, 0.4f, 1.0f};
+    }
+    if (lowered.find("right") != std::string::npos) {
+        return {0.75f, 0.4f, 0.95f, 1.0f};
+    }
+    constexpr std::array<Color, 5> kFallbackColors = {
+        Color{0.95f, 0.6f, 0.2f, 1.0f},
+        Color{0.35f, 0.85f, 0.55f, 1.0f},
+        Color{0.6f, 0.5f, 0.95f, 1.0f},
+        Color{0.95f, 0.4f, 0.4f, 1.0f},
+        Color{0.4f, 0.75f, 0.95f, 1.0f},
+    };
+    return kFallbackColors[keypoint_index % kFallbackColors.size()];
+}
+
+MarkerShape keypointMarkerShape(const std::string& label,
+                                size_t keypoint_index) {
+    const std::string lowered = lowerCopy(label);
+    if (lowered.find("swim") != std::string::npos ||
+        lowered.find("bladder") != std::string::npos) {
+        return MarkerShape::Circle;
+    }
+    if (lowered.find("left") != std::string::npos) {
+        return MarkerShape::Square;
+    }
+    if (lowered.find("right") != std::string::npos) {
+        return MarkerShape::Diamond;
+    }
+    constexpr std::array<MarkerShape, 7> kFallbackShapes = {
+        MarkerShape::Circle,       MarkerShape::Square,
+        MarkerShape::Diamond,      MarkerShape::Cross,
+        MarkerShape::Plus,         MarkerShape::TriangleUp,
+        MarkerShape::TriangleDown,
+    };
+    return kFallbackShapes[keypoint_index % kFallbackShapes.size()];
+}
+
+double keypointMarkerSizePx(const std::string& label) {
+    const std::string lowered = lowerCopy(label);
+    if (lowered.find("swim") != std::string::npos ||
+        lowered.find("bladder") != std::string::npos ||
+        lowered.find("left") != std::string::npos ||
+        lowered.find("right") != std::string::npos) {
+        return 4.5;
+    }
+    return 7.0;
+}
+
+ScreenMesh tessellateReadOnlyOverlayScene(
+    const ReadOnlyOverlayScene& scene,
+    const SourceViewportTransform& transform,
+    size_t circle_segment_count) {
+    ScreenMesh mesh;
+    if (!scene.ready() || !transform.valid()) {
+        return mesh;
+    }
+    for (const auto& primitive : scene.primitives) {
+        if (primitive.type == PrimitiveType::Polyline) {
+            if (primitive.points.size() < 2 || !primitive.stroke.valid()) {
+                continue;
+            }
+            bool emitted = false;
+            for (size_t index = 1; index < primitive.points.size(); ++index) {
+                const auto a = transform.sourceToDisplay(
+                    primitive.points[index - 1]);
+                const auto b = transform.sourceToDisplay(primitive.points[index]);
+                if (a && b) {
+                    const size_t before = mesh.triangle_vertices.size();
+                    appendSegment(mesh, *a, *b, primitive.stroke_width_px,
+                                  primitive.stroke);
+                    emitted = emitted || mesh.triangle_vertices.size() > before;
+                }
+            }
+            mesh.primitive_count += emitted ? 1 : 0;
+        } else if (primitive.type == PrimitiveType::Marker) {
+            if (primitive.points.size() != 1 || !primitive.fill.valid() ||
+                !primitive.outline.valid()) {
+                continue;
+            }
+            const auto center = transform.sourceToDisplay(primitive.points[0]);
+            if (center) {
+                const size_t before = mesh.triangle_vertices.size();
+                appendMarker(mesh, primitive, *center, circle_segment_count);
+                mesh.primitive_count +=
+                    mesh.triangle_vertices.size() > before ? 1 : 0;
+            }
+        } else if (primitive.type == PrimitiveType::Arrow) {
+            if (primitive.points.size() != 2 || !primitive.stroke.valid() ||
+                !primitive.fill.valid()) {
+                continue;
+            }
+            const auto start = transform.sourceToDisplay(primitive.points[0]);
+            const auto end = transform.sourceToDisplay(primitive.points[1]);
+            if (!start || !end) {
+                continue;
+            }
+            const size_t before = mesh.triangle_vertices.size();
+            appendSegment(mesh, *start, *end, primitive.stroke_width_px,
+                          primitive.stroke);
+            const double dx = start->x - end->x;
+            const double dy = start->y - end->y;
+            const double length = std::hypot(dx, dy);
+            if (length > 1e-6) {
+                const double ux = dx / length;
+                const double uy = dy / length;
+                const double size = primitive.arrow_head_size_px;
+                const Point left{end->x + ux * size + uy * size * 0.5,
+                                 end->y + uy * size - ux * size * 0.5};
+                const Point right{end->x + ux * size - uy * size * 0.5,
+                                  end->y + uy * size + ux * size * 0.5};
+                appendTriangle(mesh, *end, left, right, primitive.fill);
+            }
+            mesh.primitive_count +=
+                mesh.triangle_vertices.size() > before ? 1 : 0;
+        }
+    }
+    return mesh;
+}
+
+}  // namespace crimson::overlay

@@ -2,6 +2,7 @@
 
 #include "camera.h"
 #include "gui/full_frame_rect_edit_overlay.h"
+#include "read_only_overlay_scene.h"
 #include "zarr_bbox_edit.h"
 
 #include <cstddef>
@@ -144,11 +145,16 @@ struct CameraViewChaserDistancePolarInsetOptions {
     bool show_labels = true;
 };
 
-std::vector<FullFrameRectOverlayItem> buildCameraViewBoundingBoxOverlayItems(
+crimson::overlay::ReadOnlyOverlayScene
+buildCameraViewBoundingBoxOverlayScene(
     const std::vector<LoggedBoundingBox>& zarr_boxes,
     const ZarrDetectionLoader::FrameDetections& detection_details,
     const ZarrBBoxEditState& bbox_edit_state,
+    int view_idx,
+    int presented_frame,
     int current_frame_num,
+    float image_width_px,
+    float image_height_px,
     bool frame_has_bbox_edits,
     bool active_dataset_has_synthetic_detections,
     bool is_zarr_interpolated);
@@ -156,11 +162,23 @@ std::vector<FullFrameRectOverlayItem> buildCameraViewBoundingBoxOverlayItems(
 void drawCameraViewDetectionKeypointMarkers(
     const ZarrDetectionLoader::FrameDetections& detection_details,
     bool show_keypoint_markers,
+    float image_width_px,
     float image_height_px,
+    int view_idx,
+    int presented_frame,
+    int current_frame_num,
     int skip_detection_index = -1);
 
 void drawCameraViewHeadingOverlay(
     const ZarrDetectionLoader::FrameDetections& heading_details,
+    float image_width_px,
+    float image_height_px,
+    int view_idx,
+    int presented_frame,
+    int current_frame_num);
+
+void drawCameraViewReadOnlyOverlayScene(
+    const crimson::overlay::ReadOnlyOverlayScene& scene,
     float image_height_px);
 
 void drawCameraViewMovementOverlay(

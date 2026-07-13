@@ -186,6 +186,7 @@
         "apple_acquisition_crop_playback_tests",
         "apple_acquisition_crop_playback_probe",
         "apple_crop_presentation_metal_tests",
+        "apple_read_only_overlay_metal_tests",
         "apple_multistream_discontinuity_tests",
         "apple_stimulus_playback_tests",
         "apple_stimulus_composite_metal_tests",
@@ -193,7 +194,8 @@
         "apple_video_metal_tests",
         "apple_video_provider_tests",
         "frame_slot_tests",
-        "overlay_scene_contract_tests"
+        "overlay_scene_contract_tests",
+        "read_only_overlay_scene_tests"
       ]
     }
   ],
