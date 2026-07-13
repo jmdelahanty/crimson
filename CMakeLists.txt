@@ -64,6 +64,7 @@ target_link_libraries(crimson_frame_contracts PUBLIC Threads::Threads)
 target_compile_features(crimson_frame_contracts PUBLIC cxx_std_17)
 
 add_library(crimson_repository_contracts STATIC
+    src/zarr/keypoint_overlay_repository.cpp
     src/zarr/stimulus_repository.cpp
 )
 target_include_directories(crimson_repository_contracts PUBLIC
@@ -85,12 +86,16 @@ target_compile_features(crimson_crop_contracts PUBLIC cxx_std_17)
 add_library(crimson_overlay_contracts STATIC
     src/overlay_scene_contract.cpp
     src/read_only_overlay_scene.cpp
+    src/zarr/keypoint_overlay_scene_adapter.cpp
 )
 target_include_directories(crimson_overlay_contracts PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_compile_features(crimson_overlay_contracts PUBLIC cxx_std_17)
-target_link_libraries(crimson_overlay_contracts PUBLIC crimson_crop_contracts)
+target_link_libraries(crimson_overlay_contracts PUBLIC
+    crimson_crop_contracts
+    crimson_repository_contracts
+)
 
 add_library(crimson_stimulus_playback_contracts STATIC
     src/stimulus_playback_coordinator.cpp
@@ -113,6 +118,7 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         src/zarr/tensorstore_archive_context.cpp
         src/zarr/tensorstore_analysis_crop_geometry_repository.cpp
         src/zarr/tensorstore_acquisition_crop_repository.cpp
+        src/zarr/tensorstore_keypoint_overlay_repository.cpp
         src/zarr/tensorstore_stimulus_repository.cpp
     )
     target_include_directories(crimson_tensorstore_repositories PUBLIC
@@ -175,6 +181,26 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
 
+    add_executable(keypoint_overlay_repository_tests
+        tools/keypoint_overlay_repository_tests.cpp
+    )
+    target_compile_features(keypoint_overlay_repository_tests PRIVATE cxx_std_17)
+    target_link_libraries(keypoint_overlay_repository_tests PRIVATE
+        crimson_overlay_contracts
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(keypoint_overlay_repository_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME keypoint_overlay_repository_tests
+        COMMAND $<TARGET_FILE:keypoint_overlay_repository_tests>)
+    set_tests_properties(keypoint_overlay_repository_tests PROPERTIES
+        LABELS "headless;keypoints;overlay;portable;repository;tensorstore;zarr"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
     add_executable(acquisition_crop_repository_probe
         tools/acquisition_crop_repository_probe.cpp
     )
@@ -184,6 +210,18 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         ${tensorstore_target}
     )
     set_target_properties(acquisition_crop_repository_probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
+    add_executable(keypoint_overlay_repository_probe
+        tools/keypoint_overlay_repository_probe.cpp
+    )
+    target_compile_features(keypoint_overlay_repository_probe PRIVATE cxx_std_17)
+    target_link_libraries(keypoint_overlay_repository_probe PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(keypoint_overlay_repository_probe PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
 endfunction()

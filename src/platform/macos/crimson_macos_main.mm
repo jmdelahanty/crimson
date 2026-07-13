@@ -14,8 +14,11 @@
 #include "stimulus_presentation_coordinator.h"
 #include "zarr/analysis_crop_geometry_repository.h"
 #include "zarr/archive_context.h"
+#include "zarr/keypoint_overlay_repository.h"
+#include "zarr/keypoint_overlay_scene_adapter.h"
 #include "zarr/tensorstore_analysis_crop_geometry_repository.h"
 #include "zarr/tensorstore_acquisition_crop_repository.h"
+#include "zarr/tensorstore_keypoint_overlay_repository.h"
 #include "zarr/tensorstore_stimulus_repository.h"
 
 #define GLFW_INCLUDE_NONE
@@ -627,6 +630,8 @@ int main(int argc, char **argv) {
   AppleAcquisitionCropPlaybackSession crop_playback;
   std::unique_ptr<crimson::zarr::AnalysisCropGeometryRepository>
       analysis_crop_geometry;
+  std::unique_ptr<crimson::zarr::KeypointOverlayRepository>
+      keypoint_overlay_repository;
   std::optional<AppleVideoAssetInfo> analysis_crop_view_info;
   std::optional<AppleVideoAssetInfo> crop_view_info;
   crimson::crop::CropPresentationCoordinator crop_presentation;
@@ -639,6 +644,8 @@ int main(int argc, char **argv) {
   bool crop_failed = false;
   bool crop_smoke_end_satisfied = false;
   uint64_t read_only_overlay_presentations = 0;
+  uint64_t keypoint_overlay_presentations = 0;
+  uint64_t keypoint_overlay_detections = 0;
   bool pending_crop_discontinuity = true;
   int64_t last_crop_camera_request = -1;
   std::string crop_error;
@@ -747,6 +754,33 @@ int main(int argc, char **argv) {
           stimulus_playback.close();
           std::fprintf(stderr, "[AppleStimulus] Unavailable: %s\n",
                        stimulus_error.c_str());
+        }
+
+        std::string keypoint_error;
+        keypoint_overlay_repository =
+            crimson::zarr::OpenKeypointOverlayRepository(
+                archive, {}, &keypoint_error);
+        if (keypoint_overlay_repository) {
+          const auto &descriptor = keypoint_overlay_repository->descriptor();
+          const char *coordinate_space =
+              descriptor.coordinate_space ==
+                      crimson::zarr::KeypointCoordinateSpace::Image
+                  ? "image"
+                  : descriptor.coordinate_space ==
+                            crimson::zarr::KeypointCoordinateSpace::Roi
+                        ? "roi"
+                        : "normalized-roi";
+          std::printf(
+              "[AppleKeypoints] group=%s run=%s refined=%d crop_run=%s "
+              "rows=%zu camera_frames=%zu labels=%zu edges=%zu space=%s\n",
+              descriptor.source_group.c_str(), descriptor.run_name.c_str(),
+              descriptor.refined, descriptor.source_crop_run.c_str(),
+              descriptor.row_count, descriptor.camera_frame_count,
+              descriptor.keypoint_labels.size(),
+              descriptor.skeleton_edges.size(), coordinate_space);
+        } else {
+          std::fprintf(stderr, "[AppleKeypoints] Unavailable: %s\n",
+                       keypoint_error.c_str());
         }
 
         std::string geometry_error;
@@ -1538,6 +1572,50 @@ int main(int argc, char **argv) {
             }
             crop_frame_encoded = true;
           }
+          if (keypoint_overlay_repository) {
+            const auto keypoint_resolution =
+                keypoint_overlay_repository->resolveCameraFrame(
+                    metadata.frame_number, video_playback.info().width,
+                    video_playback.info().height);
+            if (keypoint_resolution.status ==
+                    crimson::zarr::KeypointOverlayStatus::Mapped &&
+                keypoint_resolution.camera_frame == metadata.frame_number) {
+              const auto &descriptor =
+                  keypoint_overlay_repository->descriptor();
+              const auto overlay_input =
+                  crimson::zarr::makeKeypointOverlaySceneInput(
+                      descriptor, keypoint_resolution, 0,
+                      metadata.frame_number, 0,
+                      video_playback.info().width,
+                      video_playback.info().height);
+              const auto overlay_scene =
+                  crimson::overlay::buildReadOnlyOverlayScene(overlay_input);
+              const crimson::overlay::SourceViewportTransform transform{
+                  {0.0, 0.0, overlay_input.source_width,
+                   overlay_input.source_height},
+                  {video_viewports.camera.x, video_viewports.camera.y,
+                   video_viewports.camera.width,
+                   video_viewports.camera.height}};
+              if (!overlay_renderer.encode(
+                      overlay_scene, transform,
+                      reinterpret_cast<uintptr_t>((__bridge void *)encoder),
+                      static_cast<uint32_t>(width),
+                      static_cast<uint32_t>(height), &render_error)) {
+                std::fprintf(stderr,
+                             "[AppleKeypoints] Metal encode failed: %s\n",
+                             render_error.c_str());
+                render_failed = true;
+                break;
+              }
+              if (overlay_scene.ready() &&
+                  !overlay_scene.primitives.empty()) {
+                ++read_only_overlay_presentations;
+                ++keypoint_overlay_presentations;
+                keypoint_overlay_detections +=
+                    keypoint_resolution.detections.size();
+              }
+            }
+          }
           if (current_crop_selection.selected() &&
               current_crop_selection.camera_frame == metadata.frame_number &&
               current_crop_selection.geometry &&
@@ -1987,6 +2065,8 @@ int main(int argc, char **argv) {
       const bool crop_smoke_failed =
           crop_failed || !crop_smoke_end_satisfied || !source_matches ||
           read_only_overlay_presentations == 0 ||
+          (keypoint_overlay_repository &&
+           keypoint_overlay_presentations == 0) ||
           final_crop_presentation.presented_crop_camera_frame !=
               options->video_smoke_end ||
           final_crop_presentation.camera_skew_frames != 0 ||
@@ -2010,7 +2090,8 @@ int main(int argc, char **argv) {
             "holds=%llu deferred=%llu max_deferred_run=%llu "
             "selection_mismatches=%llu surface_mismatches=%llu "
             "camera_skew=%+lld max_abs_camera_skew=%llu "
-            "overlay_presentations=%llu failed_requests=%llu error=%s\n",
+            "overlay_presentations=%llu keypoint_presentations=%llu "
+            "keypoint_detections=%llu failed_requests=%llu error=%s\n",
             options->video_smoke_start, options->video_smoke_end, source_name,
             static_cast<long long>(
                 final_crop_presentation.presented_crop_camera_frame),
@@ -2037,6 +2118,9 @@ int main(int argc, char **argv) {
             static_cast<unsigned long long>(
                 read_only_overlay_presentations),
             static_cast<unsigned long long>(
+                keypoint_overlay_presentations),
+            static_cast<unsigned long long>(keypoint_overlay_detections),
+            static_cast<unsigned long long>(
                 final_crop_metrics.failed_requests),
             reported_crop_error.c_str());
         return 8;
@@ -2046,7 +2130,8 @@ int main(int argc, char **argv) {
           "decoded=%lld source_frame=%lld generation=%llu paired=%llu "
           "holds=%llu deferred=%llu max_deferred_run=%llu seeks=%llu "
           "follows=%llu decoder_peak=%zu camera_skew=%+lld "
-          "max_abs_camera_skew=%llu overlay_presentations=%llu\n",
+          "max_abs_camera_skew=%llu overlay_presentations=%llu "
+          "keypoint_presentations=%llu keypoint_detections=%llu\n",
           options->video_smoke_start, options->video_smoke_end, source_name,
           static_cast<long long>(
               final_crop_presentation.presented_crop_camera_frame),
@@ -2071,7 +2156,9 @@ int main(int argc, char **argv) {
           static_cast<unsigned long long>(
               final_crop_presentation.max_abs_camera_skew_frames),
           static_cast<unsigned long long>(
-              read_only_overlay_presentations));
+              read_only_overlay_presentations),
+          static_cast<unsigned long long>(keypoint_overlay_presentations),
+          static_cast<unsigned long long>(keypoint_overlay_detections));
     }
     if (options->multistream_smoke) {
       const double memory_growth_mib =
