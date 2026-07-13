@@ -101,8 +101,8 @@ one detection with five finite keypoints and one valid heading.
 
 The Apple Silicon release build completed and the full macOS preset passed 22
 of 22 tests. The production live-geometry smoke passed camera frames 1024
-through 1324 with zero camera skew, 235 keypoint-scene presentations, and 235
-resolved detections. Crop presentation recorded 117 paired updates and zero
+through 1324 with zero camera skew, 189 keypoint-scene presentations, and 189
+resolved detections. Crop presentation recorded 111 paired updates and zero
 deferrals. Interactive review found the live-geometry playback and overlays
 visually correct.
 
@@ -118,6 +118,23 @@ discontinuities. This is not attributed to Phase 5C overlay work.
 
 ## NVIDIA Validation
 
-The cumulative source must still build the maintained NVIDIA application and
-portable repository/scene tests and pass the production playback smoke before
-this checkpoint is committed.
+The cumulative source, including the three newer Linux commits, configured and
+built in an isolated checkout on `ws1` with CUDA 12.4, TensorRT 10.0.1.6, the
+NVIDIA FFmpeg build, and the prebuilt TensorStore tree. The maintained
+`redgui`, keypoint repository probe/tests, portable scene tests, path preset
+tests, and NVDEC smoke all linked successfully. The Linux CTest registration
+passed 11 of 11 tests.
+
+The Linux production repository probe matched macOS: the same refined run,
+120,221 rows, five labels, six edges, and one detection with five finite
+keypoints and a valid heading at camera frame 1024. The NVDEC regression smoke
+identified a 25-frame GOP, rewound the demuxer to first packet frame 0, decoded
+300 of 300 frames from the 4512-by-4512 HEVC acquisition video, and sustained
+about 157 frames per second end to end on an RTX A6000.
+
+The authenticated production GUI smoke passed camera frames 0 through 300 in
+2.99 seconds with 351 presentations. It loaded the affiliated acquisition
+video and the re-encoded H.264 stimulus video. The Linux build gate also found
+and fixed a CMake ownership error: the recursive NVIDIA source glob now
+excludes the TensorStore keypoint repository, matching the established
+ownership of the other portable TensorStore repository implementations.
