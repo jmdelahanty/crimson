@@ -181,6 +181,8 @@
         "stimulus_repository_probe",
         "stimulus_playback_coordinator_tests",
         "stimulus_presentation_coordinator_tests",
+        "apple_acquisition_crop_playback_tests",
+        "apple_acquisition_crop_playback_probe",
         "apple_stimulus_playback_tests",
         "apple_stimulus_composite_metal_tests",
         "apple_stimulus_playback_probe",

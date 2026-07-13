@@ -1490,6 +1490,19 @@ if(CRIMSON_BUILD_MACOS_APP)
         crimson_stimulus_playback_contracts
     )
 
+    add_library(crimson_apple_acquisition_crop_playback STATIC
+        src/platform/macos/apple_acquisition_crop_playback_session.cpp
+    )
+    target_compile_features(crimson_apple_acquisition_crop_playback
+        PRIVATE cxx_std_17)
+    target_include_directories(crimson_apple_acquisition_crop_playback PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(crimson_apple_acquisition_crop_playback PUBLIC
+        crimson_apple_video
+        crimson_crop_contracts
+    )
+
     add_executable(apple_stimulus_playback_probe
         tools/apple_stimulus_playback_probe.cpp
     )
@@ -1500,6 +1513,20 @@ if(CRIMSON_BUILD_MACOS_APP)
         crimson::tensorstore_zarr
     )
     set_target_properties(apple_stimulus_playback_probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
+    add_executable(apple_acquisition_crop_playback_probe
+        tools/apple_acquisition_crop_playback_probe.cpp
+    )
+    target_compile_features(apple_acquisition_crop_playback_probe
+        PRIVATE cxx_std_17)
+    target_link_libraries(apple_acquisition_crop_playback_probe PRIVATE
+        crimson_apple_acquisition_crop_playback
+        crimson_tensorstore_repositories
+        crimson::tensorstore_zarr
+    )
+    set_target_properties(apple_acquisition_crop_playback_probe PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
 
@@ -1655,6 +1682,35 @@ if(CRIMSON_BUILD_MACOS_APP)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunAppleStimulusPlaybackTest.cmake)
     set_tests_properties(apple_stimulus_playback_tests PROPERTIES
         LABELS "headless;macos;playback;repository;stimulus;video"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    add_executable(apple_acquisition_crop_playback_tests
+        tools/apple_acquisition_crop_playback_tests.mm
+    )
+    target_compile_features(apple_acquisition_crop_playback_tests
+        PRIVATE cxx_std_17)
+    target_compile_options(apple_acquisition_crop_playback_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
+    )
+    target_link_libraries(apple_acquisition_crop_playback_tests PRIVATE
+        crimson_apple_acquisition_crop_playback
+    )
+    set_target_properties(apple_acquisition_crop_playback_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_dependencies(apple_acquisition_crop_playback_tests
+        apple_video_provider_tests)
+    set(CRIMSON_ACQUISITION_CROP_VIDEO_FIXTURE
+        "${CMAKE_CURRENT_BINARY_DIR}/apple_acquisition_crop_playback_fixture.mov")
+    add_test(NAME apple_acquisition_crop_playback_tests
+        COMMAND ${CMAKE_COMMAND}
+            -DFIXTURE_WRITER=$<TARGET_FILE:apple_video_provider_tests>
+            -DPLAYBACK_TEST=$<TARGET_FILE:apple_acquisition_crop_playback_tests>
+            -DVIDEO_FIXTURE=${CRIMSON_ACQUISITION_CROP_VIDEO_FIXTURE}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunAppleStimulusPlaybackTest.cmake)
+    set_tests_properties(apple_acquisition_crop_playback_tests PROPERTIES
+        LABELS "crop;headless;macos;playback;repository;video"
         TIMEOUT 60
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )

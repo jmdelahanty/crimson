@@ -120,6 +120,9 @@ documented in
 The Phase 4F-C acquisition crop repository, Zarr v2/v3 adapter, strict sidecar
 validation, and production archive probes are documented in
 [`docs/crimson_macos_phase4f_acquisition_crop_repository.md`](docs/crimson_macos_phase4f_acquisition_crop_repository.md).
+The Phase 4F-D bounded Apple acquisition-crop decode session, exact identity
+tests, and production VideoToolbox probes are documented in
+[`docs/crimson_macos_phase4f_apple_acquisition_crop_playback.md`](docs/crimson_macos_phase4f_apple_acquisition_crop_playback.md).
 
 ### How Dependency Paths Are Supplied
 

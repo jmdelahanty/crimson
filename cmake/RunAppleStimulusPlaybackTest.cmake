@@ -10,8 +10,21 @@ execute_process(
     ERROR_VARIABLE fixture_error
 )
 if(NOT fixture_result EQUAL 0)
+    string(FIND "${fixture_output}${fixture_error}" "Cannot Encode"
+        cannot_encode_position)
+    if(NOT cannot_encode_position EQUAL -1)
+        execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep 1)
+        execute_process(
+            COMMAND "${FIXTURE_WRITER}" --write-fixture "${VIDEO_FIXTURE}"
+            RESULT_VARIABLE fixture_result
+            OUTPUT_VARIABLE fixture_output
+            ERROR_VARIABLE fixture_error
+        )
+    endif()
+endif()
+if(NOT fixture_result EQUAL 0)
     message(FATAL_ERROR
-        "stimulus video fixture failed (${fixture_result})\n"
+        "video fixture creation failed (${fixture_result})\n"
         "${fixture_output}${fixture_error}")
 endif()
 
@@ -24,7 +37,7 @@ execute_process(
 file(REMOVE "${VIDEO_FIXTURE}")
 if(NOT playback_result EQUAL 0)
     message(FATAL_ERROR
-        "stimulus playback test failed (${playback_result})\n"
+        "video playback test failed (${playback_result})\n"
         "${playback_output}${playback_error}")
 endif()
 

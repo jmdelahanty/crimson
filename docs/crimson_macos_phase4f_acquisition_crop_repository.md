@@ -123,11 +123,10 @@ the NVIDIA host's native `/groups/johnson/johnsonlab` mount. This exercises
 both foreign-absolute rebasing and original absolute-path preservation against
 the same imported archives.
 
-## Next Checkpoint
+## Phase 4F-D Follow-up
 
-Phase 4F-D should add an Apple acquisition-crop playback session around the
-existing bounded AVFoundation video buffer. Its headless tests should cover
-forward, repeated, backward, and discontinuous requests, exact decoded-frame
-identity, mapped blank frames, out-of-range requests, and bounded buffering.
-Presentation remains a later step and must consume the shared selection result
-rather than add backend-specific frame policy.
+Phase 4F-D added the Apple acquisition-crop playback session around the
+existing bounded AVFoundation video buffer. Its implementation and validation
+record is in `crimson_macos_phase4f_apple_acquisition_crop_playback.md`.
+Presentation remains a later step and must consume the session's shared
+selection result rather than add backend-specific frame policy.
