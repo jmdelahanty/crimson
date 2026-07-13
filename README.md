@@ -111,6 +111,9 @@ production re-encode gate are documented in
 The Phase 4E atomic camera/stimulus Metal presentation contract and production
 smoke results are documented in
 [`docs/crimson_macos_phase4e_composite_stimulus_presentation.md`](docs/crimson_macos_phase4e_composite_stimulus_presentation.md).
+The Phase 4F-A production acquisition-crop contract and implementation audit are
+documented in
+[`docs/crimson_macos_phase4f_acquisition_crop_audit.md`](docs/crimson_macos_phase4f_acquisition_crop_audit.md).
 
 ### How Dependency Paths Are Supplied
 
