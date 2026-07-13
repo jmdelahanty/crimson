@@ -284,7 +284,8 @@ required after shared-source changes.
 ## Phase Boundary
 
 Phase 4F-A establishes the acquisition crop contract and implementation seam.
-The next checkpoint is 4F-B: add the portable resolver, generic archive path
-resolution, TensorStore/filesystem adapter, crop-source capability contract,
-and headless tests. It should not yet change Crop Preview, `redgui`, or Metal
-presentation.
+Phase 4F-B subsequently added the portable crop-source capability, exact-frame
+selection, and geometry contract. The next checkpoint is 4F-C: add the
+acquisition repository, generic archive path resolution, TensorStore/filesystem
+adapter, and repository tests. It should not yet change Crop Preview, `redgui`,
+or Metal presentation.

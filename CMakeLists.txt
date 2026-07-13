@@ -71,6 +71,14 @@ target_include_directories(crimson_repository_contracts PUBLIC
 )
 target_compile_features(crimson_repository_contracts PUBLIC cxx_std_17)
 
+add_library(crimson_crop_contracts STATIC
+    src/crop_source_contract.cpp
+)
+target_include_directories(crimson_crop_contracts PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_features(crimson_crop_contracts PUBLIC cxx_std_17)
+
 add_library(crimson_stimulus_playback_contracts STATIC
     src/stimulus_playback_coordinator.cpp
     src/stimulus_presentation_coordinator.cpp
@@ -122,6 +130,22 @@ set_target_properties(frame_slot_tests PROPERTIES
 enable_testing()
 add_test(NAME frame_slot_tests COMMAND $<TARGET_FILE:frame_slot_tests>)
 set_tests_properties(frame_slot_tests PROPERTIES LABELS "frame;portable")
+
+add_executable(crop_source_contract_tests
+    tools/crop_source_contract_tests.cpp
+)
+target_link_libraries(crop_source_contract_tests PRIVATE
+    crimson_crop_contracts
+)
+target_compile_features(crop_source_contract_tests PRIVATE cxx_std_17)
+set_target_properties(crop_source_contract_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME crop_source_contract_tests
+    COMMAND $<TARGET_FILE:crop_source_contract_tests>)
+set_tests_properties(crop_source_contract_tests PROPERTIES
+    LABELS "crop;playback;portable"
+)
 
 add_executable(stimulus_playback_coordinator_tests
     tools/stimulus_playback_coordinator_tests.cpp
@@ -868,6 +892,7 @@ file(GLOB CPP_SOURCES CONFIGURE_DEPENDS
     "src/gui/*.cpp"
     "src/zarr/*.cpp")
 list(REMOVE_ITEM CPP_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/crop_source_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_types.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_selection.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_slot.cpp"

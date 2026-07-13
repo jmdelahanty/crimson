@@ -114,6 +114,9 @@ smoke results are documented in
 The Phase 4F-A production acquisition-crop contract and implementation audit are
 documented in
 [`docs/crimson_macos_phase4f_acquisition_crop_audit.md`](docs/crimson_macos_phase4f_acquisition_crop_audit.md).
+The Phase 4F-B portable source-capability, exact-frame, and geometry contract is
+documented in
+[`docs/crimson_macos_phase4f_crop_source_contract.md`](docs/crimson_macos_phase4f_crop_source_contract.md).
 
 ### How Dependency Paths Are Supplied
 
