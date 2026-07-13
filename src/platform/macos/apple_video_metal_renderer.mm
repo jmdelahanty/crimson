@@ -19,6 +19,13 @@ struct ColorConversion {
     float padding[2] = {};
 };
 
+struct SourceRegion {
+    float x = 0.0f;
+    float y = 0.0f;
+    float width = 1.0f;
+    float height = 1.0f;
+};
+
 void assignError(std::string* destination, const std::string& value) {
     if (destination != nullptr) {
         *destination = value;
@@ -85,7 +92,9 @@ struct ColorConversion {
     float2 padding;
 };
 
-vertex VertexOutput crimsonVideoVertex(uint vertex_id [[vertex_id]]) {
+vertex VertexOutput crimsonVideoVertex(
+    uint vertex_id [[vertex_id]],
+    constant float4& source_region [[buffer(0)]]) {
     constexpr float2 positions[] = {
         float2(-1.0, -1.0), float2(3.0, -1.0), float2(-1.0, 3.0)
     };
@@ -94,7 +103,7 @@ vertex VertexOutput crimsonVideoVertex(uint vertex_id [[vertex_id]]) {
     };
     VertexOutput output;
     output.position = float4(positions[vertex_id], 0.0, 1.0);
-    output.uv = coordinates[vertex_id];
+    output.uv = source_region.xy + coordinates[vertex_id] * source_region.zw;
     return output;
 }
 
@@ -221,9 +230,28 @@ bool AppleVideoMetalRenderer::encode(
     const AppleDecodedVideoFrame& frame, uintptr_t metal_command_buffer,
     uintptr_t metal_render_encoder, const AppleMetalVideoViewport& viewport,
     std::string* error) {
+    return encodeRegion(frame, metal_command_buffer, metal_render_encoder,
+                        viewport, {}, error);
+}
+
+bool AppleVideoMetalRenderer::encodeRegion(
+    const AppleDecodedVideoFrame& frame, uintptr_t metal_command_buffer,
+    uintptr_t metal_render_encoder, const AppleMetalVideoViewport& viewport,
+    const AppleMetalVideoSourceRegion& source_region, std::string* error) {
     if (!isInitialized() || !frame || viewport.width <= 0.0 ||
         viewport.height <= 0.0) {
         assignError(error, "Metal video renderer received invalid state");
+        return false;
+    }
+    if (!std::isfinite(source_region.x) ||
+        !std::isfinite(source_region.y) ||
+        !std::isfinite(source_region.width) ||
+        !std::isfinite(source_region.height) || source_region.x < 0.0 ||
+        source_region.y < 0.0 || source_region.width <= 0.0 ||
+        source_region.height <= 0.0 ||
+        source_region.x + source_region.width > 1.0 + 1e-9 ||
+        source_region.y + source_region.height > 1.0 + 1e-9) {
+        assignError(error, "Metal video source region is invalid");
         return false;
     }
     id<MTLCommandBuffer> command_buffer =
@@ -250,6 +278,14 @@ bool AppleVideoMetalRenderer::encode(
                                      static_cast<double>(width),
                                      static_cast<double>(height), 0.0, 1.0}];
     [encoder setScissorRect:MTLScissorRect{x, y, width, height}];
+    const SourceRegion normalized_region{
+        static_cast<float>(source_region.x),
+        static_cast<float>(source_region.y),
+        static_cast<float>(source_region.width),
+        static_cast<float>(source_region.height)};
+    [encoder setVertexBytes:&normalized_region
+                     length:sizeof(normalized_region)
+                    atIndex:0];
 
     CVMetalTextureRef first_ref = nullptr;
     CVMetalTextureRef second_ref = nullptr;

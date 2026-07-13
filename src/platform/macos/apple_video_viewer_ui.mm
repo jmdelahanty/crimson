@@ -71,6 +71,43 @@ AppleMetalVideoViewport fitVideoViewport(double x, double y, double width,
           y + (height - fitted_height) * 0.5, fitted_width, fitted_height};
 }
 
+const char *cropSourceName(crimson::crop::CropSourceKind source) {
+  switch (source) {
+  case crimson::crop::CropSourceKind::LiveGeometry:
+    return "Live geometry";
+  case crimson::crop::CropSourceKind::AcquisitionVideo:
+    return "Acquisition video";
+  case crimson::crop::CropSourceKind::PersistedZarr:
+    return "Persisted Zarr";
+  }
+  return "Unavailable";
+}
+
+const char *cropStatusName(crimson::crop::CropSourceSelectionStatus status) {
+  switch (status) {
+  case crimson::crop::CropSourceSelectionStatus::Selected:
+    return "exact";
+  case crimson::crop::CropSourceSelectionStatus::NoCapableSource:
+    return "unavailable";
+  case crimson::crop::CropSourceSelectionStatus::MissingFrame:
+    return "missing frame";
+  case crimson::crop::CropSourceSelectionStatus::MissingGeometry:
+    return "missing geometry";
+  case crimson::crop::CropSourceSelectionStatus::AwaitingExactFrame:
+    return "waiting";
+  case crimson::crop::CropSourceSelectionStatus::OutOfRange:
+    return "out of range";
+  case crimson::crop::CropSourceSelectionStatus::InvalidState:
+    return "invalid";
+  }
+  return "unavailable";
+}
+
+double transportHeight(bool has_stimulus, bool has_crop) {
+  return 108.0 + (has_stimulus ? 24.0 : 0.0) +
+         (has_crop ? 48.0 : 0.0);
+}
+
 }  // namespace
 
 void sampleAppleVideoViewerSystemMetrics(AppleVideoViewerStats &stats) {
@@ -100,10 +137,12 @@ AppleVideoControlResult drawAppleVideoControls(
     LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
     const AppleVideoViewerStats &stats,
     const crimson::playback::StimulusPresentationMetrics *stimulus_metrics,
+    AppleCropViewerControls *crop_controls,
     bool interactive) {
   AppleVideoControlResult result;
   const ImGuiViewport *viewport = ImGui::GetMainViewport();
-  const float panel_height = stimulus_metrics == nullptr ? 108.0f : 132.0f;
+  const float panel_height = static_cast<float>(transportHeight(
+      stimulus_metrics != nullptr, crop_controls != nullptr));
   ImGui::SetNextWindowPos(
       ImVec2(viewport->WorkPos.x,
              viewport->WorkPos.y + viewport->WorkSize.y - panel_height));
@@ -208,6 +247,43 @@ AppleVideoControlResult drawAppleVideoControls(
         static_cast<unsigned long long>(
             stimulus_metrics->max_consecutive_unavailable));
   }
+  if (crop_controls != nullptr) {
+    ImGui::TextUnformatted("Crop source");
+    ImGui::SameLine();
+    const bool acquisition_selected =
+        crop_controls->preference ==
+        crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
+    if (ImGui::RadioButton("Acquisition video", acquisition_selected) &&
+        interactive) {
+      crop_controls->preference =
+          crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
+    }
+    ImGui::SameLine();
+    const bool geometry_selected =
+        crop_controls->preference ==
+        crimson::crop::CropSourcePreference::PreferLiveGeometry;
+    if (ImGui::RadioButton("Live geometry", geometry_selected) &&
+        interactive) {
+      crop_controls->preference =
+          crimson::crop::CropSourcePreference::PreferLiveGeometry;
+    }
+    ImGui::SameLine();
+    ImGui::Text("Status %s", cropStatusName(crop_controls->selection_status));
+    if (crop_controls->metrics != nullptr) {
+      const auto &metrics = *crop_controls->metrics;
+      ImGui::Text(
+          "Crop camera %lld   source frame %lld   holds %llu   deferred %llu "
+          "(max run %llu)   mismatches %llu",
+          static_cast<long long>(metrics.presented_crop_camera_frame),
+          static_cast<long long>(metrics.presented_source_frame),
+          static_cast<unsigned long long>(metrics.held_presentations),
+          static_cast<unsigned long long>(metrics.deferred_presentations),
+          static_cast<unsigned long long>(metrics.max_consecutive_unavailable),
+          static_cast<unsigned long long>(
+              metrics.mismatched_selection_frames +
+              metrics.mismatched_surface_frames));
+    }
+  }
   ImGui::End();
 
   if (interactive && !ImGui::GetIO().WantTextInput &&
@@ -237,6 +313,65 @@ AppleVideoControlResult drawAppleVideoControls(
   return result;
 }
 
+void drawAppleCropPreviewOverlay(
+    const AppleMetalVideoViewport &viewport, float framebuffer_scale,
+    const crimson::crop::CropSourceSelection *selection,
+    crimson::crop::CropSourceSelectionStatus status) {
+  if (viewport.width <= 0.0 || viewport.height <= 0.0 ||
+      framebuffer_scale <= 0.0f) {
+    return;
+  }
+  const float x = static_cast<float>(viewport.x / framebuffer_scale);
+  const float y = static_cast<float>(viewport.y / framebuffer_scale);
+  const float width =
+      static_cast<float>(viewport.width / framebuffer_scale);
+  const float height =
+      static_cast<float>(viewport.height / framebuffer_scale);
+  ImDrawList *draw_list = ImGui::GetForegroundDrawList();
+  draw_list->AddRect(ImVec2(x, y), ImVec2(x + width, y + height),
+                     IM_COL32(210, 216, 222, 210), 0.0f, 0, 1.0f);
+
+  const char *source_name = "Unavailable";
+  if (selection != nullptr && selection->source) {
+    source_name = cropSourceName(*selection->source);
+  }
+  const std::string label =
+      std::string("Crop Preview  ") + source_name + "  " +
+      cropStatusName(status);
+  const ImVec2 label_size = ImGui::CalcTextSize(label.c_str());
+  draw_list->AddRectFilled(ImVec2(x, y),
+                           ImVec2(std::min(x + width,
+                                           x + label_size.x + 14.0f),
+                                  y + label_size.y + 8.0f),
+                           IM_COL32(12, 15, 18, 220));
+  draw_list->AddText(ImVec2(x + 7.0f, y + 4.0f),
+                     IM_COL32(240, 243, 246, 255), label.c_str());
+
+  if (selection == nullptr || !selection->geometry ||
+      selection->blank_frame ||
+      !selection->geometry->full_frame_detection) {
+    return;
+  }
+  const auto crop_detection = selection->geometry->fullFrameToCrop(
+      *selection->geometry->full_frame_detection);
+  if (!crop_detection) {
+    return;
+  }
+  const auto &geometry = *selection->geometry;
+  const float x0 = x + static_cast<float>(
+                           crop_detection->x / geometry.output_width * width);
+  const float y0 = y + static_cast<float>(
+                           crop_detection->y / geometry.output_height * height);
+  const float x1 = x + static_cast<float>(
+                           (crop_detection->x + crop_detection->width) /
+                           geometry.output_width * width);
+  const float y1 = y + static_cast<float>(
+                           (crop_detection->y + crop_detection->height) /
+                           geometry.output_height * height);
+  draw_list->AddRect(ImVec2(x0, y0), ImVec2(x1, y1),
+                     IM_COL32(58, 214, 132, 255), 0.0f, 0, 2.0f);
+}
+
 AppleMetalVideoViewport appleVideoViewport(int framebuffer_width,
                                            int framebuffer_height,
                                            float framebuffer_scale,
@@ -251,41 +386,65 @@ AppleMetalVideoViewport appleVideoViewport(int framebuffer_width,
 AppleCompositeVideoViewports appleCompositeVideoViewports(
     int framebuffer_width, int framebuffer_height, float framebuffer_scale,
     const AppleVideoAssetInfo &camera_info,
+    const AppleVideoAssetInfo *crop_info,
     const AppleVideoAssetInfo *stimulus_info) {
   AppleCompositeVideoViewports result;
-  if (stimulus_info == nullptr) {
+  if (stimulus_info == nullptr && crop_info == nullptr) {
     result.camera = appleVideoViewport(framebuffer_width, framebuffer_height,
                                        framebuffer_scale, camera_info);
     return result;
   }
 
-  const double control_height = 132.0 * framebuffer_scale;
+  const double control_height =
+      transportHeight(stimulus_info != nullptr, crop_info != nullptr) *
+      framebuffer_scale;
   const double available_width = std::max(1, framebuffer_width);
   const double available_height =
       std::max(1.0, framebuffer_height - control_height);
   if (available_width < 4.0) {
     result.camera = fitVideoViewport(0.0, 0.0, available_width,
                                      available_height, camera_info);
-    result.stimulus = fitVideoViewport(
-        std::max(0.0, available_width - 1.0), 0.0, 1.0,
-        available_height, *stimulus_info);
+    if (crop_info != nullptr) {
+      result.crop = fitVideoViewport(
+          std::max(0.0, available_width - 1.0), 0.0, 1.0,
+          available_height, *crop_info);
+    } else if (stimulus_info != nullptr) {
+      result.stimulus = fitVideoViewport(
+          std::max(0.0, available_width - 1.0), 0.0, 1.0,
+          available_height, *stimulus_info);
+    }
     return result;
   }
   const double gutter = std::min(
       std::max(8.0, 12.0 * framebuffer_scale), available_width * 0.05);
-  const double maximum_stimulus_width = std::max(
+  const double maximum_rail_width = std::max(
       1.0, std::min(360.0 * framebuffer_scale, available_width * 0.4));
-  const double minimum_stimulus_width =
-      std::min(160.0 * framebuffer_scale, maximum_stimulus_width);
-  const double stimulus_width =
-      std::clamp(available_width * 0.24, minimum_stimulus_width,
-                 maximum_stimulus_width);
+  const double minimum_rail_width =
+      std::min(160.0 * framebuffer_scale, maximum_rail_width);
+  const double rail_width =
+      std::clamp(available_width * 0.24, minimum_rail_width,
+                 maximum_rail_width);
   const double camera_width =
-      std::max(1.0, available_width - stimulus_width - gutter);
+      std::max(1.0, available_width - rail_width - gutter);
   result.camera = fitVideoViewport(0.0, 0.0, camera_width, available_height,
                                    camera_info);
-  result.stimulus = fitVideoViewport(
-      camera_width + gutter, 0.0, stimulus_width, available_height,
-      *stimulus_info);
+  const double rail_x = camera_width + gutter;
+  if (crop_info != nullptr && stimulus_info != nullptr) {
+    const double rail_gutter = std::min(8.0 * framebuffer_scale,
+                                        available_height * 0.04);
+    const double panel_height =
+        std::max(1.0, (available_height - rail_gutter) * 0.5);
+    result.crop = fitVideoViewport(rail_x, 0.0, rail_width, panel_height,
+                                   *crop_info);
+    result.stimulus = fitVideoViewport(
+        rail_x, panel_height + rail_gutter, rail_width, panel_height,
+        *stimulus_info);
+  } else if (crop_info != nullptr) {
+    result.crop = fitVideoViewport(rail_x, 0.0, rail_width, available_height,
+                                   *crop_info);
+  } else {
+    result.stimulus = fitVideoViewport(
+        rail_x, 0.0, rail_width, available_height, *stimulus_info);
+  }
   return result;
 }

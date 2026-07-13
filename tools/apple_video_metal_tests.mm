@@ -120,9 +120,70 @@ AppleDecodedVideoFrame makeFrame(bool full_range, int matrix, uint8_t y,
     return frame;
 }
 
+AppleDecodedVideoFrame makeBgraSplitFrame() {
+    constexpr int width = 16;
+    constexpr int height = 16;
+    NSDictionary* attributes = @{
+        (NSString*)kCVPixelBufferPixelFormatTypeKey:
+            @(kCVPixelFormatType_32BGRA),
+        (NSString*)kCVPixelBufferWidthKey: @(width),
+        (NSString*)kCVPixelBufferHeightKey: @(height),
+        (NSString*)kCVPixelBufferMetalCompatibilityKey: @YES,
+        (NSString*)kCVPixelBufferIOSurfacePropertiesKey: @{},
+    };
+    CVPixelBufferRef buffer = nullptr;
+    CHECK(CVPixelBufferCreate(kCFAllocatorDefault, width, height,
+                              kCVPixelFormatType_32BGRA,
+                              (__bridge CFDictionaryRef)attributes,
+                              &buffer) == kCVReturnSuccess);
+    CVPixelBufferLockBaseAddress(buffer, 0);
+    auto* pixels = static_cast<uint8_t*>(CVPixelBufferGetBaseAddress(buffer));
+    const size_t stride = CVPixelBufferGetBytesPerRow(buffer);
+    for (int row = 0; row < height; ++row) {
+        for (int column = 0; column < width; ++column) {
+            uint8_t* pixel = pixels + row * stride + column * 4;
+            if (column < width / 2) {
+                pixel[0] = 0;
+                pixel[1] = 0;
+                pixel[2] = 255;
+            } else {
+                pixel[0] = 0;
+                pixel[1] = 255;
+                pixel[2] = 0;
+            }
+            pixel[3] = 255;
+        }
+    }
+    CVPixelBufferUnlockBaseAddress(buffer, 0);
+
+    AppleDecodedVideoFrame frame;
+    frame.metadata.stream_id = "metal-bgra-test";
+    frame.metadata.frame_number = 0;
+    frame.metadata.local_frame_number = 0;
+    frame.metadata.width = width;
+    frame.metadata.height = height;
+    frame.metadata.pixel_format = FramePixelFormat::BGRA8;
+    frame.metadata.plane_count = 1;
+    frame.metadata.planes[0].row_stride_bytes = static_cast<int>(stride);
+    frame.metadata.planes[0].width_pixels = width;
+    frame.metadata.planes[0].height_pixels = height;
+    frame.metadata.planes[0].bytes_per_element = 4;
+    frame.metadata.pitch_bytes = static_cast<int>(stride);
+    frame.metadata.frame_bytes = stride * height;
+    frame.metadata.surface_backend = FrameSurfaceBackend::AppleVideoToolbox;
+    frame.metadata.ownership = FrameSurfaceOwnership::ReferenceCounted;
+    frame.metadata.lifetime = FrameSurfaceLifetime::ReferenceCounted;
+    frame.surface = std::make_shared<TestPixelBufferSurface>(
+        buffer, frameSurfaceDescriptorFromMetadata(frame.metadata));
+    CVPixelBufferRelease(buffer);
+    return frame;
+}
+
 std::array<uint8_t, 4> render(AppleVideoMetalRenderer& renderer,
                               AppleDecodedVideoFrame frame,
-                              bool* retained_until_completion = nullptr) {
+                              bool* retained_until_completion = nullptr,
+                              const AppleMetalVideoSourceRegion* region =
+                                  nullptr) {
     constexpr NSUInteger width = 16;
     constexpr NSUInteger height = 16;
     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
@@ -145,11 +206,18 @@ std::array<uint8_t, 4> render(AppleVideoMetalRenderer& renderer,
         [command renderCommandEncoderWithDescriptor:pass];
     std::string error;
     std::weak_ptr<const FrameSurface> weak = frame.surface;
-    CHECK(renderer.encode(
-        frame, reinterpret_cast<uintptr_t>((__bridge void*)command),
-        reinterpret_cast<uintptr_t>((__bridge void*)encoder),
-        {0.0, 0.0, static_cast<double>(width), static_cast<double>(height)},
-        &error));
+    const AppleMetalVideoViewport viewport{
+        0.0, 0.0, static_cast<double>(width), static_cast<double>(height)};
+    CHECK(region ? renderer.encodeRegion(
+                       frame,
+                       reinterpret_cast<uintptr_t>((__bridge void*)command),
+                       reinterpret_cast<uintptr_t>((__bridge void*)encoder),
+                       viewport, *region, &error)
+                 : renderer.encode(
+                       frame,
+                       reinterpret_cast<uintptr_t>((__bridge void*)command),
+                       reinterpret_cast<uintptr_t>((__bridge void*)encoder),
+                       viewport, &error));
     frame.surface.reset();
     if (retained_until_completion != nullptr) {
         *retained_until_completion = !weak.expired();
@@ -219,6 +287,20 @@ void runTests() {
     checkNear(bt2020[0], 29, 2);
     checkNear(bt2020[1], 65, 2);
     checkNear(bt2020[2], 207, 2);
+
+    const AppleMetalVideoSourceRegion left_half{0.0, 0.0, 0.5, 1.0};
+    const auto cropped_left =
+        render(renderer, makeBgraSplitFrame(), nullptr, &left_half);
+    checkNear(cropped_left[0], 0, 2);
+    checkNear(cropped_left[1], 0, 2);
+    checkNear(cropped_left[2], 255, 2);
+
+    const AppleMetalVideoSourceRegion right_half{0.5, 0.0, 0.5, 1.0};
+    const auto cropped_right =
+        render(renderer, makeBgraSplitFrame(), nullptr, &right_half);
+    checkNear(cropped_right[0], 0, 2);
+    checkNear(cropped_right[1], 255, 2);
+    checkNear(cropped_right[2], 0, 2);
 }
 
 }  // namespace

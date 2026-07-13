@@ -1,4 +1,5 @@
 #include "apple_metal_presentation_texture.h"
+#include "apple_acquisition_crop_playback_session.h"
 #include "apple_stimulus_playback_session.h"
 #include "apple_video_metal_renderer.h"
 #include "apple_video_playback_buffer.h"
@@ -8,8 +9,10 @@
 #include "imgui_impl_metal.h"
 #include "implot.h"
 #include "playback_clock.h"
+#include "crop_presentation_coordinator.h"
 #include "stimulus_presentation_coordinator.h"
 #include "zarr/archive_context.h"
+#include "zarr/tensorstore_acquisition_crop_repository.h"
 #include "zarr/tensorstore_stimulus_repository.h"
 
 #define GLFW_INCLUDE_NONE
@@ -48,12 +51,15 @@ struct LaunchOptions {
   bool validate_metal = false;
   bool video_smoke = false;
   bool stimulus_smoke = false;
+  bool crop_smoke = false;
   int smoke_frames = 12;
   int video_smoke_start = 0;
   int video_smoke_end = 0;
   std::string video_path;
   std::string zarr_path;
   std::string stimulus_run;
+  crimson::crop::CropSourcePreference crop_preference =
+      crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
 };
 
 void glfwErrorCallback(int error, const char *description) {
@@ -173,6 +179,40 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
       options.stimulus_smoke = true;
       continue;
     }
+    if (argument == "--crop-smoke") {
+      if (i + 1 >= argc ||
+          !parseFrameRange(argv[++i], &options.video_smoke_start,
+                           &options.video_smoke_end)) {
+        std::fprintf(stderr,
+                     "Invalid --crop-smoke value; expected START:END\n");
+        return std::nullopt;
+      }
+      options.smoke = true;
+      options.video_smoke = true;
+      options.crop_smoke = true;
+      continue;
+    }
+    if (argument == "--crop-source") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr,
+                     "Missing value for --crop-source\n");
+        return std::nullopt;
+      }
+      const std::string source = argv[++i];
+      if (source == "acquisition") {
+        options.crop_preference =
+            crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
+      } else if (source == "geometry") {
+        options.crop_preference =
+            crimson::crop::CropSourcePreference::PreferLiveGeometry;
+      } else {
+        std::fprintf(stderr,
+                     "Invalid --crop-source value; expected acquisition or "
+                     "geometry\n");
+        return std::nullopt;
+      }
+      continue;
+    }
     if (argument == "--smoke-frames") {
       if (i + 1 >= argc) {
         std::fprintf(stderr, "Missing value for --smoke-frames\n");
@@ -213,6 +253,10 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
   }
   if (options.stimulus_smoke && options.zarr_path.empty()) {
     std::fprintf(stderr, "--stimulus-smoke requires --zarr PATH\n");
+    return std::nullopt;
+  }
+  if (options.crop_smoke && options.zarr_path.empty()) {
+    std::fprintf(stderr, "--crop-smoke requires --zarr PATH\n");
     return std::nullopt;
   }
   return options;
@@ -508,12 +552,28 @@ int main(int argc, char **argv) {
   AppleStimulusPlaybackSession stimulus_playback;
   crimson::playback::StimulusPresentationCoordinator stimulus_presentation;
   std::optional<AppleAlignedStimulusFrame> current_stimulus_frame;
+  std::optional<AppleAlignedStimulusFrame> candidate_stimulus_frame;
   crimson::zarr::StimulusFrameResolution current_stimulus_resolution;
+  crimson::zarr::StimulusFrameResolution candidate_stimulus_resolution;
+  bool stimulus_candidate_ready = false;
   std::string stimulus_error;
   bool stimulus_failed = false;
   bool stimulus_smoke_end_satisfied = false;
   bool pending_camera_discontinuity = true;
   int64_t last_stimulus_camera_request = -1;
+  AppleAcquisitionCropPlaybackSession crop_playback;
+  crimson::crop::CropPresentationCoordinator crop_presentation;
+  std::optional<AppleAlignedAcquisitionCropFrame> current_crop_frame;
+  crimson::crop::CropSourceSelection current_crop_selection;
+  AppleCropViewerControls crop_controls;
+  crop_controls.preference = options->crop_preference;
+  auto active_crop_preference = crop_controls.preference;
+  bool crop_enabled = false;
+  bool crop_failed = false;
+  bool crop_smoke_end_satisfied = false;
+  bool pending_crop_discontinuity = true;
+  int64_t last_crop_camera_request = -1;
+  std::string crop_error;
   auto video_smoke_started = std::chrono::steady_clock::now();
   if (video_enabled) {
     std::string video_error;
@@ -628,6 +688,61 @@ int main(int argc, char **argv) {
           stimulus_info.nominal_frame_rate,
           stimulus_playback.metrics().decoder.startup_ms,
           stimulus_info.path.c_str());
+
+      auto crop_repository = crimson::zarr::OpenAcquisitionCropRepository(
+          archive, &crop_error);
+      if (crop_repository &&
+          crop_playback.open(std::move(crop_repository),
+                             video_playback.info().width,
+                             video_playback.info().height, 6, &crop_error)) {
+        bool crop_initialization_ready = true;
+        if (crop_controls.preference ==
+            crimson::crop::CropSourcePreference::PreferAcquisitionVideo) {
+          crop_initialization_ready =
+              crop_playback.requestCameraFrame(initial_frame, true,
+                                               &crop_error);
+          const auto initial_crop_resolution =
+              crop_playback.resolveCameraFrame(initial_frame);
+          if (crop_initialization_ready &&
+              initial_crop_resolution.status ==
+                  crimson::zarr::AcquisitionCropMappingStatus::Mapped) {
+            crop_initialization_ready = crop_playback.waitForCameraFrame(
+                initial_frame, std::chrono::seconds(10), &crop_error);
+          }
+        } else {
+          crop_playback.suspend();
+        }
+        if (crop_initialization_ready) {
+          crop_enabled = true;
+          const auto &crop_info = crop_playback.info();
+          std::printf(
+              "[AppleCrop] stream=%s asset=%dx%d frames=%lld fps=%.6f "
+              "buffer_capacity=6 startup_ms=%.1f path=%s\n",
+              crop_playback.repository()->descriptor().stream_id.c_str(),
+              crop_info.width, crop_info.height,
+              static_cast<long long>(crop_info.frame_count),
+              crop_info.nominal_frame_rate,
+              crop_playback.metrics().decoder.startup_ms,
+              crop_info.path.c_str());
+        }
+      }
+      if (!crop_enabled) {
+        crop_playback.close();
+        std::fprintf(stderr, "[AppleCrop] Unavailable: %s\n",
+                     crop_error.c_str());
+        if (options->crop_smoke) {
+          stimulus_playback.close();
+          video_playback.close();
+          video_renderer.reset();
+          ImGui_ImplMetal_Shutdown();
+          ImGui_ImplGlfw_Shutdown();
+          ImPlot::DestroyContext();
+          ImGui::DestroyContext();
+          glfwDestroyWindow(window);
+          glfwTerminate();
+          return 11;
+        }
+      }
     }
     video_clock.seek(initial_frame);
     video_clock.play();
@@ -761,9 +876,12 @@ int main(int argc, char **argv) {
               video_playback.info().frame_count - 1;
           pending_camera_discontinuity = true;
         }
+        crop_controls.metrics =
+            crop_enabled ? &crop_presentation.metrics() : nullptr;
         const auto control_result = drawAppleVideoControls(
             video_clock, video_playback, viewer_stats,
             stimulus_enabled ? &stimulus_presentation.metrics() : nullptr,
+            crop_enabled ? &crop_controls : nullptr,
             !options->video_smoke);
         pending_camera_discontinuity =
             pending_camera_discontinuity ||
@@ -780,11 +898,15 @@ int main(int argc, char **argv) {
                          pause_error.c_str());
           }
         }
+        pending_crop_discontinuity =
+            pending_crop_discontinuity || pending_camera_discontinuity;
         video_playback.setPlaybackState(
             viewer_stats.requested_frame, video_clock.isPlaying(),
             video_playback.info().nominal_frame_rate);
         if (stimulus_enabled && pending_camera_discontinuity) {
           pending_video_frame.reset();
+          candidate_stimulus_frame.reset();
+          stimulus_candidate_ready = false;
         }
         auto selected = video_playback.frameForTarget(
             viewer_stats.requested_frame, !video_clock.isPlaying());
@@ -839,16 +961,16 @@ int main(int argc, char **argv) {
                     mapped_camera_frame, resolution,
                     decoded_stimulus_frame);
                 if (presentation.commit_composite) {
-                  current_video_frame = std::move(pending_video_frame);
-                  pending_video_frame.reset();
-                  current_stimulus_resolution = resolution;
+                  candidate_stimulus_resolution = resolution;
                   if (presentation.render_current) {
                     if (aligned) {
-                      current_stimulus_frame = std::move(aligned);
+                      candidate_stimulus_frame = std::move(aligned);
+                    } else if (!candidate_stimulus_frame) {
+                      candidate_stimulus_frame = current_stimulus_frame;
                     }
-                    if (!current_stimulus_frame ||
+                    if (!candidate_stimulus_frame ||
                         !resolution.stimulus_frame ||
-                        current_stimulus_frame->decoded_frame.metadata
+                        candidate_stimulus_frame->decoded_frame.metadata
                                 .frame_number != *resolution.stimulus_frame) {
                       stimulus_error =
                           "composite stimulus frame does not match camera "
@@ -856,22 +978,138 @@ int main(int argc, char **argv) {
                       stimulus_failed = true;
                     }
                   } else {
-                    current_stimulus_frame.reset();
+                    candidate_stimulus_frame.reset();
                   }
+                  stimulus_candidate_ready = !stimulus_failed;
                 }
               }
             }
           }
           if (stimulus_failed) {
-            if (pending_video_frame) {
-              current_video_frame = std::move(pending_video_frame);
-            }
-            pending_video_frame.reset();
-            current_stimulus_frame.reset();
+            candidate_stimulus_frame.reset();
+            stimulus_candidate_ready = pending_video_frame.has_value();
             stimulus_presentation.resetVisibleFrame();
           }
         } else if (selected) {
           current_video_frame = std::move(selected);
+        }
+
+        auto commit_stimulus_candidate = [&] {
+          if (!pending_video_frame || !stimulus_candidate_ready) {
+            return;
+          }
+          current_video_frame = std::move(pending_video_frame);
+          pending_video_frame.reset();
+          current_stimulus_frame = std::move(candidate_stimulus_frame);
+          candidate_stimulus_frame.reset();
+          current_stimulus_resolution = candidate_stimulus_resolution;
+          stimulus_candidate_ready = false;
+        };
+
+        if (crop_enabled &&
+            crop_controls.preference != active_crop_preference) {
+          active_crop_preference = crop_controls.preference;
+          last_crop_camera_request = -1;
+          pending_crop_discontinuity = true;
+          if (active_crop_preference ==
+              crimson::crop::CropSourcePreference::PreferLiveGeometry) {
+            crop_playback.suspend();
+          }
+        }
+
+        if (crop_enabled && pending_video_frame &&
+            stimulus_candidate_ready && !crop_failed) {
+          const int64_t camera_frame =
+              pending_video_frame->metadata.frame_number;
+          const bool acquisition_preferred =
+              crop_controls.preference ==
+              crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
+          if (acquisition_preferred &&
+              (last_crop_camera_request != camera_frame ||
+               pending_crop_discontinuity)) {
+            if (!crop_playback.requestCameraFrame(
+                    camera_frame, pending_crop_discontinuity, &crop_error)) {
+              std::fprintf(stderr,
+                           "[AppleCrop] Camera frame %lld request failed: %s\n",
+                           static_cast<long long>(camera_frame),
+                           crop_error.c_str());
+              crop_failed = true;
+            } else {
+              last_crop_camera_request = camera_frame;
+              pending_crop_discontinuity = false;
+            }
+          }
+
+          if (!crop_failed) {
+            auto aligned = acquisition_preferred
+                               ? crop_playback.frameForCameraFrame(camera_frame)
+                               : std::optional<
+                                     AppleAlignedAcquisitionCropFrame>{};
+            const auto *repository = crop_playback.repository();
+            crimson::crop::CropFrameSourceState source_state;
+            source_state.camera_frame = camera_frame;
+            source_state.exact_full_frame = camera_frame;
+            source_state.live_geometry = repository->liveGeometry(
+                camera_frame, video_playback.info().width,
+                video_playback.info().height);
+            source_state.acquisition = repository->acquisitionFrameState(
+                camera_frame,
+                aligned ? std::optional<int64_t>(
+                              aligned->decoded_frame.metadata.frame_number)
+                        : std::nullopt,
+                video_playback.info().width, video_playback.info().height);
+            const auto selection = crimson::crop::SelectCropSource(
+                repository->sourceCapabilities(), source_state,
+                crop_controls.preference,
+                crimson::crop::CropFallbackPolicy::WaitForPreferred,
+                static_cast<int64_t>(repository->cameraFrameCount()));
+            crop_controls.selection_status = selection.status;
+            std::optional<int64_t> surface_camera_frame;
+            if (selection.selected()) {
+              if (selection.source ==
+                  crimson::crop::CropSourceKind::LiveGeometry) {
+                surface_camera_frame = camera_frame;
+              } else if (aligned) {
+                surface_camera_frame = aligned->resolution.camera_frame;
+              }
+            }
+            const auto crop_decision = crop_presentation.update(
+                camera_frame, selection, surface_camera_frame);
+            if (selection.status ==
+                crimson::crop::CropSourceSelectionStatus::InvalidState) {
+              crop_error = "crop source selection returned invalid state";
+              crop_failed = true;
+            } else if (crop_decision.action ==
+                       crimson::crop::CropPresentationAction::Present) {
+              current_crop_selection = selection;
+              if (selection.source ==
+                  crimson::crop::CropSourceKind::AcquisitionVideo) {
+                if (!aligned) {
+                  crop_error =
+                      "selected acquisition crop has no exact decoded frame";
+                  crop_failed = true;
+                } else {
+                  current_crop_frame = std::move(aligned);
+                }
+              } else {
+                current_crop_frame.reset();
+              }
+              if (!crop_failed) {
+                commit_stimulus_candidate();
+              }
+            } else if (crop_decision.action ==
+                       crimson::crop::CropPresentationAction::Hold) {
+              commit_stimulus_candidate();
+            } else if (crop_decision.action ==
+                       crimson::crop::CropPresentationAction::Clear) {
+              current_crop_frame.reset();
+              current_crop_selection = {};
+              commit_stimulus_candidate();
+            }
+          }
+        } else if ((!crop_enabled || crop_failed) &&
+                   stimulus_candidate_ready) {
+          commit_stimulus_candidate();
         }
 
         if (current_video_frame) {
@@ -912,13 +1150,17 @@ int main(int argc, char **argv) {
             }
           }
           bool stimulus_frame_encoded = false;
+          bool crop_frame_encoded = false;
           std::string render_error;
           const AppleCompositeVideoViewports video_viewports =
               appleCompositeVideoViewports(
                   width, height, io.DisplayFramebufferScale.y,
                   video_playback.info(),
+                  crop_enabled ? &crop_playback.info() : nullptr,
                   stimulus_enabled ? &stimulus_playback.info() : nullptr);
           if (!viewportFitsDrawable(video_viewports.camera, width, height) ||
+              (crop_enabled &&
+               !viewportFitsDrawable(video_viewports.crop, width, height)) ||
               (stimulus_enabled &&
                !viewportFitsDrawable(video_viewports.stimulus, width,
                                       height))) {
@@ -952,6 +1194,52 @@ int main(int argc, char **argv) {
             }
             stimulus_frame_encoded = true;
           }
+          if (crop_enabled && current_crop_selection.selected() &&
+              current_crop_selection.camera_frame == metadata.frame_number) {
+            bool crop_encoded = false;
+            if (current_crop_selection.source ==
+                    crimson::crop::CropSourceKind::AcquisitionVideo &&
+                current_crop_frame &&
+                current_crop_frame->resolution.camera_frame ==
+                    metadata.frame_number) {
+              crop_encoded = video_renderer.encode(
+                  current_crop_frame->decoded_frame,
+                  reinterpret_cast<uintptr_t>(
+                      (__bridge void *)command_buffer),
+                  reinterpret_cast<uintptr_t>((__bridge void *)encoder),
+                  video_viewports.crop, &render_error);
+            } else if (current_crop_selection.source ==
+                           crimson::crop::CropSourceKind::LiveGeometry &&
+                       current_crop_selection.geometry) {
+              const auto &geometry = *current_crop_selection.geometry;
+              const AppleMetalVideoSourceRegion source_region{
+                  geometry.full_frame_crop.x / geometry.source_width,
+                  geometry.full_frame_crop.y / geometry.source_height,
+                  geometry.full_frame_crop.width / geometry.source_width,
+                  geometry.full_frame_crop.height / geometry.source_height};
+              crop_encoded = video_renderer.encodeRegion(
+                  *current_video_frame,
+                  reinterpret_cast<uintptr_t>(
+                      (__bridge void *)command_buffer),
+                  reinterpret_cast<uintptr_t>((__bridge void *)encoder),
+                  video_viewports.crop, source_region, &render_error);
+            }
+            if (!crop_encoded) {
+              std::fprintf(stderr,
+                           "[AppleCrop] Metal encode failed: %s\n",
+                           render_error.c_str());
+              render_failed = true;
+              break;
+            }
+            crop_frame_encoded = true;
+          }
+          if (crop_enabled) {
+            drawAppleCropPreviewOverlay(
+                video_viewports.crop, io.DisplayFramebufferScale.y,
+                crop_frame_encoded ? &current_crop_selection : nullptr,
+                crop_frame_encoded ? current_crop_selection.status
+                                   : crop_controls.selection_status);
+          }
           if (options->stimulus_smoke &&
               metadata.frame_number >= options->video_smoke_end) {
             if (current_stimulus_resolution.status !=
@@ -967,6 +1255,20 @@ int main(int argc, char **argv) {
                   current_stimulus_frame->decoded_frame.metadata.frame_number ==
                       *current_stimulus_resolution.stimulus_frame;
             }
+          }
+          if (options->crop_smoke &&
+              metadata.frame_number >= options->video_smoke_end) {
+            const auto expected_source =
+                crop_controls.preference ==
+                        crimson::crop::CropSourcePreference::PreferLiveGeometry
+                    ? crimson::crop::CropSourceKind::LiveGeometry
+                    : crimson::crop::CropSourceKind::AcquisitionVideo;
+            crop_smoke_end_satisfied =
+                crop_frame_encoded && current_crop_selection.selected() &&
+                current_crop_selection.source == expected_source &&
+                current_crop_selection.camera_frame == metadata.frame_number &&
+                crop_presentation.metrics().presented_crop_camera_frame ==
+                    metadata.frame_number;
           }
         }
       } else {
@@ -1007,7 +1309,8 @@ int main(int argc, char **argv) {
       if (options->video_smoke &&
           viewer_stats.presented_frame >= options->video_smoke_end &&
           (!options->stimulus_smoke || stimulus_smoke_end_satisfied ||
-           stimulus_failed)) {
+           stimulus_failed) &&
+          (!options->crop_smoke || crop_smoke_end_satisfied || crop_failed)) {
         glfwSetWindowShouldClose(window, GLFW_TRUE);
       }
       if (options->video_smoke &&
@@ -1045,11 +1348,24 @@ int main(int argc, char **argv) {
                        : AppleStimulusPlaybackMetrics{};
   const crimson::playback::StimulusPresentationMetrics
       final_stimulus_presentation = stimulus_presentation.metrics();
+  const AppleAcquisitionCropPlaybackMetrics final_crop_metrics =
+      crop_enabled ? crop_playback.metrics()
+                   : AppleAcquisitionCropPlaybackMetrics{};
+  const crimson::crop::CropPresentationMetrics final_crop_presentation =
+      crop_presentation.metrics();
+  const int64_t final_crop_decoded_frame =
+      current_crop_frame
+          ? current_crop_frame->decoded_frame.metadata.frame_number
+          : -1;
   const int32_t final_paired_stimulus_frame =
       current_stimulus_frame
           ? current_stimulus_frame->decoded_frame.metadata.frame_number
           : -1;
   current_stimulus_frame.reset();
+  current_crop_frame.reset();
+  if (crop_enabled) {
+    crop_playback.close();
+  }
   if (stimulus_enabled) {
     stimulus_playback.close();
   }
@@ -1220,6 +1536,98 @@ int main(int argc, char **argv) {
           static_cast<unsigned long long>(
               final_stimulus_presentation.max_abs_camera_skew_frames));
     }
+    if (options->crop_smoke) {
+      const auto expected_source =
+          options->crop_preference ==
+                  crimson::crop::CropSourcePreference::PreferLiveGeometry
+              ? crimson::crop::CropSourceKind::LiveGeometry
+              : crimson::crop::CropSourceKind::AcquisitionVideo;
+      const bool source_matches =
+          final_crop_presentation.presented_source == expected_source;
+      const bool crop_smoke_failed =
+          crop_failed || !crop_smoke_end_satisfied || !source_matches ||
+          final_crop_presentation.presented_crop_camera_frame !=
+              options->video_smoke_end ||
+          final_crop_presentation.camera_skew_frames != 0 ||
+          final_crop_presentation.max_abs_camera_skew_frames != 0 ||
+          final_crop_presentation.mismatched_selection_frames != 0 ||
+          final_crop_presentation.mismatched_surface_frames != 0 ||
+          final_crop_presentation.invalid_presentations != 0 ||
+          final_crop_metrics.failed_requests != 0;
+      const char *source_name =
+          expected_source == crimson::crop::CropSourceKind::LiveGeometry
+              ? "geometry"
+              : "acquisition";
+      const std::string &reported_crop_error =
+          crop_error.empty() ? final_crop_metrics.decoder.last_error
+                             : crop_error;
+      if (crop_smoke_failed) {
+        std::fprintf(
+            stderr,
+            "[AppleCropSmoke] FAIL start=%d end=%d source=%s camera=%lld "
+            "decoded=%lld source_frame=%lld generation=%llu exact=%llu "
+            "holds=%llu deferred=%llu max_deferred_run=%llu "
+            "selection_mismatches=%llu surface_mismatches=%llu "
+            "camera_skew=%+lld max_abs_camera_skew=%llu "
+            "failed_requests=%llu error=%s\n",
+            options->video_smoke_start, options->video_smoke_end, source_name,
+            static_cast<long long>(
+                final_crop_presentation.presented_crop_camera_frame),
+            static_cast<long long>(final_crop_decoded_frame),
+            static_cast<long long>(
+                final_crop_presentation.presented_source_frame),
+            static_cast<unsigned long long>(
+                final_crop_presentation.last_rendered_generation),
+            static_cast<unsigned long long>(
+                final_crop_presentation.exact_presentations),
+            static_cast<unsigned long long>(
+                final_crop_presentation.held_presentations),
+            static_cast<unsigned long long>(
+                final_crop_presentation.deferred_presentations),
+            static_cast<unsigned long long>(
+                final_crop_presentation.max_consecutive_unavailable),
+            static_cast<unsigned long long>(
+                final_crop_presentation.mismatched_selection_frames),
+            static_cast<unsigned long long>(
+                final_crop_presentation.mismatched_surface_frames),
+            static_cast<long long>(final_crop_presentation.camera_skew_frames),
+            static_cast<unsigned long long>(
+                final_crop_presentation.max_abs_camera_skew_frames),
+            static_cast<unsigned long long>(
+                final_crop_metrics.failed_requests),
+            reported_crop_error.c_str());
+        return 8;
+      }
+      std::printf(
+          "[AppleCropSmoke] PASS start=%d end=%d source=%s camera=%lld "
+          "decoded=%lld source_frame=%lld generation=%llu paired=%llu "
+          "holds=%llu deferred=%llu max_deferred_run=%llu seeks=%llu "
+          "follows=%llu decoder_peak=%zu camera_skew=%+lld "
+          "max_abs_camera_skew=%llu\n",
+          options->video_smoke_start, options->video_smoke_end, source_name,
+          static_cast<long long>(
+              final_crop_presentation.presented_crop_camera_frame),
+          static_cast<long long>(final_crop_decoded_frame),
+          static_cast<long long>(
+              final_crop_presentation.presented_source_frame),
+          static_cast<unsigned long long>(
+              final_crop_presentation.last_rendered_generation),
+          static_cast<unsigned long long>(
+              final_crop_presentation.exact_presentations +
+              final_crop_presentation.held_presentations),
+          static_cast<unsigned long long>(
+              final_crop_presentation.held_presentations),
+          static_cast<unsigned long long>(
+              final_crop_presentation.deferred_presentations),
+          static_cast<unsigned long long>(
+              final_crop_presentation.max_consecutive_unavailable),
+          static_cast<unsigned long long>(final_crop_metrics.seek_requests),
+          static_cast<unsigned long long>(final_crop_metrics.follow_requests),
+          final_crop_metrics.decoder.peak_buffered_frames,
+          static_cast<long long>(final_crop_presentation.camera_skew_frames),
+          static_cast<unsigned long long>(
+              final_crop_presentation.max_abs_camera_skew_frames));
+    }
   } else if (options->smoke) {
     if (render_failed || presented_frames < options->smoke_frames) {
       std::fprintf(stderr,
@@ -1231,5 +1639,5 @@ int main(int argc, char **argv) {
                 "window=GLFW/Cocoa font=bundled\n",
                 presented_frames);
   }
-  return render_failed || stimulus_failed ? 8 : 0;
+  return render_failed || stimulus_failed || crop_failed ? 8 : 0;
 }

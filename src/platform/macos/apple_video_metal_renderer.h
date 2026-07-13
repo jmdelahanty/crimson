@@ -13,6 +13,13 @@ struct AppleMetalVideoViewport {
     double height = 0.0;
 };
 
+struct AppleMetalVideoSourceRegion {
+    double x = 0.0;
+    double y = 0.0;
+    double width = 1.0;
+    double height = 1.0;
+};
+
 class AppleVideoMetalRenderer {
   public:
     AppleVideoMetalRenderer();
@@ -31,6 +38,12 @@ class AppleVideoMetalRenderer {
                 uintptr_t metal_render_encoder,
                 const AppleMetalVideoViewport& viewport,
                 std::string* error = nullptr);
+    bool encodeRegion(const AppleDecodedVideoFrame& frame,
+                      uintptr_t metal_command_buffer,
+                      uintptr_t metal_render_encoder,
+                      const AppleMetalVideoViewport& viewport,
+                      const AppleMetalVideoSourceRegion& source_region,
+                      std::string* error = nullptr);
 
   private:
     struct Impl;

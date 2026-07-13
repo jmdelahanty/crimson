@@ -2,6 +2,7 @@
 
 #include "apple_video_metal_renderer.h"
 #include "apple_video_playback_buffer.h"
+#include "crop_presentation_coordinator.h"
 #include "playback_clock.h"
 #include "stimulus_presentation_coordinator.h"
 
@@ -36,8 +37,17 @@ struct AppleVideoControlResult {
   bool camera_discontinuity = false;
 };
 
+struct AppleCropViewerControls {
+  crimson::crop::CropSourcePreference preference =
+      crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
+  crimson::crop::CropSourceSelectionStatus selection_status =
+      crimson::crop::CropSourceSelectionStatus::NoCapableSource;
+  const crimson::crop::CropPresentationMetrics *metrics = nullptr;
+};
+
 struct AppleCompositeVideoViewports {
   AppleMetalVideoViewport camera;
+  AppleMetalVideoViewport crop;
   AppleMetalVideoViewport stimulus;
 };
 
@@ -48,7 +58,13 @@ AppleVideoControlResult drawAppleVideoControls(
     LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
     const AppleVideoViewerStats &stats,
     const crimson::playback::StimulusPresentationMetrics *stimulus_metrics,
+    AppleCropViewerControls *crop_controls,
     bool interactive);
+
+void drawAppleCropPreviewOverlay(
+    const AppleMetalVideoViewport &viewport, float framebuffer_scale,
+    const crimson::crop::CropSourceSelection *selection,
+    crimson::crop::CropSourceSelectionStatus status);
 
 AppleMetalVideoViewport appleVideoViewport(int framebuffer_width,
                                            int framebuffer_height,
@@ -58,4 +74,5 @@ AppleMetalVideoViewport appleVideoViewport(int framebuffer_width,
 AppleCompositeVideoViewports appleCompositeVideoViewports(
     int framebuffer_width, int framebuffer_height, float framebuffer_scale,
     const AppleVideoAssetInfo &camera_info,
+    const AppleVideoAssetInfo *crop_info,
     const AppleVideoAssetInfo *stimulus_info);

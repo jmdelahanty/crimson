@@ -119,8 +119,8 @@ surfaces whose decoded luma planes were black.
 
 ## Next Checkpoint
 
-Phase 4F-E should integrate this session with the macOS application and Metal
-Crop Preview. Candidate presentation must consume the shared source selection
-and commit only when the crop surface and main camera surface carry the same
-camera identity. It should then exercise acquisition-video and geometry-only
-source preference without changing the repository or decoder mapping rules.
+Completed by Phase 4F-E in
+`docs/crimson_macos_phase4f_crop_presentation.md`: the macOS application and
+Metal Crop Preview now consume shared source selection and atomically commit
+only exact camera/crop identities for acquisition-video and geometry-only
+preference.

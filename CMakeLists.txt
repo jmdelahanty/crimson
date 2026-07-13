@@ -73,6 +73,7 @@ target_compile_features(crimson_repository_contracts PUBLIC cxx_std_17)
 
 add_library(crimson_crop_contracts STATIC
     src/crop_source_contract.cpp
+    src/crop_presentation_coordinator.cpp
     src/zarr/acquisition_crop_repository.cpp
 )
 target_include_directories(crimson_crop_contracts PUBLIC
@@ -179,6 +180,22 @@ add_test(NAME crop_source_contract_tests
     COMMAND $<TARGET_FILE:crop_source_contract_tests>)
 set_tests_properties(crop_source_contract_tests PROPERTIES
     LABELS "crop;playback;portable"
+)
+
+add_executable(crop_presentation_coordinator_tests
+    tools/crop_presentation_coordinator_tests.cpp
+)
+target_link_libraries(crop_presentation_coordinator_tests PRIVATE
+    crimson_crop_contracts
+)
+target_compile_features(crop_presentation_coordinator_tests PRIVATE cxx_std_17)
+set_target_properties(crop_presentation_coordinator_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME crop_presentation_coordinator_tests
+    COMMAND $<TARGET_FILE:crop_presentation_coordinator_tests>)
+set_tests_properties(crop_presentation_coordinator_tests PROPERTIES
+    LABELS "crop;playback;portable;presentation"
 )
 
 add_executable(stimulus_playback_coordinator_tests
@@ -926,6 +943,7 @@ file(GLOB CPP_SOURCES CONFIGURE_DEPENDS
     "src/gui/*.cpp"
     "src/zarr/*.cpp")
 list(REMOVE_ITEM CPP_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/crop_presentation_coordinator.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/crop_source_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_types.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_selection.cpp"
@@ -1578,6 +1596,7 @@ if(CRIMSON_BUILD_MACOS_APP)
         ${CRIMSON_MACOS_IMPLOT_DIR}
     )
     target_link_libraries(crimson_macos_shell PRIVATE
+        crimson_apple_acquisition_crop_playback
         crimson_apple_stimulus_playback
         crimson_tensorstore_repositories
         crimson::tensorstore_zarr
@@ -1739,6 +1758,34 @@ if(CRIMSON_BUILD_MACOS_APP)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunAppleStimulusPlaybackTest.cmake)
     set_tests_properties(apple_stimulus_composite_metal_tests PROPERTIES
         LABELS "composite;headless;macos;metal;playback;stimulus;video"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    add_executable(apple_crop_presentation_metal_tests
+        tools/apple_crop_presentation_metal_tests.mm
+    )
+    target_compile_features(apple_crop_presentation_metal_tests PRIVATE cxx_std_17)
+    target_compile_options(apple_crop_presentation_metal_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
+    )
+    target_link_libraries(apple_crop_presentation_metal_tests PRIVATE
+        crimson_apple_acquisition_crop_playback
+    )
+    set_target_properties(apple_crop_presentation_metal_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_dependencies(apple_crop_presentation_metal_tests
+        apple_video_provider_tests)
+    set(CRIMSON_CROP_PRESENTATION_VIDEO_FIXTURE
+        "${CMAKE_CURRENT_BINARY_DIR}/apple_crop_presentation_fixture.mov")
+    add_test(NAME apple_crop_presentation_metal_tests
+        COMMAND ${CMAKE_COMMAND}
+            -DFIXTURE_WRITER=$<TARGET_FILE:apple_video_provider_tests>
+            -DPLAYBACK_TEST=$<TARGET_FILE:apple_crop_presentation_metal_tests>
+            -DVIDEO_FIXTURE=${CRIMSON_CROP_PRESENTATION_VIDEO_FIXTURE}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunAppleStimulusPlaybackTest.cmake)
+    set_tests_properties(apple_crop_presentation_metal_tests PROPERTIES
+        LABELS "composite;crop;headless;macos;metal;playback;video"
         TIMEOUT 60
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
