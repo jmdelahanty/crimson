@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstring>
+#include <filesystem>
 #include <iostream>
 
 namespace {
@@ -27,6 +29,202 @@ const char* playbackRendererModeLabel(int mode) {
     default:
         return "standard";
     }
+}
+
+template <size_t N>
+void setPathBuffer(std::array<char, N>& buffer, const std::string& value) {
+    buffer.fill('\0');
+    const size_t copy_size = std::min(value.size(), N - 1);
+    std::memcpy(buffer.data(), value.data(), copy_size);
+}
+
+void initializePathEditor(FileBrowserWindowState& state,
+                          const UiPathConfig& config) {
+    setPathBuffer(state.default_start_path_buffer,
+                  config.default_start_path);
+    state.preferred_root_buffers.clear();
+    state.preferred_root_buffers.reserve(config.preferred_roots.size());
+    for (const auto& root : config.preferred_roots) {
+        std::array<char, FileBrowserWindowState::kPathBufferSize> buffer{};
+        setPathBuffer(buffer, root);
+        state.preferred_root_buffers.push_back(buffer);
+    }
+    state.path_browse_target = -2;
+    state.path_editor_message.clear();
+    state.path_editor_message_is_error = false;
+}
+
+UiPathConfig pathConfigFromEditor(const FileBrowserWindowState& state,
+                                  const UiPathConfig& current_config) {
+    UiPathConfig config;
+    config.default_start_path = state.default_start_path_buffer.data();
+    config.loaded_from = current_config.loaded_from;
+    config.preferred_roots.reserve(state.preferred_root_buffers.size());
+    for (const auto& buffer : state.preferred_root_buffers) {
+        config.preferred_roots.emplace_back(buffer.data());
+    }
+    return config;
+}
+
+void openPathFolderDialog(FileBrowserWindowState& state,
+                          int target,
+                          const std::string& current_path,
+                          const std::string& fallback_path) {
+    state.path_browse_target = target;
+    IGFD::FileDialogConfig config;
+    config.countSelectionMax = 1;
+    config.path = IsDirectoryNoThrow(current_path) ? current_path : fallback_path;
+    config.flags = ImGuiFileDialogFlags_Modal;
+    ImGuiFileDialog::Instance()->OpenDialog(
+        "ChooseUiPathPresetFolder",
+        "Choose Path Preset Directory",
+        nullptr,
+        config);
+}
+
+void textDisabledWrapped(const char* label, const std::string& value) {
+    ImGui::PushStyleColor(ImGuiCol_Text,
+                          ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped(label, value.c_str());
+    ImGui::PopStyleColor();
+}
+
+void drawPathEditor(const FileBrowserWindowContext& context,
+                    FileBrowserWindowState& state,
+                    FileBrowserWindowResult& result) {
+    if (state.request_open_path_editor) {
+        ImGui::OpenPopup("Edit Path Presets");
+        state.request_open_path_editor = false;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(900.0f, 500.0f),
+                             ImGuiCond_FirstUseEver);
+    if (!ImGui::BeginPopupModal("Edit Path Presets", nullptr)) {
+        return;
+    }
+
+    ImGui::TextWrapped(
+        "Edit the directories shown in File > Path Preset. Apply changes "
+        "to this session, or save them to your user configuration.");
+    if (!context.ui_path_config.loaded_from.empty()) {
+        textDisabledWrapped("Loaded from: %s",
+                            context.ui_path_config.loaded_from);
+    }
+    if (auto user_path = GetCrimsonUserUiPathConfigPath()) {
+        textDisabledWrapped("User configuration: %s", user_path->string());
+    }
+
+    ImGui::SeparatorText("Default start path");
+    ImGui::SetNextItemWidth(-100.0f);
+    ImGui::InputText("##default_start_path",
+                     state.default_start_path_buffer.data(),
+                     state.default_start_path_buffer.size());
+    ImGui::SameLine();
+    if (ImGui::Button("Browse...##default_start_path")) {
+        openPathFolderDialog(
+            state,
+            -1,
+            state.default_start_path_buffer.data(),
+            context.start_folder_name);
+    }
+
+    ImGui::SeparatorText("Preferred roots");
+    int remove_index = -1;
+    for (size_t index = 0; index < state.preferred_root_buffers.size(); ++index) {
+        auto& buffer = state.preferred_root_buffers[index];
+        ImGui::PushID(static_cast<int>(index));
+        ImGui::SetNextItemWidth(-238.0f);
+        ImGui::InputText("##preferred_root", buffer.data(), buffer.size());
+        ImGui::SameLine();
+        if (ImGui::Button("Browse...")) {
+            openPathFolderDialog(state,
+                                 static_cast<int>(index),
+                                 buffer.data(),
+                                 context.start_folder_name);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Use as default")) {
+            setPathBuffer(state.default_start_path_buffer,
+                          std::string(buffer.data()));
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Remove")) {
+            remove_index = static_cast<int>(index);
+        }
+        ImGui::PopID();
+    }
+    if (remove_index >= 0) {
+        state.preferred_root_buffers.erase(
+            state.preferred_root_buffers.begin() + remove_index);
+    }
+
+    if (ImGui::Button("Add path")) {
+        state.preferred_root_buffers.emplace_back();
+    }
+
+    if (!state.path_editor_message.empty()) {
+        const ImVec4 color = state.path_editor_message_is_error
+                                 ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
+                                 : ImVec4(0.35f, 0.85f, 0.45f, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, color);
+        ImGui::TextWrapped("%s", state.path_editor_message.c_str());
+        ImGui::PopStyleColor();
+    }
+
+    ImGui::Separator();
+    auto apply_editor_config = [&](bool save) {
+        UiPathConfig candidate =
+            pathConfigFromEditor(state, context.ui_path_config);
+        UiPathConfig normalized;
+        std::string error_message;
+        if (!NormalizeUiPathConfig(candidate, normalized, error_message)) {
+            state.path_editor_message = error_message;
+            state.path_editor_message_is_error = true;
+            return;
+        }
+
+        if (save) {
+            std::filesystem::path saved_path;
+            if (!SaveUserUiPathConfig(normalized,
+                                      saved_path,
+                                      error_message)) {
+                state.path_editor_message = error_message;
+                state.path_editor_message_is_error = true;
+                return;
+            }
+            normalized.loaded_from = saved_path.string();
+            state.path_editor_message = "Saved to " + saved_path.string();
+            std::cout << "[UIPathConfig] Saved user preferences: "
+                      << saved_path << std::endl;
+        } else {
+            state.path_editor_message = "Applied to this session.";
+        }
+
+        state.path_editor_message_is_error = false;
+        initializePathEditor(state, normalized);
+        state.path_editor_message =
+            save ? "Saved to " + normalized.loaded_from
+                 : "Applied to this session.";
+        result.updated_path_config = std::move(normalized);
+    };
+
+    if (ImGui::Button("Apply")) {
+        apply_editor_config(false);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Save")) {
+        apply_editor_config(true);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reset fields")) {
+        initializePathEditor(state, context.ui_path_config);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Close")) {
+        ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
 }
 
 }  // namespace
@@ -75,8 +273,7 @@ FileBrowserWindowResult drawFileBrowserWindow(const FileBrowserWindowContext& co
                     ".mp4",
                     config);
             }
-            if (!context.ui_path_config.preferred_roots.empty() &&
-                ImGui::BeginMenu("Path Preset")) {
+            if (ImGui::BeginMenu("Path Preset")) {
                 for (const auto& preset_path :
                      context.ui_path_config.preferred_roots) {
                     bool selected = (preset_path == context.start_folder_name);
@@ -85,6 +282,13 @@ FileBrowserWindowResult drawFileBrowserWindow(const FileBrowserWindowContext& co
                         std::cout << "[UIPathConfig] Start path set to: "
                                   << context.start_folder_name << std::endl;
                     }
+                }
+                if (!context.ui_path_config.preferred_roots.empty()) {
+                    ImGui::Separator();
+                }
+                if (ImGui::MenuItem("Edit Path Presets...")) {
+                    initializePathEditor(state, context.ui_path_config);
+                    state.request_open_path_editor = true;
                 }
                 ImGui::EndMenu();
             }
@@ -174,6 +378,8 @@ FileBrowserWindowResult drawFileBrowserWindow(const FileBrowserWindowContext& co
         }
         ImGui::EndMenuBar();
     }
+
+    drawPathEditor(context, state, result);
 
     ImGui::Text("Application average %.3f ms/frame (%.1f FPS)",
                 1000.0f / ImGui::GetIO().Framerate,
@@ -313,5 +519,30 @@ FileBrowserWindowResult drawFileBrowserWindow(const FileBrowserWindowContext& co
     }
 
     ImGui::End();
+
+    if (ImGuiFileDialog::Instance()->Display("ChooseUiPathPresetFolder")) {
+        if (ImGuiFileDialog::Instance()->IsOk()) {
+            std::string selected_path =
+                ImGuiFileDialog::Instance()->GetCurrentPath();
+            const auto selection = ImGuiFileDialog::Instance()->GetSelection();
+            if (!selection.empty() &&
+                IsDirectoryNoThrow(selection.begin()->second)) {
+                selected_path = selection.begin()->second;
+            }
+
+            if (state.path_browse_target == -1) {
+                setPathBuffer(state.default_start_path_buffer, selected_path);
+            } else if (state.path_browse_target >= 0 &&
+                       static_cast<size_t>(state.path_browse_target) <
+                           state.preferred_root_buffers.size()) {
+                setPathBuffer(
+                    state.preferred_root_buffers[
+                        static_cast<size_t>(state.path_browse_target)],
+                    selected_path);
+            }
+        }
+        state.path_browse_target = -2;
+        ImGuiFileDialog::Instance()->Close();
+    }
     return result;
 }

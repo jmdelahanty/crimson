@@ -2,11 +2,17 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <random>
 #include <sstream>
+#include <system_error>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -85,6 +91,11 @@ std::optional<fs::path> GetCrimsonUserConfigDir() {
 #ifdef _WIN32
     if (auto appdata = GetExpandedEnvPath("APPDATA")) {
         return *appdata / "crimson";
+    }
+#endif
+#ifdef __APPLE__
+    if (auto home = GetHomeDirectory()) {
+        return *home / "Library" / "Application Support" / "Crimson";
     }
 #endif
     if (auto home = GetHomeDirectory()) {
@@ -222,6 +233,43 @@ fs::path GetPreferredDefaultStartPath(const fs::path& current_working_dir) {
     }
 
     return ".";
+}
+
+std::string TrimCopy(const std::string& value) {
+    auto first = std::find_if_not(value.begin(), value.end(), [](unsigned char ch) {
+        return std::isspace(ch) != 0;
+    });
+    auto last = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char ch) {
+                    return std::isspace(ch) != 0;
+                }).base();
+    if (first >= last) {
+        return {};
+    }
+    return std::string(first, last);
+}
+
+bool ReplaceFileAtomically(const fs::path& source,
+                           const fs::path& destination,
+                           std::string& error_message) {
+#ifdef _WIN32
+    if (MoveFileExW(source.c_str(),
+                    destination.c_str(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        return true;
+    }
+    error_message = "Could not replace " + destination.string() +
+                    " (Windows error " + std::to_string(GetLastError()) + ")";
+    return false;
+#else
+    std::error_code ec;
+    fs::rename(source, destination, ec);
+    if (!ec) {
+        return true;
+    }
+    error_message = "Could not replace " + destination.string() + ": " +
+                    ec.message();
+    return false;
+#endif
 }
 
 std::optional<UiPathConfig> LoadUiPathConfigFile(const fs::path& config_path,
@@ -367,6 +415,128 @@ fs::path GetDefaultCrimsonBufferDumpRoot() {
     return ".crimson/buffer_dumps";
 }
 
+std::optional<fs::path> GetCrimsonUserUiPathConfigPath() {
+    auto config_dir = GetCrimsonUserConfigDir();
+    if (!config_dir) {
+        return std::nullopt;
+    }
+    return *config_dir / "ui_paths.json";
+}
+
+bool NormalizeUiPathConfig(const UiPathConfig& input,
+                           UiPathConfig& normalized,
+                           std::string& error_message) {
+    normalized = UiPathConfig{};
+    normalized.loaded_from = input.loaded_from;
+    error_message.clear();
+
+    const std::string default_value = TrimCopy(input.default_start_path);
+    if (default_value.empty()) {
+        error_message = "Default start path cannot be empty.";
+        return false;
+    }
+
+    auto normalized_default = NormalizePath(ExpandUserPath(default_value));
+    if (!normalized_default || !IsDirectoryNoThrow(*normalized_default)) {
+        error_message = "Default start path is not an existing directory: " +
+                        default_value;
+        return false;
+    }
+    normalized.default_start_path = normalized_default->string();
+
+    for (const auto& candidate_value : input.preferred_roots) {
+        const std::string trimmed_value = TrimCopy(candidate_value);
+        if (trimmed_value.empty()) {
+            continue;
+        }
+        auto normalized_candidate =
+            NormalizePath(ExpandUserPath(trimmed_value));
+        if (!normalized_candidate ||
+            !IsDirectoryNoThrow(*normalized_candidate)) {
+            error_message = "Preferred root is not an existing directory: " +
+                            trimmed_value;
+            return false;
+        }
+        const std::string root = normalized_candidate->string();
+        if (std::find(normalized.preferred_roots.begin(),
+                      normalized.preferred_roots.end(),
+                      root) == normalized.preferred_roots.end()) {
+            normalized.preferred_roots.push_back(root);
+        }
+    }
+
+    if (normalized.preferred_roots.empty()) {
+        normalized.preferred_roots.push_back(normalized.default_start_path);
+    }
+    return true;
+}
+
+bool SaveUserUiPathConfig(const UiPathConfig& config,
+                          fs::path& saved_path,
+                          std::string& error_message) {
+    saved_path.clear();
+    error_message.clear();
+
+    UiPathConfig normalized;
+    if (!NormalizeUiPathConfig(config, normalized, error_message)) {
+        return false;
+    }
+
+    auto config_path = GetCrimsonUserUiPathConfigPath();
+    if (!config_path) {
+        error_message = "Could not determine the user configuration directory.";
+        return false;
+    }
+
+    std::error_code ec;
+    fs::create_directories(config_path->parent_path(), ec);
+    if (ec) {
+        error_message = "Could not create " +
+                        config_path->parent_path().string() + ": " +
+                        ec.message();
+        return false;
+    }
+
+    std::random_device random_device;
+    const fs::path temporary_path =
+        config_path->parent_path() /
+        (config_path->filename().string() + ".tmp." +
+         std::to_string(std::chrono::steady_clock::now()
+                            .time_since_epoch()
+                            .count()) +
+         "." + std::to_string(random_device()));
+
+    json payload = {
+        {"default_start_path", normalized.default_start_path},
+        {"preferred_roots", normalized.preferred_roots},
+    };
+    {
+        std::ofstream output(temporary_path, std::ios::out | std::ios::trunc);
+        if (!output) {
+            error_message = "Could not write temporary configuration file: " +
+                            temporary_path.string();
+            return false;
+        }
+        output << payload.dump(2) << '\n';
+        output.flush();
+        if (!output) {
+            error_message = "Failed while writing temporary configuration file: " +
+                            temporary_path.string();
+            output.close();
+            fs::remove(temporary_path, ec);
+            return false;
+        }
+    }
+
+    if (!ReplaceFileAtomically(temporary_path, *config_path, error_message)) {
+        fs::remove(temporary_path, ec);
+        return false;
+    }
+
+    saved_path = *config_path;
+    return true;
+}
+
 UiPathConfig LoadUiPathConfig(const fs::path& current_working_dir,
                               const fs::path& argv0_path) {
     const fs::path fallback_start_path = GetPreferredDefaultStartPath(current_working_dir);
@@ -376,6 +546,13 @@ UiPathConfig LoadUiPathConfig(const fs::path& current_working_dir,
         if (*env_config != '\0') {
             candidates.push_back(fs::path(ExpandUserPath(env_config)));
         }
+    }
+
+    // GUI-saved preferences are user scoped and take priority over packaged
+    // or checkout defaults. CRIMSON_UI_PATHS_CONFIG remains the explicit
+    // highest-priority override.
+    if (auto user_config_path = GetCrimsonUserUiPathConfigPath()) {
+        candidates.push_back(*user_config_path);
     }
 
     if (auto data_dir = GetExpandedEnvPath("CRIMSON_DATA_DIR")) {
@@ -393,10 +570,6 @@ UiPathConfig LoadUiPathConfig(const fs::path& current_working_dir,
         if (!repo_like_root.empty()) {
             candidates.push_back(repo_like_root / "config" / "ui_paths.json");
         }
-    }
-
-    if (auto user_config_dir = GetCrimsonUserConfigDir()) {
-        candidates.push_back(*user_config_dir / "ui_paths.json");
     }
 
     if (auto executable_dir = GetExecutableDir(argv0_path)) {
