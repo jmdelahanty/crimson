@@ -174,6 +174,7 @@
       "targets": [
         "crimson_macos_shell",
         "apple_tensorstore_zarr_tests",
+        "analysis_crop_geometry_repository_tests",
         "acquisition_crop_repository_tests",
         "acquisition_crop_repository_probe",
         "crop_presentation_coordinator_tests",
@@ -185,6 +186,7 @@
         "apple_acquisition_crop_playback_tests",
         "apple_acquisition_crop_playback_probe",
         "apple_crop_presentation_metal_tests",
+        "apple_multistream_discontinuity_tests",
         "apple_stimulus_playback_tests",
         "apple_stimulus_composite_metal_tests",
         "apple_stimulus_playback_probe",

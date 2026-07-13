@@ -253,19 +253,31 @@ AppleVideoControlResult drawAppleVideoControls(
     const bool acquisition_selected =
         crop_controls->preference ==
         crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
+    if (!crop_controls->acquisition_available) {
+      ImGui::BeginDisabled();
+    }
     if (ImGui::RadioButton("Acquisition video", acquisition_selected) &&
         interactive) {
       crop_controls->preference =
           crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
     }
+    if (!crop_controls->acquisition_available) {
+      ImGui::EndDisabled();
+    }
     ImGui::SameLine();
     const bool geometry_selected =
         crop_controls->preference ==
         crimson::crop::CropSourcePreference::PreferLiveGeometry;
+    if (!crop_controls->live_geometry_available) {
+      ImGui::BeginDisabled();
+    }
     if (ImGui::RadioButton("Live geometry", geometry_selected) &&
         interactive) {
       crop_controls->preference =
           crimson::crop::CropSourcePreference::PreferLiveGeometry;
+    }
+    if (!crop_controls->live_geometry_available) {
+      ImGui::EndDisabled();
     }
     ImGui::SameLine();
     ImGui::Text("Status %s", cropStatusName(crop_controls->selection_status));

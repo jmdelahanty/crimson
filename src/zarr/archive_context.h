@@ -37,6 +37,11 @@ class ArchiveContext {
   OpenAcquisitionCropRepository(
       const std::shared_ptr<ArchiveContext>& archive,
       std::string* error_message);
+  friend std::unique_ptr<class AnalysisCropGeometryRepository>
+  OpenAnalysisCropGeometryRepository(
+      const std::shared_ptr<ArchiveContext>& archive,
+      const std::string& requested_run,
+      std::string* error_message);
 };
 
 }  // namespace crimson::zarr

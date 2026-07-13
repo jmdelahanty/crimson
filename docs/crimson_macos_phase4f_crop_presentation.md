@@ -117,8 +117,8 @@ The authenticated NVIDIA `0:300` GUI smoke passed with final presented frame
 
 ## Next Checkpoint
 
-Phase 4F-E completes native macOS acquisition-video and geometry-only Crop
-Preview under the shared source-selection and exact-presentation contracts.
-The next checkpoint should validate source switching and discontinuities over
-longer network ranges, then extend overlay parity beyond the acquisition
-detection rectangle without changing these identity or ownership rules.
+Completed by Phase 4G in
+`docs/crimson_macos_phase4g_multistream_robustness.md`: the native app now
+supports true analysis-only geometry recordings and validates pause, step,
+backward/forward seeks, resumed playback, queue bounds, and memory growth over
+longer PRFS ranges. Overlay parity remains the next checkpoint.

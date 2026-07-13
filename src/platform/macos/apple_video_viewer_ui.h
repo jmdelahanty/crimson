@@ -40,6 +40,8 @@ struct AppleVideoControlResult {
 struct AppleCropViewerControls {
   crimson::crop::CropSourcePreference preference =
       crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
+  bool acquisition_available = false;
+  bool live_geometry_available = false;
   crimson::crop::CropSourceSelectionStatus selection_status =
       crimson::crop::CropSourceSelectionStatus::NoCapableSource;
   const crimson::crop::CropPresentationMetrics *metrics = nullptr;

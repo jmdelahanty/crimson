@@ -3,6 +3,7 @@ if(NOT DEFINED FIXTURE_WRITER OR NOT DEFINED PLAYBACK_TEST OR
     message(FATAL_ERROR "fixture writer, playback test, and video path are required")
 endif()
 
+file(REMOVE "${VIDEO_FIXTURE}")
 execute_process(
     COMMAND "${FIXTURE_WRITER}" --write-fixture "${VIDEO_FIXTURE}"
     RESULT_VARIABLE fixture_result
@@ -14,6 +15,7 @@ if(NOT fixture_result EQUAL 0)
         cannot_encode_position)
     if(NOT cannot_encode_position EQUAL -1)
         execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep 1)
+        file(REMOVE "${VIDEO_FIXTURE}")
         execute_process(
             COMMAND "${FIXTURE_WRITER}" --write-fixture "${VIDEO_FIXTURE}"
             RESULT_VARIABLE fixture_result

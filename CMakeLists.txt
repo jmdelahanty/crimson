@@ -74,6 +74,7 @@ target_compile_features(crimson_repository_contracts PUBLIC cxx_std_17)
 add_library(crimson_crop_contracts STATIC
     src/crop_source_contract.cpp
     src/crop_presentation_coordinator.cpp
+    src/zarr/analysis_crop_geometry_repository.cpp
     src/zarr/acquisition_crop_repository.cpp
 )
 target_include_directories(crimson_crop_contracts PUBLIC
@@ -100,6 +101,7 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
 
     add_library(crimson_tensorstore_repositories OBJECT
         src/zarr/tensorstore_archive_context.cpp
+        src/zarr/tensorstore_analysis_crop_geometry_repository.cpp
         src/zarr/tensorstore_acquisition_crop_repository.cpp
         src/zarr/tensorstore_stimulus_repository.cpp
     )
@@ -139,6 +141,26 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         COMMAND $<TARGET_FILE:acquisition_crop_repository_tests>)
     set_tests_properties(acquisition_crop_repository_tests PROPERTIES
         LABELS "crop;headless;portable;repository;tensorstore;zarr"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_executable(analysis_crop_geometry_repository_tests
+        tools/analysis_crop_geometry_repository_tests.cpp
+    )
+    target_compile_features(analysis_crop_geometry_repository_tests
+        PRIVATE cxx_std_17)
+    target_link_libraries(analysis_crop_geometry_repository_tests PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(analysis_crop_geometry_repository_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME analysis_crop_geometry_repository_tests
+        COMMAND $<TARGET_FILE:analysis_crop_geometry_repository_tests>)
+    set_tests_properties(analysis_crop_geometry_repository_tests PROPERTIES
+        LABELS "crop;geometry;headless;portable;repository;tensorstore;zarr"
         TIMEOUT 60
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
@@ -948,9 +970,11 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_types.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_selection.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_slot.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/analysis_crop_geometry_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/stimulus_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/acquisition_crop_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_archive_context.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_analysis_crop_geometry_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_acquisition_crop_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_stimulus_repository.cpp"
 )
@@ -1787,6 +1811,36 @@ if(CRIMSON_BUILD_MACOS_APP)
     set_tests_properties(apple_crop_presentation_metal_tests PROPERTIES
         LABELS "composite;crop;headless;macos;metal;playback;video"
         TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    add_executable(apple_multistream_discontinuity_tests
+        tools/apple_multistream_discontinuity_tests.mm
+    )
+    target_compile_features(apple_multistream_discontinuity_tests
+        PRIVATE cxx_std_17)
+    target_compile_options(apple_multistream_discontinuity_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
+    )
+    target_link_libraries(apple_multistream_discontinuity_tests PRIVATE
+        crimson_apple_acquisition_crop_playback
+        crimson_apple_stimulus_playback
+    )
+    set_target_properties(apple_multistream_discontinuity_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_dependencies(apple_multistream_discontinuity_tests
+        apple_video_provider_tests)
+    set(CRIMSON_MULTISTREAM_DISCONTINUITY_VIDEO_FIXTURE
+        "${CMAKE_CURRENT_BINARY_DIR}/apple_multistream_discontinuity_fixture.mov")
+    add_test(NAME apple_multistream_discontinuity_tests
+        COMMAND ${CMAKE_COMMAND}
+            -DFIXTURE_WRITER=$<TARGET_FILE:apple_video_provider_tests>
+            -DPLAYBACK_TEST=$<TARGET_FILE:apple_multistream_discontinuity_tests>
+            -DVIDEO_FIXTURE=${CRIMSON_MULTISTREAM_DISCONTINUITY_VIDEO_FIXTURE}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunAppleStimulusPlaybackTest.cmake)
+    set_tests_properties(apple_multistream_discontinuity_tests PROPERTIES
+        LABELS "composite;crop;discontinuity;headless;macos;metal;playback;stimulus;video"
+        TIMEOUT 90
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
     add_executable(apple_video_metal_tests
