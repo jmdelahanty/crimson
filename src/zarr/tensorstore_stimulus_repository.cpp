@@ -1,9 +1,7 @@
 #include "zarr/tensorstore_stimulus_repository.h"
+#include "zarr/archive_context_internal.h"
 
-#include <absl/strings/cord.h>
 #include <nlohmann/json.hpp>
-#include <tensorstore/kvstore/operations.h>
-#include <tensorstore/kvstore/spec.h>
 #include <tensorstore/open.h>
 #include <tensorstore/tensorstore.h>
 
@@ -20,62 +18,7 @@ namespace crimson::zarr {
 namespace ts = tensorstore;
 using json = nlohmann::json;
 
-struct ArchiveContext::Impl {
-  std::filesystem::path root_path;
-  ts::Context context = ts::Context::Default();
-  ts::kvstore::KvStore store;
-};
-
 namespace {
-
-std::string NormalizeFileRoot(std::filesystem::path path) {
-  std::string normalized = path.lexically_normal().string();
-  if (!normalized.empty() && normalized.back() != '/') {
-    normalized.push_back('/');
-  }
-  return normalized;
-}
-
-void SetError(std::string* error_message, std::string message) {
-  if (error_message) {
-    *error_message = std::move(message);
-  }
-}
-
-std::optional<json> ReadJson(const ts::kvstore::KvStore& store,
-                             const std::string& key) {
-  auto read_result = ts::kvstore::Read(store, key).result();
-  if (!read_result.ok() || !read_result->has_value()) {
-    return std::nullopt;
-  }
-  std::string payload;
-  absl::CopyCordToString(read_result->value, &payload);
-  try {
-    return json::parse(payload);
-  } catch (const json::exception&) {
-    return std::nullopt;
-  }
-}
-
-std::optional<json> ReadAttributes(const ts::kvstore::KvStore& store,
-                                   const std::string& group_path) {
-  std::string prefix = group_path;
-  if (!prefix.empty() && prefix.back() != '/') {
-    prefix.push_back('/');
-  }
-  if (auto metadata = ReadJson(store, prefix + "zarr.json")) {
-    if (metadata->contains("attributes") &&
-        (*metadata)["attributes"].is_object()) {
-      return (*metadata)["attributes"];
-    }
-  }
-  if (auto attributes = ReadJson(store, prefix + ".zattrs")) {
-    if (attributes->is_object()) {
-      return attributes;
-    }
-  }
-  return std::nullopt;
-}
 
 template <typename Source>
 bool ReadTypedArray(const ArchiveContext::Impl& archive,
@@ -172,94 +115,27 @@ bool ReadFlagArray(const ArchiveContext::Impl& archive,
 
 }  // namespace
 
-ArchiveContext::ArchiveContext(std::shared_ptr<Impl> impl)
-    : impl_(std::move(impl)) {}
-
-ArchiveContext::~ArchiveContext() = default;
-
-std::shared_ptr<ArchiveContext> ArchiveContext::Open(
-    const std::filesystem::path& root_path,
-    std::string* error_message) {
-  if (!std::filesystem::is_directory(root_path)) {
-    SetError(error_message,
-             "Zarr archive directory does not exist: " + root_path.string());
-    return nullptr;
-  }
-
-  auto spec = ts::kvstore::Spec::FromJson(
-      {{"driver", "file"}, {"path", NormalizeFileRoot(root_path)}});
-  if (!spec.ok()) {
-    SetError(error_message,
-             "Failed to create archive kvstore spec: " +
-                 spec.status().ToString());
-    return nullptr;
-  }
-
-  auto impl = std::make_shared<Impl>();
-  impl->root_path = root_path;
-  auto store = ts::kvstore::Open(*spec, impl->context).result();
-  if (!store.ok()) {
-    SetError(error_message,
-             "Failed to open archive kvstore: " + store.status().ToString());
-    return nullptr;
-  }
-  impl->store = *store;
-  return std::shared_ptr<ArchiveContext>(new ArchiveContext(std::move(impl)));
-}
-
-const std::filesystem::path& ArchiveContext::rootPath() const {
-  return impl_->root_path;
-}
-
-std::filesystem::path ArchiveContext::resolveStoredPath(
-    const std::filesystem::path& stored_path) const {
-  if (stored_path.empty() || std::filesystem::exists(stored_path)) {
-    return stored_path;
-  }
-
-  std::filesystem::path recording_root = impl_->root_path.parent_path();
-  if (recording_root.filename() == "zarr") {
-    recording_root = recording_root.parent_path();
-  }
-  if (recording_root.empty()) {
-    return stored_path;
-  }
-
-  bool found_recording = false;
-  std::filesystem::path suffix;
-  for (const auto& component : stored_path) {
-    if (!found_recording) {
-      found_recording = component == recording_root.filename();
-      continue;
-    }
-    suffix /= component;
-  }
-  if (!found_recording || suffix.empty()) {
-    return stored_path;
-  }
-  return recording_root / suffix;
-}
-
 std::unique_ptr<StimulusRepository> OpenStimulusRepository(
     const std::shared_ptr<ArchiveContext>& archive,
     const std::string& requested_run,
     std::string* error_message) {
   if (!archive || !archive->impl_) {
-    SetError(error_message, "Archive context is not open");
+    internal::SetArchiveError(error_message, "Archive context is not open");
     return nullptr;
   }
   const auto& impl = *archive->impl_;
 
   std::string run_name = requested_run;
   if (run_name.empty()) {
-    auto attributes = ReadAttributes(impl.store, "analysis/stimulus_runs");
+    auto attributes =
+        internal::ReadArchiveAttributes(impl, "analysis/stimulus_runs");
     if (attributes && attributes->contains("latest") &&
         (*attributes)["latest"].is_string()) {
       run_name = (*attributes)["latest"].get<std::string>();
     }
   }
   if (run_name.empty()) {
-    SetError(error_message,
+    internal::SetArchiveError(error_message,
              "No stimulus run was requested and analysis/stimulus_runs has no latest run");
     return nullptr;
   }
@@ -269,7 +145,7 @@ std::unique_ptr<StimulusRepository> OpenStimulusRepository(
   const std::string run_base =
       "analysis/stimulus_runs/" + run_name + "/";
 
-  if (auto attributes = ReadAttributes(impl.store, run_base)) {
+  if (auto attributes = internal::ReadArchiveAttributes(impl, run_base)) {
     if (attributes->contains("source_stimulus_video_path") &&
         (*attributes)["source_stimulus_video_path"].is_string()) {
       alignment.source_video_path =
@@ -280,7 +156,8 @@ std::unique_ptr<StimulusRepository> OpenStimulusRepository(
   }
 
   if (auto attributes =
-          ReadAttributes(impl.store, run_base + "frame_alignment")) {
+          internal::ReadArchiveAttributes(impl,
+                                          run_base + "frame_alignment")) {
     if (attributes->contains("camera_frame_offset") &&
         (*attributes)["camera_frame_offset"].is_number_integer()) {
       alignment.camera_frame_offset =
@@ -331,7 +208,7 @@ std::unique_ptr<StimulusRepository> OpenStimulusRepository(
                                   alignment.legacy_metadata_available;
 
   if (!alignment.alignment_available) {
-    SetError(error_message,
+    internal::SetArchiveError(error_message,
              "Stimulus run '" + run_name +
                  "' has no usable corrected or legacy frame mapping"
                  " (legacy_mapping=" + (legacy_mapping ? "true" : "false") +

@@ -135,9 +135,10 @@ NVIDIA FFmpeg stack. `redgui` linked and all four portable CTests passed. The
 known OpenCV/FFmpeg version-family linker warnings remain unchanged. No NVIDIA
 application runtime code was changed in this checkpoint.
 
-## Next Checkpoint
+## Phase 4F-C Follow-up
 
-Phase 4F-C should add the acquisition repository and adapter:
+Phase 4F-C added the acquisition repository and adapter described by this
+contract:
 
 - generic recording-root-relative archive path resolution;
 - Zarr v2/v3 acquisition stream attribute discovery;
@@ -145,6 +146,8 @@ Phase 4F-C should add the acquisition repository and adapter:
 - production archive probes; and
 - conversion of repository results into this crop-source contract.
 
-Backend adapters can then connect geometry-only full-frame surfaces,
-AVFoundation crop-video decode, and persisted analysis images without changing
-the shared identity or geometry semantics.
+The implementation and validation record is in
+`crimson_macos_phase4f_acquisition_crop_repository.md`. Phase 4F-D can now
+connect the repository to AVFoundation crop-video decode. Geometry-only
+full-frame surfaces and persisted analysis images remain backend-owned pixel
+sources behind the same identity and geometry semantics.

@@ -20,6 +20,7 @@ class ArchiveContext {
       std::string* error_message = nullptr);
 
   const std::filesystem::path& rootPath() const;
+  const std::filesystem::path& recordingRootPath() const;
   std::filesystem::path resolveStoredPath(
       const std::filesystem::path& stored_path) const;
 
@@ -31,6 +32,10 @@ class ArchiveContext {
   friend std::unique_ptr<class StimulusRepository> OpenStimulusRepository(
       const std::shared_ptr<ArchiveContext>& archive,
       const std::string& requested_run,
+      std::string* error_message);
+  friend std::unique_ptr<class AcquisitionCropRepository>
+  OpenAcquisitionCropRepository(
+      const std::shared_ptr<ArchiveContext>& archive,
       std::string* error_message);
 };
 

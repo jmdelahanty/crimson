@@ -73,6 +73,7 @@ target_compile_features(crimson_repository_contracts PUBLIC cxx_std_17)
 
 add_library(crimson_crop_contracts STATIC
     src/crop_source_contract.cpp
+    src/zarr/acquisition_crop_repository.cpp
 )
 target_include_directories(crimson_crop_contracts PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -97,6 +98,8 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
     endif()
 
     add_library(crimson_tensorstore_repositories OBJECT
+        src/zarr/tensorstore_archive_context.cpp
+        src/zarr/tensorstore_acquisition_crop_repository.cpp
         src/zarr/tensorstore_stimulus_repository.cpp
     )
     target_include_directories(crimson_tensorstore_repositories PUBLIC
@@ -104,7 +107,7 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
     )
     target_compile_features(crimson_tensorstore_repositories PUBLIC cxx_std_17)
     target_link_libraries(crimson_tensorstore_repositories
-        PUBLIC crimson_repository_contracts
+        PUBLIC crimson_crop_contracts crimson_repository_contracts
         PRIVATE ${tensorstore_target} Threads::Threads
     )
 
@@ -117,6 +120,37 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         ${tensorstore_target}
     )
     set_target_properties(stimulus_repository_probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
+    add_executable(acquisition_crop_repository_tests
+        tools/acquisition_crop_repository_tests.cpp
+    )
+    target_compile_features(acquisition_crop_repository_tests PRIVATE cxx_std_17)
+    target_link_libraries(acquisition_crop_repository_tests PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(acquisition_crop_repository_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME acquisition_crop_repository_tests
+        COMMAND $<TARGET_FILE:acquisition_crop_repository_tests>)
+    set_tests_properties(acquisition_crop_repository_tests PROPERTIES
+        LABELS "crop;headless;portable;repository;tensorstore;zarr"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_executable(acquisition_crop_repository_probe
+        tools/acquisition_crop_repository_probe.cpp
+    )
+    target_compile_features(acquisition_crop_repository_probe PRIVATE cxx_std_17)
+    target_link_libraries(acquisition_crop_repository_probe PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(acquisition_crop_repository_probe PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
 endfunction()
@@ -897,6 +931,9 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_selection.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_slot.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/stimulus_repository.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/acquisition_crop_repository.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_archive_context.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_acquisition_crop_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_stimulus_repository.cpp"
 )
 

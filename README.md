@@ -117,6 +117,9 @@ documented in
 The Phase 4F-B portable source-capability, exact-frame, and geometry contract is
 documented in
 [`docs/crimson_macos_phase4f_crop_source_contract.md`](docs/crimson_macos_phase4f_crop_source_contract.md).
+The Phase 4F-C acquisition crop repository, Zarr v2/v3 adapter, strict sidecar
+validation, and production archive probes are documented in
+[`docs/crimson_macos_phase4f_acquisition_crop_repository.md`](docs/crimson_macos_phase4f_acquisition_crop_repository.md).
 
 ### How Dependency Paths Are Supplied
 
