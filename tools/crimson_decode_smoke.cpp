@@ -36,6 +36,7 @@ struct Args {
     std::filesystem::path output_json;
     int frames = 160;
     int gpu = 0;
+    bool probe_keyframe_interval = false;
 };
 
 double seconds_since(Clock::time_point start) {
@@ -44,7 +45,8 @@ double seconds_since(Clock::time_point start) {
 
 void usage(const char *argv0) {
     std::cerr
-        << "Usage: " << argv0 << " VIDEO.mp4 --output-json PATH [--frames N] [--gpu N]\n"
+        << "Usage: " << argv0 << " VIDEO.mp4 --output-json PATH [--frames N] [--gpu N]"
+        << " [--probe-keyframe-interval]\n"
         << "\n"
         << "Headless Crimson FFmpeg/NVDEC sequential decode timing smoke.\n";
 }
@@ -82,6 +84,8 @@ Args parse_args(int argc, char **argv) {
             args.frames = parse_int(require_value("--frames"), "--frames");
         } else if (token == "--gpu") {
             args.gpu = parse_int(require_value("--gpu"), "--gpu");
+        } else if (token == "--probe-keyframe-interval") {
+            args.probe_keyframe_interval = true;
         } else if (token.rfind("-", 0) == 0) {
             throw std::invalid_argument("unknown option: " + token);
         } else if (args.video_path.empty()) {
@@ -158,6 +162,11 @@ json run_smoke(const Args &args) {
     payload["fps"] = demuxer.GetFramerate();
     payload["duration_seconds"] = demuxer.GetDuration();
     payload["container_reported_frames"] = demuxer.GetNumFrames();
+    payload["keyframe_interval_probe_enabled"] =
+        args.probe_keyframe_interval;
+    if (args.probe_keyframe_interval) {
+        payload["keyframe_interval"] = demuxer.FindKeyFrameInterval();
+    }
 
     CUcontext cu_context = nullptr;
     const auto init_start = Clock::now();
@@ -171,6 +180,7 @@ json run_smoke(const Args &args) {
 
     int frames_decoded = 0;
     int packets_demuxed = 0;
+    int64_t first_packet_frame = -1;
     PacketData packet_data;
     uint8_t *video = nullptr;
     size_t video_bytes = 0;
@@ -179,6 +189,14 @@ json run_smoke(const Args &args) {
     while (frames_decoded < args.frames &&
            demuxer.Demux(video, video_bytes, packet_data)) {
         ++packets_demuxed;
+        if (packets_demuxed == 1) {
+            const int64_t timestamp =
+                packet_data.pts != AV_NOPTS_VALUE ? packet_data.pts
+                                                  : packet_data.dts;
+            if (timestamp != AV_NOPTS_VALUE) {
+                first_packet_frame = demuxer.FrameNumberFromTs(timestamp);
+            }
+        }
         decoder.Decode(video, static_cast<int>(video_bytes), 0, packet_data.pts);
         int64_t timestamp = 0;
         while (frames_decoded < args.frames && decoder.GetFrame(&timestamp)) {
@@ -197,6 +215,7 @@ json run_smoke(const Args &args) {
     const double total_seconds = seconds_since(total_start);
 
     payload["packets_demuxed"] = packets_demuxed;
+    payload["first_packet_frame"] = first_packet_frame;
     payload["frames_decoded"] = frames_decoded;
     payload["decode_seconds"] = decode_seconds;
     payload["total_seconds"] = total_seconds;
@@ -204,6 +223,11 @@ json run_smoke(const Args &args) {
         total_seconds > 0.0 ? static_cast<double>(frames_decoded) / total_seconds : 0.0;
     payload["decode_fps"] =
         decode_seconds > 0.0 ? static_cast<double>(frames_decoded) / decode_seconds : 0.0;
+    if (args.probe_keyframe_interval && first_packet_frame != 0) {
+        throw std::runtime_error(
+            "keyframe interval probe did not restore demuxer to frame 0; "
+            "first packet frame was " + std::to_string(first_packet_frame));
+    }
     payload["status"] = "ok";
     return payload;
 }

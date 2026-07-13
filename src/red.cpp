@@ -2837,6 +2837,13 @@ int main(int argc, char **argv) {
         FileBrowserWindowResult file_browser_result =
             drawFileBrowserWindow(file_browser_context,
                                   file_browser_window_state);
+        if (file_browser_result.updated_path_config.has_value()) {
+            ui_path_config =
+                std::move(*file_browser_result.updated_path_config);
+            start_folder_name = ui_path_config.default_start_path;
+            std::cout << "[UIPathConfig] Applied default start path: "
+                      << start_folder_name << std::endl;
+        }
         if (file_browser_result.skeleton_selection.has_value()) {
             const auto& selection = *file_browser_result.skeleton_selection;
             bool load_calibration = true;

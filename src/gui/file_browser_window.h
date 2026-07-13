@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <fstream>
 
 #include "render.h"
@@ -24,8 +25,16 @@ struct FileBrowserSkeletonSelection {
 };
 
 struct FileBrowserWindowState {
+    static constexpr size_t kPathBufferSize = 4096;
+
     int seek_accurate_frame_num = 0;
     bool enable_legacy_manual_labeling = false;
+    bool request_open_path_editor = false;
+    std::array<char, kPathBufferSize> default_start_path_buffer{};
+    std::vector<std::array<char, kPathBufferSize>> preferred_root_buffers;
+    int path_browse_target = -2;
+    std::string path_editor_message;
+    bool path_editor_message_is_error = false;
 };
 
 struct FileBrowserWindowContext {
@@ -67,6 +76,7 @@ struct FileBrowserWindowResult {
     FileBrowserDetectionAction detection_action =
         FileBrowserDetectionAction::None;
     std::optional<int> accurate_seek_target_frame;
+    std::optional<UiPathConfig> updated_path_config;
 };
 
 FileBrowserWindowResult drawFileBrowserWindow(const FileBrowserWindowContext& context,

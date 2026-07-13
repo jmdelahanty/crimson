@@ -1029,6 +1029,18 @@ target_compile_definitions(crimson_decode_smoke PRIVATE
     CRIMSON_GIT_COMMIT="${CRIMSON_GIT_COMMIT}"
 )
 
+add_executable(ui_path_config_tests
+    tools/ui_path_config_tests.cpp
+    src/ui_path_config.cpp
+)
+target_include_directories(ui_path_config_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(ui_path_config_tests PRIVATE
+    nlohmann_json::nlohmann_json
+)
+target_compile_features(ui_path_config_tests PRIVATE cxx_std_17)
+add_test(NAME ui_path_config_tests COMMAND ui_path_config_tests)
 # --- Source Files ---
 # CUDA sources
 set(CUDA_SOURCES "")
