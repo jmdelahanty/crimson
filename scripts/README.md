@@ -24,6 +24,23 @@ The app owns the logical clock. A passing record reports requested and presented
 frame identity, PTS error, bounded native-buffer depth, intentional source-frame
 skips, late presentations, process memory, and thermal state.
 
+Camera-aligned stimulus presentation has a separate production smoke. It opens
+the representative main camera and analysis Zarr by default, or accepts video,
+Zarr, and inclusive camera range arguments:
+
+```bash
+scripts/macos_gui_smoke_stimulus.sh
+
+scripts/macos_gui_smoke_stimulus.sh \
+  /Volumes/recordings/cams/camera.mp4 \
+  /Volumes/recordings/zarr/analysis.zarr \
+  1024:1324
+```
+
+The smoke requires both `[AppleVideoSmoke] PASS` and
+`[AppleStimulusSmoke] PASS`. The latter rejects mapping/decoded identity
+mismatches and nonzero camera-frame presentation skew.
+
 Quick reference for fixing seekability issues in MP4 recordings read by crimson.
 
 ## Script Summary

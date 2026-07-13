@@ -127,7 +127,7 @@
     {
       "name": "macos-arm64-release",
       "displayName": "macOS Apple Silicon Release",
-      "description": "Native arm64 macOS Metal application with Phase 3 main-camera playback and no CUDA, NVIDIA, OpenGL, or TensorRT dependencies.",
+      "description": "Native arm64 macOS Metal application with Phase 4 camera-aligned stimulus playback and no CUDA, NVIDIA, OpenGL, or TensorRT dependencies.",
       "inherits": [
         "base",
         "backend-macos"
@@ -177,7 +177,9 @@
         "stimulus_repository_tests",
         "stimulus_repository_probe",
         "stimulus_playback_coordinator_tests",
+        "stimulus_presentation_coordinator_tests",
         "apple_stimulus_playback_tests",
+        "apple_stimulus_composite_metal_tests",
         "apple_stimulus_playback_probe",
         "apple_video_metal_tests",
         "apple_video_provider_tests",

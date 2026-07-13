@@ -140,5 +140,6 @@ The NVIDIA link retained its known OpenCV/FFmpeg version-family warnings.
 
 Phase 4D establishes the shared mapping-to-decoder contract and proves exact
 Apple decode identity with deterministic and production media. The production
-re-encode gate is closed. Phase 4E can add a second Metal viewport and measure
-camera/stimulus presentation skew without introducing another clock.
+re-encode gate is closed. Phase 4E subsequently added atomic camera/stimulus
+Metal presentation and measurable skew without introducing another clock. See
+[the Phase 4E composite presentation record](crimson_macos_phase4e_composite_stimulus_presentation.md).

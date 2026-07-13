@@ -3,6 +3,7 @@
 #include "apple_video_metal_renderer.h"
 #include "apple_video_playback_buffer.h"
 #include "playback_clock.h"
+#include "stimulus_presentation_coordinator.h"
 
 #include <cstdint>
 
@@ -31,15 +32,30 @@ struct AppleVideoViewerStats {
   AppleViewerThermalState thermal_state = AppleViewerThermalState::Nominal;
 };
 
+struct AppleVideoControlResult {
+  bool camera_discontinuity = false;
+};
+
+struct AppleCompositeVideoViewports {
+  AppleMetalVideoViewport camera;
+  AppleMetalVideoViewport stimulus;
+};
+
 void sampleAppleVideoViewerSystemMetrics(AppleVideoViewerStats &stats);
 const char *appleViewerThermalStateName(AppleViewerThermalState state);
 
-void drawAppleVideoControls(LogicalPlaybackClock &clock,
-                            AppleVideoPlaybackBuffer &playback,
-                            const AppleVideoViewerStats &stats,
-                            bool interactive);
+AppleVideoControlResult drawAppleVideoControls(
+    LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
+    const AppleVideoViewerStats &stats,
+    const crimson::playback::StimulusPresentationMetrics *stimulus_metrics,
+    bool interactive);
 
 AppleMetalVideoViewport appleVideoViewport(int framebuffer_width,
                                            int framebuffer_height,
                                            float framebuffer_scale,
                                            const AppleVideoAssetInfo &info);
+
+AppleCompositeVideoViewports appleCompositeVideoViewports(
+    int framebuffer_width, int framebuffer_height, float framebuffer_scale,
+    const AppleVideoAssetInfo &camera_info,
+    const AppleVideoAssetInfo *stimulus_info);

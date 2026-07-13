@@ -73,6 +73,7 @@ target_compile_features(crimson_repository_contracts PUBLIC cxx_std_17)
 
 add_library(crimson_stimulus_playback_contracts STATIC
     src/stimulus_playback_coordinator.cpp
+    src/stimulus_presentation_coordinator.cpp
 )
 target_include_directories(crimson_stimulus_playback_contracts PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -135,6 +136,22 @@ set_target_properties(stimulus_playback_coordinator_tests PROPERTIES
 add_test(NAME stimulus_playback_coordinator_tests
     COMMAND $<TARGET_FILE:stimulus_playback_coordinator_tests>)
 set_tests_properties(stimulus_playback_coordinator_tests PROPERTIES
+    LABELS "playback;portable;stimulus"
+)
+
+add_executable(stimulus_presentation_coordinator_tests
+    tools/stimulus_presentation_coordinator_tests.cpp
+)
+target_link_libraries(stimulus_presentation_coordinator_tests PRIVATE
+    crimson_stimulus_playback_contracts
+)
+target_compile_features(stimulus_presentation_coordinator_tests PRIVATE cxx_std_17)
+set_target_properties(stimulus_presentation_coordinator_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME stimulus_presentation_coordinator_tests
+    COMMAND $<TARGET_FILE:stimulus_presentation_coordinator_tests>)
+set_tests_properties(stimulus_presentation_coordinator_tests PROPERTIES
     LABELS "playback;portable;stimulus"
 )
 
@@ -1472,7 +1489,9 @@ if(CRIMSON_BUILD_MACOS_APP)
         ${CRIMSON_MACOS_IMPLOT_DIR}
     )
     target_link_libraries(crimson_macos_shell PRIVATE
-        crimson_apple_video
+        crimson_apple_stimulus_playback
+        crimson_tensorstore_repositories
+        crimson::tensorstore_zarr
         glfw
         ${COCOA_FRAMEWORK}
         ${METAL_FRAMEWORK}
@@ -1577,6 +1596,34 @@ if(CRIMSON_BUILD_MACOS_APP)
         TIMEOUT 60
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
+    add_executable(apple_stimulus_composite_metal_tests
+        tools/apple_stimulus_composite_metal_tests.mm
+    )
+    target_compile_features(apple_stimulus_composite_metal_tests PRIVATE cxx_std_17)
+    target_compile_options(apple_stimulus_composite_metal_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
+    )
+    target_link_libraries(apple_stimulus_composite_metal_tests PRIVATE
+        crimson_apple_stimulus_playback
+    )
+    set_target_properties(apple_stimulus_composite_metal_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_dependencies(apple_stimulus_composite_metal_tests
+        apple_video_provider_tests)
+    set(CRIMSON_STIMULUS_COMPOSITE_VIDEO_FIXTURE
+        "${CMAKE_CURRENT_BINARY_DIR}/apple_stimulus_composite_fixture.mov")
+    add_test(NAME apple_stimulus_composite_metal_tests
+        COMMAND ${CMAKE_COMMAND}
+            -DFIXTURE_WRITER=$<TARGET_FILE:apple_video_provider_tests>
+            -DPLAYBACK_TEST=$<TARGET_FILE:apple_stimulus_composite_metal_tests>
+            -DVIDEO_FIXTURE=${CRIMSON_STIMULUS_COMPOSITE_VIDEO_FIXTURE}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunAppleStimulusPlaybackTest.cmake)
+    set_tests_properties(apple_stimulus_composite_metal_tests PROPERTIES
+        LABELS "composite;headless;macos;metal;playback;stimulus;video"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
     add_executable(apple_video_metal_tests
         tools/apple_video_metal_tests.mm
     )
@@ -1618,7 +1665,7 @@ if(CRIMSON_BUILD_MACOS_APP)
     )
 
     message(STATUS "========================================")
-    message(STATUS "Crimson macOS Phase 3 Configuration")
+    message(STATUS "Crimson macOS Phase 4 Configuration")
     message(STATUS "  Architecture: ${CMAKE_SYSTEM_PROCESSOR}")
     message(STATUS "  Renderer: Metal")
     message(STATUS "  Window backend: GLFW/Cocoa")

@@ -108,6 +108,9 @@ path resolution, is documented in
 The Phase 4D camera-driven stimulus decode policy, headless identity tests, and
 production re-encode gate are documented in
 [`docs/crimson_macos_phase4d_aligned_stimulus_decode.md`](docs/crimson_macos_phase4d_aligned_stimulus_decode.md).
+The Phase 4E atomic camera/stimulus Metal presentation contract and production
+smoke results are documented in
+[`docs/crimson_macos_phase4e_composite_stimulus_presentation.md`](docs/crimson_macos_phase4e_composite_stimulus_presentation.md).
 
 ### How Dependency Paths Are Supplied
 

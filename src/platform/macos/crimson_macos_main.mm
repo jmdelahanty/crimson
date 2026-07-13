@@ -1,4 +1,5 @@
 #include "apple_metal_presentation_texture.h"
+#include "apple_stimulus_playback_session.h"
 #include "apple_video_metal_renderer.h"
 #include "apple_video_playback_buffer.h"
 #include "apple_video_viewer_ui.h"
@@ -7,6 +8,9 @@
 #include "imgui_impl_metal.h"
 #include "implot.h"
 #include "playback_clock.h"
+#include "stimulus_presentation_coordinator.h"
+#include "zarr/archive_context.h"
+#include "zarr/tensorstore_stimulus_repository.h"
 
 #define GLFW_INCLUDE_NONE
 #define GLFW_EXPOSE_NATIVE_COCOA
@@ -23,6 +27,8 @@
 #include <cstdio>
 #include <cstdint>
 #include <cmath>
+#include <limits>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -41,10 +47,13 @@ struct LaunchOptions {
   bool smoke = false;
   bool validate_metal = false;
   bool video_smoke = false;
+  bool stimulus_smoke = false;
   int smoke_frames = 12;
   int video_smoke_start = 0;
   int video_smoke_end = 0;
   std::string video_path;
+  std::string zarr_path;
+  std::string stimulus_run;
 };
 
 void glfwErrorCallback(int error, const char *description) {
@@ -93,6 +102,16 @@ bool parseFrameRange(const std::string &value, int *start, int *end) {
   return true;
 }
 
+bool viewportFitsDrawable(const AppleMetalVideoViewport &viewport,
+                          int framebuffer_width, int framebuffer_height) {
+  return std::isfinite(viewport.x) && std::isfinite(viewport.y) &&
+         std::isfinite(viewport.width) && std::isfinite(viewport.height) &&
+         viewport.x >= 0.0 && viewport.y >= 0.0 && viewport.width > 0.0 &&
+         viewport.height > 0.0 &&
+         viewport.x + viewport.width <= framebuffer_width + 0.001 &&
+         viewport.y + viewport.height <= framebuffer_height + 0.001;
+}
+
 std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
   LaunchOptions options;
   for (int i = 1; i < argc; ++i) {
@@ -113,6 +132,22 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
       options.video_path = argv[++i];
       continue;
     }
+    if (argument == "--zarr") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "Missing value for --zarr\n");
+        return std::nullopt;
+      }
+      options.zarr_path = argv[++i];
+      continue;
+    }
+    if (argument == "--stimulus-run") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "Missing value for --stimulus-run\n");
+        return std::nullopt;
+      }
+      options.stimulus_run = argv[++i];
+      continue;
+    }
     if (argument == "--video-smoke") {
       if (i + 1 >= argc ||
           !parseFrameRange(argv[++i], &options.video_smoke_start,
@@ -123,6 +158,19 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
       }
       options.smoke = true;
       options.video_smoke = true;
+      continue;
+    }
+    if (argument == "--stimulus-smoke") {
+      if (i + 1 >= argc ||
+          !parseFrameRange(argv[++i], &options.video_smoke_start,
+                           &options.video_smoke_end)) {
+        std::fprintf(stderr,
+                     "Invalid --stimulus-smoke value; expected START:END\n");
+        return std::nullopt;
+      }
+      options.smoke = true;
+      options.video_smoke = true;
+      options.stimulus_smoke = true;
       continue;
     }
     if (argument == "--smoke-frames") {
@@ -153,6 +201,18 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
   }
   if (options.video_smoke && options.video_path.empty()) {
     std::fprintf(stderr, "--video-smoke requires --video PATH\n");
+    return std::nullopt;
+  }
+  if (!options.zarr_path.empty() && options.video_path.empty()) {
+    std::fprintf(stderr, "--zarr requires --video PATH\n");
+    return std::nullopt;
+  }
+  if (!options.stimulus_run.empty() && options.zarr_path.empty()) {
+    std::fprintf(stderr, "--stimulus-run requires --zarr PATH\n");
+    return std::nullopt;
+  }
+  if (options.stimulus_smoke && options.zarr_path.empty()) {
+    std::fprintf(stderr, "--stimulus-smoke requires --zarr PATH\n");
     return std::nullopt;
   }
   return options;
@@ -442,7 +502,18 @@ int main(int argc, char **argv) {
   LogicalPlaybackClock video_clock;
   AppleVideoViewerStats viewer_stats;
   std::optional<AppleDecodedVideoFrame> current_video_frame;
+  std::optional<AppleDecodedVideoFrame> pending_video_frame;
   const bool video_enabled = !options->video_path.empty();
+  const bool stimulus_enabled = video_enabled && !options->zarr_path.empty();
+  AppleStimulusPlaybackSession stimulus_playback;
+  crimson::playback::StimulusPresentationCoordinator stimulus_presentation;
+  std::optional<AppleAlignedStimulusFrame> current_stimulus_frame;
+  crimson::zarr::StimulusFrameResolution current_stimulus_resolution;
+  std::string stimulus_error;
+  bool stimulus_failed = false;
+  bool stimulus_smoke_end_satisfied = false;
+  bool pending_camera_discontinuity = true;
+  int64_t last_stimulus_camera_request = -1;
   auto video_smoke_started = std::chrono::steady_clock::now();
   if (video_enabled) {
     std::string video_error;
@@ -496,6 +567,67 @@ int main(int argc, char **argv) {
       glfwDestroyWindow(window);
       glfwTerminate();
       return 9;
+    }
+    if (stimulus_enabled) {
+      auto archive =
+          crimson::zarr::ArchiveContext::Open(options->zarr_path,
+                                              &stimulus_error);
+      std::unique_ptr<crimson::zarr::StimulusRepository> repository;
+      if (archive) {
+        repository = crimson::zarr::OpenStimulusRepository(
+            archive, options->stimulus_run, &stimulus_error);
+      }
+      const std::string stimulus_run =
+          repository ? repository->runName() : std::string{};
+      if (!repository ||
+          !stimulus_playback.open(std::move(repository), 6,
+                                  &stimulus_error) ||
+          initial_frame > std::numeric_limits<int32_t>::max() ||
+          !stimulus_playback.requestCameraFrame(
+              static_cast<int32_t>(initial_frame), true, &stimulus_error)) {
+        std::fprintf(stderr, "[AppleStimulus] Initialization failed: %s\n",
+                     stimulus_error.c_str());
+        stimulus_playback.close();
+        video_playback.close();
+        video_renderer.reset();
+        ImGui_ImplMetal_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImPlot::DestroyContext();
+        ImGui::DestroyContext();
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 10;
+      }
+      const auto initial_resolution = stimulus_playback.resolveCameraFrame(
+          static_cast<int32_t>(initial_frame));
+      if (initial_resolution.status ==
+              crimson::zarr::StimulusMappingStatus::Mapped &&
+          !stimulus_playback.waitForCameraFrame(
+              static_cast<int32_t>(initial_frame), std::chrono::seconds(10),
+              &stimulus_error)) {
+        std::fprintf(stderr,
+                     "[AppleStimulus] Initial mapped frame failed: %s\n",
+                     stimulus_error.c_str());
+        stimulus_playback.close();
+        video_playback.close();
+        video_renderer.reset();
+        ImGui_ImplMetal_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImPlot::DestroyContext();
+        ImGui::DestroyContext();
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 10;
+      }
+      const auto &stimulus_info = stimulus_playback.info();
+      std::printf(
+          "[AppleStimulus] run=%s asset=%dx%d frames=%lld fps=%.6f "
+          "buffer_capacity=6 startup_ms=%.1f path=%s\n",
+          stimulus_run.c_str(), stimulus_info.width, stimulus_info.height,
+          static_cast<long long>(stimulus_info.frame_count),
+          stimulus_info.nominal_frame_rate,
+          stimulus_playback.metrics().decoder.startup_ms,
+          stimulus_info.path.c_str());
     }
     video_clock.seek(initial_frame);
     video_clock.play();
@@ -619,12 +751,27 @@ int main(int argc, char **argv) {
           video_clock.pause(now);
           video_clock.seek(options->video_smoke_end, now);
           viewer_stats.requested_frame = options->video_smoke_end;
+          pending_camera_discontinuity = true;
+        } else if (!options->video_smoke && video_clock.isPlaying() &&
+                   viewer_stats.requested_frame >=
+                       video_playback.info().frame_count - 1) {
+          video_clock.pause(now);
+          video_clock.seek(video_playback.info().frame_count - 1, now);
+          viewer_stats.requested_frame =
+              video_playback.info().frame_count - 1;
+          pending_camera_discontinuity = true;
         }
-        drawAppleVideoControls(video_clock, video_playback, viewer_stats,
-                               !options->video_smoke);
+        const auto control_result = drawAppleVideoControls(
+            video_clock, video_playback, viewer_stats,
+            stimulus_enabled ? &stimulus_presentation.metrics() : nullptr,
+            !options->video_smoke);
+        pending_camera_discontinuity =
+            pending_camera_discontinuity ||
+            control_result.camera_discontinuity;
         viewer_stats.requested_frame = video_clock.requestedFrame();
         const bool is_playing = video_clock.isPlaying();
         if (was_playing && !is_playing) {
+          pending_camera_discontinuity = true;
           std::string pause_error;
           if (!video_playback.requestSeek(viewer_stats.requested_frame,
                                           &pause_error)) {
@@ -636,12 +783,95 @@ int main(int argc, char **argv) {
         video_playback.setPlaybackState(
             viewer_stats.requested_frame, video_clock.isPlaying(),
             video_playback.info().nominal_frame_rate);
+        if (stimulus_enabled && pending_camera_discontinuity) {
+          pending_video_frame.reset();
+        }
         auto selected = video_playback.frameForTarget(
             viewer_stats.requested_frame, !video_clock.isPlaying());
-        if (selected) {
+        if (!stimulus_enabled) {
+          if (selected) {
+            current_video_frame = std::move(selected);
+          } else if (!video_clock.isPlaying()) {
+            current_video_frame.reset();
+          }
+        } else if (!stimulus_failed) {
+          if (selected &&
+              (!pending_video_frame || pending_camera_discontinuity)) {
+            pending_video_frame = std::move(selected);
+          }
+          if (pending_video_frame) {
+            const int64_t camera_frame =
+                pending_video_frame->metadata.frame_number;
+            if (camera_frame < 0 ||
+                camera_frame > std::numeric_limits<int32_t>::max()) {
+              stimulus_error =
+                  "camera frame exceeds the stimulus mapping range";
+              stimulus_failed = true;
+            } else {
+              const int32_t mapped_camera_frame =
+                  static_cast<int32_t>(camera_frame);
+              if (last_stimulus_camera_request != camera_frame ||
+                  pending_camera_discontinuity) {
+                if (!stimulus_playback.requestCameraFrame(
+                        mapped_camera_frame, pending_camera_discontinuity,
+                        &stimulus_error)) {
+                  std::fprintf(stderr,
+                               "[AppleStimulus] Camera frame %d request "
+                               "failed: %s\n",
+                               mapped_camera_frame, stimulus_error.c_str());
+                  stimulus_failed = true;
+                } else {
+                  last_stimulus_camera_request = camera_frame;
+                  pending_camera_discontinuity = false;
+                }
+              }
+
+              if (!stimulus_failed) {
+                const auto resolution =
+                    stimulus_playback.resolveCameraFrame(mapped_camera_frame);
+                auto aligned =
+                    stimulus_playback.frameForCameraFrame(mapped_camera_frame);
+                const std::optional<int32_t> decoded_stimulus_frame =
+                    aligned ? std::optional<int32_t>(
+                                  aligned->decoded_frame.metadata.frame_number)
+                            : std::nullopt;
+                const auto presentation = stimulus_presentation.update(
+                    mapped_camera_frame, resolution,
+                    decoded_stimulus_frame);
+                if (presentation.commit_composite) {
+                  current_video_frame = std::move(pending_video_frame);
+                  pending_video_frame.reset();
+                  current_stimulus_resolution = resolution;
+                  if (presentation.render_current) {
+                    if (aligned) {
+                      current_stimulus_frame = std::move(aligned);
+                    }
+                    if (!current_stimulus_frame ||
+                        !resolution.stimulus_frame ||
+                        current_stimulus_frame->decoded_frame.metadata
+                                .frame_number != *resolution.stimulus_frame) {
+                      stimulus_error =
+                          "composite stimulus frame does not match camera "
+                          "mapping";
+                      stimulus_failed = true;
+                    }
+                  } else {
+                    current_stimulus_frame.reset();
+                  }
+                }
+              }
+            }
+          }
+          if (stimulus_failed) {
+            if (pending_video_frame) {
+              current_video_frame = std::move(pending_video_frame);
+            }
+            pending_video_frame.reset();
+            current_stimulus_frame.reset();
+            stimulus_presentation.resetVisibleFrame();
+          }
+        } else if (selected) {
           current_video_frame = std::move(selected);
-        } else if (!video_clock.isPlaying()) {
-          current_video_frame.reset();
         }
 
         if (current_video_frame) {
@@ -681,19 +911,62 @@ int main(int argc, char **argv) {
                   std::max(viewer_stats.max_lag_frames, lag_frames);
             }
           }
+          bool stimulus_frame_encoded = false;
           std::string render_error;
-          const AppleMetalVideoViewport video_viewport = appleVideoViewport(
-              width, height, io.DisplayFramebufferScale.y,
-              video_playback.info());
+          const AppleCompositeVideoViewports video_viewports =
+              appleCompositeVideoViewports(
+                  width, height, io.DisplayFramebufferScale.y,
+                  video_playback.info(),
+                  stimulus_enabled ? &stimulus_playback.info() : nullptr);
+          if (!viewportFitsDrawable(video_viewports.camera, width, height) ||
+              (stimulus_enabled &&
+               !viewportFitsDrawable(video_viewports.stimulus, width,
+                                      height))) {
+            std::fprintf(stderr,
+                         "[MacShell] Composite viewport exceeds drawable\n");
+            render_failed = true;
+            break;
+          }
           if (!video_renderer.encode(
                   *current_video_frame,
                   reinterpret_cast<uintptr_t>((__bridge void *)command_buffer),
                   reinterpret_cast<uintptr_t>((__bridge void *)encoder),
-                  video_viewport, &render_error)) {
+                  video_viewports.camera, &render_error)) {
             std::fprintf(stderr, "[AppleVideo] Metal encode failed: %s\n",
                          render_error.c_str());
             render_failed = true;
             break;
+          }
+          if (stimulus_enabled && current_stimulus_frame) {
+            if (!video_renderer.encode(
+                    current_stimulus_frame->decoded_frame,
+                    reinterpret_cast<uintptr_t>(
+                        (__bridge void *)command_buffer),
+                    reinterpret_cast<uintptr_t>((__bridge void *)encoder),
+                    video_viewports.stimulus, &render_error)) {
+              std::fprintf(stderr,
+                           "[AppleStimulus] Metal encode failed: %s\n",
+                           render_error.c_str());
+              render_failed = true;
+              break;
+            }
+            stimulus_frame_encoded = true;
+          }
+          if (options->stimulus_smoke &&
+              metadata.frame_number >= options->video_smoke_end) {
+            if (current_stimulus_resolution.status !=
+                crimson::zarr::StimulusMappingStatus::Mapped) {
+              stimulus_error =
+                  "stimulus smoke end camera frame is not mapped";
+              stimulus_failed = true;
+            } else {
+              stimulus_smoke_end_satisfied =
+                  stimulus_frame_encoded &&
+                  current_stimulus_resolution.stimulus_frame &&
+                  current_stimulus_frame &&
+                  current_stimulus_frame->decoded_frame.metadata.frame_number ==
+                      *current_stimulus_resolution.stimulus_frame;
+            }
           }
         }
       } else {
@@ -732,7 +1005,9 @@ int main(int argc, char **argv) {
         glfwSetWindowShouldClose(window, GLFW_TRUE);
       }
       if (options->video_smoke &&
-          viewer_stats.presented_frame >= options->video_smoke_end) {
+          viewer_stats.presented_frame >= options->video_smoke_end &&
+          (!options->stimulus_smoke || stimulus_smoke_end_satisfied ||
+           stimulus_failed)) {
         glfwSetWindowShouldClose(window, GLFW_TRUE);
       }
       if (options->video_smoke &&
@@ -763,7 +1038,23 @@ int main(int argc, char **argv) {
   const AppleVideoPlaybackBufferMetrics final_video_metrics =
       video_enabled ? video_playback.metrics()
                     : AppleVideoPlaybackBufferMetrics{};
+  const AppleVideoAssetInfo final_video_info =
+      video_enabled ? video_playback.info() : AppleVideoAssetInfo{};
+  const AppleStimulusPlaybackMetrics final_stimulus_metrics =
+      stimulus_enabled ? stimulus_playback.metrics()
+                       : AppleStimulusPlaybackMetrics{};
+  const crimson::playback::StimulusPresentationMetrics
+      final_stimulus_presentation = stimulus_presentation.metrics();
+  const int32_t final_paired_stimulus_frame =
+      current_stimulus_frame
+          ? current_stimulus_frame->decoded_frame.metadata.frame_number
+          : -1;
+  current_stimulus_frame.reset();
+  if (stimulus_enabled) {
+    stimulus_playback.close();
+  }
   if (video_enabled) {
+    current_video_frame.reset();
     video_playback.close();
     video_renderer.reset();
   }
@@ -781,7 +1072,7 @@ int main(int argc, char **argv) {
                                       video_smoke_started)
             .count();
     const double maximum_accepted_lag_frames =
-        video_playback.info().nominal_frame_rate * 5.0;
+        final_video_info.nominal_frame_rate * 5.0;
     if (render_failed ||
         viewer_stats.presented_frame < options->video_smoke_end ||
         std::fabs(viewer_stats.pts_error_frames) > 0.51 ||
@@ -836,6 +1127,99 @@ int main(int argc, char **argv) {
         viewer_stats.process_memory_mib,
         viewer_stats.peak_process_memory_mib,
         appleViewerThermalStateName(viewer_stats.thermal_state));
+    if (options->stimulus_smoke) {
+      const bool stimulus_smoke_failed =
+          stimulus_failed || !stimulus_smoke_end_satisfied ||
+          final_stimulus_presentation.mapped_presentations == 0 ||
+          final_stimulus_presentation.last_target_stimulus_frame < 0 ||
+          final_paired_stimulus_frame !=
+              final_stimulus_presentation.last_target_stimulus_frame ||
+          final_stimulus_presentation.presented_stimulus_frame !=
+              final_stimulus_presentation.last_target_stimulus_frame ||
+          final_stimulus_presentation.mismatched_mapping_frames != 0 ||
+          final_stimulus_presentation.mismatched_decoded_frames != 0 ||
+          final_stimulus_presentation.camera_skew_frames != 0 ||
+          final_stimulus_presentation.max_abs_camera_skew_frames != 0 ||
+          final_stimulus_metrics.failed_requests != 0;
+      const std::string &reported_stimulus_error =
+          stimulus_error.empty()
+              ? final_stimulus_metrics.decoder.last_error
+              : stimulus_error;
+      if (stimulus_smoke_failed) {
+        std::fprintf(
+            stderr,
+            "[AppleStimulusSmoke] FAIL start=%d end=%d camera=%d "
+            "target=%d decoded=%d decoder_head=%lld presented=%d "
+            "generation=%llu "
+            "exact=%llu holds=%llu deferred=%llu "
+            "max_deferred_run=%llu mapping_mismatches=%llu "
+            "decoded_mismatches=%llu camera_skew=%+lld "
+            "max_abs_camera_skew=%llu failed_requests=%llu error=%s\n",
+            options->video_smoke_start, options->video_smoke_end,
+            final_stimulus_presentation.last_camera_frame,
+            final_stimulus_presentation.last_target_stimulus_frame,
+            final_paired_stimulus_frame,
+            static_cast<long long>(
+                final_stimulus_metrics.decoder.last_decoded_frame),
+            final_stimulus_presentation.presented_stimulus_frame,
+            static_cast<unsigned long long>(
+                final_stimulus_presentation.last_rendered_generation),
+            static_cast<unsigned long long>(
+                final_stimulus_presentation.exact_presentations),
+            static_cast<unsigned long long>(
+                final_stimulus_presentation.held_presentations),
+            static_cast<unsigned long long>(
+                final_stimulus_presentation.unavailable_presentations),
+            static_cast<unsigned long long>(
+                final_stimulus_presentation.max_consecutive_unavailable),
+            static_cast<unsigned long long>(
+                final_stimulus_presentation.mismatched_mapping_frames),
+            static_cast<unsigned long long>(
+                final_stimulus_presentation.mismatched_decoded_frames),
+            static_cast<long long>(
+                final_stimulus_presentation.camera_skew_frames),
+            static_cast<unsigned long long>(
+                final_stimulus_presentation.max_abs_camera_skew_frames),
+            static_cast<unsigned long long>(
+                final_stimulus_metrics.failed_requests),
+            reported_stimulus_error.c_str());
+        return 8;
+      }
+      std::printf(
+          "[AppleStimulusSmoke] PASS start=%d end=%d camera=%d target=%d "
+          "decoded=%d decoder_head=%lld presented=%d generation=%llu "
+          "paired=%llu holds=%llu deferred=%llu interpolated=%llu "
+          "max_deferred_run=%llu seeks=%llu follows=%llu "
+          "decoder_peak=%zu camera_skew=%+lld max_abs_camera_skew=%llu\n",
+          options->video_smoke_start, options->video_smoke_end,
+          final_stimulus_presentation.last_camera_frame,
+          final_stimulus_presentation.last_target_stimulus_frame,
+          final_paired_stimulus_frame,
+          static_cast<long long>(
+              final_stimulus_metrics.decoder.last_decoded_frame),
+          final_stimulus_presentation.presented_stimulus_frame,
+          static_cast<unsigned long long>(
+              final_stimulus_presentation.last_rendered_generation),
+          static_cast<unsigned long long>(
+              final_stimulus_presentation.exact_presentations +
+              final_stimulus_presentation.held_presentations),
+          static_cast<unsigned long long>(
+              final_stimulus_presentation.held_presentations),
+          static_cast<unsigned long long>(
+              final_stimulus_presentation.unavailable_presentations),
+          static_cast<unsigned long long>(
+              final_stimulus_presentation.interpolated_presentations),
+          static_cast<unsigned long long>(
+              final_stimulus_presentation.max_consecutive_unavailable),
+          static_cast<unsigned long long>(final_stimulus_metrics.seek_requests),
+          static_cast<unsigned long long>(
+              final_stimulus_metrics.follow_requests),
+          final_stimulus_metrics.decoder.peak_buffered_frames,
+          static_cast<long long>(
+              final_stimulus_presentation.camera_skew_frames),
+          static_cast<unsigned long long>(
+              final_stimulus_presentation.max_abs_camera_skew_frames));
+    }
   } else if (options->smoke) {
     if (render_failed || presented_frames < options->smoke_frames) {
       std::fprintf(stderr,
@@ -847,5 +1231,5 @@ int main(int argc, char **argv) {
                 "window=GLFW/Cocoa font=bundled\n",
                 presented_frames);
   }
-  return render_failed ? 8 : 0;
+  return render_failed || stimulus_failed ? 8 : 0;
 }

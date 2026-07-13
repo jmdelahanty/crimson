@@ -43,7 +43,7 @@ AppleViewerThermalState currentThermalState() {
   return AppleViewerThermalState::Unknown;
 }
 
-void seekViewer(LogicalPlaybackClock &clock,
+bool seekViewer(LogicalPlaybackClock &clock,
                 AppleVideoPlaybackBuffer &playback, int64_t frame_number) {
   clock.pause();
   clock.seek(frame_number);
@@ -51,7 +51,24 @@ void seekViewer(LogicalPlaybackClock &clock,
   if (!playback.requestSeek(frame_number, &error)) {
     std::fprintf(stderr, "[AppleVideo] Seek request failed: %s\n",
                  error.c_str());
+    return false;
   }
+  return true;
+}
+
+AppleMetalVideoViewport fitVideoViewport(double x, double y, double width,
+                                         double height,
+                                         const AppleVideoAssetInfo &info) {
+  if (width <= 0.0 || height <= 0.0 || info.width <= 0 || info.height <= 0) {
+    return {};
+  }
+  const double scale =
+      std::min(width / static_cast<double>(info.width),
+               height / static_cast<double>(info.height));
+  const double fitted_width = info.width * scale;
+  const double fitted_height = info.height * scale;
+  return {x + (width - fitted_width) * 0.5,
+          y + (height - fitted_height) * 0.5, fitted_width, fitted_height};
 }
 
 }  // namespace
@@ -79,12 +96,14 @@ const char *appleViewerThermalStateName(AppleViewerThermalState state) {
   return "unknown";
 }
 
-void drawAppleVideoControls(LogicalPlaybackClock &clock,
-                            AppleVideoPlaybackBuffer &playback,
-                            const AppleVideoViewerStats &stats,
-                            bool interactive) {
+AppleVideoControlResult drawAppleVideoControls(
+    LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
+    const AppleVideoViewerStats &stats,
+    const crimson::playback::StimulusPresentationMetrics *stimulus_metrics,
+    bool interactive) {
+  AppleVideoControlResult result;
   const ImGuiViewport *viewport = ImGui::GetMainViewport();
-  constexpr float panel_height = 108.0f;
+  const float panel_height = stimulus_metrics == nullptr ? 108.0f : 132.0f;
   ImGui::SetNextWindowPos(
       ImVec2(viewport->WorkPos.x,
              viewport->WorkPos.y + viewport->WorkSize.y - panel_height));
@@ -101,6 +120,7 @@ void drawAppleVideoControls(LogicalPlaybackClock &clock,
   if (ImGui::Button(clock.isPlaying() ? "||" : ">", ImVec2(34.0f, 28.0f))) {
     if (clock.isPlaying()) {
       clock.pause();
+      result.camera_discontinuity = true;
     } else {
       clock.play();
     }
@@ -108,15 +128,19 @@ void drawAppleVideoControls(LogicalPlaybackClock &clock,
   showItemTooltip(clock.isPlaying() ? "Pause" : "Play");
   ImGui::SameLine();
   if (ImGui::ArrowButton("step-back", ImGuiDir_Left)) {
-    seekViewer(clock, playback,
-               std::max<int64_t>(0, clock.requestedFrame() - 1));
+    result.camera_discontinuity =
+        seekViewer(clock, playback,
+                   std::max<int64_t>(0, clock.requestedFrame() - 1)) ||
+        result.camera_discontinuity;
   }
   showItemTooltip("Previous frame");
   ImGui::SameLine();
   if (ImGui::ArrowButton("step-forward", ImGuiDir_Right)) {
-    seekViewer(clock, playback,
-               std::min<int64_t>(clock.frameCount() - 1,
-                                 clock.requestedFrame() + 1));
+    result.camera_discontinuity =
+        seekViewer(clock, playback,
+                   std::min<int64_t>(clock.frameCount() - 1,
+                                     clock.requestedFrame() + 1)) ||
+        result.camera_discontinuity;
   }
   showItemTooltip("Next frame");
   ImGui::SameLine();
@@ -138,7 +162,9 @@ void drawAppleVideoControls(LogicalPlaybackClock &clock,
     clock.seek(timeline_frame);
   }
   if (timeline_active && ImGui::IsItemDeactivatedAfterEdit()) {
-    seekViewer(clock, playback, timeline_frame);
+    result.camera_discontinuity =
+        seekViewer(clock, playback, timeline_frame) ||
+        result.camera_discontinuity;
     timeline_active = false;
   }
   if (!interactive) {
@@ -169,27 +195,46 @@ void drawAppleVideoControls(LogicalPlaybackClock &clock,
       stats.max_lag_frames,
       static_cast<unsigned long long>(metrics.catchup_discarded_frames),
       metrics.startup_ms, metrics.last_seek_ms);
+  if (stimulus_metrics != nullptr) {
+    ImGui::Text(
+        "Stimulus target %d   presented %d   camera skew %+.0f frames   "
+        "holds %llu   deferred %llu (max run %llu)",
+        stimulus_metrics->last_target_stimulus_frame,
+        stimulus_metrics->presented_stimulus_frame,
+        static_cast<double>(stimulus_metrics->camera_skew_frames),
+        static_cast<unsigned long long>(stimulus_metrics->held_presentations),
+        static_cast<unsigned long long>(
+            stimulus_metrics->unavailable_presentations),
+        static_cast<unsigned long long>(
+            stimulus_metrics->max_consecutive_unavailable));
+  }
   ImGui::End();
 
   if (interactive && !ImGui::GetIO().WantTextInput &&
       ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
     if (clock.isPlaying()) {
       clock.pause();
+      result.camera_discontinuity = true;
     } else {
       clock.play();
     }
   }
   if (interactive && !ImGui::GetIO().WantTextInput &&
       ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false)) {
-    seekViewer(clock, playback,
-               std::max<int64_t>(0, clock.requestedFrame() - 1));
+    result.camera_discontinuity =
+        seekViewer(clock, playback,
+                   std::max<int64_t>(0, clock.requestedFrame() - 1)) ||
+        result.camera_discontinuity;
   }
   if (interactive && !ImGui::GetIO().WantTextInput &&
       ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)) {
-    seekViewer(clock, playback,
-               std::min<int64_t>(clock.frameCount() - 1,
-                                 clock.requestedFrame() + 1));
+    result.camera_discontinuity =
+        seekViewer(clock, playback,
+                   std::min<int64_t>(clock.frameCount() - 1,
+                                     clock.requestedFrame() + 1)) ||
+        result.camera_discontinuity;
   }
+  return result;
 }
 
 AppleMetalVideoViewport appleVideoViewport(int framebuffer_width,
@@ -200,11 +245,47 @@ AppleMetalVideoViewport appleVideoViewport(int framebuffer_width,
   const double available_width = framebuffer_width;
   const double available_height =
       std::max(1.0, framebuffer_height - control_height);
-  const double scale =
-      std::min(available_width / static_cast<double>(info.width),
-               available_height / static_cast<double>(info.height));
-  const double width = info.width * scale;
-  const double height = info.height * scale;
-  return {(available_width - width) * 0.5,
-          (available_height - height) * 0.5, width, height};
+  return fitVideoViewport(0.0, 0.0, available_width, available_height, info);
+}
+
+AppleCompositeVideoViewports appleCompositeVideoViewports(
+    int framebuffer_width, int framebuffer_height, float framebuffer_scale,
+    const AppleVideoAssetInfo &camera_info,
+    const AppleVideoAssetInfo *stimulus_info) {
+  AppleCompositeVideoViewports result;
+  if (stimulus_info == nullptr) {
+    result.camera = appleVideoViewport(framebuffer_width, framebuffer_height,
+                                       framebuffer_scale, camera_info);
+    return result;
+  }
+
+  const double control_height = 132.0 * framebuffer_scale;
+  const double available_width = std::max(1, framebuffer_width);
+  const double available_height =
+      std::max(1.0, framebuffer_height - control_height);
+  if (available_width < 4.0) {
+    result.camera = fitVideoViewport(0.0, 0.0, available_width,
+                                     available_height, camera_info);
+    result.stimulus = fitVideoViewport(
+        std::max(0.0, available_width - 1.0), 0.0, 1.0,
+        available_height, *stimulus_info);
+    return result;
+  }
+  const double gutter = std::min(
+      std::max(8.0, 12.0 * framebuffer_scale), available_width * 0.05);
+  const double maximum_stimulus_width = std::max(
+      1.0, std::min(360.0 * framebuffer_scale, available_width * 0.4));
+  const double minimum_stimulus_width =
+      std::min(160.0 * framebuffer_scale, maximum_stimulus_width);
+  const double stimulus_width =
+      std::clamp(available_width * 0.24, minimum_stimulus_width,
+                 maximum_stimulus_width);
+  const double camera_width =
+      std::max(1.0, available_width - stimulus_width - gutter);
+  result.camera = fitVideoViewport(0.0, 0.0, camera_width, available_height,
+                                   camera_info);
+  result.stimulus = fitVideoViewport(
+      camera_width + gutter, 0.0, stimulus_width, available_height,
+      *stimulus_info);
+  return result;
 }
