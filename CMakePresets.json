@@ -177,6 +177,8 @@
         "analysis_crop_geometry_repository_tests",
         "keypoint_overlay_repository_tests",
         "keypoint_overlay_repository_probe",
+        "subject_mask_overlay_repository_tests",
+        "subject_mask_overlay_repository_probe",
         "acquisition_crop_repository_tests",
         "acquisition_crop_repository_probe",
         "crop_presentation_coordinator_tests",

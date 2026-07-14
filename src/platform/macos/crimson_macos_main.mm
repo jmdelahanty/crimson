@@ -12,14 +12,18 @@
 #include "playback_clock.h"
 #include "crop_presentation_coordinator.h"
 #include "stimulus_presentation_coordinator.h"
+#include "subject_mask_overlay_buffer.h"
 #include "zarr/analysis_crop_geometry_repository.h"
 #include "zarr/archive_context.h"
 #include "zarr/keypoint_overlay_repository.h"
 #include "zarr/keypoint_overlay_scene_adapter.h"
+#include "zarr/subject_mask_overlay_repository.h"
+#include "zarr/subject_mask_overlay_scene_adapter.h"
 #include "zarr/tensorstore_analysis_crop_geometry_repository.h"
 #include "zarr/tensorstore_acquisition_crop_repository.h"
 #include "zarr/tensorstore_keypoint_overlay_repository.h"
 #include "zarr/tensorstore_stimulus_repository.h"
+#include "zarr/tensorstore_subject_mask_overlay_repository.h"
 
 #define GLFW_INCLUDE_NONE
 #define GLFW_EXPOSE_NATIVE_COCOA
@@ -59,6 +63,7 @@ struct LaunchOptions {
   bool stimulus_smoke = false;
   bool crop_smoke = false;
   bool multistream_smoke = false;
+  bool subject_masks_enabled = true;
   int smoke_frames = 12;
   int video_smoke_start = 0;
   int video_smoke_end = 0;
@@ -94,6 +99,7 @@ struct MultistreamSmokeState {
 };
 
 constexpr double kMultistreamMemoryGrowthLimitMiB = 512.0;
+constexpr size_t kAcquisitionCropBufferCapacity = 32;
 
 void glfwErrorCallback(int error, const char *description) {
   std::fprintf(stderr, "Glfw Error %d: %s\n", error, description);
@@ -161,6 +167,10 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
     }
     if (argument == "--validate-metal") {
       options.validate_metal = true;
+      continue;
+    }
+    if (argument == "--no-subject-masks") {
+      options.subject_masks_enabled = false;
       continue;
     }
     if (argument == "--video") {
@@ -632,6 +642,12 @@ int main(int argc, char **argv) {
       analysis_crop_geometry;
   std::unique_ptr<crimson::zarr::KeypointOverlayRepository>
       keypoint_overlay_repository;
+  SubjectMaskOverlayBuffer subject_mask_overlay_buffer;
+  crimson::zarr::SubjectMaskOverlayDescriptor subject_mask_descriptor;
+  bool subject_mask_overlay_available = false;
+  bool subject_mask_overlay_failed = false;
+  bool subject_mask_smoke_start_pending = false;
+  std::string subject_mask_error;
   std::optional<AppleVideoAssetInfo> analysis_crop_view_info;
   std::optional<AppleVideoAssetInfo> crop_view_info;
   crimson::crop::CropPresentationCoordinator crop_presentation;
@@ -646,6 +662,10 @@ int main(int argc, char **argv) {
   uint64_t read_only_overlay_presentations = 0;
   uint64_t keypoint_overlay_presentations = 0;
   uint64_t keypoint_overlay_detections = 0;
+  uint64_t subject_mask_overlay_presentations = 0;
+  uint64_t subject_mask_overlay_detections = 0;
+  uint64_t subject_mask_overlay_components = 0;
+  int64_t last_subject_mask_camera_request = -1;
   bool pending_crop_discontinuity = true;
   int64_t last_crop_camera_request = -1;
   std::string crop_error;
@@ -783,6 +803,61 @@ int main(int argc, char **argv) {
                        keypoint_error.c_str());
         }
 
+        if (options->subject_masks_enabled) {
+          auto subject_mask_repository =
+              crimson::zarr::OpenSubjectMaskOverlayRepository(
+                  archive, {}, &subject_mask_error);
+          if (subject_mask_repository) {
+            subject_mask_descriptor = subject_mask_repository->descriptor();
+            if (subject_mask_overlay_buffer.open(
+                    std::move(subject_mask_repository), 12, 24,
+                    &subject_mask_error) &&
+                subject_mask_overlay_buffer.requestFrame(
+                    initial_frame, video_playback.info().width,
+                    video_playback.info().height, true,
+                    &subject_mask_error) &&
+                (!options->video_smoke ||
+                 subject_mask_overlay_buffer.waitForFrame(
+                     initial_frame, std::chrono::seconds(15)))) {
+              subject_mask_overlay_available = true;
+              subject_mask_smoke_start_pending = options->video_smoke;
+              const char *storage =
+                  subject_mask_descriptor.storage ==
+                          crimson::zarr::SubjectMaskStorage::Dense
+                      ? "dense"
+                      : subject_mask_descriptor.storage ==
+                                crimson::zarr::SubjectMaskStorage::Bitpacked
+                            ? "bitpacked"
+                            : "rle";
+              std::printf(
+                  "[AppleSubjectMasks] group=%s run=%s crop_run=%s "
+                  "storage=%s rows=%zu camera_frames=%zu components=%zu "
+                  "mask=%zux%zu lookahead=12 cache=24\n",
+                  subject_mask_descriptor.source_group.c_str(),
+                  subject_mask_descriptor.run_name.c_str(),
+                  subject_mask_descriptor.source_crop_run.c_str(), storage,
+                  subject_mask_descriptor.row_count,
+                  subject_mask_descriptor.camera_frame_count,
+                  subject_mask_descriptor.component_labels.size(),
+                  subject_mask_descriptor.mask_width,
+                  subject_mask_descriptor.mask_height);
+            } else {
+              subject_mask_overlay_failed = true;
+              subject_mask_overlay_buffer.close();
+              if (subject_mask_error.empty()) {
+                subject_mask_error =
+                    "Timed out settling the initial subject-mask smoke frame";
+              }
+              std::fprintf(stderr,
+                           "[AppleSubjectMasks] Initialization failed: %s\n",
+                           subject_mask_error.c_str());
+            }
+          } else {
+            std::fprintf(stderr, "[AppleSubjectMasks] Unavailable: %s\n",
+                         subject_mask_error.c_str());
+          }
+        }
+
         std::string geometry_error;
         analysis_crop_geometry =
             crimson::zarr::OpenAnalysisCropGeometryRepository(
@@ -816,18 +891,19 @@ int main(int argc, char **argv) {
         if (acquisition_repository &&
             crop_playback.open(std::move(acquisition_repository),
                                video_playback.info().width,
-                               video_playback.info().height, 6, &crop_error)) {
+                               video_playback.info().height,
+                               kAcquisitionCropBufferCapacity, &crop_error)) {
           crop_controls.acquisition_available = true;
           crop_controls.live_geometry_available = true;
           crop_view_info = crop_playback.info();
           const auto &crop_info = crop_playback.info();
           std::printf(
               "[AppleCrop] stream=%s asset=%dx%d frames=%lld fps=%.6f "
-              "buffer_capacity=6 startup_ms=%.1f path=%s\n",
+              "buffer_capacity=%zu startup_ms=%.1f path=%s\n",
               crop_playback.repository()->descriptor().stream_id.c_str(),
               crop_info.width, crop_info.height,
               static_cast<long long>(crop_info.frame_count),
-              crop_info.nominal_frame_rate,
+              crop_info.nominal_frame_rate, kAcquisitionCropBufferCapacity,
               crop_playback.metrics().decoder.startup_ms,
               crop_info.path.c_str());
         } else {
@@ -1007,9 +1083,12 @@ int main(int argc, char **argv) {
           static_cast<long long>(multistream_smoke.end_frame));
     }
     video_clock.seek(initial_frame);
-    video_clock.play();
+    if (!subject_mask_smoke_start_pending) {
+      video_clock.play();
+    }
     video_playback.setPlaybackState(
-        initial_frame, true, video_playback.info().nominal_frame_rate);
+        initial_frame, !subject_mask_smoke_start_pending,
+        video_playback.info().nominal_frame_rate);
     video_smoke_started = std::chrono::steady_clock::now();
     const auto &info = video_playback.info();
     std::printf("[AppleVideo] asset=%dx%d frames=%lld fps=%.6f "
@@ -1447,6 +1526,8 @@ int main(int argc, char **argv) {
         }
 
         if (current_video_frame) {
+          const bool presentation_was_discontinuous =
+              viewer_presentation_discontinuity;
           viewer_stats.presented_frame =
               current_video_frame->metadata.frame_number;
           if (viewer_stats.presented_frame ==
@@ -1572,6 +1653,14 @@ int main(int argc, char **argv) {
             }
             crop_frame_encoded = true;
           }
+          crimson::overlay::ReadOnlyOverlayInput overlay_input;
+          overlay_input.identity = {0, metadata.frame_number, 0,
+                                    metadata.frame_number};
+          overlay_input.source_width = video_playback.info().width;
+          overlay_input.source_height = video_playback.info().height;
+          overlay_input.show_boxes = false;
+          bool keypoint_overlay_ready = false;
+          size_t presented_keypoint_detections = 0;
           if (keypoint_overlay_repository) {
             const auto keypoint_resolution =
                 keypoint_overlay_repository->resolveCameraFrame(
@@ -1580,42 +1669,65 @@ int main(int argc, char **argv) {
             if (keypoint_resolution.status ==
                     crimson::zarr::KeypointOverlayStatus::Mapped &&
                 keypoint_resolution.camera_frame == metadata.frame_number) {
-              const auto &descriptor =
-                  keypoint_overlay_repository->descriptor();
-              const auto overlay_input =
-                  crimson::zarr::makeKeypointOverlaySceneInput(
-                      descriptor, keypoint_resolution, 0,
-                      metadata.frame_number, 0,
-                      video_playback.info().width,
-                      video_playback.info().height);
-              const auto overlay_scene =
-                  crimson::overlay::buildReadOnlyOverlayScene(overlay_input);
-              const crimson::overlay::SourceViewportTransform transform{
-                  {0.0, 0.0, overlay_input.source_width,
-                   overlay_input.source_height},
-                  {video_viewports.camera.x, video_viewports.camera.y,
-                   video_viewports.camera.width,
-                   video_viewports.camera.height}};
-              if (!overlay_renderer.encode(
-                      overlay_scene, transform,
-                      reinterpret_cast<uintptr_t>((__bridge void *)encoder),
-                      static_cast<uint32_t>(width),
-                      static_cast<uint32_t>(height), &render_error)) {
-                std::fprintf(stderr,
-                             "[AppleKeypoints] Metal encode failed: %s\n",
-                             render_error.c_str());
-                render_failed = true;
-                break;
-              }
-              if (overlay_scene.ready() &&
-                  !overlay_scene.primitives.empty()) {
-                ++read_only_overlay_presentations;
-                ++keypoint_overlay_presentations;
-                keypoint_overlay_detections +=
-                    keypoint_resolution.detections.size();
+              overlay_input = crimson::zarr::makeKeypointOverlaySceneInput(
+                  keypoint_overlay_repository->descriptor(),
+                  keypoint_resolution, 0, metadata.frame_number, 0,
+                  video_playback.info().width,
+                  video_playback.info().height);
+              keypoint_overlay_ready = true;
+              presented_keypoint_detections =
+                  keypoint_resolution.detections.size();
+            }
+          }
+
+          bool subject_mask_overlay_ready = false;
+          size_t presented_subject_mask_detections = 0;
+          size_t presented_subject_mask_components = 0;
+          if (subject_mask_overlay_available) {
+            const bool subject_mask_discontinuity =
+                presentation_was_discontinuous &&
+                last_subject_mask_camera_request >= 0;
+            if (!subject_mask_overlay_buffer.requestFrame(
+                    metadata.frame_number, video_playback.info().width,
+                    video_playback.info().height,
+                    subject_mask_discontinuity, &subject_mask_error)) {
+              std::fprintf(stderr,
+                           "[AppleSubjectMasks] Request failed: %s\n",
+                           subject_mask_error.c_str());
+              subject_mask_overlay_failed = true;
+              subject_mask_overlay_available = false;
+            } else {
+              last_subject_mask_camera_request = metadata.frame_number;
+              const auto resolution =
+                  subject_mask_overlay_buffer.frame(metadata.frame_number);
+              if (resolution &&
+                  resolution->status ==
+                      crimson::zarr::SubjectMaskOverlayStatus::Mapped &&
+                  resolution->camera_frame == metadata.frame_number) {
+                subject_mask_overlay_ready =
+                    crimson::zarr::appendSubjectMaskOverlaySceneInput(
+                        subject_mask_descriptor, *resolution,
+                        metadata.frame_number, &overlay_input);
+                if (subject_mask_overlay_ready) {
+                  presented_subject_mask_detections =
+                      resolution->detections.size();
+                  for (const auto &detection : resolution->detections) {
+                    presented_subject_mask_components +=
+                        static_cast<size_t>(std::count_if(
+                            detection.components.begin(),
+                            detection.components.end(),
+                            [](const auto &component) {
+                              return component.present ||
+                                     !component.contour.empty();
+                            }));
+                  }
+                }
               }
             }
           }
+
+          auto overlay_scene =
+              crimson::overlay::buildReadOnlyOverlayScene(overlay_input);
           if (current_crop_selection.selected() &&
               current_crop_selection.camera_frame == metadata.frame_number &&
               current_crop_selection.geometry &&
@@ -1637,29 +1749,56 @@ int main(int argc, char **argv) {
                   {box.x, box.y, box.width, box.height}, 0,
                   crimson::overlay::BoxProvenance::Clean};
               overlay_input.detections.push_back(std::move(detection));
-              const auto overlay_scene =
+              const auto crop_overlay_scene =
                   crimson::overlay::buildReadOnlyOverlayScene(overlay_input);
-              const crimson::overlay::SourceViewportTransform transform{
-                  {0.0, 0.0, overlay_input.source_width,
-                   overlay_input.source_height},
-                  {video_viewports.camera.x, video_viewports.camera.y,
-                   video_viewports.camera.width,
-                   video_viewports.camera.height}};
-              if (!overlay_renderer.encode(
-                      overlay_scene, transform,
-                      reinterpret_cast<uintptr_t>((__bridge void *)encoder),
-                      static_cast<uint32_t>(width),
-                      static_cast<uint32_t>(height), &render_error)) {
-                std::fprintf(stderr,
-                             "[AppleOverlay] Metal encode failed: %s\n",
-                             render_error.c_str());
-                render_failed = true;
-                break;
-              }
-              if (overlay_scene.ready() &&
-                  !overlay_scene.primitives.empty()) {
-                ++read_only_overlay_presentations;
-              }
+              overlay_scene.primitives.insert(
+                  overlay_scene.primitives.end(),
+                  crop_overlay_scene.primitives.begin(),
+                  crop_overlay_scene.primitives.end());
+            }
+          }
+          if (overlay_scene.ready() &&
+              (!overlay_scene.primitives.empty() ||
+               !overlay_scene.raster_masks.empty())) {
+            const crimson::overlay::SourceViewportTransform transform{
+                {0.0, 0.0, overlay_scene.source_width,
+                 overlay_scene.source_height},
+                {video_viewports.camera.x, video_viewports.camera.y,
+                 video_viewports.camera.width,
+                 video_viewports.camera.height}};
+            if (!overlay_renderer.encode(
+                    overlay_scene, transform,
+                    reinterpret_cast<uintptr_t>((__bridge void *)encoder),
+                    static_cast<uint32_t>(width),
+                    static_cast<uint32_t>(height), &render_error)) {
+              std::fprintf(stderr,
+                           "[AppleOverlay] Metal encode failed: %s\n",
+                           render_error.c_str());
+              render_failed = true;
+              break;
+            }
+            ++read_only_overlay_presentations;
+            if (keypoint_overlay_ready &&
+                (overlay_scene.count(
+                     crimson::overlay::CameraOverlayLayer::KeypointHeading) >
+                     0 ||
+                 overlay_scene.count(
+                     crimson::overlay::CameraOverlayLayer::Keypoints) > 0)) {
+              ++keypoint_overlay_presentations;
+              keypoint_overlay_detections +=
+                  presented_keypoint_detections;
+            }
+            if (subject_mask_overlay_ready &&
+                (overlay_scene.rasterCount(
+                     crimson::overlay::CameraOverlayLayer::SubjectMasks) > 0 ||
+                 overlay_scene.count(
+                     crimson::overlay::CameraOverlayLayer::SubjectMasks) >
+                     0)) {
+              ++subject_mask_overlay_presentations;
+              subject_mask_overlay_detections +=
+                  presented_subject_mask_detections;
+              subject_mask_overlay_components +=
+                  presented_subject_mask_components;
             }
           }
           if (crop_enabled) {
@@ -1736,6 +1875,17 @@ int main(int argc, char **argv) {
       [command_buffer presentDrawable:drawable];
       [command_buffer commit];
       last_command_buffer = command_buffer;
+
+      if (subject_mask_smoke_start_pending &&
+          viewer_stats.presented_frame == options->video_smoke_start) {
+        subject_mask_smoke_start_pending = false;
+        const auto playback_started = std::chrono::steady_clock::now();
+        video_clock.play(playback_started);
+        video_playback.setPlaybackState(
+            viewer_stats.presented_frame, true,
+            video_playback.info().nominal_frame_rate);
+        video_smoke_started = playback_started;
+      }
 
       if (options->smoke) {
         const auto command_wait_started = std::chrono::steady_clock::now();
@@ -1880,6 +2030,9 @@ int main(int argc, char **argv) {
           : -1;
   current_stimulus_frame.reset();
   current_crop_frame.reset();
+  subject_mask_overlay_buffer.close();
+  const SubjectMaskOverlayBufferMetrics final_subject_mask_metrics =
+      subject_mask_overlay_buffer.metrics();
   if (crop_enabled) {
     crop_playback.close();
   }
@@ -1900,6 +2053,32 @@ int main(int argc, char **argv) {
   glfwDestroyWindow(window);
   glfwTerminate();
 
+  if (!subject_mask_descriptor.run_name.empty()) {
+    std::printf(
+        "[AppleSubjectMasks] presentations=%llu detections=%llu "
+        "components=%llu requests=%llu cache_hits=%llu resolved=%llu "
+        "missing=%llu failed=%llu discarded=%llu peak_cached=%zu "
+        "peak_pending=%zu max_resolve_ms=%.1f error=%s\n",
+        static_cast<unsigned long long>(subject_mask_overlay_presentations),
+        static_cast<unsigned long long>(subject_mask_overlay_detections),
+        static_cast<unsigned long long>(subject_mask_overlay_components),
+        static_cast<unsigned long long>(final_subject_mask_metrics.requests),
+        static_cast<unsigned long long>(
+            final_subject_mask_metrics.cache_hits),
+        static_cast<unsigned long long>(
+            final_subject_mask_metrics.resolved_frames),
+        static_cast<unsigned long long>(
+            final_subject_mask_metrics.missing_frames),
+        static_cast<unsigned long long>(
+            final_subject_mask_metrics.failed_frames),
+        static_cast<unsigned long long>(
+            final_subject_mask_metrics.discarded_results),
+        final_subject_mask_metrics.peak_cached_frames,
+        final_subject_mask_metrics.peak_pending_frames,
+        final_subject_mask_metrics.maximum_resolve_ms,
+        final_subject_mask_metrics.last_error.c_str());
+  }
+
   if (options->video_smoke) {
     const double elapsed_seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() -
@@ -1907,7 +2086,19 @@ int main(int argc, char **argv) {
             .count();
     const double maximum_accepted_lag_frames =
         final_video_info.nominal_frame_rate * 5.0;
-    if (render_failed ||
+    const bool subject_mask_validation_failed =
+        !subject_mask_descriptor.run_name.empty() &&
+        (subject_mask_overlay_failed ||
+         final_subject_mask_metrics.failed_frames != 0 ||
+         (final_subject_mask_metrics.resolved_frames != 0 &&
+          subject_mask_overlay_presentations == 0));
+    const std::string &smoke_error =
+        subject_mask_validation_failed
+            ? (!subject_mask_error.empty()
+                   ? subject_mask_error
+                   : final_subject_mask_metrics.last_error)
+            : final_video_metrics.last_error;
+    if (render_failed || subject_mask_validation_failed ||
         viewer_stats.presented_frame < options->video_smoke_end ||
         std::fabs(viewer_stats.pts_error_frames) > 0.51 ||
         viewer_stats.max_lag_frames > maximum_accepted_lag_frames) {
@@ -1917,7 +2108,9 @@ int main(int argc, char **argv) {
           "presented=%lld decoded=%llu "
           "buffered_peak=%zu max_lag_frames=%.1f lag_limit_frames=%.1f "
           "elapsed_s=%.3f "
-          "memory_mib=%.1f peak_memory_mib=%.1f thermal=%s error=%s\n",
+          "memory_mib=%.1f peak_memory_mib=%.1f thermal=%s "
+          "subject_mask_presentations=%llu subject_mask_resolved=%llu "
+          "subject_mask_failed=%llu error=%s\n",
           options->video_smoke_start, options->video_smoke_end,
           static_cast<long long>(viewer_stats.requested_frame),
           static_cast<long long>(viewer_stats.presented_frame),
@@ -1928,7 +2121,13 @@ int main(int argc, char **argv) {
           viewer_stats.process_memory_mib,
           viewer_stats.peak_process_memory_mib,
           appleViewerThermalStateName(viewer_stats.thermal_state),
-          final_video_metrics.last_error.c_str());
+          static_cast<unsigned long long>(
+              subject_mask_overlay_presentations),
+          static_cast<unsigned long long>(
+              final_subject_mask_metrics.resolved_frames),
+          static_cast<unsigned long long>(
+              final_subject_mask_metrics.failed_frames),
+          smoke_error.c_str());
       return 8;
     }
     std::printf(
@@ -1941,7 +2140,8 @@ int main(int argc, char **argv) {
         "seek_ms=%.1f "
         "next_drawable_max_ms=%.1f "
         "command_wait_max_ms=%.1f elapsed_s=%.3f "
-        "memory_mib=%.1f peak_memory_mib=%.1f thermal=%s\n",
+        "memory_mib=%.1f peak_memory_mib=%.1f thermal=%s "
+        "subject_mask_presentations=%llu subject_mask_resolved=%llu\n",
         options->video_smoke_start, options->video_smoke_end,
         static_cast<long long>(viewer_stats.requested_frame),
         static_cast<long long>(viewer_stats.presented_frame),
@@ -1960,7 +2160,10 @@ int main(int argc, char **argv) {
         viewer_stats.max_command_wait_ms, elapsed_seconds,
         viewer_stats.process_memory_mib,
         viewer_stats.peak_process_memory_mib,
-        appleViewerThermalStateName(viewer_stats.thermal_state));
+        appleViewerThermalStateName(viewer_stats.thermal_state),
+        static_cast<unsigned long long>(subject_mask_overlay_presentations),
+        static_cast<unsigned long long>(
+            final_subject_mask_metrics.resolved_frames));
     if (options->stimulus_smoke) {
       const bool stimulus_smoke_failed =
           stimulus_failed || !stimulus_smoke_end_satisfied ||

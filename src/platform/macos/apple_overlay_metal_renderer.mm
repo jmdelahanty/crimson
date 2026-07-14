@@ -3,7 +3,11 @@
 #import <Metal/Metal.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <limits>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -11,6 +15,13 @@ namespace {
 struct TargetSize {
     float width = 0.0f;
     float height = 0.0f;
+};
+
+struct MaskVertex {
+    float x = 0.0f;
+    float y = 0.0f;
+    float u = 0.0f;
+    float v = 0.0f;
 };
 
 void assignError(std::string* destination, const std::string& value) {
@@ -55,18 +66,60 @@ vertex VertexOutput crimsonOverlayVertex(
 fragment float4 crimsonOverlayFragment(VertexOutput input [[stage_in]]) {
     return input.color;
 }
+
+struct MaskVertexOutput {
+    float4 position [[position]];
+    float2 texcoord;
+};
+
+vertex MaskVertexOutput crimsonMaskVertex(
+    uint vertex_id [[vertex_id]],
+    device const packed_float4* vertices [[buffer(0)]],
+    constant float2& target_size [[buffer(1)]]) {
+    const float4 mask_vertex = float4(vertices[vertex_id]);
+    MaskVertexOutput output;
+    output.position = float4(
+        mask_vertex.x / target_size.x * 2.0 - 1.0,
+        1.0 - mask_vertex.y / target_size.y * 2.0,
+        0.0,
+        1.0);
+    output.texcoord = mask_vertex.zw;
+    return output;
+}
+
+fragment float4 crimsonMaskFragment(
+    MaskVertexOutput input [[stage_in]],
+    texture2d<float> mask [[texture(0)]],
+    constant float4& color [[buffer(0)]]) {
+    constexpr sampler mask_sampler(coord::normalized,
+                                   address::clamp_to_edge,
+                                   filter::nearest);
+    const float coverage = mask.sample(mask_sampler, input.texcoord).r;
+    return float4(color.rgb, color.a * coverage);
+}
 )METAL";
 }
 
 }  // namespace
 
 struct AppleOverlayMetalRenderer::Impl {
+    struct CachedMaskTexture {
+        id<MTLTexture> texture = nil;
+        uint64_t last_used = 0;
+    };
+
     id<MTLDevice> device = nil;
-    id<MTLRenderPipelineState> pipeline = nil;
+    id<MTLRenderPipelineState> vector_pipeline = nil;
+    id<MTLRenderPipelineState> mask_pipeline = nil;
+    std::unordered_map<std::string, CachedMaskTexture> mask_textures;
+    uint64_t use_counter = 0;
 
     void reset() {
-        pipeline = nil;
+        mask_textures.clear();
+        mask_pipeline = nil;
+        vector_pipeline = nil;
         device = nil;
+        use_counter = 0;
     }
 };
 
@@ -96,6 +149,19 @@ bool AppleOverlayMetalRenderer::initialize(uintptr_t metal_device,
         reset();
         return false;
     }
+    auto configureBlend = [](MTLRenderPipelineColorAttachmentDescriptor*
+                                 attachment) {
+        attachment.blendingEnabled = YES;
+        attachment.rgbBlendOperation = MTLBlendOperationAdd;
+        attachment.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+        attachment.destinationRGBBlendFactor =
+            MTLBlendFactorOneMinusSourceAlpha;
+        attachment.alphaBlendOperation = MTLBlendOperationAdd;
+        attachment.sourceAlphaBlendFactor = MTLBlendFactorOne;
+        attachment.destinationAlphaBlendFactor =
+            MTLBlendFactorOneMinusSourceAlpha;
+    };
+
     MTLRenderPipelineDescriptor* descriptor =
         [MTLRenderPipelineDescriptor new];
     descriptor.vertexFunction =
@@ -106,23 +172,36 @@ bool AppleOverlayMetalRenderer::initialize(uintptr_t metal_device,
         descriptor.colorAttachments[0];
     attachment.pixelFormat =
         static_cast<MTLPixelFormat>(drawable_pixel_format);
-    attachment.blendingEnabled = YES;
-    attachment.rgbBlendOperation = MTLBlendOperationAdd;
-    attachment.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
-    attachment.destinationRGBBlendFactor =
-        MTLBlendFactorOneMinusSourceAlpha;
-    attachment.alphaBlendOperation = MTLBlendOperationAdd;
-    attachment.sourceAlphaBlendFactor = MTLBlendFactorOne;
-    attachment.destinationAlphaBlendFactor =
-        MTLBlendFactorOneMinusSourceAlpha;
+    configureBlend(attachment);
     NSError* pipeline_error = nil;
-    impl_->pipeline =
+    impl_->vector_pipeline =
         [impl_->device newRenderPipelineStateWithDescriptor:descriptor
                                                       error:&pipeline_error];
-    if (impl_->pipeline == nil) {
+    if (impl_->vector_pipeline == nil) {
         assignError(error,
                     errorText(pipeline_error,
                               "Metal overlay pipeline creation failed"));
+        reset();
+        return false;
+    }
+
+    MTLRenderPipelineDescriptor* mask_descriptor =
+        [MTLRenderPipelineDescriptor new];
+    mask_descriptor.vertexFunction =
+        [library newFunctionWithName:@"crimsonMaskVertex"];
+    mask_descriptor.fragmentFunction =
+        [library newFunctionWithName:@"crimsonMaskFragment"];
+    mask_descriptor.colorAttachments[0].pixelFormat =
+        static_cast<MTLPixelFormat>(drawable_pixel_format);
+    configureBlend(mask_descriptor.colorAttachments[0]);
+    pipeline_error = nil;
+    impl_->mask_pipeline =
+        [impl_->device newRenderPipelineStateWithDescriptor:mask_descriptor
+                                                      error:&pipeline_error];
+    if (impl_->mask_pipeline == nil) {
+        assignError(error,
+                    errorText(pipeline_error,
+                              "Metal mask overlay pipeline creation failed"));
         reset();
         return false;
     }
@@ -132,7 +211,8 @@ bool AppleOverlayMetalRenderer::initialize(uintptr_t metal_device,
 void AppleOverlayMetalRenderer::reset() { impl_->reset(); }
 
 bool AppleOverlayMetalRenderer::isInitialized() const {
-    return impl_->device != nil && impl_->pipeline != nil;
+    return impl_->device != nil && impl_->vector_pipeline != nil &&
+           impl_->mask_pipeline != nil;
 }
 
 bool AppleOverlayMetalRenderer::encode(
@@ -158,11 +238,6 @@ bool AppleOverlayMetalRenderer::encode(
         return false;
     }
 
-    const crimson::overlay::ScreenMesh mesh =
-        crimson::overlay::tessellateReadOnlyOverlayScene(scene, transform);
-    if (mesh.triangle_vertices.empty()) {
-        return true;
-    }
     const auto clipped = crimson::overlay::intersectRects(
         transform.display,
         {0.0, 0.0, static_cast<double>(drawable_width),
@@ -184,42 +259,164 @@ bool AppleOverlayMetalRenderer::encode(
         return true;
     }
 
-    std::vector<float> positions;
-    std::vector<crimson::overlay::Color> colors;
-    positions.reserve(mesh.triangle_vertices.size() * 2);
-    colors.reserve(mesh.triangle_vertices.size());
-    for (const auto& vertex : mesh.triangle_vertices) {
-        positions.push_back(vertex.x);
-        positions.push_back(vertex.y);
-        colors.push_back(vertex.color);
-    }
-    id<MTLBuffer> position_buffer = [impl_->device
-        newBufferWithBytes:positions.data()
-                   length:positions.size() * sizeof(float)
-                  options:MTLResourceStorageModeShared];
-    id<MTLBuffer> color_buffer = [impl_->device
-        newBufferWithBytes:colors.data()
-                   length:colors.size() * sizeof(crimson::overlay::Color)
-                  options:MTLResourceStorageModeShared];
-    if (position_buffer == nil || color_buffer == nil) {
-        assignError(error, "Metal overlay vertex buffer allocation failed");
-        return false;
-    }
-
     [encoder setViewport:MTLViewport{
                              0.0, 0.0, static_cast<double>(drawable_width),
                              static_cast<double>(drawable_height), 0.0, 1.0}];
     [encoder setScissorRect:MTLScissorRect{
                                 clip_x, clip_y, clip_right - clip_x,
                                 clip_bottom - clip_y}];
-    [encoder setRenderPipelineState:impl_->pipeline];
-    [encoder setVertexBuffer:position_buffer offset:0 atIndex:0];
-    [encoder setVertexBuffer:color_buffer offset:0 atIndex:1];
     const TargetSize target{static_cast<float>(drawable_width),
                             static_cast<float>(drawable_height)};
-    [encoder setVertexBytes:&target length:sizeof(target) atIndex:2];
-    [encoder drawPrimitives:MTLPrimitiveTypeTriangle
-                vertexStart:0
-                vertexCount:mesh.triangle_vertices.size()];
+
+    auto encodeRaster = [&](const crimson::overlay::RasterMask& raster)
+        -> bool {
+        if (!raster.source_rect.valid() || raster.width == 0 ||
+            raster.height == 0 || !raster.alpha ||
+            raster.width >
+                std::numeric_limits<size_t>::max() / raster.height ||
+            raster.alpha->size() != raster.width * raster.height ||
+            !raster.color.valid()) {
+            return true;
+        }
+        const auto visible = crimson::overlay::intersectRects(
+            raster.source_rect, transform.visible_source);
+        if (!visible) {
+            return true;
+        }
+        const auto display = transform.sourceToDisplay(*visible);
+        if (!display) {
+            return true;
+        }
+        const float u0 = static_cast<float>(
+            (visible->x - raster.source_rect.x) / raster.source_rect.width);
+        const float v0 = static_cast<float>(
+            (visible->y - raster.source_rect.y) / raster.source_rect.height);
+        const float u1 = static_cast<float>(
+            (visible->x + visible->width - raster.source_rect.x) /
+            raster.source_rect.width);
+        const float v1 = static_cast<float>(
+            (visible->y + visible->height - raster.source_rect.y) /
+            raster.source_rect.height);
+        const float x0 = static_cast<float>(display->x);
+        const float y0 = static_cast<float>(display->y);
+        const float x1 = static_cast<float>(display->x + display->width);
+        const float y1 = static_cast<float>(display->y + display->height);
+        const std::array<MaskVertex, 6> vertices = {
+            MaskVertex{x0, y0, u0, v0}, MaskVertex{x1, y0, u1, v0},
+            MaskVertex{x0, y1, u0, v1}, MaskVertex{x0, y1, u0, v1},
+            MaskVertex{x1, y0, u1, v0}, MaskVertex{x1, y1, u1, v1}};
+
+        const std::string key = raster.cache_key + ":" +
+            std::to_string(raster.width) + "x" +
+            std::to_string(raster.height);
+        auto found = impl_->mask_textures.find(key);
+        if (found == impl_->mask_textures.end()) {
+            MTLTextureDescriptor* texture_descriptor =
+                [MTLTextureDescriptor
+                    texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm
+                                                 width:raster.width
+                                                height:raster.height
+                                             mipmapped:NO];
+            texture_descriptor.storageMode = MTLStorageModeShared;
+            texture_descriptor.usage = MTLTextureUsageShaderRead;
+            id<MTLTexture> texture =
+                [impl_->device newTextureWithDescriptor:texture_descriptor];
+            if (texture == nil) {
+                assignError(error, "Metal mask texture allocation failed");
+                return false;
+            }
+            [texture replaceRegion:MTLRegionMake2D(0, 0, raster.width,
+                                                   raster.height)
+                       mipmapLevel:0
+                         withBytes:raster.alpha->data()
+                       bytesPerRow:raster.width];
+            found = impl_->mask_textures
+                        .emplace(key, Impl::CachedMaskTexture{texture, 0})
+                        .first;
+        }
+        found->second.last_used = ++impl_->use_counter;
+        [encoder setRenderPipelineState:impl_->mask_pipeline];
+        [encoder setVertexBytes:vertices.data()
+                         length:sizeof(vertices)
+                        atIndex:0];
+        [encoder setVertexBytes:&target length:sizeof(target) atIndex:1];
+        [encoder setFragmentTexture:found->second.texture atIndex:0];
+        [encoder setFragmentBytes:&raster.color
+                           length:sizeof(raster.color)
+                          atIndex:0];
+        [encoder drawPrimitives:MTLPrimitiveTypeTriangle
+                    vertexStart:0
+                    vertexCount:vertices.size()];
+        return true;
+    };
+
+    auto encodeMesh = [&](crimson::overlay::CameraOverlayLayer layer)
+        -> bool {
+        const crimson::overlay::ScreenMesh mesh =
+            crimson::overlay::tessellateReadOnlyOverlaySceneLayer(
+                scene, transform, layer);
+        if (mesh.triangle_vertices.empty()) {
+            return true;
+        }
+        std::vector<float> positions;
+        std::vector<crimson::overlay::Color> colors;
+        positions.reserve(mesh.triangle_vertices.size() * 2);
+        colors.reserve(mesh.triangle_vertices.size());
+        for (const auto& vertex : mesh.triangle_vertices) {
+            positions.push_back(vertex.x);
+            positions.push_back(vertex.y);
+            colors.push_back(vertex.color);
+        }
+        id<MTLBuffer> position_buffer = [impl_->device
+            newBufferWithBytes:positions.data()
+                       length:positions.size() * sizeof(float)
+                      options:MTLResourceStorageModeShared];
+        id<MTLBuffer> color_buffer = [impl_->device
+            newBufferWithBytes:colors.data()
+                       length:colors.size() *
+                              sizeof(crimson::overlay::Color)
+                      options:MTLResourceStorageModeShared];
+        if (position_buffer == nil || color_buffer == nil) {
+            assignError(error,
+                        "Metal overlay vertex buffer allocation failed");
+            return false;
+        }
+        [encoder setRenderPipelineState:impl_->vector_pipeline];
+        [encoder setVertexBuffer:position_buffer offset:0 atIndex:0];
+        [encoder setVertexBuffer:color_buffer offset:0 atIndex:1];
+        [encoder setVertexBytes:&target length:sizeof(target) atIndex:2];
+        [encoder drawPrimitives:MTLPrimitiveTypeTriangle
+                    vertexStart:0
+                    vertexCount:mesh.triangle_vertices.size()];
+        return true;
+    };
+
+    for (const auto layer : crimson::overlay::kCameraOverlayLayerOrder) {
+        for (const auto& raster : scene.raster_masks) {
+            if (raster.layer == layer && !encodeRaster(raster)) {
+                return false;
+            }
+        }
+        if (!encodeMesh(layer)) {
+            return false;
+        }
+    }
+
+    constexpr size_t kMaximumCachedMaskTextures = 64;
+    while (impl_->mask_textures.size() > kMaximumCachedMaskTextures) {
+        auto oldest = impl_->mask_textures.end();
+        uint64_t oldest_use = std::numeric_limits<uint64_t>::max();
+        for (auto candidate = impl_->mask_textures.begin();
+             candidate != impl_->mask_textures.end(); ++candidate) {
+            if (candidate->second.last_used < oldest_use) {
+                oldest = candidate;
+                oldest_use = candidate->second.last_used;
+            }
+        }
+        if (oldest == impl_->mask_textures.end()) {
+            break;
+        }
+        impl_->mask_textures.erase(oldest);
+    }
     return true;
 }

@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -49,6 +50,18 @@ struct DetectionOverlayInput {
     bool keypoint_flip_corrected = false;
 };
 
+struct SubjectMaskComponentInput {
+    std::string cache_namespace;
+    std::string label;
+    int64_t source_crop_row_id = -1;
+    size_t channel_index = 0;
+    Rect source_rect;
+    size_t mask_width = 0;
+    size_t mask_height = 0;
+    std::shared_ptr<const std::vector<uint8_t>> mask;
+    std::vector<Point> contour;
+};
+
 struct ReadOnlyOverlayInput {
     FrameIdentity identity;
     double source_width = 0.0;
@@ -56,8 +69,11 @@ struct ReadOnlyOverlayInput {
     std::vector<std::string> keypoint_labels;
     std::vector<std::array<size_t, 2>> skeleton_edges;
     std::vector<DetectionOverlayInput> detections;
+    std::vector<SubjectMaskComponentInput> subject_masks;
     bool show_boxes = true;
     bool show_headings = true;
+    bool show_subject_mask_fills = true;
+    bool show_subject_mask_contours = true;
     bool show_keypoints = true;
 };
 
@@ -92,6 +108,17 @@ struct Primitive {
     std::string label;
 };
 
+struct RasterMask {
+    CameraOverlayLayer layer = CameraOverlayLayer::SubjectMasks;
+    Rect source_rect;
+    size_t width = 0;
+    size_t height = 0;
+    std::shared_ptr<const std::vector<uint8_t>> alpha;
+    Color color;
+    std::string cache_key;
+    std::string label;
+};
+
 enum class ReadOnlyOverlayBuildStatus : uint8_t {
     Ready,
     InvalidIdentity,
@@ -104,11 +131,13 @@ struct ReadOnlyOverlayScene {
     FrameIdentity identity;
     double source_width = 0.0;
     double source_height = 0.0;
+    std::vector<RasterMask> raster_masks;
     std::vector<Primitive> primitives;
 
     bool ready() const;
     size_t count(PrimitiveType type) const;
     size_t count(CameraOverlayLayer layer) const;
+    size_t rasterCount(CameraOverlayLayer layer) const;
 };
 
 ReadOnlyOverlayScene buildReadOnlyOverlayScene(
@@ -118,6 +147,8 @@ Color keypointColor(const std::string& label, size_t keypoint_index);
 MarkerShape keypointMarkerShape(const std::string& label,
                                 size_t keypoint_index);
 double keypointMarkerSizePx(const std::string& label);
+Color subjectMaskColor(const std::string& label);
+int subjectMaskComponentRank(const std::string& label);
 
 struct ScreenVertex {
     float x = 0.0f;
@@ -135,6 +166,12 @@ struct ScreenMesh {
 ScreenMesh tessellateReadOnlyOverlayScene(
     const ReadOnlyOverlayScene& scene,
     const SourceViewportTransform& transform,
+    size_t circle_segment_count = 24);
+
+ScreenMesh tessellateReadOnlyOverlaySceneLayer(
+    const ReadOnlyOverlayScene& scene,
+    const SourceViewportTransform& transform,
+    CameraOverlayLayer layer,
     size_t circle_segment_count = 24);
 
 }  // namespace crimson::overlay

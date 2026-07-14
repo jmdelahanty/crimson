@@ -112,9 +112,11 @@ recorded only 16 paired updates and 114 deferrals, with eight crop seeks and no
 ordinary follow requests. Each stream already has an independent decode
 worker. The evidence points to the current six-frame exact-crop request policy:
 main-camera catch-up skips trigger crop seeks, and exact-only presentation then
-withholds late crop frames. A future playback checkpoint should keep the small
-crop decoder running with bounded read-ahead and reserve seeks for real user
-discontinuities. This is not attributed to Phase 5C overlay work.
+withholds late crop frames. Phase 5D resolved this adjacent playback debt by
+raising the small 256-by-256 crop stream's bounded queue to 32 frames. The
+repeat production smoke reduced seeks from 11 to one, deferrals from 112 to
+nine, and the longest deferred run from 14 frames to one while preserving exact
+camera/crop identity. This was not a Phase 5C overlay regression.
 
 ## NVIDIA Validation
 

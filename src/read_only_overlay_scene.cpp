@@ -263,6 +263,66 @@ void appendKeypointPrimitives(const ReadOnlyOverlayInput& input,
     }
 }
 
+void appendSubjectMasks(const ReadOnlyOverlayInput& input,
+                        ReadOnlyOverlayScene& scene) {
+    std::vector<const SubjectMaskComponentInput*> components;
+    components.reserve(input.subject_masks.size());
+    for (const auto& component : input.subject_masks) {
+        components.push_back(&component);
+    }
+    std::stable_sort(
+        components.begin(), components.end(),
+        [](const auto* first, const auto* second) {
+            return subjectMaskComponentRank(first->label) <
+                   subjectMaskComponentRank(second->label);
+        });
+
+    for (const auto* component : components) {
+        const Color color = subjectMaskColor(component->label);
+        if (input.show_subject_mask_fills && component->source_rect.valid() &&
+            component->mask && component->mask_width > 0 &&
+            component->mask_height > 0 &&
+            component->mask_width <=
+                std::numeric_limits<size_t>::max() /
+                    component->mask_height &&
+            component->mask->size() ==
+                component->mask_width * component->mask_height) {
+            RasterMask raster;
+            raster.source_rect = component->source_rect;
+            raster.width = component->mask_width;
+            raster.height = component->mask_height;
+            raster.alpha = component->mask;
+            raster.color = color;
+            raster.label = component->label;
+            raster.cache_key = component->cache_namespace + ":" +
+                component->label + ":" +
+                std::to_string(component->source_crop_row_id) + ":" +
+                std::to_string(component->channel_index);
+            scene.raster_masks.push_back(std::move(raster));
+        }
+        if (input.show_subject_mask_contours &&
+            component->contour.size() > 1) {
+            Primitive contour;
+            contour.type = PrimitiveType::Polyline;
+            contour.layer = CameraOverlayLayer::SubjectMasks;
+            contour.points = component->contour;
+            if (contour.points.size() > 2) {
+                const Point first = contour.points.front();
+                const Point last = contour.points.back();
+                if (std::hypot(first.x - last.x, first.y - last.y) > 1e-3) {
+                    contour.points.push_back(first);
+                }
+            }
+            contour.stroke = withAlpha(color, 0.95f);
+            contour.stroke_width_px =
+                component->label == "subject_body" ? 1.5 : 1.75;
+            contour.label = "##mask_contour_" + component->label + "_" +
+                std::to_string(component->source_crop_row_id);
+            scene.primitives.push_back(std::move(contour));
+        }
+    }
+}
+
 void appendTriangle(ScreenMesh& mesh,
                     Point a,
                     Point b,
@@ -435,6 +495,12 @@ size_t ReadOnlyOverlayScene::count(CameraOverlayLayer layer) const {
         [layer](const Primitive& primitive) { return primitive.layer == layer; }));
 }
 
+size_t ReadOnlyOverlayScene::rasterCount(CameraOverlayLayer layer) const {
+    return static_cast<size_t>(std::count_if(
+        raster_masks.begin(), raster_masks.end(),
+        [layer](const RasterMask& raster) { return raster.layer == layer; }));
+}
+
 ReadOnlyOverlayScene buildReadOnlyOverlayScene(
     const ReadOnlyOverlayInput& input) {
     ReadOnlyOverlayScene scene;
@@ -465,6 +531,7 @@ ReadOnlyOverlayScene buildReadOnlyOverlayScene(
                                    scene.primitives);
         }
     }
+    appendSubjectMasks(input, scene);
     if (input.show_keypoints) {
         for (size_t index = 0; index < input.detections.size(); ++index) {
             appendKeypointPrimitives(input, input.detections[index], index,
@@ -527,6 +594,40 @@ double keypointMarkerSizePx(const std::string& label) {
         return 4.5;
     }
     return 7.0;
+}
+
+Color subjectMaskColor(const std::string& label) {
+    const std::string lowered = lowerCopy(label);
+    if (lowered == "subject_body") {
+        return {0.15f, 0.75f, 0.95f, 0.20f};
+    }
+    if (lowered == "swim_bladder") {
+        return {1.0f, 0.72f, 0.12f, 0.34f};
+    }
+    if (lowered == "eye_left") {
+        return {0.25f, 0.95f, 0.35f, 0.42f};
+    }
+    if (lowered == "eye_right") {
+        return {0.82f, 0.35f, 0.95f, 0.42f};
+    }
+    return {0.95f, 0.55f, 0.25f, 0.30f};
+}
+
+int subjectMaskComponentRank(const std::string& label) {
+    const std::string lowered = lowerCopy(label);
+    if (lowered == "subject_body") {
+        return 10;
+    }
+    if (lowered == "swim_bladder") {
+        return 20;
+    }
+    if (lowered == "eye_left") {
+        return 30;
+    }
+    if (lowered == "eye_right") {
+        return 31;
+    }
+    return 100;
 }
 
 ScreenMesh tessellateReadOnlyOverlayScene(
@@ -598,6 +699,23 @@ ScreenMesh tessellateReadOnlyOverlayScene(
         }
     }
     return mesh;
+}
+
+ScreenMesh tessellateReadOnlyOverlaySceneLayer(
+    const ReadOnlyOverlayScene& scene,
+    const SourceViewportTransform& transform,
+    CameraOverlayLayer layer,
+    size_t circle_segment_count) {
+    ReadOnlyOverlayScene filtered = scene;
+    filtered.primitives.erase(
+        std::remove_if(filtered.primitives.begin(), filtered.primitives.end(),
+                       [layer](const Primitive& primitive) {
+                           return primitive.layer != layer;
+                       }),
+        filtered.primitives.end());
+    filtered.raster_masks.clear();
+    return tessellateReadOnlyOverlayScene(filtered, transform,
+                                          circle_segment_count);
 }
 
 }  // namespace crimson::overlay

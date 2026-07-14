@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -124,9 +125,11 @@ void runTest() {
     CHECK(queue != nil);
     AppleOverlayMetalRenderer renderer;
     std::string error;
-    CHECK(renderer.initialize(
-        reinterpret_cast<uintptr_t>((__bridge void*)device),
-        static_cast<uint64_t>(MTLPixelFormatBGRA8Unorm), &error));
+    if (!renderer.initialize(
+            reinterpret_cast<uintptr_t>((__bridge void*)device),
+            static_cast<uint64_t>(MTLPixelFormatBGRA8Unorm), &error)) {
+        throw TestFailure{"Metal overlay initialization failed: " + error};
+    }
 
     const ReadOnlyOverlayScene scene =
         buildReadOnlyOverlayScene(fixture::makeReadOnlyOverlayInput());
@@ -160,6 +163,59 @@ void runTest() {
     CHECK(changedPixelCount(zoomed) > 400);
     checkOutsideIsClear(zoomed, zoom.display);
     CHECK(!isClear(zoomed.at(40, 40)));
+
+    ReadOnlyOverlayInput mask_input;
+    mask_input.identity = {0, 7, 0, 7};
+    mask_input.source_width = 100.0;
+    mask_input.source_height = 100.0;
+    mask_input.show_boxes = false;
+    mask_input.show_headings = false;
+    mask_input.show_keypoints = false;
+    auto alpha = std::make_shared<std::vector<uint8_t>>(
+        std::initializer_list<uint8_t>{0, 0, 0, 0,
+                                       0, 255, 255, 0,
+                                       0, 255, 255, 0,
+                                       0, 0, 0, 0});
+    SubjectMaskComponentInput body;
+    body.label = "subject_body";
+    body.source_crop_row_id = 17;
+    body.source_rect = {20.0, 20.0, 40.0, 40.0};
+    body.mask_width = 4;
+    body.mask_height = 4;
+    body.mask = alpha;
+    body.contour = {{20.0, 20.0}, {60.0, 20.0},
+                    {60.0, 60.0}, {20.0, 60.0}};
+    mask_input.subject_masks.push_back(std::move(body));
+    const ReadOnlyOverlayScene mask_scene =
+        buildReadOnlyOverlayScene(mask_input);
+    CHECK(mask_scene.ready());
+    CHECK(mask_scene.rasterCount(CameraOverlayLayer::SubjectMasks) == 1);
+    CHECK(mask_scene.count(CameraOverlayLayer::SubjectMasks) == 1);
+    const SourceViewportTransform mask_full{{0.0, 0.0, 100.0, 100.0},
+                                            {40.0, 20.0, 180.0, 180.0}};
+    const RenderedImage masked =
+        render(device, queue, renderer, mask_scene, mask_full);
+    checkOutsideIsClear(masked, mask_full.display);
+    CHECK(changedPixelCount(masked) > 1500);
+    const Pixel mask_fill = masked.at(112, 92);
+    CHECK(mask_fill[0] > 65);
+    CHECK(mask_fill[1] > 50);
+    CHECK(isClear(masked.at(80, 60)));
+
+    const SourceViewportTransform mask_zoom{{30.0, 30.0, 20.0, 20.0},
+                                            {40.0, 20.0, 180.0, 180.0}};
+    const RenderedImage masked_zoom =
+        render(device, queue, renderer, mask_scene, mask_zoom);
+    checkOutsideIsClear(masked_zoom, mask_zoom.display);
+    CHECK(!isClear(masked_zoom.at(130, 110)));
+
+    --mask_input.identity.overlay_frame;
+    const ReadOnlyOverlayScene stale_mask =
+        buildReadOnlyOverlayScene(mask_input);
+    CHECK(!stale_mask.ready());
+    const RenderedImage withheld_mask =
+        render(device, queue, renderer, stale_mask, mask_full);
+    CHECK(changedPixelCount(withheld_mask) == 0);
 
     auto stale_input = fixture::makeReadOnlyOverlayInput();
     --stale_input.identity.overlay_frame;
