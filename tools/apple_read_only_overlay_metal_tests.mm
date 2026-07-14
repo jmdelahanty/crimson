@@ -248,6 +248,66 @@ void runTest() {
     CHECK(changedPixelCount(shaped) > 150);
     CHECK(!isClear(shaped.at(130, 110)));
 
+    ReadOnlyOverlayInput eye_input;
+    eye_input.identity = {0, 11, 0, 11};
+    eye_input.source_width = 100.0;
+    eye_input.source_height = 100.0;
+    eye_input.show_boxes = false;
+    eye_input.show_headings = false;
+    eye_input.show_keypoints = false;
+    EyeGeometryInput eye_geometry;
+    eye_geometry.eye_row = 29;
+    eye_geometry.detection_index = 0;
+    eye_geometry.source_crop_row_id = 43;
+    eye_geometry.source_rect = {20.0, 20.0, 60.0, 60.0};
+    eye_geometry.coordinate_width = 10.0;
+    eye_geometry.coordinate_height = 10.0;
+    eye_geometry.frame_valid = true;
+    eye_geometry.body_frame_valid = true;
+    eye_geometry.body_forward_axis = {1.0, 0.0};
+    eye_geometry.body_left_axis = {0.0, 1.0};
+    eye_geometry.vergence_valid = true;
+    eye_geometry.vergence_degrees = 8.0;
+    for (size_t eye = 0; eye < eye_geometry.eyes.size(); ++eye) {
+        auto& values = eye_geometry.eyes[eye];
+        values.valid = true;
+        const double x = eye == 0 ? 4.0 : 6.0;
+        values.major_axis = {true, {x - 1.5, 5.0}, {x + 1.5, 5.0}};
+        values.minor_axis = {true, {x, 4.0}, {x, 6.0}};
+        values.gaze_valid = true;
+        values.gaze = eye == 0 ? crimson::overlay::Point{1.0, 0.15}
+                               : crimson::overlay::Point{1.0, -0.15};
+        values.signed_angle_valid = true;
+        values.signed_angle_degrees = eye == 0 ? 12.0 : -10.0;
+        values.eye_frame_angle_valid = true;
+        values.eye_frame_angle_degrees = eye == 0 ? 9.0 : -7.0;
+    }
+    eye_input.eye_geometry.push_back(std::move(eye_geometry));
+    const ReadOnlyOverlayScene eye_scene =
+        buildReadOnlyOverlayScene(eye_input);
+    CHECK(eye_scene.ready());
+    CHECK(eye_scene.count(PrimitiveType::Polygon) >= 2);
+    CHECK(eye_scene.textCount(CameraOverlayLayer::SubjectMasks) == 3);
+    const SourceViewportTransform eye_full{{0.0, 0.0, 100.0, 100.0},
+                                           {40.0, 20.0, 180.0, 180.0}};
+    const ScreenMesh eye_mesh =
+        tessellateReadOnlyOverlayScene(eye_scene, eye_full);
+    CHECK(eye_mesh.primitive_count == eye_scene.primitives.size());
+    CHECK(eye_mesh.triangleCount() > 100);
+    const RenderedImage eyes =
+        render(device, queue, renderer, eye_scene, eye_full);
+    checkOutsideIsClear(eyes, eye_full.display);
+    CHECK(changedPixelCount(eyes) > 1500);
+    CHECK(!isClear(eyes.at(130, 110)));
+
+    --eye_input.identity.overlay_frame;
+    const ReadOnlyOverlayScene stale_eye =
+        buildReadOnlyOverlayScene(eye_input);
+    CHECK(!stale_eye.ready());
+    const RenderedImage withheld_eye =
+        render(device, queue, renderer, stale_eye, eye_full);
+    CHECK(changedPixelCount(withheld_eye) == 0);
+
     --shape_input.identity.overlay_frame;
     const ReadOnlyOverlayScene stale_shape =
         buildReadOnlyOverlayScene(shape_input);

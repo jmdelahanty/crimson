@@ -11,11 +11,13 @@
 #include "implot.h"
 #include "playback_clock.h"
 #include "crop_presentation_coordinator.h"
+#include "eye_geometry_overlay_buffer.h"
 #include "stimulus_presentation_coordinator.h"
 #include "subject_mask_overlay_buffer.h"
 #include "subject_shape_overlay_buffer.h"
 #include "zarr/analysis_crop_geometry_repository.h"
 #include "zarr/archive_context.h"
+#include "zarr/eye_geometry_overlay_scene_adapter.h"
 #include "zarr/keypoint_overlay_repository.h"
 #include "zarr/keypoint_overlay_scene_adapter.h"
 #include "zarr/subject_mask_overlay_repository.h"
@@ -23,6 +25,7 @@
 #include "zarr/subject_shape_overlay_scene_adapter.h"
 #include "zarr/tensorstore_analysis_crop_geometry_repository.h"
 #include "zarr/tensorstore_acquisition_crop_repository.h"
+#include "zarr/tensorstore_eye_geometry_overlay_repository.h"
 #include "zarr/tensorstore_keypoint_overlay_repository.h"
 #include "zarr/tensorstore_stimulus_repository.h"
 #include "zarr/tensorstore_subject_mask_overlay_repository.h"
@@ -68,6 +71,7 @@ struct LaunchOptions {
   bool multistream_smoke = false;
   bool subject_masks_enabled = true;
   bool subject_shapes_enabled = true;
+  bool eye_geometry_enabled = true;
   int smoke_frames = 12;
   int video_smoke_start = 0;
   int video_smoke_end = 0;
@@ -179,6 +183,10 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
     }
     if (argument == "--no-subject-shapes") {
       options.subject_shapes_enabled = false;
+      continue;
+    }
+    if (argument == "--no-eye-geometry") {
+      options.eye_geometry_enabled = false;
       continue;
     }
     if (argument == "--video") {
@@ -661,6 +669,11 @@ int main(int argc, char **argv) {
   bool subject_shape_overlay_available = false;
   bool subject_shape_overlay_failed = false;
   std::string subject_shape_error;
+  EyeGeometryOverlayBuffer eye_geometry_overlay_buffer;
+  crimson::zarr::EyeGeometryOverlayDescriptor eye_geometry_descriptor;
+  bool eye_geometry_overlay_available = false;
+  bool eye_geometry_overlay_failed = false;
+  std::string eye_geometry_error;
   std::optional<AppleVideoAssetInfo> analysis_crop_view_info;
   std::optional<AppleVideoAssetInfo> crop_view_info;
   crimson::crop::CropPresentationCoordinator crop_presentation;
@@ -682,6 +695,10 @@ int main(int argc, char **argv) {
   uint64_t subject_shape_overlay_presentations = 0;
   uint64_t subject_shape_overlay_detections = 0;
   int64_t last_subject_shape_camera_request = -1;
+  uint64_t eye_geometry_overlay_presentations = 0;
+  uint64_t eye_geometry_overlay_detections = 0;
+  uint64_t eye_geometry_overlay_labels = 0;
+  int64_t last_eye_geometry_camera_request = -1;
   bool pending_crop_discontinuity = true;
   int64_t last_crop_camera_request = -1;
   std::string crop_error;
@@ -920,6 +937,57 @@ int main(int argc, char **argv) {
           } else {
             std::fprintf(stderr, "[AppleSubjectShape] Unavailable: %s\n",
                          subject_shape_error.c_str());
+          }
+        }
+
+        if (options->eye_geometry_enabled) {
+          auto eye_geometry_repository =
+              crimson::zarr::OpenEyeGeometryOverlayRepository(
+                  archive, {}, &eye_geometry_error);
+          if (eye_geometry_repository) {
+            eye_geometry_descriptor = eye_geometry_repository->descriptor();
+            if (eye_geometry_overlay_buffer.open(
+                    std::move(eye_geometry_repository), 6, 16,
+                    &eye_geometry_error) &&
+                eye_geometry_overlay_buffer.requestFrame(
+                    initial_frame, video_playback.info().width,
+                    video_playback.info().height, true,
+                    &eye_geometry_error) &&
+                (!options->video_smoke ||
+                 eye_geometry_overlay_buffer.waitForFrame(
+                     initial_frame, std::chrono::seconds(20)))) {
+              eye_geometry_overlay_available = true;
+              std::printf(
+                  "[AppleEyeGeometry] group=%s run=%s refined_masks=%s "
+                  "crop_run=%s schema=%s:%d method=%s rows=%zu "
+                  "camera_frames=%zu coordinates=%zux%zu lookahead=6 "
+                  "cache=16\n",
+                  eye_geometry_descriptor.source_group.c_str(),
+                  eye_geometry_descriptor.run_name.c_str(),
+                  eye_geometry_descriptor.source_refined_subject_masks_run
+                      .c_str(),
+                  eye_geometry_descriptor.source_crop_run.c_str(),
+                  eye_geometry_descriptor.schema_id.c_str(),
+                  eye_geometry_descriptor.schema_version,
+                  eye_geometry_descriptor.method.c_str(),
+                  eye_geometry_descriptor.row_count,
+                  eye_geometry_descriptor.camera_frame_count,
+                  eye_geometry_descriptor.coordinate_width,
+                  eye_geometry_descriptor.coordinate_height);
+            } else {
+              eye_geometry_overlay_failed = true;
+              eye_geometry_overlay_buffer.close();
+              if (eye_geometry_error.empty()) {
+                eye_geometry_error =
+                    "Timed out settling the initial eye-geometry smoke frame";
+              }
+              std::fprintf(stderr,
+                           "[AppleEyeGeometry] Initialization failed: %s\n",
+                           eye_geometry_error.c_str());
+            }
+          } else {
+            std::fprintf(stderr, "[AppleEyeGeometry] Unavailable: %s\n",
+                         eye_geometry_error.c_str());
           }
         }
 
@@ -1826,6 +1894,41 @@ int main(int argc, char **argv) {
             }
           }
 
+          bool eye_geometry_overlay_ready = false;
+          size_t presented_eye_geometry_detections = 0;
+          if (eye_geometry_overlay_available) {
+            const bool eye_geometry_discontinuity =
+                presentation_was_discontinuous &&
+                last_eye_geometry_camera_request >= 0;
+            if (!eye_geometry_overlay_buffer.requestFrame(
+                    metadata.frame_number, video_playback.info().width,
+                    video_playback.info().height, eye_geometry_discontinuity,
+                    &eye_geometry_error)) {
+              std::fprintf(stderr,
+                           "[AppleEyeGeometry] Request failed: %s\n",
+                           eye_geometry_error.c_str());
+              eye_geometry_overlay_failed = true;
+              eye_geometry_overlay_available = false;
+            } else {
+              last_eye_geometry_camera_request = metadata.frame_number;
+              const auto resolution =
+                  eye_geometry_overlay_buffer.frame(metadata.frame_number);
+              if (resolution &&
+                  resolution->status ==
+                      crimson::zarr::EyeGeometryOverlayStatus::Mapped &&
+                  resolution->camera_frame == metadata.frame_number) {
+                eye_geometry_overlay_ready =
+                    crimson::zarr::appendEyeGeometryOverlaySceneInput(
+                        eye_geometry_descriptor, *resolution,
+                        metadata.frame_number, &overlay_input);
+                if (eye_geometry_overlay_ready) {
+                  presented_eye_geometry_detections =
+                      resolution->detections.size();
+                }
+              }
+            }
+          }
+
           auto overlay_scene =
               crimson::overlay::buildReadOnlyOverlayScene(overlay_input);
           if (current_crop_selection.selected() &&
@@ -1859,7 +1962,8 @@ int main(int argc, char **argv) {
           }
           if (overlay_scene.ready() &&
               (!overlay_scene.primitives.empty() ||
-               !overlay_scene.raster_masks.empty())) {
+               !overlay_scene.raster_masks.empty() ||
+               !overlay_scene.text_annotations.empty())) {
             const crimson::overlay::SourceViewportTransform transform{
                 {0.0, 0.0, overlay_scene.source_width,
                  overlay_scene.source_height},
@@ -1877,6 +1981,9 @@ int main(int argc, char **argv) {
               render_failed = true;
               break;
             }
+            const size_t drawn_overlay_labels = drawAppleReadOnlyOverlayText(
+                overlay_scene, transform, io.DisplayFramebufferScale.x,
+                io.DisplayFramebufferScale.y);
             ++read_only_overlay_presentations;
             if (keypoint_overlay_ready &&
                 (overlay_scene.count(
@@ -1906,6 +2013,13 @@ int main(int argc, char **argv) {
               ++subject_shape_overlay_presentations;
               subject_shape_overlay_detections +=
                   presented_subject_shape_detections;
+            }
+            if (eye_geometry_overlay_ready &&
+                presented_eye_geometry_detections > 0) {
+              ++eye_geometry_overlay_presentations;
+              eye_geometry_overlay_detections +=
+                  presented_eye_geometry_detections;
+              eye_geometry_overlay_labels += drawn_overlay_labels;
             }
           }
           if (crop_enabled) {
@@ -2143,6 +2257,9 @@ int main(int argc, char **argv) {
   subject_shape_overlay_buffer.close();
   const SubjectShapeOverlayBufferMetrics final_subject_shape_metrics =
       subject_shape_overlay_buffer.metrics();
+  eye_geometry_overlay_buffer.close();
+  const EyeGeometryOverlayBufferMetrics final_eye_geometry_metrics =
+      eye_geometry_overlay_buffer.metrics();
   if (crop_enabled) {
     crop_playback.close();
   }
@@ -2211,6 +2328,29 @@ int main(int argc, char **argv) {
         final_subject_shape_metrics.maximum_resolve_ms,
         final_subject_shape_metrics.last_error.c_str());
   }
+  if (!eye_geometry_descriptor.run_name.empty()) {
+    std::printf(
+        "[AppleEyeGeometry] presentations=%llu detections=%llu labels=%llu "
+        "requests=%llu cache_hits=%llu resolved=%llu missing=%llu failed=%llu "
+        "discarded=%llu peak_cached=%zu peak_pending=%zu max_resolve_ms=%.1f "
+        "error=%s\n",
+        static_cast<unsigned long long>(eye_geometry_overlay_presentations),
+        static_cast<unsigned long long>(eye_geometry_overlay_detections),
+        static_cast<unsigned long long>(eye_geometry_overlay_labels),
+        static_cast<unsigned long long>(final_eye_geometry_metrics.requests),
+        static_cast<unsigned long long>(final_eye_geometry_metrics.cache_hits),
+        static_cast<unsigned long long>(
+            final_eye_geometry_metrics.resolved_frames),
+        static_cast<unsigned long long>(
+            final_eye_geometry_metrics.missing_frames),
+        static_cast<unsigned long long>(final_eye_geometry_metrics.failed_frames),
+        static_cast<unsigned long long>(
+            final_eye_geometry_metrics.discarded_results),
+        final_eye_geometry_metrics.peak_cached_frames,
+        final_eye_geometry_metrics.peak_pending_frames,
+        final_eye_geometry_metrics.maximum_resolve_ms,
+        final_eye_geometry_metrics.last_error.c_str());
+  }
 
   if (options->video_smoke) {
     const double elapsed_seconds =
@@ -2231,8 +2371,18 @@ int main(int argc, char **argv) {
          final_subject_shape_metrics.failed_frames != 0 ||
          (final_subject_shape_metrics.resolved_frames != 0 &&
           subject_shape_overlay_presentations == 0));
+    const bool eye_geometry_validation_failed =
+        !eye_geometry_descriptor.run_name.empty() &&
+        (eye_geometry_overlay_failed ||
+         final_eye_geometry_metrics.failed_frames != 0 ||
+         (final_eye_geometry_metrics.resolved_frames != 0 &&
+          eye_geometry_overlay_presentations == 0));
     const std::string &smoke_error =
-        subject_shape_validation_failed
+        eye_geometry_validation_failed
+            ? (!eye_geometry_error.empty()
+                   ? eye_geometry_error
+                   : final_eye_geometry_metrics.last_error)
+        : subject_shape_validation_failed
             ? (!subject_shape_error.empty()
                    ? subject_shape_error
                    : final_subject_shape_metrics.last_error)
@@ -2242,7 +2392,7 @@ int main(int argc, char **argv) {
                    : final_subject_mask_metrics.last_error)
             : final_video_metrics.last_error;
     if (render_failed || subject_mask_validation_failed ||
-        subject_shape_validation_failed ||
+        subject_shape_validation_failed || eye_geometry_validation_failed ||
         viewer_stats.presented_frame < options->video_smoke_end ||
         std::fabs(viewer_stats.pts_error_frames) > 0.51 ||
         viewer_stats.max_lag_frames > maximum_accepted_lag_frames) {

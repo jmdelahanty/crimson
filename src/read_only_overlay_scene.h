@@ -93,6 +93,41 @@ struct SubjectShapeInput {
     std::vector<Point> tail_normals;
 };
 
+struct EyeAxisInput {
+    bool valid = false;
+    Point start;
+    Point end;
+};
+
+struct EyeInput {
+    bool valid = false;
+    EyeAxisInput major_axis;
+    EyeAxisInput minor_axis;
+    bool gaze_valid = false;
+    Point gaze;
+    bool signed_angle_valid = false;
+    double signed_angle_degrees = 0.0;
+    bool eye_frame_angle_valid = false;
+    double eye_frame_angle_degrees = 0.0;
+};
+
+struct EyeGeometryInput {
+    size_t eye_row = 0;
+    int64_t detection_index = -1;
+    int64_t source_crop_row_id = -1;
+    Rect source_rect;
+    double coordinate_width = 0.0;
+    double coordinate_height = 0.0;
+    bool frame_valid = false;
+    bool body_frame_valid = false;
+    Point body_origin;
+    Point body_forward_axis;
+    Point body_left_axis;
+    std::array<EyeInput, 2> eyes;
+    bool vergence_valid = false;
+    double vergence_degrees = 0.0;
+};
+
 struct ReadOnlyOverlayInput {
     FrameIdentity identity;
     double source_width = 0.0;
@@ -101,11 +136,17 @@ struct ReadOnlyOverlayInput {
     std::vector<std::array<size_t, 2>> skeleton_edges;
     std::vector<DetectionOverlayInput> detections;
     std::vector<SubjectMaskComponentInput> subject_masks;
+    std::vector<EyeGeometryInput> eye_geometry;
     std::vector<SubjectShapeInput> subject_shapes;
     bool show_boxes = true;
     bool show_headings = true;
     bool show_subject_mask_fills = true;
     bool show_subject_mask_contours = true;
+    bool show_eye_geometry = true;
+    bool show_eye_direction_beams = true;
+    bool show_eye_gaze_rays = true;
+    bool show_eye_angle_arcs = true;
+    bool show_eye_angle_labels = true;
     bool show_subject_shape = true;
     bool show_subject_shape_body_axes = false;
     bool show_subject_shape_snout_tip = true;
@@ -135,6 +176,7 @@ enum class PrimitiveType : uint8_t {
     Polyline,
     Marker,
     Arrow,
+    Polygon,
 };
 
 struct Primitive {
@@ -163,6 +205,32 @@ struct RasterMask {
     std::string label;
 };
 
+struct TextAnnotation {
+    CameraOverlayLayer layer = CameraOverlayLayer::SubjectMasks;
+    Point source_anchor;
+    Point offset_px;
+    Color text;
+    Color background;
+    Color border;
+    double font_scale = 1.0;
+    bool centered = true;
+    std::string content;
+    std::string label;
+};
+
+struct ScreenTextAnnotation {
+    CameraOverlayLayer layer = CameraOverlayLayer::SubjectMasks;
+    Point anchor;
+    Rect clip_rect;
+    Color text;
+    Color background;
+    Color border;
+    double font_scale = 1.0;
+    bool centered = true;
+    std::string content;
+    std::string label;
+};
+
 enum class ReadOnlyOverlayBuildStatus : uint8_t {
     Ready,
     InvalidIdentity,
@@ -177,11 +245,13 @@ struct ReadOnlyOverlayScene {
     double source_height = 0.0;
     std::vector<RasterMask> raster_masks;
     std::vector<Primitive> primitives;
+    std::vector<TextAnnotation> text_annotations;
 
     bool ready() const;
     size_t count(PrimitiveType type) const;
     size_t count(CameraOverlayLayer layer) const;
     size_t rasterCount(CameraOverlayLayer layer) const;
+    size_t textCount(CameraOverlayLayer layer) const;
 };
 
 ReadOnlyOverlayScene buildReadOnlyOverlayScene(
@@ -217,5 +287,9 @@ ScreenMesh tessellateReadOnlyOverlaySceneLayer(
     const SourceViewportTransform& transform,
     CameraOverlayLayer layer,
     size_t circle_segment_count = 24);
+
+std::vector<ScreenTextAnnotation> layoutReadOnlyOverlayText(
+    const ReadOnlyOverlayScene& scene,
+    const SourceViewportTransform& transform);
 
 }  // namespace crimson::overlay

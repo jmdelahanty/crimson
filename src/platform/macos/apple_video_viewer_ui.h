@@ -4,6 +4,7 @@
 #include "apple_video_playback_buffer.h"
 #include "crop_presentation_coordinator.h"
 #include "playback_clock.h"
+#include "read_only_overlay_scene.h"
 #include "stimulus_presentation_coordinator.h"
 
 #include <cstdint>
@@ -67,6 +68,11 @@ void drawAppleCropPreviewOverlay(
     const AppleMetalVideoViewport &viewport, float framebuffer_scale,
     const crimson::crop::CropSourceSelection *selection,
     crimson::crop::CropSourceSelectionStatus status);
+
+size_t drawAppleReadOnlyOverlayText(
+    const crimson::overlay::ReadOnlyOverlayScene &scene,
+    const crimson::overlay::SourceViewportTransform &transform,
+    float framebuffer_scale_x, float framebuffer_scale_y);
 
 AppleMetalVideoViewport appleVideoViewport(int framebuffer_width,
                                            int framebuffer_height,

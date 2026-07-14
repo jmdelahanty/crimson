@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include <utility>
 
@@ -334,6 +335,353 @@ Point subjectShapePoint(const SubjectShapeInput& shape, Point point) {
                                       shape.source_rect.width,
             shape.source_rect.y + point.y / shape.coordinate_height *
                                       shape.source_rect.height};
+}
+
+Point eyeGeometryPoint(const EyeGeometryInput& geometry, Point point) {
+    if (!geometry.source_rect.valid() || !finite(point) ||
+        !finite(geometry.coordinate_width) ||
+        !finite(geometry.coordinate_height) ||
+        geometry.coordinate_width <= 0.0 || geometry.coordinate_height <= 0.0) {
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        return {nan, nan};
+    }
+    return {geometry.source_rect.x + point.x / geometry.coordinate_width *
+                                         geometry.source_rect.width,
+            geometry.source_rect.y + point.y / geometry.coordinate_height *
+                                         geometry.source_rect.height};
+}
+
+Point normalizedEyeVector(const EyeGeometryInput& geometry, Point vector) {
+    vector.x *= geometry.source_rect.width / geometry.coordinate_width;
+    vector.y *= geometry.source_rect.height / geometry.coordinate_height;
+    const double length = std::hypot(vector.x, vector.y);
+    if (!finite(vector) || length <= 1e-6) {
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        return {nan, nan};
+    }
+    return {vector.x / length, vector.y / length};
+}
+
+void appendEyePolyline(std::vector<Point> points, const std::string& label,
+                       Color color, double width,
+                       std::vector<Primitive>& primitives) {
+    if (points.size() < 2 ||
+        std::any_of(points.begin(), points.end(),
+                    [](Point value) { return !finite(value); })) {
+        return;
+    }
+    Primitive primitive;
+    primitive.type = PrimitiveType::Polyline;
+    primitive.layer = CameraOverlayLayer::SubjectMasks;
+    primitive.points = std::move(points);
+    primitive.stroke = color;
+    primitive.stroke_width_px = width;
+    primitive.label = label;
+    primitives.push_back(std::move(primitive));
+}
+
+std::string eyeAngleLabel(size_t eye, bool eye_frame, double angle) {
+    char text[96];
+    std::snprintf(text, sizeof(text),
+                  eye_frame ? "%s eye-frame %+.1f\xC2\xB0"
+                            : "%s gaze signed %+.1f\xC2\xB0",
+                  eye == 0 ? "Left" : "Right", angle);
+    return text;
+}
+
+double polygonSignedArea(const std::vector<Point>& polygon) {
+    double area = 0.0;
+    for (size_t index = 0; index < polygon.size(); ++index) {
+        const Point a = polygon[index];
+        const Point b = polygon[(index + 1) % polygon.size()];
+        area += a.x * b.y - b.x * a.y;
+    }
+    return area * 0.5;
+}
+
+double edgeDistance(Point edge_start, Point edge_end, Point point) {
+    return (edge_end.x - edge_start.x) * (point.y - edge_start.y) -
+           (edge_end.y - edge_start.y) * (point.x - edge_start.x);
+}
+
+std::vector<Point> intersectConvexPolygons(const std::vector<Point>& subject,
+                                           const std::vector<Point>& clip) {
+    if (subject.size() < 3 || clip.size() < 3) {
+        return {};
+    }
+    std::vector<Point> output = subject;
+    const double orientation = polygonSignedArea(clip) >= 0.0 ? 1.0 : -1.0;
+    for (size_t edge = 0; edge < clip.size() && !output.empty(); ++edge) {
+        const Point clip_start = clip[edge];
+        const Point clip_end = clip[(edge + 1) % clip.size()];
+        std::vector<Point> input = std::move(output);
+        output.clear();
+        output.reserve(input.size() + 2);
+        Point previous = input.back();
+        double previous_distance = edgeDistance(clip_start, clip_end, previous);
+        bool previous_inside = orientation * previous_distance >= -1e-7;
+        for (const Point current : input) {
+            const double current_distance =
+                edgeDistance(clip_start, clip_end, current);
+            const bool current_inside = orientation * current_distance >= -1e-7;
+            if (current_inside != previous_inside) {
+                const double denominator = previous_distance - current_distance;
+                if (std::fabs(denominator) > 1e-12) {
+                    const double t = previous_distance / denominator;
+                    output.push_back(
+                        {previous.x + (current.x - previous.x) * t,
+                         previous.y + (current.y - previous.y) * t});
+                }
+            }
+            if (current_inside) {
+                output.push_back(current);
+            }
+            previous = current;
+            previous_distance = current_distance;
+            previous_inside = current_inside;
+        }
+    }
+    return output.size() >= 3 ? output : std::vector<Point>{};
+}
+
+void appendEyeGeometry(const ReadOnlyOverlayInput& input,
+                       ReadOnlyOverlayScene& scene) {
+    if (!input.show_eye_geometry) {
+        return;
+    }
+    for (const auto& geometry : input.eye_geometry) {
+        if (!geometry.frame_valid || !geometry.source_rect.valid() ||
+            geometry.coordinate_width <= 0.0 ||
+            geometry.coordinate_height <= 0.0) {
+            continue;
+        }
+        const std::string row = std::to_string(geometry.eye_row);
+        std::array<Point, 2> beam_label_anchor{};
+        std::array<bool, 2> beam_valid = {false, false};
+        std::array<std::vector<Point>, 2> beam_polygons;
+        for (size_t eye = 0; eye < 2; ++eye) {
+            const auto& values = geometry.eyes[eye];
+            if (!values.valid) {
+                continue;
+            }
+            const Color color = eye == 0 ? Color{0.25f, 0.95f, 0.35f, 0.90f}
+                                         : Color{0.82f, 0.35f, 0.95f, 0.90f};
+            const std::string suffix = row + "_" + std::to_string(eye);
+            auto append_axis = [&](const EyeAxisInput& axis,
+                                   const std::string& name, Color axis_color,
+                                   double width) {
+                if (!axis.valid) {
+                    return;
+                }
+                appendEyePolyline({eyeGeometryPoint(geometry, axis.start),
+                                   eyeGeometryPoint(geometry, axis.end)},
+                                  name + suffix, axis_color, width,
+                                  scene.primitives);
+            };
+            append_axis(values.major_axis, "##eye_major_", color, 2.5);
+            Color minor_color = color;
+            minor_color.red = std::min(1.0f, minor_color.red + 0.15f);
+            minor_color.green = std::min(1.0f, minor_color.green + 0.15f);
+            minor_color.blue = std::min(1.0f, minor_color.blue + 0.15f);
+            minor_color.alpha = 0.75f;
+            append_axis(values.minor_axis, "##eye_minor_", minor_color, 1.8);
+            if (!values.minor_axis.valid) {
+                continue;
+            }
+            const Point center_local{
+                (values.minor_axis.start.x + values.minor_axis.end.x) * 0.5,
+                (values.minor_axis.start.y + values.minor_axis.end.y) * 0.5};
+            const Point center = eyeGeometryPoint(geometry, center_local);
+            const Point minor_start =
+                eyeGeometryPoint(geometry, values.minor_axis.start);
+            const Point minor_end =
+                eyeGeometryPoint(geometry, values.minor_axis.end);
+            const double minor_length = std::hypot(minor_end.x - minor_start.x,
+                                                   minor_end.y - minor_start.y);
+            Point direction;
+            bool direction_valid = false;
+            if (values.gaze_valid) {
+                direction = normalizedEyeVector(geometry, values.gaze);
+                direction_valid = finite(direction);
+            }
+            if (!direction_valid) {
+                const Point subject_center{
+                    geometry.source_rect.x + geometry.source_rect.width * 0.5,
+                    geometry.source_rect.y + geometry.source_rect.height * 0.5};
+                const double start_distance =
+                    std::hypot(minor_start.x - subject_center.x,
+                               minor_start.y - subject_center.y);
+                const double end_distance =
+                    std::hypot(minor_end.x - subject_center.x,
+                               minor_end.y - subject_center.y);
+                const Point outward =
+                    start_distance >= end_distance ? minor_start : minor_end;
+                const double length =
+                    std::hypot(outward.x - center.x, outward.y - center.y);
+                if (length > 1e-6) {
+                    direction = {(outward.x - center.x) / length,
+                                 (outward.y - center.y) / length};
+                    direction_valid = true;
+                }
+            }
+            if (input.show_eye_gaze_rays && values.gaze_valid &&
+                direction_valid) {
+                const double roi_span = std::max(geometry.source_rect.width,
+                                                 geometry.source_rect.height);
+                const double length =
+                    std::max(roi_span * 0.32, minor_length * 1.35);
+                const Point end{center.x + direction.x * length,
+                                center.y + direction.y * length};
+                appendEyePolyline({center, end}, "##eye_gaze_" + suffix,
+                                  {minor_color.red, minor_color.green,
+                                   minor_color.blue, 0.95f},
+                                  2.2, scene.primitives);
+                Primitive tip;
+                tip.type = PrimitiveType::Marker;
+                tip.layer = CameraOverlayLayer::SubjectMasks;
+                tip.points = {end};
+                tip.marker_shape = MarkerShape::Circle;
+                tip.marker_size_px = 3.0;
+                tip.fill = color;
+                tip.outline = color;
+                tip.outline_width_px = 1.0;
+                tip.label = "##eye_gaze_tip_" + suffix;
+                scene.primitives.push_back(std::move(tip));
+            }
+            if (input.show_eye_angle_arcs && values.signed_angle_valid &&
+                geometry.body_frame_valid) {
+                const Point forward =
+                    normalizedEyeVector(geometry, geometry.body_forward_axis);
+                const Point left =
+                    normalizedEyeVector(geometry, geometry.body_left_axis);
+                if (finite(forward) && finite(left)) {
+                    const double roi_span =
+                        std::max(geometry.source_rect.width,
+                                 geometry.source_rect.height);
+                    const double radius = std::clamp(
+                        std::max(minor_length * 0.75, roi_span * 0.075), 10.0,
+                        std::max(12.0, roi_span * 0.18));
+                    const double angle = std::clamp(
+                        values.signed_angle_degrees * kPi / 180.0, -kPi, kPi);
+                    const int steps =
+                        std::clamp(static_cast<int>(std::ceil(std::fabs(angle) /
+                                                              (kPi / 24.0))),
+                                   6, 32);
+                    appendEyePolyline({center,
+                                       {center.x + forward.x * radius,
+                                        center.y + forward.y * radius}},
+                                      "##eye_arc_body_" + suffix,
+                                      {1.0f, 1.0f, 1.0f, 0.42f}, 1.0,
+                                      scene.primitives);
+                    std::vector<Point> arc;
+                    arc.reserve(static_cast<size_t>(steps + 1));
+                    for (int step = 0; step <= steps; ++step) {
+                        const double value = angle * step / steps;
+                        const Point vector{std::cos(value) * forward.x +
+                                               std::sin(value) * left.x,
+                                           std::cos(value) * forward.y +
+                                               std::sin(value) * left.y};
+                        arc.push_back({center.x + vector.x * radius,
+                                       center.y + vector.y * radius});
+                    }
+                    appendEyePolyline(std::move(arc), "##eye_arc_" + suffix,
+                                      {minor_color.red, minor_color.green,
+                                       minor_color.blue, 0.95f},
+                                      2.4, scene.primitives);
+                }
+            }
+            if (input.show_eye_direction_beams && direction_valid) {
+                const double roi_span = std::max(geometry.source_rect.width,
+                                                 geometry.source_rect.height);
+                const double cone_length =
+                    std::clamp(roi_span * 1.15, 90.0, 520.0);
+                constexpr double kHalfAngle = 81.5 * kPi / 180.0;
+                constexpr int kSteps = 30;
+                Primitive cone;
+                cone.type = PrimitiveType::Polygon;
+                cone.layer = CameraOverlayLayer::SubjectMasks;
+                cone.points.push_back(center);
+                for (int step = 0; step <= kSteps; ++step) {
+                    const double angle =
+                        -kHalfAngle + 2.0 * kHalfAngle * step / kSteps;
+                    const Point ray{std::cos(angle) * direction.x -
+                                        std::sin(angle) * direction.y,
+                                    std::sin(angle) * direction.x +
+                                        std::cos(angle) * direction.y};
+                    cone.points.push_back({center.x + ray.x * cone_length,
+                                           center.y + ray.y * cone_length});
+                }
+                cone.fill = {color.red, color.green, color.blue, 0.13f};
+                cone.outline = {color.red, color.green, color.blue, 0.55f};
+                cone.outline_width_px = 1.0;
+                cone.label = "##eye_beam_" + suffix;
+                beam_polygons[eye] = cone.points;
+                scene.primitives.push_back(std::move(cone));
+                beam_label_anchor[eye] = {
+                    center.x + direction.x * cone_length * 0.42,
+                    center.y + direction.y * cone_length * 0.42};
+                beam_valid[eye] = true;
+            }
+            if (input.show_eye_angle_labels) {
+                double angle = 0.0;
+                bool eye_frame = false;
+                if (values.eye_frame_angle_valid) {
+                    angle = values.eye_frame_angle_degrees;
+                    eye_frame = true;
+                } else if (values.signed_angle_valid) {
+                    angle = values.signed_angle_degrees;
+                } else {
+                    continue;
+                }
+                TextAnnotation text;
+                text.source_anchor = center;
+                text.offset_px = {0.0, eye == 0 ? -24.0 : 24.0};
+                text.text = {minor_color.red, minor_color.green,
+                             minor_color.blue, 1.0f};
+                text.background = {0.03f, 0.04f, 0.05f, 0.82f};
+                text.border = {minor_color.red, minor_color.green,
+                               minor_color.blue, 0.90f};
+                text.font_scale = 1.05;
+                text.content = eyeAngleLabel(eye, eye_frame, angle);
+                text.label = "##eye_label_" + suffix;
+                scene.text_annotations.push_back(std::move(text));
+            }
+        }
+        if (beam_valid[0] && beam_valid[1]) {
+            auto overlap =
+                intersectConvexPolygons(beam_polygons[0], beam_polygons[1]);
+            if (!overlap.empty()) {
+                Primitive fill;
+                fill.type = PrimitiveType::Polygon;
+                fill.layer = CameraOverlayLayer::SubjectMasks;
+                fill.points = std::move(overlap);
+                fill.fill = {0.34f, 1.0f, 0.42f, 0.24f};
+                fill.outline = {0.34f, 1.0f, 0.42f, 0.58f};
+                fill.outline_width_px = 1.0;
+                fill.label = "##eye_beam_overlap_" + row;
+                scene.primitives.push_back(std::move(fill));
+            }
+        }
+        if (input.show_eye_angle_labels && geometry.vergence_valid &&
+            beam_valid[0] && beam_valid[1]) {
+            char label[96];
+            std::snprintf(label, sizeof(label),
+                          "Eye-frame vergence %+.1f\xC2\xB0",
+                          geometry.vergence_degrees);
+            TextAnnotation text;
+            text.source_anchor = {
+                (beam_label_anchor[0].x + beam_label_anchor[1].x) * 0.5,
+                (beam_label_anchor[0].y + beam_label_anchor[1].y) * 0.5};
+            text.offset_px = {0.0, -18.0};
+            text.text = {0.34f, 1.0f, 0.42f, 0.92f};
+            text.background = {0.03f, 0.04f, 0.05f, 0.82f};
+            text.border = {0.34f, 1.0f, 0.42f, 0.92f};
+            text.font_scale = 1.15;
+            text.content = label;
+            text.label = "##eye_vergence_" + row;
+            scene.text_annotations.push_back(std::move(text));
+        }
+    }
 }
 
 std::vector<Point> subjectShapePoints(const SubjectShapeInput& shape,
@@ -722,6 +1070,12 @@ size_t ReadOnlyOverlayScene::rasterCount(CameraOverlayLayer layer) const {
         [layer](const RasterMask& raster) { return raster.layer == layer; }));
 }
 
+size_t ReadOnlyOverlayScene::textCount(CameraOverlayLayer layer) const {
+    return static_cast<size_t>(std::count_if(
+        text_annotations.begin(), text_annotations.end(),
+        [layer](const TextAnnotation& text) { return text.layer == layer; }));
+}
+
 ReadOnlyOverlayScene buildReadOnlyOverlayScene(
     const ReadOnlyOverlayInput& input) {
     ReadOnlyOverlayScene scene;
@@ -753,6 +1107,7 @@ ReadOnlyOverlayScene buildReadOnlyOverlayScene(
         }
     }
     appendSubjectMasks(input, scene);
+    appendEyeGeometry(input, scene);
     appendSubjectShapes(input, scene.primitives);
     if (input.show_keypoints) {
         for (size_t index = 0; index < input.detections.size(); ++index) {
@@ -918,6 +1273,28 @@ ScreenMesh tessellateReadOnlyOverlayScene(
             }
             mesh.primitive_count +=
                 mesh.triangle_vertices.size() > before ? 1 : 0;
+        } else if (primitive.type == PrimitiveType::Polygon) {
+            if (primitive.points.size() < 3 || !primitive.fill.valid() ||
+                !primitive.outline.valid()) {
+                continue;
+            }
+            std::vector<Point> points;
+            points.reserve(primitive.points.size());
+            for (const Point source : primitive.points) {
+                const auto display = transform.sourceToDisplay(source);
+                if (!display) {
+                    points.clear();
+                    break;
+                }
+                points.push_back(*display);
+            }
+            if (points.size() >= 3) {
+                const size_t before = mesh.triangle_vertices.size();
+                appendPolygon(mesh, points, primitive.fill, primitive.outline,
+                              primitive.outline_width_px);
+                mesh.primitive_count +=
+                    mesh.triangle_vertices.size() > before ? 1 : 0;
+            }
         }
     }
     return mesh;
@@ -938,6 +1315,39 @@ ScreenMesh tessellateReadOnlyOverlaySceneLayer(
     filtered.raster_masks.clear();
     return tessellateReadOnlyOverlayScene(filtered, transform,
                                           circle_segment_count);
+}
+
+std::vector<ScreenTextAnnotation> layoutReadOnlyOverlayText(
+    const ReadOnlyOverlayScene& scene,
+    const SourceViewportTransform& transform) {
+    std::vector<ScreenTextAnnotation> output;
+    if (!scene.ready() || !transform.valid()) {
+        return output;
+    }
+    output.reserve(scene.text_annotations.size());
+    for (const auto& source : scene.text_annotations) {
+        const auto anchor = transform.sourceToDisplay(source.source_anchor);
+        if (!anchor || !source.text.valid() || !source.background.valid() ||
+            !source.border.valid() || !finite(source.offset_px) ||
+            !finite(source.font_scale) || source.font_scale <= 0.0 ||
+            source.content.empty()) {
+            continue;
+        }
+        ScreenTextAnnotation text;
+        text.layer = source.layer;
+        text.anchor = {anchor->x + source.offset_px.x,
+                       anchor->y + source.offset_px.y};
+        text.clip_rect = transform.display;
+        text.text = source.text;
+        text.background = source.background;
+        text.border = source.border;
+        text.font_scale = source.font_scale;
+        text.centered = source.centered;
+        text.content = source.content;
+        text.label = source.label;
+        output.push_back(std::move(text));
+    }
+    return output;
 }
 
 }  // namespace crimson::overlay

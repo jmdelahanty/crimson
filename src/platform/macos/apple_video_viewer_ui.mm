@@ -6,6 +6,8 @@
 #import <mach/mach.h>
 
 #include <algorithm>
+#include <cfloat>
+#include <cmath>
 #include <cstdio>
 #include <string>
 
@@ -41,6 +43,13 @@ AppleViewerThermalState currentThermalState() {
     return AppleViewerThermalState::Critical;
   }
   return AppleViewerThermalState::Unknown;
+}
+
+ImU32 overlayColor(crimson::overlay::Color color) {
+  return IM_COL32(static_cast<int>(std::lround(color.red * 255.0f)),
+                  static_cast<int>(std::lround(color.green * 255.0f)),
+                  static_cast<int>(std::lround(color.blue * 255.0f)),
+                  static_cast<int>(std::lround(color.alpha * 255.0f)));
 }
 
 bool seekViewer(LogicalPlaybackClock &clock,
@@ -382,6 +391,54 @@ void drawAppleCropPreviewOverlay(
                            geometry.output_height * height);
   draw_list->AddRect(ImVec2(x0, y0), ImVec2(x1, y1),
                      IM_COL32(58, 214, 132, 255), 0.0f, 0, 2.0f);
+}
+
+size_t drawAppleReadOnlyOverlayText(
+    const crimson::overlay::ReadOnlyOverlayScene &scene,
+    const crimson::overlay::SourceViewportTransform &transform,
+    float framebuffer_scale_x, float framebuffer_scale_y) {
+  if (framebuffer_scale_x <= 0.0f || framebuffer_scale_y <= 0.0f) {
+    return 0;
+  }
+  const auto labels = crimson::overlay::layoutReadOnlyOverlayText(scene,
+                                                                  transform);
+  ImDrawList *draw_list = ImGui::GetForegroundDrawList();
+  ImFont *font = ImGui::GetFont();
+  size_t drawn = 0;
+  for (const auto &label : labels) {
+    const ImVec2 clip_min(
+        static_cast<float>(label.clip_rect.x / framebuffer_scale_x),
+        static_cast<float>(label.clip_rect.y / framebuffer_scale_y));
+    const ImVec2 clip_max(
+        static_cast<float>((label.clip_rect.x + label.clip_rect.width) /
+                           framebuffer_scale_x),
+        static_cast<float>((label.clip_rect.y + label.clip_rect.height) /
+                           framebuffer_scale_y));
+    const float font_size =
+        ImGui::GetFontSize() * static_cast<float>(label.font_scale);
+    const ImVec2 text_size = font->CalcTextSizeA(
+        font_size, FLT_MAX, 0.0f, label.content.c_str());
+    const ImVec2 anchor(static_cast<float>(label.anchor.x / framebuffer_scale_x),
+                        static_cast<float>(label.anchor.y / framebuffer_scale_y));
+    const ImVec2 text_min(
+        label.centered ? anchor.x - text_size.x * 0.5f : anchor.x,
+        label.centered ? anchor.y - text_size.y * 0.5f : anchor.y);
+    constexpr float kHorizontalPadding = 5.0f;
+    constexpr float kVerticalPadding = 3.0f;
+    const ImVec2 box_min(text_min.x - kHorizontalPadding,
+                         text_min.y - kVerticalPadding);
+    const ImVec2 box_max(text_min.x + text_size.x + kHorizontalPadding,
+                         text_min.y + text_size.y + kVerticalPadding);
+    draw_list->PushClipRect(clip_min, clip_max, true);
+    draw_list->AddRectFilled(box_min, box_max, overlayColor(label.background));
+    draw_list->AddRect(box_min, box_max, overlayColor(label.border), 0.0f, 0,
+                       1.0f);
+    draw_list->AddText(font, font_size, text_min, overlayColor(label.text),
+                       label.content.c_str());
+    draw_list->PopClipRect();
+    ++drawn;
+  }
+  return drawn;
 }
 
 AppleMetalVideoViewport appleVideoViewport(int framebuffer_width,
