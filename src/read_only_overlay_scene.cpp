@@ -323,6 +323,227 @@ void appendSubjectMasks(const ReadOnlyOverlayInput& input,
     }
 }
 
+Point subjectShapePoint(const SubjectShapeInput& shape, Point point) {
+    if (!shape.source_rect.valid() || !finite(point) ||
+        !finite(shape.coordinate_width) || !finite(shape.coordinate_height) ||
+        shape.coordinate_width <= 0.0 || shape.coordinate_height <= 0.0) {
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        return {nan, nan};
+    }
+    return {shape.source_rect.x + point.x / shape.coordinate_width *
+                                      shape.source_rect.width,
+            shape.source_rect.y + point.y / shape.coordinate_height *
+                                      shape.source_rect.height};
+}
+
+std::vector<Point> subjectShapePoints(const SubjectShapeInput& shape,
+                                      const std::vector<Point>& points) {
+    std::vector<Point> converted;
+    converted.reserve(points.size());
+    for (const Point point : points) {
+        const Point scene = subjectShapePoint(shape, point);
+        if (finite(scene)) {
+            converted.push_back(scene);
+        }
+    }
+    return converted;
+}
+
+void appendShapePolyline(const SubjectShapeInput& shape,
+                         const std::vector<Point>& points,
+                         const std::string& label,
+                         Color color,
+                         double width,
+                         std::vector<Primitive>& primitives) {
+    auto converted = subjectShapePoints(shape, points);
+    if (converted.size() < 2) {
+        return;
+    }
+    Primitive primitive;
+    primitive.type = PrimitiveType::Polyline;
+    primitive.layer = CameraOverlayLayer::SubjectShape;
+    primitive.points = std::move(converted);
+    primitive.stroke = color;
+    primitive.stroke_width_px = width;
+    primitive.label = label;
+    primitives.push_back(std::move(primitive));
+}
+
+void appendShapeMarker(const SubjectShapeInput& shape,
+                       Point point,
+                       const std::string& label,
+                       MarkerShape marker,
+                       double size,
+                       Color fill,
+                       std::vector<Primitive>& primitives) {
+    const Point converted = subjectShapePoint(shape, point);
+    if (!finite(converted)) {
+        return;
+    }
+    Primitive primitive;
+    primitive.type = PrimitiveType::Marker;
+    primitive.layer = CameraOverlayLayer::SubjectShape;
+    primitive.points = {converted};
+    primitive.marker_shape = marker;
+    primitive.marker_size_px = size;
+    primitive.fill = fill;
+    primitive.outline = marker == MarkerShape::Cross
+                            ? fill
+                            : Color{0.0f, 0.0f, 0.0f, 0.9f};
+    primitive.outline_width_px = marker == MarkerShape::Cross ? 2.0 : 1.5;
+    primitive.label = label;
+    primitives.push_back(std::move(primitive));
+}
+
+void appendBodyAxis(const SubjectShapeInput& shape,
+                    Point axis,
+                    const std::string& label,
+                    Color color,
+                    std::vector<Primitive>& primitives) {
+    if (!shape.body_frame_valid || !finite(shape.body_origin) || !finite(axis)) {
+        return;
+    }
+    const double length = std::hypot(axis.x, axis.y);
+    if (length <= 1e-5) {
+        return;
+    }
+    const double axis_length =
+        std::max(shape.coordinate_width, shape.coordinate_height) * 0.12;
+    appendShapePolyline(
+        shape,
+        {shape.body_origin,
+         {shape.body_origin.x + axis.x / length * axis_length,
+          shape.body_origin.y + axis.y / length * axis_length}},
+        label, color, 2.0, primitives);
+}
+
+void appendSubjectShapes(const ReadOnlyOverlayInput& input,
+                         std::vector<Primitive>& primitives) {
+    if (!input.show_subject_shape) {
+        return;
+    }
+    std::vector<const SubjectShapeInput*> shapes;
+    shapes.reserve(input.subject_shapes.size());
+    for (const auto& shape : input.subject_shapes) {
+        shapes.push_back(&shape);
+    }
+    std::stable_sort(shapes.begin(), shapes.end(), [](const auto* first,
+                                                      const auto* second) {
+        if (first->detection_index != second->detection_index) {
+            return first->detection_index < second->detection_index;
+        }
+        return first->shape_row < second->shape_row;
+    });
+
+    for (const SubjectShapeInput* shape : shapes) {
+        if (!shape->source_rect.valid() || shape->coordinate_width <= 0.0 ||
+            shape->coordinate_height <= 0.0) {
+            continue;
+        }
+        const std::string suffix = std::to_string(shape->shape_row);
+        if (input.show_subject_shape_body_axes) {
+            appendBodyAxis(*shape, shape->body_forward_axis,
+                           "##shape_body_forward_" + suffix,
+                           {1.0f, 0.55f, 0.15f, 0.9f}, primitives);
+            appendBodyAxis(*shape, shape->body_left_axis,
+                           "##shape_body_left_" + suffix,
+                           {0.1f, 0.9f, 0.95f, 0.85f}, primitives);
+        }
+        if (input.show_subject_shape_centerline && shape->centerline_valid) {
+            appendShapePolyline(*shape, shape->centerline,
+                                "##shape_centerline_" + suffix,
+                                {1.0f, 0.92f, 0.25f, 0.95f}, 2.2,
+                                primitives);
+        }
+        if (input.show_subject_shape_bspline && shape->bspline_valid) {
+            appendShapePolyline(*shape, shape->bspline_sample,
+                                "##shape_bspline_" + suffix,
+                                {0.2f, 1.0f, 0.7f, 0.95f}, 2.0, primitives);
+        }
+        if (input.show_subject_shape_bspline_debug_points &&
+            shape->bspline_valid) {
+            for (size_t index = 0; index < shape->bspline_sample.size(); ++index) {
+                appendShapeMarker(*shape, shape->bspline_sample[index],
+                                  "##shape_bspline_debug_" + suffix + "_" +
+                                      std::to_string(index),
+                                  MarkerShape::Circle, 2.4,
+                                  {0.2f, 1.0f, 0.7f, 0.45f}, primitives);
+            }
+        }
+        if (input.show_subject_shape_bspline_control_points) {
+            appendShapePolyline(*shape, shape->bspline_control_points,
+                                "##shape_bspline_controls_" + suffix,
+                                {0.2f, 0.9f, 0.7f, 0.35f}, 1.0, primitives);
+            for (size_t index = 0; index < shape->bspline_control_points.size();
+                 ++index) {
+                appendShapeMarker(*shape, shape->bspline_control_points[index],
+                                  "##shape_bspline_control_" + suffix + "_" +
+                                      std::to_string(index),
+                                  MarkerShape::Square, 4.0,
+                                  {0.2f, 1.0f, 0.7f, 0.65f}, primitives);
+            }
+        }
+        if (input.show_subject_shape_tail_samples &&
+            shape->tail_sample_valid) {
+            for (size_t index = 0; index < shape->tail_samples.size(); ++index) {
+                appendShapeMarker(*shape, shape->tail_samples[index],
+                                  "##shape_tail_sample_" + suffix + "_" +
+                                      std::to_string(index),
+                                  MarkerShape::Circle, 3.0,
+                                  {0.85f, 0.6f, 1.0f, 0.7f}, primitives);
+            }
+        }
+        if (input.show_subject_shape_tail_normals &&
+            shape->tail_sample_valid &&
+            shape->tail_samples.size() == shape->tail_normals.size()) {
+            const double normal_length =
+                std::max(shape->coordinate_width, shape->coordinate_height) *
+                0.035;
+            for (size_t index = 0; index < shape->tail_samples.size(); ++index) {
+                const Point sample = shape->tail_samples[index];
+                const Point normal = shape->tail_normals[index];
+                const double length = std::hypot(normal.x, normal.y);
+                if (!finite(sample) || !finite(normal) || length <= 1e-5) {
+                    continue;
+                }
+                const Point delta{normal.x / length * normal_length,
+                                  normal.y / length * normal_length};
+                appendShapePolyline(
+                    *shape,
+                    {{sample.x - delta.x, sample.y - delta.y},
+                     {sample.x + delta.x, sample.y + delta.y}},
+                    "##shape_tail_normal_" + suffix + "_" +
+                        std::to_string(index),
+                    {0.65f, 0.95f, 1.0f, 0.65f}, 1.0, primitives);
+            }
+        }
+        if (input.show_subject_shape_snout_tip && shape->snout_tip_valid) {
+            appendShapeMarker(*shape, shape->snout_tip,
+                              "##shape_snout_" + suffix, MarkerShape::Circle,
+                              7.0, {1.0f, 0.45f, 0.1f, 0.95f}, primitives);
+        }
+        if (input.show_subject_shape_tail_base && shape->tail_base_valid) {
+            appendShapeMarker(*shape, shape->tail_base,
+                              "##shape_tail_base_" + suffix,
+                              MarkerShape::Diamond, 6.5,
+                              {0.95f, 0.55f, 1.0f, 0.9f}, primitives);
+        }
+        if (input.show_subject_shape_tail_tip) {
+            appendShapeMarker(*shape, shape->tail_tip,
+                              "##shape_tail_tip_" + suffix,
+                              MarkerShape::Cross, 6.5,
+                              {0.75f, 0.45f, 1.0f, 0.9f}, primitives);
+        }
+        if (input.show_subject_shape_caudal_anchor &&
+            shape->caudal_anchor_valid) {
+            appendShapeMarker(*shape, shape->caudal_anchor,
+                              "##shape_caudal_anchor_" + suffix,
+                              MarkerShape::TriangleUp, 6.5,
+                              {0.25f, 0.75f, 1.0f, 0.95f}, primitives);
+        }
+    }
+}
+
 void appendTriangle(ScreenMesh& mesh,
                     Point a,
                     Point b,
@@ -532,6 +753,7 @@ ReadOnlyOverlayScene buildReadOnlyOverlayScene(
         }
     }
     appendSubjectMasks(input, scene);
+    appendSubjectShapes(input, scene.primitives);
     if (input.show_keypoints) {
         for (size_t index = 0; index < input.detections.size(); ++index) {
             appendKeypointPrimitives(input, input.detections[index], index,

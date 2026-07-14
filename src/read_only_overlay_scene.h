@@ -62,6 +62,37 @@ struct SubjectMaskComponentInput {
     std::vector<Point> contour;
 };
 
+struct SubjectShapeInput {
+    size_t shape_row = 0;
+    int64_t detection_index = -1;
+    int64_t source_refined_row_id = -1;
+    int64_t source_crop_row_id = -1;
+    Rect source_rect;
+    double coordinate_width = 0.0;
+    double coordinate_height = 0.0;
+
+    bool body_frame_valid = false;
+    Point body_origin;
+    Point body_forward_axis;
+    Point body_left_axis;
+    bool snout_tip_valid = false;
+    Point snout_tip;
+    bool tail_base_valid = false;
+    Point tail_base;
+    Point tail_tip;
+    bool caudal_anchor_valid = false;
+    Point caudal_anchor;
+    bool centerline_valid = false;
+    bool centerline_reaches_snout = false;
+    std::vector<Point> centerline;
+    bool bspline_valid = false;
+    std::vector<Point> bspline_sample;
+    std::vector<Point> bspline_control_points;
+    bool tail_sample_valid = false;
+    std::vector<Point> tail_samples;
+    std::vector<Point> tail_normals;
+};
+
 struct ReadOnlyOverlayInput {
     FrameIdentity identity;
     double source_width = 0.0;
@@ -70,10 +101,23 @@ struct ReadOnlyOverlayInput {
     std::vector<std::array<size_t, 2>> skeleton_edges;
     std::vector<DetectionOverlayInput> detections;
     std::vector<SubjectMaskComponentInput> subject_masks;
+    std::vector<SubjectShapeInput> subject_shapes;
     bool show_boxes = true;
     bool show_headings = true;
     bool show_subject_mask_fills = true;
     bool show_subject_mask_contours = true;
+    bool show_subject_shape = true;
+    bool show_subject_shape_body_axes = false;
+    bool show_subject_shape_snout_tip = true;
+    bool show_subject_shape_caudal_anchor = true;
+    bool show_subject_shape_tail_base = true;
+    bool show_subject_shape_tail_tip = true;
+    bool show_subject_shape_centerline = true;
+    bool show_subject_shape_bspline = true;
+    bool show_subject_shape_bspline_debug_points = false;
+    bool show_subject_shape_bspline_control_points = false;
+    bool show_subject_shape_tail_samples = false;
+    bool show_subject_shape_tail_normals = false;
     bool show_keypoints = true;
 };
 

@@ -13,17 +13,20 @@
 #include "crop_presentation_coordinator.h"
 #include "stimulus_presentation_coordinator.h"
 #include "subject_mask_overlay_buffer.h"
+#include "subject_shape_overlay_buffer.h"
 #include "zarr/analysis_crop_geometry_repository.h"
 #include "zarr/archive_context.h"
 #include "zarr/keypoint_overlay_repository.h"
 #include "zarr/keypoint_overlay_scene_adapter.h"
 #include "zarr/subject_mask_overlay_repository.h"
 #include "zarr/subject_mask_overlay_scene_adapter.h"
+#include "zarr/subject_shape_overlay_scene_adapter.h"
 #include "zarr/tensorstore_analysis_crop_geometry_repository.h"
 #include "zarr/tensorstore_acquisition_crop_repository.h"
 #include "zarr/tensorstore_keypoint_overlay_repository.h"
 #include "zarr/tensorstore_stimulus_repository.h"
 #include "zarr/tensorstore_subject_mask_overlay_repository.h"
+#include "zarr/tensorstore_subject_shape_overlay_repository.h"
 
 #define GLFW_INCLUDE_NONE
 #define GLFW_EXPOSE_NATIVE_COCOA
@@ -64,6 +67,7 @@ struct LaunchOptions {
   bool crop_smoke = false;
   bool multistream_smoke = false;
   bool subject_masks_enabled = true;
+  bool subject_shapes_enabled = true;
   int smoke_frames = 12;
   int video_smoke_start = 0;
   int video_smoke_end = 0;
@@ -171,6 +175,10 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
     }
     if (argument == "--no-subject-masks") {
       options.subject_masks_enabled = false;
+      continue;
+    }
+    if (argument == "--no-subject-shapes") {
+      options.subject_shapes_enabled = false;
       continue;
     }
     if (argument == "--video") {
@@ -648,6 +656,11 @@ int main(int argc, char **argv) {
   bool subject_mask_overlay_failed = false;
   bool subject_mask_smoke_start_pending = false;
   std::string subject_mask_error;
+  SubjectShapeOverlayBuffer subject_shape_overlay_buffer;
+  crimson::zarr::SubjectShapeOverlayDescriptor subject_shape_descriptor;
+  bool subject_shape_overlay_available = false;
+  bool subject_shape_overlay_failed = false;
+  std::string subject_shape_error;
   std::optional<AppleVideoAssetInfo> analysis_crop_view_info;
   std::optional<AppleVideoAssetInfo> crop_view_info;
   crimson::crop::CropPresentationCoordinator crop_presentation;
@@ -666,6 +679,9 @@ int main(int argc, char **argv) {
   uint64_t subject_mask_overlay_detections = 0;
   uint64_t subject_mask_overlay_components = 0;
   int64_t last_subject_mask_camera_request = -1;
+  uint64_t subject_shape_overlay_presentations = 0;
+  uint64_t subject_shape_overlay_detections = 0;
+  int64_t last_subject_shape_camera_request = -1;
   bool pending_crop_discontinuity = true;
   int64_t last_crop_camera_request = -1;
   std::string crop_error;
@@ -855,6 +871,55 @@ int main(int argc, char **argv) {
           } else {
             std::fprintf(stderr, "[AppleSubjectMasks] Unavailable: %s\n",
                          subject_mask_error.c_str());
+          }
+        }
+
+        if (options->subject_shapes_enabled) {
+          auto subject_shape_repository =
+              crimson::zarr::OpenSubjectShapeOverlayRepository(
+                  archive, {}, &subject_shape_error);
+          if (subject_shape_repository) {
+            subject_shape_descriptor = subject_shape_repository->descriptor();
+            if (subject_shape_overlay_buffer.open(
+                    std::move(subject_shape_repository), 6, 16,
+                    &subject_shape_error) &&
+                subject_shape_overlay_buffer.requestFrame(
+                    initial_frame, video_playback.info().width,
+                    video_playback.info().height, true,
+                    &subject_shape_error) &&
+                (!options->video_smoke ||
+                 subject_shape_overlay_buffer.waitForFrame(
+                     initial_frame, std::chrono::seconds(20)))) {
+              subject_shape_overlay_available = true;
+              std::printf(
+                  "[AppleSubjectShape] group=%s run=%s refined_masks=%s "
+                  "crop_run=%s rows=%zu camera_frames=%zu coordinates=%zux%zu "
+                  "centerline=%zu bspline=%zu lookahead=6 cache=16\n",
+                  subject_shape_descriptor.source_group.c_str(),
+                  subject_shape_descriptor.run_name.c_str(),
+                  subject_shape_descriptor.source_refined_subject_masks_run
+                      .c_str(),
+                  subject_shape_descriptor.source_crop_run.c_str(),
+                  subject_shape_descriptor.row_count,
+                  subject_shape_descriptor.camera_frame_count,
+                  subject_shape_descriptor.coordinate_width,
+                  subject_shape_descriptor.coordinate_height,
+                  subject_shape_descriptor.centerline_point_count,
+                  subject_shape_descriptor.bspline_sample_point_count);
+            } else {
+              subject_shape_overlay_failed = true;
+              subject_shape_overlay_buffer.close();
+              if (subject_shape_error.empty()) {
+                subject_shape_error =
+                    "Timed out settling the initial subject-shape smoke frame";
+              }
+              std::fprintf(stderr,
+                           "[AppleSubjectShape] Initialization failed: %s\n",
+                           subject_shape_error.c_str());
+            }
+          } else {
+            std::fprintf(stderr, "[AppleSubjectShape] Unavailable: %s\n",
+                         subject_shape_error.c_str());
           }
         }
 
@@ -1726,6 +1791,41 @@ int main(int argc, char **argv) {
             }
           }
 
+          bool subject_shape_overlay_ready = false;
+          size_t presented_subject_shape_detections = 0;
+          if (subject_shape_overlay_available) {
+            const bool subject_shape_discontinuity =
+                presentation_was_discontinuous &&
+                last_subject_shape_camera_request >= 0;
+            if (!subject_shape_overlay_buffer.requestFrame(
+                    metadata.frame_number, video_playback.info().width,
+                    video_playback.info().height,
+                    subject_shape_discontinuity, &subject_shape_error)) {
+              std::fprintf(stderr,
+                           "[AppleSubjectShape] Request failed: %s\n",
+                           subject_shape_error.c_str());
+              subject_shape_overlay_failed = true;
+              subject_shape_overlay_available = false;
+            } else {
+              last_subject_shape_camera_request = metadata.frame_number;
+              const auto resolution =
+                  subject_shape_overlay_buffer.frame(metadata.frame_number);
+              if (resolution &&
+                  resolution->status ==
+                      crimson::zarr::SubjectShapeOverlayStatus::Mapped &&
+                  resolution->camera_frame == metadata.frame_number) {
+                subject_shape_overlay_ready =
+                    crimson::zarr::appendSubjectShapeOverlaySceneInput(
+                        subject_shape_descriptor, *resolution,
+                        metadata.frame_number, &overlay_input);
+                if (subject_shape_overlay_ready) {
+                  presented_subject_shape_detections =
+                      resolution->detections.size();
+                }
+              }
+            }
+          }
+
           auto overlay_scene =
               crimson::overlay::buildReadOnlyOverlayScene(overlay_input);
           if (current_crop_selection.selected() &&
@@ -1799,6 +1899,13 @@ int main(int argc, char **argv) {
                   presented_subject_mask_detections;
               subject_mask_overlay_components +=
                   presented_subject_mask_components;
+            }
+            if (subject_shape_overlay_ready &&
+                overlay_scene.count(
+                    crimson::overlay::CameraOverlayLayer::SubjectShape) > 0) {
+              ++subject_shape_overlay_presentations;
+              subject_shape_overlay_detections +=
+                  presented_subject_shape_detections;
             }
           }
           if (crop_enabled) {
@@ -2033,6 +2140,9 @@ int main(int argc, char **argv) {
   subject_mask_overlay_buffer.close();
   const SubjectMaskOverlayBufferMetrics final_subject_mask_metrics =
       subject_mask_overlay_buffer.metrics();
+  subject_shape_overlay_buffer.close();
+  const SubjectShapeOverlayBufferMetrics final_subject_shape_metrics =
+      subject_shape_overlay_buffer.metrics();
   if (crop_enabled) {
     crop_playback.close();
   }
@@ -2078,6 +2188,29 @@ int main(int argc, char **argv) {
         final_subject_mask_metrics.maximum_resolve_ms,
         final_subject_mask_metrics.last_error.c_str());
   }
+  if (!subject_shape_descriptor.run_name.empty()) {
+    std::printf(
+        "[AppleSubjectShape] presentations=%llu detections=%llu requests=%llu "
+        "cache_hits=%llu resolved=%llu missing=%llu failed=%llu discarded=%llu "
+        "peak_cached=%zu peak_pending=%zu max_resolve_ms=%.1f error=%s\n",
+        static_cast<unsigned long long>(subject_shape_overlay_presentations),
+        static_cast<unsigned long long>(subject_shape_overlay_detections),
+        static_cast<unsigned long long>(final_subject_shape_metrics.requests),
+        static_cast<unsigned long long>(
+            final_subject_shape_metrics.cache_hits),
+        static_cast<unsigned long long>(
+            final_subject_shape_metrics.resolved_frames),
+        static_cast<unsigned long long>(
+            final_subject_shape_metrics.missing_frames),
+        static_cast<unsigned long long>(
+            final_subject_shape_metrics.failed_frames),
+        static_cast<unsigned long long>(
+            final_subject_shape_metrics.discarded_results),
+        final_subject_shape_metrics.peak_cached_frames,
+        final_subject_shape_metrics.peak_pending_frames,
+        final_subject_shape_metrics.maximum_resolve_ms,
+        final_subject_shape_metrics.last_error.c_str());
+  }
 
   if (options->video_smoke) {
     const double elapsed_seconds =
@@ -2092,13 +2225,24 @@ int main(int argc, char **argv) {
          final_subject_mask_metrics.failed_frames != 0 ||
          (final_subject_mask_metrics.resolved_frames != 0 &&
           subject_mask_overlay_presentations == 0));
+    const bool subject_shape_validation_failed =
+        !subject_shape_descriptor.run_name.empty() &&
+        (subject_shape_overlay_failed ||
+         final_subject_shape_metrics.failed_frames != 0 ||
+         (final_subject_shape_metrics.resolved_frames != 0 &&
+          subject_shape_overlay_presentations == 0));
     const std::string &smoke_error =
-        subject_mask_validation_failed
+        subject_shape_validation_failed
+            ? (!subject_shape_error.empty()
+                   ? subject_shape_error
+                   : final_subject_shape_metrics.last_error)
+        : subject_mask_validation_failed
             ? (!subject_mask_error.empty()
                    ? subject_mask_error
                    : final_subject_mask_metrics.last_error)
             : final_video_metrics.last_error;
     if (render_failed || subject_mask_validation_failed ||
+        subject_shape_validation_failed ||
         viewer_stats.presented_frame < options->video_smoke_end ||
         std::fabs(viewer_stats.pts_error_frames) > 0.51 ||
         viewer_stats.max_lag_frames > maximum_accepted_lag_frames) {

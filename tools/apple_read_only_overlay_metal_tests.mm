@@ -209,6 +209,53 @@ void runTest() {
     checkOutsideIsClear(masked_zoom, mask_zoom.display);
     CHECK(!isClear(masked_zoom.at(130, 110)));
 
+    ReadOnlyOverlayInput shape_input;
+    shape_input.identity = {0, 9, 0, 9};
+    shape_input.source_width = 100.0;
+    shape_input.source_height = 100.0;
+    shape_input.show_boxes = false;
+    shape_input.show_headings = false;
+    shape_input.show_keypoints = false;
+    SubjectShapeInput shape;
+    shape.shape_row = 17;
+    shape.detection_index = 0;
+    shape.source_refined_row_id = 51;
+    shape.source_crop_row_id = 33;
+    shape.source_rect = {20.0, 20.0, 60.0, 60.0};
+    shape.coordinate_width = 10.0;
+    shape.coordinate_height = 10.0;
+    shape.snout_tip_valid = true;
+    shape.snout_tip = {5.0, 5.0};
+    shape.tail_base_valid = true;
+    shape.tail_base = {3.0, 7.0};
+    shape.tail_tip = {1.0, 9.0};
+    shape.caudal_anchor_valid = true;
+    shape.caudal_anchor = {6.0, 6.0};
+    shape.centerline_valid = true;
+    shape.centerline = {{2.0, 2.0}, {5.0, 5.0}, {8.0, 8.0}};
+    shape.bspline_valid = true;
+    shape.bspline_sample = {{2.0, 3.0}, {5.0, 6.0}, {8.0, 9.0}};
+    shape_input.subject_shapes.push_back(std::move(shape));
+    const ReadOnlyOverlayScene shape_scene =
+        buildReadOnlyOverlayScene(shape_input);
+    CHECK(shape_scene.ready());
+    CHECK(shape_scene.count(CameraOverlayLayer::SubjectShape) == 6);
+    const SourceViewportTransform shape_full{{0.0, 0.0, 100.0, 100.0},
+                                             {40.0, 20.0, 180.0, 180.0}};
+    const RenderedImage shaped =
+        render(device, queue, renderer, shape_scene, shape_full);
+    checkOutsideIsClear(shaped, shape_full.display);
+    CHECK(changedPixelCount(shaped) > 150);
+    CHECK(!isClear(shaped.at(130, 110)));
+
+    --shape_input.identity.overlay_frame;
+    const ReadOnlyOverlayScene stale_shape =
+        buildReadOnlyOverlayScene(shape_input);
+    CHECK(!stale_shape.ready());
+    const RenderedImage withheld_shape =
+        render(device, queue, renderer, stale_shape, shape_full);
+    CHECK(changedPixelCount(withheld_shape) == 0);
+
     --mask_input.identity.overlay_frame;
     const ReadOnlyOverlayScene stale_mask =
         buildReadOnlyOverlayScene(mask_input);

@@ -65,9 +65,11 @@ target_compile_features(crimson_frame_contracts PUBLIC cxx_std_17)
 
 add_library(crimson_repository_contracts STATIC
     src/subject_mask_overlay_buffer.cpp
+    src/subject_shape_overlay_buffer.cpp
     src/zarr/keypoint_overlay_repository.cpp
     src/zarr/stimulus_repository.cpp
     src/zarr/subject_mask_overlay_repository.cpp
+    src/zarr/subject_shape_overlay_repository.cpp
 )
 target_include_directories(crimson_repository_contracts PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -91,6 +93,7 @@ add_library(crimson_overlay_contracts STATIC
     src/read_only_overlay_scene.cpp
     src/zarr/keypoint_overlay_scene_adapter.cpp
     src/zarr/subject_mask_overlay_scene_adapter.cpp
+    src/zarr/subject_shape_overlay_scene_adapter.cpp
 )
 target_include_directories(crimson_overlay_contracts PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -125,6 +128,7 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         src/zarr/tensorstore_keypoint_overlay_repository.cpp
         src/zarr/tensorstore_stimulus_repository.cpp
         src/zarr/tensorstore_subject_mask_overlay_repository.cpp
+        src/zarr/tensorstore_subject_shape_overlay_repository.cpp
     )
     target_include_directories(crimson_tensorstore_repositories PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -229,6 +233,27 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
 
+    add_executable(subject_shape_overlay_repository_tests
+        tools/subject_shape_overlay_repository_tests.cpp
+    )
+    target_compile_features(subject_shape_overlay_repository_tests
+        PRIVATE cxx_std_17)
+    target_link_libraries(subject_shape_overlay_repository_tests PRIVATE
+        crimson_overlay_contracts
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(subject_shape_overlay_repository_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME subject_shape_overlay_repository_tests
+        COMMAND $<TARGET_FILE:subject_shape_overlay_repository_tests>)
+    set_tests_properties(subject_shape_overlay_repository_tests PROPERTIES
+        LABELS "headless;overlay;portable;repository;subject-shape;tensorstore;zarr"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
     add_executable(acquisition_crop_repository_probe
         tools/acquisition_crop_repository_probe.cpp
     )
@@ -263,6 +288,19 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         ${tensorstore_target}
     )
     set_target_properties(subject_mask_overlay_repository_probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
+    add_executable(subject_shape_overlay_repository_probe
+        tools/subject_shape_overlay_repository_probe.cpp
+    )
+    target_compile_features(subject_shape_overlay_repository_probe
+        PRIVATE cxx_std_17)
+    target_link_libraries(subject_shape_overlay_repository_probe PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(subject_shape_overlay_repository_probe PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
 endfunction()
@@ -1120,6 +1158,7 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_keypoint_overlay_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_stimulus_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_subject_mask_overlay_repository.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_subject_shape_overlay_repository.cpp"
 )
 
 # keypoint write path requires strict IEEE NaN semantics for contract-idempotent
