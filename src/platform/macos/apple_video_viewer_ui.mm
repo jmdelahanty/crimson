@@ -1,6 +1,7 @@
 #include "apple_video_viewer_ui.h"
 
 #include "imgui.h"
+#include "implot.h"
 
 #import <Foundation/Foundation.h>
 #import <mach/mach.h>
@@ -122,6 +123,52 @@ const char *cropStatusName(crimson::crop::CropSourceSelectionStatus status) {
   return "unavailable";
 }
 
+bool traceEnabled(const AppleEyeAngleTimelineControls &controls,
+                  crimson::timeline::EyeAngleTraceRole role) {
+  switch (role) {
+  case crimson::timeline::EyeAngleTraceRole::Left:
+    return controls.show_left;
+  case crimson::timeline::EyeAngleTraceRole::Right:
+    return controls.show_right;
+  case crimson::timeline::EyeAngleTraceRole::Vergence:
+    return controls.show_vergence;
+  case crimson::timeline::EyeAngleTraceRole::Other:
+    return true;
+  }
+  return true;
+}
+
+ImVec4 traceColor(crimson::timeline::EyeAngleTraceRole role) {
+  switch (role) {
+  case crimson::timeline::EyeAngleTraceRole::Left:
+    return ImVec4(0.20f, 0.78f, 0.43f, 1.0f);
+  case crimson::timeline::EyeAngleTraceRole::Right:
+    return ImVec4(0.66f, 0.38f, 0.88f, 1.0f);
+  case crimson::timeline::EyeAngleTraceRole::Vergence:
+    return ImVec4(0.96f, 0.68f, 0.16f, 1.0f);
+  case crimson::timeline::EyeAngleTraceRole::Other:
+    return ImVec4(0.30f, 0.68f, 0.90f, 1.0f);
+  }
+  return ImVec4(0.80f, 0.80f, 0.80f, 1.0f);
+}
+
+const char *timelineStatusName(
+    crimson::timeline::EyeAngleTimelineStatus status) {
+  switch (status) {
+  case crimson::timeline::EyeAngleTimelineStatus::Mapped:
+    return "ready";
+  case crimson::timeline::EyeAngleTimelineStatus::Missing:
+    return "missing";
+  case crimson::timeline::EyeAngleTimelineStatus::OutOfRange:
+    return "out of range";
+  case crimson::timeline::EyeAngleTimelineStatus::InvalidRequest:
+    return "invalid request";
+  case crimson::timeline::EyeAngleTimelineStatus::ReadFailed:
+    return "read failed";
+  }
+  return "unavailable";
+}
+
 double transportHeight(bool has_stimulus, bool has_crop) {
   return 108.0 + (has_stimulus ? 24.0 : 0.0) +
          (has_crop ? 48.0 : 0.0);
@@ -156,7 +203,7 @@ AppleVideoControlResult drawAppleVideoControls(
     LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
     const AppleVideoViewerStats &stats,
     const crimson::playback::StimulusPresentationMetrics *stimulus_metrics,
-    AppleCropViewerControls *crop_controls,
+    AppleCropViewerControls *crop_controls, bool eye_angle_timeline_available,
     bool interactive) {
   AppleVideoControlResult result;
   const ImGuiViewport *viewport = ImGui::GetMainViewport();
@@ -210,6 +257,17 @@ AppleVideoControlResult drawAppleVideoControls(
     result.toggle_overlay_controls = true;
   }
   showItemTooltip("Open or close overlay controls");
+  ImGui::SameLine();
+  if (!eye_angle_timeline_available) {
+    ImGui::BeginDisabled();
+  }
+  if (ImGui::Button("Timeline")) {
+    result.toggle_eye_angle_timeline = true;
+  }
+  showItemTooltip("Open or close the eye-angle timeline");
+  if (!eye_angle_timeline_available) {
+    ImGui::EndDisabled();
+  }
 
   static int timeline_frame = 0;
   static bool timeline_active = false;
@@ -347,6 +405,140 @@ AppleVideoControlResult drawAppleVideoControls(
         result.camera_discontinuity;
   }
   return result;
+}
+
+bool drawAppleEyeAngleTimeline(
+    AppleEyeAngleTimelineControls *controls,
+    const crimson::timeline::EyeAngleTimelineDescriptor &descriptor,
+    const std::shared_ptr<const crimson::timeline::EyeAngleTimelineWindow>
+        &window,
+    int64_t current_frame, LogicalPlaybackClock &clock,
+    AppleVideoPlaybackBuffer &playback, bool interactive) {
+  if (controls == nullptr || !controls->open) {
+    return false;
+  }
+  if (controls->representation_key.empty()) {
+    controls->representation_key =
+        crimson::timeline::defaultEyeAngleTimelineRepresentation(descriptor);
+  }
+
+  const ImGuiViewport *viewport = ImGui::GetMainViewport();
+  const float initial_width = std::max(
+      520.0f, std::min(920.0f, viewport->WorkSize.x - 32.0f));
+  ImGui::SetNextWindowPos(
+      ImVec2(viewport->WorkPos.x + (viewport->WorkSize.x - initial_width) * 0.5f,
+             viewport->WorkPos.y + 16.0f),
+      ImGuiCond_Appearing);
+  ImGui::SetNextWindowSize(ImVec2(initial_width, 360.0f),
+                           ImGuiCond_Appearing);
+  ImGui::SetNextWindowSizeConstraints(ImVec2(500.0f, 280.0f),
+                                      ImVec2(FLT_MAX, 620.0f));
+  if (!ImGui::Begin("Eye-angle timeline", &controls->open)) {
+    ImGui::End();
+    return false;
+  }
+  if (!interactive) {
+    ImGui::BeginDisabled();
+  }
+
+  const auto *representation =
+      crimson::timeline::findEyeAngleTimelineRepresentation(
+          descriptor, controls->representation_key);
+  const char *preview = representation != nullptr
+                            ? representation->display_name.c_str()
+                            : controls->representation_key.c_str();
+  ImGui::SetNextItemWidth(220.0f);
+  if (ImGui::BeginCombo("Representation", preview)) {
+    for (const auto &candidate : descriptor.representations) {
+      const bool selected =
+          candidate.key == controls->representation_key;
+      if (ImGui::Selectable(candidate.display_name.c_str(), selected)) {
+        controls->representation_key = candidate.key;
+      }
+      if (selected) {
+        ImGui::SetItemDefaultFocus();
+      }
+    }
+    ImGui::EndCombo();
+  }
+  ImGui::SameLine();
+  ImGui::Checkbox("Left", &controls->show_left);
+  ImGui::SameLine();
+  ImGui::Checkbox("Right", &controls->show_right);
+  ImGui::SameLine();
+  ImGui::Checkbox("Vergence", &controls->show_vergence);
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(130.0f);
+  ImGui::SliderFloat("Span", &controls->half_span_seconds, 1.0f, 30.0f,
+                     "+/- %.0f s");
+
+  bool camera_discontinuity = false;
+  const bool window_matches =
+      window != nullptr &&
+      window->request.representation_key == controls->representation_key;
+  if (current_frame < 0 ||
+      current_frame >= static_cast<int64_t>(descriptor.frame_count)) {
+    ImGui::TextUnformatted("Timeline out of range for this frame");
+  } else if (!window_matches) {
+    ImGui::TextUnformatted("Loading timeline data...");
+  } else if (!window->ready()) {
+    ImGui::Text("Timeline %s", timelineStatusName(window->status));
+    if (!window->error.empty()) {
+      ImGui::TextWrapped("%s", window->error.c_str());
+    }
+  } else {
+    const double frames_per_second = clock.framesPerSecond();
+    const double cursor_time = crimson::timeline::eyeAngleTimelineTimeForFrame(
+        *window, current_frame, frames_per_second);
+    if (ImPlot::BeginPlot("##eye-angle-plot", ImVec2(-1.0f, -1.0f),
+                          ImPlotFlags_NoTitle | ImPlotFlags_NoBoxSelect)) {
+      ImPlot::SetupAxes("Time (s)", "Angle (deg)",
+                        ImPlotAxisFlags_NoMenus,
+                        ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_NoMenus);
+      ImPlot::SetupAxisLimits(ImAxis_X1,
+                              cursor_time - controls->half_span_seconds,
+                              cursor_time + controls->half_span_seconds,
+                              ImPlotCond_Always);
+      for (const auto &trace : window->traces) {
+        if (!traceEnabled(*controls, trace.field.role) ||
+            trace.times_seconds.empty() || trace.values.empty()) {
+          continue;
+        }
+        const int count = static_cast<int>(
+            std::min(trace.times_seconds.size(), trace.values.size()));
+        ImPlot::PushStyleColor(ImPlotCol_Line, traceColor(trace.field.role));
+        ImPlot::PlotLine(trace.field.display_name.c_str(),
+                         trace.times_seconds.data(), trace.values.data(), count);
+        ImPlot::PopStyleColor();
+      }
+      ImPlot::PushStyleColor(ImPlotCol_Line,
+                             ImVec4(0.94f, 0.94f, 0.94f, 0.90f));
+      ImPlot::PlotInfLines("Current frame", &cursor_time, 1);
+      ImPlot::PopStyleColor();
+      ImPlot::TagX(cursor_time, ImVec4(0.94f, 0.94f, 0.94f, 0.90f),
+                   "Frame %lld", static_cast<long long>(current_frame));
+      if (interactive && ImPlot::IsPlotHovered() &&
+          ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        const double clicked_time = ImPlot::GetPlotMousePos().x;
+        const int64_t clicked_frame =
+            crimson::timeline::eyeAngleTimelineNearestFrame(
+                *window, clicked_time, frames_per_second);
+        if (clicked_frame >= 0) {
+          const int64_t bounded_frame = std::clamp<int64_t>(
+              clicked_frame, 0, std::max<int64_t>(0, clock.frameCount() - 1));
+          camera_discontinuity =
+              seekViewer(clock, playback, bounded_frame) ||
+              camera_discontinuity;
+        }
+      }
+      ImPlot::EndPlot();
+    }
+  }
+  if (!interactive) {
+    ImGui::EndDisabled();
+  }
+  ImGui::End();
+  return camera_discontinuity;
 }
 
 void drawAppleReadOnlyOverlayControls(

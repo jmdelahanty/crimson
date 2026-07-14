@@ -4,6 +4,10 @@
 #include <memory>
 #include <string>
 
+namespace crimson::timeline {
+class EyeAngleTimelineRepository;
+}
+
 namespace crimson::zarr {
 
 class ArchiveContext {
@@ -59,6 +63,11 @@ class ArchiveContext {
       std::string* error_message);
   friend std::unique_ptr<class EyeGeometryOverlayRepository>
   OpenEyeGeometryOverlayRepository(
+      const std::shared_ptr<ArchiveContext>& archive,
+      const std::string& requested_run,
+      std::string* error_message);
+  friend std::unique_ptr<crimson::timeline::EyeAngleTimelineRepository>
+  OpenEyeAngleTimelineRepository(
       const std::shared_ptr<ArchiveContext>& archive,
       const std::string& requested_run,
       std::string* error_message);
