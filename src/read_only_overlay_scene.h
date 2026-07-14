@@ -142,6 +142,10 @@ struct ReadOnlyOverlayInput {
     bool show_headings = true;
     bool show_subject_mask_fills = true;
     bool show_subject_mask_contours = true;
+    bool show_subject_body_mask = true;
+    bool show_eye_left_mask = true;
+    bool show_eye_right_mask = true;
+    bool show_swim_bladder_mask = true;
     bool show_eye_geometry = true;
     bool show_eye_direction_beams = true;
     bool show_eye_gaze_rays = true;

@@ -539,15 +539,7 @@ void prewarmInsetMaskTextures(
 }  // namespace
 
 const char* cameraViewMaskOverlayModeLabel(CameraViewMaskOverlayMode mode) {
-    switch (mode) {
-    case CameraViewMaskOverlayMode::Realtime:
-        return "Realtime";
-    case CameraViewMaskOverlayMode::Review:
-        return "Review";
-    case CameraViewMaskOverlayMode::Debug:
-        return "Debug";
-    }
-    return "Review";
+    return crimson::overlay::readOnlyMaskOverlayModeName(mode);
 }
 
 void accumulateCameraViewMaskPerfMetrics(CameraViewMaskPerfMetrics& dst,

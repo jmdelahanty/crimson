@@ -635,6 +635,9 @@ int main(int argc, char **argv) {
   AppleOverlayMetalRenderer overlay_renderer;
   LogicalPlaybackClock video_clock;
   AppleVideoViewerStats viewer_stats;
+  crimson::overlay::ReadOnlyOverlayControlState overlay_controls;
+  crimson::overlay::ReadOnlyOverlayAvailability overlay_availability;
+  bool overlay_controls_open = false;
   std::optional<AppleDecodedVideoFrame> current_video_frame;
   std::optional<AppleDecodedVideoFrame> pending_video_frame;
   const bool video_enabled = !options->video_path.empty();
@@ -1384,10 +1387,23 @@ int main(int argc, char **argv) {
         }
         crop_controls.metrics =
             crop_enabled ? &crop_presentation.metrics() : nullptr;
+        overlay_availability.keypoints =
+            keypoint_overlay_repository != nullptr;
+        overlay_availability.headings =
+            keypoint_overlay_repository != nullptr;
+        overlay_availability.subject_masks = subject_mask_overlay_available;
+        overlay_availability.subject_shape = subject_shape_overlay_available;
+        overlay_availability.eye_geometry = eye_geometry_overlay_available;
         const auto control_result = drawAppleVideoControls(
             video_clock, video_playback, viewer_stats,
             stimulus_enabled ? &stimulus_presentation.metrics() : nullptr,
             crop_enabled ? &crop_controls : nullptr,
+            !options->video_smoke);
+        if (control_result.toggle_overlay_controls) {
+          overlay_controls_open = !overlay_controls_open;
+        }
+        drawAppleReadOnlyOverlayControls(
+            &overlay_controls_open, &overlay_controls, overlay_availability,
             !options->video_smoke);
         pending_camera_discontinuity =
             pending_camera_discontinuity ||
@@ -1929,6 +1945,8 @@ int main(int argc, char **argv) {
             }
           }
 
+          crimson::overlay::applyReadOnlyOverlayControls(overlay_controls,
+                                                         &overlay_input);
           auto overlay_scene =
               crimson::overlay::buildReadOnlyOverlayScene(overlay_input);
           if (current_crop_selection.selected() &&

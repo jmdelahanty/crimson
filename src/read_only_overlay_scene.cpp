@@ -279,6 +279,16 @@ void appendSubjectMasks(const ReadOnlyOverlayInput& input,
         });
 
     for (const auto* component : components) {
+        const bool component_visible =
+            (component->label != "subject_body" ||
+             input.show_subject_body_mask) &&
+            (component->label != "eye_left" || input.show_eye_left_mask) &&
+            (component->label != "eye_right" || input.show_eye_right_mask) &&
+            (component->label != "swim_bladder" ||
+             input.show_swim_bladder_mask);
+        if (!component_visible) {
+            continue;
+        }
         const Color color = subjectMaskColor(component->label);
         if (input.show_subject_mask_fills && component->source_rect.valid() &&
             component->mask && component->mask_width > 0 &&
@@ -460,6 +470,10 @@ void appendEyeGeometry(const ReadOnlyOverlayInput& input,
         std::array<bool, 2> beam_valid = {false, false};
         std::array<std::vector<Point>, 2> beam_polygons;
         for (size_t eye = 0; eye < 2; ++eye) {
+            if ((eye == 0 && !input.show_eye_left_mask) ||
+                (eye == 1 && !input.show_eye_right_mask)) {
+                continue;
+            }
             const auto& values = geometry.eyes[eye];
             if (!values.valid) {
                 continue;

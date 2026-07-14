@@ -203,7 +203,8 @@
         "apple_video_provider_tests",
         "frame_slot_tests",
         "overlay_scene_contract_tests",
-        "read_only_overlay_scene_tests"
+        "read_only_overlay_scene_tests",
+        "read_only_overlay_controls_tests"
       ]
     }
   ],

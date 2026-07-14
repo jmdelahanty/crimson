@@ -4,6 +4,7 @@
 #include "apple_video_playback_buffer.h"
 #include "crop_presentation_coordinator.h"
 #include "playback_clock.h"
+#include "read_only_overlay_controls.h"
 #include "read_only_overlay_scene.h"
 #include "stimulus_presentation_coordinator.h"
 
@@ -36,6 +37,7 @@ struct AppleVideoViewerStats {
 
 struct AppleVideoControlResult {
   bool camera_discontinuity = false;
+  bool toggle_overlay_controls = false;
 };
 
 struct AppleCropViewerControls {
@@ -62,6 +64,11 @@ AppleVideoControlResult drawAppleVideoControls(
     const AppleVideoViewerStats &stats,
     const crimson::playback::StimulusPresentationMetrics *stimulus_metrics,
     AppleCropViewerControls *crop_controls,
+    bool interactive);
+
+void drawAppleReadOnlyOverlayControls(
+    bool *open, crimson::overlay::ReadOnlyOverlayControlState *controls,
+    const crimson::overlay::ReadOnlyOverlayAvailability &availability,
     bool interactive);
 
 void drawAppleCropPreviewOverlay(

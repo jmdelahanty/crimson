@@ -92,6 +92,7 @@ target_compile_features(crimson_crop_contracts PUBLIC cxx_std_17)
 
 add_library(crimson_overlay_contracts STATIC
     src/overlay_scene_contract.cpp
+    src/read_only_overlay_controls.cpp
     src/read_only_overlay_scene.cpp
     src/zarr/keypoint_overlay_scene_adapter.cpp
     src/zarr/eye_geometry_overlay_scene_adapter.cpp
@@ -421,6 +422,25 @@ add_test(NAME read_only_overlay_scene_tests
     COMMAND $<TARGET_FILE:read_only_overlay_scene_tests>)
 set_tests_properties(read_only_overlay_scene_tests PROPERTIES
     LABELS "headless;overlay;portable"
+)
+
+add_executable(read_only_overlay_controls_tests
+    tools/read_only_overlay_controls_tests.cpp
+)
+target_link_libraries(read_only_overlay_controls_tests PRIVATE
+    crimson_overlay_contracts
+)
+target_include_directories(read_only_overlay_controls_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_compile_features(read_only_overlay_controls_tests PRIVATE cxx_std_17)
+set_target_properties(read_only_overlay_controls_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME read_only_overlay_controls_tests
+    COMMAND $<TARGET_FILE:read_only_overlay_controls_tests>)
+set_tests_properties(read_only_overlay_controls_tests PROPERTIES
+    LABELS "controls;headless;overlay;portable"
 )
 
 add_executable(stimulus_playback_coordinator_tests

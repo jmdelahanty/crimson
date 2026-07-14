@@ -2,6 +2,7 @@
 
 #include "camera.h"
 #include "gui/full_frame_rect_edit_overlay.h"
+#include "read_only_overlay_controls.h"
 #include "read_only_overlay_scene.h"
 #include "zarr_bbox_edit.h"
 
@@ -13,11 +14,7 @@
 struct StimulusPlayback;
 struct RefinedKeypointSelection;
 
-enum class CameraViewMaskOverlayMode {
-    Realtime = 0,
-    Review = 1,
-    Debug = 2,
-};
+using CameraViewMaskOverlayMode = crimson::overlay::ReadOnlyMaskOverlayMode;
 
 const char* cameraViewMaskOverlayModeLabel(CameraViewMaskOverlayMode mode);
 

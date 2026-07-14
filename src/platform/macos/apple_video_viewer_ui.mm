@@ -19,6 +19,16 @@ void showItemTooltip(const char *text) {
   }
 }
 
+void drawAvailableCheckbox(const char *label, bool *value, bool available) {
+  if (!available) {
+    ImGui::BeginDisabled();
+  }
+  ImGui::Checkbox(label, value);
+  if (!available) {
+    ImGui::EndDisabled();
+  }
+}
+
 double processMemoryMiB() {
   task_vm_info_data_t task_info_data{};
   mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
@@ -195,6 +205,11 @@ AppleVideoControlResult drawAppleVideoControls(
   ImGui::Text("Frame %lld / %lld",
               static_cast<long long>(stats.requested_frame),
               static_cast<long long>(clock.frameCount() - 1));
+  ImGui::SameLine();
+  if (ImGui::Button("Overlays")) {
+    result.toggle_overlay_controls = true;
+  }
+  showItemTooltip("Open or close overlay controls");
 
   static int timeline_frame = 0;
   static bool timeline_active = false;
@@ -334,6 +349,154 @@ AppleVideoControlResult drawAppleVideoControls(
   return result;
 }
 
+void drawAppleReadOnlyOverlayControls(
+    bool *open, crimson::overlay::ReadOnlyOverlayControlState *controls,
+    const crimson::overlay::ReadOnlyOverlayAvailability &availability,
+    bool interactive) {
+  if (open == nullptr || controls == nullptr || !*open) {
+    return;
+  }
+
+  const ImGuiViewport *viewport = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(
+      ImVec2(viewport->WorkPos.x + 16.0f, viewport->WorkPos.y + 16.0f),
+      ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(340.0f, 560.0f), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSizeConstraints(ImVec2(300.0f, 300.0f),
+                                      ImVec2(460.0f, 720.0f));
+  if (!ImGui::Begin("Overlay controls", open)) {
+    ImGui::End();
+    return;
+  }
+  if (!interactive) {
+    ImGui::BeginDisabled();
+  }
+
+  if (ImGui::Button("Reset defaults")) {
+    *controls = {};
+  }
+
+  if (ImGui::CollapsingHeader("Keypoints and heading",
+                              ImGuiTreeNodeFlags_DefaultOpen)) {
+    drawAvailableCheckbox("Keypoint markers", &controls->show_keypoints,
+                          availability.keypoints);
+    ImGui::SameLine();
+    drawAvailableCheckbox("Heading arrows", &controls->show_headings,
+                          availability.headings);
+  }
+
+  if (ImGui::CollapsingHeader("Subject masks",
+                              ImGuiTreeNodeFlags_DefaultOpen)) {
+    drawAvailableCheckbox("Show masks", &controls->show_subject_masks,
+                          availability.subject_masks);
+
+    const bool mode_available =
+        availability.subject_masks || availability.eye_geometry;
+    if (!mode_available) {
+      ImGui::BeginDisabled();
+    }
+    int mode = static_cast<int>(controls->mask_mode);
+    const char *mode_labels[] = {"Realtime", "Review", "Debug"};
+    ImGui::SetNextItemWidth(150.0f);
+    if (ImGui::Combo("Mode", &mode, mode_labels, 3)) {
+      controls->mask_mode =
+          static_cast<crimson::overlay::ReadOnlyMaskOverlayMode>(mode);
+    }
+    showItemTooltip(
+        "Realtime draws fills only; Review and Debug add contours and eye geometry");
+    if (!mode_available) {
+      ImGui::EndDisabled();
+    }
+
+    const bool mask_components_enabled =
+        availability.subject_masks && controls->show_subject_masks;
+    drawAvailableCheckbox("Subject body", &controls->show_subject_body_mask,
+                          mask_components_enabled);
+    ImGui::SameLine();
+    drawAvailableCheckbox("Swim bladder", &controls->show_swim_bladder_mask,
+                          mask_components_enabled);
+    const bool eye_components_available =
+        availability.subject_masks || availability.eye_geometry;
+    drawAvailableCheckbox("Left eye", &controls->show_eye_left_mask,
+                          eye_components_available);
+    ImGui::SameLine();
+    drawAvailableCheckbox("Right eye", &controls->show_eye_right_mask,
+                          eye_components_available);
+  }
+
+  if (ImGui::CollapsingHeader("Eye geometry",
+                              ImGuiTreeNodeFlags_DefaultOpen)) {
+    const bool detailed =
+        controls->mask_mode !=
+        crimson::overlay::ReadOnlyMaskOverlayMode::Realtime;
+    drawAvailableCheckbox("Show eye geometry", &controls->show_eye_geometry,
+                          availability.eye_geometry && detailed);
+    const bool eye_details_enabled = availability.eye_geometry && detailed &&
+                                     controls->show_eye_geometry;
+    drawAvailableCheckbox("Visual cones",
+                          &controls->show_eye_direction_beams,
+                          eye_details_enabled);
+    ImGui::SameLine();
+    drawAvailableCheckbox("Gaze rays", &controls->show_eye_gaze_rays,
+                          eye_details_enabled);
+    drawAvailableCheckbox("Angle arcs", &controls->show_eye_angle_arcs,
+                          eye_details_enabled);
+    ImGui::SameLine();
+    drawAvailableCheckbox("Angle labels", &controls->show_eye_angle_labels,
+                          eye_details_enabled);
+  }
+
+  if (ImGui::CollapsingHeader("Subject shape",
+                              ImGuiTreeNodeFlags_DefaultOpen)) {
+    drawAvailableCheckbox("Show subject shape", &controls->show_subject_shape,
+                          availability.subject_shape);
+    const bool shape_enabled =
+        availability.subject_shape && controls->show_subject_shape;
+    drawAvailableCheckbox("Snout tip",
+                          &controls->show_subject_shape_snout_tip,
+                          shape_enabled);
+    ImGui::SameLine();
+    drawAvailableCheckbox("Tail base",
+                          &controls->show_subject_shape_tail_base,
+                          shape_enabled);
+    ImGui::SameLine();
+    drawAvailableCheckbox("Tail tip",
+                          &controls->show_subject_shape_tail_tip,
+                          shape_enabled);
+    drawAvailableCheckbox("Caudal anchor",
+                          &controls->show_subject_shape_caudal_anchor,
+                          shape_enabled);
+    drawAvailableCheckbox("Centerline",
+                          &controls->show_subject_shape_centerline,
+                          shape_enabled);
+    drawAvailableCheckbox("Dense B-spline",
+                          &controls->show_subject_shape_bspline,
+                          shape_enabled);
+    drawAvailableCheckbox("Body frame axes",
+                          &controls->show_subject_shape_body_axes,
+                          shape_enabled);
+    drawAvailableCheckbox(
+        "Spline debug points",
+        &controls->show_subject_shape_bspline_debug_points, shape_enabled);
+    ImGui::SameLine();
+    drawAvailableCheckbox(
+        "Control points",
+        &controls->show_subject_shape_bspline_control_points, shape_enabled);
+    drawAvailableCheckbox("Tail samples",
+                          &controls->show_subject_shape_tail_samples,
+                          shape_enabled);
+    ImGui::SameLine();
+    drawAvailableCheckbox("Tail normals",
+                          &controls->show_subject_shape_tail_normals,
+                          shape_enabled);
+  }
+
+  if (!interactive) {
+    ImGui::EndDisabled();
+  }
+  ImGui::End();
+}
+
 void drawAppleCropPreviewOverlay(
     const AppleMetalVideoViewport &viewport, float framebuffer_scale,
     const crimson::crop::CropSourceSelection *selection,
@@ -348,7 +511,7 @@ void drawAppleCropPreviewOverlay(
       static_cast<float>(viewport.width / framebuffer_scale);
   const float height =
       static_cast<float>(viewport.height / framebuffer_scale);
-  ImDrawList *draw_list = ImGui::GetForegroundDrawList();
+  ImDrawList *draw_list = ImGui::GetBackgroundDrawList();
   draw_list->AddRect(ImVec2(x, y), ImVec2(x + width, y + height),
                      IM_COL32(210, 216, 222, 210), 0.0f, 0, 1.0f);
 
@@ -402,7 +565,7 @@ size_t drawAppleReadOnlyOverlayText(
   }
   const auto labels = crimson::overlay::layoutReadOnlyOverlayText(scene,
                                                                   transform);
-  ImDrawList *draw_list = ImGui::GetForegroundDrawList();
+  ImDrawList *draw_list = ImGui::GetBackgroundDrawList();
   ImFont *font = ImGui::GetFont();
   size_t drawn = 0;
   for (const auto &label : labels) {

@@ -327,20 +327,23 @@ Gate:
 
 #### Current Phase 5 Checkpoint (2026-07-14)
 
-Phase 5 remains active and is not the full UI/overlay parity gate. Phase 5F is
-accepted for read-only production eye geometry. The native Mac camera view now
-resolves exact schema-5 eye rows through TensorStore and renders refined major
-and minor axes, gaze rays, signed-angle arcs, 163-degree visual cones, cone
-overlap, per-eye eye-frame labels, and vergence through shared scene contracts.
-The full source, lineage, coordinate, buffering, deterministic-test, Mac
-production, and NVIDIA validation record is in
+Phase 5 remains active and is not the full UI/overlay parity gate. Phase 5G is
+accepted for native read-only overlay controls. macOS and the maintained
+Linux/Windows camera overlay now share the `Realtime`, `Review`, and `Debug`
+mode contract. The Mac shell exposes availability-aware controls for keypoints,
+headings, semantic subject-mask components, eye geometry, and subject-shape
+details without changing exact-frame publication or layer ordering. The full
+contract, UI, deterministic-test, Mac production, and NVIDIA validation record
+is in `docs/crimson_macos_phase5g_overlay_controls.md`. The Phase 5F production
+eye-geometry record remains in
 `docs/crimson_macos_phase5f_eye_geometry.md`.
 
-Remaining Phase 5 work includes connecting the maintained overlay-debug
-controls, analysis plots/timelines, edit/review interactions, and other panels
-and multiwindow workflows identified by the parity inventory. Phase 5 must not
-be marked complete until those workflows and the screenshot/image-difference
-gate are satisfied.
+The native Mac shell is still intentionally much smaller than the maintained
+Linux/Windows `redgui` workspace. Remaining Phase 5 work includes analysis
+plots and timelines, the representation selector, edit/review interactions,
+and other panels and multiwindow workflows identified by the parity inventory.
+Phase 5 must not be marked complete until those workflows and the
+screenshot/image-difference gate are satisfied.
 
 ### Phase 6 — Inference Parity
 
