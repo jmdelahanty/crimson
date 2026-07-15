@@ -8,9 +8,11 @@
 #include "playback_clock.h"
 #include "read_only_overlay_controls.h"
 #include "read_only_overlay_scene.h"
+#include "stimulus_context_timeline.h"
 #include "stimulus_presentation_coordinator.h"
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -64,6 +66,7 @@ enum class AppleAnalysisTimelineTab {
   Motion,
   EyeAngles,
   TailKinematics,
+  Stimulus,
 };
 
 struct AppleAnalysisTimelineControls {
@@ -73,6 +76,10 @@ struct AppleAnalysisTimelineControls {
   AppleSeriesTimelineControls motion;
   AppleEyeAngleTimelineControls eye_angles;
   AppleSeriesTimelineControls tail_kinematics;
+  bool show_stimulus_context = true;
+  std::string stimulus_run_name;
+  std::unordered_map<int32_t, bool> stimulus_event_type_filter;
+  size_t selected_stimulus_event = std::numeric_limits<size_t>::max();
 };
 
 struct AppleCropViewerControls {
@@ -113,6 +120,11 @@ bool drawAppleAnalysisTimeline(
     const crimson::timeline::AnalysisSeriesTimelineDescriptor *tail_descriptor,
     const std::shared_ptr<const crimson::timeline::AnalysisSeriesTimelineWindow>
         &tail_window,
+    const crimson::timeline::StimulusContextTimelineDescriptor
+        *stimulus_descriptor,
+    const std::shared_ptr<
+        const crimson::timeline::StimulusContextTimelineSnapshot>
+        &stimulus_snapshot,
     int64_t current_frame, LogicalPlaybackClock &clock,
     AppleVideoPlaybackBuffer &playback, bool interactive);
 

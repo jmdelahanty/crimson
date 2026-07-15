@@ -452,6 +452,276 @@ AppleVideoControlResult drawAppleVideoControls(
 
 namespace {
 
+ImU32 stimulusEventColor(int32_t event_type_id) {
+  const uint32_t hash =
+      static_cast<uint32_t>(event_type_id) * 2654435761u + 0x9e3779b9u;
+  const int red = 96 + static_cast<int>((hash >> 16) & 0x7f);
+  const int green = 96 + static_cast<int>((hash >> 8) & 0x7f);
+  const int blue = 96 + static_cast<int>(hash & 0x7f);
+  return IM_COL32(red, green, blue, 255);
+}
+
+ImU32 stimulusStepColor(crimson::timeline::StimulusStepKind kind) {
+  using Kind = crimson::timeline::StimulusStepKind;
+  switch (kind) {
+  case Kind::MovingGrating:
+    return IM_COL32(54, 151, 96, 165);
+  case Kind::ConcentricGrating:
+    return IM_COL32(54, 139, 190, 165);
+  case Kind::LoomingDot:
+    return IM_COL32(218, 145, 48, 165);
+  case Kind::Chaser:
+    return IM_COL32(184, 70, 74, 165);
+  case Kind::Other:
+    return IM_COL32(118, 122, 132, 165);
+  }
+  return IM_COL32(118, 122, 132, 165);
+}
+
+bool eventTypeVisible(const std::unordered_map<int32_t, bool> *filter,
+                      int32_t event_type_id) {
+  if (filter == nullptr) {
+    return true;
+  }
+  const auto found = filter->find(event_type_id);
+  return found == filter->end() || found->second;
+}
+
+void initializeStimulusControls(
+    AppleAnalysisTimelineControls *controls,
+    const crimson::timeline::StimulusContextTimelineDescriptor &descriptor) {
+  if (controls->stimulus_run_name == descriptor.run_name) {
+    return;
+  }
+  controls->stimulus_run_name = descriptor.run_name;
+  controls->stimulus_event_type_filter.clear();
+  for (const auto &type : descriptor.event_types) {
+    controls->stimulus_event_type_filter.emplace(type.id, true);
+  }
+  controls->selected_stimulus_event = std::numeric_limits<size_t>::max();
+}
+
+bool drawStimulusContextLane(
+    const char *id, float height,
+    const crimson::timeline::StimulusContextTimelineSnapshot &snapshot,
+    const std::unordered_map<int32_t, bool> *event_filter,
+    size_t *selected_event, float half_span_seconds, int64_t current_frame,
+    LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
+    bool interactive) {
+  const int64_t final_frame = std::max<int64_t>(0, clock.frameCount() - 1);
+  const double fps = clock.framesPerSecond();
+  const int64_t half_span_frames = static_cast<int64_t>(
+      std::ceil(std::max(1.0, static_cast<double>(half_span_seconds) * fps)));
+  const int64_t first_frame =
+      std::max<int64_t>(0, current_frame - half_span_frames);
+  const int64_t last_frame =
+      std::min<int64_t>(final_frame, current_frame + half_span_frames);
+  const auto window = crimson::timeline::stimulusContextTimelineWindow(
+      snapshot, first_frame, last_frame);
+  if (!window.valid()) {
+    return false;
+  }
+
+  const float width = std::max(1.0f, ImGui::GetContentRegionAvail().x);
+  const ImVec2 top_left = ImGui::GetCursorScreenPos();
+  ImGui::InvisibleButton(id, ImVec2(width, height));
+  const ImVec2 bottom_right(top_left.x + width, top_left.y + height);
+  ImDrawList *draw_list = ImGui::GetWindowDrawList();
+  draw_list->AddRectFilled(top_left, bottom_right,
+                           ImGui::GetColorU32(ImGuiCol_FrameBg), 3.0f);
+  draw_list->AddRect(top_left, bottom_right,
+                     ImGui::GetColorU32(ImGuiCol_Border), 3.0f);
+  const double frame_span =
+      static_cast<double>(std::max<int64_t>(1, last_frame - first_frame));
+  auto frame_x = [&](int64_t frame) {
+    return top_left.x + static_cast<float>(
+                            (static_cast<double>(frame - first_frame) /
+                             frame_span) *
+                            static_cast<double>(width));
+  };
+
+  for (const size_t index : window.step_indices) {
+    const auto &step = snapshot.steps[index];
+    const float x0 = frame_x(std::max(first_frame, step.start_camera_frame));
+    const float x1 = frame_x(std::min(last_frame, step.end_camera_frame));
+    const ImVec2 step_min(x0, top_left.y + 8.0f);
+    const ImVec2 step_max(std::max(x0 + 1.0f, x1), top_left.y + 39.0f);
+    draw_list->AddRectFilled(step_min, step_max, stimulusStepColor(step.kind),
+                             2.0f);
+    const std::string &label =
+        !step.step_name.empty() ? step.step_name : step.stimulus_mode;
+    if (!label.empty() && step_max.x - step_min.x >
+                              ImGui::CalcTextSize(label.c_str()).x + 8.0f) {
+      draw_list->PushClipRect(step_min, step_max, true);
+      draw_list->AddText(ImVec2(step_min.x + 4.0f, step_min.y + 7.0f),
+                         IM_COL32(242, 242, 244, 255), label.c_str());
+      draw_list->PopClipRect();
+    }
+  }
+  for (const size_t index : window.event_indices) {
+    const auto &event = snapshot.events[index];
+    if (!eventTypeVisible(event_filter, event.event_type_id)) {
+      continue;
+    }
+    const float x = frame_x(event.camera_frame);
+    draw_list->AddLine(ImVec2(x, top_left.y + 44.0f),
+                       ImVec2(x, bottom_right.y - 7.0f),
+                       stimulusEventColor(event.event_type_id), 2.0f);
+  }
+  const float cursor_x = frame_x(std::clamp(current_frame, first_frame,
+                                            last_frame));
+  draw_list->AddLine(ImVec2(cursor_x, top_left.y + 2.0f),
+                     ImVec2(cursor_x, bottom_right.y - 2.0f),
+                     IM_COL32(245, 245, 246, 230), 1.5f);
+
+  size_t nearest_event = std::numeric_limits<size_t>::max();
+  float nearest_distance = 8.0f;
+  if (ImGui::IsItemHovered()) {
+    const float mouse_x = ImGui::GetIO().MousePos.x;
+    for (const size_t index : window.event_indices) {
+      const auto &event = snapshot.events[index];
+      if (!eventTypeVisible(event_filter, event.event_type_id)) {
+        continue;
+      }
+      const float distance = std::fabs(frame_x(event.camera_frame) - mouse_x);
+      if (distance < nearest_distance) {
+        nearest_distance = distance;
+        nearest_event = index;
+      }
+    }
+    if (nearest_event != std::numeric_limits<size_t>::max()) {
+      const auto &event = snapshot.events[nearest_event];
+      ImGui::SetTooltip("Frame %lld\n%s",
+                        static_cast<long long>(event.camera_frame),
+                        event.label.c_str());
+    } else {
+      const double fraction = std::clamp(
+          static_cast<double>(mouse_x - top_left.x) /
+              static_cast<double>(width),
+          0.0, 1.0);
+      const int64_t hovered_frame = first_frame + static_cast<int64_t>(
+                                                    std::llround(fraction *
+                                                                 frame_span));
+      const auto *step =
+          crimson::timeline::findStimulusContextStepForFrame(snapshot,
+                                                              hovered_frame);
+      if (step != nullptr) {
+        const std::string &label =
+            !step->step_name.empty() ? step->step_name : step->stimulus_mode;
+        ImGui::SetTooltip("Frame %lld\n%s\nFrames %lld-%lld",
+                          static_cast<long long>(hovered_frame), label.c_str(),
+                          static_cast<long long>(step->start_camera_frame),
+                          static_cast<long long>(step->end_camera_frame));
+      }
+    }
+  }
+  if (interactive && nearest_event != std::numeric_limits<size_t>::max() &&
+      ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+    if (selected_event != nullptr) {
+      *selected_event = nearest_event;
+    }
+    const int64_t frame = snapshot.events[nearest_event].camera_frame;
+    return frame >= 0 && seekViewer(clock, playback, frame);
+  }
+  return false;
+}
+
+bool drawStimulusTimelineTab(
+    AppleAnalysisTimelineControls *controls,
+    const crimson::timeline::StimulusContextTimelineDescriptor &descriptor,
+    const std::shared_ptr<
+        const crimson::timeline::StimulusContextTimelineSnapshot> &snapshot,
+    int64_t current_frame, LogicalPlaybackClock &clock,
+    AppleVideoPlaybackBuffer &playback, bool interactive) {
+  if (!snapshot) {
+    ImGui::TextUnformatted("Stimulus context unavailable");
+    return false;
+  }
+  initializeStimulusControls(controls, descriptor);
+  bool camera_discontinuity = false;
+  const auto *step = crimson::timeline::findStimulusContextStepForFrame(
+      *snapshot, current_frame);
+  if (step != nullptr) {
+    ImGui::Text("%s", (!step->step_name.empty() ? step->step_name
+                                                : step->stimulus_mode)
+                           .c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s  frames %lld-%lld", step->stimulus_mode.c_str(),
+                        static_cast<long long>(step->start_camera_frame),
+                        static_cast<long long>(step->end_camera_frame));
+    if (step->moving_grating.present) {
+      ImGui::Text("Direction %.1f deg   Speed %.2f mm/s   Frequency %.2f Hz",
+                  step->moving_grating.grating_direction_camera_deg,
+                  step->moving_grating.speed_mm_s,
+                  step->moving_grating.temporal_frequency_hz);
+    } else if (step->concentric_grating.present) {
+      ImGui::Text("%s   %s   Radius %.2f-%.2f mm",
+                  step->concentric_grating.stimulus_role.c_str(),
+                  step->concentric_grating.radial_polarity_authored.c_str(),
+                  step->concentric_grating.target_radius_min_mm,
+                  step->concentric_grating.target_radius_max_mm);
+    }
+  } else {
+    ImGui::TextDisabled("No canonical step at frame %lld",
+                        static_cast<long long>(current_frame));
+  }
+
+  if (ImGui::BeginTable("##stimulus-event-filters", 3,
+                        ImGuiTableFlags_SizingStretchSame)) {
+    for (const auto &type : descriptor.event_types) {
+      ImGui::TableNextColumn();
+      bool &enabled = controls->stimulus_event_type_filter[type.id];
+      std::string label = type.display_name + " (" +
+                          std::to_string(type.event_count) + ")##type-" +
+                          std::to_string(type.id);
+      ImGui::Checkbox(label.c_str(), &enabled);
+    }
+    ImGui::EndTable();
+  }
+
+  camera_discontinuity =
+      drawStimulusContextLane(
+          "##stimulus-context-full", 150.0f, *snapshot,
+          &controls->stimulus_event_type_filter,
+          &controls->selected_stimulus_event, controls->half_span_seconds,
+          current_frame, clock, playback, interactive) ||
+      camera_discontinuity;
+
+  ImGui::BeginChild("##stimulus-event-list", ImVec2(0.0f, 150.0f), true);
+  for (size_t index = 0; index < snapshot->events.size(); ++index) {
+    const auto &event = snapshot->events[index];
+    if (!eventTypeVisible(&controls->stimulus_event_type_filter,
+                          event.event_type_id)) {
+      continue;
+    }
+    const std::string label =
+        std::to_string(event.camera_frame) + "  " + event.label +
+        "##stimulus-event-" + std::to_string(index);
+    const bool selected = controls->selected_stimulus_event == index;
+    if (ImGui::Selectable(label.c_str(), selected) && interactive) {
+      controls->selected_stimulus_event = index;
+      if (event.camera_frame >= 0) {
+        camera_discontinuity =
+            seekViewer(clock, playback, event.camera_frame) ||
+            camera_discontinuity;
+      }
+    }
+  }
+  ImGui::EndChild();
+  if (controls->selected_stimulus_event < snapshot->events.size()) {
+    const auto &event =
+        snapshot->events[controls->selected_stimulus_event];
+    ImGui::Text("Frame %lld   stimulus %lld   type %d",
+                static_cast<long long>(event.camera_frame),
+                static_cast<long long>(event.stimulus_frame),
+                event.event_type_id);
+    if (!event.details_json.empty() && event.details_json != "{}") {
+      ImGui::TextWrapped("%s", event.details_json.c_str());
+    }
+  }
+  return camera_discontinuity;
+}
+
 void initializeSeriesControls(
     AppleSeriesTimelineControls *controls,
     const crimson::timeline::AnalysisSeriesTimelineDescriptor &descriptor) {
@@ -756,6 +1026,11 @@ bool drawAppleAnalysisTimeline(
     const crimson::timeline::AnalysisSeriesTimelineDescriptor *tail_descriptor,
     const std::shared_ptr<const crimson::timeline::AnalysisSeriesTimelineWindow>
         &tail_window,
+    const crimson::timeline::StimulusContextTimelineDescriptor
+        *stimulus_descriptor,
+    const std::shared_ptr<
+        const crimson::timeline::StimulusContextTimelineSnapshot>
+        &stimulus_snapshot,
     int64_t current_frame, LogicalPlaybackClock &clock,
     AppleVideoPlaybackBuffer &playback, bool interactive) {
   if (controls == nullptr || !controls->open) {
@@ -785,6 +1060,10 @@ bool drawAppleAnalysisTimeline(
   ImGui::SetNextItemWidth(150.0f);
   ImGui::SliderFloat("Span", &controls->half_span_seconds, 1.0f, 30.0f,
                      "+/- %.0f s");
+  if (stimulus_descriptor != nullptr && stimulus_snapshot) {
+    ImGui::SameLine();
+    ImGui::Checkbox("Stimulus context", &controls->show_stimulus_context);
+  }
 
   bool camera_discontinuity = false;
   if (ImGui::BeginTabBar("##analysis-timeline-tabs")) {
@@ -797,14 +1076,22 @@ bool drawAppleAnalysisTimeline(
       if (controls->initial_tab == AppleAnalysisTimelineTab::Motion) {
         controls->initial_tab = AppleAnalysisTimelineTab::Automatic;
       }
-          camera_discontinuity =
+      if (controls->show_stimulus_context && stimulus_snapshot) {
+        camera_discontinuity =
+            drawStimulusContextLane(
+                "##motion-stimulus-context", 78.0f, *stimulus_snapshot,
+                nullptr, nullptr, controls->half_span_seconds, current_frame,
+                clock, playback, interactive) ||
+            camera_discontinuity;
+      }
+      camera_discontinuity =
           drawSeriesTimelineTab("motion", &controls->motion,
                                 controls->half_span_seconds, *motion_descriptor,
                                 motion_window, current_frame, clock, playback,
                                 interactive) ||
-              camera_discontinuity;
+          camera_discontinuity;
       ImGui::EndTabItem();
-        }
+    }
     const ImGuiTabItemFlags eye_flags =
         controls->initial_tab == AppleAnalysisTimelineTab::EyeAngles
             ? ImGuiTabItemFlags_SetSelected
@@ -813,6 +1100,14 @@ bool drawAppleAnalysisTimeline(
         ImGui::BeginTabItem("Eye angles", nullptr, eye_flags)) {
       if (controls->initial_tab == AppleAnalysisTimelineTab::EyeAngles) {
         controls->initial_tab = AppleAnalysisTimelineTab::Automatic;
+      }
+      if (controls->show_stimulus_context && stimulus_snapshot) {
+        camera_discontinuity =
+            drawStimulusContextLane(
+                "##eye-stimulus-context", 78.0f, *stimulus_snapshot, nullptr,
+                nullptr, controls->half_span_seconds, current_frame, clock,
+                playback, interactive) ||
+            camera_discontinuity;
       }
       camera_discontinuity =
           drawEyeAngleTimelineTab(&controls->eye_angles,
@@ -831,11 +1126,35 @@ bool drawAppleAnalysisTimeline(
       if (controls->initial_tab == AppleAnalysisTimelineTab::TailKinematics) {
         controls->initial_tab = AppleAnalysisTimelineTab::Automatic;
       }
+      if (controls->show_stimulus_context && stimulus_snapshot) {
+        camera_discontinuity =
+            drawStimulusContextLane(
+                "##tail-stimulus-context", 78.0f, *stimulus_snapshot, nullptr,
+                nullptr, controls->half_span_seconds, current_frame, clock,
+                playback, interactive) ||
+            camera_discontinuity;
+      }
       camera_discontinuity =
           drawSeriesTimelineTab("tail", &controls->tail_kinematics,
                                 controls->half_span_seconds, *tail_descriptor,
                                 tail_window, current_frame, clock, playback,
                                 interactive) ||
+          camera_discontinuity;
+      ImGui::EndTabItem();
+    }
+    const ImGuiTabItemFlags stimulus_flags =
+        controls->initial_tab == AppleAnalysisTimelineTab::Stimulus
+            ? ImGuiTabItemFlags_SetSelected
+            : ImGuiTabItemFlags_None;
+    if (stimulus_descriptor != nullptr && stimulus_snapshot &&
+        ImGui::BeginTabItem("Stimulus", nullptr, stimulus_flags)) {
+      if (controls->initial_tab == AppleAnalysisTimelineTab::Stimulus) {
+        controls->initial_tab = AppleAnalysisTimelineTab::Automatic;
+      }
+      camera_discontinuity =
+          drawStimulusTimelineTab(controls, *stimulus_descriptor,
+                                  stimulus_snapshot, current_frame, clock,
+                                  playback, interactive) ||
           camera_discontinuity;
       ImGui::EndTabItem();
     }

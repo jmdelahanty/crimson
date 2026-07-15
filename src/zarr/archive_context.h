@@ -8,6 +8,7 @@
 namespace crimson::timeline {
 class AnalysisSeriesTimelineRepository;
 class EyeAngleTimelineRepository;
+class StimulusContextTimelineRepository;
 }
 
 namespace crimson::zarr {
@@ -80,6 +81,12 @@ class ArchiveContext {
       std::string* error_message);
   friend std::unique_ptr<crimson::timeline::AnalysisSeriesTimelineRepository>
   OpenTailKinematicsTimelineRepository(
+      const std::shared_ptr<ArchiveContext>& archive,
+      std::size_t frame_count_hint,
+      const std::string& requested_run,
+      std::string* error_message);
+  friend std::unique_ptr<crimson::timeline::StimulusContextTimelineRepository>
+  OpenStimulusContextTimelineRepository(
       const std::shared_ptr<ArchiveContext>& archive,
       std::size_t frame_count_hint,
       const std::string& requested_run,

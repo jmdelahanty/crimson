@@ -325,7 +325,7 @@ Gate:
 - all edit/review interactions operate on the same data and frames as NVIDIA;
 - no required panel, overlay, or interaction is omitted.
 
-#### Current Phase 5 Checkpoint (2026-07-14)
+#### Current Phase 5 Checkpoint (2026-07-15)
 
 Phase 5 remains active and is not the full UI/overlay parity gate. Phase 5I is
 accepted for the shared sparse-series contract and the native motion/tail
@@ -341,11 +341,27 @@ complete Phase 5I record is in
 contract remains documented in
 `docs/crimson_macos_phase5h_eye_angle_timeline.md`.
 
+Phase 5J is accepted for the shared stimulus event/interval contract and native
+stimulus context workflows. The Mac analysis window now includes compact
+stimulus context lanes beside Motion, Eye angles, and Tail plus a rich Stimulus
+tab with canonical step details, event-type filters, tooltips, an event list,
+and exact camera-frame seeking. The native TensorStore adapter reads the
+current columnar event layout and retains read-only compatibility with the
+legacy packed structured event-array fallback used by the maintained loader.
+Corrected stimulus alignment resolves missing event camera frames without
+Python Zarr. The production Mac and NVIDIA probes agreed on the selected run,
+33 events, one step, 19 types, and zero unresolved camera frames; both native
+GUI smoke paths passed. The mounted production archives are columnar, so a
+representative legacy structured archive remains a residual compatibility
+risk. The complete Phase 5J record is in
+`docs/crimson_macos_phase5j_stimulus_context_timeline.md`.
+
 The native Mac shell is still intentionally much smaller than the maintained
 Linux/Windows `redgui` workspace. Remaining Phase 5 work includes stimulus
-events/context, production-tail data acceptance, edit/review interactions, and
-other panels, docking, and multiwindow workflows identified by the parity
-inventory. Phase 5 must not be marked complete until those workflows and the
+overlay parity beyond the event/context surfaces, production-tail data
+acceptance, swim-bout rectangles, edit/review interactions, and other panels,
+docking, and multiwindow workflows identified by the parity inventory. Phase 5
+must not be marked complete until those workflows and the
 screenshot/image-difference gate are satisfied.
 
 ### Phase 6 — Inference Parity

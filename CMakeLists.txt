@@ -69,6 +69,7 @@ add_library(crimson_repository_contracts STATIC
     src/eye_angle_timeline.cpp
     src/eye_angle_timeline_buffer.cpp
     src/eye_geometry_overlay_buffer.cpp
+    src/stimulus_context_timeline.cpp
     src/subject_mask_overlay_buffer.cpp
     src/subject_shape_overlay_buffer.cpp
     src/zarr/keypoint_overlay_repository.cpp
@@ -137,6 +138,7 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         src/zarr/tensorstore_analysis_crop_geometry_repository.cpp
         src/zarr/tensorstore_acquisition_crop_repository.cpp
         src/zarr/tensorstore_keypoint_overlay_repository.cpp
+        src/zarr/tensorstore_stimulus_context_timeline_repository.cpp
         src/zarr/tensorstore_stimulus_repository.cpp
         src/zarr/tensorstore_subject_mask_overlay_repository.cpp
         src/zarr/tensorstore_subject_shape_overlay_repository.cpp
@@ -162,6 +164,39 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
     )
     set_target_properties(stimulus_repository_probe PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
+    add_executable(stimulus_context_timeline_repository_probe
+        tools/stimulus_context_timeline_repository_probe.cpp
+    )
+    target_compile_features(stimulus_context_timeline_repository_probe
+        PRIVATE cxx_std_17)
+    target_link_libraries(stimulus_context_timeline_repository_probe PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(stimulus_context_timeline_repository_probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
+    add_executable(stimulus_context_timeline_repository_tests
+        tools/stimulus_context_timeline_repository_tests.cpp
+    )
+    target_compile_features(stimulus_context_timeline_repository_tests
+        PRIVATE cxx_std_17)
+    target_link_libraries(stimulus_context_timeline_repository_tests PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(stimulus_context_timeline_repository_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME stimulus_context_timeline_repository_tests
+        COMMAND $<TARGET_FILE:stimulus_context_timeline_repository_tests>)
+    set_tests_properties(stimulus_context_timeline_repository_tests PROPERTIES
+        LABELS "headless;portable;repository;stimulus;tensorstore;timeline;zarr"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
 
     add_executable(acquisition_crop_repository_tests
@@ -545,6 +580,22 @@ add_test(NAME analysis_series_timeline_tests
     COMMAND $<TARGET_FILE:analysis_series_timeline_tests>)
 set_tests_properties(analysis_series_timeline_tests PROPERTIES
     LABELS "headless;portable;repository;timeline"
+)
+
+add_executable(stimulus_context_timeline_tests
+    tools/stimulus_context_timeline_tests.cpp
+)
+target_link_libraries(stimulus_context_timeline_tests PRIVATE
+    crimson_repository_contracts
+)
+target_compile_features(stimulus_context_timeline_tests PRIVATE cxx_std_17)
+set_target_properties(stimulus_context_timeline_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME stimulus_context_timeline_tests
+    COMMAND $<TARGET_FILE:stimulus_context_timeline_tests>)
+set_tests_properties(stimulus_context_timeline_tests PROPERTIES
+    LABELS "headless;portable;repository;stimulus;timeline"
 )
 
 add_executable(stimulus_playback_coordinator_tests
@@ -1321,6 +1372,7 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_analysis_crop_geometry_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_acquisition_crop_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_keypoint_overlay_repository.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_stimulus_context_timeline_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_stimulus_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_subject_mask_overlay_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_subject_shape_overlay_repository.cpp"
