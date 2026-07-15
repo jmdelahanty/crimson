@@ -471,6 +471,11 @@ endif()
 
 message(STATUS "TensorStore configured successfully")
 
+# Contract tests below are independent of the optional legacy Zarr3 probe.
+# Keep CTest registration active even when that probe is disabled in an
+# existing build cache.
+enable_testing()
+
 # Tiny Zarr v3 (Palette) smoke test
 add_executable(test_zarr3_read tools/test_zarr3_read.cpp)
 target_link_libraries(test_zarr3_read PRIVATE
@@ -479,6 +484,62 @@ target_link_libraries(test_zarr3_read PRIVATE
     nlohmann_json::nlohmann_json
 )
 target_compile_features(test_zarr3_read PRIVATE cxx_std_17)
+
+add_executable(reason_contract_check
+    tools/reason_contract_check.cpp
+    src/zarr_loader_internal.cpp
+)
+target_include_directories(reason_contract_check PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+    ${HDF5_INCLUDE_DIRS}
+)
+target_link_libraries(reason_contract_check PRIVATE
+    tensorstore::all_drivers
+    Threads::Threads
+    nlohmann_json::nlohmann_json
+    ${OpenCV_LIBS}
+    ${HDF5_CXX_LIBRARIES}
+    ${HDF5_HL_LIBRARIES}
+)
+target_compile_features(reason_contract_check PRIVATE cxx_std_17)
+add_test(NAME reason_column_contract COMMAND reason_contract_check)
+
+add_executable(tensorstore_keypoint_read_benchmark
+    tools/tensorstore_keypoint_read_benchmark.cpp
+)
+target_link_libraries(tensorstore_keypoint_read_benchmark PRIVATE
+    tensorstore::all_drivers
+    Threads::Threads
+    nlohmann_json::nlohmann_json
+)
+target_compile_features(tensorstore_keypoint_read_benchmark PRIVATE cxx_std_17)
+
+add_executable(manual_reason_write_contract_check
+    tools/manual_reason_write_contract_check.cpp
+    src/zarr_loader.cpp
+    src/zarr_loader_detections.cpp
+    src/zarr_loader_eye_keypoint.cpp
+    src/zarr_loader_movement.cpp
+    src/zarr_loader_stimulus.cpp
+    src/zarr_loader_write.cpp
+    src/zarr_loader_internal.cpp
+)
+target_include_directories(manual_reason_write_contract_check PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+    ${HDF5_INCLUDE_DIRS}
+)
+target_link_libraries(manual_reason_write_contract_check PRIVATE
+    tensorstore::all_drivers
+    nlohmann_json::nlohmann_json
+    Threads::Threads
+    ${OpenCV_LIBS}
+    ${HDF5_CXX_LIBRARIES}
+    ${HDF5_HL_LIBRARIES}
+)
+target_compile_features(manual_reason_write_contract_check PRIVATE cxx_std_17)
+add_test(NAME manual_reason_write_contract COMMAND manual_reason_write_contract_check)
 
 add_executable(zarr_calibration_probe tools/zarr_calibration_probe.cpp)
 target_link_libraries(zarr_calibration_probe PRIVATE

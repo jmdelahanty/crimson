@@ -645,17 +645,28 @@ bool ZarrDetectionLoader::readStringArray(const ts::kvstore::KvStore& store,
             size_t width = static_cast<size_t>(array.shape()[1]);
             out.resize(rows);
             const auto* data = static_cast<const Element*>(array.data());
+            size_t malformed_rows = 0;
             for (size_t row = 0; row < rows; ++row) {
                 const auto* row_ptr = data + row * width;
                 size_t length = 0;
                 while (length < width && row_ptr[length] != static_cast<Element>(0)) {
                     ++length;
                 }
-                out[row] = std::string(reinterpret_cast<const char*>(row_ptr),
-                                       reinterpret_cast<const char*>(row_ptr + length));
+                const std::string_view raw(
+                    reinterpret_cast<const char*>(row_ptr), length);
+                bool malformed = false;
+                out[row] = sanitizeUtf8ReplacingInvalid(raw, &malformed);
+                if (malformed) {
+                    ++malformed_rows;
+                }
             }
             std::cout << "  [ReadStringArray] '" << path << "' read as " << label
-                      << " (" << rows << " rows, width " << width << ")" << std::endl;
+                      << " (" << rows << " rows, width " << width << ")";
+            if (malformed_rows > 0) {
+                std::cout << "; replaced malformed UTF-8 in "
+                          << malformed_rows << " rows";
+            }
+            std::cout << std::endl;
             return true;
         };
 
@@ -1131,39 +1142,60 @@ bool ZarrDetectionLoader::loadFlattenedRun(
 
     if (detection_reason_out) {
         detection_reason_out->clear();
-        auto try_load_reason = [&](const std::string& field_name) -> bool {
-            const std::string field_path = base_path + field_name;
-            if (!arrayExists(store, field_path)) {
-                return false;
-            }
-            std::vector<std::string> reason_raw;
-            if (!readStringArray(store, field_path, reason_raw)) {
-                return false;
-            }
-            if (reason_raw.size() != total_detections) {
-                std::cout << "  [ReadStringArray] '" << field_path
-                          << "' length mismatch (expected " << total_detections
-                          << ", got " << reason_raw.size()
-                          << "); ignoring field." << std::endl;
-                return false;
-            }
-            *detection_reason_out = std::move(reason_raw);
-            return true;
-        };
+        std::optional<std::vector<std::string>> canonical_reason;
+        std::optional<std::vector<std::string>> legacy_reason;
 
-        // Palette detect reason precedence: reason_bytes -> reason -> detection_source
-        if (!try_load_reason("reason_bytes")) {
-            if (!try_load_reason("reason")) {
-                if (detection_source_out &&
-                    detection_source_out->size() == total_detections &&
-                    total_detections > 0) {
-                    detection_reason_out->resize(total_detections);
-                    for (size_t i = 0; i < total_detections; ++i) {
-                        (*detection_reason_out)[i] =
-                            ((*detection_source_out)[i] != 0) ? "interpolated" : "clean";
-                    }
+        const std::string canonical_path = base_path + "reason_bytes";
+        if (arrayExists(store, canonical_path)) {
+            std::vector<std::string> values;
+            ReasonBytesDecodeStats stats;
+            std::string read_error;
+            if (readReasonBytesArray(store, canonical_path, context_, values,
+                                     &stats, &read_error)) {
+                canonical_reason = std::move(values);
+                std::cout << "  [ReasonColumn] '" << canonical_path
+                          << "' read as canonical reason_bytes ("
+                          << canonical_reason->size() << " rows)";
+                if (stats.rows_without_null_terminator > 0) {
+                    std::cout << "; " << stats.rows_without_null_terminator
+                              << " rows use the full width without a null terminator";
                 }
+                if (stats.rows_with_malformed_utf8 > 0) {
+                    std::cout << "; replaced malformed UTF-8 in "
+                              << stats.rows_with_malformed_utf8 << " rows";
+                }
+                std::cout << std::endl;
+            } else {
+                std::cout << "  [ReasonColumn] failed to read canonical '"
+                          << canonical_path << "': " << read_error << std::endl;
             }
+        }
+
+        const std::string legacy_path = base_path + "reason";
+        if (arrayExists(store, legacy_path)) {
+            std::vector<std::string> values;
+            if (readStringArray(store, legacy_path, values)) {
+                legacy_reason = std::move(values);
+            }
+        }
+
+        const auto resolution = resolveReasonColumns(
+            total_detections, canonical_reason, legacy_reason,
+            detection_source_out);
+        *detection_reason_out = resolution.labels;
+        if (resolution.conflicting_legacy_rows > 0) {
+            std::cout << "  [REASON_CONFLICT] '" << base_path
+                      << "' has " << resolution.conflicting_legacy_rows
+                      << " conflicting reason rows; reason_bytes is authoritative."
+                      << std::endl;
+        }
+        if ((canonical_reason.has_value() &&
+             canonical_reason->size() != total_detections) ||
+            (legacy_reason.has_value() &&
+             legacy_reason->size() != total_detections)) {
+            std::cout << "  [ReasonColumn] '" << base_path
+                      << "' ignored a reason column whose row count does not match "
+                      << total_detections << "." << std::endl;
         }
     }
 

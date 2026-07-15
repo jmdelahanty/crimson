@@ -31,18 +31,26 @@ Given `run_name = refined_detect_runs.attrs["latest"]` and `manual_group` (defau
 - `n_detections` (`int32`, shape `(n_frames,)`)  # alias of `frame_counts`
 - `frame_mapping` (`int32`, shape `(n_detections,)`)  # alias of `frame_indices`
 
-3. Optional arrays (recommended when available):
+3. Reason/source arrays:
 - `detection_source` (`int8`, shape `(n_detections,)`)
 - `retune_id` (`int32`, shape `(n_detections,)`, `-1` for non-retuned)
-- `reason` (UTF-8 variable-length string, shape `(n_detections,)`)
+- `reason_bytes` (`uint8`, shape `(n_detections, width)`, null-terminated UTF-8; canonical)
 
-`reason` write guidance:
-- If `detection_source` is written, write `reason` as well.
+`reason_bytes` write guidance:
+- If `detection_source` is written, write `reason_bytes` as well.
 - Recommended mapping:
-  - `detection_source == 0` -> `reason = "clean"` (or `"manual"` for explicit manual rows)
-  - `detection_source == 1` -> `reason = "interpolated"`
+  - `detection_source == 0` -> label `"clean"` (or `"manual"` for explicit manual rows)
+  - `detection_source == 1` -> label `"interpolated"`
 - Custom labels are allowed (for example `retune`), but lengths must still match
   `n_detections` and labels must be UTF-8 strings.
+- Never create or synchronize a variable-length `reason` array. It is a
+  historical read-only fallback.
+- Required attrs are `reason_encoding="utf8-null-terminated"`,
+  `reason_authority="reason_bytes"`, `reason_bytes_width=<actual width>`,
+  `reason_bytes_null_terminated=true`, and
+  `reason_fallback_order=["reason_bytes","detection_source"]`.
+- If replacing a legacy reason-only subgroup, stage and validate the complete
+  effective labels in `reason_bytes` before retiring the legacy subgroup.
 
 4. Manual subgroup attrs:
 - `storage_layout = "columnar"`
@@ -94,7 +102,7 @@ Recommended payload fields:
 4. Keep array lengths consistent:
 - `len(frame_indices) == len(bbox_norm_coords) == len(scores) == len(class_ids)`
 - `len(frame_counts) == n_frames`
-- if `reason` exists: `len(reason) == n_detections`
+- `reason_bytes.shape[0] == n_detections`
 
 ## Validation Queries / Checks
 
@@ -109,7 +117,7 @@ Run after Crimson writes:
 3. Shape consistency:
 - all detection-level arrays share `n_detections`.
 - `sum(frame_counts) == n_detections`.
-- if present, `reason` and `detection_source` lengths match `n_detections`.
+- `reason_bytes` and `detection_source` row counts match `n_detections`.
 
 4. Resolution check:
 - Palette helper resolution returns manual group as active source.

@@ -481,6 +481,189 @@ bool arrayExists(const ts::kvstore::KvStore& store, const std::string& path) {
     return v3.ok() && v3.value().has_value();
 }
 
+std::string sanitizeUtf8ReplacingInvalid(std::string_view value,
+                                         bool* malformed) {
+    bool saw_malformed = false;
+    std::string result;
+    result.reserve(value.size());
+
+    const auto continuation = [](unsigned char byte) {
+        return byte >= 0x80 && byte <= 0xbf;
+    };
+    const auto append_replacement = [&]() {
+        result.append("\xef\xbf\xbd", 3);
+        saw_malformed = true;
+    };
+
+    size_t i = 0;
+    while (i < value.size()) {
+        const unsigned char b0 = static_cast<unsigned char>(value[i]);
+        size_t sequence_length = 0;
+        bool valid = false;
+        if (b0 <= 0x7f) {
+            sequence_length = 1;
+            valid = true;
+        } else if (b0 >= 0xc2 && b0 <= 0xdf && i + 1 < value.size()) {
+            sequence_length = 2;
+            valid = continuation(static_cast<unsigned char>(value[i + 1]));
+        } else if (b0 >= 0xe0 && b0 <= 0xef && i + 2 < value.size()) {
+            const unsigned char b1 = static_cast<unsigned char>(value[i + 1]);
+            const unsigned char b2 = static_cast<unsigned char>(value[i + 2]);
+            sequence_length = 3;
+            const bool second_ok =
+                (b0 == 0xe0) ? (b1 >= 0xa0 && b1 <= 0xbf)
+                             : (b0 == 0xed) ? (b1 >= 0x80 && b1 <= 0x9f)
+                                            : continuation(b1);
+            valid = second_ok && continuation(b2);
+        } else if (b0 >= 0xf0 && b0 <= 0xf4 && i + 3 < value.size()) {
+            const unsigned char b1 = static_cast<unsigned char>(value[i + 1]);
+            const unsigned char b2 = static_cast<unsigned char>(value[i + 2]);
+            const unsigned char b3 = static_cast<unsigned char>(value[i + 3]);
+            sequence_length = 4;
+            const bool second_ok =
+                (b0 == 0xf0) ? (b1 >= 0x90 && b1 <= 0xbf)
+                             : (b0 == 0xf4) ? (b1 >= 0x80 && b1 <= 0x8f)
+                                            : continuation(b1);
+            valid = second_ok && continuation(b2) && continuation(b3);
+        }
+
+        if (!valid) {
+            append_replacement();
+            ++i;
+            continue;
+        }
+        result.append(value.data() + i, sequence_length);
+        i += sequence_length;
+    }
+
+    if (malformed) {
+        *malformed = saw_malformed;
+    }
+    return result;
+}
+
+bool readReasonBytesArray(const ts::kvstore::KvStore& store,
+                          const std::string& path,
+                          const ts::Context& context,
+                          std::vector<std::string>& out,
+                          ReasonBytesDecodeStats* stats,
+                          std::string* error_message) {
+    out.clear();
+    ReasonBytesDecodeStats local_stats;
+    auto open_result = openArrayAny<uint8_t, 2>(store, path, context);
+    if (!open_result.ok()) {
+        if (error_message) {
+            *error_message = "open failed: " + open_result.status().ToString();
+        }
+        return false;
+    }
+    auto read_result = ts::Read(open_result.value()).result();
+    if (!read_result.ok()) {
+        if (error_message) {
+            *error_message = "read failed: " + read_result.status().ToString();
+        }
+        return false;
+    }
+
+    const auto array = read_result.value();
+    if (array.rank() != 2 || array.shape()[0] < 0 || array.shape()[1] <= 0) {
+        if (error_message) {
+            *error_message = "expected uint8[N,width] with width > 0";
+        }
+        return false;
+    }
+    const size_t rows = static_cast<size_t>(array.shape()[0]);
+    const size_t width = static_cast<size_t>(array.shape()[1]);
+    const auto* data = static_cast<const uint8_t*>(array.data());
+    out.resize(rows);
+    for (size_t row = 0; row < rows; ++row) {
+        const uint8_t* row_ptr = data + row * width;
+        size_t length = 0;
+        while (length < width && row_ptr[length] != 0) {
+            ++length;
+        }
+        if (length == width) {
+            ++local_stats.rows_without_null_terminator;
+        }
+        bool malformed = false;
+        const std::string_view bytes(
+            reinterpret_cast<const char*>(row_ptr), length);
+        out[row] = sanitizeUtf8ReplacingInvalid(bytes, &malformed);
+        if (malformed) {
+            ++local_stats.rows_with_malformed_utf8;
+        }
+    }
+    if (stats) {
+        *stats = local_stats;
+    }
+    if (error_message) {
+        error_message->clear();
+    }
+    return true;
+}
+
+ReasonColumnResolution resolveReasonColumns(
+    size_t expected_rows,
+    const std::optional<std::vector<std::string>>& reason_bytes,
+    const std::optional<std::vector<std::string>>& legacy_reason,
+    const std::vector<uint8_t>* detection_source) {
+    ReasonColumnResolution result;
+    const bool canonical_valid =
+        reason_bytes.has_value() && reason_bytes->size() == expected_rows;
+    const bool legacy_valid =
+        legacy_reason.has_value() && legacy_reason->size() == expected_rows;
+
+    if (canonical_valid) {
+        result.labels = *reason_bytes;
+        result.authority = ReasonAuthority::ReasonBytes;
+        if (legacy_valid) {
+            for (size_t row = 0; row < expected_rows; ++row) {
+                if ((*reason_bytes)[row] != (*legacy_reason)[row]) {
+                    ++result.conflicting_legacy_rows;
+                }
+            }
+        }
+        return result;
+    }
+    if (legacy_valid) {
+        result.labels = *legacy_reason;
+        result.authority = ReasonAuthority::LegacyReason;
+        return result;
+    }
+    if (detection_source && detection_source->size() == expected_rows) {
+        result.labels.resize(expected_rows);
+        for (size_t row = 0; row < expected_rows; ++row) {
+            result.labels[row] =
+                (*detection_source)[row] != 0 ? "interpolated" : "clean";
+        }
+        result.authority = ReasonAuthority::DetectionSource;
+    }
+    return result;
+}
+
+const char* reasonAuthorityName(ReasonAuthority authority) {
+    switch (authority) {
+        case ReasonAuthority::ReasonBytes:
+            return "reason_bytes";
+        case ReasonAuthority::LegacyReason:
+            return "reason";
+        case ReasonAuthority::DetectionSource:
+            return "detection_source";
+        case ReasonAuthority::None:
+        default:
+            return "none";
+    }
+}
+
+void setCanonicalReasonAttrs(json& attrs, size_t reason_bytes_width) {
+    attrs["reason_encoding"] = "utf8-null-terminated";
+    attrs["reason_authority"] = "reason_bytes";
+    attrs["reason_bytes_width"] = static_cast<int64_t>(reason_bytes_width);
+    attrs["reason_bytes_null_terminated"] = true;
+    attrs["reason_fallback_order"] =
+        json::array({"reason_bytes", "detection_source"});
+}
+
 std::string stringFromFixedBuffer(const char* buffer, size_t size) {
     const char* end = static_cast<const char*>(
         std::memchr(buffer, '\0', size));

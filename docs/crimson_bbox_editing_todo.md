@@ -161,10 +161,11 @@ Rationale for doing this before Phase 3:
 - Writeback should handle all edit types together: move, add, and ideally delete.
 
 2. Avoid reworking persistence twice.
-- If writeback ships before create/delete tools, row assembly and `reason` assignment likely need refactors.
+- If writeback ships before create/delete tools, row assembly and canonical
+  `reason_bytes` assignment likely need refactors.
 
 3. Fit manual semantics cleanly.
-- New boxes can be labeled `reason = "manual"` under the current contract.
+- New boxes can be labeled `"manual"` in `reason_bytes` under the current contract.
 
 Recommended implementation slice:
 

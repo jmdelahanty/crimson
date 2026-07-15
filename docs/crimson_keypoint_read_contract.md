@@ -91,8 +91,8 @@ Keypoint order is `[bladder, eye_left, eye_right]` (confirmed by
 ### Refined only
 
 - `quality_labels` (`int8`, shape `(n_rois,)`) — see Quality Labels below
-- `reason_bytes` (`uint8`, shape `(n_rois, width)`) — null-terminated UTF-8 reason labels (preferred Crimson/native path)
-- `reason` (`string`, shape `(n_rois,)`) — pipe-delimited tags (secondary/fallback text view)
+- `reason_bytes` (`uint8`, shape `(n_rois, width)`) — null-terminated UTF-8 reason labels (canonical current path)
+- `reason` (`string`, shape `(n_rois,)`) — historical read-only fallback; current runs omit it
 - `flip_corrected` (`bool`, shape `(n_rois,)`) — true if left/right eyes were swapped
 - `usable_keypoints` (`bool`, shape `(n_rois,)`) — confidence + geometry valid
 - `confidence_valid` (`bool`, shape `(n_rois,)`) — all per-keypoint confidences >= threshold
@@ -104,8 +104,8 @@ Keypoint order is `[bladder, eye_left, eye_right]` (confirmed by
 
 ### String-Dtype Compatibility Note
 
-Current Palette writes keypoint `reason` as Zarr v3 string dtype. Some C++
-TensorStore builds cannot parse this dtype directly.
+Historical Palette runs may contain keypoint `reason` as Zarr v3 string dtype.
+Some C++ TensorStore builds cannot parse this legacy dtype directly.
 
 Reader requirements in Crimson:
 1. Treat `reason` as optional for rendering; do not hard-fail if parsing fails.
@@ -119,9 +119,9 @@ to the native reader path.
 
 ## Reason Decode (Refined Keypoints)
 
-Reason labels are encoded in two equivalent forms:
-1. `reason_bytes` (preferred): null-terminated UTF-8 rows (`uint8[n, width]`)
-2. `reason` (secondary): string array
+Current reason labels are encoded only as `reason_bytes`: null-terminated UTF-8
+rows (`uint8[n, width]`). Historical runs may instead contain `reason` as a
+string array. If both occur and disagree, `reason_bytes` is authoritative.
 
 The decoded labels use **pipe-delimited multi-tag** strings. For example:
 - `"flip_corrected|geometry_issue"`
@@ -227,7 +227,7 @@ For selected group:
 - if `confidence` present: `len(confidence) == n_rois`
 - if `keypoint_confidences` present: `keypoint_confidences.shape == (n_rois, 3)`
 - if `quality_labels` present: `len(quality_labels) == n_rois`
-- if `reason` present: `len(reason) == n_rois`
+- if historical `reason` is present: `len(reason) == n_rois`
 - if `frame_counts` present: `sum(frame_counts) == n_rois` (advisory; allow mismatch with warning)
 
 ## Metadata Hints (Optional)

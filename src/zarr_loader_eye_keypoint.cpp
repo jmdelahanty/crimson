@@ -764,19 +764,6 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
         std::vector<int32_t> roi_quality_labels;
         readInt32Array(store, run_base + "quality_labels", roi_quality_labels);
 
-        std::vector<std::string> roi_reason;
-        bool reason_loaded = readStringArray(store, run_base + "reason_bytes", roi_reason);
-        if (!reason_loaded) {
-            if (!readStringArray(store, run_base + "reason", roi_reason)) {
-                static bool reason_warned = false;
-                if (!reason_warned) {
-                    std::cout << "[REFINED_KP_WARNING] reason_bytes and reason arrays unavailable for run '"
-                              << latest_run << "'; quality reason display disabled." << std::endl;
-                    reason_warned = true;
-                }
-            }
-        }
-
         std::vector<uint8_t> roi_flip_corrected;
         readBoolArray(store, run_base + "flip_corrected", roi_flip_corrected);
 
@@ -801,6 +788,61 @@ bool ZarrDetectionLoader::loadKeypointHeadingData(const ts::kvstore::KvStore& st
             }
         } else {
             readBoolArray(store, run_base + "detection_source", roi_det_source);
+        }
+
+        std::optional<std::vector<std::string>> canonical_reason;
+        std::optional<std::vector<std::string>> legacy_reason;
+        const std::string canonical_reason_path = run_base + "reason_bytes";
+        if (arrayExists(store, canonical_reason_path)) {
+            std::vector<std::string> values;
+            ReasonBytesDecodeStats stats;
+            std::string read_error;
+            if (readReasonBytesArray(store, canonical_reason_path, context_, values,
+                                     &stats, &read_error)) {
+                canonical_reason = std::move(values);
+                std::cout << "  [ReasonColumn] '" << canonical_reason_path
+                          << "' read as canonical reason_bytes ("
+                          << canonical_reason->size() << " rows)";
+                if (stats.rows_without_null_terminator > 0) {
+                    std::cout << "; " << stats.rows_without_null_terminator
+                              << " rows use the full width without a null terminator";
+                }
+                if (stats.rows_with_malformed_utf8 > 0) {
+                    std::cout << "; replaced malformed UTF-8 in "
+                              << stats.rows_with_malformed_utf8 << " rows";
+                }
+                std::cout << std::endl;
+            } else {
+                std::cout << "  [ReasonColumn] failed to read canonical '"
+                          << canonical_reason_path << "': " << read_error
+                          << std::endl;
+            }
+        }
+        const std::string legacy_reason_path = run_base + "reason";
+        if (arrayExists(store, legacy_reason_path)) {
+            std::vector<std::string> values;
+            if (readStringArray(store, legacy_reason_path, values)) {
+                legacy_reason = std::move(values);
+            }
+        }
+        const auto reason_resolution = resolveReasonColumns(
+            roi_count, canonical_reason, legacy_reason, &roi_det_source);
+        std::vector<std::string> roi_reason = reason_resolution.labels;
+        if (reason_resolution.conflicting_legacy_rows > 0) {
+            std::cout << "[REFINED_KP_REASON_CONFLICT] run '" << latest_run
+                      << "' has " << reason_resolution.conflicting_legacy_rows
+                      << " conflicting rows; reason_bytes is authoritative."
+                      << std::endl;
+        }
+        if (reason_resolution.authority == ReasonAuthority::None) {
+            static bool reason_warned = false;
+            if (!reason_warned) {
+                std::cout << "[REFINED_KP_WARNING] reason_bytes, legacy reason, "
+                             "and aligned detection_source are unavailable for run '"
+                          << latest_run
+                          << "'; quality reason display disabled." << std::endl;
+                reason_warned = true;
+            }
         }
 
         // Scatter ROI arrays → detection-aligned flat vectors using roi_to_det

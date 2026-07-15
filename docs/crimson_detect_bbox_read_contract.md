@@ -66,14 +66,15 @@ This matches Palette runtime resolution in:
 - `class_ids` (`int32`, shape `(N,)`)
 - `detection_source` (`int8`, refined groups only: `0=real`, `1=interpolated`)
 - `reason_bytes` (`uint8`, shape `(N, width)`, null-terminated UTF-8 labels)
-- `reason` (`string`, refined groups; detect semantics commonly `clean` / `interpolated`, manual/retune may use other labels)
+- `reason` (`string`, historical refined groups only; read-only fallback)
 - `frame_counts` (`int32`, shape `(num_frames,)`)
 - `n_detections` (`int32`, alias of `frame_counts`)
 
 ## Reason Array Contract (Refined Detect)
 
-When reading `refined_detect_runs/<run>/<group>`, Crimson should treat `reason`
-as the human-readable source label for each detection row.
+When reading `refined_detect_runs/<run>/<group>`, Crimson should treat
+`reason_bytes` as the authoritative human-readable source label for each row.
+Historical `reason` is consulted only when `reason_bytes` is absent.
 
 Minimum expected semantics:
 - `clean`: detection comes from observed/kept detection rows
@@ -91,6 +92,13 @@ Reader behavior:
    - `0 -> clean`
    - `1 -> interpolated`
 4. If none exists, default label to `clean` and warn once.
+
+Current Crimson writes must persist only `reason_bytes` and must set
+`reason_authority="reason_bytes"` plus
+`reason_fallback_order=["reason_bytes","detection_source"]`. If both historical
+columns exist and conflict, `reason_bytes` wins and the reader should diagnose
+the mismatch. A legacy reason-only edit must materialize the complete effective
+column into `reason_bytes` before retiring `reason`.
 
 Do not hard-fail on unknown reason strings; display them as-is.
 

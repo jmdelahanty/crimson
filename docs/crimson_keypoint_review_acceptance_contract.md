@@ -142,9 +142,8 @@ Recommended flow from Crimson:
    - If edits were not made through Palette's manual-review UI, explicitly run
      a summary refresh path before acceptance (for example keypoint-review
      audit behavior).
-   - Ensure reason columns are synchronized before acceptance:
-     `reason_bytes` is the required compatible representation; `reason` is
-     secondary/best-effort where supported.
+   - Ensure `reason_bytes` is complete before acceptance. Current tools must
+     not create or synchronize `reason`; it is a historical read fallback only.
 4. Crimson writes acceptance status with explicit intent:
    - approved training example:
      ```

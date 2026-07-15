@@ -3,6 +3,21 @@
 
 using json = nlohmann::json;
 
+namespace {
+
+struct StagingDirectoryCleanup {
+    std::filesystem::path path;
+    bool active = true;
+
+    ~StagingDirectoryCleanup() {
+        if (!active || path.empty()) return;
+        std::error_code ignored;
+        std::filesystem::remove_all(path, ignored);
+    }
+};
+
+}  // namespace
+
 bool ZarrDetectionLoader::writeManualRefinedDetections(
     const std::vector<int32_t>& frame_indices,
     const std::vector<std::array<double, 4>>& bbox_norm_coords,
@@ -134,52 +149,6 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
         }
     }
 
-    std::vector<std::string> reasons = reason_labels;
-    reasons.resize(n_detections);
-    size_t clean_rows = 0;
-    size_t interpolated_rows = 0;
-    size_t manual_rows = 0;
-    for (size_t i = 0; i < reasons.size(); ++i) {
-        std::string lowered = toLowerCopy(reasons[i]);
-        if (lowered.empty()) {
-            lowered = detection_source_sanitized[i] != 0
-                          ? "interpolated"
-                          : "clean";
-        }
-        if (lowered.find("manual") != std::string::npos) {
-            reasons[i] = "manual";
-            detection_source_sanitized[i] = 0;
-            ++manual_rows;
-        } else if (lowered.find("interp") != std::string::npos) {
-            reasons[i] = "interpolated";
-            detection_source_sanitized[i] = 1;
-            ++interpolated_rows;
-        } else {
-            reasons[i] = "clean";
-            detection_source_sanitized[i] = 0;
-            ++clean_rows;
-        }
-    }
-
-    size_t reason_bytes_width = 16;
-    for (const auto& reason : reasons) {
-        reason_bytes_width = std::max(reason_bytes_width, reason.size() + 1);
-    }
-    std::vector<uint8_t> reason_bytes(n_detections * reason_bytes_width, 0);
-    for (size_t i = 0; i < n_detections; ++i) {
-        const std::string& reason = reasons[i];
-        const size_t row_offset = i * reason_bytes_width;
-        const size_t copy_len = std::min(reason.size(), reason_bytes_width - 1);
-        if (copy_len > 0) {
-            std::memcpy(reason_bytes.data() + row_offset, reason.data(), copy_len);
-        }
-        reason_bytes[row_offset + copy_len] = 0;
-    }
-
-    std::vector<int32_t> frame_mapping = frame_indices;
-    std::vector<int32_t> n_detections_alias = frame_counts_sanitized;
-    std::vector<int32_t> retune_id(n_detections, -1);
-
     const std::string kvstore_path = normalizeKvstoreFileRootPath(root_path_);
     auto kv_spec = ts::kvstore::Spec::FromJson(
         {{"driver", "file"}, {"path", kvstore_path}});
@@ -209,14 +178,117 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
     if (resolved_refined_run) {
         *resolved_refined_run = refined_run;
     }
-
-    const std::string refined_run_path = "refined_detect_runs/" + refined_run + "/";
+    const std::string refined_run_path =
+        "refined_detect_runs/" + refined_run + "/";
     auto refined_run_meta = readNodeMetaV3(store, refined_run_path);
     if (!refined_run_meta.has_value()) {
         error_message =
             "Latest refined run metadata is missing: " + refined_run_path;
         return false;
     }
+
+    std::vector<std::string> reasons = reason_labels;
+    if (reasons.empty() && n_detections > 0) {
+        const std::string existing_base =
+            refined_run_path + manual_group_name + "/";
+        std::optional<std::vector<std::string>> canonical_reason;
+        std::optional<std::vector<std::string>> legacy_reason;
+        if (arrayExists(store, existing_base + "reason_bytes")) {
+            std::vector<std::string> values;
+            if (readReasonBytesArray(store, existing_base + "reason_bytes",
+                                     context_, values)) {
+                canonical_reason = std::move(values);
+            }
+        }
+        if (arrayExists(store, existing_base + "reason")) {
+            std::vector<std::string> values;
+            if (readStringArray(store, existing_base + "reason", values)) {
+                legacy_reason = std::move(values);
+            }
+        }
+        std::vector<uint8_t> source_u8(detection_source_sanitized.begin(),
+                                       detection_source_sanitized.end());
+        const auto existing_resolution = resolveReasonColumns(
+            n_detections, canonical_reason, legacy_reason, &source_u8);
+        if (existing_resolution.authority == ReasonAuthority::ReasonBytes ||
+            existing_resolution.authority == ReasonAuthority::LegacyReason) {
+            reasons = existing_resolution.labels;
+            std::cout << "[MANUAL_REASON_MIGRATION] materialized "
+                      << reasons.size() << " effective labels from "
+                      << reasonAuthorityName(existing_resolution.authority)
+                      << " before canonical publication." << std::endl;
+        }
+        if (existing_resolution.conflicting_legacy_rows > 0) {
+            std::cout << "[MANUAL_REASON_CONFLICT] existing manual subgroup has "
+                      << existing_resolution.conflicting_legacy_rows
+                      << " conflicting rows; reason_bytes is authoritative."
+                      << std::endl;
+        }
+    }
+    reasons.resize(n_detections);
+    size_t clean_rows = 0;
+    size_t interpolated_rows = 0;
+    size_t manual_rows = 0;
+    for (size_t i = 0; i < reasons.size(); ++i) {
+        if (reasons[i].find('\0') != std::string::npos) {
+            error_message = "reason_labels contains an embedded null byte at row " +
+                            std::to_string(i) + ".";
+            return false;
+        }
+        bool malformed_utf8 = false;
+        reasons[i] = sanitizeUtf8ReplacingInvalid(reasons[i], &malformed_utf8);
+        if (malformed_utf8) {
+            error_message = "reason_labels contains malformed UTF-8 at row " +
+                            std::to_string(i) + ".";
+            return false;
+        }
+        std::string lowered = toLowerCopy(reasons[i]);
+        if (lowered.empty()) {
+            lowered = detection_source_sanitized[i] != 0
+                          ? "interpolated"
+                          : "clean";
+        }
+        if (lowered.find("manual") != std::string::npos) {
+            reasons[i] = "manual";
+            detection_source_sanitized[i] = 0;
+            ++manual_rows;
+        } else if (lowered.find("interp") != std::string::npos) {
+            reasons[i] = "interpolated";
+            detection_source_sanitized[i] = 1;
+            ++interpolated_rows;
+        } else if (lowered == "clean") {
+            reasons[i] = "clean";
+            detection_source_sanitized[i] = 0;
+            ++clean_rows;
+        } else {
+            // Custom UTF-8 labels are canonical data, not display-only aliases.
+            // Preserve them verbatim while keeping the caller-provided source flag.
+            if (detection_source_sanitized[i] != 0) {
+                ++interpolated_rows;
+            } else {
+                ++clean_rows;
+            }
+        }
+    }
+
+    size_t reason_bytes_width = 16;
+    for (const auto& reason : reasons) {
+        reason_bytes_width = std::max(reason_bytes_width, reason.size() + 1);
+    }
+    std::vector<uint8_t> reason_bytes(n_detections * reason_bytes_width, 0);
+    for (size_t i = 0; i < n_detections; ++i) {
+        const std::string& reason = reasons[i];
+        const size_t row_offset = i * reason_bytes_width;
+        const size_t copy_len = std::min(reason.size(), reason_bytes_width - 1);
+        if (copy_len > 0) {
+            std::memcpy(reason_bytes.data() + row_offset, reason.data(), copy_len);
+        }
+        reason_bytes[row_offset + copy_len] = 0;
+    }
+
+    std::vector<int32_t> frame_mapping = frame_indices;
+    std::vector<int32_t> n_detections_alias = frame_counts_sanitized;
+    std::vector<int32_t> retune_id(n_detections, -1);
 
     std::string source_variant_value = toLowerCopy(source_variant);
     if (source_variant_value != "filtered" &&
@@ -226,13 +298,25 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
                                    : "interpolated";
     }
 
-    const std::string manual_group_path = refined_run_path + manual_group_name + "/";
+    const std::string timestamp = currentUtcIsoTimestamp();
+    const std::string staging_suffix =
+        ".__crimson_staging_" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const std::string staging_group_name = manual_group_name + staging_suffix;
+    const std::string final_manual_group_path =
+        refined_run_path + manual_group_name + "/";
+    const std::string manual_group_path =
+        refined_run_path + staging_group_name + "/";
+    const std::filesystem::path staging_directory =
+        std::filesystem::path(root_path_) / "refined_detect_runs" / refined_run /
+        staging_group_name;
+    StagingDirectoryCleanup staging_cleanup{staging_directory, true};
     auto delete_result =
         ts::kvstore::DeleteRange(store, ts::KeyRange::Prefix(manual_group_path))
             .result();
     if (!delete_result.ok()) {
         error_message =
-            "Failed to clear existing manual subgroup: " +
+            "Failed to clear stale manual staging subgroup: " +
             delete_result.status().ToString();
         return false;
     }
@@ -372,14 +456,9 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
         return false;
     }
 
-    const std::string timestamp = currentUtcIsoTimestamp();
     json manual_meta = makeEmptyGroupMetadataV3();
     auto& manual_attrs = manual_meta["attributes"];
-    manual_attrs["reason_encoding"] = "utf8-null-terminated";
-    manual_attrs["reason_bytes_width"] = static_cast<int64_t>(reason_bytes_width);
-    manual_attrs["reason_bytes_null_terminated"] = true;
-    manual_attrs["reason_fallback_order"] =
-        json::array({"reason_bytes", "reason", "detection_source"});
+    setCanonicalReasonAttrs(manual_attrs, reason_bytes_width);
     manual_attrs["storage_layout"] = "columnar";
     const json manual_fields = json::array(
         {"frame_indices",
@@ -407,6 +486,108 @@ bool ZarrDetectionLoader::writeManualRefinedDetections(
     manual_attrs["manual_review_timestamp"] = timestamp;
     if (!writeNodeMetaV3(store, manual_group_path, manual_meta, &error_message)) {
         return false;
+    }
+
+    std::vector<std::string> staged_reasons;
+    ReasonBytesDecodeStats staged_reason_stats;
+    std::string staged_read_error;
+    if (!readReasonBytesArray(store,
+                              manual_group_path + "reason_bytes",
+                              context_,
+                              staged_reasons,
+                              &staged_reason_stats,
+                              &staged_read_error) ||
+        staged_reasons != reasons ||
+        staged_reason_stats.rows_with_malformed_utf8 != 0) {
+        error_message =
+            "Failed to validate staged canonical reason_bytes before publication";
+        if (!staged_read_error.empty()) {
+            error_message += ": " + staged_read_error;
+        }
+        return false;
+    }
+
+    // Publish by replacing the complete subgroup only after reason_bytes and all
+    // sibling columns have been written and validated. This preserves a legacy
+    // reason-only subgroup on every pre-publication failure and retires its
+    // historical `reason` mirror only as part of the successful replacement.
+    const std::filesystem::path final_directory =
+        std::filesystem::path(root_path_) / "refined_detect_runs" / refined_run /
+        manual_group_name;
+    const std::filesystem::path backup_directory =
+        final_directory.string() + ".__crimson_backup_" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    std::error_code fs_error;
+    const bool had_previous_group = std::filesystem::exists(final_directory);
+    if (had_previous_group) {
+        std::filesystem::rename(final_directory, backup_directory, fs_error);
+        if (fs_error) {
+            error_message = "Failed to preserve existing manual subgroup before publication: " +
+                            fs_error.message();
+            return false;
+        }
+    }
+    std::filesystem::rename(staging_directory, final_directory, fs_error);
+    if (fs_error) {
+        if (had_previous_group) {
+            std::error_code restore_error;
+            std::filesystem::rename(backup_directory, final_directory,
+                                    restore_error);
+            if (restore_error) {
+                error_message =
+                    "Failed to publish canonical manual subgroup and failed to "
+                    "restore its backup: " + fs_error.message() + "; restore: " +
+                    restore_error.message();
+                staging_cleanup.active = false;
+                return false;
+            }
+        }
+        error_message = "Failed to publish canonical manual subgroup: " +
+                        fs_error.message();
+        return false;
+    }
+    staging_cleanup.active = false;
+
+    std::vector<std::string> published_reasons;
+    ReasonBytesDecodeStats published_reason_stats;
+    std::string published_read_error;
+    const ts::Context verification_context = ts::Context::Default();
+    const bool published_reason_valid =
+        readReasonBytesArray(store,
+                             final_manual_group_path + "reason_bytes",
+                             verification_context,
+                             published_reasons,
+                             &published_reason_stats,
+                             &published_read_error) &&
+        published_reasons == reasons &&
+        !arrayExists(store, final_manual_group_path + "reason");
+    if (!published_reason_valid) {
+        std::error_code remove_error;
+        std::filesystem::remove_all(final_directory, remove_error);
+        if (had_previous_group) {
+            std::error_code restore_error;
+            std::filesystem::rename(backup_directory, final_directory,
+                                    restore_error);
+            if (restore_error) {
+                error_message =
+                    "Published reason_bytes validation failed and backup restore "
+                    "also failed: " + restore_error.message();
+                return false;
+            }
+        }
+        error_message = "Published reason_bytes validation failed";
+        if (!published_read_error.empty()) {
+            error_message += ": " + published_read_error;
+        }
+        return false;
+    }
+    if (had_previous_group) {
+        std::filesystem::remove_all(backup_directory, fs_error);
+        if (fs_error) {
+            std::cout << "[MANUAL_REASON_WARNING] canonical subgroup published, "
+                         "but backup cleanup failed: "
+                      << fs_error.message() << std::endl;
+        }
     }
 
     json run_meta = normalizeGroupMetadataV3(*refined_run_meta);

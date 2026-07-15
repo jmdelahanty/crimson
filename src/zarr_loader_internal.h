@@ -65,6 +65,24 @@ struct ZarrDiscoveryResult {
     std::string error_message;
 };
 
+enum class ReasonAuthority {
+    None,
+    ReasonBytes,
+    LegacyReason,
+    DetectionSource,
+};
+
+struct ReasonBytesDecodeStats {
+    size_t rows_without_null_terminator = 0;
+    size_t rows_with_malformed_utf8 = 0;
+};
+
+struct ReasonColumnResolution {
+    std::vector<std::string> labels;
+    ReasonAuthority authority = ReasonAuthority::None;
+    size_t conflicting_legacy_rows = 0;
+};
+
 #pragma pack(push, 1)
 struct StimulusEventRowV3 {
     int64_t timestamp_ns_epoch = 0;
@@ -139,6 +157,26 @@ nlohmann::json makeNumericArrayMetadata(const std::vector<ts::Index>& shape,
                                         bool bytes_endian_little);
 
 bool arrayExists(const ts::kvstore::KvStore& store, const std::string& path);
+
+std::string sanitizeUtf8ReplacingInvalid(std::string_view value,
+                                         bool* malformed = nullptr);
+
+bool readReasonBytesArray(const ts::kvstore::KvStore& store,
+                          const std::string& path,
+                          const ts::Context& context,
+                          std::vector<std::string>& out,
+                          ReasonBytesDecodeStats* stats = nullptr,
+                          std::string* error_message = nullptr);
+
+ReasonColumnResolution resolveReasonColumns(
+    size_t expected_rows,
+    const std::optional<std::vector<std::string>>& reason_bytes,
+    const std::optional<std::vector<std::string>>& legacy_reason,
+    const std::vector<uint8_t>* detection_source);
+
+const char* reasonAuthorityName(ReasonAuthority authority);
+
+void setCanonicalReasonAttrs(nlohmann::json& attrs, size_t reason_bytes_width);
 
 std::string stringFromFixedBuffer(const char* buffer, size_t size);
 

@@ -117,23 +117,22 @@ Read existing reason label for `roi_idx` (prefer `reason_bytes`, fallback `reaso
 3. Append `manual_correction`
 4. If `geometry_valid` is false, append `geometry_issue`
 5. Deduplicate and join with `|`
-6. Write: `reason[roi_idx] = result`
-7. Synchronize `reason_bytes` and `reason` together (same decoded labels)
+6. Write the updated label to `reason_bytes[roi_idx]` using null-terminated
+   UTF-8 with zero padding.
+7. Do not create or synchronize a variable-length `reason` array.
 
 Example: `"detection_failed|low_confidence"` → `"manual_correction"`
 Example: `"flip_corrected"` → `"flip_corrected|manual_correction"`
 
 Compatibility note:
-- Palette currently stores `reason` as Zarr v3 string dtype.
-- Palette now also stores `reason_bytes` (detect-compatible null-terminated `uint8`)
-  and sets `reason_fallback_order=["reason_bytes","reason","detection_source"]`.
-- If Crimson's native C++ writer cannot write this dtype in your TensorStore
-  build, do not silently skip the update.
-- Route reason updates through a compatible helper path (for example
-  Python-side writeback), or keep the run in `needs_review` state until both
-  reason representations are written successfully.
-  If only one representation can be updated in-place, prefer `reason_bytes`.
-  Keep `reason` best-effort for Python-side tooling compatibility.
+- `reason_bytes` is the sole persisted reason authority for current writes.
+- Required attrs are `reason_encoding="utf8-null-terminated"`,
+  `reason_authority="reason_bytes"`, the actual `reason_bytes_width`,
+  `reason_bytes_null_terminated=true`, and
+  `reason_fallback_order=["reason_bytes","detection_source"]`.
+- Historical `reason` remains a read-only fallback. When editing a legacy
+  reason-only run, materialize every effective row label into `reason_bytes`
+  first and retire `reason` only after that canonical write succeeds.
 
 ## "No Keypoints" Marking
 
