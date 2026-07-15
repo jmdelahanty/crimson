@@ -5,6 +5,7 @@
 #include "apple_video_metal_renderer.h"
 #include "apple_video_playback_buffer.h"
 #include "apple_video_viewer_ui.h"
+#include "analysis_series_timeline_buffer.h"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_metal.h"
@@ -26,6 +27,7 @@
 #include "zarr/subject_shape_overlay_scene_adapter.h"
 #include "zarr/tensorstore_analysis_crop_geometry_repository.h"
 #include "zarr/tensorstore_acquisition_crop_repository.h"
+#include "zarr/tensorstore_analysis_series_timeline_repository.h"
 #include "zarr/tensorstore_eye_angle_timeline_repository.h"
 #include "zarr/tensorstore_eye_geometry_overlay_repository.h"
 #include "zarr/tensorstore_keypoint_overlay_repository.h"
@@ -74,9 +76,14 @@ struct LaunchOptions {
   bool subject_masks_enabled = true;
   bool subject_shapes_enabled = true;
   bool eye_geometry_enabled = true;
+  bool motion_timeline_enabled = true;
   bool eye_angle_timeline_enabled = true;
+  bool tail_kinematics_timeline_enabled = true;
+  bool show_analysis_timeline = false;
   bool show_eye_angle_timeline = false;
+  bool require_motion_timeline = false;
   bool require_eye_angle_timeline = false;
+  bool require_tail_kinematics_timeline = false;
   int smoke_frames = 12;
   int video_smoke_start = 0;
   int video_smoke_end = 0;
@@ -198,12 +205,33 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
       options.eye_angle_timeline_enabled = false;
       continue;
     }
+    if (argument == "--no-motion-timeline") {
+      options.motion_timeline_enabled = false;
+      continue;
+    }
+    if (argument == "--no-tail-kinematics-timeline") {
+      options.tail_kinematics_timeline_enabled = false;
+      continue;
+    }
+    if (argument == "--show-analysis-timeline") {
+      options.show_analysis_timeline = true;
+      continue;
+    }
     if (argument == "--show-eye-angle-timeline") {
+      options.show_analysis_timeline = true;
       options.show_eye_angle_timeline = true;
+      continue;
+    }
+    if (argument == "--require-motion-timeline") {
+      options.require_motion_timeline = true;
       continue;
     }
     if (argument == "--require-eye-angle-timeline") {
       options.require_eye_angle_timeline = true;
+      continue;
+    }
+    if (argument == "--require-tail-kinematics-timeline") {
+      options.require_tail_kinematics_timeline = true;
       continue;
     }
     if (argument == "--video") {
@@ -365,11 +393,23 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
     std::fprintf(stderr, "--crop-smoke requires --zarr PATH\n");
     return std::nullopt;
   }
-  if ((options.show_eye_angle_timeline ||
+  if ((options.show_analysis_timeline || options.require_motion_timeline ||
        options.require_eye_angle_timeline) &&
       options.zarr_path.empty()) {
     std::fprintf(stderr,
-                 "Eye-angle timeline options require --zarr PATH\n");
+                 "Analysis timeline options require --zarr PATH\n");
+    return std::nullopt;
+  }
+  if (options.require_tail_kinematics_timeline &&
+      options.zarr_path.empty()) {
+    std::fprintf(stderr,
+                 "Tail-kinematics timeline options require --zarr PATH\n");
+    return std::nullopt;
+  }
+  if (options.require_motion_timeline && !options.motion_timeline_enabled) {
+    std::fprintf(stderr,
+                 "--require-motion-timeline conflicts with "
+                 "--no-motion-timeline\n");
     return std::nullopt;
   }
   if (options.require_eye_angle_timeline &&
@@ -377,6 +417,13 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
     std::fprintf(stderr,
                  "--require-eye-angle-timeline conflicts with "
                  "--no-eye-angle-timeline\n");
+    return std::nullopt;
+  }
+  if (options.require_tail_kinematics_timeline &&
+      !options.tail_kinematics_timeline_enabled) {
+    std::fprintf(stderr,
+                 "--require-tail-kinematics-timeline conflicts with "
+                 "--no-tail-kinematics-timeline\n");
     return std::nullopt;
   }
   return options;
@@ -669,8 +716,12 @@ int main(int argc, char **argv) {
   crimson::overlay::ReadOnlyOverlayControlState overlay_controls;
   crimson::overlay::ReadOnlyOverlayAvailability overlay_availability;
   bool overlay_controls_open = false;
-  AppleEyeAngleTimelineControls eye_angle_timeline_controls;
-  eye_angle_timeline_controls.open = options->show_eye_angle_timeline;
+  AppleAnalysisTimelineControls analysis_timeline_controls;
+  analysis_timeline_controls.open = options->show_analysis_timeline;
+  analysis_timeline_controls.initial_tab =
+      options->show_eye_angle_timeline
+          ? AppleAnalysisTimelineTab::EyeAngles
+          : AppleAnalysisTimelineTab::Motion;
   std::optional<AppleDecodedVideoFrame> current_video_frame;
   std::optional<AppleDecodedVideoFrame> pending_video_frame;
   const bool video_enabled = !options->video_path.empty();
@@ -710,12 +761,26 @@ int main(int argc, char **argv) {
   bool eye_geometry_overlay_available = false;
   bool eye_geometry_overlay_failed = false;
   std::string eye_geometry_error;
+  AnalysisSeriesTimelineBuffer motion_timeline_buffer;
+  crimson::timeline::AnalysisSeriesTimelineDescriptor
+      motion_timeline_descriptor;
+  bool motion_timeline_available = false;
+  bool motion_timeline_failed = false;
+  std::string motion_timeline_error;
+  uint64_t motion_timeline_presentations = 0;
   EyeAngleTimelineBuffer eye_angle_timeline_buffer;
   crimson::timeline::EyeAngleTimelineDescriptor eye_angle_timeline_descriptor;
   bool eye_angle_timeline_available = false;
   bool eye_angle_timeline_failed = false;
   std::string eye_angle_timeline_error;
   uint64_t eye_angle_timeline_presentations = 0;
+  AnalysisSeriesTimelineBuffer tail_kinematics_timeline_buffer;
+  crimson::timeline::AnalysisSeriesTimelineDescriptor
+      tail_kinematics_timeline_descriptor;
+  bool tail_kinematics_timeline_available = false;
+  bool tail_kinematics_timeline_failed = false;
+  std::string tail_kinematics_timeline_error;
+  uint64_t tail_kinematics_timeline_presentations = 0;
   std::optional<AppleVideoAssetInfo> analysis_crop_view_info;
   std::optional<AppleVideoAssetInfo> crop_view_info;
   crimson::crop::CropPresentationCoordinator crop_presentation;
@@ -1033,13 +1098,71 @@ int main(int argc, char **argv) {
           }
         }
 
+        if (options->motion_timeline_enabled) {
+          auto motion_repository =
+              crimson::zarr::OpenMotionSeriesTimelineRepository(
+                  archive,
+                  static_cast<size_t>(video_playback.info().frame_count),
+                  &motion_timeline_error);
+          if (motion_repository) {
+            motion_timeline_descriptor = motion_repository->descriptor();
+            analysis_timeline_controls.motion.source_key =
+                crimson::timeline::defaultAnalysisSeriesSource(
+                    motion_timeline_descriptor);
+            const double fps = video_playback.info().nominal_frame_rate;
+            bool timeline_initialization_ready = motion_timeline_buffer.open(
+                std::move(motion_repository), 4096, 2048, 1200, 3,
+                &motion_timeline_error);
+            const bool initial_page_required =
+                options->show_analysis_timeline || options->video_smoke ||
+                options->require_motion_timeline;
+            if (timeline_initialization_ready && initial_page_required) {
+              timeline_initialization_ready =
+                  motion_timeline_buffer.requestFrame(
+                      initial_frame,
+                      analysis_timeline_controls.motion.source_key, fps, true,
+                      &motion_timeline_error) &&
+                  (!options->video_smoke ||
+                   motion_timeline_buffer.waitForFrame(
+                       initial_frame,
+                       analysis_timeline_controls.motion.source_key, fps,
+                       std::chrono::seconds(20)));
+            }
+            if (timeline_initialization_ready) {
+              motion_timeline_available = true;
+              std::printf(
+                  "[AppleMotionTimeline] sources=%zu camera_frames=%zu "
+                  "default=%s page=4096 step=2048 points=1200 cache=3\n",
+                  motion_timeline_descriptor.sources.size(),
+                  motion_timeline_descriptor.frame_count,
+                  motion_timeline_descriptor.default_source.c_str());
+            } else {
+              motion_timeline_failed = true;
+              motion_timeline_buffer.close();
+              if (motion_timeline_error.empty()) {
+                motion_timeline_error =
+                    "Timed out settling the initial motion timeline page";
+              }
+              std::fprintf(stderr,
+                           "[AppleMotionTimeline] Initialization failed: %s\n",
+                           motion_timeline_error.c_str());
+            }
+          } else {
+            if (options->require_motion_timeline) {
+              motion_timeline_failed = true;
+            }
+            std::fprintf(stderr, "[AppleMotionTimeline] Unavailable: %s\n",
+                         motion_timeline_error.c_str());
+          }
+        }
+
         if (options->eye_angle_timeline_enabled) {
           auto eye_angle_repository =
               crimson::zarr::OpenEyeAngleTimelineRepository(
                   archive, {}, &eye_angle_timeline_error);
           if (eye_angle_repository) {
             eye_angle_timeline_descriptor = eye_angle_repository->descriptor();
-            eye_angle_timeline_controls.representation_key =
+            analysis_timeline_controls.eye_angles.representation_key =
                 crimson::timeline::defaultEyeAngleTimelineRepresentation(
                     eye_angle_timeline_descriptor);
             const double fps = video_playback.info().nominal_frame_rate;
@@ -1048,18 +1171,20 @@ int main(int argc, char **argv) {
                     std::move(eye_angle_repository), 4096, 2048, 1200, 3,
                     &eye_angle_timeline_error);
             const bool initial_page_required =
-                options->show_eye_angle_timeline || options->video_smoke ||
+                options->show_analysis_timeline || options->video_smoke ||
                 options->require_eye_angle_timeline;
             if (timeline_initialization_ready && initial_page_required) {
               timeline_initialization_ready =
                   eye_angle_timeline_buffer.requestFrame(
                       initial_frame,
-                      eye_angle_timeline_controls.representation_key, fps, true,
+                      analysis_timeline_controls.eye_angles.representation_key,
+                      fps, true,
                       &eye_angle_timeline_error) &&
                   (!options->video_smoke ||
                    eye_angle_timeline_buffer.waitForFrame(
                        initial_frame,
-                       eye_angle_timeline_controls.representation_key, fps,
+                       analysis_timeline_controls.eye_angles.representation_key,
+                       fps,
                        std::chrono::seconds(20)));
             }
             if (timeline_initialization_ready) {
@@ -1096,6 +1221,70 @@ int main(int argc, char **argv) {
             }
             std::fprintf(stderr, "[AppleEyeAngleTimeline] Unavailable: %s\n",
                          eye_angle_timeline_error.c_str());
+          }
+        }
+
+        if (options->tail_kinematics_timeline_enabled) {
+          auto tail_repository =
+              crimson::zarr::OpenTailKinematicsTimelineRepository(
+                  archive,
+                  static_cast<size_t>(video_playback.info().frame_count), {},
+                  &tail_kinematics_timeline_error);
+          if (tail_repository) {
+            tail_kinematics_timeline_descriptor =
+                tail_repository->descriptor();
+            analysis_timeline_controls.tail_kinematics.source_key =
+                crimson::timeline::defaultAnalysisSeriesSource(
+                    tail_kinematics_timeline_descriptor);
+            const double fps = video_playback.info().nominal_frame_rate;
+            bool timeline_initialization_ready =
+                tail_kinematics_timeline_buffer.open(
+                    std::move(tail_repository), 4096, 2048, 1200, 3,
+                    &tail_kinematics_timeline_error);
+            const bool initial_page_required =
+                options->show_analysis_timeline || options->video_smoke ||
+                options->require_tail_kinematics_timeline;
+            if (timeline_initialization_ready && initial_page_required) {
+              timeline_initialization_ready =
+                  tail_kinematics_timeline_buffer.requestFrame(
+                      initial_frame,
+                      analysis_timeline_controls.tail_kinematics.source_key,
+                      fps, true, &tail_kinematics_timeline_error) &&
+                  (!options->video_smoke ||
+                   tail_kinematics_timeline_buffer.waitForFrame(
+                       initial_frame,
+                       analysis_timeline_controls.tail_kinematics.source_key,
+                       fps, std::chrono::seconds(20)));
+            }
+            if (timeline_initialization_ready) {
+              tail_kinematics_timeline_available = true;
+              std::printf(
+                  "[AppleTailKinematicsTimeline] sources=%zu "
+                  "camera_frames=%zu default=%s page=4096 step=2048 "
+                  "points=1200 cache=3\n",
+                  tail_kinematics_timeline_descriptor.sources.size(),
+                  tail_kinematics_timeline_descriptor.frame_count,
+                  tail_kinematics_timeline_descriptor.default_source.c_str());
+            } else {
+              tail_kinematics_timeline_failed = true;
+              tail_kinematics_timeline_buffer.close();
+              if (tail_kinematics_timeline_error.empty()) {
+                tail_kinematics_timeline_error =
+                    "Timed out settling the initial tail-kinematics timeline "
+                    "page";
+              }
+              std::fprintf(
+                  stderr,
+                  "[AppleTailKinematicsTimeline] Initialization failed: %s\n",
+                  tail_kinematics_timeline_error.c_str());
+            }
+          } else {
+            if (options->require_tail_kinematics_timeline) {
+              tail_kinematics_timeline_failed = true;
+            }
+            std::fprintf(stderr,
+                         "[AppleTailKinematicsTimeline] Unavailable: %s\n",
+                         tail_kinematics_timeline_error.c_str());
           }
         }
 
@@ -1499,10 +1688,37 @@ int main(int argc, char **argv) {
         overlay_availability.subject_masks = subject_mask_overlay_available;
         overlay_availability.subject_shape = subject_shape_overlay_available;
         overlay_availability.eye_geometry = eye_geometry_overlay_available;
+        std::shared_ptr<const crimson::timeline::AnalysisSeriesTimelineWindow>
+            motion_timeline_window;
+        if (motion_timeline_available &&
+            (analysis_timeline_controls.open || options->video_smoke ||
+             options->require_motion_timeline) &&
+            viewer_stats.requested_frame >= 0 &&
+            viewer_stats.requested_frame <
+                static_cast<int64_t>(motion_timeline_descriptor.frame_count)) {
+          if (!motion_timeline_buffer.requestFrame(
+                  viewer_stats.requested_frame,
+                  analysis_timeline_controls.motion.source_key,
+                  video_playback.info().nominal_frame_rate,
+                  pending_camera_discontinuity, &motion_timeline_error)) {
+            motion_timeline_failed = true;
+            motion_timeline_available = false;
+            std::fprintf(stderr,
+                         "[AppleMotionTimeline] Request failed: %s\n",
+                         motion_timeline_error.c_str());
+          } else {
+            motion_timeline_window = motion_timeline_buffer.window(
+                viewer_stats.requested_frame,
+                analysis_timeline_controls.motion.source_key);
+            if (motion_timeline_window && motion_timeline_window->ready()) {
+              ++motion_timeline_presentations;
+            }
+          }
+        }
         std::shared_ptr<const crimson::timeline::EyeAngleTimelineWindow>
             eye_angle_window;
         if (eye_angle_timeline_available &&
-            (eye_angle_timeline_controls.open || options->video_smoke ||
+            (analysis_timeline_controls.open || options->video_smoke ||
              options->require_eye_angle_timeline) &&
             viewer_stats.requested_frame >= 0 &&
             viewer_stats.requested_frame < static_cast<int64_t>(
@@ -1510,7 +1726,7 @@ int main(int argc, char **argv) {
                                                    .frame_count)) {
           if (!eye_angle_timeline_buffer.requestFrame(
                   viewer_stats.requested_frame,
-                  eye_angle_timeline_controls.representation_key,
+                  analysis_timeline_controls.eye_angles.representation_key,
                   video_playback.info().nominal_frame_rate,
                   pending_camera_discontinuity, &eye_angle_timeline_error)) {
             eye_angle_timeline_failed = true;
@@ -1521,42 +1737,87 @@ int main(int argc, char **argv) {
           } else {
             eye_angle_window = eye_angle_timeline_buffer.window(
                 viewer_stats.requested_frame,
-                eye_angle_timeline_controls.representation_key);
+                analysis_timeline_controls.eye_angles.representation_key);
             if (eye_angle_window && eye_angle_window->ready()) {
               ++eye_angle_timeline_presentations;
             }
           }
         }
+        std::shared_ptr<const crimson::timeline::AnalysisSeriesTimelineWindow>
+            tail_kinematics_timeline_window;
+        if (tail_kinematics_timeline_available &&
+            (analysis_timeline_controls.open || options->video_smoke ||
+             options->require_tail_kinematics_timeline) &&
+            viewer_stats.requested_frame >= 0 &&
+            viewer_stats.requested_frame < static_cast<int64_t>(
+                                               tail_kinematics_timeline_descriptor
+                                                   .frame_count)) {
+          if (!tail_kinematics_timeline_buffer.requestFrame(
+                  viewer_stats.requested_frame,
+                  analysis_timeline_controls.tail_kinematics.source_key,
+                  video_playback.info().nominal_frame_rate,
+                  pending_camera_discontinuity,
+                  &tail_kinematics_timeline_error)) {
+            tail_kinematics_timeline_failed = true;
+            tail_kinematics_timeline_available = false;
+            std::fprintf(
+                stderr,
+                "[AppleTailKinematicsTimeline] Request failed: %s\n",
+                tail_kinematics_timeline_error.c_str());
+          } else {
+            tail_kinematics_timeline_window =
+                tail_kinematics_timeline_buffer.window(
+                    viewer_stats.requested_frame,
+                    analysis_timeline_controls.tail_kinematics.source_key);
+            if (tail_kinematics_timeline_window &&
+                tail_kinematics_timeline_window->ready()) {
+              ++tail_kinematics_timeline_presentations;
+            }
+          }
+        }
+        const bool analysis_timeline_available =
+            motion_timeline_available || eye_angle_timeline_available ||
+            tail_kinematics_timeline_available;
         const auto control_result = drawAppleVideoControls(
             video_clock, video_playback, viewer_stats,
             stimulus_enabled ? &stimulus_presentation.metrics() : nullptr,
             crop_enabled ? &crop_controls : nullptr,
-            eye_angle_timeline_available,
+            analysis_timeline_available,
             !options->video_smoke);
         if (control_result.toggle_overlay_controls) {
           overlay_controls_open = !overlay_controls_open;
         }
-        if (control_result.toggle_eye_angle_timeline) {
-          eye_angle_timeline_controls.open =
-              !eye_angle_timeline_controls.open;
+        if (control_result.toggle_analysis_timeline) {
+          analysis_timeline_controls.open =
+              !analysis_timeline_controls.open;
         }
         drawAppleReadOnlyOverlayControls(
             &overlay_controls_open, &overlay_controls, overlay_availability,
             !options->video_smoke);
-        const bool eye_angle_timeline_discontinuity =
-            eye_angle_timeline_available &&
-            drawAppleEyeAngleTimeline(
-                &eye_angle_timeline_controls, eye_angle_timeline_descriptor,
-                eye_angle_window, viewer_stats.requested_frame, video_clock,
-                video_playback, !options->video_smoke);
+        const bool analysis_timeline_discontinuity =
+            analysis_timeline_available &&
+            drawAppleAnalysisTimeline(
+                &analysis_timeline_controls,
+                motion_timeline_available ? &motion_timeline_descriptor
+                                          : nullptr,
+                motion_timeline_window,
+                eye_angle_timeline_available ? &eye_angle_timeline_descriptor
+                                             : nullptr,
+                eye_angle_window,
+                tail_kinematics_timeline_available
+                    ? &tail_kinematics_timeline_descriptor
+                    : nullptr,
+                tail_kinematics_timeline_window,
+                viewer_stats.requested_frame, video_clock, video_playback,
+                !options->video_smoke);
         pending_camera_discontinuity =
             pending_camera_discontinuity ||
             control_result.camera_discontinuity ||
-            eye_angle_timeline_discontinuity;
+            analysis_timeline_discontinuity;
         viewer_presentation_discontinuity =
             viewer_presentation_discontinuity ||
             control_result.camera_discontinuity ||
-            eye_angle_timeline_discontinuity;
+            analysis_timeline_discontinuity;
         viewer_stats.requested_frame = video_clock.requestedFrame();
         const bool is_playing = video_clock.isPlaying();
         if (was_playing && !is_playing) {
@@ -2424,9 +2685,16 @@ int main(int argc, char **argv) {
   eye_geometry_overlay_buffer.close();
   const EyeGeometryOverlayBufferMetrics final_eye_geometry_metrics =
       eye_geometry_overlay_buffer.metrics();
+  motion_timeline_buffer.close();
+  const AnalysisSeriesTimelineBufferMetrics final_motion_timeline_metrics =
+      motion_timeline_buffer.metrics();
   eye_angle_timeline_buffer.close();
   const EyeAngleTimelineBufferMetrics final_eye_angle_timeline_metrics =
       eye_angle_timeline_buffer.metrics();
+  tail_kinematics_timeline_buffer.close();
+  const AnalysisSeriesTimelineBufferMetrics
+      final_tail_kinematics_timeline_metrics =
+          tail_kinematics_timeline_buffer.metrics();
   if (crop_enabled) {
     crop_playback.close();
   }
@@ -2518,6 +2786,33 @@ int main(int argc, char **argv) {
         final_eye_geometry_metrics.maximum_resolve_ms,
         final_eye_geometry_metrics.last_error.c_str());
   }
+  if (!motion_timeline_descriptor.sources.empty()) {
+    std::printf(
+        "[AppleMotionTimeline] presentations=%llu requests=%llu "
+        "cache_hits=%llu resolved=%llu missing=%llu failed=%llu "
+        "discarded=%llu rows_read=%llu points=%llu peak_cached=%zu "
+        "peak_pending=%zu max_resolve_ms=%.1f error=%s\n",
+        static_cast<unsigned long long>(motion_timeline_presentations),
+        static_cast<unsigned long long>(final_motion_timeline_metrics.requests),
+        static_cast<unsigned long long>(
+            final_motion_timeline_metrics.cache_hits),
+        static_cast<unsigned long long>(
+            final_motion_timeline_metrics.resolved_windows),
+        static_cast<unsigned long long>(
+            final_motion_timeline_metrics.missing_windows),
+        static_cast<unsigned long long>(
+            final_motion_timeline_metrics.failed_windows),
+        static_cast<unsigned long long>(
+            final_motion_timeline_metrics.discarded_results),
+        static_cast<unsigned long long>(
+            final_motion_timeline_metrics.source_rows_read),
+        static_cast<unsigned long long>(
+            final_motion_timeline_metrics.published_points),
+        final_motion_timeline_metrics.peak_cached_windows,
+        final_motion_timeline_metrics.peak_pending_windows,
+        final_motion_timeline_metrics.maximum_resolve_ms,
+        final_motion_timeline_metrics.last_error.c_str());
+  }
   if (!eye_angle_timeline_descriptor.run_name.empty()) {
     std::printf(
         "[AppleEyeAngleTimeline] presentations=%llu requests=%llu "
@@ -2546,6 +2841,35 @@ int main(int argc, char **argv) {
         final_eye_angle_timeline_metrics.maximum_resolve_ms,
         final_eye_angle_timeline_metrics.last_error.c_str());
   }
+  if (!tail_kinematics_timeline_descriptor.sources.empty()) {
+    std::printf(
+        "[AppleTailKinematicsTimeline] presentations=%llu requests=%llu "
+        "cache_hits=%llu resolved=%llu missing=%llu failed=%llu "
+        "discarded=%llu rows_read=%llu points=%llu peak_cached=%zu "
+        "peak_pending=%zu max_resolve_ms=%.1f error=%s\n",
+        static_cast<unsigned long long>(
+            tail_kinematics_timeline_presentations),
+        static_cast<unsigned long long>(
+            final_tail_kinematics_timeline_metrics.requests),
+        static_cast<unsigned long long>(
+            final_tail_kinematics_timeline_metrics.cache_hits),
+        static_cast<unsigned long long>(
+            final_tail_kinematics_timeline_metrics.resolved_windows),
+        static_cast<unsigned long long>(
+            final_tail_kinematics_timeline_metrics.missing_windows),
+        static_cast<unsigned long long>(
+            final_tail_kinematics_timeline_metrics.failed_windows),
+        static_cast<unsigned long long>(
+            final_tail_kinematics_timeline_metrics.discarded_results),
+        static_cast<unsigned long long>(
+            final_tail_kinematics_timeline_metrics.source_rows_read),
+        static_cast<unsigned long long>(
+            final_tail_kinematics_timeline_metrics.published_points),
+        final_tail_kinematics_timeline_metrics.peak_cached_windows,
+        final_tail_kinematics_timeline_metrics.peak_pending_windows,
+        final_tail_kinematics_timeline_metrics.maximum_resolve_ms,
+        final_tail_kinematics_timeline_metrics.last_error.c_str());
+  }
 
   if (options->video_smoke) {
     const double elapsed_seconds =
@@ -2572,6 +2896,14 @@ int main(int argc, char **argv) {
          final_eye_geometry_metrics.failed_frames != 0 ||
          (final_eye_geometry_metrics.resolved_frames != 0 &&
           eye_geometry_overlay_presentations == 0));
+    const bool motion_timeline_validation_failed =
+        (options->require_motion_timeline &&
+         motion_timeline_descriptor.sources.empty()) ||
+        (!motion_timeline_descriptor.sources.empty() &&
+         (motion_timeline_failed ||
+          final_motion_timeline_metrics.failed_windows != 0 ||
+          final_motion_timeline_metrics.resolved_windows == 0 ||
+          motion_timeline_presentations == 0));
     const bool eye_angle_timeline_validation_failed =
         (options->require_eye_angle_timeline &&
          eye_angle_timeline_descriptor.run_name.empty()) ||
@@ -2580,11 +2912,27 @@ int main(int argc, char **argv) {
           final_eye_angle_timeline_metrics.failed_windows != 0 ||
           final_eye_angle_timeline_metrics.resolved_windows == 0 ||
           eye_angle_timeline_presentations == 0));
+    const bool tail_kinematics_timeline_validation_failed =
+        (options->require_tail_kinematics_timeline &&
+         tail_kinematics_timeline_descriptor.sources.empty()) ||
+        (!tail_kinematics_timeline_descriptor.sources.empty() &&
+         (tail_kinematics_timeline_failed ||
+          final_tail_kinematics_timeline_metrics.failed_windows != 0 ||
+          final_tail_kinematics_timeline_metrics.resolved_windows == 0 ||
+          tail_kinematics_timeline_presentations == 0));
     const std::string &smoke_error =
-        eye_angle_timeline_validation_failed
+        tail_kinematics_timeline_validation_failed
+            ? (!tail_kinematics_timeline_error.empty()
+                   ? tail_kinematics_timeline_error
+                   : final_tail_kinematics_timeline_metrics.last_error)
+        : eye_angle_timeline_validation_failed
             ? (!eye_angle_timeline_error.empty()
                    ? eye_angle_timeline_error
                    : final_eye_angle_timeline_metrics.last_error)
+        : motion_timeline_validation_failed
+            ? (!motion_timeline_error.empty()
+                   ? motion_timeline_error
+                   : final_motion_timeline_metrics.last_error)
         : eye_geometry_validation_failed
             ? (!eye_geometry_error.empty()
                    ? eye_geometry_error
@@ -2600,7 +2948,9 @@ int main(int argc, char **argv) {
             : final_video_metrics.last_error;
     if (render_failed || subject_mask_validation_failed ||
         subject_shape_validation_failed || eye_geometry_validation_failed ||
+        motion_timeline_validation_failed ||
         eye_angle_timeline_validation_failed ||
+        tail_kinematics_timeline_validation_failed ||
         viewer_stats.presented_frame < options->video_smoke_end ||
         std::fabs(viewer_stats.pts_error_frames) > 0.51 ||
         viewer_stats.max_lag_frames > maximum_accepted_lag_frames) {

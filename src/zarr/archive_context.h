@@ -1,10 +1,12 @@
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <string>
 
 namespace crimson::timeline {
+class AnalysisSeriesTimelineRepository;
 class EyeAngleTimelineRepository;
 }
 
@@ -69,6 +71,17 @@ class ArchiveContext {
   friend std::unique_ptr<crimson::timeline::EyeAngleTimelineRepository>
   OpenEyeAngleTimelineRepository(
       const std::shared_ptr<ArchiveContext>& archive,
+      const std::string& requested_run,
+      std::string* error_message);
+  friend std::unique_ptr<crimson::timeline::AnalysisSeriesTimelineRepository>
+  OpenMotionSeriesTimelineRepository(
+      const std::shared_ptr<ArchiveContext>& archive,
+      std::size_t frame_count_hint,
+      std::string* error_message);
+  friend std::unique_ptr<crimson::timeline::AnalysisSeriesTimelineRepository>
+  OpenTailKinematicsTimelineRepository(
+      const std::shared_ptr<ArchiveContext>& archive,
+      std::size_t frame_count_hint,
       const std::string& requested_run,
       std::string* error_message);
 };

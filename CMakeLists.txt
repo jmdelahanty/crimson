@@ -64,6 +64,8 @@ target_link_libraries(crimson_frame_contracts PUBLIC Threads::Threads)
 target_compile_features(crimson_frame_contracts PUBLIC cxx_std_17)
 
 add_library(crimson_repository_contracts STATIC
+    src/analysis_series_timeline.cpp
+    src/analysis_series_timeline_buffer.cpp
     src/eye_angle_timeline.cpp
     src/eye_angle_timeline_buffer.cpp
     src/eye_geometry_overlay_buffer.cpp
@@ -129,6 +131,7 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
 
     add_library(crimson_tensorstore_repositories OBJECT
         src/zarr/tensorstore_archive_context.cpp
+        src/zarr/tensorstore_analysis_series_timeline_repository.cpp
         src/zarr/tensorstore_eye_angle_timeline_repository.cpp
         src/zarr/tensorstore_eye_geometry_overlay_repository.cpp
         src/zarr/tensorstore_analysis_crop_geometry_repository.cpp
@@ -306,6 +309,39 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         LABELS "headless;portable;repository;tensorstore;timeline;zarr"
         TIMEOUT 60
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_executable(analysis_series_timeline_repository_tests
+        tools/analysis_series_timeline_repository_tests.cpp
+    )
+    target_compile_features(analysis_series_timeline_repository_tests
+        PRIVATE cxx_std_17)
+    target_link_libraries(analysis_series_timeline_repository_tests PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(analysis_series_timeline_repository_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME analysis_series_timeline_repository_tests
+        COMMAND $<TARGET_FILE:analysis_series_timeline_repository_tests>)
+    set_tests_properties(analysis_series_timeline_repository_tests PROPERTIES
+        LABELS "headless;portable;repository;tensorstore;timeline;zarr"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_executable(analysis_series_timeline_repository_probe
+        tools/analysis_series_timeline_repository_probe.cpp
+    )
+    target_compile_features(analysis_series_timeline_repository_probe
+        PRIVATE cxx_std_17)
+    target_link_libraries(analysis_series_timeline_repository_probe PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(analysis_series_timeline_repository_probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
 
     add_executable(eye_geometry_overlay_repository_tests
@@ -492,6 +528,22 @@ set_target_properties(eye_angle_timeline_tests PROPERTIES
 add_test(NAME eye_angle_timeline_tests
     COMMAND $<TARGET_FILE:eye_angle_timeline_tests>)
 set_tests_properties(eye_angle_timeline_tests PROPERTIES
+    LABELS "headless;portable;repository;timeline"
+)
+
+add_executable(analysis_series_timeline_tests
+    tools/analysis_series_timeline_tests.cpp
+)
+target_link_libraries(analysis_series_timeline_tests PRIVATE
+    crimson_repository_contracts
+)
+target_compile_features(analysis_series_timeline_tests PRIVATE cxx_std_17)
+set_target_properties(analysis_series_timeline_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME analysis_series_timeline_tests
+    COMMAND $<TARGET_FILE:analysis_series_timeline_tests>)
+set_tests_properties(analysis_series_timeline_tests PROPERTIES
     LABELS "headless;portable;repository;timeline"
 )
 
@@ -1263,6 +1315,7 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/stimulus_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/acquisition_crop_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_archive_context.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_analysis_series_timeline_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_eye_angle_timeline_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_eye_geometry_overlay_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_analysis_crop_geometry_repository.cpp"

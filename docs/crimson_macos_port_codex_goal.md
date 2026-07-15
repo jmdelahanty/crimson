@@ -327,24 +327,25 @@ Gate:
 
 #### Current Phase 5 Checkpoint (2026-07-14)
 
-Phase 5 remains active and is not the full UI/overlay parity gate. Phase 5H is
-accepted for the native eye-angle analysis timeline. macOS now has a bounded,
-TensorStore-backed eye-angle repository, an asynchronous page cache, maintained
-representation and smoothed-field fallback semantics, left/right/vergence
-controls, a current-frame cursor, and plot-click exact seeking. The portable
-time/frame mapping and repository contracts compile on both platform stacks;
-the maintained Linux/Windows application retains its existing eager timeline
-loader. The complete contract, UI, deterministic-test, Mac production, and
-NVIDIA validation record is in
-`docs/crimson_macos_phase5h_eye_angle_timeline.md`. Phase 5G's shared read-only
-overlay-control record remains in
-`docs/crimson_macos_phase5g_overlay_controls.md`.
+Phase 5 remains active and is not the full UI/overlay parity gate. Phase 5I is
+accepted for the shared sparse-series contract and the native motion/tail
+analysis tabs. macOS now exposes Motion, Eye angles, and Tail in one bounded
+analysis window with maintained source/trace defaults, asynchronous TensorStore
+pages, current-frame cursors, and plot-click exact seeking. Motion passed the
+mounted production and NVIDIA gates. Tail passed real TensorStore-written Zarr
+fixtures; production-tail acceptance remains open because neither representative
+archive currently contains `analysis/tail_kinematics_runs`. The maintained
+Linux/Windows application retains its existing eager timeline loader. The
+complete Phase 5I record is in
+`docs/crimson_macos_phase5i_motion_tail_timelines.md`; the eye-angle-specific
+contract remains documented in
+`docs/crimson_macos_phase5h_eye_angle_timeline.md`.
 
 The native Mac shell is still intentionally much smaller than the maintained
-Linux/Windows `redgui` workspace. Remaining Phase 5 work includes motion,
-tail-kinematics, and stimulus timelines; edit/review interactions; and other
-panels, docking, and multiwindow workflows identified by the parity inventory.
-Phase 5 must not be marked complete until those workflows and the
+Linux/Windows `redgui` workspace. Remaining Phase 5 work includes stimulus
+events/context, production-tail data acceptance, edit/review interactions, and
+other panels, docking, and multiwindow workflows identified by the parity
+inventory. Phase 5 must not be marked complete until those workflows and the
 screenshot/image-difference gate are satisfied.
 
 ### Phase 6 — Inference Parity

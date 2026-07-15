@@ -1,5 +1,6 @@
 #pragma once
 
+#include "analysis_series_timeline.h"
 #include "apple_video_metal_renderer.h"
 #include "apple_video_playback_buffer.h"
 #include "crop_presentation_coordinator.h"
@@ -12,6 +13,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
 
 enum class AppleViewerThermalState {
   Nominal,
@@ -41,16 +43,36 @@ struct AppleVideoViewerStats {
 struct AppleVideoControlResult {
   bool camera_discontinuity = false;
   bool toggle_overlay_controls = false;
-  bool toggle_eye_angle_timeline = false;
+  bool toggle_analysis_timeline = false;
 };
 
 struct AppleEyeAngleTimelineControls {
-  bool open = false;
   std::string representation_key;
   bool show_left = true;
   bool show_right = true;
   bool show_vergence = true;
+};
+
+struct AppleSeriesTimelineControls {
+  std::string source_key;
+  std::string initialized_source_key;
+  std::unordered_map<std::string, bool> trace_visibility;
+};
+
+enum class AppleAnalysisTimelineTab {
+  Automatic,
+  Motion,
+  EyeAngles,
+  TailKinematics,
+};
+
+struct AppleAnalysisTimelineControls {
+  bool open = false;
   float half_span_seconds = 5.0f;
+  AppleAnalysisTimelineTab initial_tab = AppleAnalysisTimelineTab::Automatic;
+  AppleSeriesTimelineControls motion;
+  AppleEyeAngleTimelineControls eye_angles;
+  AppleSeriesTimelineControls tail_kinematics;
 };
 
 struct AppleCropViewerControls {
@@ -76,14 +98,21 @@ AppleVideoControlResult drawAppleVideoControls(
     LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
     const AppleVideoViewerStats &stats,
     const crimson::playback::StimulusPresentationMetrics *stimulus_metrics,
-    AppleCropViewerControls *crop_controls, bool eye_angle_timeline_available,
+    AppleCropViewerControls *crop_controls, bool analysis_timeline_available,
     bool interactive);
 
-bool drawAppleEyeAngleTimeline(
-    AppleEyeAngleTimelineControls *controls,
-    const crimson::timeline::EyeAngleTimelineDescriptor &descriptor,
+bool drawAppleAnalysisTimeline(
+    AppleAnalysisTimelineControls *controls,
+    const crimson::timeline::AnalysisSeriesTimelineDescriptor
+        *motion_descriptor,
+    const std::shared_ptr<const crimson::timeline::AnalysisSeriesTimelineWindow>
+        &motion_window,
+    const crimson::timeline::EyeAngleTimelineDescriptor *eye_descriptor,
     const std::shared_ptr<const crimson::timeline::EyeAngleTimelineWindow>
-        &window,
+        &eye_window,
+    const crimson::timeline::AnalysisSeriesTimelineDescriptor *tail_descriptor,
+    const std::shared_ptr<const crimson::timeline::AnalysisSeriesTimelineWindow>
+        &tail_window,
     int64_t current_frame, LogicalPlaybackClock &clock,
     AppleVideoPlaybackBuffer &playback, bool interactive);
 

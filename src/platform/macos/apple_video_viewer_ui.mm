@@ -152,8 +152,33 @@ ImVec4 traceColor(crimson::timeline::EyeAngleTraceRole role) {
   return ImVec4(0.80f, 0.80f, 0.80f, 1.0f);
 }
 
-const char *timelineStatusName(
-    crimson::timeline::EyeAngleTimelineStatus status) {
+ImVec4 traceColor(crimson::timeline::AnalysisSeriesTraceRole role) {
+  using Role = crimson::timeline::AnalysisSeriesTraceRole;
+  switch (role) {
+  case Role::PrimarySpeed:
+  case Role::TailTipAngle:
+    return ImVec4(0.20f, 0.78f, 0.43f, 1.0f);
+  case Role::SecondarySpeed:
+  case Role::MaxAbsTailAngle:
+    return ImVec4(0.96f, 0.68f, 0.16f, 1.0f);
+  case Role::HeadingRaw:
+  case Role::TailTipLateralDeflection:
+    return ImVec4(0.30f, 0.68f, 0.90f, 1.0f);
+  case Role::HeadingSmoothed:
+  case Role::MaxAbsTailCurvature:
+    return ImVec4(0.66f, 0.38f, 0.88f, 1.0f);
+  case Role::PositionX:
+    return ImVec4(0.93f, 0.36f, 0.34f, 1.0f);
+  case Role::PositionY:
+    return ImVec4(0.28f, 0.78f, 0.82f, 1.0f);
+  case Role::Other:
+    return ImVec4(0.80f, 0.80f, 0.80f, 1.0f);
+  }
+  return ImVec4(0.80f, 0.80f, 0.80f, 1.0f);
+}
+
+const char *
+timelineStatusName(crimson::timeline::EyeAngleTimelineStatus status) {
   switch (status) {
   case crimson::timeline::EyeAngleTimelineStatus::Mapped:
     return "ready";
@@ -164,6 +189,24 @@ const char *timelineStatusName(
   case crimson::timeline::EyeAngleTimelineStatus::InvalidRequest:
     return "invalid request";
   case crimson::timeline::EyeAngleTimelineStatus::ReadFailed:
+    return "read failed";
+  }
+  return "unavailable";
+}
+
+const char *
+timelineStatusName(crimson::timeline::AnalysisSeriesTimelineStatus status) {
+  using Status = crimson::timeline::AnalysisSeriesTimelineStatus;
+  switch (status) {
+  case Status::Mapped:
+    return "ready";
+  case Status::Missing:
+    return "missing";
+  case Status::OutOfRange:
+    return "out of range";
+  case Status::InvalidRequest:
+    return "invalid request";
+  case Status::ReadFailed:
     return "read failed";
   }
   return "unavailable";
@@ -203,7 +246,7 @@ AppleVideoControlResult drawAppleVideoControls(
     LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
     const AppleVideoViewerStats &stats,
     const crimson::playback::StimulusPresentationMetrics *stimulus_metrics,
-    AppleCropViewerControls *crop_controls, bool eye_angle_timeline_available,
+    AppleCropViewerControls *crop_controls, bool analysis_timeline_available,
     bool interactive) {
   AppleVideoControlResult result;
   const ImGuiViewport *viewport = ImGui::GetMainViewport();
@@ -258,14 +301,14 @@ AppleVideoControlResult drawAppleVideoControls(
   }
   showItemTooltip("Open or close overlay controls");
   ImGui::SameLine();
-  if (!eye_angle_timeline_available) {
+  if (!analysis_timeline_available) {
     ImGui::BeginDisabled();
   }
   if (ImGui::Button("Timeline")) {
-    result.toggle_eye_angle_timeline = true;
+    result.toggle_analysis_timeline = true;
   }
-  showItemTooltip("Open or close the eye-angle timeline");
-  if (!eye_angle_timeline_available) {
+  showItemTooltip("Open or close analysis timelines");
+  if (!analysis_timeline_available) {
     ImGui::EndDisabled();
   }
 
@@ -407,38 +450,207 @@ AppleVideoControlResult drawAppleVideoControls(
   return result;
 }
 
-bool drawAppleEyeAngleTimeline(
-    AppleEyeAngleTimelineControls *controls,
+namespace {
+
+void initializeSeriesControls(
+    AppleSeriesTimelineControls *controls,
+    const crimson::timeline::AnalysisSeriesTimelineDescriptor &descriptor) {
+  if (controls->source_key.empty()) {
+    controls->source_key =
+        crimson::timeline::defaultAnalysisSeriesSource(descriptor);
+  }
+  if (controls->initialized_source_key == controls->source_key) {
+    return;
+  }
+  controls->initialized_source_key = controls->source_key;
+  controls->trace_visibility.clear();
+  const auto *source = crimson::timeline::findAnalysisSeriesSource(
+      descriptor, controls->source_key);
+  if (source == nullptr) {
+    return;
+  }
+  for (const auto &trace : source->traces) {
+    controls->trace_visibility.emplace(trace.key, trace.default_visible);
+  }
+}
+
+const char *seriesRowName(const std::string &row_key) {
+  if (row_key == "speed") {
+    return "Speed";
+  }
+  if (row_key == "heading") {
+    return "Heading";
+  }
+  if (row_key == "position") {
+    return "Position";
+  }
+  if (row_key == "tail_angle") {
+    return "Tail angle";
+  }
+  if (row_key == "tail_deflection") {
+    return "Tail deflection";
+  }
+  if (row_key == "tail_curvature") {
+    return "Tail curvature";
+  }
+  return row_key.c_str();
+}
+
+bool drawSeriesTimelineTab(
+    const char *plot_id_prefix, AppleSeriesTimelineControls *controls,
+    float half_span_seconds,
+    const crimson::timeline::AnalysisSeriesTimelineDescriptor &descriptor,
+    const std::shared_ptr<const crimson::timeline::AnalysisSeriesTimelineWindow>
+        &window,
+    int64_t current_frame, LogicalPlaybackClock &clock,
+    AppleVideoPlaybackBuffer &playback, bool interactive) {
+  initializeSeriesControls(controls, descriptor);
+  const auto *source = crimson::timeline::findAnalysisSeriesSource(
+      descriptor, controls->source_key);
+  const char *source_preview =
+      source != nullptr ? source->display_name.c_str() : "Unavailable";
+  ImGui::SetNextItemWidth(360.0f);
+  if (ImGui::BeginCombo("Source", source_preview)) {
+    for (const auto &candidate : descriptor.sources) {
+      const bool selected = candidate.key == controls->source_key;
+      if (ImGui::Selectable(candidate.display_name.c_str(), selected)) {
+        controls->source_key = candidate.key;
+      }
+      if (selected) {
+        ImGui::SetItemDefaultFocus();
+      }
+    }
+    ImGui::EndCombo();
+  }
+  initializeSeriesControls(controls, descriptor);
+  source = crimson::timeline::findAnalysisSeriesSource(descriptor,
+                                                       controls->source_key);
+  if (source == nullptr) {
+    ImGui::TextUnformatted("Timeline source unavailable");
+    return false;
+  }
+
+  if (ImGui::BeginTable("##trace-visibility", 2,
+                        ImGuiTableFlags_SizingStretchSame)) {
+    for (const auto &trace : source->traces) {
+      ImGui::TableNextColumn();
+      bool &visible = controls->trace_visibility[trace.key];
+      ImGui::Checkbox(trace.display_name.c_str(), &visible);
+    }
+    ImGui::EndTable();
+  }
+
+  const bool window_matches =
+      window != nullptr && window->request.source_key == controls->source_key;
+  if (current_frame < 0 ||
+      current_frame >= static_cast<int64_t>(descriptor.frame_count)) {
+    ImGui::TextUnformatted("Timeline out of range for this frame");
+    return false;
+  }
+  if (!window_matches) {
+    ImGui::TextUnformatted("Loading timeline data...");
+    return false;
+  }
+  if (!window->ready()) {
+    ImGui::Text("Timeline %s", timelineStatusName(window->status));
+    if (!window->error.empty()) {
+      ImGui::TextWrapped("%s", window->error.c_str());
+    }
+    return false;
+  }
+
+  bool camera_discontinuity = false;
+  const double frames_per_second = clock.framesPerSecond();
+  const double cursor_time =
+      crimson::timeline::analysisSeriesTimelineTimeForFrame(
+          *window, current_frame, frames_per_second);
+  std::vector<std::string> row_keys;
+  for (const auto &trace : source->traces) {
+    if (controls->trace_visibility[trace.key] &&
+        std::find(row_keys.begin(), row_keys.end(), trace.row_key) ==
+            row_keys.end()) {
+      row_keys.push_back(trace.row_key);
+    }
+  }
+  if (row_keys.empty()) {
+    ImGui::TextUnformatted("Select at least one trace");
+    return false;
+  }
+
+  ImGui::BeginChild("##series-plots", ImVec2(0.0f, 0.0f), false,
+                    ImGuiWindowFlags_AlwaysVerticalScrollbar);
+  for (const auto &row_key : row_keys) {
+    const crimson::timeline::AnalysisSeriesTraceDescriptor *row_trace = nullptr;
+    for (const auto &trace : source->traces) {
+      if (trace.row_key == row_key && controls->trace_visibility[trace.key]) {
+        row_trace = &trace;
+        break;
+      }
+    }
+    if (row_trace == nullptr) {
+      continue;
+    }
+    ImGui::Text("%s", seriesRowName(row_key));
+    const std::string plot_id =
+        std::string("##") + plot_id_prefix + "-" + row_key;
+    if (ImPlot::BeginPlot(plot_id.c_str(), ImVec2(-1.0f, 180.0f),
+                          ImPlotFlags_NoTitle | ImPlotFlags_NoBoxSelect)) {
+      ImPlot::SetupAxes("Time (s)", row_trace->units.c_str(),
+                        ImPlotAxisFlags_NoMenus,
+                        ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_NoMenus);
+      ImPlot::SetupAxisLimits(ImAxis_X1, cursor_time - half_span_seconds,
+                              cursor_time + half_span_seconds,
+                              ImPlotCond_Always);
+      for (const auto &trace : window->traces) {
+        if (trace.descriptor.row_key != row_key ||
+            !controls->trace_visibility[trace.descriptor.key] ||
+            trace.times_seconds.empty() || trace.values.empty()) {
+          continue;
+        }
+        const int count = static_cast<int>(
+            std::min(trace.times_seconds.size(), trace.values.size()));
+        ImPlot::PushStyleColor(ImPlotCol_Line,
+                               traceColor(trace.descriptor.role));
+        ImPlot::PlotLine(trace.descriptor.display_name.c_str(),
+                         trace.times_seconds.data(), trace.values.data(),
+                         count);
+        ImPlot::PopStyleColor();
+      }
+      ImPlot::PushStyleColor(ImPlotCol_Line,
+                             ImVec4(0.94f, 0.94f, 0.94f, 0.90f));
+      ImPlot::PlotInfLines("Current frame", &cursor_time, 1);
+      ImPlot::PopStyleColor();
+      ImPlot::TagX(cursor_time, ImVec4(0.94f, 0.94f, 0.94f, 0.90f),
+                   "Frame %lld", static_cast<long long>(current_frame));
+      if (interactive && ImPlot::IsPlotHovered() &&
+          ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        const int64_t clicked_frame =
+            crimson::timeline::analysisSeriesTimelineNearestFrame(
+                *window, ImPlot::GetPlotMousePos().x, frames_per_second);
+        if (clicked_frame >= 0) {
+          const int64_t bounded_frame = std::clamp<int64_t>(
+              clicked_frame, 0, std::max<int64_t>(0, clock.frameCount() - 1));
+          camera_discontinuity = seekViewer(clock, playback, bounded_frame) ||
+                                 camera_discontinuity;
+        }
+      }
+      ImPlot::EndPlot();
+    }
+  }
+  ImGui::EndChild();
+  return camera_discontinuity;
+}
+
+bool drawEyeAngleTimelineTab(
+    AppleEyeAngleTimelineControls *controls, float half_span_seconds,
     const crimson::timeline::EyeAngleTimelineDescriptor &descriptor,
     const std::shared_ptr<const crimson::timeline::EyeAngleTimelineWindow>
         &window,
     int64_t current_frame, LogicalPlaybackClock &clock,
     AppleVideoPlaybackBuffer &playback, bool interactive) {
-  if (controls == nullptr || !controls->open) {
-    return false;
-  }
   if (controls->representation_key.empty()) {
     controls->representation_key =
         crimson::timeline::defaultEyeAngleTimelineRepresentation(descriptor);
-  }
-
-  const ImGuiViewport *viewport = ImGui::GetMainViewport();
-  const float initial_width = std::max(
-      520.0f, std::min(920.0f, viewport->WorkSize.x - 32.0f));
-  ImGui::SetNextWindowPos(
-      ImVec2(viewport->WorkPos.x + (viewport->WorkSize.x - initial_width) * 0.5f,
-             viewport->WorkPos.y + 16.0f),
-      ImGuiCond_Appearing);
-  ImGui::SetNextWindowSize(ImVec2(initial_width, 360.0f),
-                           ImGuiCond_Appearing);
-  ImGui::SetNextWindowSizeConstraints(ImVec2(500.0f, 280.0f),
-                                      ImVec2(FLT_MAX, 620.0f));
-  if (!ImGui::Begin("Eye-angle timeline", &controls->open)) {
-    ImGui::End();
-    return false;
-  }
-  if (!interactive) {
-    ImGui::BeginDisabled();
   }
 
   const auto *representation =
@@ -450,8 +662,7 @@ bool drawAppleEyeAngleTimeline(
   ImGui::SetNextItemWidth(220.0f);
   if (ImGui::BeginCombo("Representation", preview)) {
     for (const auto &candidate : descriptor.representations) {
-      const bool selected =
-          candidate.key == controls->representation_key;
+      const bool selected = candidate.key == controls->representation_key;
       if (ImGui::Selectable(candidate.display_name.c_str(), selected)) {
         controls->representation_key = candidate.key;
       }
@@ -467,38 +678,37 @@ bool drawAppleEyeAngleTimeline(
   ImGui::Checkbox("Right", &controls->show_right);
   ImGui::SameLine();
   ImGui::Checkbox("Vergence", &controls->show_vergence);
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(130.0f);
-  ImGui::SliderFloat("Span", &controls->half_span_seconds, 1.0f, 30.0f,
-                     "+/- %.0f s");
 
-  bool camera_discontinuity = false;
   const bool window_matches =
       window != nullptr &&
       window->request.representation_key == controls->representation_key;
   if (current_frame < 0 ||
       current_frame >= static_cast<int64_t>(descriptor.frame_count)) {
     ImGui::TextUnformatted("Timeline out of range for this frame");
-  } else if (!window_matches) {
+    return false;
+  }
+  if (!window_matches) {
     ImGui::TextUnformatted("Loading timeline data...");
-  } else if (!window->ready()) {
+    return false;
+  }
+  if (!window->ready()) {
     ImGui::Text("Timeline %s", timelineStatusName(window->status));
     if (!window->error.empty()) {
       ImGui::TextWrapped("%s", window->error.c_str());
     }
-  } else {
+    return false;
+  }
+
+  bool camera_discontinuity = false;
     const double frames_per_second = clock.framesPerSecond();
     const double cursor_time = crimson::timeline::eyeAngleTimelineTimeForFrame(
         *window, current_frame, frames_per_second);
     if (ImPlot::BeginPlot("##eye-angle-plot", ImVec2(-1.0f, -1.0f),
                           ImPlotFlags_NoTitle | ImPlotFlags_NoBoxSelect)) {
-      ImPlot::SetupAxes("Time (s)", "Angle (deg)",
-                        ImPlotAxisFlags_NoMenus,
+    ImPlot::SetupAxes("Time (s)", "Angle (deg)", ImPlotAxisFlags_NoMenus,
                         ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_NoMenus);
-      ImPlot::SetupAxisLimits(ImAxis_X1,
-                              cursor_time - controls->half_span_seconds,
-                              cursor_time + controls->half_span_seconds,
-                              ImPlotCond_Always);
+    ImPlot::SetupAxisLimits(ImAxis_X1, cursor_time - half_span_seconds,
+                            cursor_time + half_span_seconds, ImPlotCond_Always);
       for (const auto &trace : window->traces) {
         if (!traceEnabled(*controls, trace.field.role) ||
             trace.times_seconds.empty() || trace.values.empty()) {
@@ -511,28 +721,125 @@ bool drawAppleEyeAngleTimeline(
                          trace.times_seconds.data(), trace.values.data(), count);
         ImPlot::PopStyleColor();
       }
-      ImPlot::PushStyleColor(ImPlotCol_Line,
-                             ImVec4(0.94f, 0.94f, 0.94f, 0.90f));
+    ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.94f, 0.94f, 0.94f, 0.90f));
       ImPlot::PlotInfLines("Current frame", &cursor_time, 1);
       ImPlot::PopStyleColor();
-      ImPlot::TagX(cursor_time, ImVec4(0.94f, 0.94f, 0.94f, 0.90f),
-                   "Frame %lld", static_cast<long long>(current_frame));
+    ImPlot::TagX(cursor_time, ImVec4(0.94f, 0.94f, 0.94f, 0.90f), "Frame %lld",
+                 static_cast<long long>(current_frame));
       if (interactive && ImPlot::IsPlotHovered() &&
           ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        const double clicked_time = ImPlot::GetPlotMousePos().x;
         const int64_t clicked_frame =
             crimson::timeline::eyeAngleTimelineNearestFrame(
-                *window, clicked_time, frames_per_second);
+              *window, ImPlot::GetPlotMousePos().x, frames_per_second);
         if (clicked_frame >= 0) {
           const int64_t bounded_frame = std::clamp<int64_t>(
               clicked_frame, 0, std::max<int64_t>(0, clock.frameCount() - 1));
-          camera_discontinuity =
-              seekViewer(clock, playback, bounded_frame) ||
-              camera_discontinuity;
-        }
+        camera_discontinuity = seekViewer(clock, playback, bounded_frame);
       }
-      ImPlot::EndPlot();
     }
+    ImPlot::EndPlot();
+  }
+  return camera_discontinuity;
+}
+
+} // namespace
+
+bool drawAppleAnalysisTimeline(
+    AppleAnalysisTimelineControls *controls,
+    const crimson::timeline::AnalysisSeriesTimelineDescriptor
+        *motion_descriptor,
+    const std::shared_ptr<const crimson::timeline::AnalysisSeriesTimelineWindow>
+        &motion_window,
+    const crimson::timeline::EyeAngleTimelineDescriptor *eye_descriptor,
+    const std::shared_ptr<const crimson::timeline::EyeAngleTimelineWindow>
+        &eye_window,
+    const crimson::timeline::AnalysisSeriesTimelineDescriptor *tail_descriptor,
+    const std::shared_ptr<const crimson::timeline::AnalysisSeriesTimelineWindow>
+        &tail_window,
+    int64_t current_frame, LogicalPlaybackClock &clock,
+    AppleVideoPlaybackBuffer &playback, bool interactive) {
+  if (controls == nullptr || !controls->open) {
+    return false;
+  }
+  const ImGuiViewport *viewport = ImGui::GetMainViewport();
+  const float initial_width =
+      std::max(620.0f, std::min(1040.0f, viewport->WorkSize.x - 32.0f));
+  const float initial_height =
+      std::max(420.0f, std::min(720.0f, viewport->WorkSize.y - 144.0f));
+  ImGui::SetNextWindowPos(
+      ImVec2(viewport->WorkPos.x +
+                 (viewport->WorkSize.x - initial_width) * 0.5f,
+             viewport->WorkPos.y + 16.0f),
+      ImGuiCond_Appearing);
+  ImGui::SetNextWindowSize(ImVec2(initial_width, initial_height),
+                           ImGuiCond_Appearing);
+  ImGui::SetNextWindowSizeConstraints(ImVec2(600.0f, 380.0f),
+                                      ImVec2(FLT_MAX, FLT_MAX));
+  if (!ImGui::Begin("Analysis timeline", &controls->open)) {
+    ImGui::End();
+    return false;
+  }
+  if (!interactive) {
+    ImGui::BeginDisabled();
+  }
+  ImGui::SetNextItemWidth(150.0f);
+  ImGui::SliderFloat("Span", &controls->half_span_seconds, 1.0f, 30.0f,
+                     "+/- %.0f s");
+
+  bool camera_discontinuity = false;
+  if (ImGui::BeginTabBar("##analysis-timeline-tabs")) {
+    const ImGuiTabItemFlags motion_flags =
+        controls->initial_tab == AppleAnalysisTimelineTab::Motion
+            ? ImGuiTabItemFlags_SetSelected
+            : ImGuiTabItemFlags_None;
+    if (motion_descriptor != nullptr && !motion_descriptor->sources.empty() &&
+        ImGui::BeginTabItem("Motion", nullptr, motion_flags)) {
+      if (controls->initial_tab == AppleAnalysisTimelineTab::Motion) {
+        controls->initial_tab = AppleAnalysisTimelineTab::Automatic;
+      }
+          camera_discontinuity =
+          drawSeriesTimelineTab("motion", &controls->motion,
+                                controls->half_span_seconds, *motion_descriptor,
+                                motion_window, current_frame, clock, playback,
+                                interactive) ||
+              camera_discontinuity;
+      ImGui::EndTabItem();
+        }
+    const ImGuiTabItemFlags eye_flags =
+        controls->initial_tab == AppleAnalysisTimelineTab::EyeAngles
+            ? ImGuiTabItemFlags_SetSelected
+            : ImGuiTabItemFlags_None;
+    if (eye_descriptor != nullptr && !eye_descriptor->representations.empty() &&
+        ImGui::BeginTabItem("Eye angles", nullptr, eye_flags)) {
+      if (controls->initial_tab == AppleAnalysisTimelineTab::EyeAngles) {
+        controls->initial_tab = AppleAnalysisTimelineTab::Automatic;
+      }
+      camera_discontinuity =
+          drawEyeAngleTimelineTab(&controls->eye_angles,
+                                  controls->half_span_seconds, *eye_descriptor,
+                                  eye_window, current_frame, clock, playback,
+                                  interactive) ||
+          camera_discontinuity;
+      ImGui::EndTabItem();
+    }
+    const ImGuiTabItemFlags tail_flags =
+        controls->initial_tab == AppleAnalysisTimelineTab::TailKinematics
+            ? ImGuiTabItemFlags_SetSelected
+            : ImGuiTabItemFlags_None;
+    if (tail_descriptor != nullptr && !tail_descriptor->sources.empty() &&
+        ImGui::BeginTabItem("Tail", nullptr, tail_flags)) {
+      if (controls->initial_tab == AppleAnalysisTimelineTab::TailKinematics) {
+        controls->initial_tab = AppleAnalysisTimelineTab::Automatic;
+      }
+      camera_discontinuity =
+          drawSeriesTimelineTab("tail", &controls->tail_kinematics,
+                                controls->half_span_seconds, *tail_descriptor,
+                                tail_window, current_frame, clock, playback,
+                                interactive) ||
+          camera_discontinuity;
+      ImGui::EndTabItem();
+    }
+    ImGui::EndTabBar();
   }
   if (!interactive) {
     ImGui::EndDisabled();
