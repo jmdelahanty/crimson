@@ -4,15 +4,18 @@ Date: 2026-07-26
 
 Contract version: 1
 
-Status: consumer experiment and selection policy frozen; Palette candidate
-publication and Crimson runner implementation pending
+Status: deferred by the Phase 5O.5 residency-strategy gate; Palette publication
+is paused
 
 ## Decision
 
-Palette may build the five-candidate, five-repetition full-duration canonical
-detection matrix after incorporating this contract. Palette owns immutable
-candidate generation, logical equality, and publication. Crimson owns the
-workload, consumer telemetry, paired reduction, and selection verdict.
+Palette must not build the five-candidate matrix yet. The superseding strategy
+gate in `docs/crimson_macos_phase5o5_detection_residency_gate.md` first compares
+bounded paging with first-page-then-background residency using the existing
+full-duration regular and hybrid fixtures. This contract remains the exact
+fallback experiment if residency fails. If residency passes, Crimson replaces
+it with a reduced three-candidate matrix contract before Palette publishes any
+new stores.
 
 This matrix is detection-isolated. It follows the full-application Stage 1
 comparison, which showed that nondetection repositories and scheduler queueing
@@ -29,7 +32,7 @@ docs/reference/crimson_canonical_detection_layout_matrix_workload_v1.json
 Its SHA-256 is:
 
 ```text
-8d42ec89047c0306fc4513735841de5be7f14591ca4c8bc82374c8c1c60f80dc
+75d958f7ef4a7162b9b945a210c25de26fb7c3020ed7e9d9551753875bcb6d57
 ```
 
 The file is authoritative for the exact selections, process order, traversal

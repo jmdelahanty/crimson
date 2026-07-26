@@ -159,8 +159,8 @@
     "traversal_regions": [
       {
         "repetition": 0,
-        "first_frame": 300000,
-        "last_frame_exclusive": 303500,
+        "first_frame": 300020,
+        "last_frame_exclusive": 303520,
         "direction_order": [
           "forward",
           "reverse"
@@ -177,8 +177,8 @@
       },
       {
         "repetition": 2,
-        "first_frame": 540000,
-        "last_frame_exclusive": 543500,
+        "first_frame": 539980,
+        "last_frame_exclusive": 543480,
         "direction_order": [
           "forward",
           "reverse"
@@ -186,8 +186,8 @@
       },
       {
         "repetition": 3,
-        "first_frame": 660000,
-        "last_frame_exclusive": 663500,
+        "first_frame": 660030,
+        "last_frame_exclusive": 663530,
         "direction_order": [
           "reverse",
           "forward"
@@ -195,8 +195,8 @@
       },
       {
         "repetition": 4,
-        "first_frame": 780000,
-        "last_frame_exclusive": 783500,
+        "first_frame": 780010,
+        "last_frame_exclusive": 783510,
         "direction_order": [
           "forward",
           "reverse"
