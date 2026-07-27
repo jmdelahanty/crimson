@@ -24,6 +24,13 @@ struct MaskVertex {
     float v = 0.0f;
 };
 
+struct VectorColor {
+    float red = 0.0f;
+    float green = 0.0f;
+    float blue = 0.0f;
+    float alpha = 0.0f;
+};
+
 void assignError(std::string* destination, const std::string& value) {
     if (destination != nullptr) {
         *destination = value;
@@ -122,6 +129,46 @@ struct AppleOverlayMetalRenderer::Impl {
         use_counter = 0;
     }
 };
+
+namespace {
+
+bool encodeVectorTriangles(id<MTLDevice> device,
+                           id<MTLRenderPipelineState> pipeline,
+                           id<MTLRenderCommandEncoder> encoder,
+                           const TargetSize& target,
+                           const std::vector<float>& positions,
+                           const std::vector<VectorColor>& colors,
+                           std::string* error) {
+    if (positions.empty() && colors.empty()) {
+        return true;
+    }
+    if (positions.size() != colors.size() * 2) {
+        assignError(error, "Metal overlay vector mesh is inconsistent");
+        return false;
+    }
+    id<MTLBuffer> position_buffer = [device
+        newBufferWithBytes:positions.data()
+                   length:positions.size() * sizeof(float)
+                  options:MTLResourceStorageModeShared];
+    id<MTLBuffer> color_buffer = [device
+        newBufferWithBytes:colors.data()
+                   length:colors.size() * sizeof(VectorColor)
+                  options:MTLResourceStorageModeShared];
+    if (position_buffer == nil || color_buffer == nil) {
+        assignError(error, "Metal overlay vertex buffer allocation failed");
+        return false;
+    }
+    [encoder setRenderPipelineState:pipeline];
+    [encoder setVertexBuffer:position_buffer offset:0 atIndex:0];
+    [encoder setVertexBuffer:color_buffer offset:0 atIndex:1];
+    [encoder setVertexBytes:&target length:sizeof(target) atIndex:2];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangle
+                vertexStart:0
+                vertexCount:colors.size()];
+    return true;
+}
+
+}  // namespace
 
 AppleOverlayMetalRenderer::AppleOverlayMetalRenderer()
     : impl_(std::make_unique<Impl>()) {}
@@ -359,36 +406,18 @@ bool AppleOverlayMetalRenderer::encode(
             return true;
         }
         std::vector<float> positions;
-        std::vector<crimson::overlay::Color> colors;
+        std::vector<VectorColor> colors;
         positions.reserve(mesh.triangle_vertices.size() * 2);
         colors.reserve(mesh.triangle_vertices.size());
         for (const auto& vertex : mesh.triangle_vertices) {
             positions.push_back(vertex.x);
             positions.push_back(vertex.y);
-            colors.push_back(vertex.color);
+            colors.push_back({vertex.color.red, vertex.color.green,
+                              vertex.color.blue, vertex.color.alpha});
         }
-        id<MTLBuffer> position_buffer = [impl_->device
-            newBufferWithBytes:positions.data()
-                       length:positions.size() * sizeof(float)
-                      options:MTLResourceStorageModeShared];
-        id<MTLBuffer> color_buffer = [impl_->device
-            newBufferWithBytes:colors.data()
-                       length:colors.size() *
-                              sizeof(crimson::overlay::Color)
-                      options:MTLResourceStorageModeShared];
-        if (position_buffer == nil || color_buffer == nil) {
-            assignError(error,
-                        "Metal overlay vertex buffer allocation failed");
-            return false;
-        }
-        [encoder setRenderPipelineState:impl_->vector_pipeline];
-        [encoder setVertexBuffer:position_buffer offset:0 atIndex:0];
-        [encoder setVertexBuffer:color_buffer offset:0 atIndex:1];
-        [encoder setVertexBytes:&target length:sizeof(target) atIndex:2];
-        [encoder drawPrimitives:MTLPrimitiveTypeTriangle
-                    vertexStart:0
-                    vertexCount:mesh.triangle_vertices.size()];
-        return true;
+        return encodeVectorTriangles(impl_->device, impl_->vector_pipeline,
+                                     encoder, target, positions, colors,
+                                     error);
     };
 
     for (const auto layer : crimson::overlay::kCameraOverlayLayerOrder) {
@@ -419,4 +448,165 @@ bool AppleOverlayMetalRenderer::encode(
         impl_->mask_textures.erase(oldest);
     }
     return true;
+}
+
+bool AppleOverlayMetalRenderer::encodePolar(
+    const crimson::polar::ChaserDistancePolarScene& scene,
+    crimson::polar::ChaserDistancePolarScenePoint display_origin,
+    double scale_x,
+    double scale_y,
+    uintptr_t metal_render_encoder,
+    uint32_t drawable_width,
+    uint32_t drawable_height,
+    std::string* error) {
+    if (!isInitialized() || drawable_width == 0 || drawable_height == 0 ||
+        !std::isfinite(display_origin.x) ||
+        !std::isfinite(display_origin.y) || !std::isfinite(scale_x) ||
+        !std::isfinite(scale_y) || scale_x <= 0.0 || scale_y <= 0.0) {
+        assignError(error, "Metal polar renderer received invalid state");
+        return false;
+    }
+    if (!scene.ready()) {
+        return true;
+    }
+    id<MTLRenderCommandEncoder> encoder =
+        (__bridge id<MTLRenderCommandEncoder>)reinterpret_cast<void*>(
+            metal_render_encoder);
+    if (encoder == nil) {
+        assignError(error, "Metal polar render encoder is null");
+        return false;
+    }
+
+    const double viewport_right =
+        display_origin.x + scene.viewport.width_px * scale_x;
+    const double viewport_bottom =
+        display_origin.y + scene.viewport.height_px * scale_y;
+    const double clipped_left = std::max(0.0, display_origin.x);
+    const double clipped_top = std::max(0.0, display_origin.y);
+    const double clipped_right = std::min(
+        static_cast<double>(drawable_width), viewport_right);
+    const double clipped_bottom = std::min(
+        static_cast<double>(drawable_height), viewport_bottom);
+    if (!(clipped_right > clipped_left && clipped_bottom > clipped_top)) {
+        return true;
+    }
+    const NSUInteger clip_x =
+        static_cast<NSUInteger>(std::floor(clipped_left));
+    const NSUInteger clip_y =
+        static_cast<NSUInteger>(std::floor(clipped_top));
+    const NSUInteger clip_right =
+        static_cast<NSUInteger>(std::ceil(clipped_right));
+    const NSUInteger clip_bottom =
+        static_cast<NSUInteger>(std::ceil(clipped_bottom));
+
+    const auto mesh = crimson::polar::tessellateChaserDistancePolarScene(
+        scene, display_origin, scale_x, scale_y);
+    if (mesh.triangle_vertices.empty()) {
+        return true;
+    }
+    std::vector<float> positions;
+    std::vector<VectorColor> colors;
+    positions.reserve(mesh.triangle_vertices.size() * 2);
+    colors.reserve(mesh.triangle_vertices.size());
+    for (const auto& vertex : mesh.triangle_vertices) {
+        positions.push_back(vertex.x);
+        positions.push_back(vertex.y);
+        colors.push_back(
+            {static_cast<float>(vertex.color.red),
+             static_cast<float>(vertex.color.green),
+             static_cast<float>(vertex.color.blue),
+             static_cast<float>(vertex.color.alpha)});
+    }
+
+    [encoder setViewport:MTLViewport{
+                             0.0, 0.0, static_cast<double>(drawable_width),
+                             static_cast<double>(drawable_height), 0.0, 1.0}];
+    [encoder setScissorRect:MTLScissorRect{
+                                clip_x, clip_y, clip_right - clip_x,
+                                clip_bottom - clip_y}];
+    const TargetSize target{static_cast<float>(drawable_width),
+                            static_cast<float>(drawable_height)};
+    return encodeVectorTriangles(impl_->device, impl_->vector_pipeline,
+                                 encoder, target, positions, colors, error);
+}
+
+bool AppleOverlayMetalRenderer::encodeStimulusCameraOverlay(
+    const crimson::stimulus::StimulusCameraOverlayScene& scene,
+    crimson::stimulus::StimulusCameraOverlayPoint display_origin,
+    double scale_x,
+    double scale_y,
+    uintptr_t metal_render_encoder,
+    uint32_t drawable_width,
+    uint32_t drawable_height,
+    std::string* error) {
+    if (!isInitialized() || drawable_width == 0 || drawable_height == 0 ||
+        !std::isfinite(display_origin.x) ||
+        !std::isfinite(display_origin.y) || !std::isfinite(scale_x) ||
+        !std::isfinite(scale_y) || scale_x <= 0.0 || scale_y <= 0.0) {
+        assignError(error, "Metal stimulus overlay renderer received invalid state");
+        return false;
+    }
+    if (!scene.ready()) {
+        return true;
+    }
+    id<MTLRenderCommandEncoder> encoder =
+        (__bridge id<MTLRenderCommandEncoder>)reinterpret_cast<void*>(
+            metal_render_encoder);
+    if (encoder == nil) {
+        assignError(error, "Metal stimulus overlay render encoder is null");
+        return false;
+    }
+
+    const double viewport_right =
+        display_origin.x + scene.viewport.width_px * scale_x;
+    const double viewport_bottom =
+        display_origin.y + scene.viewport.height_px * scale_y;
+    const double clipped_left = std::max(0.0, display_origin.x);
+    const double clipped_top = std::max(0.0, display_origin.y);
+    const double clipped_right =
+        std::min(static_cast<double>(drawable_width), viewport_right);
+    const double clipped_bottom =
+        std::min(static_cast<double>(drawable_height), viewport_bottom);
+    if (!(clipped_right > clipped_left && clipped_bottom > clipped_top)) {
+        return true;
+    }
+    const NSUInteger clip_x =
+        static_cast<NSUInteger>(std::floor(clipped_left));
+    const NSUInteger clip_y =
+        static_cast<NSUInteger>(std::floor(clipped_top));
+    const NSUInteger clip_right_px =
+        static_cast<NSUInteger>(std::ceil(clipped_right));
+    const NSUInteger clip_bottom_px =
+        static_cast<NSUInteger>(std::ceil(clipped_bottom));
+
+    const auto mesh =
+        crimson::stimulus::tessellateStimulusCameraOverlayScene(
+            scene, display_origin, scale_x, scale_y);
+    if (mesh.triangle_vertices.empty()) {
+        return true;
+    }
+    std::vector<float> positions;
+    std::vector<VectorColor> colors;
+    positions.reserve(mesh.triangle_vertices.size() * 2);
+    colors.reserve(mesh.triangle_vertices.size());
+    for (const auto& vertex : mesh.triangle_vertices) {
+        positions.push_back(vertex.x);
+        positions.push_back(vertex.y);
+        colors.push_back(
+            {static_cast<float>(vertex.color.red),
+             static_cast<float>(vertex.color.green),
+             static_cast<float>(vertex.color.blue),
+             static_cast<float>(vertex.color.alpha)});
+    }
+
+    [encoder setViewport:MTLViewport{
+                             0.0, 0.0, static_cast<double>(drawable_width),
+                             static_cast<double>(drawable_height), 0.0, 1.0}];
+    [encoder setScissorRect:MTLScissorRect{
+                                clip_x, clip_y, clip_right_px - clip_x,
+                                clip_bottom_px - clip_y}];
+    const TargetSize target{static_cast<float>(drawable_width),
+                            static_cast<float>(drawable_height)};
+    return encodeVectorTriangles(impl_->device, impl_->vector_pipeline,
+                                 encoder, target, positions, colors, error);
 }

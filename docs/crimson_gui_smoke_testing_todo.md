@@ -12,7 +12,7 @@ On the workstation Xwayland session, GUI launch works from tmux with:
 
 ```bash
 export DISPLAY=:1
-export XAUTHORITY=/run/user/$(id -u)/.mutter-Xwaylandauth.9MIFN3
+export XAUTHORITY=/run/user/$(id -u)/.mutter-Xwaylandauth.<current>
 ```
 
 Useful installed tools:
@@ -22,9 +22,7 @@ Useful installed tools:
 - `xwd`
 - ImageMagick `import`
 - ImageMagick `convert`
-
-`xdotool` is not currently installed, so automated clicks/key presses are
-deferred.
+- `xdotool`
 
 ## First External Smoke Script
 
@@ -205,32 +203,52 @@ Known data gate for this canary:
 - Default candidate `0`, default signal `4` (`speed_exponential`) has 519 bouts.
 - Strict JSON validation reports `bad_json_files 0`.
 
-## Future App-Side Smoke Hooks
+## Deterministic Workspace Reference Hook
 
-External X11 smoke tests are useful but brittle. A more robust path is to add
-explicit app-side smoke-test flags, for example:
+The Phase 5L read-only reference hook is implemented. It separates exact app
+state from external X11 window capture:
 
 ```bash
 ./release/redgui \
   --zarr <analysis.zarr> \
-  --ui-smoke-test calibration_subject_masks \
-  --ui-smoke-frame 56 \
-  --ui-smoke-screenshot /tmp/redgui_smoke.png \
-  --ui-smoke-exit-after-ready
+  --ui-reference-state overlays \
+  --ui-reference-frame 56 \
+  --ui-reference-ready-file /tmp/redgui-reference.json \
+  --ui-reference-timeout 60
 ```
 
-Potential hooks:
+Supported states are `workspace`, `overlays`, `stimulus-debug`, `crop-preview`,
+`analysis-eye`, and `analysis-tail-stimulus`. The three required state/frame/file
+arguments are atomic as a CLI contract: incomplete or unknown combinations fail
+before GUI launch.
 
-- Seek to a deterministic frame after all data loads.
-- Open a specific panel or timeline window.
-- Enable specific overlay groups.
-- Render one frame.
-- Save a screenshot.
-- Exit with nonzero status if required data or overlays are missing.
+Before publishing the marker, `redgui` proves all of the following:
+
+- the requested camera frame is paused, selected, and actually presented;
+- the camera decode ring is complete;
+- state-specific data and visible presentation evidence are present, including
+  completed optional eye geometry for overlay/eye-analysis presets;
+- stimulus debug has the exact mapped stimulus texture presented and a
+  configured decoder ring;
+- the state remains unchanged for at least 60 rendered frames; and
+- the post-swap OpenGL front buffer is written to `<ready-file>.png`.
+
+The atomic JSON marker records frame identities, client/framebuffer dimensions,
+buffer occupancy, overlay/crop/analysis evidence, the read-only contract, and
+the rendered-image path. After publishing it, the app freezes that proven front
+buffer until the harness terminates the process. This avoids treating a partial
+Xwayland `xwd` capture as application pixels.
+
+`scripts/capture_redgui_workspace_reference.sh` validates the marker, retains a
+companion X11 capture for native-window diagnostics, and emits hashes and
+metadata. Set `CRIMSON_REFERENCE_KEEP_RUN_DIR=1` to retain the temporary log and
+marker after a failed run. Set `CRIMSON_REFERENCE_MASK_PERF_LOG=1` during an
+overlay failure to preserve the individual mask and eye-geometry counters.
 
 ## Optional Interaction Automation
 
-If `xdotool` is installed later, add scripted interaction checks:
+The Linux reference host now has `xdotool`. Add these as a separate scripted
+interaction suite when coordinate-stable layouts are available:
 
 - Toggle pause/play.
 - Step backward and forward with keyboard shortcuts.

@@ -2,6 +2,52 @@
 
 Date anchored: 2026-04-03.
 
+## 2026-07-23 Runtime Contract Checkpoint
+
+The first backend-neutral runtime slices are now shared by the macOS and
+NVIDIA application shells: session lifecycle, loading progress, frame
+presentation policy/metrics, and diagnostic reporting. Their ownership rules
+and cross-platform test surface are recorded in
+`docs/crimson_shared_runtime_contracts_2026-07-23.md`.
+
+Session readiness policy and generation-safe session-open transactions have
+also moved into that shared runtime library. The macOS shell now uses strict
+analysis readiness without background dismissal or autoplay, while both shells
+use the transaction for session-open lifecycle/progress bookkeeping.
+
+The macOS shell also uses the portable progress-settlement helper for its
+initial session. The helper converts analysis-loader readiness into the parent
+`analysis` product and commits or fails the session transaction; repository
+result adoption, ImGui rendering, playback, and Metal ownership remain in the
+shell.
+
+Loading presentation is now split as well. A portable view model lives in the
+runtime contracts, and the shared ImGui modal lives under `src/gui`. The macOS
+composition root supplies snapshots and readiness decisions but no longer owns
+the modal's labels, progress formatting, or popup lifecycle.
+
+The next bounded controller slice is also complete. A backend-neutral
+`RecordingOpenWorkflowController` now owns the active transaction, product
+timing, failure/cancellation transitions, and generation-checked child-loader
+settlement. The macOS and NVIDIA shells both use it for CLI and interactive
+recording opens, while they continue to own archive reads, decoder creation,
+repository adoption, threads, and GPU resources. This is progress toward the
+Phase 3 `RecordingLoader` boundary, not completion of the broader Phase 3
+controller extraction.
+
+Playback transport is now a shared controller as well. The former portable
+logical clock owns play/pause/seek/step/rate commands, readiness gating,
+timeline clamping, and end-of-stream pause. macOS uses it directly for Metal
+viewer controls; NVIDIA uses the same clock and command state while retaining
+its existing buffer-aware resume, exact-seek, stimulus, FFmpeg, CUDA, and
+OpenGL execution. This is a completed bounded slice of the Phase 3
+`PlaybackController`, not completion of the platform playback adapters.
+
+This checkpoint does not create the proposed catch-all `AppState`. Decoder,
+repository, thread, window, and GPU-resource ownership remains in the existing
+platform/application layers. Coordinate-sensitive ROI work remains deferred
+until the acquisition-to-presentation contracts stabilize.
+
 ## Why This Exists
 
 `crimson` has already done useful mechanical splits, but the core architecture
@@ -456,6 +502,13 @@ Acceptance:
   - `ReviewController`
   - `BBoxEditController`
   - `StimulusController`
+  - The portable recording-open lifecycle/timing controller is extracted and
+    used by both shells; platform media/storage execution and full loader
+    ownership remain to be extracted before `RecordingLoader` is complete.
+  - The portable playback transport/timing controller is extracted and used by
+    both shells; decoder scheduling, buffer policy, stimulus synchronization,
+    and graphics publication remain platform-owned before `PlaybackController`
+    is complete.
 - [ ] Replace direct mutation of unrelated globals with explicit command calls.
   - Example: "select detection dataset", "apply frame edits", "schedule seek",
     "reload archive", "mark review accepted".

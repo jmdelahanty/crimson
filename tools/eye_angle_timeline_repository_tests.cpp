@@ -255,6 +255,24 @@ bool TestRepository(const std::filesystem::path& root) {
   CHECK(gaze.traces[0].field.fallback);
   CHECK(gaze.traces[0].field.role == EyeAngleTraceRole::Left);
   CHECK(gaze.traces[1].field.role == EyeAngleTraceRole::Right);
+
+  auto preloaded = crimson::zarr::OpenEyeAngleTimelineRepository(
+      archive, {}, &error, {1024 * 1024});
+  CHECK(preloaded != nullptr);
+  const auto preload_open_metrics = preloaded->metrics();
+  CHECK(preload_open_metrics.preload_candidate_bytes > 0);
+  CHECK(preload_open_metrics.frame_series_preloaded);
+  CHECK(preload_open_metrics.preloaded_retained_bytes > 0);
+  request.representation_key = "eye_frame";
+  CHECK(preloaded->resolveWindow(request).ready());
+  const auto preload_resolve_metrics = preloaded->metrics();
+  CHECK(preload_resolve_metrics.preloaded_window_resolves == 1);
+  CHECK(preload_resolve_metrics.paged_window_resolves == 0);
+  request.representation_key = "gaze";
+  CHECK(preloaded->resolveWindow(request).ready());
+  const auto mixed_resolve_metrics = preloaded->metrics();
+  CHECK(mixed_resolve_metrics.preloaded_window_resolves == 1);
+  CHECK(mixed_resolve_metrics.paged_window_resolves == 1);
   return true;
 }
 

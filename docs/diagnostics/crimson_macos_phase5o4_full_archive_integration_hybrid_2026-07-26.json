@@ -1,0 +1,170 @@
+{
+  "affiliated_video": {
+    "discovery_error": "Affiliated video file does not exist for stored path: /groups/johnson/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+    "discovery_succeeded": false,
+    "explicit_exists": true,
+    "explicit_path": "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4"
+  },
+  "archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_integration_2048_v1/hybrid.zarr",
+  "archive_context": {
+    "cache_pool_bytes": 67108864
+  },
+  "canonical": {
+    "buffer": {
+      "cache_hits": 0,
+      "cache_pages": 4,
+      "discarded_pages": 2,
+      "evicted_pages": 26,
+      "page_frames": 70,
+      "peak_cached_bytes": 17920,
+      "peak_cached_pages": 4,
+      "requests": 38,
+      "resolved_pages": 31
+    },
+    "cancellation": {
+      "cancelled_requests": 14,
+      "discarded_completions": 2,
+      "seek_count": 8,
+      "stale_publications": 0
+    },
+    "detections": 2048,
+    "frames": 2048,
+    "logical_digest_fnv1a64": "e7665c85d8913ff5",
+    "open": {
+      "consolidated_declarations": 9,
+      "elapsed_ms": 565.912292,
+      "exact_handle_opens": 4,
+      "fallback_dtype_opens": 0,
+      "fallback_metadata_reads": 0,
+      "offset_ms": 157.168417,
+      "offset_reads": 1,
+      "retained_offset_bytes": 16392,
+      "root_metadata_reads": 1
+    },
+    "overlay_boxes": 2048,
+    "repository": {
+      "field_reads": 99,
+      "peak_concurrent_fields": 6,
+      "range_reads": 33,
+      "resolved_frames": 2206,
+      "resolved_rows": 2206
+    },
+    "rows": 2048,
+    "run": "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+    "seek_settle_ms": 0.205625,
+    "traversal_ms": 178.471125
+  },
+  "classification": "integration_only",
+  "first_presentations": {
+    "camera_frame": 0,
+    "concurrent_streams": 5,
+    "concurrent_timelines": 3,
+    "crop_rows": 1,
+    "elapsed_ms": 1659.59,
+    "eye_angle_points": 3594,
+    "eye_detections": 1,
+    "keypoint_detections": 1,
+    "mask_detections": 1,
+    "motion_points": 6601,
+    "shape_detections": 1,
+    "tail_points": 4792
+  },
+  "frame_range": [
+    0,
+    2048
+  ],
+  "label": "hybrid",
+  "loading": {
+    "completed_products": 13,
+    "elapsed_ms": 5369.445542,
+    "products": {
+      "acquisition_crop": {
+        "available": false,
+        "elapsed_ms": 0.328625,
+        "error": "Archive has no acquisition crop inventory attributes"
+      },
+      "archive": {
+        "available": true,
+        "elapsed_ms": 0.072333,
+        "error": ""
+      },
+      "canonical_detection": {
+        "available": true,
+        "elapsed_ms": 573.666709,
+        "error": ""
+      },
+      "chaser_polar": {
+        "available": true,
+        "elapsed_ms": 13.133791,
+        "error": ""
+      },
+      "crop_geometry": {
+        "available": true,
+        "elapsed_ms": 516.811209,
+        "error": ""
+      },
+      "eye_angles": {
+        "available": true,
+        "elapsed_ms": 647.447042,
+        "error": ""
+      },
+      "eye_geometry": {
+        "available": true,
+        "elapsed_ms": 2996.252125,
+        "error": ""
+      },
+      "keypoints": {
+        "available": true,
+        "elapsed_ms": 1875.258708,
+        "error": ""
+      },
+      "motion": {
+        "available": true,
+        "elapsed_ms": 1869.378583,
+        "error": ""
+      },
+      "stimulus": {
+        "available": false,
+        "elapsed_ms": 18.333,
+        "error": "No stimulus run was requested and analysis/stimulus_runs has no latest run"
+      },
+      "subject_masks": {
+        "available": true,
+        "elapsed_ms": 2141.479583,
+        "error": ""
+      },
+      "subject_shape": {
+        "available": true,
+        "elapsed_ms": 3337.781291,
+        "error": ""
+      },
+      "tail_kinematics": {
+        "available": true,
+        "elapsed_ms": 975.622292,
+        "error": ""
+      }
+    },
+    "readiness": "ready",
+    "readiness_reason": "",
+    "state": "ready",
+    "total_products": 13
+  },
+  "not_valid_for": [
+    "full_duration_startup",
+    "full_duration_cache_pressure",
+    "full_duration_object_count",
+    "promotion"
+  ],
+  "pass": true,
+  "requested_run": "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+  "scheduler": {
+    "completed": 43,
+    "failed": 0,
+    "peak_active": 4,
+    "submissions": 84,
+    "work_exceptions": 0,
+    "workers": 4
+  },
+  "schema_id": "crimson.canonical_detection_full_archive_integration",
+  "schema_version": 1
+}

@@ -227,8 +227,10 @@ bool TestMotion(const std::filesystem::path &root) {
   CHECK(descriptor.sources.size() == 4);
   CHECK(descriptor.sources.front().variant == "filtered");
   CHECK(descriptor.sources.front().traces.size() == 6);
+  const size_t row_count = descriptor.sources.front().sample_count;
   CHECK(defaultAnalysisSeriesSource(descriptor) ==
         descriptor.sources.front().key);
+  CHECK(repository->metrics().frame_index_block_reads == 0);
 
   AnalysisSeriesTimelineRequest request;
   request.source_key = descriptor.default_source;
@@ -250,6 +252,36 @@ bool TestMotion(const std::filesystem::path &root) {
       });
   CHECK(heading != window.traces.end());
   CHECK(heading->frames.size() == 7);
+  const auto first_metrics = repository->metrics();
+  CHECK(first_metrics.frame_index_block_reads == 1);
+  CHECK(first_metrics.frame_index_cache_hits > 0);
+  CHECK(first_metrics.frame_index_source_bytes == row_count * sizeof(int64_t));
+  CHECK(first_metrics.cached_frame_index_bytes >=
+        row_count * sizeof(int64_t));
+  CHECK(first_metrics.cached_frame_index_bytes <= 2ULL * 1024ULL * 1024ULL);
+  CHECK(first_metrics.peak_cached_frame_index_bytes ==
+        first_metrics.cached_frame_index_bytes);
+  CHECK(first_metrics.maximum_frame_index_read_ms >= 0.0);
+  CHECK(repository->resolveWindow(request).ready());
+  const auto warm_metrics = repository->metrics();
+  CHECK(warm_metrics.frame_index_block_reads ==
+        first_metrics.frame_index_block_reads);
+  CHECK(warm_metrics.frame_index_cache_hits >
+        first_metrics.frame_index_cache_hits);
+
+  auto preloaded = crimson::zarr::OpenMotionSeriesTimelineRepository(
+      archive, 30, &error, {1024 * 1024});
+  CHECK(preloaded != nullptr);
+  const auto preload_open_metrics = preloaded->metrics();
+  CHECK(preload_open_metrics.preload_candidate_bytes > 0);
+  CHECK(preload_open_metrics.default_source_preloaded);
+  CHECK(preload_open_metrics.preloaded_retained_bytes > 0);
+  CHECK(preload_open_metrics.frame_index_block_reads == 0);
+  CHECK(preloaded->resolveWindow(request).ready());
+  const auto preload_resolve_metrics = preloaded->metrics();
+  CHECK(preload_resolve_metrics.preloaded_window_resolves == 1);
+  CHECK(preload_resolve_metrics.paged_window_resolves == 0);
+  CHECK(preload_resolve_metrics.frame_index_block_reads == 0);
   return true;
 }
 
@@ -266,6 +298,7 @@ bool TestTail(const std::filesystem::path &root) {
   CHECK(descriptor.default_source == "tail_fixture");
   CHECK(descriptor.sources.size() == 1);
   CHECK(descriptor.sources.front().traces.size() == 4);
+  const size_t row_count = descriptor.sources.front().sample_count;
   CHECK(descriptor.sources.front().traces[0].default_visible);
   CHECK(!descriptor.sources.front().traces[3].default_visible);
 
@@ -280,6 +313,19 @@ bool TestTail(const std::filesystem::path &root) {
     CHECK(trace.frames.front() >= 8);
     CHECK(trace.frames.back() <= 25);
   }
+  const auto metrics = repository->metrics();
+  CHECK(metrics.frame_index_block_reads == 1);
+  CHECK(metrics.frame_index_source_bytes == row_count * sizeof(int32_t));
+  CHECK(metrics.cached_frame_index_bytes >= row_count * sizeof(int64_t));
+  CHECK(metrics.cached_frame_index_bytes <= 2ULL * 1024ULL * 1024ULL);
+
+  auto preloaded = crimson::zarr::OpenTailKinematicsTimelineRepository(
+      archive, 30, {}, &error, {1024 * 1024});
+  CHECK(preloaded != nullptr);
+  CHECK(preloaded->metrics().default_source_preloaded);
+  CHECK(preloaded->resolveWindow(request).ready());
+  CHECK(preloaded->metrics().preloaded_window_resolves == 1);
+  CHECK(preloaded->metrics().frame_index_block_reads == 0);
   return true;
 }
 

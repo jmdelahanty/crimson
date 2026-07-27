@@ -1,0 +1,488 @@
+{
+  "schema": "crimson.phase5l.reference-manifest.v1",
+  "captured_at": "2026-07-16 through 2026-07-17",
+  "maintained_runtime": {
+    "platform": "Linux 6.8.0-134-generic x86_64",
+    "host": "delahantyj-ws1.hhmi.org",
+    "gpu": "NVIDIA RTX A6000",
+    "driver": "580.173.02",
+    "source_head": "34ff3c38229450b4e6bbe9b16fed99e9ca966197",
+    "source_worktree_dirty": true,
+    "source_identity_note": "Cumulative Mac-port source plus the read-only Phase 5L reference hook was applied to the isolated NVIDIA tree; executable SHA-256 and per-capture metadata are authoritative.",
+    "executable": "/tmp/crimson-phase5l4-nvidia-codex/release/redgui",
+    "executable_sha256": "e8655651cda5d21cfa0ecdb171183e21e5719ff3caf1f27964b58dd9d1e9dd05",
+    "executable_size_bytes": 92074064,
+    "x11": {
+      "display": ":1",
+      "xauthority_path": "/run/user/64406/.mutter-Xwaylandauth.MXCPR3"
+    },
+    "capture_tools": {
+      "xdotool": "3.20160805.1",
+      "xwininfo": "1.1.6",
+      "imagemagick": "6.9.12-98"
+    },
+    "reference_hook_source_revision": "34ff3c38229450b4e6bbe9b16fed99e9ca966197-phase5l-worktree"
+  },
+  "archive": {
+    "path": "/groups/johnson/johnsonlab/jeremy/recordings/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop/zarr/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop_analysis.zarr",
+    "mtime": "2026-07-15 00:27:47.758499992 -0400",
+    "metadata_manifest_sha256": null,
+    "metadata_manifest_note": "The remote metadata-only scan did not return in the capture session; path, mtime, source log, exact ready markers, and screenshot content identify this deterministic reference."
+  },
+  "phase5l4_acceptance": {
+    "captured_at": "2026-07-17",
+    "logical_size": [
+      1920,
+      1080
+    ],
+    "contract": "acceptance_contract.json",
+    "report": "acceptance_report.json",
+    "macos_capture_manifest": "macos/capture-manifest.json",
+    "equivalent_states": [
+      "workspace",
+      "overlays",
+      "crop-preview",
+      "analysis-eye",
+      "stimulus-debug"
+    ],
+    "comparator_result": {
+      "passed": true,
+      "checks_passed": 46,
+      "checks_total": 46,
+      "max_window_or_control_anchor_delta_px": 0.0,
+      "max_clean_camera_block_channel_delta_8bit": 2.109375,
+      "clean_camera_channel_tolerance_8bit": 3
+    },
+    "validation": {
+      "macos_ctest": "36/36 passed",
+      "linux_ctest": "26/26 passed",
+      "linux_playback_smoke": "PASS frame 0 through 300; presented frame 300; elapsed 2.99474 seconds",
+      "macos_acquisition_smoke": "PASS frame 1024 through 7024; zero maximum camera skew; elapsed 39.945 seconds; maximum lag 444 frames",
+      "macos_live_geometry_smoke": "PASS frame 1024 through 7024 on unchanged-threshold retry; zero maximum camera skew; elapsed 38.117 seconds; maximum lag 5 frames",
+      "macos_live_geometry_transient": "Initial post-remount run reached frame 7024 but failed the fixed 500-frame performance gate at 744 lag frames",
+      "macos_recording_backed_refresh": "complete",
+      "windows_runtime": "deferred_by_user"
+    }
+  },
+  "captures": [
+    {
+      "id": "initial_empty_1920x1080",
+      "png": "linux/initial_empty_1920x1080.png",
+      "png_sha256": "5539cad9f71895fe1719bd753285f04b821d8894d1e524b9971efed9e795fc06",
+      "client_size": [
+        1920,
+        1080
+      ],
+      "state": "fresh working directory; no media; File Browser only",
+      "frame": null,
+      "capture_class": "deterministic",
+      "actions": []
+    },
+    {
+      "id": "file_menu_1920x1080",
+      "png": "linux/file_menu_1920x1080.png",
+      "png_sha256": "8f388014a1737447eac3ccfd97a7c5e6488c585dd69c7a67bb38413857b3e46d",
+      "client_size": [
+        1920,
+        1080
+      ],
+      "state": "empty workspace; File menu open",
+      "frame": null,
+      "capture_class": "observational",
+      "actions": [
+        "xdotool left click at client-relative x=78 y=88"
+      ]
+    },
+    {
+      "id": "initial_loaded_1920x1080",
+      "png": "linux/initial_loaded_1920x1080.png",
+      "png_sha256": "4f5666cdf633431459dd186e831990757a09938589f08a1bf0dc35ca7c2c254b",
+      "client_size": [
+        1920,
+        1080
+      ],
+      "state": "fresh working directory; archive loaded; paused startup with first-use overlap",
+      "requested_frame": 0,
+      "presented_frame": 0,
+      "capture_class": "deterministic",
+      "actions": []
+    },
+    {
+      "id": "initial_loaded_1280x800",
+      "png": "linux/initial_loaded_1280x800.png",
+      "png_sha256": "13a2cb7d02c1e3dad7d68f3e544f74b36eb1371c55f2cc5bcc278c819461b80b",
+      "client_size": [
+        1280,
+        800
+      ],
+      "state": "same paused loaded session externally resized; persisted windows clip rather than reflow",
+      "requested_frame": 0,
+      "presented_frame_asserted": false,
+      "capture_class": "observational",
+      "actions": [
+        "xdotool windowsize client 1280 800"
+      ]
+    },
+    {
+      "id": "playback_active_nongolden_1920x1080",
+      "png": "linux/playback_active_nongolden_1920x1080.png",
+      "png_sha256": "a0761cbc892905b329be896dbd3e86d27ca35c755b63857e8b5203ac934d0411",
+      "client_size": [
+        1920,
+        1080
+      ],
+      "state": "archive loaded with arranged profile; active playback after two seconds",
+      "presented_frame_asserted": false,
+      "observed_ui": {
+        "display_target_frame": 200,
+        "slider_frame": 200,
+        "camera_roi_label_frame": 201
+      },
+      "capture_class": "observational_nongolden",
+      "layout_profile": "linux/arranged_reference_1920x1080.imgui.ini",
+      "actions": [
+        "xdotool Space key to start playback",
+        "wait 2 seconds"
+      ]
+    },
+    {
+      "id": "workspace_roles_arranged_1920x1080",
+      "png": "linux/workspace_roles_arranged_1920x1080.png",
+      "png_sha256": "1f9d08ed3caabd0fa6248c48e7df174d0edd4b2481adea1542a4fc12b94d0739",
+      "client_size": [
+        1920,
+        1080
+      ],
+      "state": "archive loaded; paused startup; documentation-only ini profile separates stable window roles",
+      "requested_frame": 0,
+      "presented_frame": 0,
+      "capture_class": "deterministic_profile_nondefault_layout",
+      "layout_profile": "linux/arranged_reference_1920x1080.imgui.ini",
+      "source_png": "linux/workspace_roles_arranged_1920x1080.outer.png",
+      "source_png_sha256": "49c808f5d5fdba40c4cf0085df4bce60de8a10219330d1d57f0b40ab34d02458",
+      "crop": {
+        "width": 1920,
+        "height": 1080,
+        "x": 14,
+        "y": 52
+      }
+    },
+    {
+      "id": "workspace_exact_f000056_1920x1080",
+      "png": "linux/workspace_exact_f000056_1920x1080.png",
+      "x11_png": "linux/workspace_exact_f000056_1920x1080.x11.png",
+      "metadata": "linux/workspace_exact_f000056_1920x1080.json",
+      "ready_marker": "linux/workspace_exact_f000056_1920x1080.ui-reference.json",
+      "log": "linux/workspace_exact_f000056_1920x1080.redgui.log",
+      "checksum": "linux/workspace_exact_f000056_1920x1080.sha256.txt",
+      "png_sha256": "15ee8a32c0669d042f38f95f83c7325d035244cedebb6856405f6a7ef51615de",
+      "x11_png_sha256": "6c747d12ffe1dd3aac81c184b43560ad35ea79af8b47697a72cf306fe177f763",
+      "executable_sha256": "e8655651cda5d21cfa0ecdb171183e21e5719ff3caf1f27964b58dd9d1e9dd05",
+      "client_size": [
+        1920,
+        1080
+      ],
+      "framebuffer_size": [
+        1920,
+        1080
+      ],
+      "state": "paused arranged workspace at exact camera frame 56",
+      "requested_frame": 56,
+      "presented_frame": 56,
+      "capture_class": "deterministic",
+      "capture_surface": "application_gl_front_buffer",
+      "layout_profile": "linux/arranged_reference_1920x1080.imgui.ini",
+      "assertions": {
+        "write_contract": "read-only",
+        "current_frame": 56,
+        "slider_frame": 56,
+        "stable_frames": 60,
+        "camera_buffer": {
+          "camera_capacity": 100,
+          "camera_valid": 100,
+          "stimulus_capacity": 12,
+          "stimulus_valid": 12
+        }
+      }
+    },
+    {
+      "id": "overlays_exact_f000056_1920x1080",
+      "png": "linux/overlays_exact_f000056_1920x1080.png",
+      "x11_png": "linux/overlays_exact_f000056_1920x1080.x11.png",
+      "metadata": "linux/overlays_exact_f000056_1920x1080.json",
+      "ready_marker": "linux/overlays_exact_f000056_1920x1080.ui-reference.json",
+      "log": "linux/overlays_exact_f000056_1920x1080.redgui.log",
+      "checksum": "linux/overlays_exact_f000056_1920x1080.sha256.txt",
+      "png_sha256": "f840baa8860f162d6fe118094cb47ed3f627dde4dc4f2bb052778cc66ec7b142",
+      "x11_png_sha256": "7ed6523b5178bb75190c398239963e7f87c76a95e885f83cea45826e316bf380",
+      "executable_sha256": "e8655651cda5d21cfa0ecdb171183e21e5719ff3caf1f27964b58dd9d1e9dd05",
+      "client_size": [
+        1920,
+        1080
+      ],
+      "framebuffer_size": [
+        1920,
+        1080
+      ],
+      "state": "exact frame 56 with visible eye-mask overlays",
+      "requested_frame": 56,
+      "presented_frame": 56,
+      "capture_class": "deterministic",
+      "capture_surface": "application_gl_front_buffer",
+      "layout_profile": "linux/arranged_reference_1920x1080.imgui.ini",
+      "assertions": {
+        "write_contract": "read-only",
+        "current_frame": 56,
+        "slider_frame": 56,
+        "stable_frames": 60,
+        "camera_buffer": {
+          "camera_capacity": 100,
+          "camera_valid": 100,
+          "stimulus_capacity": 12,
+          "stimulus_valid": 12
+        },
+        "overlays": {
+          "angle_labels_drawn": 1,
+          "axes_drawn": 4,
+          "component_fill_count": 4,
+          "contours_drawn": 4,
+          "eye_masks": true,
+          "gaze_rays_drawn": 0,
+          "mask_draw_attempted": true,
+          "optional_overlay_status": "optional overlays ready",
+          "texture_cache_hits": 4,
+          "texture_uploads": 0,
+          "visible_roi_count": 1,
+          "visual_cone_overlaps_drawn": 1,
+          "visual_cones_drawn": 2
+        }
+      }
+    },
+    {
+      "id": "crop_preview_exact_f000056_1920x1080",
+      "png": "linux/crop_preview_exact_f000056_1920x1080.png",
+      "x11_png": "linux/crop_preview_exact_f000056_1920x1080.x11.png",
+      "metadata": "linux/crop_preview_exact_f000056_1920x1080.json",
+      "ready_marker": "linux/crop_preview_exact_f000056_1920x1080.ui-reference.json",
+      "log": "linux/crop_preview_exact_f000056_1920x1080.redgui.log",
+      "checksum": "linux/crop_preview_exact_f000056_1920x1080.sha256.txt",
+      "png_sha256": "51ff301c936dc78571d9af223be58caa3a905a9ee7d95b51725eb7fc8273fbf9",
+      "x11_png_sha256": "78094cbd10ee1f2b2e8af0bf7fe696eeceb93f7bf7b12f4d4f872565c3740dac",
+      "executable_sha256": "e8655651cda5d21cfa0ecdb171183e21e5719ff3caf1f27964b58dd9d1e9dd05",
+      "client_size": [
+        1920,
+        1080
+      ],
+      "framebuffer_size": [
+        1920,
+        1080
+      ],
+      "state": "exact frame 56 with 512x512 live texture crop",
+      "requested_frame": 56,
+      "presented_frame": 56,
+      "capture_class": "deterministic",
+      "capture_surface": "application_gl_front_buffer",
+      "layout_profile": "linux/arranged_reference_1920x1080.imgui.ini",
+      "assertions": {
+        "write_contract": "read-only",
+        "current_frame": 56,
+        "slider_frame": 56,
+        "stable_frames": 60,
+        "camera_buffer": {
+          "camera_capacity": 100,
+          "camera_valid": 100,
+          "stimulus_capacity": 12,
+          "stimulus_valid": 12
+        },
+        "crop": {
+          "height": 512,
+          "ready": true,
+          "source_frame": 56,
+          "source_label": "frame refined keypoint ROI | live frame texture crop",
+          "width": 512
+        }
+      }
+    },
+    {
+      "id": "analysis_eye_exact_f000056_1920x1080",
+      "png": "linux/analysis_eye_exact_f000056_1920x1080.png",
+      "x11_png": "linux/analysis_eye_exact_f000056_1920x1080.x11.png",
+      "metadata": "linux/analysis_eye_exact_f000056_1920x1080.json",
+      "ready_marker": "linux/analysis_eye_exact_f000056_1920x1080.ui-reference.json",
+      "log": "linux/analysis_eye_exact_f000056_1920x1080.redgui.log",
+      "checksum": "linux/analysis_eye_exact_f000056_1920x1080.sha256.txt",
+      "png_sha256": "7c3d0aa5cb438c63e539c12839fdfc2a28fbeffb1e00420a1a965cae1416a380",
+      "x11_png_sha256": "77f1498c726ee812df3a20c952fa06e2f2f504bf5ed1a22c37f81b7de10a2304",
+      "executable_sha256": "e8655651cda5d21cfa0ecdb171183e21e5719ff3caf1f27964b58dd9d1e9dd05",
+      "client_size": [
+        1920,
+        1080
+      ],
+      "framebuffer_size": [
+        1920,
+        1080
+      ],
+      "state": "exact frame 56 with alternate eye representation and visible masks",
+      "requested_frame": 56,
+      "presented_frame": 56,
+      "capture_class": "deterministic",
+      "capture_surface": "application_gl_front_buffer",
+      "layout_profile": "linux/arranged_reference_1920x1080.imgui.ini",
+      "assertions": {
+        "write_contract": "read-only",
+        "current_frame": 56,
+        "slider_frame": 56,
+        "stable_frames": 60,
+        "camera_buffer": {
+          "camera_capacity": 100,
+          "camera_valid": 100,
+          "stimulus_capacity": 12,
+          "stimulus_valid": 12
+        },
+        "analysis": {
+          "eye_representation_index": 1,
+          "eye_representation_key": "gaze",
+          "show_eye": true,
+          "show_stimulus_context": false,
+          "show_tail_angle": false,
+          "show_tail_curvature": false,
+          "show_tail_deflection": false,
+          "state_applied": true
+        },
+        "overlays": {
+          "angle_labels_drawn": 1,
+          "axes_drawn": 4,
+          "component_fill_count": 4,
+          "contours_drawn": 4,
+          "eye_masks": true,
+          "gaze_rays_drawn": 0,
+          "mask_draw_attempted": true,
+          "optional_overlay_status": "optional overlays ready",
+          "texture_cache_hits": 4,
+          "texture_uploads": 0,
+          "visible_roi_count": 1,
+          "visual_cone_overlaps_drawn": 1,
+          "visual_cones_drawn": 2
+        }
+      }
+    },
+    {
+      "id": "stimulus_debug_exact_f001024_1920x1080",
+      "png": "linux/stimulus_debug_exact_f001024_1920x1080.png",
+      "x11_png": "linux/stimulus_debug_exact_f001024_1920x1080.x11.png",
+      "metadata": "linux/stimulus_debug_exact_f001024_1920x1080.json",
+      "ready_marker": "linux/stimulus_debug_exact_f001024_1920x1080.ui-reference.json",
+      "log": "linux/stimulus_debug_exact_f001024_1920x1080.redgui.log",
+      "checksum": "linux/stimulus_debug_exact_f001024_1920x1080.sha256.txt",
+      "png_sha256": "9b10de4b8bded4f2cc044b119c4f3769be6228a17476727be8a6805757cb9204",
+      "x11_png_sha256": "75e2553409b612d9e4358f0b618f488dfdc3b497b9633ab5a61abd90c760893c",
+      "executable_sha256": "e8655651cda5d21cfa0ecdb171183e21e5719ff3caf1f27964b58dd9d1e9dd05",
+      "client_size": [
+        1920,
+        1080
+      ],
+      "framebuffer_size": [
+        1920,
+        1080
+      ],
+      "state": "exact camera frame 1024 mapped to exact stimulus frame 0",
+      "requested_frame": 1024,
+      "presented_frame": 1024,
+      "capture_class": "deterministic",
+      "capture_surface": "application_gl_front_buffer",
+      "layout_profile": "linux/arranged_reference_1920x1080.imgui.ini",
+      "assertions": {
+        "write_contract": "read-only",
+        "current_frame": 1024,
+        "slider_frame": 1024,
+        "stable_frames": 60,
+        "camera_buffer": {
+          "camera_capacity": 100,
+          "camera_valid": 100,
+          "stimulus_capacity": 12,
+          "stimulus_valid": 2
+        },
+        "stimulus": {
+          "debug_windows": true,
+          "loaded": true,
+          "presented_frame": 0,
+          "target_frame": 0
+        }
+      }
+    }
+  ],
+  "uncaptured_states": [
+    {
+      "state": "analysis-tail-stimulus",
+      "reason": "No mounted production archive contains both required datasets. A 2026-07-16 metadata-only scan found 103 stimulus-only archives, one tail-only archive, ten with neither, and zero with both."
+    },
+    {
+      "state": "Advanced Crop Preview source-selection reference",
+      "reason": "Maintained window is coupled to keypoint editing and exposes no acquisition/live/derived source selector."
+    }
+  ],
+  "windows": {
+    "runtime_evidence": "unavailable",
+    "source_topology_shared_with_linux": true,
+    "evidence_requirement": "windows/README.md",
+    "capture_harness": "scripts/capture_redgui_workspace_reference.ps1",
+    "capture_harness_status": "source-reviewed; embedded Win32 helper compiles cleanly; PowerShell/Win32 runtime validation pending real Windows host"
+  },
+  "historical_capture_runtime": {
+    "executable_sha256": "e42803cff3a2731c98c88c162de974e2d2b4ab7d5386c0a47c623d62f8554610",
+    "executable_size_bytes": 91925328,
+    "note": "Runtime for the pre-hook empty, menu, initial-loaded, resize, active-playback, and arranged-role captures.",
+    "capture_ids": [
+      "initial_empty_1920x1080",
+      "file_menu_1920x1080",
+      "initial_loaded_1920x1080",
+      "initial_loaded_1280x800",
+      "playback_active_nongolden_1920x1080",
+      "workspace_roles_arranged_1920x1080"
+    ]
+  },
+  "ui_reference_contract": {
+    "format": "crimson_ui_reference_v1",
+    "write_contract": "read-only",
+    "primary_surface": "opengl_front_buffer",
+    "companion_surface": "x11_client",
+    "required_stable_frames": 60,
+    "camera_ring_requirement": "all slots valid",
+    "stimulus_requirement": "exact mapped texture presented and decoder ring configured; occupancy is diagnostic",
+    "freeze_after_marker": true,
+    "overlay_requirement": "optional overlays ready; visible mask fill, contour, axis, angle label, and eye-direction geometry rendered as either gaze rays or visual cones"
+  },
+  "tail_stimulus_fixture_scan": {
+    "scanned_at": "2026-07-16",
+    "root": "/Volumes/johnsonlab/jeremy/recordings",
+    "scope": "analysis Zarr directories exactly one recording/zarr level below the root",
+    "method": "metadata-only existence checks for analysis/tail_kinematics_runs/zarr.json and analysis/stimulus_runs/zarr.json",
+    "counts": {
+      "total": 114,
+      "stimulus_only": 103,
+      "tail_only": 1,
+      "neither": 10,
+      "both": 0
+    },
+    "tail_only_archive": "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/zarr/sleepyfish_2026_05_05_17_45_30_cam2010095_analysis.zarr",
+    "result": "no production analysis archive currently contains both tail kinematics and stimulus analysis",
+    "tail_only_contract_validation": {
+      "tensorstore_probe": {
+        "executable": "build/macos-arm64-release/analysis_series_timeline_repository_probe",
+        "result": "pass",
+        "run": "tail_kinematics_hardened_w2_canary_20260715_01",
+        "frame_count": 1188000,
+        "traces": 4,
+        "requested_window": "0:4095",
+        "points_per_trace": 1198
+      },
+      "maintained_runtime": {
+        "executable_sha256": "a3320bf8f80e5351815fad95b63f7e1f0796ec0d22793171e1929b422bbf2187",
+        "result": "expected_rejection",
+        "exit_code": 2,
+        "loaded_tail_run": "tail_kinematics_hardened_w2_canary_20260715_01",
+        "message": "analysis-tail-stimulus requires tail and stimulus analysis data"
+      }
+    }
+  }
+}

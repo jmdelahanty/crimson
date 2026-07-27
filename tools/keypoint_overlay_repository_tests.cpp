@@ -1,3 +1,4 @@
+#include "keypoint_overlay_buffer.h"
 #include "zarr/archive_context.h"
 #include "zarr/keypoint_overlay_repository.h"
 #include "zarr/keypoint_overlay_scene_adapter.h"
@@ -166,31 +167,33 @@ bool BuildFixture(const std::filesystem::path& root) {
          {"keypoint_labels", {"swim_bladder", "eye_left", "eye_right"}},
          {"pose_schema", {{"edges", {{0, 1}, {0, 2}, {1, 2}}}}}}}}));
   CHECK((WriteArray<int32_t, 1>(root, refined_base + "/frame_indices",
-                                "int32", {3}, {2, 1, 2})));
+                                "int32", {3}, {1, 2, 2})));
+  CHECK((WriteArray<int32_t, 1>(root, refined_base + "/frame_counts",
+                                "int32", {3}, {0, 1, 2})));
   CHECK((WriteArray<int32_t, 1>(root, refined_base + "/detection_indices",
-                                "int32", {3}, {1, 0, 0})));
+                                "int32", {3}, {0, 1, 0})));
   CHECK((WriteArray<int64_t, 1>(root,
                                 refined_base + "/source_crop_row_ids",
-                                "int64", {3}, {2, 0, 1})));
+                                "int64", {3}, {0, 2, 1})));
   CHECK((WriteArray<double, 3>(
       root, refined_base + "/keypoints_img", "float64", {3, 3, 2},
-      {70, 60, 72, 58, 74, 58,
-       20, 20, 22, 18, 24, 18,
+      {20, 20, 22, 18, 24, 18,
+       70, 60, 72, 58, 74, 58,
        45, 40, 47, 38, 49, 38})));
   CHECK((WriteArray<double, 1>(root, refined_base + "/heading", "float64",
-                               {3}, {90.0, 45.0, 0.0})));
+                               {3}, {45.0, 90.0, 0.0})));
   CHECK((WriteArray<uint8_t, 1>(root,
                                 refined_base + "/detection_success",
-                                "uint8", {3}, {1, 0, 1})));
-  CHECK((WriteArray<uint8_t, 1>(root,
-                                refined_base + "/detection_source",
-                                "uint8", {3}, {1, 0, 0})));
-  CHECK((WriteArray<uint8_t, 1>(root,
-                                refined_base + "/usable_keypoints",
                                 "uint8", {3}, {0, 1, 1})));
   CHECK((WriteArray<uint8_t, 1>(root,
+                                refined_base + "/detection_source",
+                                "uint8", {3}, {0, 1, 0})));
+  CHECK((WriteArray<uint8_t, 1>(root,
+                                refined_base + "/usable_keypoints",
+                                "uint8", {3}, {1, 0, 1})));
+  CHECK((WriteArray<uint8_t, 1>(root,
                                 refined_base + "/flip_corrected",
-                                "uint8", {3}, {1, 0, 0})));
+                                "uint8", {3}, {0, 1, 0})));
 
   constexpr const char* raw_run = "raw_fixture";
   const std::string raw_base = std::string("keypoints_runs/") + raw_run;
@@ -225,9 +228,24 @@ bool TestTensorStoreRepository() {
   std::string error;
   auto archive = crimson::zarr::ArchiveContext::Open(archive_root, &error);
   CHECK(archive != nullptr);
+  crimson::zarr::KeypointRepositoryOpenMetrics open_metrics;
   auto repository = crimson::zarr::OpenKeypointOverlayRepository(
-      archive, {}, &error);
+      archive, {}, &error, &open_metrics);
   CHECK(repository != nullptr);
+  CHECK(open_metrics.lazy_attempted);
+  CHECK(open_metrics.lazy_path);
+  CHECK(!open_metrics.fallback_path);
+  CHECK(open_metrics.attribute_reads >= 3);
+  CHECK(open_metrics.array_open_attempts > 0);
+  CHECK(open_metrics.array_open_successes > 0);
+  CHECK(open_metrics.array_open_failures > 0);
+  CHECK(open_metrics.array_reads == 1);
+  CHECK(!open_metrics.events.empty());
+  CHECK(std::any_of(open_metrics.events.begin(), open_metrics.events.end(),
+                    [](const auto& event) {
+                      return event.phase == "frame_counts_read" &&
+                             event.operation == "array_read" && event.success;
+                    }));
   const auto& descriptor = repository->descriptor();
   CHECK(descriptor.source_group == "refined_keypoints_runs");
   CHECK(descriptor.run_name == "refined_fixture");
@@ -319,10 +337,49 @@ bool TestNormalizedContract() {
   return true;
 }
 
+bool TestScheduledBuffer() {
+  crimson::zarr::KeypointOverlayDescriptor descriptor;
+  descriptor.source_group = "refined_keypoints_runs";
+  descriptor.run_name = "buffer_fixture";
+  descriptor.coordinate_space = crimson::zarr::KeypointCoordinateSpace::Image;
+  descriptor.keypoint_labels = {"point"};
+  std::vector<crimson::zarr::KeypointOverlayRow> rows;
+  for (int64_t frame = 1; frame <= 4; ++frame) {
+    crimson::zarr::KeypointOverlayRow row;
+    row.camera_frame = frame;
+    row.detection_index = frame;
+    row.keypoints = {{static_cast<double>(frame), 2.0}};
+    rows.push_back(std::move(row));
+  }
+  auto scheduler =
+      std::make_shared<crimson::data::DataAccessScheduler>(16, 2, 1);
+  KeypointOverlayBuffer buffer(scheduler, "fixture");
+  std::string error;
+  CHECK(buffer.open(crimson::zarr::MakeKeypointOverlayRepository(
+                        std::move(descriptor), std::move(rows)),
+                    2, 3, &error));
+  CHECK(buffer.requestFrame(1, 100, 80, false, &error));
+  CHECK(buffer.waitForFrame(1, std::chrono::seconds(2)));
+  CHECK(buffer.frame(1) != nullptr);
+  CHECK(buffer.frame(1)->status ==
+        crimson::zarr::KeypointOverlayStatus::Mapped);
+  CHECK(buffer.requestFrame(1, 100, 80, false, &error));
+  CHECK(buffer.metrics().cache_hits >= 1);
+  CHECK(buffer.requestFrame(4, 100, 80, true, &error));
+  CHECK(buffer.waitForFrame(4, std::chrono::seconds(2)));
+  CHECK(buffer.frame(1) == nullptr);
+  CHECK(buffer.frame(4)->detections.size() == 1);
+  CHECK(buffer.metrics().resolved_frames >= 2);
+  buffer.close();
+  scheduler->shutdown();
+  return true;
+}
+
 }  // namespace
 
 int main() {
-  if (!TestTensorStoreRepository() || !TestNormalizedContract()) {
+  if (!TestTensorStoreRepository() || !TestNormalizedContract() ||
+      !TestScheduledBuffer()) {
     return 1;
   }
   std::cout << "keypoint_overlay_repository_tests: PASS\n";

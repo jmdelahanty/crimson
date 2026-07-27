@@ -526,6 +526,7 @@ struct ZarrDetectionData {
     std::vector<StimulusEventSummary> stimulus_event_timeline;
     size_t stimulus_event_timeline_generation = 0;
     std::unordered_map<int32_t, std::string> event_type_names;
+    std::string stimulus_events_run_name;
     std::vector<std::vector<size_t>> stimulus_events_by_frame;
     std::vector<std::vector<size_t>> stimulus_events_by_camera_frame;
     bool has_stimulus_events = false;
@@ -787,6 +788,8 @@ struct ZarrDetectionData {
         bool loaded = false;
         std::string run_name;
         std::string component_name;
+        std::string run_selection;
+        std::string component_selection;
         std::string coordinate_frame;
         std::string angle_convention;
         std::vector<int64_t> camera_frame_ids;
@@ -796,9 +799,11 @@ struct ZarrDetectionData {
         std::vector<float> distance_mm;    // row-major [frame, chaser]
         std::vector<uint8_t> valid;        // row-major [frame, chaser]
         std::vector<std::array<float, 4>> chaser_rgba;
+        std::vector<std::string> chaser_color_provenance;
         size_t row_count = 0;
         size_t chaser_count = 0;
         float radial_max_mm = std::numeric_limits<float>::quiet_NaN();
+        bool radial_max_from_data = false;
     };
     ChaserDistancePolarData chaser_distance_polar;
 
@@ -1042,6 +1047,17 @@ public:
     const std::string& getStimulusSourceH5() const { return data_.stimulus_source_h5; }
     bool hasStimulusEvents() const { return data_.has_stimulus_events; }
     std::vector<std::string> getStimulusEventsForFrame(size_t frame_id) const;
+    const std::vector<ZarrDetectionData::EventLogEntry>&
+    getStimulusEventEntries() const {
+        return data_.stimulus_events;
+    }
+    const std::unordered_map<int32_t, std::string>&
+    getStimulusEventTypeNames() const {
+        return data_.event_type_names;
+    }
+    const std::string& getStimulusEventsRunName() const {
+        return data_.stimulus_events_run_name;
+    }
     using StimulusEventSummary = ZarrDetectionData::StimulusEventSummary;
     const std::vector<StimulusEventSummary>& getStimulusEventTimeline() const;
     size_t getStimulusEventTimelineGeneration() const {
@@ -1063,6 +1079,7 @@ public:
         float bearing_deg = std::numeric_limits<float>::quiet_NaN();
         std::array<float, 4> rgba = {1.0f, 0.0f, 0.0f, 1.0f};
         bool has_rgba = false;
+        std::string color_provenance;
     };
     struct ChaserDistancePolarFrame {
         bool available = false;
@@ -1080,6 +1097,36 @@ public:
     }
     const std::string& getChaserDistancePolarComponentName() const {
         return data_.chaser_distance_polar.component_name;
+    }
+    const std::string& getChaserDistancePolarRunSelection() const {
+        return data_.chaser_distance_polar.run_selection;
+    }
+    const std::string& getChaserDistancePolarComponentSelection() const {
+        return data_.chaser_distance_polar.component_selection;
+    }
+    const std::string& getChaserDistancePolarCoordinateFrame() const {
+        return data_.chaser_distance_polar.coordinate_frame;
+    }
+    const std::string& getChaserDistancePolarAngleConvention() const {
+        return data_.chaser_distance_polar.angle_convention;
+    }
+    size_t getChaserDistancePolarRowCount() const {
+        return data_.chaser_distance_polar.row_count;
+    }
+    size_t getChaserDistancePolarChaserCount() const {
+        return data_.chaser_distance_polar.chaser_count;
+    }
+    float getChaserDistancePolarRadialMaxMm() const {
+        return data_.chaser_distance_polar.radial_max_mm;
+    }
+    bool hasChaserDistancePolarDataRadialMax() const {
+        return data_.chaser_distance_polar.radial_max_from_data;
+    }
+    bool hasChaserDistancePolarCameraFrame(int64_t camera_frame) const {
+        return data_.chaser_distance_polar.loaded &&
+               data_.chaser_distance_polar.row_by_camera_frame.find(
+                   camera_frame) !=
+                   data_.chaser_distance_polar.row_by_camera_frame.end();
     }
     ChaserDistancePolarFrame getChaserDistancePolarFrame(
         int64_t camera_frame) const;

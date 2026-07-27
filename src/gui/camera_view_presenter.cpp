@@ -1,6 +1,7 @@
 #include "gui/camera_view_presenter.h"
 
 #include "NvCodecUtils.h"
+#include "frame_presentation.h"
 #include "frame_selection.h"
 
 #include <opencv2/imgproc.hpp>
@@ -832,17 +833,17 @@ CameraViewPresenterResult presentCameraViewFrame(
                 result.resolved_current_frame_num = context.target_display_frame;
             }
         } else {
-            if (camera.texture_has_valid_frame) {
-                result.presented_frame = camera.last_uploaded_frame;
-                result.resolved_current_frame_num =
-                    camera.last_uploaded_frame >= 0
-                        ? camera.last_uploaded_frame
-                        : context.current_frame_num;
-            } else {
-                result.presented_frame = -1;
-                result.resolved_current_frame_num =
-                    context.target_display_frame;
-            }
+            const auto decision = crimson::playback::resolveFramePresentation(
+                {context.target_display_frame, std::nullopt,
+                 camera.texture_has_valid_frame
+                     ? std::optional<int64_t>(camera.last_uploaded_frame)
+                     : std::nullopt,
+                 crimson::playback::MissingFramePolicy::HoldVisible, false});
+            result.presented_frame = static_cast<int>(decision.presented_frame);
+            result.resolved_current_frame_num =
+                decision.render_current
+                    ? static_cast<int>(decision.presented_frame)
+                    : context.target_display_frame;
         }
         return result;
     }
@@ -881,11 +882,16 @@ CameraViewPresenterResult presentCameraViewFrame(
                 prewarmPlaybackStagingAfter(result.presented_frame);
             }
         } else {
-            result.presented_frame =
-                camera.texture_has_valid_frame ? camera.last_uploaded_frame : -1;
+            const auto decision = crimson::playback::resolveFramePresentation(
+                {paused_target_frame, std::nullopt,
+                 camera.texture_has_valid_frame
+                     ? std::optional<int64_t>(camera.last_uploaded_frame)
+                     : std::nullopt,
+                 crimson::playback::MissingFramePolicy::HoldVisible, false});
+            result.presented_frame = static_cast<int>(decision.presented_frame);
             result.resolved_current_frame_num =
-                (camera.texture_has_valid_frame && camera.last_uploaded_frame >= 0)
-                    ? camera.last_uploaded_frame
+                decision.render_current
+                    ? static_cast<int>(decision.presented_frame)
                     : paused_target_frame;
         }
     } else if (camera.texture_has_valid_frame) {

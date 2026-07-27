@@ -183,7 +183,8 @@ std::array<uint8_t, 4> render(AppleVideoMetalRenderer& renderer,
                               AppleDecodedVideoFrame frame,
                               bool* retained_until_completion = nullptr,
                               const AppleMetalVideoSourceRegion* region =
-                                  nullptr) {
+                                  nullptr,
+                              NSUInteger sample_x = 8) {
     constexpr NSUInteger width = 16;
     constexpr NSUInteger height = 16;
     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
@@ -231,7 +232,8 @@ std::array<uint8_t, 4> render(AppleVideoMetalRenderer& renderer,
           bytesPerRow:width * 4
            fromRegion:MTLRegionMake2D(0, 0, width, height)
           mipmapLevel:0];
-    const size_t center = ((height / 2) * width + width / 2) * 4;
+    const size_t center =
+        ((height / 2) * width + std::min(sample_x, width - 1)) * 4;
     return {pixels[center], pixels[center + 1], pixels[center + 2],
             pixels[center + 3]};
 }
@@ -301,6 +303,22 @@ void runTests() {
     checkNear(cropped_right[0], 0, 2);
     checkNear(cropped_right[1], 255, 2);
     checkNear(cropped_right[2], 0, 2);
+
+    const AppleMetalVideoSourceRegion full_mirrored{0.0, 0.0, 1.0, 1.0,
+                                                     true};
+    const auto mirrored_left_edge = render(renderer, makeBgraSplitFrame(),
+                                           nullptr, &full_mirrored, 2);
+    checkNear(mirrored_left_edge[0], 0, 2);
+    checkNear(mirrored_left_edge[1], 255, 2);
+    checkNear(mirrored_left_edge[2], 0, 2);
+
+    const AppleMetalVideoSourceRegion half_opacity{0.0, 0.0, 1.0, 1.0,
+                                                    false, 0.5};
+    const auto blended_left_edge = render(renderer, makeBgraSplitFrame(),
+                                          nullptr, &half_opacity, 2);
+    checkNear(blended_left_edge[0], 128, 3);
+    checkNear(blended_left_edge[1], 0, 2);
+    checkNear(blended_left_edge[2], 255, 2);
 }
 
 }  // namespace

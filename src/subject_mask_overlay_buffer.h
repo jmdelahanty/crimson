@@ -1,5 +1,6 @@
 #pragma once
 
+#include "data_access_scheduler.h"
 #include "zarr/subject_mask_overlay_repository.h"
 
 #include <chrono>
@@ -15,15 +16,24 @@ struct SubjectMaskOverlayBufferMetrics {
   uint64_t missing_frames = 0;
   uint64_t failed_frames = 0;
   uint64_t discarded_results = 0;
+  uint64_t cached_payload_bytes = 0;
+  uint64_t peak_cached_payload_bytes = 0;
+  uint64_t released_payload_bytes = 0;
   size_t peak_cached_frames = 0;
   size_t peak_pending_frames = 0;
   double maximum_resolve_ms = 0.0;
+  uint64_t scheduler_submissions = 0;
+  uint64_t scheduler_duplicates = 0;
+  uint64_t scheduler_promotions = 0;
+  uint64_t scheduler_capacity_rejections = 0;
   std::string last_error;
 };
 
 class SubjectMaskOverlayBuffer {
 public:
-  SubjectMaskOverlayBuffer();
+  explicit SubjectMaskOverlayBuffer(
+      std::shared_ptr<crimson::data::DataAccessScheduler> scheduler = nullptr,
+      std::string archive_identity = {});
   ~SubjectMaskOverlayBuffer();
 
   SubjectMaskOverlayBuffer(const SubjectMaskOverlayBuffer &) = delete;
@@ -47,6 +57,7 @@ public:
 
   crimson::zarr::SubjectMaskOverlayDescriptor descriptor() const;
   SubjectMaskOverlayBufferMetrics metrics() const;
+  crimson::zarr::SubjectMaskOverlayRepositoryMetrics repositoryMetrics() const;
 
 private:
   struct Impl;

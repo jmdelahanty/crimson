@@ -85,6 +85,8 @@ struct AnalysisSeriesTimelineWindow {
   AnalysisSeriesTimelineRequest request;
   size_t source_row_count = 0;
   size_t published_point_count = 0;
+  std::vector<int64_t> mapping_frames;
+  std::vector<double> mapping_times_seconds;
   std::vector<AnalysisSeriesTimelineTrace> traces;
   std::string error;
 
@@ -112,12 +114,31 @@ struct AnalysisSeriesTimelinePageBounds {
   bool valid() const { return first_frame >= 0 && last_frame >= first_frame; }
 };
 
+struct AnalysisSeriesTimelineRepositoryMetrics {
+  uint64_t frame_index_block_reads = 0;
+  uint64_t frame_index_cache_hits = 0;
+  uint64_t frame_index_cache_evictions = 0;
+  uint64_t frame_index_source_bytes = 0;
+  uint64_t cached_frame_index_bytes = 0;
+  uint64_t peak_cached_frame_index_bytes = 0;
+  double maximum_frame_index_read_ms = 0.0;
+  uint64_t preload_candidate_bytes = 0;
+  uint64_t preloaded_retained_bytes = 0;
+  uint64_t preloaded_window_resolves = 0;
+  uint64_t paged_window_resolves = 0;
+  double preload_ms = 0.0;
+  bool default_source_preloaded = false;
+};
+
 class AnalysisSeriesTimelineRepository {
 public:
   virtual ~AnalysisSeriesTimelineRepository() = default;
   virtual const AnalysisSeriesTimelineDescriptor &descriptor() const = 0;
   virtual AnalysisSeriesTimelineWindow
   resolveWindow(const AnalysisSeriesTimelineRequest &request) const = 0;
+  virtual AnalysisSeriesTimelineRepositoryMetrics metrics() const {
+    return {};
+  }
 };
 
 const AnalysisSeriesSourceDescriptor *

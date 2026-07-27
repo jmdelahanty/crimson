@@ -191,6 +191,36 @@ bool BuildFixture(const std::filesystem::path& root) {
   return true;
 }
 
+bool BuildLineagePointers(const std::filesystem::path& root,
+                          const std::string& mask_crop_run,
+                          const std::string& keypoint_crop_run) {
+  CHECK(WriteJson(root / "crop_runs/zarr.json",
+                  {{"zarr_format", 3},
+                   {"node_type", "group"},
+                   {"attributes", json::object()}}));
+  CHECK(WriteJson(
+      root / "refined_subject_masks_runs/zarr.json",
+      {{"zarr_format", 3},
+       {"node_type", "group"},
+       {"attributes", {{"latest_complete", "mask_fixture"}}}}));
+  CHECK(WriteJson(
+      root / "refined_subject_masks_runs/mask_fixture/zarr.json",
+      {{"zarr_format", 3},
+       {"node_type", "group"},
+       {"attributes", {{"source_crop_run", mask_crop_run}}}}));
+  CHECK(WriteJson(
+      root / "refined_keypoints_runs/zarr.json",
+      {{"zarr_format", 3},
+       {"node_type", "group"},
+       {"attributes", {{"latest_complete", "keypoint_fixture"}}}}));
+  CHECK(WriteJson(
+      root / "refined_keypoints_runs/keypoint_fixture/zarr.json",
+      {{"zarr_format", 3},
+       {"node_type", "group"},
+       {"attributes", {{"source_crop_run", keypoint_crop_run}}}}));
+  return true;
+}
+
 bool RunTest() {
   TemporaryDirectory temporary;
   CHECK(!temporary.path().empty());
@@ -249,6 +279,10 @@ bool RunTest() {
       crimson::zarr::OpenAnalysisCropGeometryRepository(
           archive, "crop_runs/crop_geometry_fixture", &error);
   CHECK(explicit_repository != nullptr);
+  auto invalid_explicit_repository =
+      crimson::zarr::OpenAnalysisCropGeometryRepository(
+          archive, "crop_runs/nested/run", &error);
+  CHECK(invalid_explicit_repository == nullptr);
 
   auto legacy_repository = crimson::zarr::OpenAnalysisCropGeometryRepository(
       archive, "legacy_metadata_fixture", &error);
@@ -257,6 +291,39 @@ bool RunTest() {
   CHECK(legacy_repository->descriptor().output_height == 32);
   CHECK(!std::filesystem::exists(
       archive_root / "crop_runs/legacy_metadata_fixture/roi_images/c"));
+
+  const auto mask_lineage_root =
+      temporary.path() / "mask-lineage/zarr/analysis.zarr";
+  std::filesystem::create_directories(mask_lineage_root);
+  CHECK(BuildFixture(mask_lineage_root));
+  CHECK(BuildLineagePointers(mask_lineage_root, "crop_geometry_fixture",
+                             "legacy_metadata_fixture"));
+  auto mask_lineage_archive =
+      crimson::zarr::ArchiveContext::Open(mask_lineage_root, &error);
+  CHECK(mask_lineage_archive != nullptr);
+  auto mask_lineage_repository =
+      crimson::zarr::OpenAnalysisCropGeometryRepository(
+          mask_lineage_archive, {}, &error);
+  CHECK(mask_lineage_repository != nullptr);
+  CHECK(mask_lineage_repository->descriptor().run_name ==
+        "crop_geometry_fixture");
+
+  const auto keypoint_lineage_root =
+      temporary.path() / "keypoint-lineage/zarr/analysis.zarr";
+  std::filesystem::create_directories(keypoint_lineage_root);
+  CHECK(BuildFixture(keypoint_lineage_root));
+  CHECK(BuildLineagePointers(keypoint_lineage_root, "invalid/nested/run",
+                             "crop_runs/legacy_metadata_fixture"));
+  auto keypoint_lineage_archive =
+      crimson::zarr::ArchiveContext::Open(keypoint_lineage_root, &error);
+  CHECK(keypoint_lineage_archive != nullptr);
+  auto keypoint_lineage_repository =
+      crimson::zarr::OpenAnalysisCropGeometryRepository(
+          keypoint_lineage_archive, {}, &error);
+  CHECK(keypoint_lineage_repository != nullptr);
+  CHECK(keypoint_lineage_repository->descriptor().run_name ==
+        "legacy_metadata_fixture");
+
   std::cout << "analysis_crop_geometry_repository_tests: PASS\n";
   return true;
 }

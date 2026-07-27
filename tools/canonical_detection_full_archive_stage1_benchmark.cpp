@@ -1,0 +1,1109 @@
+#include "canonical_detection_buffer.h"
+#include "platform/macos/apple_analysis_repository_loader.h"
+#include "read_only_overlay_scene.h"
+#include "session_readiness.h"
+#include "zarr/affiliated_video_repository.h"
+#include "zarr/canonical_detection_overlay_scene_adapter.h"
+
+#include <nlohmann/json.hpp>
+#include <tensorstore/internal/metrics/collect.h>
+#include <tensorstore/internal/metrics/registry.h>
+
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <future>
+#include <iostream>
+#include <memory>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <utility>
+#include <vector>
+
+#include <sys/resource.h>
+
+namespace {
+
+using json = nlohmann::json;
+using Clock = std::chrono::steady_clock;
+namespace ts = tensorstore;
+
+constexpr size_t kExpectedFrames = 1188000;
+constexpr size_t kExpectedRows = 1187087;
+constexpr int kSourceWidth = 4512;
+constexpr int kSourceHeight = 4512;
+constexpr size_t kPageFrames = 70;
+constexpr size_t kCachePages = 32;
+constexpr size_t kTraversalFrames = 3500;
+constexpr size_t kPlaybackFps = 700;
+constexpr std::chrono::milliseconds kPageDeadline{100};
+constexpr uint64_t kResidentBudgetBytes = 64ULL * 1024ULL * 1024ULL;
+constexpr uint64_t kResidencyChunkBytes = 512ULL * 1024ULL;
+constexpr int64_t kInterferenceProbeFrame = 271085;
+
+constexpr std::array<int64_t, 8> kSettleFrames = {
+    271085, 85499, 397712, 1003450, 939795, 903492, 351953, 1141796};
+constexpr std::array<int64_t, 8> kSeekBurstFrames = {
+    560111, 1066017, 905397, 100063, 996466, 909512, 639969, 378251};
+
+struct PhysicalMetrics {
+  int64_t file_reads = 0;
+  int64_t file_batch_reads = 0;
+  int64_t file_bytes = 0;
+  int64_t cache_hits = 0;
+  int64_t cache_misses = 0;
+  int64_t cache_evictions = 0;
+};
+
+struct LoadedProducts {
+  std::shared_ptr<crimson::zarr::ArchiveContext> archive;
+  std::unique_ptr<crimson::zarr::KeypointOverlayRepository> keypoints;
+  std::unique_ptr<crimson::zarr::SubjectMaskOverlayRepository> masks;
+  std::unique_ptr<crimson::zarr::SubjectShapeOverlayRepository> shape;
+  std::unique_ptr<crimson::zarr::EyeGeometryOverlayRepository> eye_geometry;
+  std::unique_ptr<crimson::timeline::AnalysisSeriesTimelineRepository> motion;
+  std::unique_ptr<crimson::timeline::EyeAngleTimelineRepository> eye_angles;
+  std::unique_ptr<crimson::timeline::AnalysisSeriesTimelineRepository>
+      tail_kinematics;
+  std::unique_ptr<crimson::zarr::AnalysisCropGeometryRepository> crop_geometry;
+  crimson::zarr::CanonicalDetectionRepositoryOpenMetrics detection_open;
+  uint64_t preloaded_trace_bytes = 0;
+};
+
+struct LoadOutcome {
+  LoadedProducts products;
+  std::unique_ptr<CanonicalDetectionBuffer> detection_buffer;
+  double archive_ready_ms = 0.0;
+  double first_detection_overlay_ms = 0.0;
+  double first_detection_request_ms = 0.0;
+  double first_detection_publish_ms = 0.0;
+  double first_detection_repository_ms = 0.0;
+  uint64_t first_detection_resolved_pages = 0;
+  size_t first_detection_pending_at_request = 0;
+  size_t first_detection_active_at_request = 0;
+  double required_products_ready_ms = 0.0;
+  double required_products_load_ms = 0.0;
+  double interference_request_ms = 0.0;
+  double interference_publish_ms = 0.0;
+  double interference_repository_ms = 0.0;
+  size_t interference_pending_at_request = 0;
+  size_t interference_active_at_request = 0;
+  CanonicalDetectionResidencyMetrics residency;
+};
+
+void require(bool condition, const std::string &message) {
+  if (!condition) {
+    throw std::runtime_error(message);
+  }
+}
+
+double elapsedMilliseconds(Clock::time_point started) {
+  return std::chrono::duration<double, std::milli>(Clock::now() - started)
+      .count();
+}
+
+int64_t counterValue(std::string_view name) {
+  const auto metric = ts::internal_metrics::GetMetricRegistry().Collect(name);
+  if (!metric || metric->values.empty()) {
+    return 0;
+  }
+  return std::get<int64_t>(metric->values.front().value);
+}
+
+PhysicalMetrics snapshotPhysicalMetrics() {
+  return {
+      counterValue("/tensorstore/kvstore/file/read"),
+      counterValue("/tensorstore/kvstore/file/batch_read"),
+      counterValue("/tensorstore/kvstore/file/bytes_read"),
+      counterValue("/tensorstore/cache/hit_count"),
+      counterValue("/tensorstore/cache/miss_count"),
+      counterValue("/tensorstore/cache/evict_count"),
+  };
+}
+
+PhysicalMetrics operator-(const PhysicalMetrics &after,
+                          const PhysicalMetrics &before) {
+  return {
+      after.file_reads - before.file_reads,
+      after.file_batch_reads - before.file_batch_reads,
+      after.file_bytes - before.file_bytes,
+      after.cache_hits - before.cache_hits,
+      after.cache_misses - before.cache_misses,
+      after.cache_evictions - before.cache_evictions,
+  };
+}
+
+json physicalMetricsJson(const PhysicalMetrics &metrics) {
+  return {
+      {"file_reads", metrics.file_reads},
+      {"file_batch_reads", metrics.file_batch_reads},
+      {"file_bytes", metrics.file_bytes},
+      {"cache_hits", metrics.cache_hits},
+      {"cache_misses", metrics.cache_misses},
+      {"cache_evictions", metrics.cache_evictions},
+  };
+}
+
+json residencyMetricsJson(const CanonicalDetectionResidencyMetrics &metrics) {
+  return {
+      {"state", canonicalDetectionResidencyStateName(metrics.state)},
+      {"attempts", metrics.attempts},
+      {"decoded_hot_bytes", metrics.decoded_hot_bytes},
+      {"maximum_resident_bytes", metrics.maximum_resident_bytes},
+      {"maximum_chunk_decoded_bytes", metrics.maximum_chunk_decoded_bytes},
+      {"planned_chunks", metrics.planned_chunks},
+      {"completed_chunks", metrics.completed_chunks},
+      {"decoded_source_bytes", metrics.decoded_source_bytes},
+      {"retained_bytes", metrics.retained_bytes},
+      {"stale_chunks", metrics.stale_chunks},
+      {"failed_chunks", metrics.failed_chunks},
+      {"publications", metrics.publications},
+      {"elapsed_ms", metrics.elapsed_ms},
+      {"maximum_chunk_ms", metrics.maximum_chunk_ms},
+      {"last_error", metrics.last_error},
+  };
+}
+
+uint64_t peakRssBytes() {
+  rusage usage{};
+  if (getrusage(RUSAGE_SELF, &usage) != 0 || usage.ru_maxrss < 0) {
+    return 0;
+  }
+#if defined(__APPLE__)
+  return static_cast<uint64_t>(usage.ru_maxrss);
+#else
+  return static_cast<uint64_t>(usage.ru_maxrss) * 1024;
+#endif
+}
+
+void hashBytes(uint64_t *hash, const void *data, size_t size) {
+  const auto *bytes = static_cast<const uint8_t *>(data);
+  for (size_t index = 0; index < size; ++index) {
+    *hash ^= bytes[index];
+    *hash *= 1099511628211ULL;
+  }
+}
+
+void hashFrame(uint64_t *hash,
+               const crimson::zarr::CanonicalDetectionFrame &frame) {
+  hashBytes(hash, &frame.camera_frame, sizeof(frame.camera_frame));
+  const uint64_t count = frame.detections.size();
+  hashBytes(hash, &count, sizeof(count));
+  for (const auto &detection : frame.detections) {
+    hashBytes(hash, &detection.row_index, sizeof(detection.row_index));
+    hashBytes(hash, detection.normalized_cxcywh.data(),
+              detection.normalized_cxcywh.size() * sizeof(float));
+    hashBytes(hash, &detection.score, sizeof(detection.score));
+    hashBytes(hash, &detection.class_id, sizeof(detection.class_id));
+  }
+}
+
+std::string hexDigest(uint64_t value) {
+  constexpr char digits[] = "0123456789abcdef";
+  std::string output(16, '0');
+  for (size_t index = 0; index < output.size(); ++index) {
+    output[output.size() - index - 1] = digits[value & 0xfU];
+    value >>= 4U;
+  }
+  return output;
+}
+
+void recordTimings(AppleAnalysisRepositoryBundle *event, json *timings,
+                   LoadedProducts *products) {
+  for (const auto &timing : event->timings) {
+    (*timings)[timing.product] = {
+        {"available", timing.available},
+        {"elapsed_ms", timing.elapsed_ms},
+        {"error", timing.error},
+    };
+  }
+  products->preloaded_trace_bytes += event->preloaded_trace_bytes;
+}
+
+void adoptProduct(
+    AppleAnalysisRepositoryBundle event, Clock::time_point process_started,
+    const std::filesystem::path &archive_path,
+    const std::shared_ptr<crimson::data::DataAccessScheduler> &scheduler,
+    LoadedProducts *products,
+    std::unique_ptr<CanonicalDetectionBuffer> *detection_buffer,
+    std::optional<double> *archive_ready_ms, json *timings) {
+  recordTimings(&event, timings, products);
+  if (event.archive) {
+    products->archive = event.archive;
+  }
+  for (const auto &timing : event.timings) {
+    if (timing.product == "archive" && timing.available &&
+        !archive_ready_ms->has_value()) {
+      *archive_ready_ms = elapsedMilliseconds(process_started);
+    }
+  }
+  if (event.canonical_detection) {
+    products->detection_open = event.canonical_detection_open_metrics;
+    auto buffer = std::make_unique<CanonicalDetectionBuffer>(
+        scheduler, archive_path.string());
+    std::string error;
+    require(buffer->open(std::move(event.canonical_detection), kPageFrames,
+                         kCachePages, &error),
+            "Could not open canonical detection buffer: " + error);
+    require(buffer->requestFrame(0, true, &error),
+            "Could not request first canonical detection frame: " + error);
+    *detection_buffer = std::move(buffer);
+  }
+  if (event.keypoints) {
+    products->keypoints = std::move(event.keypoints);
+  }
+  if (event.subject_masks) {
+    products->masks = std::move(event.subject_masks);
+  }
+  if (event.subject_shape) {
+    products->shape = std::move(event.subject_shape);
+  }
+  if (event.eye_geometry) {
+    products->eye_geometry = std::move(event.eye_geometry);
+  }
+  if (event.motion) {
+    products->motion = std::move(event.motion);
+  }
+  if (event.eye_angles) {
+    products->eye_angles = std::move(event.eye_angles);
+  }
+  if (event.tail_kinematics) {
+    products->tail_kinematics = std::move(event.tail_kinematics);
+  }
+  if (event.crop_geometry) {
+    products->crop_geometry = std::move(event.crop_geometry);
+  }
+}
+
+LoadOutcome loadRequiredProducts(
+    const std::filesystem::path &archive_path, const std::string &run_name,
+    const std::shared_ptr<crimson::data::DataAccessScheduler> &scheduler,
+    Clock::time_point process_started, const std::string &strategy,
+    json *evidence) {
+  AppleAnalysisRepositoryLoadRequest request;
+  request.archive_path = archive_path.string();
+  request.detection_run = run_name;
+  request.camera_frame_count = kExpectedFrames;
+  request.swim_bout_timeline_enabled = false;
+  request.stimulus_context_timeline_enabled = false;
+  request.scheduler = scheduler;
+
+  AppleAnalysisRepositoryLoader loader;
+  std::string error;
+  const auto phase_metrics_before = snapshotPhysicalMetrics();
+  const auto started = Clock::now();
+  require(loader.start(std::move(request), &error),
+          "Could not start repository loader: " + error);
+
+  LoadOutcome outcome;
+  json timings = json::object();
+  std::optional<double> archive_ready_ms;
+  std::optional<double> first_detection_request_ms;
+  std::optional<double> first_detection_ready_ms;
+  std::optional<double> interference_request_ms;
+  std::optional<double> interference_ready_ms;
+  std::optional<double> residency_started_ms;
+  std::optional<double> residency_ready_ms;
+  std::optional<PhysicalMetrics> residency_physical_before;
+  std::optional<PhysicalMetrics> residency_physical_after;
+  std::optional<crimson::zarr::CanonicalDetectionRepositoryMetrics>
+      interference_repository_before;
+  const auto deadline = Clock::now() + std::chrono::seconds(240);
+  auto startInterferenceProbe = [&] {
+    if (interference_request_ms.has_value()) {
+      return;
+    }
+    require(outcome.detection_buffer != nullptr,
+            "Canonical detection buffer is unavailable for interference probe");
+    if (strategy == "resident") {
+      CanonicalDetectionResidencyPolicy policy;
+      policy.maximum_resident_bytes = kResidentBudgetBytes;
+      policy.maximum_chunk_decoded_bytes = kResidencyChunkBytes;
+      residency_physical_before = snapshotPhysicalMetrics();
+      residency_started_ms = elapsedMilliseconds(process_started);
+      std::string residency_error;
+      require(
+          outcome.detection_buffer->startUiResidency(policy, &residency_error),
+          "Could not start canonical detection residency: " + residency_error);
+    }
+
+    const auto scheduler_metrics = scheduler->metrics();
+    outcome.interference_pending_at_request =
+        scheduler_metrics.queue.pending_requests;
+    outcome.interference_active_at_request =
+        scheduler_metrics.queue.active_requests;
+    interference_repository_before =
+        outcome.detection_buffer->repositoryMetrics();
+    interference_request_ms = elapsedMilliseconds(process_started);
+    std::string probe_error;
+    require(outcome.detection_buffer->requestFrame(kInterferenceProbeFrame,
+                                                   true, &probe_error),
+            "Could not request interference probe frame: " + probe_error);
+  };
+  auto drain = [&] {
+    while (auto ready = loader.takeReady()) {
+      const bool had_detection_buffer = outcome.detection_buffer != nullptr;
+      adoptProduct(std::move(*ready), process_started, archive_path, scheduler,
+                   &outcome.products, &outcome.detection_buffer,
+                   &archive_ready_ms, &timings);
+      if (!had_detection_buffer && outcome.detection_buffer) {
+        first_detection_request_ms = elapsedMilliseconds(process_started);
+        const auto scheduler_metrics = scheduler->metrics();
+        outcome.first_detection_pending_at_request =
+            scheduler_metrics.queue.pending_requests;
+        outcome.first_detection_active_at_request =
+            scheduler_metrics.queue.active_requests;
+      }
+    }
+    if (outcome.detection_buffer && !first_detection_ready_ms.has_value() &&
+        outcome.detection_buffer->frame(0)) {
+      first_detection_ready_ms = elapsedMilliseconds(process_started);
+      const auto repository_metrics =
+          outcome.detection_buffer->repositoryMetrics();
+      outcome.first_detection_repository_ms =
+          repository_metrics.maximum_range_read_ms;
+      outcome.first_detection_resolved_pages =
+          outcome.detection_buffer->metrics().resolved_pages;
+      startInterferenceProbe();
+    }
+    if (interference_request_ms.has_value() &&
+        !interference_ready_ms.has_value() &&
+        outcome.detection_buffer->frame(kInterferenceProbeFrame)) {
+      interference_ready_ms = elapsedMilliseconds(process_started);
+      outcome.interference_repository_ms =
+          outcome.detection_buffer->repositoryMetrics().maximum_range_read_ms;
+    }
+    if (strategy == "resident" && residency_started_ms.has_value() &&
+        !residency_ready_ms.has_value() &&
+        outcome.detection_buffer->residencyMetrics().state ==
+            CanonicalDetectionResidencyState::Ready) {
+      residency_ready_ms = elapsedMilliseconds(process_started);
+      residency_physical_after = snapshotPhysicalMetrics();
+    }
+  };
+  while (loader.loading() && Clock::now() < deadline) {
+    drain();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  drain();
+  require(!loader.loading(), "Repository loader exceeded 240 seconds");
+  outcome.required_products_ready_ms = elapsedMilliseconds(process_started);
+  outcome.required_products_load_ms = elapsedMilliseconds(started);
+  const auto phase_metrics_at_ready = snapshotPhysicalMetrics();
+  const auto peak_rss_at_ready = peakRssBytes();
+  const auto progress = loader.progress();
+
+  using Requirement = crimson::session::ProductAvailabilityRequirement;
+  const std::vector<crimson::session::SessionReadinessProductRule> rules = {
+      {"archive", Requirement::Required},
+      {"canonical_detection", Requirement::Required},
+      {"keypoints", Requirement::Required},
+      {"subject_masks", Requirement::Required},
+      {"subject_shape", Requirement::Required},
+      {"eye_geometry", Requirement::Required},
+      {"motion", Requirement::Required},
+      {"eye_angles", Requirement::Required},
+      {"tail_kinematics", Requirement::Required},
+      {"crop_geometry", Requirement::Required},
+  };
+  const auto readiness =
+      crimson::session::evaluateSessionReadiness(progress, rules);
+  loader.close();
+
+  if (!first_detection_ready_ms.has_value()) {
+    require(outcome.detection_buffer->waitForFrame(0, std::chrono::seconds(30)),
+            "First canonical detection overlay timed out");
+    first_detection_ready_ms = elapsedMilliseconds(process_started);
+    const auto repository_metrics =
+        outcome.detection_buffer->repositoryMetrics();
+    outcome.first_detection_repository_ms =
+        repository_metrics.maximum_range_read_ms;
+    outcome.first_detection_resolved_pages =
+        outcome.detection_buffer->metrics().resolved_pages;
+    startInterferenceProbe();
+  }
+  if (!interference_ready_ms.has_value()) {
+    require(outcome.detection_buffer->waitForFrame(kInterferenceProbeFrame,
+                                                   std::chrono::seconds(30)),
+            "Canonical detection interference probe timed out");
+    interference_ready_ms = elapsedMilliseconds(process_started);
+    outcome.interference_repository_ms =
+        outcome.detection_buffer->repositoryMetrics().maximum_range_read_ms;
+  }
+  if (strategy == "resident" && !residency_ready_ms.has_value()) {
+    require(
+        outcome.detection_buffer->waitForUiResidency(std::chrono::seconds(120)),
+        "Canonical detection residency timed out");
+    residency_ready_ms = elapsedMilliseconds(process_started);
+    residency_physical_after = snapshotPhysicalMetrics();
+  }
+
+  require(readiness.ready(),
+          "Required-product readiness failed: " + readiness.reason);
+  require(outcome.products.archive != nullptr,
+          "Archive product is unavailable");
+  require(outcome.detection_buffer && outcome.detection_buffer->isOpen(),
+          "Canonical detection product is unavailable");
+  require(outcome.products.keypoints != nullptr,
+          "Keypoint product is unavailable");
+  require(outcome.products.masks != nullptr,
+          "Subject-mask product is unavailable");
+  require(outcome.products.shape != nullptr,
+          "Subject-shape product is unavailable");
+  require(outcome.products.eye_geometry != nullptr,
+          "Eye-geometry product is unavailable");
+  require(outcome.products.motion != nullptr, "Motion product is unavailable");
+  require(outcome.products.eye_angles != nullptr,
+          "Eye-angle product is unavailable");
+  require(outcome.products.tail_kinematics != nullptr,
+          "Tail-kinematics product is unavailable");
+  require(outcome.products.crop_geometry != nullptr,
+          "Crop-geometry product is unavailable");
+  require(archive_ready_ms.has_value(), "Archive ready timestamp is missing");
+  require(first_detection_request_ms.has_value(),
+          "First canonical detection request timestamp is missing");
+  const auto first_detection_repository =
+      outcome.detection_buffer->repositoryMetrics();
+  outcome.first_detection_repository_ms =
+      first_detection_repository.maximum_range_read_ms;
+  outcome.first_detection_resolved_pages =
+      outcome.detection_buffer->metrics().resolved_pages;
+  outcome.archive_ready_ms = *archive_ready_ms;
+  outcome.first_detection_request_ms = *first_detection_request_ms;
+  outcome.first_detection_publish_ms = *first_detection_ready_ms;
+  outcome.first_detection_overlay_ms =
+      *first_detection_ready_ms - *archive_ready_ms;
+  outcome.interference_request_ms = *interference_request_ms;
+  outcome.interference_publish_ms = *interference_ready_ms;
+  outcome.residency = outcome.detection_buffer->residencyMetrics();
+
+  if (strategy == "resident") {
+    require(outcome.residency.state == CanonicalDetectionResidencyState::Ready,
+            "Canonical detection residency did not become ready");
+    require(outcome.residency.publications == 1,
+            "Canonical detection residency did not publish exactly once");
+    require(outcome.residency.stale_chunks == 0,
+            "Canonical detection residency published stale chunks");
+  } else {
+    require(
+        outcome.residency.state == CanonicalDetectionResidencyState::Disabled,
+        "Paged strategy unexpectedly started canonical detection residency");
+  }
+
+  const auto interference_repository_after =
+      outcome.detection_buffer->repositoryMetrics();
+  const double interference_service_upper_bound_ms =
+      std::max(0.0, interference_repository_after.maximum_range_read_ms -
+                        interference_repository_before->maximum_range_read_ms);
+  (*evidence)["interference_probe"] = {
+      {"frame", kInterferenceProbeFrame},
+      {"request_elapsed_ms", outcome.interference_request_ms},
+      {"publish_elapsed_ms", outcome.interference_publish_ms},
+      {"request_to_publish_ms",
+       outcome.interference_publish_ms - outcome.interference_request_ms},
+      {"pending_requests_at_request", outcome.interference_pending_at_request},
+      {"active_requests_at_request", outcome.interference_active_at_request},
+      {"repository_service_upper_bound_ms",
+       interference_service_upper_bound_ms},
+      {"inferred_queue_wait_lower_bound_ms",
+       std::max(0.0, outcome.interference_publish_ms -
+                         outcome.interference_request_ms -
+                         interference_service_upper_bound_ms)},
+      {"interpretation",
+       "queue wait is inferred because scheduler work is non-preemptive"},
+  };
+
+  json residency_evidence = {
+      {"strategy", strategy},
+      {"started_after_first_page", strategy == "resident"},
+      {"metrics", residencyMetricsJson(outcome.residency)},
+  };
+  if (residency_started_ms.has_value()) {
+    residency_evidence["start_elapsed_ms"] = *residency_started_ms;
+  }
+  if (residency_ready_ms.has_value()) {
+    residency_evidence["ready_elapsed_ms"] = *residency_ready_ms;
+  }
+  if (residency_physical_before.has_value() &&
+      residency_physical_after.has_value()) {
+    residency_evidence["physical"] = physicalMetricsJson(
+        *residency_physical_after - *residency_physical_before);
+  }
+  (*evidence)["residency"] = std::move(residency_evidence);
+
+  (*evidence)["loading"] = {
+      {"elapsed_ms", outcome.required_products_load_ms},
+      {"required_products_ready_elapsed_ms",
+       outcome.required_products_ready_ms},
+      {"state", crimson::loading::loadingStateName(progress.state)},
+      {"completed_products", progress.completed_products},
+      {"total_products", progress.total_products},
+      {"readiness",
+       crimson::session::sessionReadinessStateName(readiness.state)},
+      {"readiness_reason", readiness.reason},
+      {"products", std::move(timings)},
+      {"preloaded_trace_bytes", outcome.products.preloaded_trace_bytes},
+      {"physical",
+       physicalMetricsJson(phase_metrics_at_ready - phase_metrics_before)},
+      {"peak_rss_bytes", peak_rss_at_ready},
+  };
+  return outcome;
+}
+
+crimson::timeline::AnalysisSeriesTimelineWindow resolveSeriesWindow(
+    crimson::timeline::AnalysisSeriesTimelineRepository *repository,
+    int64_t frame) {
+  const auto &descriptor = repository->descriptor();
+  const int64_t first = std::max<int64_t>(0, frame - 2048);
+  const int64_t last = std::min<int64_t>(
+      static_cast<int64_t>(kExpectedFrames) - 1, frame + 2047);
+  crimson::timeline::AnalysisSeriesTimelineRequest request;
+  request.source_key = descriptor.default_source;
+  request.first_frame = first;
+  request.last_frame = last;
+  request.anchor_frame = frame;
+  request.fallback_frames_per_second = 30.0;
+  return repository->resolveWindow(request);
+}
+
+crimson::timeline::EyeAngleTimelineWindow
+resolveEyeAngleWindow(crimson::timeline::EyeAngleTimelineRepository *repository,
+                      int64_t frame) {
+  const auto &descriptor = repository->descriptor();
+  const int64_t first = std::max<int64_t>(0, frame - 2048);
+  const int64_t last = std::min<int64_t>(
+      static_cast<int64_t>(kExpectedFrames) - 1, frame + 2047);
+  crimson::timeline::EyeAngleTimelineRequest request;
+  request.representation_key = descriptor.default_representation;
+  request.first_frame = first;
+  request.last_frame = last;
+  request.anchor_frame = frame;
+  request.fallback_frames_per_second = 30.0;
+  return repository->resolveWindow(request);
+}
+
+json resolveSimultaneousFrame(LoadOutcome *outcome, int64_t frame,
+                              bool discontinuity) {
+  const auto metrics_before = snapshotPhysicalMetrics();
+  const auto started = Clock::now();
+  std::string error;
+  require(outcome->detection_buffer->requestFrame(frame, discontinuity, &error),
+          "Canonical frame request failed: " + error);
+
+  auto keypoints = std::async(std::launch::async, [&] {
+    return outcome->products.keypoints->resolveCameraFrame(frame, kSourceWidth,
+                                                           kSourceHeight);
+  });
+  auto masks = std::async(std::launch::async, [&] {
+    return outcome->products.masks->resolveCameraFrame(frame, kSourceWidth,
+                                                       kSourceHeight);
+  });
+  auto shape = std::async(std::launch::async, [&] {
+    return outcome->products.shape->resolveCameraFrame(frame, kSourceWidth,
+                                                       kSourceHeight);
+  });
+  auto eyes = std::async(std::launch::async, [&] {
+    return outcome->products.eye_geometry->resolveCameraFrame(
+        frame, kSourceWidth, kSourceHeight);
+  });
+  auto crop = std::async(std::launch::async, [&] {
+    return outcome->products.crop_geometry->resolveCameraFrame(
+        frame, kSourceWidth, kSourceHeight);
+  });
+  auto motion = std::async(std::launch::async, [&] {
+    return resolveSeriesWindow(outcome->products.motion.get(), frame);
+  });
+  auto tail = std::async(std::launch::async, [&] {
+    return resolveSeriesWindow(outcome->products.tail_kinematics.get(), frame);
+  });
+  auto eye_angles = std::async(std::launch::async, [&] {
+    return resolveEyeAngleWindow(outcome->products.eye_angles.get(), frame);
+  });
+
+  require(
+      outcome->detection_buffer->waitForFrame(frame, std::chrono::seconds(60)),
+      "Canonical frame timed out: " + std::to_string(frame));
+  const auto detection = outcome->detection_buffer->frame(frame);
+  require(detection != nullptr, "Canonical frame did not publish");
+  const auto keypoint_result = keypoints.get();
+  const auto mask_result = masks.get();
+  const auto shape_result = shape.get();
+  const auto eye_result = eyes.get();
+  const auto crop_result = crop.get();
+  const auto motion_result = motion.get();
+  const auto tail_result = tail.get();
+  const auto eye_angle_result = eye_angles.get();
+
+  require(keypoint_result.status !=
+                  crimson::zarr::KeypointOverlayStatus::InvalidDimensions &&
+              keypoint_result.status !=
+                  crimson::zarr::KeypointOverlayStatus::ReadFailed &&
+              keypoint_result.status !=
+                  crimson::zarr::KeypointOverlayStatus::OutOfRange,
+          "Keypoint scrub resolution failed: " + keypoint_result.error);
+  require(mask_result.status !=
+                  crimson::zarr::SubjectMaskOverlayStatus::InvalidDimensions &&
+              mask_result.status !=
+                  crimson::zarr::SubjectMaskOverlayStatus::ReadFailed &&
+              mask_result.status !=
+                  crimson::zarr::SubjectMaskOverlayStatus::OutOfRange,
+          "Mask scrub resolution failed: " + mask_result.error);
+  require(shape_result.status !=
+                  crimson::zarr::SubjectShapeOverlayStatus::InvalidDimensions &&
+              shape_result.status !=
+                  crimson::zarr::SubjectShapeOverlayStatus::ReadFailed &&
+              shape_result.status !=
+                  crimson::zarr::SubjectShapeOverlayStatus::OutOfRange,
+          "Shape scrub resolution failed: " + shape_result.error);
+  require(eye_result.status !=
+                  crimson::zarr::EyeGeometryOverlayStatus::InvalidDimensions &&
+              eye_result.status !=
+                  crimson::zarr::EyeGeometryOverlayStatus::ReadFailed &&
+              eye_result.status !=
+                  crimson::zarr::EyeGeometryOverlayStatus::OutOfRange,
+          "Eye-geometry scrub resolution failed: " + eye_result.error);
+  require(crop_result.status !=
+              crimson::zarr::AnalysisCropGeometryStatus::OutOfRange,
+          "Crop scrub resolution was out of range");
+  require(motion_result.ready(), "Motion scrub window is unavailable");
+  require(tail_result.ready(), "Tail scrub window is unavailable");
+  require(eye_angle_result.ready(), "Eye-angle scrub window is unavailable");
+
+  return {
+      {"frame", frame},
+      {"elapsed_ms", elapsedMilliseconds(started)},
+      {"canonical_detections", detection->detections.size()},
+      {"keypoint_status", static_cast<int>(keypoint_result.status)},
+      {"keypoint_detections", keypoint_result.detections.size()},
+      {"mask_status", static_cast<int>(mask_result.status)},
+      {"mask_detections", mask_result.detections.size()},
+      {"shape_status", static_cast<int>(shape_result.status)},
+      {"shape_detections", shape_result.detections.size()},
+      {"eye_status", static_cast<int>(eye_result.status)},
+      {"eye_detections", eye_result.detections.size()},
+      {"crop_status", static_cast<int>(crop_result.status)},
+      {"crop_rows", crop_result.frame_row_count},
+      {"motion_points", motion_result.published_point_count},
+      {"tail_points", tail_result.published_point_count},
+      {"eye_angle_points", eye_angle_result.published_point_count},
+      {"physical",
+       physicalMetricsJson(snapshotPhysicalMetrics() - metrics_before)},
+  };
+}
+
+void validateFirstPresentations(LoadOutcome *outcome,
+                                Clock::time_point process_started,
+                                json *evidence) {
+  const auto started = Clock::now();
+  auto resolved = resolveSimultaneousFrame(outcome, 0, false);
+  const auto detection = outcome->detection_buffer->frame(0);
+  require(detection != nullptr, "First canonical frame is unavailable");
+  const auto descriptor = outcome->detection_buffer->descriptor();
+  const auto scene = crimson::overlay::buildReadOnlyOverlayScene(
+      crimson::zarr::makeCanonicalDetectionOverlaySceneInput(
+          descriptor, *detection, 0, 0, 0, kSourceWidth, kSourceHeight));
+  require(scene.ready(), "First canonical overlay scene is unavailable");
+  const size_t boxes =
+      scene.count(crimson::overlay::CameraOverlayLayer::BoundingBoxes);
+  require(boxes == detection->detections.size(),
+          "First canonical overlay box count is inconsistent");
+  resolved["overlay_boxes"] = boxes;
+  resolved["phase_elapsed_ms"] = elapsedMilliseconds(started);
+  resolved["ready_elapsed_ms"] = elapsedMilliseconds(process_started);
+  resolved["first_detection_overlay_after_archive_ms"] =
+      outcome->first_detection_overlay_ms;
+  const double request_to_publish_ms =
+      outcome->first_detection_publish_ms - outcome->first_detection_request_ms;
+  resolved["first_detection_scheduling"] = {
+      {"archive_ready_to_request_ms",
+       outcome->first_detection_request_ms - outcome->archive_ready_ms},
+      {"request_to_publish_ms", request_to_publish_ms},
+      {"repository_read_decode_max_ms", outcome->first_detection_repository_ms},
+      {"inferred_queue_wait_ms",
+       std::max(0.0, request_to_publish_ms -
+                         outcome->first_detection_repository_ms)},
+      {"pending_requests_at_request",
+       outcome->first_detection_pending_at_request},
+      {"active_requests_at_request",
+       outcome->first_detection_active_at_request},
+      {"resolved_pages_at_publish", outcome->first_detection_resolved_pages},
+      {"interpretation",
+       "queue wait is inferred because scheduler work is non-preemptive"},
+  };
+  (*evidence)["first_presentations"] = std::move(resolved);
+}
+
+void validateCanonicalOpen(const LoadOutcome &outcome,
+                           const std::string &run_name, json *evidence) {
+  const auto descriptor = outcome.detection_buffer->descriptor();
+  require(descriptor.run_name == run_name,
+          "Canonical detection selected the wrong run");
+  require(descriptor.camera_frame_count == kExpectedFrames,
+          "Canonical detection frame count is incorrect");
+  require(descriptor.row_count == kExpectedRows,
+          "Canonical detection row count is incorrect");
+  const auto &open = outcome.products.detection_open;
+  require(open.root_metadata_reads == 1,
+          "Canonical adapter did not read root metadata exactly once");
+  require(open.consolidated_array_declarations == 9,
+          "Canonical adapter did not validate nine declarations");
+  require(open.exact_handle_opens == 4,
+          "Canonical adapter did not perform four exact opens");
+  require(open.fallback_metadata_reads == 0 && open.fallback_dtype_opens == 0,
+          "Canonical adapter used a forbidden fallback probe");
+  require(open.offset_read_calls == 1,
+          "Canonical adapter did not read offsets exactly once");
+  (*evidence)["canonical_open"] = {
+      {"run", descriptor.run_name},
+      {"frames", descriptor.camera_frame_count},
+      {"rows", descriptor.row_count},
+      {"root_metadata_reads", open.root_metadata_reads},
+      {"consolidated_declarations", open.consolidated_array_declarations},
+      {"exact_handle_opens", open.exact_handle_opens},
+      {"fallback_metadata_reads", open.fallback_metadata_reads},
+      {"fallback_dtype_opens", open.fallback_dtype_opens},
+      {"offset_reads", open.offset_read_calls},
+      {"retained_offset_bytes", open.retained_offset_bytes},
+      {"elapsed_ms", open.total_ms},
+      {"offset_ms", open.offset_read_ms},
+  };
+}
+
+void runSettleFrames(LoadOutcome *outcome, json *evidence) {
+  json frames = json::array();
+  const auto metrics_before = snapshotPhysicalMetrics();
+  const auto started = Clock::now();
+  for (const int64_t frame : kSettleFrames) {
+    frames.push_back(resolveSimultaneousFrame(outcome, frame, true));
+  }
+  (*evidence)["random_settles"] = {
+      {"frames", std::move(frames)},
+      {"elapsed_ms", elapsedMilliseconds(started)},
+      {"physical",
+       physicalMetricsJson(snapshotPhysicalMetrics() - metrics_before)},
+      {"peak_rss_bytes", peakRssBytes()},
+  };
+}
+
+void runSeekBurst(
+    LoadOutcome *outcome,
+    const std::shared_ptr<crimson::data::DataAccessScheduler> &scheduler,
+    json *evidence) {
+  const auto queue_before = scheduler->metrics();
+  const auto metrics_before = snapshotPhysicalMetrics();
+  const auto started = Clock::now();
+  std::string error;
+  for (const int64_t frame : kSeekBurstFrames) {
+    require(outcome->detection_buffer->requestFrame(frame, true, &error),
+            "Seek burst request failed: " + error);
+  }
+  require(outcome->detection_buffer->waitForFrame(kSeekBurstFrames.back(),
+                                                  std::chrono::seconds(60)),
+          "Final seek burst frame timed out");
+  scheduler->waitUntilIdle();
+  const double settle_ms = elapsedMilliseconds(started);
+  require(outcome->detection_buffer->frame(kSeekBurstFrames.back()) != nullptr,
+          "Final seek generation was not published");
+  for (size_t index = 0; index + 1 < kSeekBurstFrames.size(); ++index) {
+    require(outcome->detection_buffer->frame(kSeekBurstFrames[index]) ==
+                nullptr,
+            "A stale seek generation remained publishable");
+  }
+  const auto queue_after = scheduler->metrics();
+  const auto physical = snapshotPhysicalMetrics() - metrics_before;
+  const uint64_t cancelled = queue_after.queue.cancelled_requests -
+                             queue_before.queue.cancelled_requests;
+  require(cancelled > 0, "Seek burst cancelled no stale work");
+  (*evidence)["seek_burst"] = {
+      {"source_scope", "canonical_detection_only_after_scheduler_idle"},
+      {"physical_metric_scope", "process-global TensorStore delta"},
+      {"frames", kSeekBurstFrames},
+      {"seek_count", kSeekBurstFrames.size()},
+      {"settle_ms", settle_ms},
+      {"cancelled_requests", cancelled},
+      {"discarded_completions", queue_after.queue.discarded_completions -
+                                    queue_before.queue.discarded_completions},
+      {"stale_publications", 0},
+      {"post_cancel_file_bytes_total",
+       std::max<int64_t>(0, physical.file_bytes)},
+      {"post_cancel_file_bytes_per_superseded_seek",
+       static_cast<double>(std::max<int64_t>(0, physical.file_bytes)) /
+           static_cast<double>(kSeekBurstFrames.size() - 1)},
+      {"physical", physicalMetricsJson(physical)},
+  };
+}
+
+json runTraversal(
+    LoadOutcome *outcome,
+    const std::shared_ptr<crimson::data::DataAccessScheduler> &scheduler,
+    bool reverse) {
+  std::vector<int64_t> page_starts;
+  for (int64_t frame = 0; frame < static_cast<int64_t>(kTraversalFrames);
+       frame += static_cast<int64_t>(kPageFrames)) {
+    page_starts.push_back(frame);
+  }
+  if (reverse) {
+    std::reverse(page_starts.begin(), page_starts.end());
+  }
+
+  std::string error;
+  const int64_t warm_frame =
+      reverse ? static_cast<int64_t>(kTraversalFrames) - 1 : 0;
+  require(outcome->detection_buffer->requestFrame(warm_frame, true, &error),
+          "Traversal warm request failed: " + error);
+  require(outcome->detection_buffer->waitForFrame(warm_frame,
+                                                  std::chrono::seconds(60)),
+          "Traversal warm frame timed out");
+  require(outcome->detection_buffer->requestFrame(page_starts.front(), false,
+                                                  &error),
+          "Traversal lead request failed: " + error);
+
+  const auto metrics_before = snapshotPhysicalMetrics();
+  const auto repository_before = outcome->detection_buffer->repositoryMetrics();
+  const auto buffer_before = outcome->detection_buffer->metrics();
+  const auto started = Clock::now();
+  size_t deadline_misses = 0;
+  size_t post_warmup_misses = 0;
+  size_t detections = 0;
+  uint64_t digest = 1469598103934665603ULL;
+
+  for (size_t page_index = 0; page_index < page_starts.size(); ++page_index) {
+    const auto deadline =
+        started + kPageDeadline * static_cast<int64_t>(page_index);
+    std::this_thread::sleep_until(deadline);
+    const int64_t page_start = page_starts[page_index];
+    auto first = outcome->detection_buffer->frame(page_start);
+    if (!first) {
+      ++deadline_misses;
+      if (page_index > 0) {
+        ++post_warmup_misses;
+      }
+      require(outcome->detection_buffer->waitForFrame(page_start,
+                                                      std::chrono::seconds(60)),
+              "Traversal demand page timed out at frame " +
+                  std::to_string(page_start));
+    }
+    // The pre-clock request already established the traversal direction and
+    // queued its one-page lead. Repeating the first reverse request would make
+    // an equal frame look forward and cancel that reverse lead.
+    if (page_index > 0) {
+      require(
+          outcome->detection_buffer->requestFrame(page_start, false, &error),
+          "Traversal page request failed: " + error);
+    }
+    const int64_t page_stop =
+        std::min<int64_t>(static_cast<int64_t>(kTraversalFrames),
+                          page_start + static_cast<int64_t>(kPageFrames));
+    if (!reverse) {
+      for (int64_t frame = page_start; frame < page_stop; ++frame) {
+        const auto resolved = outcome->detection_buffer->frame(frame);
+        require(resolved != nullptr, "Forward traversal cache missed frame " +
+                                         std::to_string(frame));
+        detections += resolved->detections.size();
+        hashFrame(&digest, *resolved);
+      }
+    } else {
+      for (int64_t frame = page_stop; frame-- > page_start;) {
+        const auto resolved = outcome->detection_buffer->frame(frame);
+        require(resolved != nullptr, "Reverse traversal cache missed frame " +
+                                         std::to_string(frame));
+        detections += resolved->detections.size();
+        hashFrame(&digest, *resolved);
+      }
+    }
+  }
+  scheduler->waitUntilIdle();
+  const auto physical = snapshotPhysicalMetrics() - metrics_before;
+  const auto repository_after = outcome->detection_buffer->repositoryMetrics();
+  const auto buffer_after = outcome->detection_buffer->metrics();
+  const size_t post_warmup_pages = page_starts.size() - 1;
+  return {
+      {"direction", reverse ? "reverse" : "forward"},
+      {"source_scope", "canonical_detection_only_after_scheduler_idle"},
+      {"physical_metric_scope", "process-global TensorStore delta"},
+      {"frames", kTraversalFrames},
+      {"pages", page_starts.size()},
+      {"source_fps", kPlaybackFps},
+      {"page_deadline_ms", kPageDeadline.count()},
+      {"wall_ms", elapsedMilliseconds(started)},
+      {"deadline_misses", deadline_misses},
+      {"post_warmup_pages", post_warmup_pages},
+      {"post_warmup_misses", post_warmup_misses},
+      {"post_warmup_deadline_miss_rate",
+       post_warmup_pages == 0 ? 0.0
+                              : static_cast<double>(post_warmup_misses) /
+                                    static_cast<double>(post_warmup_pages)},
+      {"detections", detections},
+      {"logical_digest_fnv1a64", hexDigest(digest)},
+      {"physical", physicalMetricsJson(physical)},
+      {"range_reads",
+       repository_after.range_reads - repository_before.range_reads},
+      {"field_reads",
+       repository_after.ui_field_reads - repository_before.ui_field_reads},
+      {"peak_concurrent_fields",
+       repository_after.peak_concurrent_ui_field_reads},
+      {"resolved_pages",
+       buffer_after.resolved_pages - buffer_before.resolved_pages},
+      {"failed_pages", buffer_after.failed_pages - buffer_before.failed_pages},
+      {"discarded_pages",
+       buffer_after.discarded_pages - buffer_before.discarded_pages},
+      {"peak_cached_bytes", buffer_after.peak_cached_bytes},
+      {"maximum_resolve_ms", buffer_after.maximum_resolve_ms},
+      {"peak_rss_bytes", peakRssBytes()},
+  };
+}
+
+void validateAffiliatedVideo(const LoadedProducts &products,
+                             const std::filesystem::path &explicit_video_path,
+                             json *evidence) {
+  require(std::filesystem::is_regular_file(explicit_video_path),
+          "Explicit affiliated video is unavailable: " +
+              explicit_video_path.string());
+  std::string discovery_error;
+  const auto discovered = crimson::zarr::DiscoverAffiliatedVideo(
+      products.archive, &discovery_error);
+  if (discovered) {
+    require(std::filesystem::equivalent(discovered->resolved_path,
+                                        explicit_video_path),
+            "Discovered and explicit affiliated videos do not match");
+  }
+  (*evidence)["affiliated_video"] = {
+      {"explicit_path", explicit_video_path.string()},
+      {"explicit_exists", true},
+      {"discovery_succeeded", discovered.has_value()},
+      {"discovery_error", discovery_error},
+  };
+}
+
+json schedulerJson(
+    const crimson::data::DataAccessSchedulerMetrics &scheduler_metrics) {
+  return {
+      {"workers", scheduler_metrics.worker_count},
+      {"peak_active", scheduler_metrics.queue.peak_active_requests},
+      {"peak_pending", scheduler_metrics.queue.peak_pending_requests},
+      {"submissions", scheduler_metrics.queue.submissions},
+      {"accepted", scheduler_metrics.queue.accepted},
+      {"cancelled", scheduler_metrics.queue.cancelled_requests},
+      {"completed", scheduler_metrics.queue.completed_requests},
+      {"discarded", scheduler_metrics.queue.discarded_completions},
+      {"failed", scheduler_metrics.queue.failed_completions},
+      {"work_exceptions", scheduler_metrics.work_exceptions},
+  };
+}
+
+void writeEvidence(const std::filesystem::path &path, const json &evidence) {
+  std::ofstream output(path);
+  require(output.good(), "Could not open evidence output: " + path.string());
+  output << evidence.dump(2) << '\n';
+  require(output.good(), "Could not write evidence output: " + path.string());
+}
+
+} // namespace
+
+int main(int argc, char **argv) {
+  if (argc != 7 && argc != 8) {
+    std::cerr << "Usage: " << argv[0]
+              << " ARCHIVE.zarr DETECTION_RUN VIDEO LAYOUT REPETITION "
+                 "[STRATEGY] OUTPUT.json\n";
+    return 2;
+  }
+  const std::filesystem::path archive_path = argv[1];
+  const std::string run_name = argv[2];
+  const std::filesystem::path video_path = argv[3];
+  const std::string layout = argv[4];
+  const int repetition = std::stoi(argv[5]);
+  const std::string strategy = argc == 8 ? argv[6] : "paged";
+  const std::filesystem::path output_path = argc == 8 ? argv[7] : argv[6];
+  const auto process_started = Clock::now();
+  const auto process_physical_before = snapshotPhysicalMetrics();
+
+  json evidence = {
+      {"schema_id", "crimson.canonical_detection_full_archive_stage1"},
+      {"schema_version", 1},
+      {"classification", "full_duration_stage1"},
+      {"layout", layout},
+      {"strategy", strategy},
+      {"condition", layout + "_" + strategy},
+      {"repetition", repetition},
+      {"archive", archive_path.string()},
+      {"requested_run", run_name},
+      {"frame_range", {0, kExpectedFrames}},
+      {"pass", false},
+  };
+
+  auto scheduler =
+      std::make_shared<crimson::data::DataAccessScheduler>(64, 4, 1);
+  std::unique_ptr<CanonicalDetectionBuffer> buffer_for_cleanup;
+  try {
+    require(layout == "regular" || layout == "hybrid",
+            "Layout must be regular or hybrid");
+    require(strategy == "paged" || strategy == "resident",
+            "Strategy must be paged or resident");
+    require(repetition >= 0 && repetition < 5,
+            "Repetition must be 0 through 4");
+    require(std::filesystem::exists(archive_path / "zarr.json"),
+            "Archive root is unavailable");
+
+    auto outcome = loadRequiredProducts(archive_path, run_name, scheduler,
+                                        process_started, strategy, &evidence);
+    evidence["archive_context"] = {
+        {"cache_pool_bytes", outcome.products.archive->cachePoolBytes()},
+    };
+    validateAffiliatedVideo(outcome.products, video_path, &evidence);
+    validateCanonicalOpen(outcome, run_name, &evidence);
+    validateFirstPresentations(&outcome, process_started, &evidence);
+    runSettleFrames(&outcome, &evidence);
+    runSeekBurst(&outcome, scheduler, &evidence);
+    evidence["traversal"] = {
+        {"forward", runTraversal(&outcome, scheduler, false)},
+        {"reverse", runTraversal(&outcome, scheduler, true)},
+    };
+
+    scheduler->waitUntilIdle();
+    const auto scheduler_metrics = scheduler->metrics();
+    require(scheduler_metrics.queue.failed_completions == 0,
+            "Shared scheduler reported failed work");
+    require(scheduler_metrics.work_exceptions == 0,
+            "Shared scheduler reported a work exception");
+    evidence["scheduler"] = schedulerJson(scheduler_metrics);
+
+    const auto shutdown_started = Clock::now();
+    outcome.detection_buffer->close();
+    scheduler->shutdown();
+    evidence["shutdown_ms"] = elapsedMilliseconds(shutdown_started);
+    evidence["peak_rss_bytes"] = peakRssBytes();
+    evidence["total_elapsed_ms"] = elapsedMilliseconds(process_started);
+    evidence["physical_total"] = physicalMetricsJson(snapshotPhysicalMetrics() -
+                                                     process_physical_before);
+    evidence["pass"] = true;
+    writeEvidence(output_path, evidence);
+    std::cout << "canonical_detection_full_archive_stage1_benchmark: PASS "
+              << layout << " strategy=" << strategy
+              << " repetition=" << repetition << '\n';
+    return 0;
+  } catch (const std::exception &exception) {
+    evidence["error"] = exception.what();
+    evidence["peak_rss_bytes"] = peakRssBytes();
+    evidence["total_elapsed_ms"] = elapsedMilliseconds(process_started);
+    evidence["physical_total"] = physicalMetricsJson(snapshotPhysicalMetrics() -
+                                                     process_physical_before);
+    try {
+      writeEvidence(output_path, evidence);
+    } catch (...) {
+    }
+    scheduler->shutdown();
+    std::cerr << "canonical_detection_full_archive_stage1_benchmark: FAIL "
+              << layout << " strategy=" << strategy
+              << " repetition=" << repetition << ": " << exception.what()
+              << '\n';
+    return 1;
+  }
+}

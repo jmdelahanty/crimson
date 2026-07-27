@@ -18,6 +18,8 @@ struct AppleMetalVideoSourceRegion {
     double y = 0.0;
     double width = 1.0;
     double height = 1.0;
+    bool mirror_x = false;
+    double opacity = 1.0;
 };
 
 class AppleVideoMetalRenderer {

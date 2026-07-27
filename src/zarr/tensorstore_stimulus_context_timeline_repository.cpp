@@ -1,9 +1,5 @@
 #include "zarr/tensorstore_stimulus_context_timeline_repository.h"
 
-#include "zarr/archive_context_internal.h"
-#include "zarr/tensorstore_stimulus_repository.h"
-
-#include <nlohmann/json.hpp>
 #include <tensorstore/open.h>
 #include <tensorstore/tensorstore.h>
 
@@ -15,11 +11,15 @@
 #include <filesystem>
 #include <limits>
 #include <map>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+#include "zarr/archive_context_internal.h"
+#include "zarr/tensorstore_stimulus_repository.h"
 
 namespace crimson::zarr {
 namespace ts = tensorstore;
@@ -43,15 +43,7 @@ struct StimulusEventRowV3 {
 
 std::optional<json> makeArraySpec(const ArchiveContext::Impl& archive,
                                   const std::string& path) {
-  const auto spec = archive.store.spec();
-  if (!spec.ok()) {
-    return std::nullopt;
-  }
-  const auto kvstore = spec->ToJson();
-  if (!kvstore.ok()) {
-    return std::nullopt;
-  }
-  return json{{"driver", "zarr3"}, {"kvstore", *kvstore}, {"path", path}};
+  return internal::MakeReadOnlyArraySpec(archive, path);
 }
 
 template <typename T, size_t Rank>
@@ -70,8 +62,7 @@ std::optional<ts::TensorStore<T, Rank>> openArray(
 
 template <typename T>
 bool readTypedIntegers(const ArchiveContext::Impl& archive,
-                       const std::string& path,
-                       std::vector<int64_t>* output) {
+                       const std::string& path, std::vector<int64_t>* output) {
   const auto store = openArray<T, 1>(archive, path);
   if (!store) {
     return false;
@@ -86,8 +77,8 @@ bool readTypedIntegers(const ArchiveContext::Impl& archive,
   for (size_t index = 0; index < count; ++index) {
     if constexpr (std::is_unsigned_v<T>) {
       (*output)[index] =
-          values[index] > static_cast<uint64_t>(
-                              std::numeric_limits<int64_t>::max())
+          values[index] >
+                  static_cast<uint64_t>(std::numeric_limits<int64_t>::max())
               ? -1
               : static_cast<int64_t>(values[index]);
     } else {
@@ -110,7 +101,8 @@ bool readIntegers(const ArchiveContext::Impl& archive, const std::string& path,
 }
 
 std::string fixedString(const char* value, size_t capacity) {
-  const auto* end = static_cast<const char*>(std::memchr(value, '\0', capacity));
+  const auto* end =
+      static_cast<const char*>(std::memchr(value, '\0', capacity));
   return std::string(value, end ? static_cast<size_t>(end - value) : capacity);
 }
 
@@ -212,8 +204,7 @@ std::string latestRun(const ArchiveContext& archive,
     }
   }
 
-  const auto runs_path =
-      archive.rootPath() / "analysis" / "stimulus_runs";
+  const auto runs_path = archive.rootPath() / "analysis" / "stimulus_runs";
   std::vector<std::string> candidates;
   std::error_code error;
   for (std::filesystem::directory_iterator it(runs_path, error), end;
@@ -333,8 +324,8 @@ bool readStructuredEvents(
     const ArchiveContext::Impl& archive, const std::string& run_base,
     const std::map<int32_t, std::string>& event_types,
     std::vector<crimson::timeline::StimulusContextEvent>* events) {
-  const auto store = openArray<StimulusEventRowV3, 1>(archive,
-                                                       run_base + "/events");
+  const auto store =
+      openArray<StimulusEventRowV3, 1>(archive, run_base + "/events");
   if (!store) {
     return false;
   }
@@ -373,8 +364,8 @@ bool readStructuredEvents(
 
 std::vector<int32_t> stepIndices(const ArchiveContext& archive,
                                  const std::string& run_name) {
-  const auto path = archive.rootPath() / "analysis/stimulus_runs" / run_name /
-                    "steps";
+  const auto path =
+      archive.rootPath() / "analysis/stimulus_runs" / run_name / "steps";
   std::vector<int32_t> result;
   std::error_code error;
   for (std::filesystem::directory_iterator it(path, error), end;
@@ -435,9 +426,9 @@ std::vector<crimson::timeline::StimulusContextStep> readSteps(
           doubleValue(*moving, "camera_to_projector_offset_deg");
       value.direction_mapping_status =
           stringValue(*moving, "direction_mapping_status");
-      value.has_direction_mapping_validated = boolValue(
-          *moving, "direction_mapping_validated",
-          &value.direction_mapping_validated);
+      value.has_direction_mapping_validated =
+          boolValue(*moving, "direction_mapping_validated",
+                    &value.direction_mapping_validated);
       value.speed_mm_s = doubleValue(*moving, "speed_mm_s");
       value.temporal_frequency_hz =
           doubleValue(*moving, "temporal_frequency_hz");
@@ -451,9 +442,9 @@ std::vector<crimson::timeline::StimulusContextStep> readSteps(
           stringValue(*concentric, "radial_polarity_authored");
       value.radial_sign_authored =
           doubleValue(*concentric, "radial_sign_authored");
-      value.has_radial_polarity_validated = boolValue(
-          *concentric, "radial_polarity_validated",
-          &value.radial_polarity_validated);
+      value.has_radial_polarity_validated =
+          boolValue(*concentric, "radial_polarity_validated",
+                    &value.radial_polarity_validated);
       value.center_x_px = doubleValue(*concentric, "center_x_px");
       value.center_y_px = doubleValue(*concentric, "center_y_px");
       value.center_x_mm = doubleValue(*concentric, "center_x_mm");
@@ -475,8 +466,9 @@ std::vector<crimson::timeline::StimulusContextStep> readSteps(
 
 std::unique_ptr<crimson::timeline::StimulusContextTimelineRepository>
 OpenStimulusContextTimelineRepository(
-    const std::shared_ptr<ArchiveContext>& archive, std::size_t frame_count_hint,
-    const std::string& requested_run, std::string* error_message) {
+    const std::shared_ptr<ArchiveContext>& archive,
+    std::size_t frame_count_hint, const std::string& requested_run,
+    std::string* error_message) {
   if (!archive || !archive->impl_) {
     internal::SetArchiveError(error_message, "Archive context is not open");
     return nullptr;
@@ -498,9 +490,9 @@ OpenStimulusContextTimelineRepository(
   }
   auto steps = readSteps(*archive, impl, run_name);
   if (events.empty() && steps.empty()) {
-    internal::SetArchiveError(error_message,
-                              "Stimulus run '" + run_name +
-                                  "' has no readable events or canonical steps");
+    internal::SetArchiveError(
+        error_message, "Stimulus run '" + run_name +
+                           "' has no readable events or canonical steps");
     return nullptr;
   }
 

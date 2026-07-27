@@ -11,6 +11,7 @@ namespace crimson::zarr {
 std::unique_ptr<StimulusRepository> OpenStimulusRepository(
     const std::shared_ptr<ArchiveContext>& archive,
     const std::string& requested_run = {},
-    std::string* error_message = nullptr);
+    std::string* error_message = nullptr,
+    const std::string& source_video_override = {});
 
 }  // namespace crimson::zarr

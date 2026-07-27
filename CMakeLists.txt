@@ -63,13 +63,48 @@ target_include_directories(crimson_frame_contracts PUBLIC
 target_link_libraries(crimson_frame_contracts PUBLIC Threads::Threads)
 target_compile_features(crimson_frame_contracts PUBLIC cxx_std_17)
 
+add_library(crimson_runtime_contracts STATIC
+    src/session_lifecycle.cpp
+    src/loading_progress.cpp
+    src/frame_presentation.cpp
+    src/diagnostic_report.cpp
+    src/session_readiness.cpp
+    src/session_open_transaction.cpp
+    src/recording_open_workflow.cpp
+    src/session_loading_presentation.cpp
+)
+target_include_directories(crimson_runtime_contracts PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(crimson_runtime_contracts PUBLIC Threads::Threads)
+target_compile_features(crimson_runtime_contracts PUBLIC cxx_std_17)
+
+add_library(crimson_data_access_contracts STATIC
+    src/data_access.cpp
+    src/data_access_cache.cpp
+    src/data_access_scheduler.cpp
+)
+target_include_directories(crimson_data_access_contracts PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(crimson_data_access_contracts PUBLIC Threads::Threads)
+target_compile_features(crimson_data_access_contracts PUBLIC cxx_std_17)
+
 add_library(crimson_repository_contracts STATIC
     src/analysis_series_timeline.cpp
     src/analysis_series_timeline_buffer.cpp
+    src/canonical_detection_buffer.cpp
+    src/chaser_distance_polar.cpp
+    src/chaser_distance_polar_buffer.cpp
+    src/chaser_distance_polar_scene.cpp
     src/eye_angle_timeline.cpp
     src/eye_angle_timeline_buffer.cpp
     src/eye_geometry_overlay_buffer.cpp
+    src/keypoint_overlay_buffer.cpp
+    src/stimulus_camera_overlay_scene.cpp
     src/stimulus_context_timeline.cpp
+    src/swim_bout_timeline.cpp
+    src/swim_bout_timeline_buffer.cpp
     src/subject_mask_overlay_buffer.cpp
     src/subject_shape_overlay_buffer.cpp
     src/zarr/keypoint_overlay_repository.cpp
@@ -82,7 +117,10 @@ target_include_directories(crimson_repository_contracts PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_compile_features(crimson_repository_contracts PUBLIC cxx_std_17)
-target_link_libraries(crimson_repository_contracts PUBLIC Threads::Threads)
+target_link_libraries(crimson_repository_contracts PUBLIC
+    crimson_data_access_contracts
+    Threads::Threads
+)
 
 add_library(crimson_crop_contracts STATIC
     src/crop_source_contract.cpp
@@ -99,6 +137,7 @@ add_library(crimson_overlay_contracts STATIC
     src/overlay_scene_contract.cpp
     src/read_only_overlay_controls.cpp
     src/read_only_overlay_scene.cpp
+    src/zarr/canonical_detection_overlay_scene_adapter.cpp
     src/zarr/keypoint_overlay_scene_adapter.cpp
     src/zarr/eye_geometry_overlay_scene_adapter.cpp
     src/zarr/subject_mask_overlay_scene_adapter.cpp
@@ -125,6 +164,18 @@ target_link_libraries(crimson_stimulus_playback_contracts PUBLIC
     crimson_repository_contracts
 )
 
+add_library(crimson_workspace_contracts STATIC
+    src/workspace_state.cpp
+)
+target_include_directories(crimson_workspace_contracts PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_features(crimson_workspace_contracts PUBLIC cxx_std_17)
+target_link_libraries(crimson_workspace_contracts PUBLIC
+    crimson_crop_contracts
+    crimson_overlay_contracts
+)
+
 function(crimson_add_tensorstore_repositories tensorstore_target)
     if(TARGET crimson_tensorstore_repositories)
         return()
@@ -132,16 +183,24 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
 
     add_library(crimson_tensorstore_repositories OBJECT
         src/zarr/tensorstore_archive_context.cpp
+        src/zarr/tensorstore_affiliated_video_repository.cpp
         src/zarr/tensorstore_analysis_series_timeline_repository.cpp
+        src/zarr/tensorstore_chaser_distance_polar_repository.cpp
+        src/zarr/detection_repository_selection.cpp
+        src/zarr/refined_detection_contract.cpp
+        src/zarr/tensorstore_canonical_detection_repository.cpp
+        src/zarr/tensorstore_refined_detection_repository.cpp
         src/zarr/tensorstore_eye_angle_timeline_repository.cpp
         src/zarr/tensorstore_eye_geometry_overlay_repository.cpp
         src/zarr/tensorstore_analysis_crop_geometry_repository.cpp
         src/zarr/tensorstore_acquisition_crop_repository.cpp
         src/zarr/tensorstore_keypoint_overlay_repository.cpp
         src/zarr/tensorstore_stimulus_context_timeline_repository.cpp
+        src/zarr/tensorstore_swim_bout_timeline_repository.cpp
         src/zarr/tensorstore_stimulus_repository.cpp
         src/zarr/tensorstore_subject_mask_overlay_repository.cpp
         src/zarr/tensorstore_subject_shape_overlay_repository.cpp
+        src/zarr/zarr_metadata_equivalence.cpp
     )
     target_include_directories(crimson_tensorstore_repositories PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -151,7 +210,131 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         PUBLIC
             crimson_crop_contracts
             crimson_repository_contracts
-        PRIVATE ${tensorstore_target} Threads::Threads
+        PRIVATE ${tensorstore_target} tensorstore_internal_digest_sha256
+                Threads::Threads
+    )
+
+    add_executable(archive_context_tests
+        tools/archive_context_tests.cpp
+    )
+    target_compile_features(archive_context_tests PRIVATE cxx_std_17)
+    target_link_libraries(archive_context_tests PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(archive_context_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME archive_context_tests
+        COMMAND $<TARGET_FILE:archive_context_tests>)
+
+    add_executable(canonical_detection_repository_tests
+        tools/canonical_detection_repository_tests.cpp
+    )
+    target_compile_features(canonical_detection_repository_tests
+        PRIVATE cxx_std_17)
+    target_link_libraries(canonical_detection_repository_tests PRIVATE
+        crimson_overlay_contracts
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+        nlohmann_json::nlohmann_json
+        Threads::Threads
+    )
+    set_target_properties(canonical_detection_repository_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME canonical_detection_repository_tests
+        COMMAND $<TARGET_FILE:canonical_detection_repository_tests>)
+    set_tests_properties(canonical_detection_repository_tests PROPERTIES
+        LABELS "headless;detection;overlay;repository;tensorstore;zarr"
+        TIMEOUT 30
+    )
+
+    add_executable(refined_detection_shadow_gate
+        tools/refined_detection_shadow_gate.cpp
+    )
+    target_compile_features(refined_detection_shadow_gate PRIVATE cxx_std_17)
+    target_link_libraries(refined_detection_shadow_gate PRIVATE
+        crimson_overlay_contracts
+        crimson_tensorstore_repositories
+        nlohmann_json::nlohmann_json
+        Threads::Threads
+    )
+    execute_process(
+        COMMAND git rev-parse HEAD
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE CRIMSON_REFINED_GATE_GIT_COMMIT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    execute_process(
+        COMMAND git status --porcelain
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE CRIMSON_REFINED_GATE_GIT_STATUS
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(NOT CRIMSON_REFINED_GATE_GIT_COMMIT)
+        set(CRIMSON_REFINED_GATE_GIT_COMMIT "unknown")
+    endif()
+    if(CRIMSON_REFINED_GATE_GIT_STATUS)
+        set(CRIMSON_REFINED_GATE_WORKTREE_DIRTY 1)
+    else()
+        set(CRIMSON_REFINED_GATE_WORKTREE_DIRTY 0)
+    endif()
+    target_compile_definitions(refined_detection_shadow_gate PRIVATE
+        CRIMSON_GIT_COMMIT="${CRIMSON_REFINED_GATE_GIT_COMMIT}"
+        CRIMSON_WORKTREE_DIRTY=${CRIMSON_REFINED_GATE_WORKTREE_DIRTY}
+    )
+    set_target_properties(refined_detection_shadow_gate PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    set_tests_properties(archive_context_tests PROPERTIES
+        LABELS "cache;headless;portable;repository;tensorstore;zarr"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_executable(tensorstore_array_access_benchmark
+        tools/tensorstore_array_access_benchmark.cpp
+    )
+    target_compile_features(tensorstore_array_access_benchmark
+        PRIVATE cxx_std_17)
+    target_link_libraries(tensorstore_array_access_benchmark PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(tensorstore_array_access_benchmark PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
+    add_executable(canonical_detection_storage_benchmark
+        tools/canonical_detection_storage_benchmark.cpp
+    )
+    target_compile_features(canonical_detection_storage_benchmark
+        PRIVATE cxx_std_17)
+    target_link_libraries(canonical_detection_storage_benchmark PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(canonical_detection_storage_benchmark PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
+    add_executable(canonical_detection_residency_benchmark
+        tools/canonical_detection_residency_benchmark.cpp
+    )
+    target_compile_features(canonical_detection_residency_benchmark
+        PRIVATE cxx_std_17)
+    target_link_libraries(canonical_detection_residency_benchmark PRIVATE
+        crimson_repository_contracts
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+        nlohmann_json::nlohmann_json
+        Threads::Threads
+    )
+    set_target_properties(canonical_detection_residency_benchmark PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
 
     add_executable(stimulus_repository_probe
@@ -179,6 +362,19 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
 
+    add_executable(swim_bout_timeline_repository_probe
+        tools/swim_bout_timeline_repository_probe.cpp
+    )
+    target_compile_features(swim_bout_timeline_repository_probe
+        PRIVATE cxx_std_17)
+    target_link_libraries(swim_bout_timeline_repository_probe PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(swim_bout_timeline_repository_probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
     add_executable(stimulus_context_timeline_repository_tests
         tools/stimulus_context_timeline_repository_tests.cpp
     )
@@ -195,6 +391,49 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         COMMAND $<TARGET_FILE:stimulus_context_timeline_repository_tests>)
     set_tests_properties(stimulus_context_timeline_repository_tests PROPERTIES
         LABELS "headless;portable;repository;stimulus;tensorstore;timeline;zarr"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_executable(swim_bout_timeline_repository_tests
+        tools/swim_bout_timeline_repository_tests.cpp
+    )
+    target_compile_features(swim_bout_timeline_repository_tests
+        PRIVATE cxx_std_17)
+    target_link_libraries(swim_bout_timeline_repository_tests PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(swim_bout_timeline_repository_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME swim_bout_timeline_repository_tests
+        COMMAND $<TARGET_FILE:swim_bout_timeline_repository_tests>)
+    set_tests_properties(swim_bout_timeline_repository_tests PROPERTIES
+        LABELS "headless;portable;repository;swim_bout;tensorstore;timeline;zarr"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_executable(chaser_distance_polar_tensorstore_repository_tests
+        tools/chaser_distance_polar_tensorstore_repository_tests.cpp
+    )
+    target_compile_features(
+        chaser_distance_polar_tensorstore_repository_tests PRIVATE cxx_std_17)
+    target_link_libraries(
+        chaser_distance_polar_tensorstore_repository_tests PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(
+        chaser_distance_polar_tensorstore_repository_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME chaser_distance_polar_tensorstore_repository_tests
+        COMMAND $<TARGET_FILE:chaser_distance_polar_tensorstore_repository_tests>)
+    set_tests_properties(
+        chaser_distance_polar_tensorstore_repository_tests PROPERTIES
+        LABELS "headless;polar;portable;repository;tensorstore;zarr"
         TIMEOUT 60
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
@@ -216,6 +455,39 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         LABELS "crop;headless;portable;repository;tensorstore;zarr"
         TIMEOUT 60
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_executable(affiliated_video_repository_tests
+        tools/affiliated_video_repository_tests.cpp
+    )
+    target_compile_features(affiliated_video_repository_tests
+        PRIVATE cxx_std_17)
+    target_link_libraries(affiliated_video_repository_tests PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(affiliated_video_repository_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME affiliated_video_repository_tests
+        COMMAND $<TARGET_FILE:affiliated_video_repository_tests>)
+    set_tests_properties(affiliated_video_repository_tests PROPERTIES
+        LABELS "headless;media;portable;repository;tensorstore;zarr"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_executable(affiliated_video_repository_probe
+        tools/affiliated_video_repository_probe.cpp
+    )
+    target_compile_features(affiliated_video_repository_probe
+        PRIVATE cxx_std_17)
+    target_link_libraries(affiliated_video_repository_probe PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(affiliated_video_repository_probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
 
     add_executable(analysis_crop_geometry_repository_tests
@@ -458,8 +730,155 @@ set_target_properties(frame_slot_tests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
 enable_testing()
+
+add_custom_target(crimson_zarr_loader_dependency_check ALL
+    COMMAND ${CMAKE_COMMAND}
+        -DCRIMSON_SOURCE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckZarrLoaderDependencies.cmake
+    COMMENT "Checking ZarrDetectionLoader dependency baseline"
+    VERBATIM
+)
+add_test(NAME zarr_loader_dependency_check
+    COMMAND ${CMAKE_COMMAND}
+        -DCRIMSON_SOURCE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckZarrLoaderDependencies.cmake
+)
+set_tests_properties(zarr_loader_dependency_check PROPERTIES
+    LABELS "architecture;headless;portable;zarr"
+)
+
 add_test(NAME frame_slot_tests COMMAND $<TARGET_FILE:frame_slot_tests>)
 set_tests_properties(frame_slot_tests PROPERTIES LABELS "frame;portable")
+
+add_executable(playback_transport_tests
+    tools/playback_transport_tests.cpp
+)
+target_link_libraries(playback_transport_tests PRIVATE crimson_frame_contracts)
+target_compile_features(playback_transport_tests PRIVATE cxx_std_17)
+set_target_properties(playback_transport_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME playback_transport_tests
+    COMMAND $<TARGET_FILE:playback_transport_tests>
+)
+set_tests_properties(playback_transport_tests PROPERTIES
+    LABELS "headless;playback;portable;transport"
+)
+
+foreach(runtime_test
+        session_lifecycle_tests
+        loading_progress_tests
+        frame_presentation_tests
+        diagnostic_report_tests
+        session_readiness_tests
+        session_open_transaction_tests
+        recording_open_workflow_tests
+        session_loading_presentation_tests)
+    add_executable(${runtime_test} tools/${runtime_test}.cpp)
+    target_link_libraries(${runtime_test} PRIVATE crimson_runtime_contracts)
+    target_compile_features(${runtime_test} PRIVATE cxx_std_17)
+    set_target_properties(${runtime_test} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME ${runtime_test} COMMAND $<TARGET_FILE:${runtime_test}>)
+    set_tests_properties(${runtime_test} PROPERTIES
+        LABELS "headless;portable;runtime")
+endforeach()
+
+add_executable(data_access_contract_tests
+    tools/data_access_contract_tests.cpp
+)
+target_link_libraries(data_access_contract_tests PRIVATE
+    crimson_data_access_contracts
+)
+target_compile_features(data_access_contract_tests PRIVATE cxx_std_17)
+set_target_properties(data_access_contract_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME data_access_contract_tests
+    COMMAND $<TARGET_FILE:data_access_contract_tests>)
+set_tests_properties(data_access_contract_tests PROPERTIES
+    LABELS "cache;headless;portable;scheduler"
+)
+
+add_executable(chaser_distance_polar_contract_tests
+    tools/chaser_distance_polar_contract_tests.cpp
+)
+target_link_libraries(chaser_distance_polar_contract_tests PRIVATE
+    crimson_repository_contracts
+)
+target_compile_features(chaser_distance_polar_contract_tests PRIVATE
+    cxx_std_17)
+set_target_properties(chaser_distance_polar_contract_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME chaser_distance_polar_contract_tests
+    COMMAND $<TARGET_FILE:chaser_distance_polar_contract_tests>)
+set_tests_properties(chaser_distance_polar_contract_tests PROPERTIES
+    LABELS "headless;polar;portable;repository"
+)
+
+add_executable(chaser_distance_polar_buffer_tests
+    tools/chaser_distance_polar_buffer_tests.cpp
+)
+target_link_libraries(chaser_distance_polar_buffer_tests PRIVATE
+    crimson_repository_contracts
+)
+target_compile_features(chaser_distance_polar_buffer_tests PRIVATE cxx_std_17)
+set_target_properties(chaser_distance_polar_buffer_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME chaser_distance_polar_buffer_tests
+    COMMAND $<TARGET_FILE:chaser_distance_polar_buffer_tests>)
+set_tests_properties(chaser_distance_polar_buffer_tests PROPERTIES
+    LABELS "buffer;headless;polar;portable;repository"
+    TIMEOUT 30
+)
+
+add_executable(chaser_distance_polar_scene_tests
+    tools/chaser_distance_polar_scene_tests.cpp
+)
+target_link_libraries(chaser_distance_polar_scene_tests PRIVATE
+    crimson_repository_contracts
+)
+target_compile_features(chaser_distance_polar_scene_tests PRIVATE cxx_std_17)
+set_target_properties(chaser_distance_polar_scene_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME chaser_distance_polar_scene_tests
+    COMMAND $<TARGET_FILE:chaser_distance_polar_scene_tests>)
+set_tests_properties(chaser_distance_polar_scene_tests PROPERTIES
+    LABELS "headless;polar;portable;presentation;scene"
+)
+
+add_executable(workspace_state_tests tools/workspace_state_tests.cpp)
+target_link_libraries(workspace_state_tests PRIVATE
+    crimson_workspace_contracts
+)
+target_compile_features(workspace_state_tests PRIVATE cxx_std_17)
+set_target_properties(workspace_state_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME workspace_state_tests
+    COMMAND $<TARGET_FILE:workspace_state_tests>)
+set_tests_properties(workspace_state_tests PROPERTIES
+    LABELS "headless;portable;workspace"
+)
+
+add_executable(workspace_workflow_tests
+    tools/workspace_workflow_tests.cpp
+)
+target_link_libraries(workspace_workflow_tests PRIVATE
+    crimson_workspace_contracts
+)
+target_compile_features(workspace_workflow_tests PRIVATE cxx_std_17)
+set_target_properties(workspace_workflow_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME workspace_workflow_tests
+    COMMAND $<TARGET_FILE:workspace_workflow_tests>)
+set_tests_properties(workspace_workflow_tests PROPERTIES
+    LABELS "headless;portable;workspace;workflow"
+)
 
 add_executable(crop_source_contract_tests
     tools/crop_source_contract_tests.cpp
@@ -491,6 +910,22 @@ add_test(NAME crop_presentation_coordinator_tests
     COMMAND $<TARGET_FILE:crop_presentation_coordinator_tests>)
 set_tests_properties(crop_presentation_coordinator_tests PROPERTIES
     LABELS "crop;playback;portable;presentation"
+)
+
+add_executable(roi_inset_presentation_tests
+    tools/roi_inset_presentation_tests.cpp
+)
+target_link_libraries(roi_inset_presentation_tests PRIVATE
+    crimson_crop_contracts
+)
+target_compile_features(roi_inset_presentation_tests PRIVATE cxx_std_17)
+set_target_properties(roi_inset_presentation_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME roi_inset_presentation_tests
+    COMMAND $<TARGET_FILE:roi_inset_presentation_tests>)
+set_tests_properties(roi_inset_presentation_tests PROPERTIES
+    LABELS "crop;headless;portable;presentation"
 )
 
 add_executable(overlay_scene_contract_tests
@@ -598,6 +1033,38 @@ set_tests_properties(stimulus_context_timeline_tests PROPERTIES
     LABELS "headless;portable;repository;stimulus;timeline"
 )
 
+add_executable(stimulus_camera_overlay_scene_tests
+    tools/stimulus_camera_overlay_scene_tests.cpp
+)
+target_link_libraries(stimulus_camera_overlay_scene_tests PRIVATE
+    crimson_repository_contracts
+)
+target_compile_features(stimulus_camera_overlay_scene_tests PRIVATE cxx_std_17)
+set_target_properties(stimulus_camera_overlay_scene_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME stimulus_camera_overlay_scene_tests
+    COMMAND $<TARGET_FILE:stimulus_camera_overlay_scene_tests>)
+set_tests_properties(stimulus_camera_overlay_scene_tests PROPERTIES
+    LABELS "headless;overlay;portable;presentation;scene;stimulus"
+)
+
+add_executable(swim_bout_timeline_tests
+    tools/swim_bout_timeline_tests.cpp
+)
+target_link_libraries(swim_bout_timeline_tests PRIVATE
+    crimson_repository_contracts
+)
+target_compile_features(swim_bout_timeline_tests PRIVATE cxx_std_17)
+set_target_properties(swim_bout_timeline_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME swim_bout_timeline_tests
+    COMMAND $<TARGET_FILE:swim_bout_timeline_tests>)
+set_tests_properties(swim_bout_timeline_tests PROPERTIES
+    LABELS "headless;portable;repository;swim_bout;timeline"
+)
+
 add_executable(stimulus_playback_coordinator_tests
     tools/stimulus_playback_coordinator_tests.cpp
 )
@@ -633,16 +1100,10 @@ set_tests_properties(stimulus_presentation_coordinator_tests PROPERTIES
 if(CRIMSON_BUILD_NVIDIA_APP)
     enable_language(CUDA)
 
-set(CRIMSON_STRICT_NAN_COMPILE_OPTION "")
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
-    set(CRIMSON_CXX_FAST_FLAGS -Ofast -ffast-math)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|X86_64|AMD64|amd64|i[3-6]86)$")
-        list(APPEND CRIMSON_CXX_FAST_FLAGS -mssse3)
+        add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-mssse3>)
     endif()
-    foreach(CRIMSON_CXX_FAST_FLAG IN LISTS CRIMSON_CXX_FAST_FLAGS)
-        add_compile_options($<$<COMPILE_LANGUAGE:CXX>:${CRIMSON_CXX_FAST_FLAG}>)
-    endforeach()
-    set(CRIMSON_STRICT_NAN_COMPILE_OPTION "-fno-fast-math")
 endif()
 
 # Set CUDA standard and options
@@ -1355,37 +1816,49 @@ file(GLOB CPP_SOURCES CONFIGURE_DEPENDS
     "src/gui/*.cpp"
     "src/zarr/*.cpp")
 list(REMOVE_ITEM CPP_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/chaser_distance_polar.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/chaser_distance_polar_buffer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/chaser_distance_polar_scene.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/canonical_detection_buffer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/stimulus_camera_overlay_scene.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/swim_bout_timeline.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/swim_bout_timeline_buffer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/crop_presentation_coordinator.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/crop_source_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_types.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_selection.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_slot.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/session_lifecycle.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/loading_progress.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_presentation.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/diagnostic_report.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/session_readiness.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/session_open_transaction.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/recording_open_workflow.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/session_loading_presentation.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/workspace_state.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/overlay_scene_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/read_only_overlay_scene.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/canonical_detection_overlay_scene_adapter.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/analysis_crop_geometry_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/stimulus_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/acquisition_crop_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_archive_context.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_affiliated_video_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_analysis_series_timeline_repository.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_chaser_distance_polar_repository.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_canonical_detection_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_eye_angle_timeline_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_eye_geometry_overlay_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_analysis_crop_geometry_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_acquisition_crop_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_keypoint_overlay_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_stimulus_context_timeline_repository.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_swim_bout_timeline_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_stimulus_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_subject_mask_overlay_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_subject_shape_overlay_repository.cpp"
 )
-
-# keypoint write path requires strict IEEE NaN semantics for contract-idempotent
-# NaN-aware comparisons and writes.
-if(CRIMSON_STRICT_NAN_COMPILE_OPTION)
-    set_source_files_properties(
-        src/zarr_loader_keypoint_write.cpp
-        PROPERTIES COMPILE_OPTIONS "${CRIMSON_STRICT_NAN_COMPILE_OPTION}"
-    )
-endif()
 
 # --- Create the Executable ---
 add_executable(redgui
@@ -1395,6 +1868,7 @@ add_executable(redgui
     ${IMPLOT_SOURCES}
     ${IMGUI_FILE_DIALOG_SOURCES}
 )
+target_compile_definitions(redgui PRIVATE IMGUI_ENABLE_TEST_ENGINE)
 
 # --- Set Include Directories ---
 target_include_directories(redgui PRIVATE
@@ -1416,8 +1890,10 @@ target_include_directories(redgui PRIVATE
 # --- Link Libraries ---
 target_link_libraries(redgui PRIVATE
     crimson_frame_contracts
+    crimson_runtime_contracts
     crimson_overlay_contracts
     crimson_repository_contracts
+    crimson_workspace_contracts
     # CUDA and NVIDIA Libraries
     ${CUDA_LIBRARIES}
     ${CUDA_DRIVER}
@@ -1734,6 +2210,86 @@ target_link_libraries(palette_clipped_loader_probe PRIVATE
 target_compile_features(palette_clipped_loader_probe PRIVATE cxx_std_17)
 crimson_configure_parquet_support(palette_clipped_loader_probe)
 
+add_executable(chaser_distance_polar_legacy_probe
+    tools/chaser_distance_polar_legacy_probe.cpp
+    src/zarr_loader.cpp
+    src/zarr_loader_detections.cpp
+    src/zarr_loader_eye_keypoint.cpp
+    src/zarr_loader_movement.cpp
+    src/zarr_loader_stimulus.cpp
+    src/zarr_loader_subject_shape.cpp
+    src/zarr_loader_tail_kinematics.cpp
+    src/zarr_loader_write.cpp
+    src/zarr_loader_internal.cpp
+    src/keypoint_heading_utils.cpp
+    src/zarr/clipped_detection_repository.cpp
+    src/zarr/palette_clipped_resolver.cpp
+)
+target_include_directories(chaser_distance_polar_legacy_probe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+    ${HDF5_INCLUDE_DIRS}
+)
+target_link_libraries(chaser_distance_polar_legacy_probe PRIVATE
+    crimson_repository_contracts
+    crimson_tensorstore_repositories
+    tensorstore::all_drivers
+    nlohmann_json::nlohmann_json
+    Threads::Threads
+    ${OpenCV_LIBS}
+    ${HDF5_CXX_LIBRARIES}
+)
+target_compile_features(chaser_distance_polar_legacy_probe PRIVATE cxx_std_17)
+crimson_configure_parquet_support(chaser_distance_polar_legacy_probe)
+add_test(NAME chaser_distance_polar_legacy_characterization
+    COMMAND $<TARGET_FILE:chaser_distance_polar_legacy_probe> --self-test
+)
+set_tests_properties(chaser_distance_polar_legacy_characterization PROPERTIES
+    LABELS "characterization;headless;legacy;polar;zarr"
+    TIMEOUT 120
+)
+
+add_executable(stimulus_context_timeline_legacy_probe
+    tools/stimulus_context_timeline_legacy_probe.cpp
+    src/zarr_loader.cpp
+    src/zarr_loader_detections.cpp
+    src/zarr_loader_eye_keypoint.cpp
+    src/zarr_loader_movement.cpp
+    src/zarr_loader_stimulus.cpp
+    src/zarr_loader_subject_shape.cpp
+    src/zarr_loader_tail_kinematics.cpp
+    src/zarr_loader_write.cpp
+    src/zarr_loader_internal.cpp
+    src/keypoint_heading_utils.cpp
+    src/zarr/clipped_detection_repository.cpp
+    src/zarr/palette_clipped_resolver.cpp
+)
+target_include_directories(stimulus_context_timeline_legacy_probe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+    ${HDF5_INCLUDE_DIRS}
+)
+target_link_libraries(stimulus_context_timeline_legacy_probe PRIVATE
+    crimson_repository_contracts
+    crimson_tensorstore_repositories
+    tensorstore::all_drivers
+    nlohmann_json::nlohmann_json
+    Threads::Threads
+    ${OpenCV_LIBS}
+    ${HDF5_CXX_LIBRARIES}
+)
+target_compile_features(stimulus_context_timeline_legacy_probe PRIVATE
+    cxx_std_17)
+crimson_configure_parquet_support(stimulus_context_timeline_legacy_probe)
+add_test(NAME stimulus_context_timeline_legacy_characterization
+    COMMAND $<TARGET_FILE:stimulus_context_timeline_legacy_probe> --self-test
+)
+set_tests_properties(stimulus_context_timeline_legacy_characterization
+    PROPERTIES
+        LABELS "characterization;headless;legacy;stimulus;timeline;zarr"
+        TIMEOUT 120
+)
+
 add_executable(subject_mask_contour_probe EXCLUDE_FROM_ALL
     tools/subject_mask_contour_probe.cpp
     src/zarr_loader.cpp
@@ -1795,10 +2351,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/keypoint_fish_present_contract_chec
     )
     target_compile_features(keypoint_fish_present_contract_check PRIVATE cxx_std_17)
     crimson_configure_parquet_support(keypoint_fish_present_contract_check)
-    if(CRIMSON_STRICT_NAN_COMPILE_OPTION)
-        target_compile_options(keypoint_fish_present_contract_check PRIVATE
-            ${CRIMSON_STRICT_NAN_COMPILE_OPTION})
-    endif()
 else()
     message(STATUS
         "Skipping keypoint_fish_present_contract_check: "
@@ -1867,6 +2419,20 @@ if(CRIMSON_BUILD_MACOS_APP)
     crimson_fetch_tensorstore()
     crimson_add_tensorstore_repositories(crimson::tensorstore_zarr)
 
+    add_library(crimson_apple_analysis_loading STATIC
+        src/platform/macos/apple_analysis_repository_loader.cpp
+    )
+    target_compile_features(crimson_apple_analysis_loading PUBLIC cxx_std_17)
+    target_include_directories(crimson_apple_analysis_loading PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(crimson_apple_analysis_loading PUBLIC
+        crimson_runtime_contracts
+        crimson_tensorstore_repositories
+        crimson::tensorstore_zarr
+        Threads::Threads
+    )
+
     if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
         message(FATAL_ERROR
             "The maintained macOS backend requires native Apple Silicon arm64.")
@@ -1891,11 +2457,21 @@ if(CRIMSON_BUILD_MACOS_APP)
     find_library(AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
     find_library(COCOA_FRAMEWORK Cocoa REQUIRED)
     find_library(COREMEDIA_FRAMEWORK CoreMedia REQUIRED)
+    find_library(COREIMAGE_FRAMEWORK CoreImage REQUIRED)
     find_library(COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
     find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
     find_library(METAL_FRAMEWORK Metal REQUIRED)
     find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
+    find_library(UNIFORMTYPEIDENTIFIERS_FRAMEWORK UniformTypeIdentifiers REQUIRED)
     find_library(VIDEOTOOLBOX_FRAMEWORK VideoToolbox REQUIRED)
+
+    add_library(crimson_apple_workspace STATIC
+        src/platform/macos/apple_workspace_layout.cpp
+    )
+    target_compile_features(crimson_apple_workspace PUBLIC cxx_std_17)
+    target_include_directories(crimson_apple_workspace PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
 
     add_library(crimson_apple_video STATIC
         src/platform/macos/apple_video_frame_provider.mm
@@ -1932,6 +2508,7 @@ if(CRIMSON_BUILD_MACOS_APP)
     )
     target_link_libraries(crimson_apple_overlay PUBLIC
         crimson_overlay_contracts
+        crimson_repository_contracts
         ${FOUNDATION_FRAMEWORK}
         ${METAL_FRAMEWORK}
     )
@@ -2002,6 +2579,9 @@ if(CRIMSON_BUILD_MACOS_APP)
     set(CRIMSON_MACOS_APP_SOURCES
         src/platform/macos/crimson_macos_main.mm
         src/platform/macos/apple_video_viewer_ui.mm
+        src/gui/session_loading_modal.cpp
+        src/imgui_semantic_snapshot.cpp
+        src/ui_path_config.cpp
         ${CRIMSON_MACOS_IMGUI_DIR}/imgui.cpp
         ${CRIMSON_MACOS_IMGUI_DIR}/imgui_draw.cpp
         ${CRIMSON_MACOS_IMGUI_DIR}/imgui_tables.cpp
@@ -2028,23 +2608,56 @@ if(CRIMSON_BUILD_MACOS_APP)
     )
     target_compile_definitions(crimson_macos_shell PRIVATE
         CRIMSON_GIT_COMMIT="${CRIMSON_MACOS_GIT_COMMIT}"
+        IMGUI_ENABLE_TEST_ENGINE
     )
     target_include_directories(crimson_macos_shell PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CRIMSON_MACOS_IMGUI_DIR}
         ${CRIMSON_MACOS_IMGUI_DIR}/backends
         ${CRIMSON_MACOS_IMPLOT_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/IconFontCppHeaders
     )
     target_link_libraries(crimson_macos_shell PRIVATE
+        crimson_apple_analysis_loading
+        crimson_apple_workspace
         crimson_apple_overlay
         crimson_apple_acquisition_crop_playback
         crimson_apple_stimulus_playback
         crimson_tensorstore_repositories
+        crimson_workspace_contracts
         crimson::tensorstore_zarr
+        nlohmann_json::nlohmann_json
         glfw
         ${COCOA_FRAMEWORK}
+        ${COREIMAGE_FRAMEWORK}
         ${METAL_FRAMEWORK}
         ${QUARTZCORE_FRAMEWORK}
+        ${UNIFORMTYPEIDENTIFIERS_FRAMEWORK}
+    )
+
+    add_executable(imgui_semantic_snapshot_tests
+        tools/imgui_semantic_snapshot_tests.cpp
+        src/gui/session_loading_modal.cpp
+        src/imgui_semantic_snapshot.cpp
+        ${CRIMSON_MACOS_IMGUI_DIR}/imgui.cpp
+        ${CRIMSON_MACOS_IMGUI_DIR}/imgui_draw.cpp
+        ${CRIMSON_MACOS_IMGUI_DIR}/imgui_tables.cpp
+        ${CRIMSON_MACOS_IMGUI_DIR}/imgui_widgets.cpp
+    )
+    target_compile_features(imgui_semantic_snapshot_tests PRIVATE cxx_std_17)
+    target_compile_definitions(imgui_semantic_snapshot_tests PRIVATE
+        IMGUI_ENABLE_TEST_ENGINE)
+    target_include_directories(imgui_semantic_snapshot_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CRIMSON_MACOS_IMGUI_DIR}
+    )
+    target_link_libraries(imgui_semantic_snapshot_tests PRIVATE
+        crimson_runtime_contracts
+        nlohmann_json::nlohmann_json)
+    add_test(NAME imgui_semantic_snapshot_tests
+        COMMAND imgui_semantic_snapshot_tests)
+    set_tests_properties(imgui_semantic_snapshot_tests PROPERTIES
+        LABELS "headless;macos;ui"
     )
     set_target_properties(crimson_macos_shell PROPERTIES
         OUTPUT_NAME "Crimson"
@@ -2056,6 +2669,71 @@ if(CRIMSON_BUILD_MACOS_APP)
     )
 
     enable_testing()
+    add_executable(apple_workspace_layout_tests
+        tools/apple_workspace_layout_tests.cpp
+    )
+    target_compile_features(apple_workspace_layout_tests PRIVATE cxx_std_17)
+    target_link_libraries(apple_workspace_layout_tests PRIVATE
+        crimson_apple_workspace
+    )
+    set_target_properties(apple_workspace_layout_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME apple_workspace_layout_tests
+        COMMAND $<TARGET_FILE:apple_workspace_layout_tests>)
+    set_tests_properties(apple_workspace_layout_tests PROPERTIES
+        LABELS "headless;macos;workspace"
+    )
+
+    add_executable(apple_analysis_repository_loader_tests
+        tools/apple_analysis_repository_loader_tests.cpp
+    )
+    target_compile_features(apple_analysis_repository_loader_tests
+        PRIVATE cxx_std_17)
+    target_link_libraries(apple_analysis_repository_loader_tests PRIVATE
+        crimson_apple_analysis_loading
+    )
+    set_target_properties(apple_analysis_repository_loader_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME apple_analysis_repository_loader_tests
+        COMMAND $<TARGET_FILE:apple_analysis_repository_loader_tests>)
+    set_tests_properties(apple_analysis_repository_loader_tests PROPERTIES
+        LABELS "headless;macos;repository;startup;tensorstore;zarr"
+        TIMEOUT 30
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_executable(canonical_detection_full_archive_integration_gate
+        tools/canonical_detection_full_archive_integration_gate.cpp
+    )
+    target_compile_features(canonical_detection_full_archive_integration_gate
+        PRIVATE cxx_std_17)
+    target_link_libraries(canonical_detection_full_archive_integration_gate
+        PRIVATE
+            crimson_apple_analysis_loading
+            crimson_overlay_contracts
+            nlohmann_json::nlohmann_json
+    )
+    set_target_properties(canonical_detection_full_archive_integration_gate
+        PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
+    add_executable(canonical_detection_full_archive_stage1_benchmark
+        tools/canonical_detection_full_archive_stage1_benchmark.cpp
+    )
+    target_compile_features(canonical_detection_full_archive_stage1_benchmark
+        PRIVATE cxx_std_17)
+    target_link_libraries(canonical_detection_full_archive_stage1_benchmark
+        PRIVATE
+            crimson_apple_analysis_loading
+            crimson_overlay_contracts
+            nlohmann_json::nlohmann_json
+    )
+    set_target_properties(canonical_detection_full_archive_stage1_benchmark
+        PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
     add_executable(apple_tensorstore_zarr_tests
         tools/apple_tensorstore_zarr_tests.cpp
     )
@@ -2250,7 +2928,7 @@ if(CRIMSON_BUILD_MACOS_APP)
     add_test(NAME apple_read_only_overlay_metal_tests
         COMMAND $<TARGET_FILE:apple_read_only_overlay_metal_tests>)
     set_tests_properties(apple_read_only_overlay_metal_tests PROPERTIES
-        LABELS "headless;macos;metal;overlay"
+        LABELS "headless;macos;metal;overlay;polar;presentation"
         TIMEOUT 60
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )

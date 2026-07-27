@@ -29,8 +29,14 @@ struct CameraViewWindowPerfMetrics {
     double tail_kinematics_overlay_ms = 0.0;
     double scene_ui_ms = 0.0;
     CameraViewMaskPerfMetrics mask_overlay;
+    double viewport_x_px = std::numeric_limits<double>::quiet_NaN();
+    double viewport_y_px = std::numeric_limits<double>::quiet_NaN();
     double viewport_width_px = std::numeric_limits<double>::quiet_NaN();
     double viewport_height_px = std::numeric_limits<double>::quiet_NaN();
+    double media_x_px = std::numeric_limits<double>::quiet_NaN();
+    double media_y_px = std::numeric_limits<double>::quiet_NaN();
+    double media_width_px = std::numeric_limits<double>::quiet_NaN();
+    double media_height_px = std::numeric_limits<double>::quiet_NaN();
     double view_x_min = std::numeric_limits<double>::quiet_NaN();
     double view_x_max = std::numeric_limits<double>::quiet_NaN();
     double view_y_min = std::numeric_limits<double>::quiet_NaN();
@@ -111,12 +117,13 @@ struct CameraViewWindowContext {
     const std::vector<ZarrDetectionLoader::ChaserState>* chaser_states =
         nullptr;
     const CameraParams* camera_params = nullptr;
-    const std::vector<std::string>* stimulus_events = nullptr;
-    const ZarrDetectionData::StimulusStep* stimulus_step = nullptr;
+    crimson::stimulus::StimulusCameraOverlayFrameSample
+        stimulus_camera_overlay_frame;
     const StimulusPlayback* stimulus_player = nullptr;
     int target_stimulus_frame = -1;
     CameraViewStimulusInsetOptions stimulus_inset_options;
-    ZarrDetectionLoader::ChaserDistancePolarFrame chaser_distance_polar_frame;
+    crimson::polar::ChaserDistancePolarFrameSample
+        chaser_distance_polar_frame;
     CameraViewChaserDistancePolarInsetOptions chaser_distance_polar_inset_options;
 
     CameraViewTransportControlsContext transport_controls;
@@ -150,6 +157,17 @@ struct CameraViewWindowResult {
     bool view_focused = false;
     CameraViewFrameSyncSummary frame_sync;
     CameraViewWindowPerfMetrics perf;
+    crimson::stimulus::StimulusCameraOverlayScene
+        stimulus_camera_overlay_scene;
+    double stimulus_camera_overlay_origin_x_px =
+        std::numeric_limits<double>::quiet_NaN();
+    double stimulus_camera_overlay_origin_y_px =
+        std::numeric_limits<double>::quiet_NaN();
+    crimson::polar::ChaserDistancePolarScene chaser_distance_polar_scene;
+    double chaser_distance_polar_origin_x_px =
+        std::numeric_limits<double>::quiet_NaN();
+    double chaser_distance_polar_origin_y_px =
+        std::numeric_limits<double>::quiet_NaN();
 };
 
 CameraViewWindowResult drawCameraViewWindowContents(

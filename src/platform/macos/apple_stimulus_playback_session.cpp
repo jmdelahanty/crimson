@@ -227,6 +227,21 @@ AppleStimulusPlaybackSession::frameForCameraFrame(int32_t camera_frame) const {
   return AppleAlignedStimulusFrame{resolution, std::move(*frame)};
 }
 
+std::optional<AppleDecodedVideoFrame>
+AppleStimulusPlaybackSession::frameForStimulusFrame(
+    int64_t stimulus_frame) const {
+  if (!isOpen()) {
+    return std::nullopt;
+  }
+  return impl_->playback.frameForTarget(stimulus_frame, true);
+}
+
+std::vector<int64_t>
+AppleStimulusPlaybackSession::bufferedFrameNumbers() const {
+  return isOpen() ? impl_->playback.bufferedFrameNumbers()
+                  : std::vector<int64_t>{};
+}
+
 crimson::zarr::StimulusFrameResolution
 AppleStimulusPlaybackSession::resolveCameraFrame(int32_t camera_frame) const {
   if (!impl_->repository) {

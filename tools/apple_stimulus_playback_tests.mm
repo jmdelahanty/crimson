@@ -130,6 +130,13 @@ void RunTest(const std::string& video_path) {
   CHECK(settled_metrics.decoder.peak_buffered_frames <= 4);
   CHECK(settled_metrics.decoder.last_decoded_frame <= 7);
   CHECK(session.frameForCameraFrame(4).has_value());
+  const auto buffered_frames = session.bufferedFrameNumbers();
+  CHECK(!buffered_frames.empty());
+  for (const int64_t buffered_frame : buffered_frames) {
+    const auto debug_frame = session.frameForStimulusFrame(buffered_frame);
+    CHECK(debug_frame.has_value());
+    CHECK(debug_frame->metadata.frame_number == buffered_frame);
+  }
 
   CHECK(settled_metrics.camera_requests == 13);
   CHECK(settled_metrics.mapped_requests == 11);

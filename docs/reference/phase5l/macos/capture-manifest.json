@@ -1,0 +1,47 @@
+{
+  "schema": "crimson.phase5l.macos-capture-set.v1",
+  "captured_at": "2026-07-17T16:04:02-0400",
+  "runtime": {
+    "platform": "macos",
+    "executable": "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/Crimson.app/Contents/MacOS/Crimson",
+    "executable_sha256": "9188bd01dcb3fe93382ac84eadfebcdec0d38d5546dae4c3e897d86f101dc0b7"
+  },
+  "inputs": {
+    "video": "/Volumes/johnsonlab/jeremy/recordings/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop/cams/Cam2010093_2026-06-14T21-12-08Z_arena_1.mp4",
+    "zarr": "/Volumes/johnsonlab/jeremy/recordings/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop/zarr/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop_analysis.zarr"
+  },
+  "logical_size": "1920x1080",
+  "windows_runtime": "deferred_by_user",
+  "captures": [
+    {
+      "state": "empty",
+      "frame": 0,
+      "stem": "initial_empty_1920x1080"
+    },
+    {
+      "state": "workspace",
+      "frame": 56,
+      "stem": "workspace_exact_f000056_1920x1080"
+    },
+    {
+      "state": "overlays",
+      "frame": 56,
+      "stem": "overlays_exact_f000056_1920x1080"
+    },
+    {
+      "state": "crop-preview",
+      "frame": 56,
+      "stem": "crop_preview_exact_f000056_1920x1080"
+    },
+    {
+      "state": "analysis-eye",
+      "frame": 56,
+      "stem": "analysis_eye_exact_f000056_1920x1080"
+    },
+    {
+      "state": "stimulus-debug",
+      "frame": 1024,
+      "stem": "stimulus_debug_exact_f001024_1920x1080"
+    }
+  ]
+}

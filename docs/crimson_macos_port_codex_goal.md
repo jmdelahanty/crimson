@@ -356,13 +356,542 @@ representative legacy structured archive remains a residual compatibility
 risk. The complete Phase 5J record is in
 `docs/crimson_macos_phase5j_stimulus_context_timeline.md`.
 
-The native Mac shell is still intentionally much smaller than the maintained
-Linux/Windows `redgui` workspace. Remaining Phase 5 work includes stimulus
-overlay parity beyond the event/context surfaces, production-tail data
-acceptance, swim-bout rectangles, edit/review interactions, and other panels,
-docking, and multiwindow workflows identified by the parity inventory. Phase 5
-must not be marked complete until those workflows and the
-screenshot/image-difference gate are satisfied.
+Phase 5K is accepted for the portable swim-bout candidate/interval contract and
+the native Motion review surface. The Mac timeline now selects candidates that
+are compatible with the active motion run, track, and speed variant; renders
+inclusive outer/core bout spans; and exposes a lazy, extrema-preserving
+detector-response trace without presenting it as physical speed. The native
+TensorStore adapter reads compact tabular v2 and hierarchical v1 archives,
+preserves candidate and detector provenance, and uses generation-cancelled,
+bounded asynchronous pages. Both representative mounted archives passed the
+Mac probes, the required native production smoke passed, the server-local
+probe agreed with Mac, the isolated NVIDIA build passed all portable tests,
+and the maintained authenticated GUI smoke passed. The complete Phase 5K
+record is in `docs/crimson_macos_phase5k_swim_bout_timeline.md`.
+
+Phase 5L has now closed maintained read-only workspace and visual parity on Mac
+and the isolated Linux/NVIDIA build. Remaining Phase 5 work includes incremental
+decomposition of stable read-only responsibilities from the monolithic
+`ZarrDetectionLoader`, stimulus overlay parity beyond the event/context
+surfaces, production-tail data acceptance, and eventually the edit/review
+interactions deferred below. Phase 5 must not be marked complete until those
+workflows and the screenshot/image-difference gate are satisfied.
+
+#### Revised Phase 5L — Maintained Workspace Parity
+
+Phase 5L established workspace parity before edit/write implementation. It
+first captured and inventoried the running maintained UI, then reproduced its
+actual window topology, primary camera composition, transport, menus, stable
+panels, styling, control density, and lifecycle behavior on Mac.
+
+Phase 5L is restricted to stable playback and read-only contracts. It must not
+define a provisional Zarr write schema or implement bounding-box, refined
+keypoint, subject-mask, detection-acceptance, or other scientific mutations.
+Write-dependent commands may remain disabled where needed to preserve the
+maintained workspace structure. Edit/review implementation resumes only after
+the shared storage and mutation contracts stabilize.
+
+The maintained source currently exposes independent ImGui windows rather than
+an active ImGui dockspace. The audit must match that observed topology and must
+not introduce docking as an assumed parity requirement. GLFW window/input
+integration and Metal rendering are compatible with the maintained UI
+composition; the rendering backend does not justify a different application
+layout.
+
+The Phase 5L gate requires a source-linked window/command inventory, fixed-size
+Linux/Windows reference captures, structural assertions for window presence,
+labels, defaults, ordering, and content bounds, region-based screenshot
+comparisons with documented masks/tolerances, stable workflow tests, Mac and
+NVIDIA builds, and interactive production smokes. It also requires evidence
+that no write repository was opened and no archive mutation occurred. The full
+plan is in `docs/crimson_macos_phase5l_workspace_parity_plan.md`.
+
+Phase 5L.0 source and Linux runtime evidence is recorded in
+`docs/crimson_macos_phase5l_workspace_inventory.md` and
+`docs/reference/phase5l/manifest.json`. The maintained Linux build now has a
+read-only exact-frame/panel/front-buffer hook and deterministic references for
+workspace, overlays, live crop, stimulus debug, and alternate eye analysis.
+Both final suites pass (34 macOS tests and 24 isolated NVIDIA tests), and the
+archive mtime is unchanged. Production tail evidence remains data-gated because
+the reference archive has no tail kinematics. Windows runtime evidence remains
+an explicit open gate because no real Windows host was available; Linux
+captures are not accepted as a substitute.
+
+Phase 5L.1 portable workspace state is complete and documented in
+`docs/crimson_macos_phase5l_portable_workspace_state.md`. The shared C++17
+contract now owns capability-derived window submission, stable command
+enablement, source/representation/event selections, versioned restoration, and
+playback intent while existing clocks, repositories, decoder rings, and GPU
+resources remain in their backend owners. The current checkpoint passes 34/34
+Mac headless tests, the native Mac Metal 0:300 playback smoke, 24/24 isolated
+NVIDIA tests, and the authenticated NVIDIA 0:300 playback smoke. Windows
+build/runtime validation is deliberately deferred until the new Windows laptop
+is used.
+
+Phase 5L.2 Mac workspace composition is complete and documented in
+`docs/crimson_macos_phase5l2_workspace_composition.md`. The Mac shell now
+matches the maintained independent-window topology, Classic theme,
+Roboto/Fork Awesome typography, first-use role geometry, primary camera
+transport, paused buffer inspection, crop/stimulus presentation, read-only
+overlays, and separate stimulus/analysis timelines. Metal targets the live
+ImGui content rectangles without synchronous full-resolution readback. Mac
+passed 35/35 headless tests plus acquisition and live-geometry multistream
+smokes; the cumulative isolated NVIDIA build passed 24/24 tests and the
+authenticated 0:300 playback smoke. Windows remains explicitly deferred.
+
+Phase 5L.3 stable window and workflow coverage is complete and documented in
+`docs/crimson_macos_phase5l3_stable_workflows.md`. The Mac shell now wires the
+stable file/session, transport, camera, buffer inspection, Frame Inspect,
+crop/stimulus, timeline, diagnostics, help, error, and lifecycle workflows.
+Controls without stable read-only adapters and every mutation command remain
+disabled. Mac passed 36/36 headless tests plus acquisition and live-geometry
+multistream smokes with zero presentation skew; the cumulative isolated
+NVIDIA build passed 25/25 tests and the authenticated 0:300 playback smoke.
+Windows remains explicitly deferred. Phase 5L.4 visual and cross-platform
+acceptance followed and is recorded below.
+
+Phase 5L.4 visual and cross-platform acceptance is complete and
+documented in `docs/crimson_macos_phase5l4_visual_acceptance.md`. Equivalent
+Mac and isolated NVIDIA captures now share exact frames, logical dimensions,
+window roles, semantic labels, control order, and stable read-only markers.
+The deterministic comparator passes 46/46 structural and clean-camera raster
+checks; Mac passes 36/36 tests, while the isolated NVIDIA build passes 26/26
+tests and its authenticated 0:300 production smoke. Controlled portable and
+Metal fixtures enforce the Phase 5 overlay geometry and raster thresholds. Mac
+also passes both 1024:7024 multistream production modes, and all six final Mac
+captures were refreshed from the current executable with valid checksums.
+Windows runtime remains the explicit user-approved deferral; no result is
+inferred for it.
+
+#### Phase 5M — Read-Only Zarr Boundary and Chaser-Polar Pilot
+
+Phase 5M begins an incremental, feature-scoped decomposition of
+`ZarrDetectionLoader`. It must not become a big-bang loader rewrite. The
+existing loader remains a maintained Linux/Windows compatibility facade for
+unmigrated behavior, while newly extracted stable read-only slices receive
+portable scientific types, explicit provenance and missing-data semantics, a
+TensorStore repository adapter, a legacy compatibility adapter, shared
+fixtures, and platform render adapters.
+
+The chaser-distance polar inset is the pilot. The representative recording has
+a complete 140,035-frame, two-chaser production dataset, while the maintained
+implementation currently couples run/component selection, eager array loading,
+camera-frame lookup, angle assumptions, radial scaling, color precedence, and
+ImGui drawing through concrete `ZarrDetectionLoader` types. Phase 5M must make
+those rules explicit without changing their accepted behavior.
+
+Deliverables:
+
+- a responsibility/consumer inventory and migration ledger for
+  `ZarrDetectionLoader`;
+- characterization tests for polar run selection, schema compatibility,
+  frame lookup, missing/invalid samples, conventions, colors, and radial scale;
+- portable descriptor, exact-frame sample, repository, availability, and scene
+  contracts with units, conventions, provenance, and frame identity;
+- read-only TensorStore and maintained-loader adapters that agree on the same
+  fixtures;
+- one shared polar scene consumed by maintained ImGui and Mac Metal
+  presentation; and
+- dependency enforcement preventing new shared or Mac code from consuming the
+  monolithic loader directly.
+
+Gate:
+
+- both adapters agree on production and synthetic fixture values;
+- unsupported coordinate/angle conventions fail explicitly;
+- unavailable, missing-frame, valid-empty, ready, and failed states remain
+  distinguishable;
+- shared scene/UI code has no storage, Metal, CUDA, OpenGL, or concrete-loader
+  dependency;
+- equivalent Mac and NVIDIA renders pass Phase 5 tolerances;
+- Mac and isolated NVIDIA builds/tests and production smokes pass; and
+- no archive mutation, write schema, or unrelated loader migration occurs.
+
+The detailed plan is in
+`docs/crimson_macos_phase5m_read_only_zarr_boundary_plan.md`.
+
+Phase 5M.0 responsibility and behavior inventory is complete and documented
+in `docs/crimson_macos_phase5m0_zarr_loader_inventory.md`. The actual legacy
+loader now has synthetic characterization coverage for selection, schema,
+lookup, invalid samples, colors, and radial scaling; its 28-file direct-include
+baseline is enforced without admitting new Mac consumers. A production
+GoodCopBadCop descriptor and exact-frame samples are recorded under
+`docs/reference/phase5m`. The characterization also exposed and removed global
+NVIDIA-side C++ `-Ofast`/`-ffast-math`, restoring the finite-value checks used
+throughout scientific data paths. Mac passed 37/37 headless tests; the isolated
+NVIDIA build passed 28/28 tests and its authenticated 0:300 production smoke.
+That completed the Phase 5M.0 checkpoint.
+
+Phase 5M.1 portable polar contracts are complete and documented in
+`docs/crimson_macos_phase5m1_portable_polar_contract.md`. Backend-neutral
+descriptor, exact-frame sample, point, provenance, availability, convention,
+color, and radial-scale types now sit behind an abstract read-only repository
+interface. Focused tests cover the production descriptor and frame values, all
+six availability states, exact-frame enforcement, convention rejection,
+validity filtering, color precedence, and radial scaling. The macOS arm64
+Release app passed 40/40 tests; the isolated Linux/NVIDIA build passed 29/29
+tests and its authenticated GoodCopBadCop 0:300 production smoke. First-party
+compile commands use ordinary Release optimization without `-Ofast` or
+`-ffast-math`. Repository-controlled TensorStore dependency builds now strip
+bundled `dav1d`'s upstream fast-math option, and the provided OpenCV build
+helpers disable their fast-math options. Phase 5M.2 storage adapters are the
+next checkpoint; the full Phase 5M gate remains open.
+
+Phase 5M.2 polar storage adapters are complete and documented in
+`docs/crimson_macos_phase5m2_polar_storage_adapters.md`. The native path uses a
+read-only TensorStore repository with bounded radial scanning, exact one-row
+matrix reads, and a bounded asynchronous lookahead/cache. The maintained path
+adapts `ZarrDetectionLoader` to the same portable descriptor and frame sample
+while preserving latest-complete selection, compatibility fallback, duplicate
+frame, color, sparse-identity, and radial-scale behavior. Synthetic fixtures
+compare both adapters field by field, and the production GoodCopBadCop
+comparison passed at frames 0, 56, 1024, 7024, and 140034 with unchanged polar
+and stimulus metadata fingerprints. Repository-provided OpenCV build helpers
+now disable fast-math as well, and repository-built TensorStore dependencies
+strip bundled `dav1d`'s upstream fast-math option. The generated macOS and Linux
+compile commands contain neither `-Ofast` nor `-ffast-math`. The complete macOS
+arm64 Release build passed 42/42 tests. The isolated Linux/NVIDIA build compiled
+`redgui`, passed 31/31 tests, and passed its authenticated GoodCopBadCop 0:300
+production smoke in 2.9958 seconds. The post-smoke chaser-distance metadata
+fingerprint matched all 2,538 pre-run stat and SHA-256 records. Phase 5M.3
+shared scene and platform presentation is the next checkpoint; the full Phase
+5M gate remains open.
+
+Phase 5M.3 shared scene and platform presentation is complete and documented
+in `docs/crimson_macos_phase5m3_shared_polar_scene.md`. One backend-neutral
+scene now owns the inset's ordered background, rings, orientation, points,
+colors, labels, readout, opacity, sizing, and clipping semantics. The maintained
+camera view resolves portable samples through the legacy repository and draws
+that scene through a thin ImGui adapter; the native Mac path resolves exact
+frames through the read-only TensorStore repository and bounded buffer, then
+draws the same vector scene through Metal and its text through ImGui. Shared
+camera presentation no longer consumes the loader's concrete polar-frame type.
+The macOS arm64 Release suite passed 43/43 tests, including an offscreen Metal
+polar raster test, and a deterministic native app smoke rendered four polar
+presentations with eight points, two ready resolves, and zero failures. The
+isolated Linux/NVIDIA build passed 32/32 tests and its authenticated production
+0:300 smoke in 2.99164 seconds. All 4,908 size, modification-time, and SHA-256
+records in the production chaser-distance subtree matched before and after.
+The production archive was not mounted on the Mac, so equivalent same-frame
+production captures and the final cross-platform visual comparison remain the
+Phase 5M.4 checkpoint; the full Phase 5M gate remains open.
+
+Phase 5M.4 cross-platform acceptance and the full Phase 5M gate are complete
+and documented in
+`docs/crimson_macos_phase5m4_cross_platform_acceptance.md`. The maintained
+legacy adapter and read-only TensorStore adapter agree on synthetic fixtures
+and on current production run `chaser_distance_v1_20260718`, component
+`egocentric_bearing_v1_20260718`, at frames 0, 56, 1024, 7024, and 140034.
+Equivalent frame-1024, 1920x1080 maintained OpenGL and Mac Metal captures use
+the same 156x213 shared scene; the acceptance comparator passed all 20 checks,
+including exact scene semantics and descriptor provenance, 1.0 vector
+coverage, zero opaque channel delta, and a maximum 0.2613-pixel raster anchor
+delta. The final Mac suite passed 43/43 tests and its 1024:1324 production
+smoke reached frame 1324 with zero polar failures. The isolated NVIDIA suite
+passed 32/32 tests and its authenticated 1024:1324 smoke passed in 2.99145
+seconds. Generated compile commands on both platforms contain no `-Ofast` or
+`-ffast-math`; all 10,736 production chaser-distance files retained identical
+paths, sizes, modification times, and SHA-256 hashes. Phase 5N completion is
+recorded below.
+
+#### Phase 5N — Remaining Stimulus Overlay Parity
+
+Phase 5N applies the Phase 5M extraction pattern to maintained camera-view
+stimulus event overlays and step-direction indicators. It must reuse the
+existing corrected/legacy alignment precedence and portable stimulus timeline
+contracts, preserve exact presented-camera-frame authority and layer order,
+and feed common scene semantics to maintained and Metal renderers.
+
+Gate:
+
+- event and step overlays resolve from the exact presented camera frame;
+- corrected alignment and declared legacy fallback produce characterized,
+  tested results;
+- controls, geometry, labels, colors, and layer order match the maintained
+  reference within Phase 5 tolerances;
+- Mac and NVIDIA deterministic tests and production smokes pass; and
+- the implementation remains read-only and introduces no provisional storage
+  or edit contract.
+
+Status: complete on 2026-07-18. The portable scene and maintained compatibility
+adapter preserve corrected-first alignment with characterized legacy fallback,
+exact presented-frame authority, sticky event labels, moving-grating direction
+geometry, colors, controls, and explicit layer order. The production legacy
+adapter and TensorStore adapter agree at frames 0, 56, 1024, 7024, and 140034.
+Equivalent frame-1024 Linux/OpenGL and Mac/Metal captures passed all 17
+acceptance checks with identical semantic signatures and 1.0 panel-border
+raster coverage. The final Mac suite passed 44/44 tests, the isolated NVIDIA
+suite passed 34/34 tests, and both 1024:1324 production smokes reached exact
+frame 1324. Generated compile graphs contain no fast-math flags. All 6,950
+files under the production stimulus-run and event-enum subtrees retained
+identical paths, sizes, mtimes, and SHA-256 hashes. Full evidence is in
+`docs/crimson_macos_phase5n_remaining_stimulus_overlay_parity.md`.
+
+#### Phase 5O — Shared Bounded Data Access and Scheduling
+
+Phase 5O is the next planned checkpoint. It combines the native Mac path's
+bounded TensorStore range reads with the maintained Linux path's demand-first
+asynchronous prefetch and cache-only playback policy. Large analysis products
+must page through a portable range contract instead of being implicitly
+materialized in full, while explicitly budgeted small products may retain the
+maintained full-series preload optimization.
+
+Deliverables:
+
+- portable source/range, field-selection, priority, generation, result-state,
+  cancellation, and byte-budget contracts;
+- one application-owned analysis I/O scheduler with bounded concurrency,
+  demand-first priority, direction-aware read-ahead, duplicate suppression, and
+  seek/reload cancellation;
+- lazy archive adapters that do not synchronously read million-row optional
+  mappings before the application shell can remain responsive;
+- byte-accounted CPU/GPU caches with storage-specific retained forms, including
+  sparse exact mask pixels and bounded persistent frame-index blocks;
+- an explicit hybrid policy for budgeted full-series preload versus paged range
+  access; and
+- maintained-loader compatibility adapters and cross-platform production
+  measurements over local storage and mounted PRFS.
+
+Gate:
+
+- optional analysis cache misses never block video presentation;
+- paused exact-frame inspection settles deterministically or reports a clear
+  unavailable/failed state;
+- cache memory remains bounded and observable during long playback and random
+  seeks;
+- current demand outranks speculative work and stale generations are discarded;
+- Linux, Windows, and macOS share the portable scheduling contract without
+  changing frame, coordinate, provenance, schema, or write semantics; and
+- small-series preload and large-series paging follow one documented, tested
+  byte-budget policy.
+
+The detailed direction and staged rollout are in
+`docs/crimson_macos_phase5o_bounded_data_access.md`.
+
+Phase 5O.0 is in progress. Portable subject-mask repository and presentation
+metrics now separate archive-open stages, individual mapping columns, decoded
+and retained bytes, mask reads, sparse conversion, contours, and cache
+retention. Mounted-PRFS probes show that the 1.18-million-row Sleepyfish mask
+repository spends 17.9 seconds of an 18.6-second warm open reading mappings;
+its three 1,024-row-chunked subject columns each take 5.4-5.7 seconds, while the
+larger 16,384-row-chunked crop mapping reads complete much faster. The first
+dense chunk read 134.5 MB and retained 3.24 MB after sparse conversion. After
+lazy mapping, the same repository opens in 3.4 seconds and moves its compact
+index and exact mapping pages to first demand. Linux, local-storage, timeline,
+traversal, and long-run memory baselines remain open. Evidence and metric
+semantics are in
+`docs/crimson_macos_phase5o0_data_access_characterization.md`.
+
+Phase 5O.1 is complete. Backend-neutral source/range, field, priority, access-
+pattern, generation, result-state, cancellation, and CPU/GPU byte-budget types
+now have deterministic portable tests. The bounded queue enforces demand-first
+ordering, deduplication/promotion, generation cancellation, and capacity
+pressure. The weighted LRU cache enforces byte and item budgets while retaining
+active and higher-priority entries. `DataAccessQueue` is the policy core, and
+`DataAccessScheduler` now adds the bounded worker layer used by the first Phase
+5O.3 adapters. Details are in
+`docs/crimson_macos_phase5o1_portable_data_access_contract.md`.
+
+Phase 5O.2 is in progress. Subject-mask runs with `frame_counts` now avoid full
+mapping-column reads at repository open, create a compact count/prefix index on
+first demand, and page exact subject/crop mapping chunks through 8 MiB and
+16 MiB caches. Exact row metadata is validated before publication; unordered
+legacy rows have a capped fallback index, and runs without `frame_counts` keep
+the eager compatibility path. Malformed inventories fail once without retaining
+a partial index. Post-migration PRFS probes are now recorded; remaining
+repositories and RLE/ragged metadata are not yet migrated.
+
+Motion and tail TensorStore timelines now persist their 16,384-row frame-index
+blocks across windows in a 2 MiB/16-block cache. Filtered, smoothed, raw, and
+averaged motion variants share the cache when they share one row mapping. The
+repository and Mac shutdown summary expose block reads, warm hits, evictions,
+source bytes, current/peak retained bytes, and maximum read latency.
+
+The native Mac archive-open path now publishes archive readiness separately
+from optional products. After archive validation, independent repository jobs
+run through the shared bounded scheduler; the GUI enters the video workspace
+and adopts each completed product between render frames. The small motion,
+eye-angle, and tail preload operations remain one serialized job so their shared
+128 MiB budget is enforced. Initial video prebuffer waiting uses the same
+responsive event/render loop. Cancellation is cooperative; active TensorStore
+calls remain non-preemptive.
+
+The first full Sleepyfish trial remained interactive but required 154.9 seconds
+to publish the former repository bundle: keypoints took 53.0 seconds, subject
+shape 59.5 seconds, and eye geometry 31.9 seconds. Maintained keypoint runs with
+`frame_counts` and explicit `source_crop_row_ids` now retain TensorStore handles
+plus a validated frame-prefix index, read exact keypoint/crop rows through a
+scheduler-backed frame cache, and never resolve a cache miss on the GUI thread.
+Older keypoint layouts retain the eager compatibility path. Subject-shape and
+eye-geometry lazy adapters remain open work.
+
+A subsequent mounted Sleepyfish run verified four-way asynchronous repository
+opening (`11` accepted jobs, four peak-active workers) and completed the product
+set in about 111.6 seconds. Keypoints, masks, eye geometry, and subject shape
+still each required roughly 81--99 seconds while overlapping. The archive's
+keypoint `frame_counts` contains only 1,188,000 `int32` values in ten outer
+shards, while subject-mask contour metadata alone took 49.4 seconds to open.
+This identifies high-latency per-array metadata access and the remaining eager
+million-row adapters, rather than GUI-thread serialization, as the next
+bottleneck. The next storage-facing contract work is consolidated run metadata,
+persisted frame-row offsets, and lazy subject-shape/eye-geometry handles.
+
+Interactive Zarr sessions now remain paused while a responsive analysis-loading
+modal reports initialization. Completion closes the modal but does not start
+playback; the user starts playback explicitly. The modal is not dismissible
+while initialization is running. First-frame analysis demands remain gated
+until every scheduled product reaches a terminal state, so large mask reads do
+not compete with repository opening by default. Optional products may finish
+unavailable, while failure of the required archive blocks session readiness.
+The modal now consumes a backend-neutral loading presentation model and is
+rendered by a shared ImGui component rather than by the Metal composition root.
+Recording-open lifecycle is shared as well: a portable controller now owns the
+active transaction, product timing, cancellation/failure transitions, and
+generation-checked settlement of the analysis loader. Both the Metal and
+NVIDIA application shells use it, but each shell still owns its storage,
+decoder, repository, threading, and GPU operations. The slice is covered by a
+portable contract test and has compiled in both the macOS application and an
+isolated NVIDIA `redgui` build.
+
+Playback transport is also backend-neutral. The shared controller owns the
+logical frame clock, play/pause/seek/step/rate transitions, readiness gating,
+frame clamping, and end-of-stream pause. Metal and NVIDIA use that state while
+retaining their decoder, buffer, exact-seek, stimulus, and GPU adapters. The
+portable transport tests pass on macOS and Linux; real playback smokes reached
+frame `300` on both the Metal application and the isolated NVIDIA build. This
+is a bounded Phase 3 controller extraction and does not move coordinate or
+storage behavior into the playback layer.
+
+Phase 5O.3 is in progress. Native repository initialization, keypoints, subject
+masks, motion, and tail now share one application-owned 64-request scheduler on
+macOS. Four workers provide bounded cross-product concurrency; one source cannot
+consume multiple workers. Current frame demand outranks initialization and
+lookahead, stale generations are cancelled, and deterministic tests cover
+archive-first/product-level publication, demand reservation, source isolation,
+keypoint cache reuse, and seek invalidation. The one-speculative setting is an
+initial baseline. Byte-weighted in-flight admission, remaining buffer
+migrations, queue-delay telemetry, and Linux/Windows adapters remain open.
+
+Phase 5O.4 is in progress. The native Mac loader shares a 128 MiB preload budget
+across the selected default motion, eye-angle, and tail series. Repositories
+retain native-precision arrays only when the complete candidate fits the
+remaining budget; otherwise they preserve bounded TensorStore paging and frame-
+index caches. Motion preload includes its selected position, speed, heading,
+mask, and time fields, while eye-angle preload includes the complete selected
+default representation and its optional frame times. Non-default variants and
+eye-angle representations remain paged. Repository metrics and headless tests
+distinguish resident and paged resolution paths. Maintained Linux/Windows
+adapters and representative PRFS measurements remain open.
+
+The shared native `ArchiveContext` now adds one bounded 64 MiB TensorStore cache
+pool per open archive. Every maintained TensorStore repository uses one
+read-only array-spec policy with metadata and data revalidation scoped to array
+open, matching the immutable published-run contract. This permits reuse of
+decoded inner chunks and Zarr v3 shard indexes across repository reads while
+keeping driver memory bounded and distinct from application page/sparse/GPU
+caches. A headless indexed-sharding test proves that an identical second read
+adds no file request or transferred bytes, and the Mac archive trace reports the
+active pool and policy. A mounted Sleepyfish Cam2010095 frame probe confirms
+production compatibility with the 64 MiB pool. A headless mounted-PRFS control
+over the sharded keypoint `frame_counts` layout shows why a nonzero driver cache
+is required: 700 adjacent two-value reads fell from 1,400 file operations and
+107,800 compressed bytes at zero cache to two operations and 154 bytes at
+64 MiB; 100 fixed random reads fell from 200 operations/22,844 bytes to 70
+operations/6,479 bytes. A complete eager read remained 11 operations and 7,428
+bytes in both modes. The control is a storage-layout proxy for future persisted
+frame-row offsets, not an end-to-end playback trace. Application-level
+traversal, random seek, cache pressure, and long-run memory measurements remain
+open before accepting 64 MiB as the final budget.
+
+The Phase 5O.4 canonical-detection consumer benchmark is complete and recorded
+in `docs/crimson_macos_phase5o4_canonical_detection_storage_benchmark.md`.
+Crimson's bundled TensorStore accepted Palette's exact regular and access-aware
+hybrid Zarr v3 stores, including indexed sharding, Zstandard payloads, CRC32C
+shard indexes, exact declared dtypes, and inline consolidated metadata. A
+balanced 20-process mounted-SMB matrix compared zero-byte and 128 MiB driver
+caches across five matched repetitions. All decoded values matched, offsets
+were read and retained exactly once, UI random-frame tail latency stayed below
+150 ms, and storage traversal exceeded 1,400 FPS. The hybrid reduced zero-cache
+UI and contract traversal file bytes by about 7.2-7.5 times. The profile is not
+promoted: the one-time offset median exceeded 100 ms in three conditions, and
+first-pass eight-column random reads had cross-repetition p95 outliers above
+150 ms in every condition. The follow-up 80-process mounted-Mac cache/read-
+ahead sweep is also complete. Every frozen deadline, cancellation, stale-
+publication, transfer-waste, concurrency, retained-offset, and RSS gate passed.
+A 16 MiB cache reduced first-phase hybrid transfer from 3,826,500 to 76,530
+bytes; 32, 64, and 128 MiB did not reduce it further. Zero speculative read-
+ahead had no post-warmup misses while the bounded presentation cache evicted
+normally. The next paired full-analysis fixture therefore uses 16 MiB with
+only a one-page asynchronous demand lead. This does not change production's
+64 MiB cache yet. Process-first offset initialization remained variable at
+135.2 ms median and 143.3 ms p95. The full result is in
+`docs/crimson_macos_phase5o4_prefetch_cache_benchmark.md`.
+
+The paired full-analysis contract is now frozen in
+`docs/crimson_macos_phase5o4_full_analysis_fixture_contract.md`. Its first
+stage compares otherwise-identical regular and hybrid archives with the
+production 64 MiB cache; its second stage compares 16 MiB and 64 MiB only after
+the hybrid passes. Exact fixture identity, simultaneous products, recording
+association, deterministic workload, consolidated-discovery scope, and numeric
+startup/overlay/memory/transfer/deadline gates are fixed before publication.
+The normal macOS application now has a canonical-detection repository,
+bounded 70-frame presentation pages with one asynchronous lead page, a shared
+overlay-scene adapter, and a fail-closed `--detection-run` override. Palette's
+2,048-frame regular/hybrid integration pair is now published, and Crimson's
+fresh-process integration gate accepts both through required-product readiness,
+all first presentations, full fixture traversal, shared overlay construction,
+and seek cancellation. Both layouts produced the same 2,048-detection digest,
+used exact typed opens and one offsets read, and published no stale work. This
+small pair is compatibility evidence only because its canonical arrays each fit
+in one inner chunk. Real Metal smokes also passed both candidates through frame
+300 with zero skipped or late frames. The full-duration five-process-per-layout
+Stage 1 matrix is also complete. Every correctness, exact-selection,
+one-offset-read, cancellation, and 700 FPS deadline check passed, but the frozen
+promotion gate failed first-overlay latency, absolute 2 GiB peak RSS, and the
+required `0.25x` hybrid traversal-byte ratio. The observed hybrid ratio was
+`0.606x`; median total bytes were `0.987x` and median Ready time was `1.011x`
+regular. The first detection page spent about 51-52 seconds queued behind four
+non-preemptive initialization jobs even though its repository read/decode took
+well under one second. Stage 2 does not run and the physical profile remains
+unpromoted. Integration evidence is in
+`docs/diagnostics/crimson_macos_phase5o4_full_archive_integration_2026-07-26.md`;
+the full-duration verdict is in
+`docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26.md`.
+
+Phase 5O.5 completed the byte-budgeted residency strategy gate. The original
+25-store physical-layout matrix is cancelled and the reduced three-candidate
+matrix remains deferred: background residency passed its readiness, deadline,
+cancellation, stale-publication, RSS, and maintained-product gates on the
+existing full-duration fixtures. Paging remains the scalable fallback, while
+small decoded UI working sets may be promoted atomically after first-page
+readiness. The contract and evidence are in
+`docs/crimson_macos_phase5o5_detection_residency_gate.md`.
+
+Phase 5O.6 is now in progress for Palette refined-detection v1 consumption.
+The backend-neutral repository, fail-closed refined-first selector, stable row
+identity, lazy source-audit boundary, paging/residency integration, shared
+overlay propagation, and macOS session wiring are implemented and covered by
+headless synthetic tests. Normal explicit refined selection requires selector
+eligibility; selector-ineligible shadow inspection uses the separate
+`--benchmark-refined-detection-run` API. Legacy mutable editing remains a
+separate compatibility path. A portable real-shadow harness is also complete.
+Crimson adopted Palette's narrow Zarr-Python group comparator: absent, null,
+and exact empty-inline nested consolidated declarations are equivalent for
+group nodes only; arrays and all other fields remain exact. The unchanged real
+Palette handoff passed typed open, selection, full traversal, identity,
+overlay, cancellation, lazy-audit, and residency checks. The deterministic
+suite covers the required `[2, 0, 1, 3]` raw/manual frame pattern. The remaining
+administrative checkpoint is binding this dirty worktree result to an immutable
+Crimson commit. After that, the paired regular/access-aware refined-snapshot
+physical gate may proceed.
+The implementation boundary is documented in
+`docs/crimson_refined_detection_v1_consumer.md`.
+
+Phase 5 also remains open for production-tail acceptance, movement-trail
+coordinate policy, any required chaser-data densification, and edit/review
+workflows whose shared storage contracts are still changing. Those blockers
+must be reviewed explicitly before beginning Phase 6; they must not be silently
+reclassified as complete.
 
 ### Phase 6 — Inference Parity
 

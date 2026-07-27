@@ -170,23 +170,35 @@ void drawFrameOverviewSection(const FrameDebugWindowContext& context) {
 void drawActiveRoiInsetControls(FrameDebugWindowState& state) {
     ImGui::Text("ROI Inset:");
     ImGui::Checkbox("Show ROI inset",
-                    &state.active_roi_inset_options.show_inset);
-    ImGui::BeginDisabled(!state.active_roi_inset_options.show_inset);
-    ImGui::Checkbox(
-        "Mirror enabled overlays",
-        &state.active_roi_inset_options.mirror_enabled_overlays);
-    ImGui::Checkbox(
-        "Heading-normalized view",
-        &state.active_roi_inset_options.heading_normalized_view);
+                    &state.active_roi_inset_options.visible);
+    ImGui::BeginDisabled(!state.active_roi_inset_options.visible);
+    bool match_camera_overlays =
+        state.active_roi_inset_options.overlay_policy ==
+        crimson::crop::RoiInsetOverlayPolicy::MatchCamera;
+    if (ImGui::Checkbox("Match camera overlays", &match_camera_overlays)) {
+        state.active_roi_inset_options.overlay_policy =
+            match_camera_overlays
+                ? crimson::crop::RoiInsetOverlayPolicy::MatchCamera
+                : crimson::crop::RoiInsetOverlayPolicy::SelectedComponent;
+    }
+    bool heading_normalized =
+        state.active_roi_inset_options.orientation ==
+        crimson::crop::RoiInsetOrientation::HeadingNormalized;
+    if (ImGui::Checkbox("Heading-normalized view", &heading_normalized)) {
+        state.active_roi_inset_options.orientation =
+            heading_normalized
+                ? crimson::crop::RoiInsetOrientation::HeadingNormalized
+                : crimson::crop::RoiInsetOrientation::Acquisition;
+    }
     ImGui::SliderFloat("ROI inset width",
                        &state.active_roi_inset_options.width_px,
-                       120.0f,
-                       420.0f,
+                       crimson::crop::kMinimumRoiInsetWidthPx,
+                       crimson::crop::kMaximumRoiInsetWidthPx,
                        "%.0f px");
     state.active_roi_inset_options.width_px =
         std::clamp(state.active_roi_inset_options.width_px,
-                   120.0f,
-                   420.0f);
+                   crimson::crop::kMinimumRoiInsetWidthPx,
+                   crimson::crop::kMaximumRoiInsetWidthPx);
     ImGui::Checkbox("ROI inset label",
                     &state.active_roi_inset_options.show_label);
     ImGui::EndDisabled();

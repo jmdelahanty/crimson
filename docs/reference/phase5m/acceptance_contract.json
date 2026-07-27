@@ -1,0 +1,67 @@
+{
+  "schema": "crimson.phase5m.polar-acceptance-contract.v1",
+  "state": "polar",
+  "frame": 1024,
+  "stem": "polar_exact_f001024_1920x1080",
+  "logical_size": {
+    "width": 1920,
+    "height": 1080
+  },
+  "expected_descriptor": {
+    "source_group": "analysis/chaser_distance_runs",
+    "run_name": "chaser_distance_v1_20260718",
+    "component_name": "egocentric_bearing_v1_20260718",
+    "row_count": 140035,
+    "chaser_count": 2,
+    "distance_unit": "mm",
+    "coordinate_frame": "arena_relative_canvas_px",
+    "angle_convention": "arena_xy_y_down_positions_converted_to_math_y_up_angles; heading_degrees_ccw_from_+x; egocentric_bearing_deg=wrap(object_bearing-heading); 0=in_front; positive=anatomical_left"
+  },
+  "expected_scene": {
+    "point_count": 2,
+    "primitive_count": 7,
+    "text_count": 7,
+    "graph_width": 140.0,
+    "graph_height": 140.0,
+    "marker_radius": 5.0,
+    "required_text": [
+      "front",
+      "left",
+      "right",
+      "behind",
+      "Chaser bearing f=1024",
+      "c0 42.6 mm  +99.9 deg",
+      "c1 52.7 mm  +43.2 deg"
+    ]
+  },
+  "tolerances": {
+    "source_geometry_px": 0.25,
+    "display_anchor_px": 0.5,
+    "scientific_value": 0.00001,
+    "non_antialiased_channel_8bit": 3,
+    "vector_coverage": 0.995,
+    "vector_coverage_radius_px": 1,
+    "vector_max_outlier_px": 2
+  },
+  "masks": [
+    {
+      "id": "font-raster",
+      "scope": "polar annotation glyph pixels",
+      "reason": "Text content, order, color, and scene-relative anchors are compared from the shared scene marker because OpenGL and Metal font rasterization differs."
+    },
+    {
+      "id": "translucent-background",
+      "scope": "polar background, grid, and axes channel values",
+      "reason": "The production camera is fitted into different surrounding viewport shapes, so translucent primitives blend over different source pixels. Their exact geometry and color semantics are compared by the canonical scene signature; opaque point markers enforce raster geometry and channel tolerances."
+    },
+    {
+      "id": "binary-mask-iou",
+      "scope": "not applicable",
+      "reason": "The polar inset contains vector and text primitives but no binary scientific mask. Existing Phase 5 mask IoU coverage remains unchanged."
+    }
+  ],
+  "required_threshold_fixtures": [
+    "chaser_distance_polar_scene_tests",
+    "apple_read_only_overlay_metal_tests"
+  ]
+}

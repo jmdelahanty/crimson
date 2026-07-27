@@ -169,6 +169,9 @@ bool testBoundedAsyncBuffer() {
     const auto window = buffer.window(frame, "eye_frame");
     CHECK(window != nullptr);
     CHECK(window->ready());
+    CHECK(window->coversFrame(frame, "eye_frame"));
+    CHECK(!window->coversFrame(window->request.last_frame + 1, "eye_frame"));
+    CHECK(!window->coversFrame(frame, "vergence"));
   }
   const auto metrics = buffer.metrics();
   CHECK(metrics.resolved_windows == 3);

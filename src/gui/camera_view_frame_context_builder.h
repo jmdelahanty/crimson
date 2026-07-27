@@ -72,6 +72,10 @@ struct CameraViewFrameContextInput {
     CameraViewStimulusInsetOptions stimulus_inset_options;
     CameraViewChaserDistancePolarInsetOptions
         chaser_distance_polar_inset_options;
+    const crimson::polar::ChaserDistancePolarRepository*
+        chaser_distance_polar_repository = nullptr;
+    const crimson::timeline::StimulusContextTimelineSnapshot*
+        stimulus_context_timeline = nullptr;
     const StimulusPlayback* stimulus_player = nullptr;
     int target_stimulus_frame = -1;
 
@@ -87,12 +91,13 @@ struct CameraViewFrameContextInput {
 
 struct PreparedCameraViewFrameContext {
     std::optional<ZarrDetectionLoader::FrameDetections> mask_details;
-    std::vector<std::string> frame_events;
     std::optional<ZarrDetectionLoader::MovementFrameSample>
         movement_frame_sample;
     std::vector<ZarrDetectionLoader::MovementTrailPoint> movement_trail_points;
-    ZarrDetectionLoader::ChaserDistancePolarFrame
+    crimson::polar::ChaserDistancePolarFrameSample
         chaser_distance_polar_frame;
+    crimson::stimulus::StimulusCameraOverlayFrameSample
+        stimulus_camera_overlay_frame;
     CameraViewWindowContext context;
     double mask_data_load_ms = 0.0;
 };

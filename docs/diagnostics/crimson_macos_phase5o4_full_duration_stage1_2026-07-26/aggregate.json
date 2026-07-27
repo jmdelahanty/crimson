@@ -1,0 +1,1035 @@
+{
+  "schema_id": "crimson.canonical_detection_full_archive_stage1_matrix",
+  "schema_version": 1,
+  "classification": "full_duration_stage1",
+  "created_unix_seconds": 1785105573.3199182,
+  "wall_elapsed_seconds": 981.7723481655121,
+  "fixture_root": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1",
+  "fixture_evidence": {
+    "regular_manifest.json": {
+      "path": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/regular_manifest.json",
+      "sha256": "d84f2c982ec8983a5b437c2d539fe4a3966bcb36866f28fb9daa6c1724fef9f1"
+    },
+    "hybrid_manifest.json": {
+      "path": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid_manifest.json",
+      "sha256": "51e4dd1ad35c3eb6481a15604e537dd756f7c4b29534f0081e5501a3c26bae74"
+    },
+    "pair_manifest.json": {
+      "path": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/pair_manifest.json",
+      "sha256": "25e49003d63f74e5c7f1aa940aa77acee8df0153476847afeb99b98238574432"
+    },
+    "publication_receipt.json": {
+      "path": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/publication_receipt.json",
+      "sha256": "22763ffce084446cfa797b567ebd7bb66d682e7e1f1f031e7af781c575fdcd1d"
+    }
+  },
+  "detection_run": "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+  "video": "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+  "binary": "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+  "balanced_order": [
+    {
+      "position": 0,
+      "repetition": 0,
+      "layout": "regular"
+    },
+    {
+      "position": 1,
+      "repetition": 0,
+      "layout": "hybrid"
+    },
+    {
+      "position": 2,
+      "repetition": 1,
+      "layout": "hybrid"
+    },
+    {
+      "position": 3,
+      "repetition": 1,
+      "layout": "regular"
+    },
+    {
+      "position": 4,
+      "repetition": 2,
+      "layout": "regular"
+    },
+    {
+      "position": 5,
+      "repetition": 2,
+      "layout": "hybrid"
+    },
+    {
+      "position": 6,
+      "repetition": 3,
+      "layout": "hybrid"
+    },
+    {
+      "position": 7,
+      "repetition": 3,
+      "layout": "regular"
+    },
+    {
+      "position": 8,
+      "repetition": 4,
+      "layout": "regular"
+    },
+    {
+      "position": 9,
+      "repetition": 4,
+      "layout": "hybrid"
+    }
+  ],
+  "cache_policy": {
+    "tensorstore_cache_bytes": 67108864,
+    "speculative_time_read_ahead_frames": 0,
+    "asynchronous_demand_lead_pages": 1,
+    "page_frames": 70
+  },
+  "environment": {
+    "crimson_commit": "34ff3c38229450b4e6bbe9b16fed99e9ca966197",
+    "crimson_worktree": "M .gitignore\n M CMakeLists.txt\n M CMakePresets.json\n M README.md\n M build_opencv_crimson.sh\n M cmake/CrimsonTensorStore.cmake\n M docs/crimson_app_architecture_refactor_todo.md\n M docs/crimson_gui_smoke_testing_todo.md\n M docs/crimson_macos_port_codex_goal.md\n M docs/crimson_subject_mask_editable_dense_storage_decision_2026-07-08.md\n M scripts/README.md\n M src/analysis_series_timeline.cpp\n M src/analysis_series_timeline.h\n M src/analysis_series_timeline_buffer.cpp\n M src/analysis_series_timeline_buffer.h\n M src/eye_angle_timeline.h\n M src/gui/camera_view_frame_context_builder.cpp\n M src/gui/camera_view_frame_context_builder.h\n M src/gui/camera_view_mask_overlay.cpp\n M src/gui/camera_view_overlay_renderer.h\n M src/gui/camera_view_presenter.cpp\n M src/gui/camera_view_stimulus_overlay.cpp\n M src/gui/camera_view_window.cpp\n M src/gui/camera_view_window.h\n M src/gui/frame_debug_status_panel.cpp\n M src/gui/frame_debug_window.h\n M src/gui/overlay_debug_panel.cpp\n M src/media_session_loader.cpp\n M src/media_session_loader.h\n M src/platform/macos/apple_overlay_metal_renderer.h\n M src/platform/macos/apple_overlay_metal_renderer.mm\n M src/platform/macos/apple_stimulus_playback_session.cpp\n M src/platform/macos/apple_stimulus_playback_session.h\n M src/platform/macos/apple_video_metal_renderer.h\n M src/platform/macos/apple_video_metal_renderer.mm\n M src/platform/macos/apple_video_playback_buffer.cpp\n M src/platform/macos/apple_video_playback_buffer.h\n M src/platform/macos/apple_video_viewer_ui.h\n M src/platform/macos/apple_video_viewer_ui.mm\n M src/platform/macos/crimson_macos_main.mm\n M src/playback_clock.cpp\n M src/playback_clock.h\n M src/playback_session_controller.cpp\n M src/playback_session_controller.h\n M src/red.cpp\n M src/subject_mask_overlay_buffer.cpp\n M src/subject_mask_overlay_buffer.h\n M src/zarr/archive_context.h\n M src/zarr/archive_context_internal.h\n M src/zarr/keypoint_overlay_repository.h\n M src/zarr/subject_mask_overlay_repository.h\n M src/zarr/tensorstore_analysis_crop_geometry_repository.cpp\n M src/zarr/tensorstore_analysis_series_timeline_repository.cpp\n M src/zarr/tensorstore_analysis_series_timeline_repository.h\n M src/zarr/tensorstore_archive_context.cpp\n M src/zarr/tensorstore_eye_angle_timeline_repository.cpp\n M src/zarr/tensorstore_eye_angle_timeline_repository.h\n M src/zarr/tensorstore_eye_geometry_overlay_repository.cpp\n M src/zarr/tensorstore_keypoint_overlay_repository.cpp\n M src/zarr/tensorstore_keypoint_overlay_repository.h\n M src/zarr/tensorstore_stimulus_context_timeline_repository.cpp\n M src/zarr/tensorstore_stimulus_repository.cpp\n M src/zarr/tensorstore_stimulus_repository.h\n M src/zarr/tensorstore_subject_mask_overlay_repository.cpp\n M src/zarr/tensorstore_subject_shape_overlay_repository.cpp\n M src/zarr_loader.h\n M src/zarr_loader_stimulus.cpp\n M tools/analysis_crop_geometry_repository_tests.cpp\n M tools/analysis_series_timeline_repository_tests.cpp\n M tools/analysis_series_timeline_tests.cpp\n M tools/apple_read_only_overlay_metal_tests.mm\n M tools/apple_stimulus_playback_tests.mm\n M tools/apple_video_metal_tests.mm\n M tools/build_opencv_ffmpeg_nvidia_linux.sh\n M tools/eye_angle_timeline_repository_tests.cpp\n M tools/eye_angle_timeline_tests.cpp\n M tools/frame_slot_tests.cpp\n M tools/keypoint_overlay_repository_probe.cpp\n M tools/keypoint_overlay_repository_tests.cpp\n M tools/subject_mask_overlay_repository_probe.cpp\n M tools/subject_mask_overlay_repository_tests.cpp",
+    "platform": "macOS-26.3.1-arm64-arm-64bit",
+    "machine": "arm64",
+    "macos": "ProductName:\t\tmacOS\nProductVersion:\t\t26.3.1\nBuildVersion:\t\t25D2128",
+    "mount": "/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)\ndevfs on /dev (devfs, local, nobrowse)\n/dev/disk3s6 on /System/Volumes/VM (apfs, local, noexec, journaled, noatime, nobrowse)\n/dev/disk3s2 on /System/Volumes/Preboot (apfs, local, journaled, nobrowse)\n/dev/disk3s4 on /System/Volumes/Update (apfs, local, journaled, nobrowse)\n/dev/disk1s2 on /System/Volumes/xarts (apfs, local, noexec, journaled, noatime, nobrowse)\n/dev/disk1s1 on /System/Volumes/iSCPreboot (apfs, local, journaled, nobrowse)\n/dev/disk1s3 on /System/Volumes/Hardware (apfs, local, journaled, nobrowse)\n/dev/disk3s5 on /System/Volumes/Data (apfs, local, journaled, nobrowse, protect, root data)\nmap auto_home on /System/Volumes/Data/home (autofs, automounted, nobrowse)\n/dev/disk2s1 on /System/Volumes/Update/SFR/mnt1 (apfs, local, journaled, nobrowse)\n//delahantyj@prfs.hhmi.org/johnsonlab on /Volumes/johnsonlab (smbfs, nodev, nosuid, mounted by jmdelahanty)\n/dev/disk3s1 on /System/Volumes/Update/mnt1 (apfs, sealed, local, journaled, nobrowse)",
+    "network": "No network information",
+    "vpn": "Available network connection services in the current set (*=enabled):",
+    "cache_condition": "process-first, OS/filesystem/server cache uncontrolled"
+  },
+  "limits": {
+    "ready_ms": 180000.0,
+    "hybrid_ready_regression_ratio": 1.1,
+    "hybrid_ready_regression_ms": 5000.0,
+    "first_overlay_p95_ms": 1000.0,
+    "hybrid_first_overlay_regression_ms": 250.0,
+    "post_warmup_deadline_miss_rate": 0.01,
+    "seek_cancellation_p95_ms": 250.0,
+    "post_cancel_bytes_per_seek_p95": 1048576.0,
+    "peak_rss_bytes": 2147483648,
+    "hybrid_peak_rss_regression_bytes": 134217728,
+    "hybrid_total_file_bytes_ratio": 1.05,
+    "hybrid_traversal_file_bytes_ratio": 0.25,
+    "shutdown_ms": 2000.0
+  },
+  "trials": [
+    {
+      "position": 0,
+      "repetition": 0,
+      "layout": "regular",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/regular.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "regular",
+        "0",
+        "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/00_repetition_0_regular.json"
+      ],
+      "result_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/00_repetition_0_regular.json",
+      "stdout_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/00_repetition_0_regular.stdout.log",
+      "stderr_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/00_repetition_0_regular.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 97694.3115000613,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "ready_ms": 76186.287875,
+        "first_overlay_ms": 51875.262625,
+        "first_page_request_to_publish_ms": 51332.967292,
+        "first_page_repository_read_decode_ms": 115.94925,
+        "first_page_inferred_queue_wait_ms": 51217.018042,
+        "offset_ms": 181.713333,
+        "peak_rss_bytes": 2155429888,
+        "total_file_bytes": 584396301,
+        "traversal_file_bytes": 2802885,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "seek_settle_ms": 45.328875,
+        "post_cancel_bytes_per_seek": 140461.2857142857,
+        "shutdown_ms": 31.776417,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "peak_concurrent_fields": 6,
+        "failed_pages": 0,
+        "stale_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0
+      }
+    },
+    {
+      "position": 1,
+      "repetition": 0,
+      "layout": "hybrid",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "hybrid",
+        "0",
+        "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/01_repetition_0_hybrid.json"
+      ],
+      "result_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/01_repetition_0_hybrid.json",
+      "stdout_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/01_repetition_0_hybrid.stdout.log",
+      "stderr_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/01_repetition_0_hybrid.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 106858.01137518138,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "ready_ms": 84003.852791,
+        "first_overlay_ms": 55415.447541,
+        "first_page_request_to_publish_ms": 54743.022708000004,
+        "first_page_repository_read_decode_ms": 496.759625,
+        "first_page_inferred_queue_wait_ms": 54246.263083000005,
+        "offset_ms": 272.152,
+        "peak_rss_bytes": 1969471488,
+        "total_file_bytes": 577507510,
+        "traversal_file_bytes": 2171917,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "seek_settle_ms": 85.518917,
+        "post_cancel_bytes_per_seek": 77334.42857142857,
+        "shutdown_ms": 0.576459,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "peak_concurrent_fields": 9,
+        "failed_pages": 0,
+        "stale_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0
+      }
+    },
+    {
+      "position": 2,
+      "repetition": 1,
+      "layout": "hybrid",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "hybrid",
+        "1",
+        "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/02_repetition_1_hybrid.json"
+      ],
+      "result_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/02_repetition_1_hybrid.json",
+      "stdout_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/02_repetition_1_hybrid.stdout.log",
+      "stderr_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/02_repetition_1_hybrid.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 92779.70712492242,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "ready_ms": 71080.355416,
+        "first_overlay_ms": 47212.592583,
+        "first_page_request_to_publish_ms": 46629.587457999995,
+        "first_page_repository_read_decode_ms": 444.368083,
+        "first_page_inferred_queue_wait_ms": 46185.21937499999,
+        "offset_ms": 185.213792,
+        "peak_rss_bytes": 2431959040,
+        "total_file_bytes": 577473462,
+        "traversal_file_bytes": 1971764,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "seek_settle_ms": 156.565958,
+        "post_cancel_bytes_per_seek": 52603.0,
+        "shutdown_ms": 0.982584,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "peak_concurrent_fields": 9,
+        "failed_pages": 0,
+        "stale_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0
+      }
+    },
+    {
+      "position": 3,
+      "repetition": 1,
+      "layout": "regular",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/regular.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "regular",
+        "1",
+        "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/03_repetition_1_regular.json"
+      ],
+      "result_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/03_repetition_1_regular.json",
+      "stdout_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/03_repetition_1_regular.stdout.log",
+      "stderr_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/03_repetition_1_regular.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 96872.37308407202,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "ready_ms": 76122.269916,
+        "first_overlay_ms": 42399.690334,
+        "first_page_request_to_publish_ms": 41806.017167,
+        "first_page_repository_read_decode_ms": 121.894,
+        "first_page_inferred_queue_wait_ms": 41684.123167,
+        "offset_ms": 192.493833,
+        "peak_rss_bytes": 2284437504,
+        "total_file_bytes": 587313585,
+        "traversal_file_bytes": 4571217,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "seek_settle_ms": 81.9875,
+        "post_cancel_bytes_per_seek": 212731.7142857143,
+        "shutdown_ms": 36.316166,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "peak_concurrent_fields": 6,
+        "failed_pages": 0,
+        "stale_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0
+      }
+    },
+    {
+      "position": 4,
+      "repetition": 2,
+      "layout": "regular",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/regular.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "regular",
+        "2",
+        "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/04_repetition_2_regular.json"
+      ],
+      "result_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/04_repetition_2_regular.json",
+      "stdout_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/04_repetition_2_regular.stdout.log",
+      "stderr_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/04_repetition_2_regular.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 97530.00554209575,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "ready_ms": 76746.178875,
+        "first_overlay_ms": 51898.206083,
+        "first_page_request_to_publish_ms": 51270.289333,
+        "first_page_repository_read_decode_ms": 95.166584,
+        "first_page_inferred_queue_wait_ms": 51175.122749,
+        "offset_ms": 224.067292,
+        "peak_rss_bytes": 2393849856,
+        "total_file_bytes": 585723476,
+        "traversal_file_bytes": 4571217,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "seek_settle_ms": 79.432709,
+        "post_cancel_bytes_per_seek": 251352.57142857142,
+        "shutdown_ms": 0.789917,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "peak_concurrent_fields": 12,
+        "failed_pages": 0,
+        "stale_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0
+      }
+    },
+    {
+      "position": 5,
+      "repetition": 2,
+      "layout": "hybrid",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "hybrid",
+        "2",
+        "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/05_repetition_2_hybrid.json"
+      ],
+      "result_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/05_repetition_2_hybrid.json",
+      "stdout_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/05_repetition_2_hybrid.stdout.log",
+      "stderr_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/05_repetition_2_hybrid.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 92127.93833343312,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "ready_ms": 71013.941959,
+        "first_overlay_ms": 46984.749667000004,
+        "first_page_request_to_publish_ms": 46333.749458000006,
+        "first_page_repository_read_decode_ms": 149.122875,
+        "first_page_inferred_queue_wait_ms": 46184.626583000005,
+        "offset_ms": 268.474959,
+        "peak_rss_bytes": 1817083904,
+        "total_file_bytes": 577502195,
+        "traversal_file_bytes": 2528547,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "seek_settle_ms": 93.475583,
+        "post_cancel_bytes_per_seek": 133267.85714285713,
+        "shutdown_ms": 0.838833,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "peak_concurrent_fields": 9,
+        "failed_pages": 0,
+        "stale_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0
+      }
+    },
+    {
+      "position": 6,
+      "repetition": 3,
+      "layout": "hybrid",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "hybrid",
+        "3",
+        "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/06_repetition_3_hybrid.json"
+      ],
+      "result_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/06_repetition_3_hybrid.json",
+      "stdout_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/06_repetition_3_hybrid.stdout.log",
+      "stderr_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/06_repetition_3_hybrid.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 100834.26941698417,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "ready_ms": 78315.342333,
+        "first_overlay_ms": 53074.866875,
+        "first_page_request_to_publish_ms": 52497.766749999995,
+        "first_page_repository_read_decode_ms": 160.216167,
+        "first_page_inferred_queue_wait_ms": 52337.550583,
+        "offset_ms": 182.235542,
+        "peak_rss_bytes": 1781186560,
+        "total_file_bytes": 577603221,
+        "traversal_file_bytes": 2763553,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "seek_settle_ms": 226.598333,
+        "post_cancel_bytes_per_seek": 53265.57142857143,
+        "shutdown_ms": 0.745333,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "peak_concurrent_fields": 9,
+        "failed_pages": 0,
+        "stale_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0
+      }
+    },
+    {
+      "position": 7,
+      "repetition": 3,
+      "layout": "regular",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/regular.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "regular",
+        "3",
+        "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/07_repetition_3_regular.json"
+      ],
+      "result_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/07_repetition_3_regular.json",
+      "stdout_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/07_repetition_3_regular.stdout.log",
+      "stderr_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/07_repetition_3_regular.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 97708.748083096,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "ready_ms": 76357.526125,
+        "first_overlay_ms": 52530.915042,
+        "first_page_request_to_publish_ms": 51682.805417,
+        "first_page_repository_read_decode_ms": 116.050583,
+        "first_page_inferred_queue_wait_ms": 51566.75483400001,
+        "offset_ms": 269.44225,
+        "peak_rss_bytes": 2396995584,
+        "total_file_bytes": 585262722,
+        "traversal_file_bytes": 3581802,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "seek_settle_ms": 66.587834,
+        "post_cancel_bytes_per_seek": 348781.4285714286,
+        "shutdown_ms": 1.05275,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "peak_concurrent_fields": 12,
+        "failed_pages": 0,
+        "stale_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0
+      }
+    },
+    {
+      "position": 8,
+      "repetition": 4,
+      "layout": "regular",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/regular.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "regular",
+        "4",
+        "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/08_repetition_4_regular.json"
+      ],
+      "result_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/08_repetition_4_regular.json",
+      "stdout_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/08_repetition_4_regular.stdout.log",
+      "stderr_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/08_repetition_4_regular.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 100998.28304210678,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "ready_ms": 80173.528208,
+        "first_overlay_ms": 54663.588,
+        "first_page_request_to_publish_ms": 52310.188042,
+        "first_page_repository_read_decode_ms": 128.427667,
+        "first_page_inferred_queue_wait_ms": 52181.760375,
+        "offset_ms": 419.750083,
+        "peak_rss_bytes": 2481569792,
+        "total_file_bytes": 585140493,
+        "traversal_file_bytes": 3581821,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "seek_settle_ms": 53.943333,
+        "post_cancel_bytes_per_seek": 142288.0,
+        "shutdown_ms": 0.799709,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "peak_concurrent_fields": 6,
+        "failed_pages": 0,
+        "stale_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0
+      }
+    },
+    {
+      "position": 9,
+      "repetition": 4,
+      "layout": "hybrid",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "hybrid",
+        "4",
+        "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/09_repetition_4_hybrid.json"
+      ],
+      "result_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/09_repetition_4_hybrid.json",
+      "stdout_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/09_repetition_4_hybrid.stdout.log",
+      "stderr_path": "docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26/09_repetition_4_hybrid.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 98356.18587490171,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "ready_ms": 77232.096,
+        "first_overlay_ms": 52791.274041000004,
+        "first_page_request_to_publish_ms": 52183.998416,
+        "first_page_repository_read_decode_ms": 594.321125,
+        "first_page_inferred_queue_wait_ms": 51589.677291,
+        "offset_ms": 225.763375,
+        "peak_rss_bytes": 1794539520,
+        "total_file_bytes": 577352154,
+        "traversal_file_bytes": 1971764,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "seek_settle_ms": 145.901667,
+        "post_cancel_bytes_per_seek": 35273.28571428572,
+        "shutdown_ms": 1.138292,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "peak_concurrent_fields": 5,
+        "failed_pages": 0,
+        "stale_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0
+      }
+    }
+  ],
+  "reduction": {
+    "status": "fail",
+    "full_duration_gate_satisfied": false,
+    "hybrid_physical_profile_stage1_accepted": false,
+    "promotion_recommended": false,
+    "profile_promoted": false,
+    "promotion_scope": "separate versioned storage-policy decision",
+    "summaries": {
+      "regular": {
+        "trial_count": 5,
+        "ready_ms": {
+          "values": [
+            76186.287875,
+            76122.269916,
+            76746.178875,
+            76357.526125,
+            80173.528208
+          ],
+          "median": 76357.526125,
+          "p95_nearest_rank": 80173.528208,
+          "maximum": 80173.528208
+        },
+        "first_overlay_ms": {
+          "values": [
+            51875.262625,
+            42399.690334,
+            51898.206083,
+            52530.915042,
+            54663.588
+          ],
+          "median": 51898.206083,
+          "p95_nearest_rank": 54663.588,
+          "maximum": 54663.588
+        },
+        "first_page_request_to_publish_ms": {
+          "values": [
+            51332.967292,
+            41806.017167,
+            51270.289333,
+            51682.805417,
+            52310.188042
+          ],
+          "median": 51332.967292,
+          "p95_nearest_rank": 52310.188042,
+          "maximum": 52310.188042
+        },
+        "first_page_repository_read_decode_ms": {
+          "values": [
+            115.94925,
+            121.894,
+            95.166584,
+            116.050583,
+            128.427667
+          ],
+          "median": 116.050583,
+          "p95_nearest_rank": 128.427667,
+          "maximum": 128.427667
+        },
+        "first_page_inferred_queue_wait_ms": {
+          "values": [
+            51217.018042,
+            41684.123167,
+            51175.122749,
+            51566.75483400001,
+            52181.760375
+          ],
+          "median": 51217.018042,
+          "p95_nearest_rank": 52181.760375,
+          "maximum": 52181.760375
+        },
+        "offset_ms": {
+          "values": [
+            181.713333,
+            192.493833,
+            224.067292,
+            269.44225,
+            419.750083
+          ],
+          "median": 224.067292,
+          "p95_nearest_rank": 419.750083,
+          "maximum": 419.750083
+        },
+        "peak_rss_bytes": {
+          "values": [
+            2155429888.0,
+            2284437504.0,
+            2393849856.0,
+            2396995584.0,
+            2481569792.0
+          ],
+          "median": 2393849856.0,
+          "p95_nearest_rank": 2481569792.0,
+          "maximum": 2481569792.0
+        },
+        "total_file_bytes": {
+          "values": [
+            584396301.0,
+            587313585.0,
+            585723476.0,
+            585262722.0,
+            585140493.0
+          ],
+          "median": 585262722.0,
+          "p95_nearest_rank": 587313585.0,
+          "maximum": 587313585.0
+        },
+        "traversal_file_bytes": {
+          "values": [
+            2802885.0,
+            4571217.0,
+            4571217.0,
+            3581802.0,
+            3581821.0
+          ],
+          "median": 3581821.0,
+          "p95_nearest_rank": 4571217.0,
+          "maximum": 4571217.0
+        },
+        "post_warmup_miss_rate": {
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "median": 0.0,
+          "p95_nearest_rank": 0.0,
+          "maximum": 0.0
+        },
+        "seek_settle_ms": {
+          "values": [
+            45.328875,
+            81.9875,
+            79.432709,
+            66.587834,
+            53.943333
+          ],
+          "median": 66.587834,
+          "p95_nearest_rank": 81.9875,
+          "maximum": 81.9875
+        },
+        "post_cancel_bytes_per_seek": {
+          "values": [
+            140461.2857142857,
+            212731.7142857143,
+            251352.57142857142,
+            348781.4285714286,
+            142288.0
+          ],
+          "median": 212731.7142857143,
+          "p95_nearest_rank": 348781.4285714286,
+          "maximum": 348781.4285714286
+        },
+        "shutdown_ms": {
+          "values": [
+            31.776417,
+            36.316166,
+            0.789917,
+            1.05275,
+            0.799709
+          ],
+          "median": 1.05275,
+          "p95_nearest_rank": 36.316166,
+          "maximum": 36.316166
+        },
+        "post_warmup_misses": 0,
+        "post_warmup_pages": 490,
+        "post_warmup_cross_run_rate": 0.0
+      },
+      "hybrid": {
+        "trial_count": 5,
+        "ready_ms": {
+          "values": [
+            84003.852791,
+            71080.355416,
+            71013.941959,
+            78315.342333,
+            77232.096
+          ],
+          "median": 77232.096,
+          "p95_nearest_rank": 84003.852791,
+          "maximum": 84003.852791
+        },
+        "first_overlay_ms": {
+          "values": [
+            55415.447541,
+            47212.592583,
+            46984.749667000004,
+            53074.866875,
+            52791.274041000004
+          ],
+          "median": 52791.274041000004,
+          "p95_nearest_rank": 55415.447541,
+          "maximum": 55415.447541
+        },
+        "first_page_request_to_publish_ms": {
+          "values": [
+            54743.022708000004,
+            46629.587457999995,
+            46333.749458000006,
+            52497.766749999995,
+            52183.998416
+          ],
+          "median": 52183.998416,
+          "p95_nearest_rank": 54743.022708000004,
+          "maximum": 54743.022708000004
+        },
+        "first_page_repository_read_decode_ms": {
+          "values": [
+            496.759625,
+            444.368083,
+            149.122875,
+            160.216167,
+            594.321125
+          ],
+          "median": 444.368083,
+          "p95_nearest_rank": 594.321125,
+          "maximum": 594.321125
+        },
+        "first_page_inferred_queue_wait_ms": {
+          "values": [
+            54246.263083000005,
+            46185.21937499999,
+            46184.626583000005,
+            52337.550583,
+            51589.677291
+          ],
+          "median": 51589.677291,
+          "p95_nearest_rank": 54246.263083000005,
+          "maximum": 54246.263083000005
+        },
+        "offset_ms": {
+          "values": [
+            272.152,
+            185.213792,
+            268.474959,
+            182.235542,
+            225.763375
+          ],
+          "median": 225.763375,
+          "p95_nearest_rank": 272.152,
+          "maximum": 272.152
+        },
+        "peak_rss_bytes": {
+          "values": [
+            1969471488.0,
+            2431959040.0,
+            1817083904.0,
+            1781186560.0,
+            1794539520.0
+          ],
+          "median": 1817083904.0,
+          "p95_nearest_rank": 2431959040.0,
+          "maximum": 2431959040.0
+        },
+        "total_file_bytes": {
+          "values": [
+            577507510.0,
+            577473462.0,
+            577502195.0,
+            577603221.0,
+            577352154.0
+          ],
+          "median": 577502195.0,
+          "p95_nearest_rank": 577603221.0,
+          "maximum": 577603221.0
+        },
+        "traversal_file_bytes": {
+          "values": [
+            2171917.0,
+            1971764.0,
+            2528547.0,
+            2763553.0,
+            1971764.0
+          ],
+          "median": 2171917.0,
+          "p95_nearest_rank": 2763553.0,
+          "maximum": 2763553.0
+        },
+        "post_warmup_miss_rate": {
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "median": 0.0,
+          "p95_nearest_rank": 0.0,
+          "maximum": 0.0
+        },
+        "seek_settle_ms": {
+          "values": [
+            85.518917,
+            156.565958,
+            93.475583,
+            226.598333,
+            145.901667
+          ],
+          "median": 145.901667,
+          "p95_nearest_rank": 226.598333,
+          "maximum": 226.598333
+        },
+        "post_cancel_bytes_per_seek": {
+          "values": [
+            77334.42857142857,
+            52603.0,
+            133267.85714285713,
+            53265.57142857143,
+            35273.28571428572
+          ],
+          "median": 53265.57142857143,
+          "p95_nearest_rank": 133267.85714285713,
+          "maximum": 133267.85714285713
+        },
+        "shutdown_ms": {
+          "values": [
+            0.576459,
+            0.982584,
+            0.838833,
+            0.745333,
+            1.138292
+          ],
+          "median": 0.838833,
+          "p95_nearest_rank": 1.138292,
+          "maximum": 1.138292
+        },
+        "post_warmup_misses": 0,
+        "post_warmup_pages": 490,
+        "post_warmup_cross_run_rate": 0.0
+      }
+    },
+    "comparisons": {
+      "hybrid_ready_ratio": 1.0114536172055693,
+      "hybrid_ready_regression_ms": 874.569875000001,
+      "hybrid_first_overlay_p95_regression_ms": 751.859540999998,
+      "hybrid_peak_rss_median_regression_bytes": -576765952.0,
+      "hybrid_total_file_bytes_ratio": 0.9867400968688383,
+      "hybrid_detection_traversal_file_bytes_ratio": 0.6063722894025134
+    },
+    "gates": [
+      {
+        "name": "correctness",
+        "pass": true,
+        "observed": [],
+        "limit": "no failures and one digest per traversal direction"
+      },
+      {
+        "name": "every_ready_time",
+        "pass": true,
+        "observed": 84003.852791,
+        "limit": 180000.0
+      },
+      {
+        "name": "hybrid_median_ready_regression",
+        "pass": true,
+        "observed": {
+          "ratio": 1.0114536172055693,
+          "milliseconds": 874.569875000001
+        },
+        "limit": {
+          "ratio": 1.1,
+          "milliseconds": 5000.0
+        }
+      },
+      {
+        "name": "first_overlay_p95",
+        "pass": false,
+        "observed": {
+          "regular": 54663.588,
+          "hybrid": 55415.447541
+        },
+        "limit": 1000.0
+      },
+      {
+        "name": "hybrid_first_overlay_p95_regression",
+        "pass": false,
+        "observed": 751.859540999998,
+        "limit": 250.0
+      },
+      {
+        "name": "post_warmup_deadline_miss_rate",
+        "pass": true,
+        "observed": {
+          "regular": 0.0,
+          "hybrid": 0.0
+        },
+        "limit": 0.01
+      },
+      {
+        "name": "seek_cancellation_p95",
+        "pass": true,
+        "observed": {
+          "regular": 81.9875,
+          "hybrid": 226.598333
+        },
+        "limit": 250.0
+      },
+      {
+        "name": "post_cancel_bytes_per_seek_p95",
+        "pass": true,
+        "observed": {
+          "regular": 348781.4285714286,
+          "hybrid": 133267.85714285713
+        },
+        "limit": 1048576.0
+      },
+      {
+        "name": "every_peak_rss",
+        "pass": false,
+        "observed": 2481569792,
+        "limit": 2147483648
+      },
+      {
+        "name": "hybrid_median_peak_rss_regression",
+        "pass": true,
+        "observed": -576765952.0,
+        "limit": 134217728
+      },
+      {
+        "name": "hybrid_total_file_bytes_ratio",
+        "pass": true,
+        "observed": 0.9867400968688383,
+        "limit": 1.05
+      },
+      {
+        "name": "hybrid_detection_traversal_file_bytes_ratio",
+        "pass": false,
+        "observed": 0.6063722894025134,
+        "limit": 0.25
+      },
+      {
+        "name": "every_shutdown",
+        "pass": true,
+        "observed": 36.316166,
+        "limit": 2000.0
+      }
+    ]
+  }
+}

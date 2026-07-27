@@ -1,0 +1,181 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1080" viewBox="0 0 1500 1080">
+<rect width="100%" height="100%" fill="#f6f8fa"/>
+<text x="75.0" y="38.0" font-size="25" text-anchor="start" font-weight="650" fill="#202124">Crimson canonical detection storage profile</text>
+<text x="75.0" y="61.0" font-size="13" text-anchor="start" font-weight="400" fill="#5f6368">Solid: workload first pass. Dashed: immediate repeat. All workloads share one process cache.</text>
+<rect x="75" y="75" width="700" height="300" fill="#ffffff" stroke="#c9cdd2"/>
+<text x="93.0" y="103.0" font-size="18" text-anchor="start" font-weight="600" fill="#202124">UI random-frame p95 latency</text>
+<text x="93.0" y="124.0" font-size="12" text-anchor="start" font-weight="400" fill="#5f6368">Median across repetitions; lower is better (log scale)</text>
+<line x1="150" y1="325.0" x2="745" y2="325.0" stroke="#e8eaed"/>
+<text x="140.0" y="330.0" font-size="11" text-anchor="end" font-weight="400" fill="#202124">0.01</text>
+<line x1="150" y1="278.8" x2="745" y2="278.8" stroke="#e8eaed"/>
+<text x="140.0" y="283.8" font-size="11" text-anchor="end" font-weight="400" fill="#202124">0.10</text>
+<line x1="150" y1="232.5" x2="745" y2="232.5" stroke="#e8eaed"/>
+<text x="140.0" y="237.5" font-size="11" text-anchor="end" font-weight="400" fill="#202124">1.00</text>
+<line x1="150" y1="186.2" x2="745" y2="186.2" stroke="#e8eaed"/>
+<text x="140.0" y="191.2" font-size="11" text-anchor="end" font-weight="400" fill="#202124">10.0</text>
+<line x1="150" y1="140.0" x2="745" y2="140.0" stroke="#e8eaed"/>
+<text x="140.0" y="145.0" font-size="11" text-anchor="end" font-weight="400" fill="#202124">100</text>
+<line x1="150.0" y1="140" x2="150.0" y2="325" stroke="#f1f3f4"/>
+<text x="150.0" y="348.0" font-size="12" text-anchor="middle" font-weight="400" fill="#202124">0.00</text>
+<line x1="745.0" y1="140" x2="745.0" y2="325" stroke="#f1f3f4"/>
+<text x="745.0" y="348.0" font-size="12" text-anchor="middle" font-weight="400" fill="#202124">128</text>
+<text x="447.5" y="368.0" font-size="12" text-anchor="middle" font-weight="400" fill="#202124">TensorStore cache limit (MiB)</text>
+<polyline points="150.0,147.6 745.0,154.4" fill="none" stroke="#1769aa" stroke-width="2.5"/>
+<circle cx="150.0" cy="147.6" r="4" fill="#1769aa"><title>regular pass 0: 68.5182</title></circle>
+<circle cx="745.0" cy="154.4" r="4" fill="#1769aa"><title>regular pass 0: 48.9257</title></circle>
+<polyline points="150.0,216.4 745.0,276.1" fill="none" stroke="#1769aa" stroke-width="2.5" stroke-dasharray="7 5"/>
+<circle cx="150.0" cy="216.4" r="4" fill="#1769aa"><title>regular pass 1: 2.2244</title></circle>
+<circle cx="745.0" cy="276.1" r="4" fill="#1769aa"><title>regular pass 1: 0.1140</title></circle>
+<polyline points="150.0,163.5 745.0,247.7" fill="none" stroke="#c73e1d" stroke-width="2.5"/>
+<circle cx="150.0" cy="163.5" r="4" fill="#c73e1d"><title>hybrid pass 0: 30.9860</title></circle>
+<circle cx="745.0" cy="247.7" r="4" fill="#c73e1d"><title>hybrid pass 0: 0.4683</title></circle>
+<polyline points="150.0,224.7 745.0,300.7" fill="none" stroke="#c73e1d" stroke-width="2.5" stroke-dasharray="7 5"/>
+<circle cx="150.0" cy="224.7" r="4" fill="#c73e1d"><title>hybrid pass 1: 1.4780</title></circle>
+<circle cx="745.0" cy="300.7" r="4" fill="#c73e1d"><title>hybrid pass 1: 0.0335</title></circle>
+<rect x="820" y="75" width="700" height="300" fill="#ffffff" stroke="#c9cdd2"/>
+<text x="838.0" y="103.0" font-size="18" text-anchor="start" font-weight="600" fill="#202124">UI random-frame file bytes</text>
+<text x="838.0" y="124.0" font-size="12" text-anchor="start" font-weight="400" fill="#5f6368">Median TensorStore file bytes per workload; lower is better (log scale)</text>
+<line x1="895" y1="325.0" x2="1490" y2="325.0" stroke="#e8eaed"/>
+<text x="885.0" y="330.0" font-size="11" text-anchor="end" font-weight="400" fill="#202124">1.0M</text>
+<line x1="895" y1="232.5" x2="1490" y2="232.5" stroke="#e8eaed"/>
+<text x="885.0" y="237.5" font-size="11" text-anchor="end" font-weight="400" fill="#202124">10.0M</text>
+<line x1="895" y1="140.0" x2="1490" y2="140.0" stroke="#e8eaed"/>
+<text x="885.0" y="145.0" font-size="11" text-anchor="end" font-weight="400" fill="#202124">100.0M</text>
+<line x1="895.0" y1="140" x2="895.0" y2="325" stroke="#f1f3f4"/>
+<text x="895.0" y="348.0" font-size="12" text-anchor="middle" font-weight="400" fill="#202124">0.00</text>
+<line x1="1490.0" y1="140" x2="1490.0" y2="325" stroke="#f1f3f4"/>
+<text x="1490.0" y="348.0" font-size="12" text-anchor="middle" font-weight="400" fill="#202124">128</text>
+<text x="1192.5" y="368.0" font-size="12" text-anchor="middle" font-weight="400" fill="#202124">TensorStore cache limit (MiB)</text>
+<polyline points="895.0,160.1 1490.0,261.8" fill="none" stroke="#1769aa" stroke-width="2.5"/>
+<circle cx="895.0" cy="160.1" r="4" fill="#1769aa"><title>regular pass 0: 60605555.0000</title></circle>
+<circle cx="1490.0" cy="261.8" r="4" fill="#1769aa"><title>regular pass 0: 4823302.0000</title></circle>
+<polyline points="895.0,160.1 1490.0,325.0" fill="none" stroke="#1769aa" stroke-width="2.5" stroke-dasharray="7 5"/>
+<circle cx="895.0" cy="160.1" r="4" fill="#1769aa"><title>regular pass 1: 60605555.0000</title></circle>
+<circle cx="1490.0" cy="325.0" r="4" fill="#1769aa"><title>regular pass 1: 0.0000</title></circle>
+<polyline points="895.0,240.9 1490.0,274.7" fill="none" stroke="#c73e1d" stroke-width="2.5"/>
+<circle cx="895.0" cy="240.9" r="4" fill="#c73e1d"><title>hybrid pass 0: 8105650.0000</title></circle>
+<circle cx="1490.0" cy="274.7" r="4" fill="#c73e1d"><title>hybrid pass 0: 3495942.0000</title></circle>
+<polyline points="895.0,240.9 1490.0,325.0" fill="none" stroke="#c73e1d" stroke-width="2.5" stroke-dasharray="7 5"/>
+<circle cx="895.0" cy="240.9" r="4" fill="#c73e1d"><title>hybrid pass 1: 8105650.0000</title></circle>
+<circle cx="1490.0" cy="325.0" r="4" fill="#c73e1d"><title>hybrid pass 1: 0.0000</title></circle>
+<rect x="75" y="420" width="700" height="300" fill="#ffffff" stroke="#c9cdd2"/>
+<text x="93.0" y="448.0" font-size="18" text-anchor="start" font-weight="600" fill="#202124">Contract forward traversal throughput</text>
+<text x="93.0" y="469.0" font-size="12" text-anchor="start" font-weight="400" fill="#5f6368">700-frame windows; higher is better (log scale)</text>
+<line x1="150" y1="670.0" x2="745" y2="670.0" stroke="#e8eaed"/>
+<text x="140.0" y="675.0" font-size="11" text-anchor="end" font-weight="400" fill="#202124">100.0k</text>
+<line x1="150" y1="577.5" x2="745" y2="577.5" stroke="#e8eaed"/>
+<text x="140.0" y="582.5" font-size="11" text-anchor="end" font-weight="400" fill="#202124">1.0M</text>
+<line x1="150" y1="485.0" x2="745" y2="485.0" stroke="#e8eaed"/>
+<text x="140.0" y="490.0" font-size="11" text-anchor="end" font-weight="400" fill="#202124">10.0M</text>
+<line x1="150.0" y1="485" x2="150.0" y2="670" stroke="#f1f3f4"/>
+<text x="150.0" y="693.0" font-size="12" text-anchor="middle" font-weight="400" fill="#202124">0.00</text>
+<line x1="745.0" y1="485" x2="745.0" y2="670" stroke="#f1f3f4"/>
+<text x="745.0" y="693.0" font-size="12" text-anchor="middle" font-weight="400" fill="#202124">128</text>
+<text x="447.5" y="713.0" font-size="12" text-anchor="middle" font-weight="400" fill="#202124">TensorStore cache limit (MiB)</text>
+<polyline points="150.0,664.5 745.0,485.8" fill="none" stroke="#1769aa" stroke-width="2.5"/>
+<circle cx="150.0" cy="664.5" r="4" fill="#1769aa"><title>regular pass 0: 114736.6663</title></circle>
+<circle cx="745.0" cy="485.8" r="4" fill="#1769aa"><title>regular pass 0: 9798743.4596</title></circle>
+<polyline points="150.0,664.1 745.0,485.3" fill="none" stroke="#1769aa" stroke-width="2.5" stroke-dasharray="7 5"/>
+<circle cx="150.0" cy="664.1" r="4" fill="#1769aa"><title>regular pass 1: 115777.7743</title></circle>
+<circle cx="745.0" cy="485.3" r="4" fill="#1769aa"><title>regular pass 1: 9937431.9044</title></circle>
+<polyline points="150.0,607.8 745.0,499.2" fill="none" stroke="#c73e1d" stroke-width="2.5"/>
+<circle cx="150.0" cy="607.8" r="4" fill="#c73e1d"><title>hybrid pass 0: 470231.2278</title></circle>
+<circle cx="745.0" cy="499.2" r="4" fill="#c73e1d"><title>hybrid pass 0: 7016186.2117</title></circle>
+<polyline points="150.0,600.0 745.0,486.0" fill="none" stroke="#c73e1d" stroke-width="2.5" stroke-dasharray="7 5"/>
+<circle cx="150.0" cy="600.0" r="4" fill="#c73e1d"><title>hybrid pass 1: 571389.8788</title></circle>
+<circle cx="745.0" cy="486.0" r="4" fill="#c73e1d"><title>hybrid pass 1: 9754600.4457</title></circle>
+<rect x="820" y="420" width="700" height="300" fill="#ffffff" stroke="#c9cdd2"/>
+<text x="838.0" y="448.0" font-size="18" text-anchor="start" font-weight="600" fill="#202124">Contract forward file reads</text>
+<text x="838.0" y="469.0" font-size="12" text-anchor="start" font-weight="400" fill="#5f6368">Median file-range reads; lower is better (log scale)</text>
+<line x1="895" y1="670.0" x2="1490" y2="670.0" stroke="#e8eaed"/>
+<text x="885.0" y="675.0" font-size="11" text-anchor="end" font-weight="400" fill="#202124">10.0</text>
+<line x1="895" y1="623.8" x2="1490" y2="623.8" stroke="#e8eaed"/>
+<text x="885.0" y="628.8" font-size="11" text-anchor="end" font-weight="400" fill="#202124">100</text>
+<line x1="895" y1="577.5" x2="1490" y2="577.5" stroke="#e8eaed"/>
+<text x="885.0" y="582.5" font-size="11" text-anchor="end" font-weight="400" fill="#202124">1.0k</text>
+<line x1="895" y1="531.2" x2="1490" y2="531.2" stroke="#e8eaed"/>
+<text x="885.0" y="536.2" font-size="11" text-anchor="end" font-weight="400" fill="#202124">10.0k</text>
+<line x1="895" y1="485.0" x2="1490" y2="485.0" stroke="#e8eaed"/>
+<text x="885.0" y="490.0" font-size="11" text-anchor="end" font-weight="400" fill="#202124">100.0k</text>
+<line x1="895.0" y1="485" x2="895.0" y2="670" stroke="#f1f3f4"/>
+<text x="895.0" y="693.0" font-size="12" text-anchor="middle" font-weight="400" fill="#202124">0.00</text>
+<line x1="1490.0" y1="485" x2="1490.0" y2="670" stroke="#f1f3f4"/>
+<text x="1490.0" y="693.0" font-size="12" text-anchor="middle" font-weight="400" fill="#202124">128</text>
+<text x="1192.5" y="713.0" font-size="12" text-anchor="middle" font-weight="400" fill="#202124">TensorStore cache limit (MiB)</text>
+<polyline points="895.0,525.0 1490.0,670.0" fill="none" stroke="#1769aa" stroke-width="2.5"/>
+<circle cx="895.0" cy="525.0" r="4" fill="#1769aa"><title>regular pass 0: 13659.0000</title></circle>
+<circle cx="1490.0" cy="670.0" r="4" fill="#1769aa"><title>regular pass 0: 0.0000</title></circle>
+<polyline points="895.0,525.0 1490.0,670.0" fill="none" stroke="#1769aa" stroke-width="2.5" stroke-dasharray="7 5"/>
+<circle cx="895.0" cy="525.0" r="4" fill="#1769aa"><title>regular pass 1: 13659.0000</title></circle>
+<circle cx="1490.0" cy="670.0" r="4" fill="#1769aa"><title>regular pass 1: 0.0000</title></circle>
+<polyline points="895.0,512.0 1490.0,634.3" fill="none" stroke="#c73e1d" stroke-width="2.5"/>
+<circle cx="895.0" cy="512.0" r="4" fill="#c73e1d"><title>hybrid pass 0: 26053.0000</title></circle>
+<circle cx="1490.0" cy="634.3" r="4" fill="#c73e1d"><title>hybrid pass 0: 59.0000</title></circle>
+<polyline points="895.0,512.0 1490.0,670.0" fill="none" stroke="#c73e1d" stroke-width="2.5" stroke-dasharray="7 5"/>
+<circle cx="895.0" cy="512.0" r="4" fill="#c73e1d"><title>hybrid pass 1: 26053.0000</title></circle>
+<circle cx="1490.0" cy="670.0" r="4" fill="#c73e1d"><title>hybrid pass 1: 0.0000</title></circle>
+<rect x="75" y="765" width="700" height="300" fill="#ffffff" stroke="#c9cdd2"/>
+<text x="93.0" y="793.0" font-size="18" text-anchor="start" font-weight="600" fill="#202124">Contract forward TensorStore cache hits</text>
+<text x="93.0" y="814.0" font-size="12" text-anchor="start" font-weight="400" fill="#5f6368">Decoded/index cache reuse; higher indicates reuse</text>
+<line x1="150" y1="1015.0" x2="745" y2="1015.0" stroke="#e8eaed"/>
+<text x="140.0" y="1020.0" font-size="11" text-anchor="end" font-weight="400" fill="#202124">0.00</text>
+<line x1="150" y1="968.8" x2="745" y2="968.8" stroke="#e8eaed"/>
+<text x="140.0" y="973.8" font-size="11" text-anchor="end" font-weight="400" fill="#202124">7.5k</text>
+<line x1="150" y1="922.5" x2="745" y2="922.5" stroke="#e8eaed"/>
+<text x="140.0" y="927.5" font-size="11" text-anchor="end" font-weight="400" fill="#202124">15.0k</text>
+<line x1="150" y1="876.2" x2="745" y2="876.2" stroke="#e8eaed"/>
+<text x="140.0" y="881.2" font-size="11" text-anchor="end" font-weight="400" fill="#202124">22.5k</text>
+<line x1="150" y1="830.0" x2="745" y2="830.0" stroke="#e8eaed"/>
+<text x="140.0" y="835.0" font-size="11" text-anchor="end" font-weight="400" fill="#202124">30.0k</text>
+<line x1="150.0" y1="830" x2="150.0" y2="1015" stroke="#f1f3f4"/>
+<text x="150.0" y="1038.0" font-size="12" text-anchor="middle" font-weight="400" fill="#202124">0.00</text>
+<line x1="745.0" y1="830" x2="745.0" y2="1015" stroke="#f1f3f4"/>
+<text x="745.0" y="1038.0" font-size="12" text-anchor="middle" font-weight="400" fill="#202124">128</text>
+<text x="447.5" y="1058.0" font-size="12" text-anchor="middle" font-weight="400" fill="#202124">TensorStore cache limit (MiB)</text>
+<polyline points="150.0,1015.0 745.0,930.8" fill="none" stroke="#1769aa" stroke-width="2.5"/>
+<circle cx="150.0" cy="1015.0" r="4" fill="#1769aa"><title>regular pass 0: 0.0000</title></circle>
+<circle cx="745.0" cy="930.8" r="4" fill="#1769aa"><title>regular pass 0: 13659.0000</title></circle>
+<polyline points="150.0,1015.0 745.0,930.8" fill="none" stroke="#1769aa" stroke-width="2.5" stroke-dasharray="7 5"/>
+<circle cx="150.0" cy="1015.0" r="4" fill="#1769aa"><title>regular pass 1: 0.0000</title></circle>
+<circle cx="745.0" cy="930.8" r="4" fill="#1769aa"><title>regular pass 1: 13659.0000</title></circle>
+<polyline points="150.0,1015.0 745.0,843.7" fill="none" stroke="#c73e1d" stroke-width="2.5"/>
+<circle cx="150.0" cy="1015.0" r="4" fill="#c73e1d"><title>hybrid pass 0: 0.0000</title></circle>
+<circle cx="745.0" cy="843.7" r="4" fill="#c73e1d"><title>hybrid pass 0: 27787.0000</title></circle>
+<polyline points="150.0,1015.0 745.0,843.7" fill="none" stroke="#c73e1d" stroke-width="2.5" stroke-dasharray="7 5"/>
+<circle cx="150.0" cy="1015.0" r="4" fill="#c73e1d"><title>hybrid pass 1: 0.0000</title></circle>
+<circle cx="745.0" cy="843.7" r="4" fill="#c73e1d"><title>hybrid pass 1: 27787.0000</title></circle>
+<rect x="820" y="765" width="700" height="300" fill="#ffffff" stroke="#c9cdd2"/>
+<text x="838.0" y="793.0" font-size="18" text-anchor="start" font-weight="600" fill="#202124">Contract forward TensorStore cache misses</text>
+<text x="838.0" y="814.0" font-size="12" text-anchor="start" font-weight="400" fill="#5f6368">Requests absent from TensorStore cache; lower is better (log scale)</text>
+<line x1="895" y1="1015.0" x2="1490" y2="1015.0" stroke="#e8eaed"/>
+<text x="885.0" y="1020.0" font-size="11" text-anchor="end" font-weight="400" fill="#202124">10.0</text>
+<line x1="895" y1="968.8" x2="1490" y2="968.8" stroke="#e8eaed"/>
+<text x="885.0" y="973.8" font-size="11" text-anchor="end" font-weight="400" fill="#202124">100</text>
+<line x1="895" y1="922.5" x2="1490" y2="922.5" stroke="#e8eaed"/>
+<text x="885.0" y="927.5" font-size="11" text-anchor="end" font-weight="400" fill="#202124">1.0k</text>
+<line x1="895" y1="876.2" x2="1490" y2="876.2" stroke="#e8eaed"/>
+<text x="885.0" y="881.2" font-size="11" text-anchor="end" font-weight="400" fill="#202124">10.0k</text>
+<line x1="895" y1="830.0" x2="1490" y2="830.0" stroke="#e8eaed"/>
+<text x="885.0" y="835.0" font-size="11" text-anchor="end" font-weight="400" fill="#202124">100.0k</text>
+<line x1="895.0" y1="830" x2="895.0" y2="1015" stroke="#f1f3f4"/>
+<text x="895.0" y="1038.0" font-size="12" text-anchor="middle" font-weight="400" fill="#202124">0.00</text>
+<line x1="1490.0" y1="830" x2="1490.0" y2="1015" stroke="#f1f3f4"/>
+<text x="1490.0" y="1038.0" font-size="12" text-anchor="middle" font-weight="400" fill="#202124">128</text>
+<text x="1192.5" y="1058.0" font-size="12" text-anchor="middle" font-weight="400" fill="#202124">TensorStore cache limit (MiB)</text>
+<polyline points="895.0,870.0 1490.0,1015.0" fill="none" stroke="#1769aa" stroke-width="2.5"/>
+<circle cx="895.0" cy="870.0" r="4" fill="#1769aa"><title>regular pass 0: 13659.0000</title></circle>
+<circle cx="1490.0" cy="1015.0" r="4" fill="#1769aa"><title>regular pass 0: 0.0000</title></circle>
+<polyline points="895.0,870.0 1490.0,1015.0" fill="none" stroke="#1769aa" stroke-width="2.5" stroke-dasharray="7 5"/>
+<circle cx="895.0" cy="870.0" r="4" fill="#1769aa"><title>regular pass 1: 13659.0000</title></circle>
+<circle cx="1490.0" cy="1015.0" r="4" fill="#1769aa"><title>regular pass 1: 0.0000</title></circle>
+<polyline points="895.0,847.7 1490.0,979.3" fill="none" stroke="#c73e1d" stroke-width="2.5"/>
+<circle cx="895.0" cy="847.7" r="4" fill="#c73e1d"><title>hybrid pass 0: 41378.0000</title></circle>
+<circle cx="1490.0" cy="979.3" r="4" fill="#c73e1d"><title>hybrid pass 0: 59.0000</title></circle>
+<polyline points="895.0,847.7 1490.0,1015.0" fill="none" stroke="#c73e1d" stroke-width="2.5" stroke-dasharray="7 5"/>
+<circle cx="895.0" cy="847.7" r="4" fill="#c73e1d"><title>hybrid pass 1: 41378.0000</title></circle>
+<circle cx="1490.0" cy="1015.0" r="4" fill="#c73e1d"><title>hybrid pass 1: 0.0000</title></circle>
+<line x1="75" y1="1053" x2="109" y2="1053" stroke="#1769aa" stroke-width="3"/>
+<text x="118.0" y="1058.0" font-size="13" text-anchor="start" font-weight="400" fill="#202124">regular</text>
+<line x1="220" y1="1053" x2="254" y2="1053" stroke="#c73e1d" stroke-width="3"/>
+<text x="263.0" y="1058.0" font-size="13" text-anchor="start" font-weight="400" fill="#202124">hybrid</text>
+</svg>

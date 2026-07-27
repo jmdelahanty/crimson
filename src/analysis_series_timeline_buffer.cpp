@@ -6,7 +6,6 @@
 #include <deque>
 #include <mutex>
 #include <optional>
-#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -40,12 +39,6 @@ struct PageKeyHash {
   }
 };
 
-struct PendingRequest {
-  PageKey key;
-  crimson::timeline::AnalysisSeriesTimelineRequest request;
-  uint64_t generation = 0;
-};
-
 } // namespace
 
 struct AnalysisSeriesTimelineBuffer::Impl {
@@ -54,7 +47,11 @@ struct AnalysisSeriesTimelineBuffer::Impl {
   std::unique_ptr<crimson::timeline::AnalysisSeriesTimelineRepository>
       repository;
   crimson::timeline::AnalysisSeriesTimelineDescriptor descriptor;
-  std::thread worker;
+  std::shared_ptr<crimson::data::DataAccessScheduler> scheduler;
+  std::string archive_identity;
+  std::unordered_set<crimson::data::SourceIdentity,
+                     crimson::data::SourceIdentityHash>
+      scheduler_sources;
   bool stopping = false;
   size_t page_span = 4096;
   size_t page_step = 2048;
@@ -62,9 +59,6 @@ struct AnalysisSeriesTimelineBuffer::Impl {
   size_t capacity = 3;
   uint64_t generation = 1;
   std::optional<PageKey> last_key;
-  std::deque<PendingRequest> pending;
-  std::unordered_set<PageKey, PageKeyHash> pending_keys;
-  std::optional<PendingRequest> active;
   std::unordered_map<
       PageKey,
       std::shared_ptr<const crimson::timeline::AnalysisSeriesTimelineWindow>,
@@ -72,6 +66,22 @@ struct AnalysisSeriesTimelineBuffer::Impl {
       cache;
   std::deque<PageKey> cache_order;
   AnalysisSeriesTimelineBufferMetrics metrics;
+
+  crimson::data::SourceIdentity
+  schedulerSource(const std::string &source_key) const {
+    const auto *source =
+        crimson::timeline::findAnalysisSeriesSource(descriptor, source_key);
+    const std::string product =
+        descriptor.kind == crimson::timeline::AnalysisSeriesKind::Motion
+            ? "motion_timeline"
+            : "tail_kinematics_timeline";
+    std::string run = source_key;
+    if (source) {
+      run = source->source_group + "/" + source->run_name + "/" + source_key;
+    }
+    return {archive_identity.empty() ? "in_memory" : archive_identity,
+            product, std::move(run)};
+  }
 
   std::optional<PageKey> keyFor(int64_t frame,
                                 const std::string &source) const {
@@ -81,11 +91,6 @@ struct AnalysisSeriesTimelineBuffer::Impl {
       return std::nullopt;
     }
     return PageKey{source, bounds.first_frame, bounds.last_frame};
-  }
-
-  void clearPendingLocked() {
-    pending.clear();
-    pending_keys.clear();
   }
 
   void publishLocked(
@@ -104,65 +109,17 @@ struct AnalysisSeriesTimelineBuffer::Impl {
     metrics.peak_cached_windows =
         std::max(metrics.peak_cached_windows, cache.size());
   }
-
-  void run() {
-    while (true) {
-      PendingRequest request;
-      {
-        std::unique_lock<std::mutex> lock(mutex);
-        condition.wait(lock, [&] { return stopping || !pending.empty(); });
-        if (stopping) {
-          return;
-        }
-        request = pending.front();
-        pending.pop_front();
-        pending_keys.erase(request.key);
-        active = request;
-      }
-
-      const auto start = std::chrono::steady_clock::now();
-      auto resolved = repository->resolveWindow(request.request);
-      const double elapsed_ms = std::chrono::duration<double, std::milli>(
-                                    std::chrono::steady_clock::now() - start)
-                                    .count();
-      auto shared = std::make_shared<
-          const crimson::timeline::AnalysisSeriesTimelineWindow>(
-          std::move(resolved));
-      {
-        std::lock_guard<std::mutex> lock(mutex);
-        active.reset();
-        metrics.maximum_resolve_ms =
-            std::max(metrics.maximum_resolve_ms, elapsed_ms);
-        if (request.generation != generation) {
-          ++metrics.discarded_results;
-          condition.notify_all();
-          continue;
-        }
-        metrics.source_rows_read += shared->source_row_count;
-        metrics.published_points += shared->published_point_count;
-        switch (shared->status) {
-        case crimson::timeline::AnalysisSeriesTimelineStatus::Mapped:
-          ++metrics.resolved_windows;
-          break;
-        case crimson::timeline::AnalysisSeriesTimelineStatus::Missing:
-        case crimson::timeline::AnalysisSeriesTimelineStatus::OutOfRange:
-          ++metrics.missing_windows;
-          break;
-        case crimson::timeline::AnalysisSeriesTimelineStatus::InvalidRequest:
-        case crimson::timeline::AnalysisSeriesTimelineStatus::ReadFailed:
-          ++metrics.failed_windows;
-          metrics.last_error = shared->error;
-          break;
-        }
-        publishLocked(request.key, std::move(shared));
-        condition.notify_all();
-      }
-    }
-  }
 };
 
-AnalysisSeriesTimelineBuffer::AnalysisSeriesTimelineBuffer()
-    : impl_(std::make_unique<Impl>()) {}
+AnalysisSeriesTimelineBuffer::AnalysisSeriesTimelineBuffer(
+    std::shared_ptr<crimson::data::DataAccessScheduler> scheduler,
+    std::string archive_identity)
+    : impl_(std::make_unique<Impl>()) {
+  impl_->scheduler = scheduler ? std::move(scheduler)
+                               : std::make_shared<
+                                     crimson::data::DataAccessScheduler>(16, 1);
+  impl_->archive_identity = std::move(archive_identity);
+}
 
 AnalysisSeriesTimelineBuffer::~AnalysisSeriesTimelineBuffer() { close(); }
 
@@ -183,6 +140,10 @@ bool AnalysisSeriesTimelineBuffer::open(
                 "Analysis-series timeline buffer configuration is invalid");
     return false;
   }
+  if (!impl_->scheduler || !impl_->scheduler->running()) {
+    assignError(error, "Analysis-series data scheduler is unavailable");
+    return false;
+  }
   {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->descriptor = repository->descriptor();
@@ -194,9 +155,9 @@ bool AnalysisSeriesTimelineBuffer::open(
     impl_->stopping = false;
     impl_->generation = 1;
     impl_->last_key.reset();
+    impl_->scheduler_sources.clear();
     impl_->metrics = {};
   }
-  impl_->worker = std::thread([this] { impl_->run(); });
   if (error != nullptr) {
     error->clear();
   }
@@ -204,19 +165,24 @@ bool AnalysisSeriesTimelineBuffer::open(
 }
 
 void AnalysisSeriesTimelineBuffer::close() {
+  std::vector<crimson::data::SourceIdentity> sources;
   {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->stopping = true;
     impl_->condition.notify_all();
+    sources.assign(impl_->scheduler_sources.begin(),
+                   impl_->scheduler_sources.end());
   }
-  if (impl_->worker.joinable()) {
-    impl_->worker.join();
+  for (const auto &source : sources) {
+    impl_->scheduler->cancelSource(source);
+  }
+  for (const auto &source : sources) {
+    impl_->scheduler->waitForSourceIdle(source);
   }
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->repository.reset();
   impl_->descriptor = {};
-  impl_->clearPendingLocked();
-  impl_->active.reset();
+  impl_->scheduler_sources.clear();
   impl_->cache.clear();
   impl_->cache_order.clear();
   impl_->stopping = false;
@@ -225,8 +191,8 @@ void AnalysisSeriesTimelineBuffer::close() {
 
 bool AnalysisSeriesTimelineBuffer::isOpen() const {
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  return impl_->repository != nullptr && impl_->worker.joinable() &&
-         !impl_->stopping;
+  return impl_->repository != nullptr && impl_->scheduler &&
+         impl_->scheduler->running() && !impl_->stopping;
 }
 
 bool AnalysisSeriesTimelineBuffer::requestFrame(
@@ -249,10 +215,21 @@ bool AnalysisSeriesTimelineBuffer::requestFrame(
   }
   ++impl_->metrics.requests;
   const bool changed_page = impl_->last_key && !(*impl_->last_key == *key);
-  if ((discontinuity || changed_page) &&
-      (impl_->active.has_value() || !impl_->pending.empty())) {
+  crimson::data::AccessPattern access_pattern =
+      crimson::data::AccessPattern::Paused;
+  if (discontinuity) {
+    access_pattern = crimson::data::AccessPattern::RandomSeek;
+  } else if (impl_->last_key) {
+    access_pattern = frame >= impl_->last_key->first
+                         ? crimson::data::AccessPattern::Forward
+                         : crimson::data::AccessPattern::Reverse;
+  }
+  if (discontinuity || changed_page) {
     ++impl_->generation;
-    impl_->clearPendingLocked();
+    if (impl_->last_key) {
+      impl_->scheduler->cancelSource(
+          impl_->schedulerSource(impl_->last_key->source));
+    }
   }
   impl_->last_key = key;
   if (impl_->cache.find(*key) != impl_->cache.end()) {
@@ -262,20 +239,108 @@ bool AnalysisSeriesTimelineBuffer::requestFrame(
     }
     return true;
   }
-  if (impl_->pending_keys.find(*key) == impl_->pending_keys.end() &&
-      (!impl_->active || !(impl_->active->key == *key))) {
-    crimson::timeline::AnalysisSeriesTimelineRequest request;
-    request.source_key = source;
-    request.first_frame = key->first;
-    request.last_frame = key->last;
-    request.anchor_frame = frame;
-    request.max_points_per_trace = impl_->maximum_points;
-    request.fallback_frames_per_second = fallback_frames_per_second;
-    impl_->pending.push_back({*key, std::move(request), impl_->generation});
-    impl_->pending_keys.insert(*key);
-    impl_->metrics.peak_pending_windows =
-        std::max(impl_->metrics.peak_pending_windows, impl_->pending.size());
-    impl_->condition.notify_all();
+  crimson::timeline::AnalysisSeriesTimelineRequest request;
+  request.source_key = source;
+  request.first_frame = key->first;
+  request.last_frame = key->last;
+  request.anchor_frame = frame;
+  request.max_points_per_trace = impl_->maximum_points;
+  request.fallback_frames_per_second = fallback_frames_per_second;
+  const uint64_t request_generation = impl_->generation;
+  const auto scheduler_source = impl_->schedulerSource(source);
+  impl_->scheduler_sources.insert(scheduler_source);
+  crimson::data::DataRangeRequest data_request{
+      scheduler_source,
+      {key->first, key->last},
+      crimson::data::FieldSelection::All(),
+      crimson::data::RequestPriority::VisibleWindow,
+      access_pattern,
+      request_generation};
+  const auto outcome = impl_->scheduler->submit(
+      std::move(data_request),
+      [this, key = *key, request = std::move(request), request_generation](
+          const crimson::data::ScheduledDataRequest &scheduled) {
+        if (scheduled.cancellation.cancelled()) {
+          return crimson::data::DataResultStatus::Stale;
+        }
+        const auto start = std::chrono::steady_clock::now();
+        auto resolved = impl_->repository->resolveWindow(request);
+        const auto repository_metrics = impl_->repository->metrics();
+        const double elapsed_ms = std::chrono::duration<double, std::milli>(
+                                      std::chrono::steady_clock::now() - start)
+                                      .count();
+        auto shared = std::make_shared<
+            const crimson::timeline::AnalysisSeriesTimelineWindow>(
+            std::move(resolved));
+        std::lock_guard<std::mutex> callback_lock(impl_->mutex);
+        impl_->metrics.maximum_resolve_ms =
+            std::max(impl_->metrics.maximum_resolve_ms, elapsed_ms);
+        impl_->metrics.frame_index_block_reads =
+            repository_metrics.frame_index_block_reads;
+        impl_->metrics.frame_index_cache_hits =
+            repository_metrics.frame_index_cache_hits;
+        impl_->metrics.frame_index_cache_evictions =
+            repository_metrics.frame_index_cache_evictions;
+        impl_->metrics.frame_index_source_bytes =
+            repository_metrics.frame_index_source_bytes;
+        impl_->metrics.cached_frame_index_bytes =
+            repository_metrics.cached_frame_index_bytes;
+        impl_->metrics.peak_cached_frame_index_bytes =
+            repository_metrics.peak_cached_frame_index_bytes;
+        impl_->metrics.maximum_frame_index_read_ms =
+            repository_metrics.maximum_frame_index_read_ms;
+        if (scheduled.cancellation.cancelled() || impl_->stopping ||
+            request_generation != impl_->generation) {
+          ++impl_->metrics.discarded_results;
+          impl_->condition.notify_all();
+          return crimson::data::DataResultStatus::Stale;
+        }
+        impl_->metrics.source_rows_read += shared->source_row_count;
+        impl_->metrics.published_points += shared->published_point_count;
+        crimson::data::DataResultStatus status =
+            crimson::data::DataResultStatus::Failed;
+        switch (shared->status) {
+        case crimson::timeline::AnalysisSeriesTimelineStatus::Mapped:
+          ++impl_->metrics.resolved_windows;
+          status = crimson::data::DataResultStatus::Ready;
+          break;
+        case crimson::timeline::AnalysisSeriesTimelineStatus::Missing:
+        case crimson::timeline::AnalysisSeriesTimelineStatus::OutOfRange:
+          ++impl_->metrics.missing_windows;
+          status = crimson::data::DataResultStatus::Missing;
+          break;
+        case crimson::timeline::AnalysisSeriesTimelineStatus::InvalidRequest:
+        case crimson::timeline::AnalysisSeriesTimelineStatus::ReadFailed:
+          ++impl_->metrics.failed_windows;
+          impl_->metrics.last_error = shared->error;
+          break;
+        }
+        impl_->publishLocked(key, std::move(shared));
+        impl_->condition.notify_all();
+        return status;
+      });
+  ++impl_->metrics.scheduler_submissions;
+  switch (outcome.status) {
+  case crimson::data::DataRequestSubmitStatus::Duplicate:
+    ++impl_->metrics.scheduler_duplicates;
+    break;
+  case crimson::data::DataRequestSubmitStatus::Promoted:
+    ++impl_->metrics.scheduler_promotions;
+    break;
+  case crimson::data::DataRequestSubmitStatus::RejectedCapacity:
+    ++impl_->metrics.scheduler_capacity_rejections;
+    break;
+  default:
+    break;
+  }
+  impl_->metrics.peak_pending_windows = std::max(
+      impl_->metrics.peak_pending_windows,
+      impl_->scheduler->metrics().queue.pending_requests);
+  if (!outcome.accepted() &&
+      outcome.status !=
+          crimson::data::DataRequestSubmitStatus::RejectedCapacity) {
+    assignError(error, "Analysis-series timeline scheduler rejected request");
+    return false;
   }
   if (error != nullptr) {
     error->clear();

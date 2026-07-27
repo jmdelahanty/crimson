@@ -1,10 +1,10 @@
-#include "zarr/archive_context_internal.h"
-
 #include <absl/strings/cord.h>
 #include <tensorstore/kvstore/operations.h>
 #include <tensorstore/kvstore/spec.h>
 
 #include <utility>
+
+#include "zarr/archive_context_internal.h"
 
 namespace crimson::zarr {
 namespace ts = tensorstore;
@@ -33,6 +33,11 @@ std::filesystem::path InferRecordingRoot(
 
 namespace internal {
 
+ts::Result<ts::Context> MakeArchiveTensorStoreContext(size_t cache_pool_bytes) {
+  return ts::Context::FromJson(
+      {{"cache_pool", {{"total_bytes_limit", cache_pool_bytes}}}});
+}
+
 void SetArchiveError(std::string* error_message, std::string message) {
   if (error_message) {
     *error_message = std::move(message);
@@ -54,9 +59,8 @@ std::optional<json> ReadArchiveJson(const ArchiveContext::Impl& archive,
   }
 }
 
-std::optional<json> ReadArchiveAttributes(
-    const ArchiveContext::Impl& archive,
-    const std::string& group_path) {
+std::optional<json> ReadArchiveAttributes(const ArchiveContext::Impl& archive,
+                                          const std::string& group_path) {
   std::string prefix = group_path;
   if (!prefix.empty() && prefix.back() != '/') {
     prefix.push_back('/');
@@ -75,6 +79,24 @@ std::optional<json> ReadArchiveAttributes(
   return std::nullopt;
 }
 
+std::optional<json> MakeReadOnlyArraySpec(const ArchiveContext::Impl& archive,
+                                          const std::string& path,
+                                          const char* driver) {
+  auto store_spec = archive.store.spec();
+  if (!store_spec.ok()) {
+    return std::nullopt;
+  }
+  auto kvstore_json = store_spec->ToJson();
+  if (!kvstore_json.ok()) {
+    return std::nullopt;
+  }
+  return json{{"driver", driver},
+              {"kvstore", *kvstore_json},
+              {"path", path},
+              {"recheck_cached_metadata", "open"},
+              {"recheck_cached_data", "open"}};
+}
+
 }  // namespace internal
 
 ArchiveContext::ArchiveContext(std::shared_ptr<Impl> impl)
@@ -83,12 +105,15 @@ ArchiveContext::ArchiveContext(std::shared_ptr<Impl> impl)
 ArchiveContext::~ArchiveContext() = default;
 
 std::shared_ptr<ArchiveContext> ArchiveContext::Open(
-    const std::filesystem::path& root_path,
-    std::string* error_message) {
-  if (!std::filesystem::is_directory(root_path)) {
-    internal::SetArchiveError(
-        error_message,
-        "Zarr archive directory does not exist: " + root_path.string());
+    const std::filesystem::path& root_path, std::string* error_message) {
+  std::error_code directory_error;
+  if (!std::filesystem::is_directory(root_path, directory_error)) {
+    const std::string detail =
+        directory_error ? "Could not inspect Zarr archive directory: " +
+                              directory_error.message()
+                        : "Zarr archive directory does not exist";
+    internal::SetArchiveError(error_message,
+                              detail + ": " + root_path.string());
     return nullptr;
   }
 
@@ -106,14 +131,22 @@ std::shared_ptr<ArchiveContext> ArchiveContext::Open(
   if (!spec.ok()) {
     internal::SetArchiveError(
         error_message,
-        "Failed to create archive kvstore spec: " +
-            spec.status().ToString());
+        "Failed to create archive kvstore spec: " + spec.status().ToString());
     return nullptr;
   }
 
   auto impl = std::make_shared<Impl>();
   impl->root_path = absolute_root;
   impl->recording_root_path = InferRecordingRoot(impl->root_path);
+  auto context = internal::MakeArchiveTensorStoreContext();
+  if (!context.ok()) {
+    internal::SetArchiveError(
+        error_message,
+        "Failed to configure archive cache: " + context.status().ToString());
+    return nullptr;
+  }
+  impl->context = *context;
+  impl->cache_pool_bytes = internal::kArchiveCachePoolBytes;
   auto store = ts::kvstore::Open(*spec, impl->context).result();
   if (!store.ok()) {
     internal::SetArchiveError(
@@ -133,6 +166,10 @@ const std::filesystem::path& ArchiveContext::recordingRootPath() const {
   return impl_->recording_root_path;
 }
 
+size_t ArchiveContext::cachePoolBytes() const {
+  return impl_ ? impl_->cache_pool_bytes : 0;
+}
+
 std::filesystem::path ArchiveContext::resolveStoredPath(
     const std::filesystem::path& stored_path) const {
   if (stored_path.empty()) {
@@ -141,7 +178,8 @@ std::filesystem::path ArchiveContext::resolveStoredPath(
   if (stored_path.is_relative()) {
     return (impl_->recording_root_path / stored_path).lexically_normal();
   }
-  if (std::filesystem::exists(stored_path)) {
+  std::error_code exists_error;
+  if (std::filesystem::exists(stored_path, exists_error)) {
     return stored_path;
   }
   if (impl_->recording_root_path.empty()) {
@@ -152,8 +190,7 @@ std::filesystem::path ArchiveContext::resolveStoredPath(
   std::filesystem::path suffix;
   for (const auto& component : stored_path) {
     if (!found_recording) {
-      found_recording =
-          component == impl_->recording_root_path.filename();
+      found_recording = component == impl_->recording_root_path.filename();
       continue;
     }
     suffix /= component;

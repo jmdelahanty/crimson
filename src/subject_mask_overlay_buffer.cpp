@@ -5,10 +5,7 @@
 #include <deque>
 #include <limits>
 #include <mutex>
-#include <optional>
-#include <thread>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 
 namespace {
@@ -19,12 +16,43 @@ void assignError(std::string *destination, const std::string &value) {
   }
 }
 
-struct PendingRequest {
-  int64_t frame = -1;
-  int width = 0;
-  int height = 0;
-  uint64_t generation = 0;
-};
+void addPayloadBytes(uint64_t *total, size_t count, size_t element_size) {
+  if (total == nullptr || count == 0 || element_size == 0) {
+    return;
+  }
+  const uint64_t maximum = std::numeric_limits<uint64_t>::max();
+  if (count > maximum / element_size ||
+      *total > maximum - static_cast<uint64_t>(count) * element_size) {
+    *total = maximum;
+    return;
+  }
+  *total += static_cast<uint64_t>(count) * element_size;
+}
+
+uint64_t resolutionPayloadBytes(
+    const crimson::zarr::SubjectMaskOverlayResolution &resolution) {
+  uint64_t total = sizeof(resolution);
+  addPayloadBytes(&total, resolution.error.capacity(), sizeof(char));
+  addPayloadBytes(&total, resolution.detections.capacity(),
+                  sizeof(crimson::zarr::SubjectMaskOverlayDetection));
+  for (const auto &detection : resolution.detections) {
+    addPayloadBytes(&total, detection.components.capacity(),
+                    sizeof(crimson::zarr::SubjectMaskOverlayComponent));
+    for (const auto &component : detection.components) {
+      addPayloadBytes(&total, component.label.capacity(), sizeof(char));
+      if (component.mask) {
+        total = total > std::numeric_limits<uint64_t>::max() -
+                            sizeof(std::vector<uint8_t>)
+                    ? std::numeric_limits<uint64_t>::max()
+                    : total + sizeof(std::vector<uint8_t>);
+        addPayloadBytes(&total, component.mask->capacity(), sizeof(uint8_t));
+      }
+      addPayloadBytes(&total, component.contour.capacity(),
+                      sizeof(crimson::zarr::SubjectMaskOverlayPoint));
+    }
+  }
+  return total;
+}
 
 } // namespace
 
@@ -33,42 +61,25 @@ struct SubjectMaskOverlayBuffer::Impl {
   mutable std::condition_variable condition;
   std::unique_ptr<crimson::zarr::SubjectMaskOverlayRepository> repository;
   crimson::zarr::SubjectMaskOverlayDescriptor descriptor;
-  std::thread worker;
+  std::shared_ptr<crimson::data::DataAccessScheduler> scheduler;
+  std::string archive_identity;
+  crimson::data::SourceIdentity scheduler_source;
   bool stopping = false;
   size_t lookahead = 12;
   size_t capacity = 24;
   uint64_t generation = 1;
   int64_t last_request = -1;
-  std::deque<PendingRequest> pending;
-  std::unordered_set<int64_t> pending_frames;
-  std::optional<PendingRequest> active_request;
   std::unordered_map<
       int64_t,
       std::shared_ptr<const crimson::zarr::SubjectMaskOverlayResolution>>
       cache;
   std::deque<int64_t> cache_order;
   SubjectMaskOverlayBufferMetrics metrics;
-
-  void clearPendingLocked() {
-    pending.clear();
-    pending_frames.clear();
-  }
-
-  void retainPendingWindowLocked(int64_t first_frame, int64_t final_frame) {
-    std::deque<PendingRequest> retained;
-    pending_frames.clear();
-    for (auto &request : pending) {
-      if (request.generation != generation || request.frame < first_frame ||
-          request.frame > final_frame) {
-        continue;
-      }
-      pending_frames.insert(request.frame);
-      retained.push_back(std::move(request));
-    }
-    pending.swap(retained);
-  }
+  crimson::zarr::SubjectMaskOverlayRepositoryMetrics repository_metrics;
 
   void clearCacheLocked() {
+    metrics.released_payload_bytes += metrics.cached_payload_bytes;
+    metrics.cached_payload_bytes = 0;
     cache.clear();
     cache_order.clear();
   }
@@ -77,76 +88,47 @@ struct SubjectMaskOverlayBuffer::Impl {
       int64_t frame,
       std::shared_ptr<const crimson::zarr::SubjectMaskOverlayResolution>
           resolution) {
-    if (cache.find(frame) == cache.end()) {
+    const uint64_t payload_bytes = resolutionPayloadBytes(*resolution);
+    const auto existing = cache.find(frame);
+    if (existing == cache.end()) {
       cache_order.push_back(frame);
+    } else {
+      const uint64_t previous_bytes = resolutionPayloadBytes(*existing->second);
+      metrics.cached_payload_bytes -=
+          std::min(metrics.cached_payload_bytes, previous_bytes);
+      metrics.released_payload_bytes += previous_bytes;
     }
     cache[frame] = std::move(resolution);
+    metrics.cached_payload_bytes += payload_bytes;
     while (cache_order.size() > capacity) {
       const int64_t evicted = cache_order.front();
       cache_order.pop_front();
+      const auto found = cache.find(evicted);
+      if (found != cache.end()) {
+        const uint64_t evicted_bytes = resolutionPayloadBytes(*found->second);
+        metrics.cached_payload_bytes -=
+            std::min(metrics.cached_payload_bytes, evicted_bytes);
+        metrics.released_payload_bytes += evicted_bytes;
+      }
       cache.erase(evicted);
     }
+    metrics.peak_cached_payload_bytes =
+        std::max(metrics.peak_cached_payload_bytes,
+                 metrics.cached_payload_bytes);
     metrics.peak_cached_frames =
         std::max(metrics.peak_cached_frames, cache.size());
   }
-
-  void run() {
-    while (true) {
-      PendingRequest request;
-      {
-        std::unique_lock<std::mutex> lock(mutex);
-        condition.wait(lock, [&] { return stopping || !pending.empty(); });
-        if (stopping) {
-          return;
-        }
-        request = pending.front();
-        pending.pop_front();
-        pending_frames.erase(request.frame);
-        active_request = request;
-      }
-
-      const auto start = std::chrono::steady_clock::now();
-      auto resolution = repository->resolveCameraFrame(
-          request.frame, request.width, request.height);
-      const double elapsed_ms = std::chrono::duration<double, std::milli>(
-                                    std::chrono::steady_clock::now() - start)
-                                    .count();
-      auto shared =
-          std::make_shared<const crimson::zarr::SubjectMaskOverlayResolution>(
-              std::move(resolution));
-      {
-        std::lock_guard<std::mutex> lock(mutex);
-        active_request.reset();
-        metrics.maximum_resolve_ms =
-            std::max(metrics.maximum_resolve_ms, elapsed_ms);
-        if (request.generation != generation) {
-          ++metrics.discarded_results;
-          condition.notify_all();
-          continue;
-        }
-        switch (shared->status) {
-        case crimson::zarr::SubjectMaskOverlayStatus::Mapped:
-          ++metrics.resolved_frames;
-          break;
-        case crimson::zarr::SubjectMaskOverlayStatus::Missing:
-        case crimson::zarr::SubjectMaskOverlayStatus::OutOfRange:
-          ++metrics.missing_frames;
-          break;
-        case crimson::zarr::SubjectMaskOverlayStatus::InvalidDimensions:
-        case crimson::zarr::SubjectMaskOverlayStatus::ReadFailed:
-          ++metrics.failed_frames;
-          metrics.last_error = shared->error;
-          break;
-        }
-        publishLocked(request.frame, std::move(shared));
-        condition.notify_all();
-      }
-    }
-  }
 };
 
-SubjectMaskOverlayBuffer::SubjectMaskOverlayBuffer()
-    : impl_(std::make_unique<Impl>()) {}
+SubjectMaskOverlayBuffer::SubjectMaskOverlayBuffer(
+    std::shared_ptr<crimson::data::DataAccessScheduler> scheduler,
+    std::string archive_identity)
+    : impl_(std::make_unique<Impl>()) {
+  impl_->scheduler = scheduler ? std::move(scheduler)
+                               : std::make_shared<
+                                     crimson::data::DataAccessScheduler>(32, 1);
+  impl_->archive_identity = std::move(archive_identity);
+}
 
 SubjectMaskOverlayBuffer::~SubjectMaskOverlayBuffer() { close(); }
 
@@ -162,9 +144,17 @@ bool SubjectMaskOverlayBuffer::open(
     assignError(error, "Subject-mask cache capacity must be positive");
     return false;
   }
+  if (!impl_->scheduler || !impl_->scheduler->running()) {
+    assignError(error, "Subject-mask data scheduler is unavailable");
+    return false;
+  }
   {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->descriptor = repository->descriptor();
+    impl_->scheduler_source = {
+        impl_->archive_identity.empty() ? "in_memory" : impl_->archive_identity,
+        "subject_masks",
+        impl_->descriptor.source_group + "/" + impl_->descriptor.run_name};
     impl_->repository = std::move(repository);
     impl_->lookahead = std::min(lookahead_frames, cache_capacity - 1);
     impl_->capacity = cache_capacity;
@@ -172,34 +162,39 @@ bool SubjectMaskOverlayBuffer::open(
     impl_->generation = 1;
     impl_->last_request = -1;
     impl_->metrics = {};
+    impl_->repository_metrics = {};
   }
-  impl_->worker = std::thread([this] { impl_->run(); });
   return true;
 }
 
 void SubjectMaskOverlayBuffer::close() {
+  crimson::data::SourceIdentity scheduler_source;
   {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->stopping = true;
     impl_->condition.notify_all();
+    scheduler_source = impl_->scheduler_source;
   }
-  if (impl_->worker.joinable()) {
-    impl_->worker.join();
+  if (scheduler_source.valid()) {
+    impl_->scheduler->cancelSource(scheduler_source);
+    impl_->scheduler->waitForSourceIdle(scheduler_source);
   }
   std::lock_guard<std::mutex> lock(impl_->mutex);
+  if (impl_->repository) {
+    impl_->repository_metrics = impl_->repository->metrics();
+  }
   impl_->repository.reset();
   impl_->descriptor = {};
-  impl_->clearPendingLocked();
   impl_->clearCacheLocked();
-  impl_->active_request.reset();
+  impl_->scheduler_source = {};
   impl_->stopping = false;
   impl_->last_request = -1;
 }
 
 bool SubjectMaskOverlayBuffer::isOpen() const {
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  return impl_->repository != nullptr && impl_->worker.joinable() &&
-         !impl_->stopping;
+  return impl_->repository != nullptr && impl_->scheduler &&
+         impl_->scheduler->running() && !impl_->stopping;
 }
 
 bool SubjectMaskOverlayBuffer::requestFrame(int64_t camera_frame,
@@ -217,6 +212,15 @@ bool SubjectMaskOverlayBuffer::requestFrame(int64_t camera_frame,
     return false;
   }
   ++impl_->metrics.requests;
+  crimson::data::AccessPattern access_pattern =
+      crimson::data::AccessPattern::Paused;
+  if (discontinuity) {
+    access_pattern = crimson::data::AccessPattern::RandomSeek;
+  } else if (impl_->last_request >= 0) {
+    access_pattern = camera_frame >= impl_->last_request
+                         ? crimson::data::AccessPattern::Forward
+                         : crimson::data::AccessPattern::Reverse;
+  }
   const bool jumped =
       impl_->last_request >= 0 &&
       (camera_frame < impl_->last_request ||
@@ -225,7 +229,7 @@ bool SubjectMaskOverlayBuffer::requestFrame(int64_t camera_frame,
             static_cast<int64_t>(impl_->lookahead) + 2));
   if (discontinuity || jumped) {
     ++impl_->generation;
-    impl_->clearPendingLocked();
+    impl_->scheduler->cancelSource(impl_->scheduler_source);
     impl_->clearCacheLocked();
   }
   impl_->last_request = camera_frame;
@@ -246,25 +250,104 @@ bool SubjectMaskOverlayBuffer::requestFrame(int64_t camera_frame,
                       ? std::min<int64_t>(frame_count - 1, final_frame)
                       : camera_frame;
   }
-  impl_->retainPendingWindowLocked(camera_frame, final_frame);
+  impl_->scheduler->retainSourceRange(
+      impl_->scheduler_source, impl_->generation,
+      {camera_frame, final_frame});
   if (impl_->cache.find(camera_frame) != impl_->cache.end()) {
     ++impl_->metrics.cache_hits;
   }
-  for (int64_t frame = camera_frame; frame <= final_frame; ++frame) {
-    if (impl_->cache.find(frame) != impl_->cache.end() ||
-        impl_->pending_frames.find(frame) != impl_->pending_frames.end() ||
-        (impl_->active_request &&
-         impl_->active_request->generation == impl_->generation &&
-         impl_->active_request->frame == frame)) {
+  for (int64_t frame = camera_frame;; ++frame) {
+    if (impl_->cache.find(frame) != impl_->cache.end()) {
+      if (frame == final_frame) {
+        break;
+      }
       continue;
     }
-    impl_->pending.push_back(
-        {frame, full_frame_width, full_frame_height, impl_->generation});
-    impl_->pending_frames.insert(frame);
+    const uint64_t request_generation = impl_->generation;
+    crimson::data::DataRangeRequest data_request{
+        impl_->scheduler_source,
+        {frame, frame},
+        crimson::data::FieldSelection::All(),
+        frame == camera_frame
+            ? crimson::data::RequestPriority::CurrentFrame
+            : crimson::data::RequestPriority::Speculative,
+        access_pattern,
+        request_generation};
+    const auto outcome = impl_->scheduler->submit(
+        std::move(data_request),
+        [this, frame, full_frame_width, full_frame_height, request_generation](
+            const crimson::data::ScheduledDataRequest &scheduled) {
+          if (scheduled.cancellation.cancelled()) {
+            return crimson::data::DataResultStatus::Stale;
+          }
+          const auto start = std::chrono::steady_clock::now();
+          auto resolution = impl_->repository->resolveCameraFrame(
+              frame, full_frame_width, full_frame_height);
+          const double elapsed_ms =
+              std::chrono::duration<double, std::milli>(
+                  std::chrono::steady_clock::now() - start)
+                  .count();
+          auto shared = std::make_shared<
+              const crimson::zarr::SubjectMaskOverlayResolution>(
+              std::move(resolution));
+          std::lock_guard<std::mutex> callback_lock(impl_->mutex);
+          impl_->metrics.maximum_resolve_ms =
+              std::max(impl_->metrics.maximum_resolve_ms, elapsed_ms);
+          if (scheduled.cancellation.cancelled() || impl_->stopping ||
+              request_generation != impl_->generation) {
+            ++impl_->metrics.discarded_results;
+            impl_->condition.notify_all();
+            return crimson::data::DataResultStatus::Stale;
+          }
+          crimson::data::DataResultStatus status =
+              crimson::data::DataResultStatus::Failed;
+          switch (shared->status) {
+          case crimson::zarr::SubjectMaskOverlayStatus::Mapped:
+            ++impl_->metrics.resolved_frames;
+            status = crimson::data::DataResultStatus::Ready;
+            break;
+          case crimson::zarr::SubjectMaskOverlayStatus::Missing:
+          case crimson::zarr::SubjectMaskOverlayStatus::OutOfRange:
+            ++impl_->metrics.missing_frames;
+            status = crimson::data::DataResultStatus::Missing;
+            break;
+          case crimson::zarr::SubjectMaskOverlayStatus::InvalidDimensions:
+          case crimson::zarr::SubjectMaskOverlayStatus::ReadFailed:
+            ++impl_->metrics.failed_frames;
+            impl_->metrics.last_error = shared->error;
+            break;
+          }
+          impl_->publishLocked(frame, std::move(shared));
+          impl_->condition.notify_all();
+          return status;
+        });
+    ++impl_->metrics.scheduler_submissions;
+    switch (outcome.status) {
+    case crimson::data::DataRequestSubmitStatus::Duplicate:
+      ++impl_->metrics.scheduler_duplicates;
+      break;
+    case crimson::data::DataRequestSubmitStatus::Promoted:
+      ++impl_->metrics.scheduler_promotions;
+      break;
+    case crimson::data::DataRequestSubmitStatus::RejectedCapacity:
+      ++impl_->metrics.scheduler_capacity_rejections;
+      break;
+    default:
+      break;
+    }
+    if (frame == camera_frame && !outcome.accepted() &&
+        outcome.status !=
+            crimson::data::DataRequestSubmitStatus::RejectedCapacity) {
+      assignError(error, "Subject-mask scheduler rejected current frame");
+      return false;
+    }
+    if (frame == final_frame) {
+      break;
+    }
   }
   impl_->metrics.peak_pending_frames =
-      std::max(impl_->metrics.peak_pending_frames, impl_->pending.size());
-  impl_->condition.notify_all();
+      std::max(impl_->metrics.peak_pending_frames,
+               impl_->scheduler->metrics().queue.pending_requests);
   return true;
 }
 
@@ -293,4 +376,11 @@ SubjectMaskOverlayBuffer::descriptor() const {
 SubjectMaskOverlayBufferMetrics SubjectMaskOverlayBuffer::metrics() const {
   std::lock_guard<std::mutex> lock(impl_->mutex);
   return impl_->metrics;
+}
+
+crimson::zarr::SubjectMaskOverlayRepositoryMetrics
+SubjectMaskOverlayBuffer::repositoryMetrics() const {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  return impl_->repository ? impl_->repository->metrics()
+                           : impl_->repository_metrics;
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "analysis_series_timeline.h"
+#include "data_access_scheduler.h"
 
 #include <chrono>
 #include <cstddef>
@@ -17,15 +18,28 @@ struct AnalysisSeriesTimelineBufferMetrics {
   uint64_t discarded_results = 0;
   uint64_t source_rows_read = 0;
   uint64_t published_points = 0;
+  uint64_t frame_index_block_reads = 0;
+  uint64_t frame_index_cache_hits = 0;
+  uint64_t frame_index_cache_evictions = 0;
+  uint64_t frame_index_source_bytes = 0;
+  uint64_t cached_frame_index_bytes = 0;
+  uint64_t peak_cached_frame_index_bytes = 0;
   size_t peak_pending_windows = 0;
   size_t peak_cached_windows = 0;
   double maximum_resolve_ms = 0.0;
+  double maximum_frame_index_read_ms = 0.0;
+  uint64_t scheduler_submissions = 0;
+  uint64_t scheduler_duplicates = 0;
+  uint64_t scheduler_promotions = 0;
+  uint64_t scheduler_capacity_rejections = 0;
   std::string last_error;
 };
 
 class AnalysisSeriesTimelineBuffer {
 public:
-  AnalysisSeriesTimelineBuffer();
+  explicit AnalysisSeriesTimelineBuffer(
+      std::shared_ptr<crimson::data::DataAccessScheduler> scheduler = nullptr,
+      std::string archive_identity = {});
   ~AnalysisSeriesTimelineBuffer();
 
   AnalysisSeriesTimelineBuffer(const AnalysisSeriesTimelineBuffer &) = delete;

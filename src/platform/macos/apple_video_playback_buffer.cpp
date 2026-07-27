@@ -355,3 +355,13 @@ AppleVideoPlaybackBufferMetrics AppleVideoPlaybackBuffer::metrics() const {
     result.buffered_frames = impl_->frames.size();
     return result;
 }
+
+std::vector<int64_t> AppleVideoPlaybackBuffer::bufferedFrameNumbers() const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    std::vector<int64_t> result;
+    result.reserve(impl_->frames.size());
+    for (const auto& frame : impl_->frames) {
+        result.push_back(frame.metadata.frame_number);
+    }
+    return result;
+}

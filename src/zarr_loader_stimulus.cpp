@@ -1,4 +1,6 @@
 #include "zarr_loader_internal.h"
+#include "zarr/chaser_distance_polar_legacy_repository.h"
+#include "zarr/stimulus_context_timeline_legacy_repository.h"
 #include "zarr/stimulus_repository.h"
 #include <iostream>
 
@@ -57,7 +59,8 @@ std::string stimulusJsonScalarStringAttr(const json& attrs, const char* key) {
     return {};
 }
 
-std::string latestCompleteFirstRunName(const json& attrs) {
+std::string latestCompleteFirstRunName(const json& attrs,
+                                       std::string* provenance) {
     const char* keys[] = {
         "latest_complete",
         "latest_completed",
@@ -66,6 +69,9 @@ std::string latestCompleteFirstRunName(const json& attrs) {
     };
     for (const char* key : keys) {
         if (attrs.contains(key) && attrs[key].is_string()) {
+            if (provenance != nullptr) {
+                *provenance = key;
+            }
             return attrs[key].get<std::string>();
         }
     }
@@ -870,9 +876,11 @@ bool ZarrDetectionLoader::loadStimulusAlignment(const ts::kvstore::KvStore& stor
     loadStimulusEventEnums(store);
     bool events_loaded = loadStimulusEventsForRun(store, run_base);
     if (!events_loaded) {
+        data_.stimulus_events_run_name.clear();
         std::cout << "  Stimulus run '" << latest_run
                   << "' does not contain events metadata." << std::endl;
     } else {
+        data_.stimulus_events_run_name = latest_run;
         std::cout << "  Stimulus run '" << latest_run << "' events metadata loaded" << std::endl;
     }
 
@@ -2746,9 +2754,10 @@ bool ZarrDetectionLoader::loadChaserDistancePolarData(
     data_.chaser_distance_polar = ZarrDetectionData::ChaserDistancePolarData{};
 
     std::string run_name;
+    std::string run_selection;
     if (auto group_attrs =
             readAttrsAny(store, "analysis/chaser_distance_runs")) {
-        run_name = latestCompleteFirstRunName(*group_attrs);
+        run_name = latestCompleteFirstRunName(*group_attrs, &run_selection);
     }
     if (run_name.empty()) {
         auto candidates = collect_runs_fs(root_path_,
@@ -2757,6 +2766,7 @@ bool ZarrDetectionLoader::loadChaserDistancePolarData(
                                            "distances/distance_mm"});
         if (!candidates.empty()) {
             run_name = candidates.back();
+            run_selection = "lexicographic_compatibility_fallback";
         }
     }
     if (run_name.empty()) {
@@ -2768,9 +2778,11 @@ bool ZarrDetectionLoader::loadChaserDistancePolarData(
     auto run_attrs = readAttrsAny(store, run_base);
 
     std::string component_name;
+    std::string component_selection;
     const std::string egocentric_group = run_base + "egocentric_bearing";
     if (auto ego_attrs = readAttrsAny(store, egocentric_group)) {
-        component_name = latestCompleteFirstRunName(*ego_attrs);
+        component_name =
+            latestCompleteFirstRunName(*ego_attrs, &component_selection);
     }
     if (component_name.empty()) {
         auto candidates = collect_runs_fs(
@@ -2781,6 +2793,8 @@ bool ZarrDetectionLoader::loadChaserDistancePolarData(
              "per_chaser/valid"});
         if (!candidates.empty()) {
             component_name = candidates.back();
+            component_selection =
+                "lexicographic_compatibility_fallback";
         }
     }
     if (component_name.empty()) {
@@ -2864,6 +2878,8 @@ bool ZarrDetectionLoader::loadChaserDistancePolarData(
     ZarrDetectionData::ChaserDistancePolarData polar;
     polar.run_name = run_name;
     polar.component_name = component_name;
+    polar.run_selection = run_selection;
+    polar.component_selection = component_selection;
     if (run_attrs.has_value()) {
         polar.coordinate_frame =
             stimulusJsonStringAttr(*run_attrs, "coordinate_frame");
@@ -2964,19 +2980,23 @@ bool ZarrDetectionLoader::loadChaserDistancePolarData(
             ? collectChaserHexColorsFromSummary(*component_attrs)
             : std::unordered_map<int32_t, std::array<float, 4>>{};
     polar.chaser_rgba.resize(polar.chaser_count);
+    polar.chaser_color_provenance.resize(polar.chaser_count);
     for (size_t col = 0; col < polar.chaser_count; ++col) {
         const int32_t chaser_index = polar.chaser_indices[col];
         auto protocol_color = data_.chaser_rgba_by_index.find(chaser_index);
         if (protocol_color != data_.chaser_rgba_by_index.end()) {
             polar.chaser_rgba[col] = protocol_color->second;
+            polar.chaser_color_provenance[col] = "stimulus_protocol";
             continue;
         }
         auto component_color = component_hex_colors.find(chaser_index);
         if (component_color != component_hex_colors.end()) {
             polar.chaser_rgba[col] = component_color->second;
+            polar.chaser_color_provenance[col] = "component_summary";
             continue;
         }
         polar.chaser_rgba[col] = fallbackChaserColor(chaser_index);
+        polar.chaser_color_provenance[col] = "fixed_fallback_palette";
     }
 
     polar.radial_max_mm = 0.0f;
@@ -2991,6 +3011,8 @@ bool ZarrDetectionLoader::loadChaserDistancePolarData(
     }
     if (!(std::isfinite(polar.radial_max_mm) && polar.radial_max_mm > 0.0f)) {
         polar.radial_max_mm = 1.0f;
+    } else {
+        polar.radial_max_from_data = true;
     }
 
     polar.loaded = true;
@@ -3047,10 +3069,283 @@ ZarrDetectionLoader::getChaserDistancePolarFrame(
             point.rgba = polar.chaser_rgba[col];
             point.has_rgba = true;
         }
+        if (col < polar.chaser_color_provenance.size()) {
+            point.color_provenance = polar.chaser_color_provenance[col];
+        }
         frame.points.push_back(point);
     }
     return frame;
 }
+
+namespace crimson::zarr {
+namespace {
+
+polar::ChaserDistancePolarSelectionProvenance selectionProvenance(
+    const std::string& value) {
+    using Provenance = polar::ChaserDistancePolarSelectionProvenance;
+    if (value == "latest_complete") {
+        return Provenance::LatestComplete;
+    }
+    if (value == "latest_completed") {
+        return Provenance::LatestCompleted;
+    }
+    if (value == "latest_success") {
+        return Provenance::LatestSuccess;
+    }
+    if (value == "latest") {
+        return Provenance::Latest;
+    }
+    if (value == "lexicographic_compatibility_fallback") {
+        return Provenance::LexicographicCompatibilityFallback;
+    }
+    return Provenance::Unspecified;
+}
+
+polar::ChaserDistancePolarColorProvenance colorProvenance(
+    const std::string& value) {
+    using Provenance = polar::ChaserDistancePolarColorProvenance;
+    if (value == "stimulus_protocol") {
+        return Provenance::StimulusProtocol;
+    }
+    if (value == "component_summary") {
+        return Provenance::ComponentSummary;
+    }
+    if (value == "fixed_fallback_palette") {
+        return Provenance::FixedFallbackPalette;
+    }
+    return Provenance::Unspecified;
+}
+
+class LegacyChaserDistancePolarRepository final
+    : public polar::ChaserDistancePolarRepository {
+public:
+    explicit LegacyChaserDistancePolarRepository(
+        const ZarrDetectionLoader& loader)
+        : loader_(&loader) {
+        descriptor_.provenance.source_group =
+            std::string(polar::kChaserDistancePolarSourceGroup);
+        if (!loader_->hasChaserDistancePolarData()) {
+            descriptor_.availability =
+                polar::ChaserDistancePolarAvailability::DatasetUnavailable;
+            descriptor_.error = "chaser-distance polar group is unavailable";
+            return;
+        }
+
+        descriptor_.availability = polar::ChaserDistancePolarAvailability::Ready;
+        descriptor_.provenance.run_name =
+            loader_->getChaserDistancePolarRunName();
+        descriptor_.provenance.component_name =
+            loader_->getChaserDistancePolarComponentName();
+        descriptor_.provenance.run_selection = selectionProvenance(
+            loader_->getChaserDistancePolarRunSelection());
+        descriptor_.provenance.component_selection = selectionProvenance(
+            loader_->getChaserDistancePolarComponentSelection());
+        descriptor_.row_count = loader_->getChaserDistancePolarRowCount();
+        descriptor_.chaser_count =
+            loader_->getChaserDistancePolarChaserCount();
+        descriptor_.distance_unit =
+            polar::ChaserDistancePolarDistanceUnit::Millimeters;
+        descriptor_.coordinate_frame =
+            loader_->getChaserDistancePolarCoordinateFrame();
+        descriptor_.angle_convention =
+            loader_->getChaserDistancePolarAngleConvention();
+        descriptor_.dataset_global_max_distance_mm =
+            loader_->hasChaserDistancePolarDataRadialMax()
+                ? static_cast<double>(
+                      loader_->getChaserDistancePolarRadialMaxMm())
+                : 0.0;
+        descriptor_ = polar::normalizeChaserDistancePolarDescriptor(
+            std::move(descriptor_));
+    }
+
+    const polar::ChaserDistancePolarDescriptor& descriptor() const override {
+        return descriptor_;
+    }
+
+    polar::ChaserDistancePolarFrameSample resolveCameraFrame(
+        int64_t camera_frame) const override {
+        if (!descriptor_.ready()) {
+            return polar::makeChaserDistancePolarFrameSample(
+                descriptor_, camera_frame, std::nullopt, {});
+        }
+        if (!loader_->hasChaserDistancePolarCameraFrame(camera_frame)) {
+            return polar::makeChaserDistancePolarFrameSample(
+                descriptor_, camera_frame, std::nullopt, {});
+        }
+
+        const auto legacy =
+            loader_->getChaserDistancePolarFrame(camera_frame);
+        if (!legacy.available) {
+            return polar::makeChaserDistancePolarFrameSample(
+                descriptor_, camera_frame, camera_frame, {},
+                "legacy loader could not resolve the exact polar frame");
+        }
+
+        std::vector<polar::ChaserDistancePolarPoint> points;
+        points.reserve(descriptor_.chaser_count);
+        for (const auto& source : legacy.points) {
+            polar::ChaserDistancePolarPoint point;
+            point.chaser_index = source.chaser_index;
+            point.distance_mm = source.distance_mm;
+            point.bearing_degrees = source.bearing_deg;
+            point.valid = true;
+            if (source.has_rgba) {
+                point.color.rgba = {source.rgba[0], source.rgba[1],
+                                    source.rgba[2], source.rgba[3]};
+                point.color.provenance =
+                    colorProvenance(source.color_provenance);
+            } else {
+                point.color = polar::resolveChaserDistancePolarColor(
+                    source.chaser_index, std::nullopt, std::nullopt);
+            }
+            points.push_back(std::move(point));
+        }
+        while (points.size() < descriptor_.chaser_count) {
+            points.emplace_back();
+        }
+        return polar::makeChaserDistancePolarFrameSample(
+            descriptor_, camera_frame, camera_frame, std::move(points));
+    }
+
+private:
+    const ZarrDetectionLoader* loader_ = nullptr;
+    polar::ChaserDistancePolarDescriptor descriptor_;
+};
+
+timeline::StimulusContextStep portableStimulusStep(
+    const ZarrDetectionData::StimulusStep& source) {
+    timeline::StimulusContextStep step;
+    step.step_index = source.step_index;
+    step.step_name = source.step_name;
+    step.stimulus_mode_id = source.stimulus_mode_id;
+    step.stimulus_mode = source.stimulus_mode;
+    step.start_camera_frame = source.start_camera_frame;
+    step.end_camera_frame = source.end_camera_frame;
+    step.duration_s = source.duration_s;
+    step.raw_protocol_params_json = source.raw_protocol_params_json;
+
+    step.moving_grating.present = source.moving_grating.present;
+    step.moving_grating.grating_direction_camera_deg =
+        source.moving_grating.grating_direction_camera_deg;
+    step.moving_grating.orientation_degrees_authored =
+        source.moving_grating.orientation_degrees_authored;
+    step.moving_grating.camera_to_projector_offset_deg =
+        source.moving_grating.camera_to_projector_offset_deg;
+    step.moving_grating.direction_mapping_status =
+        source.moving_grating.direction_mapping_status;
+    step.moving_grating.direction_mapping_validated =
+        source.moving_grating.direction_mapping_validated;
+    step.moving_grating.has_direction_mapping_validated =
+        source.moving_grating.has_direction_mapping_validated;
+    step.moving_grating.speed_mm_s = source.moving_grating.speed_mm_s;
+    step.moving_grating.temporal_frequency_hz =
+        source.moving_grating.temporal_frequency_hz;
+
+    step.concentric_grating.present = source.concentric_grating.present;
+    step.concentric_grating.stimulus_role =
+        source.concentric_grating.stimulus_role;
+    step.concentric_grating.radial_polarity_authored =
+        source.concentric_grating.radial_polarity_authored;
+    step.concentric_grating.radial_sign_authored =
+        source.concentric_grating.radial_sign_authored;
+    step.concentric_grating.radial_polarity_validated =
+        source.concentric_grating.radial_polarity_validated;
+    step.concentric_grating.has_radial_polarity_validated =
+        source.concentric_grating.has_radial_polarity_validated;
+    step.concentric_grating.center_x_px =
+        source.concentric_grating.center_x_px;
+    step.concentric_grating.center_y_px =
+        source.concentric_grating.center_y_px;
+    step.concentric_grating.center_x_mm =
+        source.concentric_grating.center_x_mm;
+    step.concentric_grating.center_y_mm =
+        source.concentric_grating.center_y_mm;
+    step.concentric_grating.target_radius_min_mm =
+        source.concentric_grating.target_radius_min_mm;
+    step.concentric_grating.target_radius_max_mm =
+        source.concentric_grating.target_radius_max_mm;
+    step.concentric_grating.speed_mm_s =
+        source.concentric_grating.speed_mm_s;
+    step.concentric_grating.temporal_frequency_hz =
+        source.concentric_grating.temporal_frequency_hz;
+    return step;
+}
+
+}  // namespace
+
+std::unique_ptr<polar::ChaserDistancePolarRepository>
+MakeLegacyChaserDistancePolarRepository(
+    const ZarrDetectionLoader& loader) {
+    return std::make_unique<LegacyChaserDistancePolarRepository>(loader);
+}
+
+std::unique_ptr<timeline::StimulusContextTimelineRepository>
+MakeLegacyStimulusContextTimelineRepository(
+    const ZarrDetectionLoader& loader) {
+    timeline::StimulusContextTimelineDescriptor descriptor;
+    descriptor.run_name = loader.getStimulusEventsRunName();
+    if (descriptor.run_name.empty()) {
+        descriptor.run_name = loader.getStimulusStepsRunName();
+    }
+    if (descriptor.run_name.empty()) {
+        descriptor.run_name = loader.getStimulusRunName();
+    }
+    descriptor.frame_count = loader.getTotalFrames();
+
+    const auto& event_type_names = loader.getStimulusEventTypeNames();
+    descriptor.event_types.reserve(event_type_names.size());
+    for (const auto& [id, name] : event_type_names) {
+        descriptor.event_types.push_back({id, name, 0});
+    }
+
+    std::unordered_map<size_t, const ZarrDetectionLoader::StimulusEventSummary*>
+        summaries;
+    for (const auto& summary : loader.getStimulusEventTimeline()) {
+        summaries.emplace(summary.source_event_index, &summary);
+    }
+
+    std::vector<timeline::StimulusContextEvent> events;
+    const auto& source_events = loader.getStimulusEventEntries();
+    events.reserve(source_events.size());
+    for (size_t index = 0; index < source_events.size(); ++index) {
+        const auto& source = source_events[index];
+        timeline::StimulusContextEvent event;
+        event.source_event_index = index;
+        event.stimulus_frame = source.stimulus_frame_num;
+        event.camera_frame = source.camera_frame_id;
+        event.timestamp_ns_session = source.timestamp_ns_session;
+        event.event_type_id = source.event_type_id;
+        event.name_or_context = source.name_or_context;
+        event.details_json = source.details_json;
+        const auto type = event_type_names.find(source.event_type_id);
+        if (type != event_type_names.end()) {
+            event.event_type_name = type->second;
+        }
+        const auto summary = summaries.find(index);
+        if (summary != summaries.end()) {
+            event.label = summary->second->label;
+        }
+        if (event.camera_frame < 0 && event.stimulus_frame >= 0 &&
+            event.stimulus_frame <= std::numeric_limits<int32_t>::max()) {
+            const auto camera = loader.getCameraFrameForStimulusFrame(
+                static_cast<int32_t>(event.stimulus_frame), true);
+            if (camera) {
+                event.camera_frame = *camera;
+            }
+        }
+        events.push_back(std::move(event));
+    }
+
+    std::vector<timeline::StimulusContextStep> steps;
+    steps.reserve(loader.getStimulusSteps().size());
+    for (const auto& source : loader.getStimulusSteps()) {
+        steps.push_back(portableStimulusStep(source));
+    }
+    return timeline::MakeStimulusContextTimelineRepository(
+        std::move(descriptor), std::move(events), std::move(steps));
+}
+
+}  // namespace crimson::zarr
 
 std::vector<ZarrDetectionLoader::ChaserBoundingBox>
 ZarrDetectionLoader::getChaserBoundingBoxesForFrame(size_t frame_id) const {

@@ -1,0 +1,305 @@
+{
+  "schema": "crimson.phase5m.polar-acceptance-report.v1",
+  "passed": true,
+  "contract": "docs/reference/phase5m/acceptance_contract.json",
+  "inputs": {
+    "linux_marker": "docs/reference/phase5m/linux/polar_exact_f001024_1920x1080.ui-reference.json",
+    "linux_image": "docs/reference/phase5m/linux/polar_exact_f001024_1920x1080.png",
+    "macos_marker": "docs/reference/phase5m/macos/polar_exact_f001024_1920x1080.ui-reference.json",
+    "macos_image": "docs/reference/phase5m/macos/polar_exact_f001024_1920x1080.ui-reference.json.png"
+  },
+  "tolerances": {
+    "source_geometry_px": 0.25,
+    "display_anchor_px": 0.5,
+    "scientific_value": 1e-05,
+    "non_antialiased_channel_8bit": 3,
+    "vector_coverage": 0.995,
+    "vector_coverage_radius_px": 1,
+    "vector_max_outlier_px": 2
+  },
+  "masks": [
+    {
+      "id": "font-raster",
+      "scope": "polar annotation glyph pixels",
+      "reason": "Text content, order, color, and scene-relative anchors are compared from the shared scene marker because OpenGL and Metal font rasterization differs."
+    },
+    {
+      "id": "translucent-background",
+      "scope": "polar background, grid, and axes channel values",
+      "reason": "The production camera is fitted into different surrounding viewport shapes, so translucent primitives blend over different source pixels. Their exact geometry and color semantics are compared by the canonical scene signature; opaque point markers enforce raster geometry and channel tolerances."
+    },
+    {
+      "id": "binary-mask-iou",
+      "scope": "not applicable",
+      "reason": "The polar inset contains vector and text primitives but no binary scientific mask. Existing Phase 5 mask IoU coverage remains unchanged."
+    }
+  ],
+  "required_threshold_fixtures": [
+    "chaser_distance_polar_scene_tests",
+    "apple_read_only_overlay_metal_tests"
+  ],
+  "checks": [
+    {
+      "id": "linux.capture-contract",
+      "passed": true,
+      "platform_marker": "linux-opengl",
+      "frame": 1024,
+      "stable_frames": 60,
+      "image_size": {
+        "width": 1920,
+        "height": 1080
+      }
+    },
+    {
+      "id": "linux.polar-ready-exact",
+      "passed": true,
+      "polar_status": "ready",
+      "requested_frame": 1024,
+      "source_frame": 1024,
+      "counts": {
+        "point_count": 2,
+        "primitive_count": 7,
+        "text_count": 7
+      }
+    },
+    {
+      "id": "linux.production-descriptor",
+      "passed": true,
+      "descriptor": {
+        "angle_convention": "arena_xy_y_down_positions_converted_to_math_y_up_angles; heading_degrees_ccw_from_+x; egocentric_bearing_deg=wrap(object_bearing-heading); 0=in_front; positive=anatomical_left",
+        "availability": "ready",
+        "chaser_count": 2,
+        "component_name": "egocentric_bearing_v1_20260718",
+        "component_selection": "latest_complete",
+        "coordinate_frame": "arena_relative_canvas_px",
+        "dataset_global_max_distance_mm": 76.72962188720703,
+        "display_max_distance_mm": 80.56610298156738,
+        "distance_unit": "mm",
+        "normalized_angle_convention": 1,
+        "normalized_coordinate_frame": 1,
+        "row_count": 140035,
+        "run_name": "chaser_distance_v1_20260718",
+        "run_selection": "latest_complete",
+        "source_group": "analysis/chaser_distance_runs"
+      },
+      "expected": {
+        "source_group": "analysis/chaser_distance_runs",
+        "run_name": "chaser_distance_v1_20260718",
+        "component_name": "egocentric_bearing_v1_20260718",
+        "row_count": 140035,
+        "chaser_count": 2,
+        "distance_unit": "mm",
+        "coordinate_frame": "arena_relative_canvas_px",
+        "angle_convention": "arena_xy_y_down_positions_converted_to_math_y_up_angles; heading_degrees_ccw_from_+x; egocentric_bearing_deg=wrap(object_bearing-heading); 0=in_front; positive=anatomical_left"
+      }
+    },
+    {
+      "id": "linux.controlled-logical-size",
+      "passed": true,
+      "graph": {
+        "height": 140.0,
+        "width": 140.0,
+        "x": 8.0,
+        "y": 8.0
+      },
+      "box": {
+        "height": 213.0,
+        "width": 156.0,
+        "x": 262.0,
+        "y": 12.0
+      }
+    },
+    {
+      "id": "linux.semantic-text",
+      "passed": true,
+      "contents": [
+        "front",
+        "left",
+        "right",
+        "behind",
+        "Chaser bearing f=1024",
+        "c0 42.6 mm  +99.9 deg",
+        "c1 52.7 mm  +43.2 deg"
+      ]
+    },
+    {
+      "id": "macos.capture-contract",
+      "passed": true,
+      "platform_marker": "macos-metal",
+      "frame": 1024,
+      "stable_frames": 60,
+      "image_size": {
+        "width": 1920,
+        "height": 1080
+      }
+    },
+    {
+      "id": "macos.polar-ready-exact",
+      "passed": true,
+      "polar_status": "ready",
+      "requested_frame": 1024,
+      "source_frame": 1024,
+      "counts": {
+        "point_count": 2,
+        "primitive_count": 7,
+        "text_count": 7
+      }
+    },
+    {
+      "id": "macos.production-descriptor",
+      "passed": true,
+      "descriptor": {
+        "angle_convention": "arena_xy_y_down_positions_converted_to_math_y_up_angles; heading_degrees_ccw_from_+x; egocentric_bearing_deg=wrap(object_bearing-heading); 0=in_front; positive=anatomical_left",
+        "availability": "ready",
+        "chaser_count": 2,
+        "component_name": "egocentric_bearing_v1_20260718",
+        "component_selection": "latest_complete",
+        "coordinate_frame": "arena_relative_canvas_px",
+        "dataset_global_max_distance_mm": 76.72962188720703,
+        "display_max_distance_mm": 80.56610298156738,
+        "distance_unit": "mm",
+        "normalized_angle_convention": 1,
+        "normalized_coordinate_frame": 1,
+        "row_count": 140035,
+        "run_name": "chaser_distance_v1_20260718",
+        "run_selection": "latest_complete",
+        "source_group": "analysis/chaser_distance_runs"
+      },
+      "expected": {
+        "source_group": "analysis/chaser_distance_runs",
+        "run_name": "chaser_distance_v1_20260718",
+        "component_name": "egocentric_bearing_v1_20260718",
+        "row_count": 140035,
+        "chaser_count": 2,
+        "distance_unit": "mm",
+        "coordinate_frame": "arena_relative_canvas_px",
+        "angle_convention": "arena_xy_y_down_positions_converted_to_math_y_up_angles; heading_degrees_ccw_from_+x; egocentric_bearing_deg=wrap(object_bearing-heading); 0=in_front; positive=anatomical_left"
+      }
+    },
+    {
+      "id": "macos.controlled-logical-size",
+      "passed": true,
+      "graph": {
+        "height": 140.0,
+        "width": 140.0,
+        "x": 8.0,
+        "y": 8.0
+      },
+      "box": {
+        "height": 213.0,
+        "width": 156.0,
+        "x": 170.0,
+        "y": 12.0
+      }
+    },
+    {
+      "id": "macos.semantic-text",
+      "passed": true,
+      "contents": [
+        "front",
+        "left",
+        "right",
+        "behind",
+        "Chaser bearing f=1024",
+        "c0 42.6 mm  +99.9 deg",
+        "c1 52.7 mm  +43.2 deg"
+      ]
+    },
+    {
+      "id": "cross-platform.scene-semantic-signature",
+      "passed": true,
+      "signature_equal": true
+    },
+    {
+      "id": "cross-platform.descriptor-agreement",
+      "passed": true,
+      "maximum_numeric_delta": 0.0,
+      "tolerance": 1e-05
+    },
+    {
+      "id": "cross-platform.scene-values-and-anchors",
+      "passed": true,
+      "maximum_numeric_delta": 2.842170943040401e-14,
+      "tolerance": 0.25
+    },
+    {
+      "id": "cross-platform.inset-logical-size",
+      "passed": true,
+      "maximum_size_delta_px": 0.0,
+      "linux_box": {
+        "height": 213.0,
+        "width": 156.0,
+        "x": 262.0,
+        "y": 12.0
+      },
+      "macos_box": {
+        "height": 213.0,
+        "width": 156.0,
+        "x": 170.0,
+        "y": 12.0
+      }
+    },
+    {
+      "id": "raster.chaser-0.opaque-channel",
+      "passed": true,
+      "linux_best_channel_delta": 0,
+      "macos_best_channel_delta": 0,
+      "tolerance": 3
+    },
+    {
+      "id": "raster.chaser-0.vector-coverage",
+      "passed": true,
+      "coverage": 1.0,
+      "minimum_coverage": 0.995,
+      "maximum_outlier_px": 1,
+      "outlier_limit_px": 2,
+      "linux_pixels": 58,
+      "macos_pixels": 56
+    },
+    {
+      "id": "raster.chaser-0.display-anchor",
+      "passed": true,
+      "maximum_centroid_delta_px": 0.10063084770765501,
+      "tolerance_px": 0.5,
+      "linux_centroid": [
+        54.10344827586207,
+        82.24137931034483
+      ],
+      "macos_centroid": [
+        54.0,
+        82.21428571428571
+      ]
+    },
+    {
+      "id": "raster.chaser-1.opaque-channel",
+      "passed": true,
+      "linux_best_channel_delta": 0,
+      "macos_best_channel_delta": 0,
+      "tolerance": 3
+    },
+    {
+      "id": "raster.chaser-1.vector-coverage",
+      "passed": true,
+      "coverage": 1.0,
+      "minimum_coverage": 0.995,
+      "maximum_outlier_px": 1,
+      "outlier_limit_px": 2,
+      "linux_pixels": 65,
+      "macos_pixels": 58
+    },
+    {
+      "id": "raster.chaser-1.display-anchor",
+      "passed": true,
+      "maximum_centroid_delta_px": 0.2612977213756998,
+      "tolerance_px": 0.5,
+      "linux_centroid": [
+        57.13076923076923,
+        56.00769230769231
+      ],
+      "macos_centroid": [
+        57.36206896551724,
+        56.0
+      ]
+    }
+  ]
+}

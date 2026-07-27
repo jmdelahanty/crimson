@@ -121,7 +121,7 @@ if [ "$CUDA_ENABLED" = true ]; then
     fi
     
     CUDA_OPTIONS="-D WITH_CUDA=ON \
-    -D CUDA_FAST_MATH=ON \
+    -D CUDA_FAST_MATH=OFF \
     -D WITH_CUBLAS=ON \
     -D CUDA_ARCH_BIN=$CUDA_ARCH \
     -D BUILD_opencv_cudacodec=ON \
@@ -171,7 +171,7 @@ sudo -u $SUDO_USER cmake \
     -D WITH_GTK_2_X=OFF \
     -D WITH_GSTREAMER=ON \
     -D WITH_FFMPEG=ON \
-    -D ENABLE_FAST_MATH=ON \
+    -D ENABLE_FAST_MATH=OFF \
     -D OPENCV_ENABLE_NONFREE=ON \
     -D OPENCV_GENERATE_PKGCONFIG=ON \
     -D OPENCV_EXTRA_MODULES_PATH="$OPENCV_CONTRIB_BUILD/modules" \

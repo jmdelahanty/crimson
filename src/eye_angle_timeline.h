@@ -82,6 +82,14 @@ struct EyeAngleTimelineWindow {
   bool ready() const {
     return status == EyeAngleTimelineStatus::Mapped && !traces.empty();
   }
+
+  bool coversFrame(int64_t frame,
+                   const std::string& representation_key = {}) const {
+    return ready() && frame >= request.first_frame &&
+           frame <= request.last_frame &&
+           (representation_key.empty() ||
+            request.representation_key == representation_key);
+  }
 };
 
 struct EyeAngleTimelineFieldSeries {
@@ -96,12 +104,22 @@ struct EyeAngleTimelinePageBounds {
   bool valid() const { return first_frame >= 0 && last_frame >= first_frame; }
 };
 
+struct EyeAngleTimelineRepositoryMetrics {
+  uint64_t preload_candidate_bytes = 0;
+  uint64_t preloaded_retained_bytes = 0;
+  uint64_t preloaded_window_resolves = 0;
+  uint64_t paged_window_resolves = 0;
+  double preload_ms = 0.0;
+  bool frame_series_preloaded = false;
+};
+
 class EyeAngleTimelineRepository {
  public:
   virtual ~EyeAngleTimelineRepository() = default;
   virtual const EyeAngleTimelineDescriptor& descriptor() const = 0;
   virtual EyeAngleTimelineWindow resolveWindow(
       const EyeAngleTimelineRequest& request) const = 0;
+  virtual EyeAngleTimelineRepositoryMetrics metrics() const { return {}; }
 };
 
 EyeAngleTraceRole eyeAngleTraceRoleForField(const std::string& field_name);

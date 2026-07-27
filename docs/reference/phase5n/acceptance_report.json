@@ -1,0 +1,290 @@
+{
+  "schema": "crimson.phase5n.stimulus-overlay-acceptance-report.v1",
+  "passed": true,
+  "contract": "docs/reference/phase5n/acceptance_contract.json",
+  "inputs": {
+    "linux_marker": "docs/reference/phase5n/linux/stimulus_overlay_exact_f001024_1920x1080.ui-reference.json",
+    "linux_image": "docs/reference/phase5n/linux/stimulus_overlay_exact_f001024_1920x1080.png",
+    "macos_marker": "docs/reference/phase5n/macos/stimulus_overlay_exact_f001024_1920x1080.ui-reference.json",
+    "macos_image": "docs/reference/phase5n/macos/stimulus_overlay_exact_f001024_1920x1080.ui-reference.json.png"
+  },
+  "tolerances": {
+    "source_geometry_px": 0.25,
+    "scientific_value": 1e-09,
+    "raster_search_radius_px": 2,
+    "minimum_border_coverage": 0.65,
+    "minimum_cross_platform_border_coverage": 0.8,
+    "minimum_text_pixels": 80
+  },
+  "masks": [
+    {
+      "id": "font-raster",
+      "scope": "event annotation glyph shape",
+      "reason": "Text content, order, color, and scene-relative anchor are compared from the shared scene marker because OpenGL and Metal font rasterization differs. Each capture must still contain the expected light-blue text raster inside the panel."
+    },
+    {
+      "id": "translucent-panel-fill",
+      "scope": "event panel interior channel values",
+      "reason": "The production camera is fitted into different viewport shapes, so the translucent black fill blends over different source pixels. Exact fill and stroke color semantics are compared from the canonical scene; the cyan border enforces raster geometry and visible color-family checks."
+    },
+    {
+      "id": "step-direction-production-raster",
+      "scope": "production frame 1024",
+      "reason": "The selected production run has a CHASER step rather than a moving-grating step. Direction-panel and arrow semantics are thresholded by portable scene tests and by the offscreen Metal raster fixture."
+    }
+  ],
+  "required_threshold_fixtures": [
+    "stimulus_camera_overlay_scene_tests",
+    "stimulus_context_timeline_legacy_probe",
+    "apple_read_only_overlay_metal_tests"
+  ],
+  "checks": [
+    {
+      "id": "linux.capture-contract",
+      "passed": true,
+      "platform_marker": "linux-opengl",
+      "presented_frame": 1024,
+      "stable_frames": 60,
+      "image_size": {
+        "width": 1920,
+        "height": 1080
+      }
+    },
+    {
+      "id": "linux.overlay-ready-exact",
+      "passed": true,
+      "status": "ready",
+      "requested_frame": 1024,
+      "source_frame": 1024,
+      "event_source_frame": 1024
+    },
+    {
+      "id": "linux.production-descriptor",
+      "passed": true,
+      "descriptor": {
+        "event_count": 984,
+        "frame_count": 140035,
+        "run_name": "stimulus_external_ipc_20260616_01",
+        "step_count": 1
+      },
+      "expected": {
+        "run_name": "stimulus_external_ipc_20260616_01",
+        "frame_count": 140035,
+        "event_count": 984,
+        "step_count": 1
+      }
+    },
+    {
+      "id": "linux.scene-geometry",
+      "passed": true,
+      "maximum_numeric_delta": 0.0,
+      "event_box": {
+        "height": 68.0,
+        "width": 254.0,
+        "x": 12.0,
+        "y": 12.0
+      },
+      "step_box": {
+        "height": 0.0,
+        "width": 0.0,
+        "x": 0.0,
+        "y": 0.0
+      }
+    },
+    {
+      "id": "linux.content-colors-and-layer-order",
+      "passed": true,
+      "layer_order": [
+        "event_panel",
+        "event_text"
+      ],
+      "text": [
+        "STEP_START - Chaser\nCHASER_PRE_PERIOD_START - Chaser\nCHASER_AT_PRE_POSITION - Chaser\nCHASER_PRESENTATION_START - Chaser"
+      ],
+      "primitive": {
+        "corner_radius_px": 4.0,
+        "fill": [
+          0.0,
+          0.0,
+          0.0,
+          0.7058823529411765
+        ],
+        "first": {
+          "x": 12.0,
+          "y": 12.0
+        },
+        "has_fill": true,
+        "has_stroke": true,
+        "layer": "event_panel",
+        "second": {
+          "x": 266.0,
+          "y": 80.0
+        },
+        "stroke": [
+          0.3137254901960784,
+          0.7058823529411765,
+          1.0,
+          0.8627450980392157
+        ],
+        "stroke_width_px": 1.0,
+        "third": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "type": 0
+      }
+    },
+    {
+      "id": "linux.panel-border-raster",
+      "passed": true,
+      "coverage": 1.0,
+      "minimum": 0.65,
+      "matched_pixels": 616,
+      "screen_event_box": {
+        "height": 68.0,
+        "width": 254.0,
+        "x": 959.0,
+        "y": 371.0
+      }
+    },
+    {
+      "id": "linux.event-text-raster",
+      "passed": true,
+      "cyan_like_text_pixels": 1384,
+      "minimum": 80
+    },
+    {
+      "id": "macos.capture-contract",
+      "passed": true,
+      "platform_marker": "macos-metal",
+      "presented_frame": 1024,
+      "stable_frames": 60,
+      "image_size": {
+        "width": 1920,
+        "height": 1080
+      }
+    },
+    {
+      "id": "macos.overlay-ready-exact",
+      "passed": true,
+      "status": "ready",
+      "requested_frame": 1024,
+      "source_frame": 1024,
+      "event_source_frame": 1024
+    },
+    {
+      "id": "macos.production-descriptor",
+      "passed": true,
+      "descriptor": {
+        "event_count": 984,
+        "frame_count": 140035,
+        "run_name": "stimulus_external_ipc_20260616_01",
+        "step_count": 1
+      },
+      "expected": {
+        "run_name": "stimulus_external_ipc_20260616_01",
+        "frame_count": 140035,
+        "event_count": 984,
+        "step_count": 1
+      }
+    },
+    {
+      "id": "macos.scene-geometry",
+      "passed": true,
+      "maximum_numeric_delta": 0.0,
+      "event_box": {
+        "height": 68.0,
+        "width": 254.0,
+        "x": 12.0,
+        "y": 12.0
+      },
+      "step_box": {
+        "height": 0.0,
+        "width": 0.0,
+        "x": 0.0,
+        "y": 0.0
+      }
+    },
+    {
+      "id": "macos.content-colors-and-layer-order",
+      "passed": true,
+      "layer_order": [
+        "event_panel",
+        "event_text"
+      ],
+      "text": [
+        "STEP_START - Chaser\nCHASER_PRE_PERIOD_START - Chaser\nCHASER_AT_PRE_POSITION - Chaser\nCHASER_PRESENTATION_START - Chaser"
+      ],
+      "primitive": {
+        "corner_radius_px": 4.0,
+        "fill": [
+          0.0,
+          0.0,
+          0.0,
+          0.7058823529411765
+        ],
+        "first": {
+          "x": 12.0,
+          "y": 12.0
+        },
+        "has_fill": true,
+        "has_stroke": true,
+        "layer": "event_panel",
+        "second": {
+          "x": 266.0,
+          "y": 80.0
+        },
+        "stroke": [
+          0.3137254901960784,
+          0.7058823529411765,
+          1.0,
+          0.8627450980392157
+        ],
+        "stroke_width_px": 1.0,
+        "third": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "type": 0
+      }
+    },
+    {
+      "id": "macos.panel-border-raster",
+      "passed": true,
+      "coverage": 1.0,
+      "minimum": 0.65,
+      "matched_pixels": 616,
+      "screen_event_box": {
+        "height": 68.0,
+        "width": 254.0,
+        "x": 988.0,
+        "y": 361.0
+      }
+    },
+    {
+      "id": "macos.event-text-raster",
+      "passed": true,
+      "cyan_like_text_pixels": 1375,
+      "minimum": 80
+    },
+    {
+      "id": "cross-platform.semantic-signature",
+      "passed": true,
+      "equal": true
+    },
+    {
+      "id": "cross-platform.scene-values",
+      "passed": true,
+      "maximum_numeric_delta": 0.0,
+      "tolerance": 0.25
+    },
+    {
+      "id": "cross-platform.panel-border-raster",
+      "passed": true,
+      "coverage": 1.0,
+      "minimum": 0.8,
+      "linux_pixels": 616,
+      "macos_pixels": 616
+    }
+  ]
+}

@@ -74,6 +74,10 @@ bitpacked masks, contours, and metrics disagree after an edit, consumers should
 trust dense `masks_roi` and treat the other arrays as stale until Palette
 regenerates them.
 
+A possible CSR-style sparse-index playback cache is recorded as a deferred
+concept in `docs/crimson_subject_mask_sparse_index_storage_concept.md`. It does
+not change the dense-authority decision in this document.
+
 ## What Gets Rewritten On Edit?
 
 Zarr arrays are chunked. A partial write affects only the chunks intersecting the

@@ -19,8 +19,33 @@ int main(int argc, char** argv) {
     std::cerr << "archive error: " << error << '\n';
     return 1;
   }
+  crimson::zarr::KeypointRepositoryOpenMetrics open_metrics;
   auto repository = crimson::zarr::OpenKeypointOverlayRepository(
-      archive, {}, &error);
+      archive, {}, &error, &open_metrics);
+  std::cout << "open_total_ms=" << open_metrics.total_ms
+            << " selection_ms=" << open_metrics.selection_ms
+            << " run_attributes_ms=" << open_metrics.run_attributes_ms
+            << " required_handles_ms=" << open_metrics.required_handles_ms
+            << " frame_counts_read_ms=" << open_metrics.frame_counts_read_ms
+            << " prefix_sum_ms=" << open_metrics.prefix_sum_ms
+            << " crop_lineage_ms=" << open_metrics.crop_lineage_ms
+            << " optional_handles_ms=" << open_metrics.optional_handles_ms
+            << " fallback_ms=" << open_metrics.fallback_materialization_ms
+            << " attribute_reads=" << open_metrics.attribute_reads
+            << " array_open_attempts=" << open_metrics.array_open_attempts
+            << " array_open_successes=" << open_metrics.array_open_successes
+            << " array_open_failures=" << open_metrics.array_open_failures
+            << " array_reads=" << open_metrics.array_reads
+            << " lazy=" << open_metrics.lazy_path
+            << " fallback=" << open_metrics.fallback_path << '\n';
+  for (const auto& event : open_metrics.events) {
+    std::cout << "open_event phase=" << event.phase
+              << " operation=" << event.operation
+              << " state=" << (event.success ? "ready" : "unavailable")
+              << " elapsed_ms=" << event.elapsed_ms
+              << " candidate=" << event.candidate
+              << " path=" << event.path << '\n';
+  }
   if (!repository) {
     std::cerr << "repository error: " << error << '\n';
     return 1;

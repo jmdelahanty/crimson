@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 struct AppleVideoPlaybackBufferMetrics {
     uint64_t decoded_frames = 0;
@@ -49,6 +50,7 @@ class AppleVideoPlaybackBuffer {
     bool waitForFrame(int64_t frame_number, std::chrono::milliseconds timeout);
 
     AppleVideoPlaybackBufferMetrics metrics() const;
+    std::vector<int64_t> bufferedFrameNumbers() const;
 
   private:
     struct Impl;

@@ -128,6 +128,8 @@ bool testSparseContractAndDecimation() {
   CHECK(window.ready());
   CHECK(window.traces.size() == 3);
   CHECK(window.source_row_count == 69);
+  CHECK(window.mapping_frames.size() == window.source_row_count);
+  CHECK(window.mapping_times_seconds.size() == window.source_row_count);
   for (const auto &trace : window.traces) {
     CHECK(trace.values.size() >= 3);
     CHECK(trace.values.size() <= 11);
@@ -140,6 +142,9 @@ bool testSparseContractAndDecimation() {
   CHECK(std::fabs(analysisSeriesTimelineTimeForFrame(window, 100, 80.0) -
                   1.25) < 1e-9);
   CHECK(analysisSeriesTimelineNearestFrame(window, 1.25, 80.0) == 100);
+  CHECK(std::fabs(analysisSeriesTimelineTimeForFrame(window, 75, 80.0) -
+                  0.9375) < 1e-9);
+  CHECK(analysisSeriesTimelineNearestFrame(window, 0.9375, 80.0) == 75);
 
   request.source_key = "missing";
   CHECK(repository->resolveWindow(request).status ==

@@ -71,12 +71,14 @@ enum class KeypointOverlayStatus : uint8_t {
   Missing,
   OutOfRange,
   InvalidDimensions,
+  ReadFailed,
 };
 
 struct KeypointOverlayResolution {
   KeypointOverlayStatus status = KeypointOverlayStatus::Missing;
   int64_t camera_frame = -1;
   std::vector<KeypointOverlayDetection> detections;
+  std::string error;
 };
 
 class KeypointOverlayRepository {

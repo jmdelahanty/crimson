@@ -649,9 +649,29 @@ CameraViewWindowResult drawCameraViewWindowContents(
         }
 
         const ImPlotRect plot_limits = ImPlot::GetPlotLimits();
+        const ImVec2 plot_pos = ImPlot::GetPlotPos();
         const ImVec2 plot_size = ImPlot::GetPlotSize();
         const double image_width = static_cast<double>(camera.image_width);
         const double image_height = static_cast<double>(camera.image_height);
+        const ImVec2 media_corner_a = ImPlot::PlotToPixels(0.0, 0.0);
+        const ImVec2 media_corner_b =
+            ImPlot::PlotToPixels(image_width, image_height);
+        const double media_x_min = std::clamp(
+            static_cast<double>(std::min(media_corner_a.x, media_corner_b.x)),
+            static_cast<double>(plot_pos.x),
+            static_cast<double>(plot_pos.x + plot_size.x));
+        const double media_x_max = std::clamp(
+            static_cast<double>(std::max(media_corner_a.x, media_corner_b.x)),
+            static_cast<double>(plot_pos.x),
+            static_cast<double>(plot_pos.x + plot_size.x));
+        const double media_y_min = std::clamp(
+            static_cast<double>(std::min(media_corner_a.y, media_corner_b.y)),
+            static_cast<double>(plot_pos.y),
+            static_cast<double>(plot_pos.y + plot_size.y));
+        const double media_y_max = std::clamp(
+            static_cast<double>(std::max(media_corner_a.y, media_corner_b.y)),
+            static_cast<double>(plot_pos.y),
+            static_cast<double>(plot_pos.y + plot_size.y));
         const double clamped_x_min =
             std::clamp(plot_limits.X.Min, 0.0, image_width);
         const double clamped_x_max =
@@ -671,8 +691,14 @@ CameraViewWindowResult drawCameraViewWindowContents(
                 : std::numeric_limits<double>::quiet_NaN();
         const bool zoomed_in = visible_width < (image_width - 1.0) ||
                                visible_height < (image_height - 1.0);
+        result.perf.viewport_x_px = static_cast<double>(plot_pos.x);
+        result.perf.viewport_y_px = static_cast<double>(plot_pos.y);
         result.perf.viewport_width_px = static_cast<double>(plot_size.x);
         result.perf.viewport_height_px = static_cast<double>(plot_size.y);
+        result.perf.media_x_px = media_x_min;
+        result.perf.media_y_px = media_y_min;
+        result.perf.media_width_px = std::max(0.0, media_x_max - media_x_min);
+        result.perf.media_height_px = std::max(0.0, media_y_max - media_y_min);
         result.perf.view_x_min = clamped_x_min;
         result.perf.view_x_max = clamped_x_max;
         result.perf.view_y_min = clamped_y_min;
@@ -1177,19 +1203,38 @@ CameraViewWindowResult drawCameraViewWindowContents(
             }
         }
 
-        if (context.stimulus_events != nullptr) {
-            drawCameraViewStimulusEventOverlay(context.view_idx,
-                                               context.current_frame_num,
-                                               *context.stimulus_events);
+        const ImVec2 stimulus_plot_size = ImPlot::GetPlotSize();
+        const ImVec2 stimulus_plot_pos = ImPlot::GetPlotPos();
+        const std::string stimulus_event_text =
+            crimson::stimulus::stimulusCameraOverlayEventText(
+                context.stimulus_camera_overlay_frame);
+        ImVec2 stimulus_event_text_size{};
+        if (!stimulus_event_text.empty()) {
+            stimulus_event_text_size = ImGui::CalcTextSize(
+                stimulus_event_text.c_str(), nullptr, false, -1.0f);
         }
-        drawCameraViewStimulusStepDirectionOverlay(context.stimulus_step);
+        result.stimulus_camera_overlay_origin_x_px = stimulus_plot_pos.x;
+        result.stimulus_camera_overlay_origin_y_px = stimulus_plot_pos.y;
+        result.stimulus_camera_overlay_scene =
+            crimson::stimulus::buildStimulusCameraOverlayScene(
+                context.stimulus_camera_overlay_frame,
+                {stimulus_plot_size.x, stimulus_plot_size.y},
+                {stimulus_event_text_size.x, stimulus_event_text_size.y});
         drawCameraViewStimulusInsetOverlay(context.stimulus_player,
                                            context.target_stimulus_frame,
                                            context.stimulus_inset_options);
+        const ImVec2 polar_plot_size = ImPlot::GetPlotSize();
+        const ImVec2 polar_plot_pos = ImPlot::GetPlotPos();
+        result.chaser_distance_polar_origin_x_px = polar_plot_pos.x;
+        result.chaser_distance_polar_origin_y_px = polar_plot_pos.y;
+        result.chaser_distance_polar_scene =
+            crimson::polar::buildChaserDistancePolarScene(
+                context.chaser_distance_polar_frame,
+                {polar_plot_size.x, polar_plot_size.y},
+                context.chaser_distance_polar_inset_options);
         drawCameraViewChaserDistancePolarInsetOverlay(
-            context.chaser_distance_polar_frame,
-            context.chaser_distance_polar_inset_options);
-        if (context.active_roi_inset_options.show_inset &&
+            result.chaser_distance_polar_scene);
+        if (context.active_roi_inset_options.visible &&
             (context.mask_details != nullptr ||
              context.active_roi_inset_target.valid)) {
             drawCameraViewActiveRoiInsetOverlay(
@@ -1224,6 +1269,10 @@ CameraViewWindowResult drawCameraViewWindowContents(
         }
 
         ImPlot::EndPlot();
+        drawCameraViewStimulusCameraOverlay(
+            result.stimulus_camera_overlay_scene,
+            result.stimulus_camera_overlay_origin_x_px,
+            result.stimulus_camera_overlay_origin_y_px);
 
         if (context.swap_playback_surface_after_draw) {
             const auto swap_start = std::chrono::steady_clock::now();

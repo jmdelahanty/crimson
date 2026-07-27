@@ -79,11 +79,15 @@ CameraViewActiveRoiInsetOptions activeRoiInsetOptions(
     const FrameDebugWindowState* state) {
     CameraViewActiveRoiInsetOptions options;
     if (state == nullptr) {
-        options.show_inset = false;
+        options.visible = false;
         return options;
     }
     options = state->active_roi_inset_options;
-    return options;
+    crimson::crop::RoiInsetPresentationCapabilities capabilities;
+    capabilities.selected_component_overlay = true;
+    capabilities.match_camera_overlays = true;
+    capabilities.heading_normalization = true;
+    return crimson::crop::resolveRoiInsetPresentation(options, capabilities);
 }
 
 const RefinedKeypointSelection* activeFullFrameKeypointSelection(
@@ -222,11 +226,12 @@ void prepareCameraViewFrameContext(
         }
     }
 
-    if (zarr_available && input.zarr_loader->hasStimulusEvents()) {
-        prepared.frame_events =
-            input.zarr_loader->getStimulusEventsForFrame(
-                input.current_frame_num);
-    }
+    const int stimulus_camera_frame =
+        input.presented_frame >= 0 ? input.presented_frame
+                                   : input.current_frame_num;
+    prepared.stimulus_camera_overlay_frame =
+        crimson::stimulus::resolveStimulusCameraOverlayFrame(
+            input.stimulus_context_timeline, stimulus_camera_frame);
 
     if (zarr_available && input.zarr_loader->hasMovementData()) {
         prepared.movement_frame_sample =
@@ -241,9 +246,9 @@ void prepareCameraViewFrameContext(
         }
     }
 
-    if (zarr_available && input.zarr_loader->hasChaserDistancePolarData()) {
+    if (input.chaser_distance_polar_repository != nullptr) {
         prepared.chaser_distance_polar_frame =
-            input.zarr_loader->getChaserDistancePolarFrame(
+            input.chaser_distance_polar_repository->resolveCameraFrame(
                 input.current_frame_num);
     }
 
@@ -332,10 +337,7 @@ void prepareCameraViewFrameContext(
         zarr_available ? input.chaser_bboxes : nullptr,
         zarr_available ? input.chaser_states : nullptr,
         input.camera_params,
-        !prepared.frame_events.empty() ? &prepared.frame_events : nullptr,
-        zarr_available
-            ? input.zarr_loader->getStimulusStepForFrame(input.current_frame_num)
-            : nullptr,
+        prepared.stimulus_camera_overlay_frame,
         input.stimulus_player,
         input.target_stimulus_frame,
         input.stimulus_inset_options,

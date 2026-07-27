@@ -59,6 +59,8 @@ struct FrameDebugWindowContext {
 
     bool zarr_loaded = false;
     ZarrDetectionLoader& zarr_loader;
+    const crimson::polar::ChaserDistancePolarDescriptor*
+        chaser_distance_polar_descriptor = nullptr;
     const std::vector<std::string>& detection_dataset_labels;
     int detection_dataset_choice = 0;
     bool dataset_has_synthetic_boxes = false;

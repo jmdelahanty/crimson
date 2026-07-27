@@ -464,7 +464,8 @@ void drawStimulusOverlaySection(const FrameDebugWindowContext& context,
 void drawChaserDistancePolarOverlaySection(
     const FrameDebugWindowContext& context,
     FrameDebugWindowResult& result) {
-    if (!context.zarr_loader.hasChaserDistancePolarData()) {
+    const auto* descriptor = context.chaser_distance_polar_descriptor;
+    if (descriptor == nullptr || !descriptor->ready()) {
         return;
     }
 
@@ -509,12 +510,8 @@ void drawChaserDistancePolarOverlaySection(
                     &result.chaser_distance_polar_inset_options.show_readout);
     ImGui::EndDisabled();
     ImGui::TextWrapped("  Source: %s / %s",
-                       context.zarr_loader
-                           .getChaserDistancePolarRunName()
-                           .c_str(),
-                       context.zarr_loader
-                           .getChaserDistancePolarComponentName()
-                           .c_str());
+                       descriptor->provenance.run_name.c_str(),
+                       descriptor->provenance.component_name.c_str());
 }
 
 }  // namespace

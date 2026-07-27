@@ -1,0 +1,2 @@
+329105e9d8f1909a8986c2c7a9f766b0be2e55c68aba4f3cb77dfaa867b0324a  stimulus_debug_exact_f001024_1920x1080.ui-reference.json.png
+8ab4f6fa28d47c0021993c2eadd0bc8da5fd05f73289544eac872f840d7abdb7  stimulus_debug_exact_f001024_1920x1080.ui-reference.json

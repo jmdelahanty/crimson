@@ -253,7 +253,8 @@ fi
 if [ "$enable_cuda" -eq 1 ]; then
     cmake_args+=(
         -D "WITH_CUDA=ON"
-        -D "CUDA_FAST_MATH=ON"
+        -D "ENABLE_FAST_MATH=OFF"
+        -D "CUDA_FAST_MATH=OFF"
         -D "WITH_CUBLAS=ON"
         -D "CUDA_ARCH_BIN=$cuda_arch"
         -D "BUILD_opencv_cudacodec=ON"

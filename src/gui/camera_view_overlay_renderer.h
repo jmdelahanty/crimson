@@ -1,9 +1,12 @@
 #pragma once
 
 #include "camera.h"
+#include "chaser_distance_polar_scene.h"
+#include "stimulus_camera_overlay_scene.h"
 #include "gui/full_frame_rect_edit_overlay.h"
 #include "read_only_overlay_controls.h"
 #include "read_only_overlay_scene.h"
+#include "roi_inset_presentation.h"
 #include "zarr_bbox_edit.h"
 
 #include <cstddef>
@@ -78,13 +81,8 @@ struct CameraViewSubjectMaskPreview {
     const std::vector<uint8_t>* binary_mask = nullptr;
 };
 
-struct CameraViewActiveRoiInsetOptions {
-    bool show_inset = true;
-    float width_px = 240.0f;
-    bool show_label = true;
-    bool mirror_enabled_overlays = true;
-    bool heading_normalized_view = false;
-};
+using CameraViewActiveRoiInsetOptions =
+    crimson::crop::RoiInsetPresentationState;
 
 struct CameraViewActiveRoiInsetTarget {
     bool valid = false;
@@ -134,13 +132,8 @@ struct CameraViewStimulusInsetOptions {
     bool show_frame_label = true;
 };
 
-struct CameraViewChaserDistancePolarInsetOptions {
-    bool show_inset = true;
-    float width_px = 220.0f;
-    float opacity = 0.86f;
-    bool show_readout = true;
-    bool show_labels = true;
-};
+using CameraViewChaserDistancePolarInsetOptions =
+    crimson::polar::ChaserDistancePolarSceneControls;
 
 crimson::overlay::ReadOnlyOverlayScene
 buildCameraViewBoundingBoxOverlayScene(
@@ -235,13 +228,10 @@ void drawCameraViewChaserOverlay(
     int image_width_px,
     int image_height_px);
 
-void drawCameraViewStimulusEventOverlay(
-    int view_idx,
-    int current_frame_num,
-    const std::vector<std::string>& frame_events);
-
-void drawCameraViewStimulusStepDirectionOverlay(
-    const ZarrDetectionData::StimulusStep* stimulus_step);
+void drawCameraViewStimulusCameraOverlay(
+    const crimson::stimulus::StimulusCameraOverlayScene& scene,
+    double display_origin_x,
+    double display_origin_y);
 
 void drawCameraViewStimulusInsetOverlay(
     const StimulusPlayback* stimulus_player,
@@ -249,5 +239,4 @@ void drawCameraViewStimulusInsetOverlay(
     const CameraViewStimulusInsetOptions& options);
 
 void drawCameraViewChaserDistancePolarInsetOverlay(
-    const ZarrDetectionLoader::ChaserDistancePolarFrame& polar_frame,
-    const CameraViewChaserDistancePolarInsetOptions& options);
+    const crimson::polar::ChaserDistancePolarScene& scene);

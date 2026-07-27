@@ -1,8 +1,5 @@
 #include "zarr/tensorstore_analysis_series_timeline_repository.h"
 
-#include "zarr/archive_context_internal.h"
-
-#include <nlohmann/json.hpp>
 #include <tensorstore/box.h>
 #include <tensorstore/index_space/index_transform.h>
 #include <tensorstore/open.h>
@@ -10,15 +7,23 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <memory>
+#include <mutex>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
+
+#include "data_access_cache.h"
+#include "zarr/archive_context_internal.h"
 
 namespace crimson::zarr {
 namespace ts = tensorstore;
@@ -35,22 +40,14 @@ using Vec2Store =
 using MaskStore =
     std::variant<ts::TensorStore<bool, 1>, ts::TensorStore<uint8_t, 1>>;
 
-std::optional<json> makeArraySpec(const ArchiveContext::Impl &archive,
-                                  const std::string &path) {
-  const auto spec = archive.store.spec();
-  if (!spec.ok()) {
-    return std::nullopt;
-  }
-  const auto kvstore = spec->ToJson();
-  if (!kvstore.ok()) {
-    return std::nullopt;
-  }
-  return json{{"driver", "zarr3"}, {"kvstore", *kvstore}, {"path", path}};
+std::optional<json> makeArraySpec(const ArchiveContext::Impl& archive,
+                                  const std::string& path) {
+  return internal::MakeReadOnlyArraySpec(archive, path);
 }
 
 template <typename T, size_t Rank>
-std::optional<ts::TensorStore<T, Rank>>
-openArray(const ArchiveContext::Impl &archive, const std::string &path) {
+std::optional<ts::TensorStore<T, Rank>> openArray(
+    const ArchiveContext::Impl& archive, const std::string& path) {
   const auto spec = makeArraySpec(archive, path);
   if (!spec) {
     return std::nullopt;
@@ -63,7 +60,7 @@ openArray(const ArchiveContext::Impl &archive, const std::string &path) {
 }
 
 template <typename T, ts::DimensionIndex Rank>
-auto sliceRows(const ts::TensorStore<T, Rank> &store, ts::Index start,
+auto sliceRows(const ts::TensorStore<T, Rank>& store, ts::Index start,
                ts::Index stop) {
   ts::Box<Rank> domain(store.domain().box());
   domain.origin()[0] = start;
@@ -71,27 +68,27 @@ auto sliceRows(const ts::TensorStore<T, Rank> &store, ts::Index start,
   return store | ts::IdentityTransform(domain);
 }
 
-std::string stringValue(const json &attributes, const char *key) {
+std::string stringValue(const json& attributes, const char* key) {
   const auto found = attributes.find(key);
   return found != attributes.end() && found->is_string()
              ? found->get<std::string>()
              : std::string{};
 }
 
-bool validName(const std::string &value) {
+bool validName(const std::string& value) {
   return !value.empty() && value != "." && value != ".." &&
          value.find('/') == std::string::npos;
 }
 
-std::string latestRun(const ArchiveContext::Impl &archive,
-                      const std::string &group) {
+std::string latestRun(const ArchiveContext::Impl& archive,
+                      const std::string& group) {
   const auto attributes = internal::ReadArchiveAttributes(archive, group);
   if (!attributes) {
     return {};
   }
-  constexpr std::array<const char *, 4> keys = {
+  constexpr std::array<const char*, 4> keys = {
       "latest_complete", "latest_completed", "latest", "latest_success"};
-  for (const char *key : keys) {
+  for (const char* key : keys) {
     const std::string value = stringValue(*attributes, key);
     if (!value.empty()) {
       return value;
@@ -100,8 +97,8 @@ std::string latestRun(const ArchiveContext::Impl &archive,
   return {};
 }
 
-std::optional<FrameStore> openFrameStore(const ArchiveContext::Impl &archive,
-                                         const std::string &path) {
+std::optional<FrameStore> openFrameStore(const ArchiveContext::Impl& archive,
+                                         const std::string& path) {
   if (auto store = openArray<int64_t, 1>(archive, path)) {
     return FrameStore{std::move(*store)};
   }
@@ -111,8 +108,8 @@ std::optional<FrameStore> openFrameStore(const ArchiveContext::Impl &archive,
   return std::nullopt;
 }
 
-std::optional<ScalarStore> openScalarStore(const ArchiveContext::Impl &archive,
-                                           const std::string &path) {
+std::optional<ScalarStore> openScalarStore(const ArchiveContext::Impl& archive,
+                                           const std::string& path) {
   if (auto store = openArray<float, 1>(archive, path)) {
     return ScalarStore{std::move(*store)};
   }
@@ -122,8 +119,8 @@ std::optional<ScalarStore> openScalarStore(const ArchiveContext::Impl &archive,
   return std::nullopt;
 }
 
-std::optional<Vec2Store> openVec2Store(const ArchiveContext::Impl &archive,
-                                       const std::string &path) {
+std::optional<Vec2Store> openVec2Store(const ArchiveContext::Impl& archive,
+                                       const std::string& path) {
   if (auto store = openArray<float, 2>(archive, path);
       store && store->domain().shape()[1] == 2) {
     return Vec2Store{std::move(*store)};
@@ -135,8 +132,8 @@ std::optional<Vec2Store> openVec2Store(const ArchiveContext::Impl &archive,
   return std::nullopt;
 }
 
-std::optional<MaskStore> openMaskStore(const ArchiveContext::Impl &archive,
-                                       const std::string &path) {
+std::optional<MaskStore> openMaskStore(const ArchiveContext::Impl& archive,
+                                       const std::string& path) {
   if (auto store = openArray<bool, 1>(archive, path)) {
     return MaskStore{std::move(*store)};
   }
@@ -146,9 +143,9 @@ std::optional<MaskStore> openMaskStore(const ArchiveContext::Impl &archive,
   return std::nullopt;
 }
 
-size_t rowCount(const FrameStore &store) {
+size_t rowCount(const FrameStore& store) {
   return std::visit(
-      [](const auto &value) {
+      [](const auto& value) {
         return value.domain().shape()[0] > 0
                    ? static_cast<size_t>(value.domain().shape()[0])
                    : 0;
@@ -156,9 +153,9 @@ size_t rowCount(const FrameStore &store) {
       store);
 }
 
-size_t rowCount(const ScalarStore &store) {
+size_t rowCount(const ScalarStore& store) {
   return std::visit(
-      [](const auto &value) {
+      [](const auto& value) {
         return value.domain().shape()[0] > 0
                    ? static_cast<size_t>(value.domain().shape()[0])
                    : 0;
@@ -166,21 +163,58 @@ size_t rowCount(const ScalarStore &store) {
       store);
 }
 
-size_t rowCount(const Vec2Store &store) {
+size_t rowCount(const Vec2Store& store) {
   return std::visit(
-      [](const auto &value) {
+      [](const auto& value) {
         return value.domain().shape()[0] > 0
                    ? static_cast<size_t>(value.domain().shape()[0])
                    : 0;
+      },
+      store);
+}
+
+size_t rowCount(const MaskStore& store) {
+  return std::visit(
+      [](const auto& value) {
+        return value.domain().shape()[0] > 0
+                   ? static_cast<size_t>(value.domain().shape()[0])
+                   : 0;
+      },
+      store);
+}
+
+size_t frameElementBytes(const FrameStore& store) {
+  return std::visit(
+      [](const auto& value) {
+        using Element = typename std::decay_t<decltype(value)>::Element;
+        return sizeof(Element);
+      },
+      store);
+}
+
+size_t scalarElementBytes(const ScalarStore& store) {
+  return std::visit(
+      [](const auto& value) {
+        using Element = typename std::decay_t<decltype(value)>::Element;
+        return sizeof(Element);
+      },
+      store);
+}
+
+size_t vec2ElementBytes(const Vec2Store& store) {
+  return std::visit(
+      [](const auto& value) {
+        using Element = typename std::decay_t<decltype(value)>::Element;
+        return sizeof(Element);
       },
       store);
 }
 
 template <typename Variant, typename Convert>
-bool readRankOneRange(const Variant &store, size_t first, size_t last,
+bool readRankOneRange(const Variant& store, size_t first, size_t last,
                       Convert convert) {
   return std::visit(
-      [&](const auto &typed) {
+      [&](const auto& typed) {
         if (last < first ||
             last > static_cast<size_t>(typed.domain().shape()[0])) {
           return false;
@@ -195,10 +229,10 @@ bool readRankOneRange(const Variant &store, size_t first, size_t last,
           return false;
         }
         using Source = typename std::decay_t<decltype(typed)>::Element;
-        const auto *origin = reinterpret_cast<const uint8_t *>(
+        const auto* origin = reinterpret_cast<const uint8_t*>(
             read->byte_strided_origin_pointer().get());
         for (size_t index = 0; index < last - first; ++index) {
-          const auto *value = reinterpret_cast<const Source *>(
+          const auto* value = reinterpret_cast<const Source*>(
               origin + static_cast<ts::Index>(index) * read->byte_strides()[0]);
           convert(index, *value);
         }
@@ -207,38 +241,38 @@ bool readRankOneRange(const Variant &store, size_t first, size_t last,
       store);
 }
 
-bool readFrames(const FrameStore &store, size_t first, size_t last,
-                std::vector<int64_t> *output) {
+bool readFrames(const FrameStore& store, size_t first, size_t last,
+                std::vector<int64_t>* output) {
   output->assign(last - first, -1);
   return readRankOneRange(store, first, last, [&](size_t index, auto value) {
     (*output)[index] = static_cast<int64_t>(value);
   });
 }
 
-bool readScalars(const ScalarStore &store, size_t first, size_t last,
-                 std::vector<double> *output) {
+bool readScalars(const ScalarStore& store, size_t first, size_t last,
+                 std::vector<double>* output) {
   output->assign(last - first, std::numeric_limits<double>::quiet_NaN());
   return readRankOneRange(store, first, last, [&](size_t index, auto value) {
     (*output)[index] = static_cast<double>(value);
   });
 }
 
-bool readMasks(const MaskStore &store, size_t first, size_t last,
-               std::vector<uint8_t> *output) {
+bool readMasks(const MaskStore& store, size_t first, size_t last,
+               std::vector<uint8_t>* output) {
   output->assign(last - first, 0);
   return readRankOneRange(store, first, last, [&](size_t index, auto value) {
     (*output)[index] = value ? 1 : 0;
   });
 }
 
-bool readVec2Column(const Vec2Store &store, size_t first, size_t last,
-                    size_t column, std::vector<double> *output) {
+bool readVec2Column(const Vec2Store& store, size_t first, size_t last,
+                    size_t column, std::vector<double>* output) {
   if (column > 1) {
     return false;
   }
   output->assign(last - first, std::numeric_limits<double>::quiet_NaN());
   return std::visit(
-      [&](const auto &typed) {
+      [&](const auto& typed) {
         if (last < first ||
             last > static_cast<size_t>(typed.domain().shape()[0])) {
           return false;
@@ -252,10 +286,10 @@ bool readVec2Column(const Vec2Store &store, size_t first, size_t last,
           return false;
         }
         using Source = typename std::decay_t<decltype(typed)>::Element;
-        const auto *origin = reinterpret_cast<const uint8_t *>(
+        const auto* origin = reinterpret_cast<const uint8_t*>(
             read->byte_strided_origin_pointer().get());
         for (size_t row = 0; row < last - first; ++row) {
-          const auto *value = reinterpret_cast<const Source *>(
+          const auto* value = reinterpret_cast<const Source*>(
               origin + static_cast<ts::Index>(row) * read->byte_strides()[0] +
               static_cast<ts::Index>(column) * read->byte_strides()[1]);
           (*output)[row] = static_cast<double>(*value);
@@ -265,11 +299,97 @@ bool readVec2Column(const Vec2Store &store, size_t first, size_t last,
       store);
 }
 
-class FrameIndexBlocks {
-public:
-  explicit FrameIndexBlocks(const FrameStore &store) : store_(store) {}
+using ResidentNumeric = std::variant<std::vector<float>, std::vector<double>>;
 
-  std::optional<size_t> lowerBound(int64_t target) {
+uint64_t residentNumericBytes(const ResidentNumeric& values) {
+  return std::visit(
+      [](const auto& typed) {
+        using Element = typename std::decay_t<decltype(typed)>::value_type;
+        return static_cast<uint64_t>(typed.capacity()) * sizeof(Element);
+      },
+      values);
+}
+
+bool readResidentNumeric(const ResidentNumeric& values, size_t first,
+                         size_t last, std::vector<double>* output) {
+  if (last < first) {
+    return false;
+  }
+  return std::visit(
+      [&](const auto& typed) {
+        if (last > typed.size()) {
+          return false;
+        }
+        output->resize(last - first);
+        std::transform(typed.begin() + static_cast<std::ptrdiff_t>(first),
+                       typed.begin() + static_cast<std::ptrdiff_t>(last),
+                       output->begin(),
+                       [](auto value) { return static_cast<double>(value); });
+        return true;
+      },
+      values);
+}
+
+bool readAllNativeScalars(const ScalarStore& store, ResidentNumeric* output) {
+  return std::visit(
+      [&](const auto& typed) {
+        using Element = typename std::decay_t<decltype(typed)>::Element;
+        const size_t count = static_cast<size_t>(typed.domain().shape()[0]);
+        const auto read = ts::Read(typed).result();
+        if (!read.ok() || read->rank() != 1 ||
+            read->shape()[0] != static_cast<ts::Index>(count) ||
+            read->byte_strides().size() != 1) {
+          return false;
+        }
+        std::vector<Element> values(count);
+        const auto* origin = reinterpret_cast<const uint8_t*>(
+            read->byte_strided_origin_pointer().get());
+        for (size_t index = 0; index < count; ++index) {
+          values[index] = *reinterpret_cast<const Element*>(
+              origin + static_cast<ts::Index>(index) * read->byte_strides()[0]);
+        }
+        *output = std::move(values);
+        return true;
+      },
+      store);
+}
+
+bool readAllNativeVec2Column(const Vec2Store& store, size_t column,
+                             ResidentNumeric* output) {
+  if (column > 1) {
+    return false;
+  }
+  return std::visit(
+      [&](const auto& typed) {
+        using Element = typename std::decay_t<decltype(typed)>::Element;
+        const size_t count = static_cast<size_t>(typed.domain().shape()[0]);
+        const auto read =
+            ts::Read(sliceRows(typed, 0, typed.domain().shape()[0])).result();
+        if (!read.ok() || read->rank() != 2 || read->shape()[1] != 2 ||
+            read->byte_strides().size() != 2) {
+          return false;
+        }
+        std::vector<Element> values(count);
+        const auto* origin = reinterpret_cast<const uint8_t*>(
+            read->byte_strided_origin_pointer().get());
+        for (size_t row = 0; row < count; ++row) {
+          values[row] = *reinterpret_cast<const Element*>(
+              origin + static_cast<ts::Index>(row) * read->byte_strides()[0] +
+              static_cast<ts::Index>(column) * read->byte_strides()[1]);
+        }
+        *output = std::move(values);
+        return true;
+      },
+      store);
+}
+
+class FrameIndexBlocks {
+ public:
+  explicit FrameIndexBlocks(FrameStore store)
+      : store_(std::move(store)), blocks_({2ULL * 1024ULL * 1024ULL, 0, 16}) {}
+
+  std::optional<size_t> lowerBound(int64_t target) const {
+    std::lock_guard<std::mutex> lock(mutex_);
     size_t first = 0;
     size_t last = rowCount(store_);
     while (first < last) {
@@ -287,27 +407,60 @@ public:
     return first;
   }
 
-private:
-  static constexpr size_t kBlockRows = 16384;
-  const FrameStore &store_;
-  std::unordered_map<size_t, std::vector<int64_t>> blocks_;
+  crimson::timeline::AnalysisSeriesTimelineRepositoryMetrics metrics() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto result = metrics_;
+    result.cached_frame_index_bytes = blocks_.metrics().current_cpu_bytes;
+    result.peak_cached_frame_index_bytes = blocks_.metrics().peak_cpu_bytes;
+    return result;
+  }
 
-  std::optional<int64_t> at(size_t row) {
+ private:
+  static constexpr size_t kBlockRows = 16384;
+  using Block = std::shared_ptr<const std::vector<int64_t>>;
+
+  FrameStore store_;
+  mutable std::mutex mutex_;
+  mutable crimson::data::ByteBudgetLruCache<size_t, Block> blocks_;
+  mutable crimson::timeline::AnalysisSeriesTimelineRepositoryMetrics metrics_;
+
+  std::optional<int64_t> at(size_t row) const {
     const size_t block = row / kBlockRows;
-    auto found = blocks_.find(block);
-    if (found == blocks_.end()) {
+    Block values;
+    if (auto cached = blocks_.findAndTouch(block)) {
+      values = *cached;
+      ++metrics_.frame_index_cache_hits;
+    } else {
       const size_t first = block * kBlockRows;
       const size_t last = std::min(rowCount(store_), first + kBlockRows);
-      std::vector<int64_t> values;
-      if (!readFrames(store_, first, last, &values) ||
-          !std::is_sorted(values.begin(), values.end())) {
+      const auto started = std::chrono::steady_clock::now();
+      auto loaded = std::make_shared<std::vector<int64_t>>();
+      if (!readFrames(store_, first, last, loaded.get()) ||
+          !std::is_sorted(loaded->begin(), loaded->end())) {
         return std::nullopt;
       }
-      found = blocks_.emplace(block, std::move(values)).first;
+      const double elapsed_ms = std::chrono::duration<double, std::milli>(
+                                    std::chrono::steady_clock::now() - started)
+                                    .count();
+      const uint64_t retained_bytes =
+          loaded->capacity() * sizeof(std::vector<int64_t>::value_type);
+      const auto admitted =
+          blocks_.put(block, loaded, {retained_bytes, 0},
+                      crimson::data::RequestPriority::CurrentFrame, false);
+      if (!admitted.admitted()) {
+        return std::nullopt;
+      }
+      values = std::move(loaded);
+      ++metrics_.frame_index_block_reads;
+      metrics_.frame_index_cache_evictions += admitted.evicted_keys.size();
+      metrics_.frame_index_source_bytes +=
+          static_cast<uint64_t>(last - first) * frameElementBytes(store_);
+      metrics_.maximum_frame_index_read_ms =
+          std::max(metrics_.maximum_frame_index_read_ms, elapsed_ms);
     }
     const size_t offset = row - block * kBlockRows;
-    return offset < found->second.size()
-               ? std::optional<int64_t>(found->second[offset])
+    return values && offset < values->size()
+               ? std::optional<int64_t>((*values)[offset])
                : std::nullopt;
   }
 };
@@ -320,32 +473,139 @@ struct FieldStore {
   std::optional<MaskStore> mask;
 };
 
+struct ResidentField {
+  ResidentNumeric values;
+  std::optional<std::vector<uint8_t>> mask;
+};
+
+struct ResidentSource {
+  std::vector<int64_t> frames;
+  std::optional<ResidentNumeric> times;
+  std::vector<ResidentField> fields;
+
+  uint64_t retainedBytes() const {
+    uint64_t result = static_cast<uint64_t>(frames.capacity()) *
+                      sizeof(std::vector<int64_t>::value_type);
+    if (times) {
+      result += residentNumericBytes(*times);
+    }
+    for (const auto& field : fields) {
+      result += residentNumericBytes(field.values);
+      if (field.mask) {
+        result += field.mask->capacity() * sizeof(uint8_t);
+      }
+    }
+    return result;
+  }
+};
+
 struct SourceStore {
   crimson::timeline::AnalysisSeriesSourceDescriptor descriptor;
   FrameStore frames;
   std::optional<ScalarStore> times;
   std::vector<FieldStore> fields;
+  std::shared_ptr<FrameIndexBlocks> frame_index;
+  std::shared_ptr<const ResidentSource> resident;
 };
+
+uint64_t preloadCandidateBytes(const SourceStore& source) {
+  const uint64_t rows = rowCount(source.frames);
+  uint64_t result = rows * sizeof(int64_t);
+  if (source.times) {
+    result += rows * scalarElementBytes(*source.times);
+  }
+  for (const auto& field : source.fields) {
+    if (field.scalar) {
+      result += rows * scalarElementBytes(*field.scalar);
+    } else if (field.vec2) {
+      result += rows * vec2ElementBytes(*field.vec2);
+    }
+    if (field.mask) {
+      result += rows * sizeof(uint8_t);
+    }
+  }
+  return result;
+}
+
+std::shared_ptr<const ResidentSource> preloadSource(const SourceStore& source) {
+  auto resident = std::make_shared<ResidentSource>();
+  if (!readFrames(source.frames, 0, rowCount(source.frames),
+                  &resident->frames) ||
+      !std::is_sorted(resident->frames.begin(), resident->frames.end())) {
+    return nullptr;
+  }
+  if (source.times) {
+    ResidentNumeric times;
+    if (!readAllNativeScalars(*source.times, &times)) {
+      return nullptr;
+    }
+    resident->times = std::move(times);
+  }
+  resident->fields.reserve(source.fields.size());
+  for (const auto& field : source.fields) {
+    ResidentField retained;
+    bool ready = false;
+    if (field.scalar) {
+      ready = readAllNativeScalars(*field.scalar, &retained.values);
+    } else if (field.vec2) {
+      ready = readAllNativeVec2Column(*field.vec2, field.vec2_column,
+                                      &retained.values);
+    }
+    if (!ready) {
+      return nullptr;
+    }
+    if (field.mask) {
+      std::vector<uint8_t> mask;
+      if (!readMasks(*field.mask, 0, rowCount(*field.mask), &mask)) {
+        return nullptr;
+      }
+      retained.mask = std::move(mask);
+    }
+    resident->fields.push_back(std::move(retained));
+  }
+  return resident;
+}
 
 class TensorStoreRepository final
     : public crimson::timeline::AnalysisSeriesTimelineRepository {
-public:
+ public:
   TensorStoreRepository(
       crimson::timeline::AnalysisSeriesTimelineDescriptor descriptor,
-      std::vector<SourceStore> sources)
+      std::vector<SourceStore> sources,
+      crimson::data::SmallSeriesPreloadPolicy preload_policy)
       : descriptor_(std::move(descriptor)) {
-    for (auto &source : sources) {
+    for (auto& source : sources) {
+      if (!source.frame_index) {
+        source.frame_index = std::make_shared<FrameIndexBlocks>(source.frames);
+      }
       sources_[source.descriptor.key] = std::move(source);
+    }
+    const auto selected = sources_.find(descriptor_.default_source);
+    if (selected != sources_.end() && preload_policy.enabled()) {
+      metrics_.preload_candidate_bytes =
+          preloadCandidateBytes(selected->second);
+      if (preload_policy.admits(metrics_.preload_candidate_bytes)) {
+        const auto started = std::chrono::steady_clock::now();
+        selected->second.resident = preloadSource(selected->second);
+        metrics_.preload_ms = std::chrono::duration<double, std::milli>(
+                                  std::chrono::steady_clock::now() - started)
+                                  .count();
+        if (selected->second.resident) {
+          metrics_.default_source_preloaded = true;
+          metrics_.preloaded_retained_bytes =
+              selected->second.resident->retainedBytes();
+        }
+      }
     }
   }
 
-  const crimson::timeline::AnalysisSeriesTimelineDescriptor &
-  descriptor() const override {
+  const crimson::timeline::AnalysisSeriesTimelineDescriptor& descriptor()
+      const override {
     return descriptor_;
   }
 
-  crimson::timeline::AnalysisSeriesTimelineWindow
-  resolveWindow(const crimson::timeline::AnalysisSeriesTimelineRequest &request)
+  crimson::timeline::AnalysisSeriesTimelineWindow resolveWindow(
+      const crimson::timeline::AnalysisSeriesTimelineRequest& request)
       const override {
     auto failure = [&](crimson::timeline::AnalysisSeriesTimelineStatus status,
                        std::string error) {
@@ -368,10 +628,27 @@ public:
           "Analysis-series frame window is out of range");
     }
 
-    const auto &source = found->second;
-    FrameIndexBlocks index(source.frames);
-    const auto first_row = index.lowerBound(request.first_frame);
-    const auto last_row = index.lowerBound(request.last_frame + 1);
+    const auto& source = found->second;
+    std::optional<size_t> first_row;
+    std::optional<size_t> last_row;
+    if (source.resident) {
+      first_row = static_cast<size_t>(
+          std::lower_bound(source.resident->frames.begin(),
+                           source.resident->frames.end(), request.first_frame) -
+          source.resident->frames.begin());
+      last_row =
+          static_cast<size_t>(std::lower_bound(source.resident->frames.begin(),
+                                               source.resident->frames.end(),
+                                               request.last_frame + 1) -
+                              source.resident->frames.begin());
+      std::lock_guard<std::mutex> lock(metrics_mutex_);
+      ++metrics_.preloaded_window_resolves;
+    } else {
+      first_row = source.frame_index->lowerBound(request.first_frame);
+      last_row = source.frame_index->lowerBound(request.last_frame + 1);
+      std::lock_guard<std::mutex> lock(metrics_mutex_);
+      ++metrics_.paged_window_resolves;
+    }
     if (!first_row || !last_row) {
       return failure(
           crimson::timeline::AnalysisSeriesTimelineStatus::ReadFailed,
@@ -383,13 +660,25 @@ public:
     }
 
     std::vector<int64_t> frames;
-    if (!readFrames(source.frames, *first_row, *last_row, &frames)) {
+    if (source.resident) {
+      frames.assign(source.resident->frames.begin() +
+                        static_cast<std::ptrdiff_t>(*first_row),
+                    source.resident->frames.begin() +
+                        static_cast<std::ptrdiff_t>(*last_row));
+    } else if (!readFrames(source.frames, *first_row, *last_row, &frames)) {
       return failure(
           crimson::timeline::AnalysisSeriesTimelineStatus::ReadFailed,
           "Failed to read analysis-series frame indices");
     }
     std::vector<double> times;
-    if (source.times &&
+    if (source.resident && source.resident->times &&
+        !readResidentNumeric(*source.resident->times, *first_row, *last_row,
+                             &times)) {
+      return failure(
+          crimson::timeline::AnalysisSeriesTimelineStatus::ReadFailed,
+          "Failed to read preloaded analysis-series sample times");
+    }
+    if (!source.resident && source.times &&
         !readScalars(*source.times, *first_row, *last_row, &times)) {
       return failure(
           crimson::timeline::AnalysisSeriesTimelineStatus::ReadFailed,
@@ -398,11 +687,17 @@ public:
 
     std::vector<crimson::timeline::AnalysisSeriesTimelineFieldSeries> fields;
     fields.reserve(source.fields.size());
-    for (const auto &field : source.fields) {
+    for (size_t field_index = 0; field_index < source.fields.size();
+         ++field_index) {
+      const auto& field = source.fields[field_index];
       crimson::timeline::AnalysisSeriesTimelineFieldSeries values;
       values.key = field.descriptor.key;
       bool read_ok = false;
-      if (field.scalar) {
+      if (source.resident && field_index < source.resident->fields.size()) {
+        read_ok =
+            readResidentNumeric(source.resident->fields[field_index].values,
+                                *first_row, *last_row, &values.values);
+      } else if (field.scalar) {
         read_ok =
             readScalars(*field.scalar, *first_row, *last_row, &values.values);
       } else if (field.vec2) {
@@ -414,7 +709,16 @@ public:
             crimson::timeline::AnalysisSeriesTimelineStatus::ReadFailed,
             "Failed to read analysis-series trace: " + field.descriptor.key);
       }
-      if (field.mask) {
+      if (source.resident && field_index < source.resident->fields.size() &&
+          source.resident->fields[field_index].mask) {
+        const auto& mask = *source.resident->fields[field_index].mask;
+        for (size_t row = 0; row < values.values.size(); ++row) {
+          const size_t source_row = *first_row + row;
+          if (source_row >= mask.size() || mask[source_row] == 0) {
+            values.values[row] = std::numeric_limits<double>::quiet_NaN();
+          }
+        }
+      } else if (field.mask) {
         std::vector<uint8_t> mask;
         if (!readMasks(*field.mask, *first_row, *last_row, &mask)) {
           return failure(
@@ -434,15 +738,48 @@ public:
         descriptor_, request, frames, times, fields);
   }
 
-private:
+  crimson::timeline::AnalysisSeriesTimelineRepositoryMetrics metrics()
+      const override {
+    crimson::timeline::AnalysisSeriesTimelineRepositoryMetrics result;
+    {
+      std::lock_guard<std::mutex> lock(metrics_mutex_);
+      result = metrics_;
+    }
+    std::unordered_set<const FrameIndexBlocks*> visited;
+    for (const auto& source : sources_) {
+      const auto* index = source.second.frame_index.get();
+      if (!index || !visited.insert(index).second) {
+        continue;
+      }
+      const auto source_metrics = index->metrics();
+      result.frame_index_block_reads += source_metrics.frame_index_block_reads;
+      result.frame_index_cache_hits += source_metrics.frame_index_cache_hits;
+      result.frame_index_cache_evictions +=
+          source_metrics.frame_index_cache_evictions;
+      result.frame_index_source_bytes +=
+          source_metrics.frame_index_source_bytes;
+      result.cached_frame_index_bytes +=
+          source_metrics.cached_frame_index_bytes;
+      result.peak_cached_frame_index_bytes +=
+          source_metrics.peak_cached_frame_index_bytes;
+      result.maximum_frame_index_read_ms =
+          std::max(result.maximum_frame_index_read_ms,
+                   source_metrics.maximum_frame_index_read_ms);
+    }
+    return result;
+  }
+
+ private:
   crimson::timeline::AnalysisSeriesTimelineDescriptor descriptor_;
   std::unordered_map<std::string, SourceStore> sources_;
+  mutable std::mutex metrics_mutex_;
+  mutable crimson::timeline::AnalysisSeriesTimelineRepositoryMetrics metrics_;
 };
 
-std::optional<ScalarStore>
-openFirstScalar(const ArchiveContext::Impl &archive,
-                const std::vector<std::string> &candidates) {
-  for (const auto &path : candidates) {
+std::optional<ScalarStore> openFirstScalar(
+    const ArchiveContext::Impl& archive,
+    const std::vector<std::string>& candidates) {
+  for (const auto& path : candidates) {
     if (auto store = openScalarStore(archive, path)) {
       return store;
     }
@@ -450,13 +787,13 @@ openFirstScalar(const ArchiveContext::Impl &archive,
   return std::nullopt;
 }
 
-std::vector<int64_t> readAllFrames(const FrameStore &store) {
+std::vector<int64_t> readAllFrames(const FrameStore& store) {
   std::vector<int64_t> result;
   readFrames(store, 0, rowCount(store), &result);
   return result;
 }
 
-size_t resolvedFrameCount(const FrameStore &frames, size_t hint) {
+size_t resolvedFrameCount(const FrameStore& frames, size_t hint) {
   const size_t count = rowCount(frames);
   if (count == 0) {
     return hint;
@@ -476,9 +813,9 @@ std::string titleCase(std::string value) {
   return value;
 }
 
-void appendScalarField(SourceStore *source, const std::string &key,
-                       const std::string &display_name,
-                       const std::string &units, const std::string &row_key,
+void appendScalarField(SourceStore* source, const std::string& key,
+                       const std::string& display_name,
+                       const std::string& units, const std::string& row_key,
                        crimson::timeline::AnalysisSeriesTraceRole role,
                        bool default_visible, ScalarStore store,
                        std::optional<MaskStore> mask = std::nullopt) {
@@ -491,11 +828,11 @@ void appendScalarField(SourceStore *source, const std::string &key,
   source->fields.push_back(std::move(field));
 }
 
-void appendVec2Field(SourceStore *source, const std::string &key,
-                     const std::string &display_name, const std::string &units,
-                     const std::string &row_key,
+void appendVec2Field(SourceStore* source, const std::string& key,
+                     const std::string& display_name, const std::string& units,
+                     const std::string& row_key,
                      crimson::timeline::AnalysisSeriesTraceRole role,
-                     bool default_visible, const Vec2Store &store,
+                     bool default_visible, const Vec2Store& store,
                      size_t column) {
   source->descriptor.traces.push_back(
       {key, display_name, units, row_key, role, default_visible});
@@ -506,19 +843,20 @@ void appendVec2Field(SourceStore *source, const std::string &key,
   source->fields.push_back(std::move(field));
 }
 
-std::vector<std::string> speedCandidates(const std::string &track_base,
-                                         const std::string &level,
-                                         const std::string &units) {
+std::vector<std::string> speedCandidates(const std::string& track_base,
+                                         const std::string& level,
+                                         const std::string& units) {
   return {track_base + "/movement/speed/" + level + "/" + units,
           track_base + "/speed_" + level + "_" + units};
 }
 
-} // namespace
+}  // namespace
 
 std::unique_ptr<crimson::timeline::AnalysisSeriesTimelineRepository>
 OpenMotionSeriesTimelineRepository(
-    const std::shared_ptr<ArchiveContext> &archive, size_t frame_count_hint,
-    std::string *error_message) {
+    const std::shared_ptr<ArchiveContext>& archive, size_t frame_count_hint,
+    std::string* error_message,
+    crimson::data::SmallSeriesPreloadPolicy preload_policy) {
   auto fail = [&](std::string message)
       -> std::unique_ptr<crimson::timeline::AnalysisSeriesTimelineRepository> {
     if (error_message != nullptr) {
@@ -529,18 +867,18 @@ OpenMotionSeriesTimelineRepository(
   if (!archive || !archive->impl_) {
     return fail("Archive context is unavailable");
   }
-  const auto &impl = *archive->impl_;
-  const std::array<std::pair<const char *, const char *>, 3> scopes = {{
+  const auto& impl = *archive->impl_;
+  const std::array<std::pair<const char*, const char*>, 3> scopes = {{
       {"offline", "offline"},
       {"online_refined", "online_refined"},
       {"online", "online"},
   }};
-  const std::array<const char *, 4> levels = {"filtered", "smoothed", "raw",
-                                              "averaged"};
+  const std::array<const char*, 4> levels = {"filtered", "smoothed", "raw",
+                                             "averaged"};
   std::vector<SourceStore> sources;
   size_t resolved_frame_count = frame_count_hint;
 
-  for (const auto &[scope_name, category_name] : scopes) {
+  for (const auto& [scope_name, category_name] : scopes) {
     const std::string scope =
         "analysis/track_kinematics_runs/" + std::string(scope_name);
     const std::string run = latestRun(impl, scope);
@@ -584,15 +922,16 @@ OpenMotionSeriesTimelineRepository(
         positions = openVec2Store(impl, track_base + "/positions_px");
         position_units = "px";
       }
+      auto frame_index = std::make_shared<FrameIndexBlocks>(*frames);
 
-      for (const char *level_name : levels) {
+      for (const char* level_name : levels) {
         const std::string level = level_name;
-        auto primary = openFirstScalar(
-            impl, speedCandidates(track_base, level, "mm"));
+        auto primary =
+            openFirstScalar(impl, speedCandidates(track_base, level, "mm"));
         std::string speed_units = "mm/s";
         if (!primary) {
-          primary = openFirstScalar(
-              impl, speedCandidates(track_base, level, "px"));
+          primary =
+              openFirstScalar(impl, speedCandidates(track_base, level, "px"));
           speed_units = "px/s";
         }
         if (!primary || rowCount(*primary) != rowCount(*frames)) {
@@ -601,6 +940,7 @@ OpenMotionSeriesTimelineRepository(
 
         SourceStore source;
         source.frames = *frames;
+        source.frame_index = frame_index;
         source.times = times;
         source.descriptor.key = std::string(scope_name) + "/" + run + "/" +
                                 track_name + "/" + level;
@@ -670,7 +1010,7 @@ OpenMotionSeriesTimelineRepository(
   descriptor.title = "Motion";
   descriptor.frame_count = resolved_frame_count;
   descriptor.default_source = sources.front().descriptor.key;
-  for (const auto &source : sources) {
+  for (const auto& source : sources) {
     descriptor.sources.push_back(source.descriptor);
   }
   if (descriptor.frame_count == 0) {
@@ -679,14 +1019,15 @@ OpenMotionSeriesTimelineRepository(
   if (error_message != nullptr) {
     error_message->clear();
   }
-  return std::make_unique<TensorStoreRepository>(std::move(descriptor),
-                                                 std::move(sources));
+  return std::make_unique<TensorStoreRepository>(
+      std::move(descriptor), std::move(sources), preload_policy);
 }
 
 std::unique_ptr<crimson::timeline::AnalysisSeriesTimelineRepository>
 OpenTailKinematicsTimelineRepository(
-    const std::shared_ptr<ArchiveContext> &archive, size_t frame_count_hint,
-    const std::string &requested_run, std::string *error_message) {
+    const std::shared_ptr<ArchiveContext>& archive, size_t frame_count_hint,
+    const std::string& requested_run, std::string* error_message,
+    crimson::data::SmallSeriesPreloadPolicy preload_policy) {
   auto fail = [&](std::string message)
       -> std::unique_ptr<crimson::timeline::AnalysisSeriesTimelineRepository> {
     if (error_message != nullptr) {
@@ -697,7 +1038,7 @@ OpenTailKinematicsTimelineRepository(
   if (!archive || !archive->impl_) {
     return fail("Archive context is unavailable");
   }
-  const auto &impl = *archive->impl_;
+  const auto& impl = *archive->impl_;
   const std::string group = "analysis/tail_kinematics_runs";
   const std::string run =
       requested_run.empty() ? latestRun(impl, group) : requested_run;
@@ -718,6 +1059,7 @@ OpenTailKinematicsTimelineRepository(
 
   SourceStore source;
   source.frames = *frames;
+  source.frame_index = std::make_shared<FrameIndexBlocks>(*frames);
   source.times = openScalarStore(impl, base + "/time_seconds");
   source.descriptor.key = run;
   source.descriptor.display_name = run;
@@ -727,8 +1069,8 @@ OpenTailKinematicsTimelineRepository(
   source.descriptor.variant = "scalar_traces";
   source.descriptor.sample_count = rowCount(*frames);
 
-  auto append = [&](const char *path, const char *display, const char *units,
-                    const char *row_key,
+  auto append = [&](const char* path, const char* display, const char* units,
+                    const char* row_key,
                     crimson::timeline::AnalysisSeriesTraceRole role,
                     bool visible) {
     auto values = openScalarStore(impl, base + "/" + path);
@@ -766,7 +1108,8 @@ OpenTailKinematicsTimelineRepository(
     error_message->clear();
   }
   return std::make_unique<TensorStoreRepository>(
-      std::move(descriptor), std::vector<SourceStore>{std::move(source)});
+      std::move(descriptor), std::vector<SourceStore>{std::move(source)},
+      preload_policy);
 }
 
-} // namespace crimson::zarr
+}  // namespace crimson::zarr

@@ -1,18 +1,28 @@
 #include "apple_video_viewer_ui.h"
 
+#include "IconsForkAwesome.h"
 #include "imgui.h"
 #include "implot.h"
+#include "platform/macos/apple_workspace_layout.h"
 
+#import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <mach/mach.h>
 
 #include <algorithm>
+#include <array>
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <filesystem>
 #include <string>
 
 namespace {
+
+crimson::macos::workspace::LayoutProfile g_workspace_layout_profile =
+    crimson::macos::workspace::LayoutProfile::Standard;
 
 void showItemTooltip(const char *text) {
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
@@ -38,8 +48,7 @@ double processMemoryMiB() {
                 &count) != KERN_SUCCESS) {
     return 0.0;
   }
-  return static_cast<double>(task_info_data.phys_footprint) /
-         (1024.0 * 1024.0);
+  return static_cast<double>(task_info_data.phys_footprint) / (1024.0 * 1024.0);
 }
 
 AppleViewerThermalState currentThermalState() {
@@ -63,17 +72,63 @@ ImU32 overlayColor(crimson::overlay::Color color) {
                   static_cast<int>(std::lround(color.alpha * 255.0f)));
 }
 
-bool seekViewer(LogicalPlaybackClock &clock,
-                AppleVideoPlaybackBuffer &playback, int64_t frame_number) {
-  clock.pause();
-  clock.seek(frame_number);
+ImU32 polarColor(const crimson::polar::ChaserDistancePolarRgba &color) {
+  return ImGui::ColorConvertFloat4ToU32(
+      ImVec4(static_cast<float>(std::clamp(color.red, 0.0, 1.0)),
+             static_cast<float>(std::clamp(color.green, 0.0, 1.0)),
+             static_cast<float>(std::clamp(color.blue, 0.0, 1.0)),
+             static_cast<float>(std::clamp(color.alpha, 0.0, 1.0))));
+}
+
+ImU32 stimulusOverlayColor(
+    const crimson::stimulus::StimulusCameraOverlayColor &color) {
+  return ImGui::ColorConvertFloat4ToU32(
+      ImVec4(static_cast<float>(std::clamp(color.red, 0.0, 1.0)),
+             static_cast<float>(std::clamp(color.green, 0.0, 1.0)),
+             static_cast<float>(std::clamp(color.blue, 0.0, 1.0)),
+             static_cast<float>(std::clamp(color.alpha, 0.0, 1.0))));
+}
+
+bool seekViewer(LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
+                int64_t frame_number) {
+  clock.apply(crimson::playback::PlaybackTransportCommand::pause());
+  const auto transition = clock.apply(
+      crimson::playback::PlaybackTransportCommand::seek(frame_number));
+  if (!transition.accepted) {
+    return false;
+  }
   std::string error;
-  if (!playback.requestSeek(frame_number, &error)) {
+  if (!playback.requestSeek(transition.target_frame, &error)) {
     std::fprintf(stderr, "[AppleVideo] Seek request failed: %s\n",
                  error.c_str());
     return false;
   }
   return true;
+}
+
+crimson::workspace::WorkspaceCapabilities
+viewerPlaybackCapabilities(const LogicalPlaybackClock &clock) {
+  crimson::workspace::WorkspaceCapabilities capabilities;
+  capabilities.video_loaded = clock.frameCount() > 0;
+  capabilities.playback_ready = clock.configured() && clock.controlsEnabled();
+  capabilities.playing = clock.isPlaying();
+  return capabilities;
+}
+
+bool applyViewerPlaybackIntent(const crimson::workspace::PlaybackIntent &intent,
+                               LogicalPlaybackClock &clock,
+                               AppleVideoPlaybackBuffer &playback) {
+  switch (intent.kind) {
+  case crimson::workspace::PlaybackIntentKind::Play:
+    clock.apply(crimson::playback::PlaybackTransportCommand::play());
+    return false;
+  case crimson::workspace::PlaybackIntentKind::Pause:
+    clock.apply(crimson::playback::PlaybackTransportCommand::pause());
+    return true;
+  case crimson::workspace::PlaybackIntentKind::Seek:
+    return seekViewer(clock, playback, intent.target_frame);
+  }
+  return false;
 }
 
 AppleMetalVideoViewport fitVideoViewport(double x, double y, double width,
@@ -82,13 +137,12 @@ AppleMetalVideoViewport fitVideoViewport(double x, double y, double width,
   if (width <= 0.0 || height <= 0.0 || info.width <= 0 || info.height <= 0) {
     return {};
   }
-  const double scale =
-      std::min(width / static_cast<double>(info.width),
-               height / static_cast<double>(info.height));
+  const double scale = std::min(width / static_cast<double>(info.width),
+                                height / static_cast<double>(info.height));
   const double fitted_width = info.width * scale;
   const double fitted_height = info.height * scale;
-  return {x + (width - fitted_width) * 0.5,
-          y + (height - fitted_height) * 0.5, fitted_width, fitted_height};
+  return {x + (width - fitted_width) * 0.5, y + (height - fitted_height) * 0.5,
+          fitted_width, fitted_height};
 }
 
 const char *cropSourceName(crimson::crop::CropSourceKind source) {
@@ -212,12 +266,219 @@ timelineStatusName(crimson::timeline::AnalysisSeriesTimelineStatus status) {
   return "unavailable";
 }
 
-double transportHeight(bool has_stimulus, bool has_crop) {
-  return 108.0 + (has_stimulus ? 24.0 : 0.0) +
-         (has_crop ? 48.0 : 0.0);
+crimson::macos::workspace::MaintainedWorkspaceLayout currentWorkspaceLayout() {
+  const ImGuiViewport *viewport = ImGui::GetMainViewport();
+  return crimson::macos::workspace::makeMaintainedWorkspaceLayout(
+      viewport->WorkSize.x, viewport->WorkSize.y, g_workspace_layout_profile);
 }
 
-}  // namespace
+void setFirstUseGeometry(const crimson::macos::workspace::Rect &rect) {
+  const ImGuiViewport *viewport = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(
+      ImVec2(viewport->WorkPos.x + static_cast<float>(rect.x),
+             viewport->WorkPos.y + static_cast<float>(rect.y)),
+      ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(
+      ImVec2(static_cast<float>(rect.width), static_cast<float>(rect.height)),
+      ImGuiCond_FirstUseEver);
+}
+
+void constrainCurrentWindowToWorkspace() {
+  const ImGuiViewport *viewport = ImGui::GetMainViewport();
+  const ImVec2 position = ImGui::GetWindowPos();
+  const ImVec2 size = ImGui::GetWindowSize();
+  const auto constrained = crimson::macos::workspace::constrainToBounds(
+      {position.x, position.y, size.x, size.y},
+      {viewport->WorkPos.x, viewport->WorkPos.y, viewport->WorkSize.x,
+       viewport->WorkSize.y});
+  if (!constrained.valid()) {
+    return;
+  }
+  if (std::abs(constrained.x - position.x) > 0.5 ||
+      std::abs(constrained.y - position.y) > 0.5) {
+    ImGui::SetWindowPos(ImVec2(static_cast<float>(constrained.x),
+                               static_cast<float>(constrained.y)),
+                        ImGuiCond_Always);
+  }
+  if (std::abs(constrained.width - size.x) > 0.5 ||
+      std::abs(constrained.height - size.y) > 0.5) {
+    ImGui::SetWindowSize(ImVec2(static_cast<float>(constrained.width),
+                                static_cast<float>(constrained.height)),
+                         ImGuiCond_Always);
+  }
+}
+
+AppleMetalVideoViewport contentViewport(const ImVec2 &position,
+                                        const ImVec2 &size,
+                                        const AppleVideoAssetInfo &info) {
+  const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
+  const crimson::macos::workspace::Rect fitted =
+      crimson::macos::workspace::fitMedia(
+          {static_cast<double>(position.x * scale.x),
+           static_cast<double>(position.y * scale.y),
+           static_cast<double>(size.x * scale.x),
+           static_cast<double>(size.y * scale.y)},
+          info.width, info.height);
+  return {fitted.x, fitted.y, fitted.width, fitted.height};
+}
+
+std::string formatTransportTime(double seconds_value) {
+  int seconds = static_cast<int>(std::max(0.0, seconds_value));
+  const int hours = seconds / 3600;
+  seconds -= hours * 3600;
+  const int minutes = seconds / 60;
+  seconds -= minutes * 60;
+  char buffer[32];
+  if (hours > 0) {
+    std::snprintf(buffer, sizeof(buffer), "%d:%02d:%02d", hours, minutes,
+                  seconds);
+  } else {
+    std::snprintf(buffer, sizeof(buffer), "%02d:%02d", minutes, seconds);
+  }
+  return buffer;
+}
+
+std::optional<std::string> chooseNativePath(const std::string &title,
+                                            const std::string &start_folder,
+                                            bool directory,
+                                            NSArray<NSString *> *extensions) {
+  NSOpenPanel *panel = [NSOpenPanel openPanel];
+  panel.title = [NSString stringWithUTF8String:title.c_str()];
+  panel.canChooseDirectories = directory ? YES : NO;
+  panel.canChooseFiles = directory ? NO : YES;
+  panel.allowsMultipleSelection = NO;
+  if (!start_folder.empty()) {
+    panel.directoryURL = [NSURL
+        fileURLWithPath:[NSString stringWithUTF8String:start_folder.c_str()]];
+  }
+  if (extensions != nil) {
+    NSMutableArray<UTType *> *content_types = [NSMutableArray array];
+    for (NSString *extension in extensions) {
+      UTType *content_type = [UTType typeWithFilenameExtension:extension];
+      if (content_type != nil) {
+        [content_types addObject:content_type];
+      }
+    }
+    panel.allowedContentTypes = content_types;
+  }
+  if ([panel runModal] != NSModalResponseOK || panel.URL == nil) {
+    return std::nullopt;
+  }
+  return std::string(panel.URL.path.UTF8String);
+}
+
+void copyPathBuffer(char *destination, size_t capacity,
+                    const std::string &value) {
+  if (destination == nullptr || capacity == 0) {
+    return;
+  }
+  std::snprintf(destination, capacity, "%s", value.c_str());
+}
+
+void initializePathEditor(AppleFileBrowserState *state) {
+  copyPathBuffer(state->default_start_path, sizeof(state->default_start_path),
+                 state->path_config.default_start_path);
+  state->preferred_root_count =
+      std::min(state->path_config.preferred_roots.size(), size_t{8});
+  for (size_t index = 0; index < 8; ++index) {
+    const std::string value = index < state->preferred_root_count
+                                  ? state->path_config.preferred_roots[index]
+                                  : std::string{};
+    copyPathBuffer(state->preferred_roots[index],
+                   sizeof(state->preferred_roots[index]), value);
+  }
+  state->path_editor_initialized = true;
+}
+
+void drawPathEditor(AppleFileBrowserState *state,
+                    AppleFileBrowserResult *result) {
+  if (state->path_editor_open) {
+    ImGui::OpenPopup("Edit Path Presets");
+    state->path_editor_open = false;
+  }
+  ImGui::SetNextWindowSize(ImVec2(900.0f, 500.0f), ImGuiCond_FirstUseEver);
+  if (!ImGui::BeginPopupModal("Edit Path Presets", nullptr,
+                              ImGuiWindowFlags_NoResize)) {
+    return;
+  }
+  if (!state->path_editor_initialized) {
+    initializePathEditor(state);
+  }
+  ImGui::TextUnformatted("Default start path");
+  ImGui::SetNextItemWidth(-1.0f);
+  ImGui::InputText("##default-start-path", state->default_start_path,
+                   sizeof(state->default_start_path));
+  ImGui::SeparatorText("Preferred roots");
+  size_t remove_index = 8;
+  for (size_t index = 0; index < state->preferred_root_count; ++index) {
+    ImGui::PushID(static_cast<int>(index));
+    ImGui::SetNextItemWidth(-42.0f);
+    ImGui::InputText("##root", state->preferred_roots[index],
+                     sizeof(state->preferred_roots[index]));
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FK_TRASH)) {
+      remove_index = index;
+    }
+    showItemTooltip("Remove path preset");
+    ImGui::PopID();
+  }
+  if (remove_index < state->preferred_root_count) {
+    for (size_t index = remove_index; index + 1 < state->preferred_root_count;
+         ++index) {
+      std::memcpy(state->preferred_roots[index],
+                  state->preferred_roots[index + 1],
+                  sizeof(state->preferred_roots[index]));
+    }
+    --state->preferred_root_count;
+  }
+  if (state->preferred_root_count < 8 && ImGui::Button(ICON_FK_PLUS " Add")) {
+    copyPathBuffer(state->preferred_roots[state->preferred_root_count],
+                   sizeof(state->preferred_roots[state->preferred_root_count]),
+                   state->start_folder);
+    ++state->preferred_root_count;
+  }
+  ImGui::Separator();
+  auto apply_editor = [&]() -> bool {
+    UiPathConfig edited;
+    edited.default_start_path = state->default_start_path;
+    for (size_t index = 0; index < state->preferred_root_count; ++index) {
+      edited.preferred_roots.emplace_back(state->preferred_roots[index]);
+    }
+    UiPathConfig normalized;
+    if (!NormalizeUiPathConfig(edited, normalized, result->error)) {
+      return false;
+    }
+    state->path_config = std::move(normalized);
+    state->start_folder = state->path_config.default_start_path;
+    initializePathEditor(state);
+    return true;
+  };
+  if (ImGui::Button("Apply") && apply_editor()) {
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::SameLine();
+  if (ImGui::Button(ICON_FK_FLOPPY_O " Save") && apply_editor()) {
+    std::filesystem::path saved_path;
+    if (SaveUserUiPathConfig(state->path_config, saved_path, result->error)) {
+      state->path_config.loaded_from = saved_path.string();
+      state->persisted_path_config = state->path_config;
+      ImGui::CloseCurrentPopup();
+    }
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Reset")) {
+    state->path_config = state->persisted_path_config;
+    state->start_folder = state->path_config.default_start_path;
+    initializePathEditor(state);
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Close")) {
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::EndPopup();
+}
+
+} // namespace
 
 void sampleAppleVideoViewerSystemMetrics(AppleVideoViewerStats &stats) {
   stats.process_memory_mib = processMemoryMiB();
@@ -242,212 +503,477 @@ const char *appleViewerThermalStateName(AppleViewerThermalState state) {
   return "unknown";
 }
 
-AppleVideoControlResult drawAppleVideoControls(
-    LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
+AppleFileBrowserResult drawAppleFileBrowserWindow(
+    AppleFileBrowserState *state, const std::string &video_path,
+    const std::string &zarr_path, const std::string &stimulus_video_path,
+    double average_frame_ms, LogicalPlaybackClock *clock, bool interactive) {
+  AppleFileBrowserResult result;
+  if (state == nullptr) {
+    result.error = "File Browser state is unavailable";
+    return result;
+  }
+  const std::string &effective_zarr_path =
+      state->selected_zarr_path.empty() ? zarr_path : state->selected_zarr_path;
+  setFirstUseGeometry(currentWorkspaceLayout().file_browser);
+  if (!ImGui::Begin("File Browser", nullptr, ImGuiWindowFlags_MenuBar)) {
+    ImGui::End();
+    return result;
+  }
+  if (ImGui::BeginMenuBar()) {
+    if (ImGui::BeginMenu("File")) {
+      if (ImGui::MenuItem("Open...", nullptr, false, interactive)) {
+        const auto path =
+            chooseNativePath("Choose Media", state->start_folder, false, @[
+              @"mp4", @"mov", @"m4v", @"tiff", @"tif", @"jpeg", @"jpg", @"png"
+            ]);
+        if (path) {
+          result.relaunch = {true,
+                             *path,
+                             effective_zarr_path,
+                             {},
+                             state->video_buffer_capacity,
+                             state->stimulus_buffer_capacity};
+        }
+      }
+      if (ImGui::MenuItem("Load Zarr Archive...", nullptr, false,
+                          interactive)) {
+        const auto path = chooseNativePath("Choose Zarr Archive Directory",
+                                           state->start_folder, true, nil);
+        if (path) {
+          result.zarr_open_request = *path;
+        }
+      }
+      if (ImGui::MenuItem("Load Stimulus Video...", nullptr, false,
+                          interactive && !video_path.empty() &&
+                              !effective_zarr_path.empty())) {
+        const auto path =
+            chooseNativePath("Choose Stimulus Video", state->start_folder,
+                             false, @[ @"mp4", @"mov", @"m4v" ]);
+        if (path) {
+          result.relaunch = {true,
+                             video_path,
+                             effective_zarr_path,
+                             *path,
+                             state->video_buffer_capacity,
+                             state->stimulus_buffer_capacity};
+        }
+      }
+      ImGui::Separator();
+      if (ImGui::BeginMenu("Path Preset", interactive)) {
+        for (const auto &path : state->path_config.preferred_roots) {
+          if (ImGui::MenuItem(path.c_str(), nullptr,
+                              state->start_folder == path)) {
+            state->start_folder = path;
+          }
+        }
+        if (!state->path_config.preferred_roots.empty()) {
+          ImGui::Separator();
+        }
+        if (ImGui::MenuItem("Edit Path Presets...")) {
+          state->path_editor_open = true;
+          state->path_editor_initialized = false;
+        }
+        ImGui::EndMenu();
+      }
+      ImGui::EndMenu();
+    }
+    ImGui::EndMenuBar();
+  }
+  drawPathEditor(state, &result);
+  if (!interactive) {
+    ImGui::BeginDisabled();
+  }
+  const double fps = average_frame_ms > 0.0 ? 1000.0 / average_frame_ms : 0.0;
+  ImGui::Text("Application average %.2f ms/frame (%.1f FPS)", average_frame_ms,
+              fps);
+  ImGui::BeginDisabled();
+  ImGui::SetNextItemWidth(
+      std::max(120.0f, ImGui::GetContentRegionAvail().x * 0.62f));
+  if (ImGui::BeginCombo("Buffer Type", "VideoToolbox CVPixelBuffer")) {
+    ImGui::Selectable("VideoToolbox CVPixelBuffer", true);
+    ImGui::EndCombo();
+  }
+  ImGui::EndDisabled();
+  ImGui::SetNextItemWidth(
+      std::max(120.0f, ImGui::GetContentRegionAvail().x * 0.62f));
+  ImGui::InputInt("Buffer Size", &state->video_buffer_capacity, 2, 16);
+  state->video_buffer_capacity =
+      std::clamp(state->video_buffer_capacity, 2, 256);
+  ImGui::BeginDisabled();
+  ImGui::SetNextItemWidth(
+      std::max(120.0f, ImGui::GetContentRegionAvail().x * 0.62f));
+  if (ImGui::BeginCombo("Playback Preview Scale", "Full Resolution (1x)")) {
+    ImGui::Selectable("Full Resolution (1x)", true);
+    ImGui::EndCombo();
+  }
+  showItemTooltip(
+      "The current AVFoundation provider publishes full-resolution frames");
+  ImGui::SetNextItemWidth(
+      std::max(120.0f, ImGui::GetContentRegionAvail().x * 0.62f));
+  if (ImGui::BeginCombo("Playback Renderer", "Metal")) {
+    ImGui::Selectable("Metal", true);
+    ImGui::EndCombo();
+  }
+  ImGui::EndDisabled();
+  ImGui::TextDisabled("Decoder: AVFoundation / VideoToolbox");
+  ImGui::SetNextItemWidth(
+      std::max(120.0f, ImGui::GetContentRegionAvail().x * 0.62f));
+  ImGui::InputInt("Stimulus Buffer Size", &state->stimulus_buffer_capacity, 2,
+                  8);
+  state->stimulus_buffer_capacity =
+      std::clamp(state->stimulus_buffer_capacity, 2, 64);
+  ImGui::TextDisabled("Stimulus Buffer Type: VideoToolbox CVPixelBuffer");
+  ImGui::TextDisabled("Stimulus Decode Backend: AVFoundation / VideoToolbox");
+  if (video_path.empty()) {
+    ImGui::TextDisabled("No recording loaded");
+  } else {
+    ImGui::TextWrapped("Video: %s", video_path.c_str());
+  }
+  if (!effective_zarr_path.empty()) {
+    ImGui::TextWrapped("Zarr: %s", effective_zarr_path.c_str());
+  }
+  if (!stimulus_video_path.empty()) {
+    ImGui::TextWrapped("Stimulus override: %s", stimulus_video_path.c_str());
+  }
+  if (clock != nullptr && clock->frameCount() > 0) {
+    ImGui::InputInt("Seek Step", &state->seek_step, 10, 100);
+    state->seek_step = std::max(1, state->seek_step);
+    ImGui::InputInt("Seek Accurate", &state->accurate_seek_frame, 1, 100);
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+      result.accurate_seek_frame = state->accurate_seek_frame;
+    }
+    if (clock->isPlaying()) {
+      float playback_rate = static_cast<float>(clock->playbackRate());
+      if (ImGui::SliderFloat("Set Playback Speed", &playback_rate, 0.1f, 1.0f,
+                             "%.1fx")) {
+        clock->apply(crimson::playback::PlaybackTransportCommand::setRate(
+            playback_rate));
+      }
+      ImGui::Text("Video FPS: %.1f", clock->framesPerSecond());
+      ImGui::Text("Target playback: %.2fx", clock->playbackRate());
+    }
+  }
+  if (!interactive) {
+    ImGui::EndDisabled();
+  }
+  ImGui::End();
+  return result;
+}
+
+AppleDiagnosticsResult drawAppleDiagnosticsWindow(
     const AppleVideoViewerStats &stats,
+    const AppleVideoPlaybackBufferMetrics &metrics, size_t buffer_capacity,
+    bool playing, const std::string &dump_root,
+    const std::string &decode_debug_status,
     const crimson::playback::StimulusPresentationMetrics *stimulus_metrics,
-    AppleCropViewerControls *crop_controls, bool analysis_timeline_available,
+    bool interactive) {
+  AppleDiagnosticsResult result;
+  setFirstUseGeometry(currentWorkspaceLayout().diagnostics);
+  if (!ImGui::Begin("Diagnostics")) {
+    ImGui::End();
+    return result;
+  }
+  ImGui::Text("Runtime State: %s", playing ? "playing" : "paused");
+  ImGui::Text("Display target frame: %lld",
+              static_cast<long long>(stats.requested_frame));
+  ImGui::Text("Presented frame: %lld",
+              static_cast<long long>(stats.presented_frame));
+  ImGui::Text("Buffer frames: valid=%zu capacity=%zu", metrics.buffered_frames,
+              buffer_capacity);
+  ImGui::Separator();
+  ImGui::Text("Latest decoded: %lld",
+              static_cast<long long>(metrics.last_decoded_frame));
+  ImGui::Text(
+      "Decoded=%llu evicted=%llu catch-up=%llu",
+      static_cast<unsigned long long>(metrics.decoded_frames),
+      static_cast<unsigned long long>(metrics.evicted_frames),
+      static_cast<unsigned long long>(metrics.catchup_discarded_frames));
+  ImGui::Text("PTS error: %+.3f frames", stats.pts_error_frames);
+  ImGui::Text("Startup %.1f ms  Seek %.1f ms", metrics.startup_ms,
+              metrics.last_seek_ms);
+  ImGui::Text("Process %.0f MiB (peak %.0f)  Thermal %s",
+              stats.process_memory_mib, stats.peak_process_memory_mib,
+              appleViewerThermalStateName(stats.thermal_state));
+  if (stimulus_metrics != nullptr) {
+    ImGui::SeparatorText("Stimulus Alignment");
+    ImGui::Text("Target %d  presented %d  skew %lld",
+                stimulus_metrics->last_target_stimulus_frame,
+                stimulus_metrics->presented_stimulus_frame,
+                static_cast<long long>(stimulus_metrics->camera_skew_frames));
+  }
+  ImGui::SeparatorText("Decode Debug");
+  if (!interactive) {
+    ImGui::BeginDisabled();
+  }
+  if (ImGui::Button("Dump Decode Buffers")) {
+    result.request_dump_decode_buffers = true;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Random Seek + Dump")) {
+    result.request_random_seek_dump = true;
+  }
+  if (!interactive) {
+    ImGui::EndDisabled();
+  }
+  ImGui::TextWrapped("Output dir: CRIMSON_BUFFER_DUMP_DIR (default %s)",
+                     dump_root.c_str());
+  if (!decode_debug_status.empty()) {
+    ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "%s",
+                       decode_debug_status.c_str());
+  }
+  ImGui::End();
+  return result;
+}
+
+bool drawAppleFramesInBufferWindow(
+    const AppleVideoViewerStats &stats,
+    const AppleVideoPlaybackBufferMetrics &metrics, size_t buffer_capacity,
+    const std::vector<int64_t> &buffered_frame_numbers,
+    LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
+    bool interactive) {
+  bool discontinuity = false;
+  setFirstUseGeometry(currentWorkspaceLayout().frames_in_buffer);
+  if (!ImGui::Begin("Frames in the buffer")) {
+    ImGui::End();
+    return false;
+  }
+  ImGui::Text("Valid frames: %zu / %zu", metrics.buffered_frames,
+              buffer_capacity);
+  ImGui::Text("Selected/displayed frame: %lld",
+              static_cast<long long>(stats.presented_frame));
+  ImGui::Text("Display target: %lld",
+              static_cast<long long>(stats.requested_frame));
+  ImGui::Text("Newest buffered frame: %lld",
+              static_cast<long long>(metrics.last_decoded_frame));
+  ImGui::Separator();
+  if (buffered_frame_numbers.empty()) {
+    ImGui::TextDisabled("No decoded frames are buffered.");
+  } else {
+    for (const int64_t frame : buffered_frame_numbers) {
+      const bool selected = frame == stats.presented_frame;
+      if (ImGui::Selectable(("Frame " + std::to_string(frame)).c_str(),
+                            selected) &&
+          interactive) {
+        discontinuity = seekViewer(clock, playback, frame) || discontinuity;
+      }
+    }
+  }
+  ImGui::End();
+  if (interactive && !ImGui::GetIO().WantTextInput) {
+    const int direction = ImGui::IsKeyPressed(ImGuiKey_Comma, false)    ? -1
+                          : ImGui::IsKeyPressed(ImGuiKey_Period, false) ? 1
+                                                                        : 0;
+    if (direction != 0) {
+      const int64_t current = stats.presented_frame >= 0
+                                  ? stats.presented_frame
+                                  : stats.requested_frame;
+      const auto target = crimson::workspace::adjacentBufferedFrame(
+          buffered_frame_numbers, current, direction);
+      if (target) {
+        discontinuity = seekViewer(clock, playback, *target) || discontinuity;
+      }
+    }
+  }
+  return discontinuity;
+}
+
+AppleVideoControlResult drawAppleCameraViewWindow(
+    const std::string &camera_name, LogicalPlaybackClock &clock,
+    AppleVideoPlaybackBuffer &playback, const AppleVideoViewerStats &stats,
+    AppleMetalVideoViewport *viewport, AppleCameraViewState *view_state,
     bool interactive) {
   AppleVideoControlResult result;
-  const ImGuiViewport *viewport = ImGui::GetMainViewport();
-  const float panel_height = static_cast<float>(transportHeight(
-      stimulus_metrics != nullptr, crop_controls != nullptr));
-  ImGui::SetNextWindowPos(
-      ImVec2(viewport->WorkPos.x,
-             viewport->WorkPos.y + viewport->WorkSize.y - panel_height));
-  ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x, panel_height));
-  ImGui::SetNextWindowBgAlpha(0.94f);
-  const ImGuiWindowFlags flags =
-      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-      ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings;
-  ImGui::Begin("Video transport", nullptr, flags);
+  if (viewport == nullptr || view_state == nullptr) {
+    return result;
+  }
+  *viewport = {};
+  setFirstUseGeometry(currentWorkspaceLayout().camera);
+  ImGui::SetNextWindowBgAlpha(0.0f);
+  const std::string window_title = camera_name + "###crimson-camera-view-v2";
+  const bool expanded = ImGui::Begin(window_title.c_str(), nullptr,
+                                     ImGuiWindowFlags_NoBackground);
+  constrainCurrentWindowToWorkspace();
+  if (!expanded) {
+    ImGui::End();
+    return result;
+  }
   if (!interactive) {
     ImGui::BeginDisabled();
   }
 
-  if (ImGui::Button(clock.isPlaying() ? "||" : ">", ImVec2(34.0f, 28.0f))) {
-    if (clock.isPlaying()) {
-      clock.pause();
-      result.camera_discontinuity = true;
-    } else {
-      clock.play();
+  const float transport_height = ImGui::GetFrameHeightWithSpacing();
+  const ImVec2 available = ImGui::GetContentRegionAvail();
+  const ImVec2 media_position = ImGui::GetCursorScreenPos();
+  const ImVec2 media_size(std::max(1.0f, available.x),
+                          std::max(1.0f, available.y - transport_height));
+  ImGui::InvisibleButton("##camera-presentation", media_size);
+  *viewport = contentViewport(media_position, media_size, playback.info());
+  if (interactive && ImGui::IsItemHovered()) {
+    ImGuiIO &io = ImGui::GetIO();
+    if (io.MouseWheel != 0.0f) {
+      const double anchor_x = std::clamp(
+          (io.MousePos.x - media_position.x) / media_size.x, 0.0f, 1.0f);
+      const double anchor_y = std::clamp(
+          (io.MousePos.y - media_position.y) / media_size.y, 0.0f, 1.0f);
+      view_state->source_region = crimson::workspace::zoomCameraView(
+          view_state->source_region, std::pow(1.2, io.MouseWheel), anchor_x,
+          anchor_y);
+    }
+    if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
+      view_state->source_region = crimson::workspace::panCameraView(
+          view_state->source_region,
+          -static_cast<double>(io.MouseDelta.x) / media_size.x *
+              view_state->source_region.width,
+          -static_cast<double>(io.MouseDelta.y) / media_size.y *
+              view_state->source_region.height);
+    }
+    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+      view_state->source_region = crimson::workspace::autofitCameraView();
     }
   }
-  showItemTooltip(clock.isPlaying() ? "Pause" : "Play");
-  ImGui::SameLine();
-  if (ImGui::ArrowButton("step-back", ImGuiDir_Left)) {
-    result.camera_discontinuity =
-        seekViewer(clock, playback,
-                   std::max<int64_t>(0, clock.requestedFrame() - 1)) ||
-        result.camera_discontinuity;
+
+  auto apply_command = [&](crimson::workspace::Command command,
+                           int64_t magnitude = 1,
+                           std::optional<int64_t> target = std::nullopt) {
+    const auto intent = crimson::workspace::makePlaybackIntent(
+        command, viewerPlaybackCapabilities(clock), clock.requestedFrame(),
+        clock.frameCount(), target, magnitude);
+    if (intent.has_value()) {
+      result.camera_discontinuity =
+          applyViewerPlaybackIntent(*intent, clock, playback) ||
+          result.camera_discontinuity;
+    }
+  };
+
+  const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+  if (ImGui::Button(ICON_FK_FAST_BACKWARD)) {
+    apply_command(crimson::workspace::Command::StepBackward, 10);
+  }
+  showItemTooltip("Back 10 frames");
+  ImGui::SameLine(0.0f, spacing);
+  if (ImGui::Button(ICON_FK_STEP_BACKWARD)) {
+    apply_command(crimson::workspace::Command::StepBackward);
   }
   showItemTooltip("Previous frame");
-  ImGui::SameLine();
-  if (ImGui::ArrowButton("step-forward", ImGuiDir_Right)) {
-    result.camera_discontinuity =
-        seekViewer(clock, playback,
-                   std::min<int64_t>(clock.frameCount() - 1,
-                                     clock.requestedFrame() + 1)) ||
-        result.camera_discontinuity;
+  ImGui::SameLine(0.0f, spacing);
+  const ImVec4 play_color = clock.isPlaying() ? ImVec4(0.8f, 0.3f, 0.3f, 1.0f)
+                                              : ImVec4(0.2f, 0.6f, 0.2f, 1.0f);
+  ImGui::PushStyleColor(ImGuiCol_Button, play_color);
+  if (ImGui::Button(clock.isPlaying() ? ICON_FK_PAUSE : ICON_FK_PLAY)) {
+    apply_command(crimson::workspace::Command::TogglePlayback);
+  }
+  ImGui::PopStyleColor();
+  showItemTooltip(clock.isPlaying() ? "Pause" : "Play");
+  ImGui::SameLine(0.0f, spacing);
+  if (ImGui::Button(ICON_FK_STEP_FORWARD)) {
+    apply_command(crimson::workspace::Command::StepForward);
   }
   showItemTooltip("Next frame");
+  ImGui::SameLine(0.0f, spacing);
+  if (ImGui::Button(ICON_FK_FAST_FORWARD)) {
+    apply_command(crimson::workspace::Command::StepForward, 10);
+  }
+  showItemTooltip("Forward 10 frames");
   ImGui::SameLine();
-  ImGui::Text("Frame %lld / %lld",
-              static_cast<long long>(stats.requested_frame),
-              static_cast<long long>(clock.frameCount() - 1));
-  ImGui::SameLine();
-  if (ImGui::Button("Overlays")) {
-    result.toggle_overlay_controls = true;
-  }
-  showItemTooltip("Open or close overlay controls");
-  ImGui::SameLine();
-  if (!analysis_timeline_available) {
-    ImGui::BeginDisabled();
-  }
-  if (ImGui::Button("Timeline")) {
-    result.toggle_analysis_timeline = true;
-  }
-  showItemTooltip("Open or close analysis timelines");
-  if (!analysis_timeline_available) {
-    ImGui::EndDisabled();
-  }
 
   static int timeline_frame = 0;
   static bool timeline_active = false;
   if (!timeline_active) {
     timeline_frame = static_cast<int>(stats.requested_frame);
   }
-  ImGui::SetNextItemWidth(-1.0f);
   const int maximum_frame =
       static_cast<int>(std::max<int64_t>(0, clock.frameCount() - 1));
+  const std::string current_time = formatTransportTime(
+      clock.framesPerSecond() > 0.0
+          ? static_cast<double>(timeline_frame) / clock.framesPerSecond()
+          : 0.0);
+  const std::string total_time = formatTransportTime(
+      clock.framesPerSecond() > 0.0
+          ? static_cast<double>(maximum_frame) / clock.framesPerSecond()
+          : 0.0);
+  const std::string time_label = current_time + " / " + total_time;
+  const float time_width = ImGui::CalcTextSize(time_label.c_str()).x;
+  ImGui::SetNextItemWidth(std::max(60.0f, ImGui::GetContentRegionAvail().x -
+                                              time_width -
+                                              ImGui::GetStyle().ItemSpacing.x));
   if (ImGui::SliderInt("##timeline", &timeline_frame, 0, maximum_frame, "")) {
     timeline_active = true;
-    clock.pause();
-    clock.seek(timeline_frame);
+    const auto intent = crimson::workspace::makePlaybackIntent(
+        crimson::workspace::Command::Seek, viewerPlaybackCapabilities(clock),
+        clock.requestedFrame(), clock.frameCount(), timeline_frame);
+    if (intent.has_value()) {
+      clock.pause();
+      clock.seek(intent->target_frame);
+    }
   }
   if (timeline_active && ImGui::IsItemDeactivatedAfterEdit()) {
-    result.camera_discontinuity =
-        seekViewer(clock, playback, timeline_frame) ||
-        result.camera_discontinuity;
+    apply_command(crimson::workspace::Command::Seek, 1, timeline_frame);
     timeline_active = false;
   }
+  ImGui::SameLine();
+  ImGui::TextUnformatted(time_label.c_str());
   if (!interactive) {
     ImGui::EndDisabled();
-  }
-
-  const AppleVideoPlaybackBufferMetrics metrics = playback.metrics();
-  const double buffer_memory_mib =
-      stats.presented_frame >= 0
-          ? static_cast<double>(metrics.buffered_frames) *
-                static_cast<double>(playback.info().width) *
-                static_cast<double>(playback.info().height) * 1.5 /
-                (1024.0 * 1024.0)
-          : 0.0;
-  ImGui::Text(
-      "Presented %lld   PTS error %+.3f frames   Buffer %zu/%zu (%.0f MiB)   "
-      "Process %.0f MiB (peak %.0f)   Thermal %s",
-      static_cast<long long>(stats.presented_frame), stats.pts_error_frames,
-      metrics.buffered_frames, playback.capacity(), buffer_memory_mib,
-      stats.process_memory_mib, stats.peak_process_memory_mib,
-      appleViewerThermalStateName(stats.thermal_state));
-  ImGui::Text(
-      "Repeats %llu   Skipped source %llu   Late %llu (max %.1f frames)   "
-      "Catch-up decode drops %llu   Startup %.1f ms   Seek %.1f ms",
-      static_cast<unsigned long long>(stats.repeated_presentations),
-      static_cast<unsigned long long>(stats.skipped_source_frames),
-      static_cast<unsigned long long>(stats.late_presentations),
-      stats.max_lag_frames,
-      static_cast<unsigned long long>(metrics.catchup_discarded_frames),
-      metrics.startup_ms, metrics.last_seek_ms);
-  if (stimulus_metrics != nullptr) {
-    ImGui::Text(
-        "Stimulus target %d   presented %d   camera skew %+.0f frames   "
-        "holds %llu   deferred %llu (max run %llu)",
-        stimulus_metrics->last_target_stimulus_frame,
-        stimulus_metrics->presented_stimulus_frame,
-        static_cast<double>(stimulus_metrics->camera_skew_frames),
-        static_cast<unsigned long long>(stimulus_metrics->held_presentations),
-        static_cast<unsigned long long>(
-            stimulus_metrics->unavailable_presentations),
-        static_cast<unsigned long long>(
-            stimulus_metrics->max_consecutive_unavailable));
-  }
-  if (crop_controls != nullptr) {
-    ImGui::TextUnformatted("Crop source");
-    ImGui::SameLine();
-    const bool acquisition_selected =
-        crop_controls->preference ==
-        crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
-    if (!crop_controls->acquisition_available) {
-      ImGui::BeginDisabled();
-    }
-    if (ImGui::RadioButton("Acquisition video", acquisition_selected) &&
-        interactive) {
-      crop_controls->preference =
-          crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
-    }
-    if (!crop_controls->acquisition_available) {
-      ImGui::EndDisabled();
-    }
-    ImGui::SameLine();
-    const bool geometry_selected =
-        crop_controls->preference ==
-        crimson::crop::CropSourcePreference::PreferLiveGeometry;
-    if (!crop_controls->live_geometry_available) {
-      ImGui::BeginDisabled();
-    }
-    if (ImGui::RadioButton("Live geometry", geometry_selected) &&
-        interactive) {
-      crop_controls->preference =
-          crimson::crop::CropSourcePreference::PreferLiveGeometry;
-    }
-    if (!crop_controls->live_geometry_available) {
-      ImGui::EndDisabled();
-    }
-    ImGui::SameLine();
-    ImGui::Text("Status %s", cropStatusName(crop_controls->selection_status));
-    if (crop_controls->metrics != nullptr) {
-      const auto &metrics = *crop_controls->metrics;
-      ImGui::Text(
-          "Crop camera %lld   source frame %lld   holds %llu   deferred %llu "
-          "(max run %llu)   mismatches %llu",
-          static_cast<long long>(metrics.presented_crop_camera_frame),
-          static_cast<long long>(metrics.presented_source_frame),
-          static_cast<unsigned long long>(metrics.held_presentations),
-          static_cast<unsigned long long>(metrics.deferred_presentations),
-          static_cast<unsigned long long>(metrics.max_consecutive_unavailable),
-          static_cast<unsigned long long>(
-              metrics.mismatched_selection_frames +
-              metrics.mismatched_surface_frames));
-    }
   }
   ImGui::End();
 
   if (interactive && !ImGui::GetIO().WantTextInput &&
       ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
-    if (clock.isPlaying()) {
-      clock.pause();
-      result.camera_discontinuity = true;
-    } else {
-      clock.play();
-    }
+    apply_command(crimson::workspace::Command::TogglePlayback);
   }
   if (interactive && !ImGui::GetIO().WantTextInput &&
       ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false)) {
-    result.camera_discontinuity =
-        seekViewer(clock, playback,
-                   std::max<int64_t>(0, clock.requestedFrame() - 1)) ||
-        result.camera_discontinuity;
+    apply_command(crimson::workspace::Command::StepBackward,
+                  ImGui::GetIO().KeyShift ? 10 : 1);
   }
   if (interactive && !ImGui::GetIO().WantTextInput &&
       ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)) {
-    result.camera_discontinuity =
-        seekViewer(clock, playback,
-                   std::min<int64_t>(clock.frameCount() - 1,
-                                     clock.requestedFrame() + 1)) ||
-        result.camera_discontinuity;
+    apply_command(crimson::workspace::Command::StepForward,
+                  ImGui::GetIO().KeyShift ? 10 : 1);
   }
   return result;
+}
+
+void drawAppleHelpWindow(bool show) {
+  if (!show) {
+    return;
+  }
+  if (ImGui::Begin("Help Menu")) {
+    ImGui::Text("<Space>: toggle play and pause");
+    ImGui::Text("<Left/Right>: seek one frame");
+    ImGui::Text("<Shift+Left/Right>: seek ten frames");
+    ImGui::SeparatorText("When paused");
+    ImGui::Text("<,>: previous image in buffer");
+    ImGui::Text("<.>: next image in buffer");
+    ImGui::SeparatorText("While hovering camera");
+    ImGui::Text("<Drag>: pan");
+    ImGui::Text("<Scroll>: zoom");
+    ImGui::Text("<Double-click>: autofit");
+    ImGui::SeparatorText("Editing");
+    ImGui::TextDisabled("Annotation and review mutation shortcuts are "
+                        "unavailable in this read-only phase.");
+  }
+  ImGui::End();
+}
+
+void drawAppleErrorPopup(bool *show, const std::string &message) {
+  if (show == nullptr) {
+    return;
+  }
+  if (*show) {
+    ImGui::OpenPopup("Error");
+    *show = false;
+  }
+  if (!ImGui::BeginPopupModal("Error", nullptr,
+                              ImGuiWindowFlags_AlwaysAutoResize)) {
+    return;
+  }
+  ImGui::TextWrapped("%s", message.c_str());
+  ImGui::Separator();
+  if (ImGui::Button("OK")) {
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::EndPopup();
 }
 
 namespace {
@@ -498,16 +1024,16 @@ void initializeStimulusControls(
   for (const auto &type : descriptor.event_types) {
     controls->stimulus_event_type_filter.emplace(type.id, true);
   }
-  controls->selected_stimulus_event = std::numeric_limits<size_t>::max();
+  controls->selections->stimulus_event_index.reset();
 }
 
 bool drawStimulusContextLane(
     const char *id, float height,
     const crimson::timeline::StimulusContextTimelineSnapshot &snapshot,
     const std::unordered_map<int32_t, bool> *event_filter,
-    size_t *selected_event, float half_span_seconds, int64_t current_frame,
-    LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
-    bool interactive) {
+    std::optional<size_t> *selected_event, float half_span_seconds,
+    int64_t current_frame, LogicalPlaybackClock &clock,
+    AppleVideoPlaybackBuffer &playback, bool interactive) {
   const int64_t final_frame = std::max<int64_t>(0, clock.frameCount() - 1);
   const double fps = clock.framesPerSecond();
   const int64_t half_span_frames = static_cast<int64_t>(
@@ -534,10 +1060,10 @@ bool drawStimulusContextLane(
   const double frame_span =
       static_cast<double>(std::max<int64_t>(1, last_frame - first_frame));
   auto frame_x = [&](int64_t frame) {
-    return top_left.x + static_cast<float>(
-                            (static_cast<double>(frame - first_frame) /
-                             frame_span) *
-                            static_cast<double>(width));
+    return top_left.x +
+           static_cast<float>(
+               (static_cast<double>(frame - first_frame) / frame_span) *
+               static_cast<double>(width));
   };
 
   for (const size_t index : window.step_indices) {
@@ -550,8 +1076,8 @@ bool drawStimulusContextLane(
                              2.0f);
     const std::string &label =
         !step.step_name.empty() ? step.step_name : step.stimulus_mode;
-    if (!label.empty() && step_max.x - step_min.x >
-                              ImGui::CalcTextSize(label.c_str()).x + 8.0f) {
+    if (!label.empty() &&
+        step_max.x - step_min.x > ImGui::CalcTextSize(label.c_str()).x + 8.0f) {
       draw_list->PushClipRect(step_min, step_max, true);
       draw_list->AddText(ImVec2(step_min.x + 4.0f, step_min.y + 7.0f),
                          IM_COL32(242, 242, 244, 255), label.c_str());
@@ -568,8 +1094,8 @@ bool drawStimulusContextLane(
                        ImVec2(x, bottom_right.y - 7.0f),
                        stimulusEventColor(event.event_type_id), 2.0f);
   }
-  const float cursor_x = frame_x(std::clamp(current_frame, first_frame,
-                                            last_frame));
+  const float cursor_x =
+      frame_x(std::clamp(current_frame, first_frame, last_frame));
   draw_list->AddLine(ImVec2(cursor_x, top_left.y + 2.0f),
                      ImVec2(cursor_x, bottom_right.y - 2.0f),
                      IM_COL32(245, 245, 246, 230), 1.5f);
@@ -595,16 +1121,15 @@ bool drawStimulusContextLane(
                         static_cast<long long>(event.camera_frame),
                         event.label.c_str());
     } else {
-      const double fraction = std::clamp(
-          static_cast<double>(mouse_x - top_left.x) /
-              static_cast<double>(width),
-          0.0, 1.0);
-      const int64_t hovered_frame = first_frame + static_cast<int64_t>(
-                                                    std::llround(fraction *
-                                                                 frame_span));
-      const auto *step =
-          crimson::timeline::findStimulusContextStepForFrame(snapshot,
-                                                              hovered_frame);
+      const double fraction =
+          std::clamp(static_cast<double>(mouse_x - top_left.x) /
+                         static_cast<double>(width),
+                     0.0, 1.0);
+      const int64_t hovered_frame =
+          first_frame +
+          static_cast<int64_t>(std::llround(fraction * frame_span));
+      const auto *step = crimson::timeline::findStimulusContextStepForFrame(
+          snapshot, hovered_frame);
       if (step != nullptr) {
         const std::string &label =
             !step->step_name.empty() ? step->step_name : step->stimulus_mode;
@@ -642,9 +1167,9 @@ bool drawStimulusTimelineTab(
   const auto *step = crimson::timeline::findStimulusContextStepForFrame(
       *snapshot, current_frame);
   if (step != nullptr) {
-    ImGui::Text("%s", (!step->step_name.empty() ? step->step_name
-                                                : step->stimulus_mode)
-                           .c_str());
+    ImGui::Text(
+        "%s", (!step->step_name.empty() ? step->step_name : step->stimulus_mode)
+                  .c_str());
     ImGui::SameLine();
     ImGui::TextDisabled("%s  frames %lld-%lld", step->stimulus_mode.c_str(),
                         static_cast<long long>(step->start_camera_frame),
@@ -680,11 +1205,11 @@ bool drawStimulusTimelineTab(
   }
 
   camera_discontinuity =
-      drawStimulusContextLane(
-          "##stimulus-context-full", 150.0f, *snapshot,
-          &controls->stimulus_event_type_filter,
-          &controls->selected_stimulus_event, controls->half_span_seconds,
-          current_frame, clock, playback, interactive) ||
+      drawStimulusContextLane("##stimulus-context-full", 150.0f, *snapshot,
+                              &controls->stimulus_event_type_filter,
+                              &controls->selections->stimulus_event_index,
+                              controls->half_span_seconds, current_frame, clock,
+                              playback, interactive) ||
       camera_discontinuity;
 
   ImGui::BeginChild("##stimulus-event-list", ImVec2(0.0f, 150.0f), true);
@@ -694,12 +1219,12 @@ bool drawStimulusTimelineTab(
                           event.event_type_id)) {
       continue;
     }
-    const std::string label =
-        std::to_string(event.camera_frame) + "  " + event.label +
-        "##stimulus-event-" + std::to_string(index);
-    const bool selected = controls->selected_stimulus_event == index;
+    const std::string label = std::to_string(event.camera_frame) + "  " +
+                              event.label + "##stimulus-event-" +
+                              std::to_string(index);
+    const bool selected = controls->selections->stimulus_event_index == index;
     if (ImGui::Selectable(label.c_str(), selected) && interactive) {
-      controls->selected_stimulus_event = index;
+      controls->selections->stimulus_event_index = index;
       if (event.camera_frame >= 0) {
         camera_discontinuity =
             seekViewer(clock, playback, event.camera_frame) ||
@@ -708,9 +1233,10 @@ bool drawStimulusTimelineTab(
     }
   }
   ImGui::EndChild();
-  if (controls->selected_stimulus_event < snapshot->events.size()) {
+  if (controls->selections->stimulus_event_index.has_value() &&
+      *controls->selections->stimulus_event_index < snapshot->events.size()) {
     const auto &event =
-        snapshot->events[controls->selected_stimulus_event];
+        snapshot->events[*controls->selections->stimulus_event_index];
     ImGui::Text("Frame %lld   stimulus %lld   type %d",
                 static_cast<long long>(event.camera_frame),
                 static_cast<long long>(event.stimulus_frame),
@@ -724,24 +1250,140 @@ bool drawStimulusTimelineTab(
 
 void initializeSeriesControls(
     AppleSeriesTimelineControls *controls,
-    const crimson::timeline::AnalysisSeriesTimelineDescriptor &descriptor) {
-  if (controls->source_key.empty()) {
-    controls->source_key =
-        crimson::timeline::defaultAnalysisSeriesSource(descriptor);
+    const crimson::timeline::AnalysisSeriesTimelineDescriptor &descriptor,
+    std::string &source_key) {
+  if (source_key.empty()) {
+    source_key = crimson::timeline::defaultAnalysisSeriesSource(descriptor);
   }
-  if (controls->initialized_source_key == controls->source_key) {
+  if (controls->initialized_source_key == source_key) {
     return;
   }
-  controls->initialized_source_key = controls->source_key;
+  controls->initialized_source_key = source_key;
   controls->trace_visibility.clear();
-  const auto *source = crimson::timeline::findAnalysisSeriesSource(
-      descriptor, controls->source_key);
+  const auto *source =
+      crimson::timeline::findAnalysisSeriesSource(descriptor, source_key);
   if (source == nullptr) {
     return;
   }
   for (const auto &trace : source->traces) {
     controls->trace_visibility.emplace(trace.key, trace.default_visible);
   }
+}
+
+void initializeSwimBoutControls(
+    AppleSwimBoutTimelineControls *controls,
+    const crimson::timeline::SwimBoutTimelineDescriptor &descriptor,
+    const crimson::timeline::AnalysisSeriesSourceDescriptor &motion_source,
+    std::string &candidate_key) {
+  const auto compatible = crimson::timeline::compatibleSwimBoutCandidates(
+      descriptor, motion_source);
+  const bool selection_is_compatible =
+      std::any_of(compatible.begin(), compatible.end(),
+                  [&](const auto *item) { return item->key == candidate_key; });
+  if (controls->initialized_motion_source_key == motion_source.key &&
+      selection_is_compatible) {
+    return;
+  }
+  controls->initialized_motion_source_key = motion_source.key;
+  candidate_key = crimson::timeline::defaultSwimBoutCandidate(
+      descriptor, motion_source, candidate_key);
+}
+
+void drawSwimBoutControls(
+    AppleSwimBoutTimelineControls *controls,
+    const crimson::timeline::SwimBoutTimelineDescriptor &descriptor,
+    const crimson::timeline::AnalysisSeriesSourceDescriptor &motion_source,
+    std::string &candidate_key) {
+  initializeSwimBoutControls(controls, descriptor, motion_source,
+                             candidate_key);
+  const auto compatible = crimson::timeline::compatibleSwimBoutCandidates(
+      descriptor, motion_source);
+  if (compatible.empty()) {
+    ImGui::TextDisabled("No compatible swim-bout candidates");
+    return;
+  }
+  const auto *selected =
+      crimson::timeline::findSwimBoutCandidate(descriptor, candidate_key);
+  const std::string preview =
+      selected != nullptr ? crimson::timeline::swimBoutCandidateLabel(*selected)
+                          : "Unavailable";
+  ImGui::SetNextItemWidth(
+      std::min(360.0f, std::max(180.0f, ImGui::GetContentRegionAvail().x)));
+  if (ImGui::BeginCombo("Swim bouts", preview.c_str())) {
+    for (const auto *candidate : compatible) {
+      const bool is_selected = candidate->key == candidate_key;
+      const std::string label =
+          crimson::timeline::swimBoutCandidateLabel(*candidate);
+      if (ImGui::Selectable(label.c_str(), is_selected)) {
+        candidate_key = candidate->key;
+      }
+      if (is_selected) {
+        ImGui::SetItemDefaultFocus();
+      }
+    }
+    ImGui::EndCombo();
+  }
+  ImGui::Checkbox("Bout spans", &controls->show_bouts);
+  ImGui::SameLine();
+  ImGui::Checkbox("Detector response", &controls->show_detector_response);
+}
+
+void drawSwimBoutIntervals(
+    const crimson::timeline::SwimBoutTimelineWindow &swim_window,
+    const crimson::timeline::AnalysisSeriesTimelineWindow &motion_window,
+    double frames_per_second) {
+  const ImPlotRect limits = ImPlot::GetPlotLimits();
+  ImDrawList *draw_list = ImPlot::GetPlotDrawList();
+  const ImVec2 plot_pos = ImPlot::GetPlotPos();
+  const ImVec2 plot_size = ImPlot::GetPlotSize();
+  const ImVec2 clip_max(plot_pos.x + plot_size.x, plot_pos.y + plot_size.y);
+  const ImU32 bout_fill =
+      ImGui::GetColorU32(ImVec4(0.15f, 0.95f, 0.45f, 0.16f));
+  const ImU32 core_fill =
+      ImGui::GetColorU32(ImVec4(0.15f, 0.95f, 0.45f, 0.24f));
+  draw_list->PushClipRect(plot_pos, clip_max, true);
+  for (const auto &interval : swim_window.intervals) {
+    const double start_time =
+        crimson::timeline::analysisSeriesTimelineTimeForFrame(
+            motion_window, interval.start_frame, frames_per_second);
+    const double end_time =
+        crimson::timeline::analysisSeriesTimelineTimeForFrame(
+            motion_window, interval.end_frame, frames_per_second);
+    if (end_time < limits.X.Min || start_time > limits.X.Max) {
+      continue;
+    }
+    const double visible_start =
+        std::clamp(start_time, limits.X.Min, limits.X.Max);
+    const double visible_end = std::clamp(end_time, limits.X.Min, limits.X.Max);
+    if (visible_end <= visible_start) {
+      continue;
+    }
+    draw_list->AddRectFilled(
+        ImPlot::PlotToPixels(ImPlotPoint(visible_start, limits.Y.Max)),
+        ImPlot::PlotToPixels(ImPlotPoint(visible_end, limits.Y.Min)),
+        bout_fill);
+    if (!interval.hasCore()) {
+      continue;
+    }
+    const double core_start =
+        crimson::timeline::analysisSeriesTimelineTimeForFrame(
+            motion_window, interval.core_start_frame, frames_per_second);
+    const double core_end =
+        crimson::timeline::analysisSeriesTimelineTimeForFrame(
+            motion_window, interval.core_end_frame, frames_per_second);
+    const double visible_core_start =
+        std::clamp(core_start, limits.X.Min, limits.X.Max);
+    const double visible_core_end =
+        std::clamp(core_end, limits.X.Min, limits.X.Max);
+    if (core_end >= limits.X.Min && core_start <= limits.X.Max &&
+        visible_core_end > visible_core_start) {
+      draw_list->AddRectFilled(
+          ImPlot::PlotToPixels(ImPlotPoint(visible_core_start, limits.Y.Max)),
+          ImPlot::PlotToPixels(ImPlotPoint(visible_core_end, limits.Y.Min)),
+          core_fill);
+    }
+  }
+  draw_list->PopClipRect();
 }
 
 const char *seriesRowName(const std::string &row_key) {
@@ -768,23 +1410,28 @@ const char *seriesRowName(const std::string &row_key) {
 
 bool drawSeriesTimelineTab(
     const char *plot_id_prefix, AppleSeriesTimelineControls *controls,
-    float half_span_seconds,
+    std::string &source_key, float half_span_seconds,
     const crimson::timeline::AnalysisSeriesTimelineDescriptor &descriptor,
     const std::shared_ptr<const crimson::timeline::AnalysisSeriesTimelineWindow>
         &window,
+    AppleSwimBoutTimelineControls *swim_controls,
+    std::string *swim_candidate_key,
+    const crimson::timeline::SwimBoutTimelineDescriptor *swim_descriptor,
+    const std::shared_ptr<const crimson::timeline::SwimBoutTimelineWindow>
+        &swim_window,
     int64_t current_frame, LogicalPlaybackClock &clock,
     AppleVideoPlaybackBuffer &playback, bool interactive) {
-  initializeSeriesControls(controls, descriptor);
-  const auto *source = crimson::timeline::findAnalysisSeriesSource(
-      descriptor, controls->source_key);
+  initializeSeriesControls(controls, descriptor, source_key);
+  const auto *source =
+      crimson::timeline::findAnalysisSeriesSource(descriptor, source_key);
   const char *source_preview =
       source != nullptr ? source->display_name.c_str() : "Unavailable";
   ImGui::SetNextItemWidth(360.0f);
   if (ImGui::BeginCombo("Source", source_preview)) {
     for (const auto &candidate : descriptor.sources) {
-      const bool selected = candidate.key == controls->source_key;
+      const bool selected = candidate.key == source_key;
       if (ImGui::Selectable(candidate.display_name.c_str(), selected)) {
-        controls->source_key = candidate.key;
+        source_key = candidate.key;
       }
       if (selected) {
         ImGui::SetItemDefaultFocus();
@@ -792,12 +1439,17 @@ bool drawSeriesTimelineTab(
     }
     ImGui::EndCombo();
   }
-  initializeSeriesControls(controls, descriptor);
-  source = crimson::timeline::findAnalysisSeriesSource(descriptor,
-                                                       controls->source_key);
+  initializeSeriesControls(controls, descriptor, source_key);
+  source = crimson::timeline::findAnalysisSeriesSource(descriptor, source_key);
   if (source == nullptr) {
     ImGui::TextUnformatted("Timeline source unavailable");
     return false;
+  }
+
+  if (swim_controls != nullptr && swim_candidate_key != nullptr &&
+      swim_descriptor != nullptr) {
+    drawSwimBoutControls(swim_controls, *swim_descriptor, *source,
+                         *swim_candidate_key);
   }
 
   if (ImGui::BeginTable("##trace-visibility", 2,
@@ -811,7 +1463,7 @@ bool drawSeriesTimelineTab(
   }
 
   const bool window_matches =
-      window != nullptr && window->request.source_key == controls->source_key;
+      window != nullptr && window->request.source_key == source_key;
   if (current_frame < 0 ||
       current_frame >= static_cast<int64_t>(descriptor.frame_count)) {
     ImGui::TextUnformatted("Timeline out of range for this frame");
@@ -871,6 +1523,14 @@ bool drawSeriesTimelineTab(
       ImPlot::SetupAxisLimits(ImAxis_X1, cursor_time - half_span_seconds,
                               cursor_time + half_span_seconds,
                               ImPlotCond_Always);
+      const bool swim_window_matches =
+          swim_controls != nullptr && swim_candidate_key != nullptr &&
+          swim_window != nullptr &&
+          swim_window->request.candidate_key == *swim_candidate_key;
+      if (row_key == "speed" && swim_window_matches &&
+          swim_controls->show_bouts) {
+        drawSwimBoutIntervals(*swim_window, *window, frames_per_second);
+      }
       for (const auto &trace : window->traces) {
         if (trace.descriptor.row_key != row_key ||
             !controls->trace_visibility[trace.descriptor.key] ||
@@ -884,6 +1544,34 @@ bool drawSeriesTimelineTab(
         ImPlot::PlotLine(trace.descriptor.display_name.c_str(),
                          trace.times_seconds.data(), trace.values.data(),
                          count);
+        ImPlot::PopStyleColor();
+      }
+      if (row_key == "speed" && swim_window_matches &&
+          swim_controls->show_detector_response &&
+          !swim_window->detector_frames.empty() &&
+          !swim_window->detector_values.empty()) {
+        std::vector<double> detector_times;
+        detector_times.reserve(swim_window->detector_frames.size());
+        for (const int64_t frame : swim_window->detector_frames) {
+          detector_times.push_back(
+              crimson::timeline::analysisSeriesTimelineTimeForFrame(
+                  *window, frame, frames_per_second));
+        }
+        const auto *candidate = crimson::timeline::findSwimBoutCandidate(
+            *swim_descriptor, *swim_candidate_key);
+        std::string label = "Detector response";
+        if (candidate != nullptr && !candidate->detector_trace_units.empty()) {
+          label +=
+              " (" + candidate->detector_trace_units + "; not physical speed)";
+        } else {
+          label += " (not physical speed)";
+        }
+        const int count = static_cast<int>(std::min(
+            detector_times.size(), swim_window->detector_values.size()));
+        ImPlot::PushStyleColor(ImPlotCol_Line,
+                               ImVec4(0.20f, 0.78f, 0.42f, 0.95f));
+        ImPlot::PlotLine(label.c_str(), detector_times.data(),
+                         swim_window->detector_values.data(), count);
         ImPlot::PopStyleColor();
       }
       ImPlot::PushStyleColor(ImPlotCol_Line,
@@ -912,29 +1600,30 @@ bool drawSeriesTimelineTab(
 }
 
 bool drawEyeAngleTimelineTab(
-    AppleEyeAngleTimelineControls *controls, float half_span_seconds,
+    AppleEyeAngleTimelineControls *controls, std::string &representation_key,
+    float half_span_seconds,
     const crimson::timeline::EyeAngleTimelineDescriptor &descriptor,
     const std::shared_ptr<const crimson::timeline::EyeAngleTimelineWindow>
         &window,
     int64_t current_frame, LogicalPlaybackClock &clock,
     AppleVideoPlaybackBuffer &playback, bool interactive) {
-  if (controls->representation_key.empty()) {
-    controls->representation_key =
+  if (representation_key.empty()) {
+    representation_key =
         crimson::timeline::defaultEyeAngleTimelineRepresentation(descriptor);
   }
 
   const auto *representation =
-      crimson::timeline::findEyeAngleTimelineRepresentation(
-          descriptor, controls->representation_key);
+      crimson::timeline::findEyeAngleTimelineRepresentation(descriptor,
+                                                            representation_key);
   const char *preview = representation != nullptr
                             ? representation->display_name.c_str()
-                            : controls->representation_key.c_str();
+                            : representation_key.c_str();
   ImGui::SetNextItemWidth(220.0f);
   if (ImGui::BeginCombo("Representation", preview)) {
     for (const auto &candidate : descriptor.representations) {
-      const bool selected = candidate.key == controls->representation_key;
+      const bool selected = candidate.key == representation_key;
       if (ImGui::Selectable(candidate.display_name.c_str(), selected)) {
-        controls->representation_key = candidate.key;
+        representation_key = candidate.key;
       }
       if (selected) {
         ImGui::SetItemDefaultFocus();
@@ -951,7 +1640,7 @@ bool drawEyeAngleTimelineTab(
 
   const bool window_matches =
       window != nullptr &&
-      window->request.representation_key == controls->representation_key;
+      window->request.representation_key == representation_key;
   if (current_frame < 0 ||
       current_frame >= static_cast<int64_t>(descriptor.frame_count)) {
     ImGui::TextUnformatted("Timeline out of range for this frame");
@@ -970,40 +1659,40 @@ bool drawEyeAngleTimelineTab(
   }
 
   bool camera_discontinuity = false;
-    const double frames_per_second = clock.framesPerSecond();
-    const double cursor_time = crimson::timeline::eyeAngleTimelineTimeForFrame(
-        *window, current_frame, frames_per_second);
-    if (ImPlot::BeginPlot("##eye-angle-plot", ImVec2(-1.0f, -1.0f),
-                          ImPlotFlags_NoTitle | ImPlotFlags_NoBoxSelect)) {
+  const double frames_per_second = clock.framesPerSecond();
+  const double cursor_time = crimson::timeline::eyeAngleTimelineTimeForFrame(
+      *window, current_frame, frames_per_second);
+  if (ImPlot::BeginPlot("##eye-angle-plot", ImVec2(-1.0f, -1.0f),
+                        ImPlotFlags_NoTitle | ImPlotFlags_NoBoxSelect)) {
     ImPlot::SetupAxes("Time (s)", "Angle (deg)", ImPlotAxisFlags_NoMenus,
-                        ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_NoMenus);
+                      ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_NoMenus);
     ImPlot::SetupAxisLimits(ImAxis_X1, cursor_time - half_span_seconds,
                             cursor_time + half_span_seconds, ImPlotCond_Always);
-      for (const auto &trace : window->traces) {
-        if (!traceEnabled(*controls, trace.field.role) ||
-            trace.times_seconds.empty() || trace.values.empty()) {
-          continue;
-        }
-        const int count = static_cast<int>(
-            std::min(trace.times_seconds.size(), trace.values.size()));
-        ImPlot::PushStyleColor(ImPlotCol_Line, traceColor(trace.field.role));
-        ImPlot::PlotLine(trace.field.display_name.c_str(),
-                         trace.times_seconds.data(), trace.values.data(), count);
-        ImPlot::PopStyleColor();
+    for (const auto &trace : window->traces) {
+      if (!traceEnabled(*controls, trace.field.role) ||
+          trace.times_seconds.empty() || trace.values.empty()) {
+        continue;
       }
-    ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.94f, 0.94f, 0.94f, 0.90f));
-      ImPlot::PlotInfLines("Current frame", &cursor_time, 1);
+      const int count = static_cast<int>(
+          std::min(trace.times_seconds.size(), trace.values.size()));
+      ImPlot::PushStyleColor(ImPlotCol_Line, traceColor(trace.field.role));
+      ImPlot::PlotLine(trace.field.display_name.c_str(),
+                       trace.times_seconds.data(), trace.values.data(), count);
       ImPlot::PopStyleColor();
+    }
+    ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.94f, 0.94f, 0.94f, 0.90f));
+    ImPlot::PlotInfLines("Current frame", &cursor_time, 1);
+    ImPlot::PopStyleColor();
     ImPlot::TagX(cursor_time, ImVec4(0.94f, 0.94f, 0.94f, 0.90f), "Frame %lld",
                  static_cast<long long>(current_frame));
-      if (interactive && ImPlot::IsPlotHovered() &&
-          ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        const int64_t clicked_frame =
-            crimson::timeline::eyeAngleTimelineNearestFrame(
+    if (interactive && ImPlot::IsPlotHovered() &&
+        ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+      const int64_t clicked_frame =
+          crimson::timeline::eyeAngleTimelineNearestFrame(
               *window, ImPlot::GetPlotMousePos().x, frames_per_second);
-        if (clicked_frame >= 0) {
-          const int64_t bounded_frame = std::clamp<int64_t>(
-              clicked_frame, 0, std::max<int64_t>(0, clock.frameCount() - 1));
+      if (clicked_frame >= 0) {
+        const int64_t bounded_frame = std::clamp<int64_t>(
+            clicked_frame, 0, std::max<int64_t>(0, clock.frameCount() - 1));
         camera_discontinuity = seekViewer(clock, playback, bounded_frame);
       }
     }
@@ -1014,12 +1703,20 @@ bool drawEyeAngleTimelineTab(
 
 } // namespace
 
+void setAppleWorkspaceLayoutProfile(
+    crimson::macos::workspace::LayoutProfile profile) {
+  g_workspace_layout_profile = profile;
+}
+
 bool drawAppleAnalysisTimeline(
     AppleAnalysisTimelineControls *controls,
     const crimson::timeline::AnalysisSeriesTimelineDescriptor
         *motion_descriptor,
     const std::shared_ptr<const crimson::timeline::AnalysisSeriesTimelineWindow>
         &motion_window,
+    const crimson::timeline::SwimBoutTimelineDescriptor *swim_bout_descriptor,
+    const std::shared_ptr<const crimson::timeline::SwimBoutTimelineWindow>
+        &swim_bout_window,
     const crimson::timeline::EyeAngleTimelineDescriptor *eye_descriptor,
     const std::shared_ptr<const crimson::timeline::EyeAngleTimelineWindow>
         &eye_window,
@@ -1033,24 +1730,12 @@ bool drawAppleAnalysisTimeline(
         &stimulus_snapshot,
     int64_t current_frame, LogicalPlaybackClock &clock,
     AppleVideoPlaybackBuffer &playback, bool interactive) {
-  if (controls == nullptr || !controls->open) {
+  if (controls == nullptr || controls->selections == nullptr) {
     return false;
   }
-  const ImGuiViewport *viewport = ImGui::GetMainViewport();
-  const float initial_width =
-      std::max(620.0f, std::min(1040.0f, viewport->WorkSize.x - 32.0f));
-  const float initial_height =
-      std::max(420.0f, std::min(720.0f, viewport->WorkSize.y - 144.0f));
-  ImGui::SetNextWindowPos(
-      ImVec2(viewport->WorkPos.x +
-                 (viewport->WorkSize.x - initial_width) * 0.5f,
-             viewport->WorkPos.y + 16.0f),
-      ImGuiCond_Appearing);
-  ImGui::SetNextWindowSize(ImVec2(initial_width, initial_height),
-                           ImGuiCond_Appearing);
-  ImGui::SetNextWindowSizeConstraints(ImVec2(600.0f, 380.0f),
-                                      ImVec2(FLT_MAX, FLT_MAX));
-  if (!ImGui::Begin("Analysis timeline", &controls->open)) {
+  auto &selections = *controls->selections;
+  setFirstUseGeometry(currentWorkspaceLayout().analysis_timeline);
+  if (!ImGui::Begin("Analysis Timeline")) {
     ImGui::End();
     return false;
   }
@@ -1078,17 +1763,19 @@ bool drawAppleAnalysisTimeline(
       }
       if (controls->show_stimulus_context && stimulus_snapshot) {
         camera_discontinuity =
-            drawStimulusContextLane(
-                "##motion-stimulus-context", 78.0f, *stimulus_snapshot,
-                nullptr, nullptr, controls->half_span_seconds, current_frame,
-                clock, playback, interactive) ||
+            drawStimulusContextLane("##motion-stimulus-context", 78.0f,
+                                    *stimulus_snapshot, nullptr, nullptr,
+                                    controls->half_span_seconds, current_frame,
+                                    clock, playback, interactive) ||
             camera_discontinuity;
       }
       camera_discontinuity =
-          drawSeriesTimelineTab("motion", &controls->motion,
-                                controls->half_span_seconds, *motion_descriptor,
-                                motion_window, current_frame, clock, playback,
-                                interactive) ||
+          drawSeriesTimelineTab(
+              "motion", &controls->motion, selections.motion_source_key,
+              controls->half_span_seconds, *motion_descriptor, motion_window,
+              &controls->swim_bouts, &selections.swim_bout_candidate_key,
+              swim_bout_descriptor, swim_bout_window, current_frame, clock,
+              playback, interactive) ||
           camera_discontinuity;
       ImGui::EndTabItem();
     }
@@ -1103,17 +1790,17 @@ bool drawAppleAnalysisTimeline(
       }
       if (controls->show_stimulus_context && stimulus_snapshot) {
         camera_discontinuity =
-            drawStimulusContextLane(
-                "##eye-stimulus-context", 78.0f, *stimulus_snapshot, nullptr,
-                nullptr, controls->half_span_seconds, current_frame, clock,
-                playback, interactive) ||
+            drawStimulusContextLane("##eye-stimulus-context", 78.0f,
+                                    *stimulus_snapshot, nullptr, nullptr,
+                                    controls->half_span_seconds, current_frame,
+                                    clock, playback, interactive) ||
             camera_discontinuity;
       }
       camera_discontinuity =
-          drawEyeAngleTimelineTab(&controls->eye_angles,
-                                  controls->half_span_seconds, *eye_descriptor,
-                                  eye_window, current_frame, clock, playback,
-                                  interactive) ||
+          drawEyeAngleTimelineTab(
+              &controls->eye_angles, selections.eye_angle_representation_key,
+              controls->half_span_seconds, *eye_descriptor, eye_window,
+              current_frame, clock, playback, interactive) ||
           camera_discontinuity;
       ImGui::EndTabItem();
     }
@@ -1128,33 +1815,18 @@ bool drawAppleAnalysisTimeline(
       }
       if (controls->show_stimulus_context && stimulus_snapshot) {
         camera_discontinuity =
-            drawStimulusContextLane(
-                "##tail-stimulus-context", 78.0f, *stimulus_snapshot, nullptr,
-                nullptr, controls->half_span_seconds, current_frame, clock,
-                playback, interactive) ||
+            drawStimulusContextLane("##tail-stimulus-context", 78.0f,
+                                    *stimulus_snapshot, nullptr, nullptr,
+                                    controls->half_span_seconds, current_frame,
+                                    clock, playback, interactive) ||
             camera_discontinuity;
       }
       camera_discontinuity =
           drawSeriesTimelineTab("tail", &controls->tail_kinematics,
+                                selections.tail_kinematics_source_key,
                                 controls->half_span_seconds, *tail_descriptor,
-                                tail_window, current_frame, clock, playback,
-                                interactive) ||
-          camera_discontinuity;
-      ImGui::EndTabItem();
-    }
-    const ImGuiTabItemFlags stimulus_flags =
-        controls->initial_tab == AppleAnalysisTimelineTab::Stimulus
-            ? ImGuiTabItemFlags_SetSelected
-            : ImGuiTabItemFlags_None;
-    if (stimulus_descriptor != nullptr && stimulus_snapshot &&
-        ImGui::BeginTabItem("Stimulus", nullptr, stimulus_flags)) {
-      if (controls->initial_tab == AppleAnalysisTimelineTab::Stimulus) {
-        controls->initial_tab = AppleAnalysisTimelineTab::Automatic;
-      }
-      camera_discontinuity =
-          drawStimulusTimelineTab(controls, *stimulus_descriptor,
-                                  stimulus_snapshot, current_frame, clock,
-                                  playback, interactive) ||
+                                tail_window, nullptr, nullptr, nullptr, {},
+                                current_frame, clock, playback, interactive) ||
           camera_discontinuity;
       ImGui::EndTabItem();
     }
@@ -1167,22 +1839,52 @@ bool drawAppleAnalysisTimeline(
   return camera_discontinuity;
 }
 
-void drawAppleReadOnlyOverlayControls(
-    bool *open, crimson::overlay::ReadOnlyOverlayControlState *controls,
+bool drawAppleStimulusEventTimeline(
+    AppleAnalysisTimelineControls *controls,
+    const crimson::timeline::StimulusContextTimelineDescriptor &descriptor,
+    const std::shared_ptr<
+        const crimson::timeline::StimulusContextTimelineSnapshot> &snapshot,
+    int64_t current_frame, LogicalPlaybackClock &clock,
+    AppleVideoPlaybackBuffer &playback, bool interactive) {
+  if (controls == nullptr || controls->selections == nullptr) {
+    return false;
+  }
+  setFirstUseGeometry(currentWorkspaceLayout().stimulus_event_timeline);
+  if (!ImGui::Begin("Stimulus Event Timeline")) {
+    ImGui::End();
+    return false;
+  }
+  if (!interactive) {
+    ImGui::BeginDisabled();
+  }
+  ImGui::SetNextItemWidth(160.0f);
+  ImGui::SliderFloat("Scrolling Window (+/- s)", &controls->half_span_seconds,
+                     1.0f, 30.0f, "%.0f");
+  const bool camera_discontinuity =
+      drawStimulusTimelineTab(controls, descriptor, snapshot, current_frame,
+                              clock, playback, interactive);
+  if (!interactive) {
+    ImGui::EndDisabled();
+  }
+  ImGui::End();
+  return camera_discontinuity;
+}
+
+void drawAppleFrameInspectWindow(
+    crimson::workspace::WorkspaceSelectionState *selections,
+    crimson::overlay::ReadOnlyOverlayControlState *controls,
     const crimson::overlay::ReadOnlyOverlayAvailability &availability,
-    bool interactive) {
-  if (open == nullptr || controls == nullptr || !*open) {
+    AppleCropViewerControls *crop_controls, bool stimulus_available,
+    bool polar_available, const AppleVideoViewerStats &stats,
+    AppleFrameInspectPresentationState *presentation,
+    bool *advanced_crop_preview, bool *stimulus_debug, bool interactive) {
+  if (selections == nullptr || controls == nullptr || presentation == nullptr ||
+      advanced_crop_preview == nullptr || stimulus_debug == nullptr) {
     return;
   }
 
-  const ImGuiViewport *viewport = ImGui::GetMainViewport();
-  ImGui::SetNextWindowPos(
-      ImVec2(viewport->WorkPos.x + 16.0f, viewport->WorkPos.y + 16.0f),
-      ImGuiCond_FirstUseEver);
-  ImGui::SetNextWindowSize(ImVec2(340.0f, 560.0f), ImGuiCond_FirstUseEver);
-  ImGui::SetNextWindowSizeConstraints(ImVec2(300.0f, 300.0f),
-                                      ImVec2(460.0f, 720.0f));
-  if (!ImGui::Begin("Overlay controls", open)) {
+  setFirstUseGeometry(currentWorkspaceLayout().frame_inspect);
+  if (!ImGui::Begin("Frame Inspect")) {
     ImGui::End();
     return;
   }
@@ -1190,21 +1892,168 @@ void drawAppleReadOnlyOverlayControls(
     ImGui::BeginDisabled();
   }
 
-  if (ImGui::Button("Reset defaults")) {
-    *controls = {};
+  constexpr crimson::crop::RoiInsetPresentationCapabilities
+      kAppleRoiInsetCapabilities{};
+  presentation->roi_inset = crimson::crop::resolveRoiInsetPresentation(
+      presentation->roi_inset, kAppleRoiInsetCapabilities);
+  auto &roi_inset = presentation->roi_inset;
+
+  ImGui::Text("Requested frame: %lld",
+              static_cast<long long>(stats.requested_frame));
+  ImGui::SameLine();
+  ImGui::Text("Presented: %lld", static_cast<long long>(stats.presented_frame));
+  ImGui::SeparatorText("ROI Inset");
+  if (crop_controls == nullptr) {
+    ImGui::BeginDisabled();
+  }
+  ImGui::Checkbox("Show ROI inset", &roi_inset.visible);
+  ImGui::SameLine();
+  ImGui::Checkbox("Label", &roi_inset.show_label);
+  ImGui::SetNextItemWidth(130.0f);
+  ImGui::SliderFloat("Inset width", &roi_inset.width_px,
+                     crimson::crop::kMinimumRoiInsetWidthPx,
+                     crimson::crop::kMaximumRoiInsetWidthPx, "%.0f px");
+  bool normalize_heading =
+      roi_inset.orientation ==
+      crimson::crop::RoiInsetOrientation::HeadingNormalized;
+  const bool heading_normalization_supported =
+      crimson::crop::supportsRoiInsetOrientation(
+          kAppleRoiInsetCapabilities,
+          crimson::crop::RoiInsetOrientation::HeadingNormalized);
+  ImGui::BeginDisabled(!heading_normalization_supported);
+  if (ImGui::Checkbox("Normalize heading", &normalize_heading)) {
+    roi_inset.orientation =
+        normalize_heading
+            ? crimson::crop::RoiInsetOrientation::HeadingNormalized
+            : crimson::crop::RoiInsetOrientation::Acquisition;
+  }
+  ImGui::EndDisabled();
+  if (!heading_normalization_supported) {
+    showItemTooltip(
+        "Heading normalization awaits the shared coordinate contract");
+  }
+  ImGui::Checkbox("Advanced Crop Preview", advanced_crop_preview);
+  if (crop_controls == nullptr) {
+    ImGui::EndDisabled();
+  }
+  ImGui::SeparatorText("Stimulus");
+  if (!stimulus_available) {
+    ImGui::BeginDisabled();
+  }
+  ImGui::Checkbox("Show stimulus inset", &presentation->show_stimulus_inset);
+  ImGui::SameLine();
+  ImGui::Checkbox("Stimulus debug windows", stimulus_debug);
+  ImGui::BeginDisabled(!presentation->show_stimulus_inset);
+  ImGui::SetNextItemWidth(140.0f);
+  ImGui::SliderInt("Stimulus inset width", &presentation->stimulus_inset_width,
+                   120, 360, "%d px");
+  ImGui::SetNextItemWidth(140.0f);
+  ImGui::SliderFloat("Stimulus inset opacity",
+                     &presentation->stimulus_inset_opacity, 0.20f, 1.0f,
+                     "%.2f");
+  ImGui::Checkbox("Stimulus frame label",
+                  &presentation->show_stimulus_frame_label);
+  ImGui::EndDisabled();
+  if (!stimulus_available) {
+    ImGui::EndDisabled();
+  }
+  if (crop_controls != nullptr) {
+    ImGui::TextUnformatted("Crop source:");
+    ImGui::SameLine();
+    const bool acquisition_selected =
+        crop_controls->preference ==
+        crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
+    if (!crop_controls->acquisition_available) {
+      ImGui::BeginDisabled();
+    }
+    if (ImGui::RadioButton("Acquisition video", acquisition_selected) &&
+        interactive) {
+      crop_controls->preference =
+          crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
+    }
+    if (!crop_controls->acquisition_available) {
+      ImGui::EndDisabled();
+    }
+    ImGui::SameLine();
+    const bool geometry_selected =
+        crop_controls->preference ==
+        crimson::crop::CropSourcePreference::PreferLiveGeometry;
+    if (!crop_controls->live_geometry_available) {
+      ImGui::BeginDisabled();
+    }
+    if (ImGui::RadioButton("Live geometry", geometry_selected) && interactive) {
+      crop_controls->preference =
+          crimson::crop::CropSourcePreference::PreferLiveGeometry;
+    }
+    if (!crop_controls->live_geometry_available) {
+      ImGui::EndDisabled();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", cropStatusName(crop_controls->selection_status));
   }
 
-  if (ImGui::CollapsingHeader("Keypoints and heading",
-                              ImGuiTreeNodeFlags_DefaultOpen)) {
+  if (!ImGui::BeginTabBar("##frame-inspect-tabs")) {
+    if (!interactive) {
+      ImGui::EndDisabled();
+    }
+    ImGui::End();
+    return;
+  }
+  const auto selected_flags = [&](crimson::workspace::FrameInspectView view) {
+    return selections->frame_inspect_view == view
+               ? ImGuiTabItemFlags_SetSelected
+               : ImGuiTabItemFlags_None;
+  };
+  if (ImGui::BeginTabItem(
+          "Detect", nullptr,
+          selected_flags(crimson::workspace::FrameInspectView::Detect))) {
+    selections->frame_inspect_view =
+        crimson::workspace::FrameInspectView::Detect;
+    ImGui::TextUnformatted("Read-only presentation");
+    ImGui::Text("Keypoints: %s",
+                availability.keypoints ? "available" : "unavailable");
+    ImGui::Text("Subject masks: %s",
+                availability.subject_masks ? "available" : "unavailable");
+    ImGui::Text("Eye geometry: %s",
+                availability.eye_geometry ? "available" : "unavailable");
+    ImGui::Separator();
+    ImGui::BeginDisabled();
+    ImGui::Button(ICON_FK_STEP_BACKWARD " Prev Review Frame");
+    ImGui::SameLine();
+    ImGui::Button("Next Review Frame " ICON_FK_STEP_FORWARD);
+    ImGui::EndDisabled();
+    ImGui::TextDisabled(
+        "No read-only review index is loaded for this archive.");
+    ImGui::Separator();
+    bool bbox_editing_enabled = false;
+    ImGui::BeginDisabled();
+    ImGui::Checkbox("Enable bbox draw editing", &bbox_editing_enabled);
+    ImGui::Button("Run Detection");
+    ImGui::EndDisabled();
+    ImGui::EndTabItem();
+  }
+  if (ImGui::BeginTabItem(
+          "Keypoints", nullptr,
+          selected_flags(crimson::workspace::FrameInspectView::Keypoints))) {
+    selections->frame_inspect_view =
+        crimson::workspace::FrameInspectView::Keypoints;
     drawAvailableCheckbox("Keypoint markers", &controls->show_keypoints,
                           availability.keypoints);
     ImGui::SameLine();
     drawAvailableCheckbox("Heading arrows", &controls->show_headings,
                           availability.headings);
+    ImGui::Separator();
+    if (ImGui::Button("Reset overlay defaults")) {
+      *controls = {};
+    }
+    ImGui::EndTabItem();
   }
 
-  if (ImGui::CollapsingHeader("Subject masks",
-                              ImGuiTreeNodeFlags_DefaultOpen)) {
+  if (ImGui::BeginTabItem(
+          "Subject Masks", nullptr,
+          selected_flags(crimson::workspace::FrameInspectView::EyeMasks))) {
+    selections->frame_inspect_view =
+        crimson::workspace::FrameInspectView::EyeMasks;
     drawAvailableCheckbox("Show masks", &controls->show_subject_masks,
                           availability.subject_masks);
 
@@ -1220,8 +2069,8 @@ void drawAppleReadOnlyOverlayControls(
       controls->mask_mode =
           static_cast<crimson::overlay::ReadOnlyMaskOverlayMode>(mode);
     }
-    showItemTooltip(
-        "Realtime draws fills only; Review and Debug add contours and eye geometry");
+    showItemTooltip("Realtime draws fills only; Review and Debug add contours "
+                    "and eye geometry");
     if (!mode_available) {
       ImGui::EndDisabled();
     }
@@ -1240,19 +2089,58 @@ void drawAppleReadOnlyOverlayControls(
     ImGui::SameLine();
     drawAvailableCheckbox("Right eye", &controls->show_eye_right_mask,
                           eye_components_available);
+    ImGui::SeparatorText("Subject shape");
+    drawAvailableCheckbox("Show subject shape", &controls->show_subject_shape,
+                          availability.subject_shape);
+    const bool shape_enabled =
+        availability.subject_shape && controls->show_subject_shape;
+    drawAvailableCheckbox("Snout tip", &controls->show_subject_shape_snout_tip,
+                          shape_enabled);
+    ImGui::SameLine();
+    drawAvailableCheckbox("Tail base", &controls->show_subject_shape_tail_base,
+                          shape_enabled);
+    ImGui::SameLine();
+    drawAvailableCheckbox("Tail tip", &controls->show_subject_shape_tail_tip,
+                          shape_enabled);
+    drawAvailableCheckbox("Caudal anchor",
+                          &controls->show_subject_shape_caudal_anchor,
+                          shape_enabled);
+    drawAvailableCheckbox(
+        "Centerline", &controls->show_subject_shape_centerline, shape_enabled);
+    drawAvailableCheckbox("Dense B-spline",
+                          &controls->show_subject_shape_bspline, shape_enabled);
+    drawAvailableCheckbox("Body frame axes",
+                          &controls->show_subject_shape_body_axes,
+                          shape_enabled);
+    drawAvailableCheckbox("Spline debug points",
+                          &controls->show_subject_shape_bspline_debug_points,
+                          shape_enabled);
+    ImGui::SameLine();
+    drawAvailableCheckbox("Control points",
+                          &controls->show_subject_shape_bspline_control_points,
+                          shape_enabled);
+    drawAvailableCheckbox("Tail samples",
+                          &controls->show_subject_shape_tail_samples,
+                          shape_enabled);
+    ImGui::SameLine();
+    drawAvailableCheckbox("Tail normals",
+                          &controls->show_subject_shape_tail_normals,
+                          shape_enabled);
+    ImGui::EndTabItem();
   }
 
-  if (ImGui::CollapsingHeader("Eye geometry",
-                              ImGuiTreeNodeFlags_DefaultOpen)) {
-    const bool detailed =
-        controls->mask_mode !=
-        crimson::overlay::ReadOnlyMaskOverlayMode::Realtime;
+  if (ImGui::BeginTabItem(
+          "Eye Angles", nullptr,
+          selected_flags(crimson::workspace::FrameInspectView::EyeAngles))) {
+    selections->frame_inspect_view =
+        crimson::workspace::FrameInspectView::EyeAngles;
+    const bool detailed = controls->mask_mode !=
+                          crimson::overlay::ReadOnlyMaskOverlayMode::Realtime;
     drawAvailableCheckbox("Show eye geometry", &controls->show_eye_geometry,
                           availability.eye_geometry && detailed);
-    const bool eye_details_enabled = availability.eye_geometry && detailed &&
-                                     controls->show_eye_geometry;
-    drawAvailableCheckbox("Visual cones",
-                          &controls->show_eye_direction_beams,
+    const bool eye_details_enabled =
+        availability.eye_geometry && detailed && controls->show_eye_geometry;
+    drawAvailableCheckbox("Visual cones", &controls->show_eye_direction_beams,
                           eye_details_enabled);
     ImGui::SameLine();
     drawAvailableCheckbox("Gaze rays", &controls->show_eye_gaze_rays,
@@ -1262,55 +2150,133 @@ void drawAppleReadOnlyOverlayControls(
     ImGui::SameLine();
     drawAvailableCheckbox("Angle labels", &controls->show_eye_angle_labels,
                           eye_details_enabled);
+    ImGui::EndTabItem();
   }
+  ImGui::EndTabBar();
 
-  if (ImGui::CollapsingHeader("Subject shape",
-                              ImGuiTreeNodeFlags_DefaultOpen)) {
-    drawAvailableCheckbox("Show subject shape", &controls->show_subject_shape,
-                          availability.subject_shape);
-    const bool shape_enabled =
-        availability.subject_shape && controls->show_subject_shape;
-    drawAvailableCheckbox("Snout tip",
-                          &controls->show_subject_shape_snout_tip,
-                          shape_enabled);
-    ImGui::SameLine();
-    drawAvailableCheckbox("Tail base",
-                          &controls->show_subject_shape_tail_base,
-                          shape_enabled);
-    ImGui::SameLine();
-    drawAvailableCheckbox("Tail tip",
-                          &controls->show_subject_shape_tail_tip,
-                          shape_enabled);
-    drawAvailableCheckbox("Caudal anchor",
-                          &controls->show_subject_shape_caudal_anchor,
-                          shape_enabled);
-    drawAvailableCheckbox("Centerline",
-                          &controls->show_subject_shape_centerline,
-                          shape_enabled);
-    drawAvailableCheckbox("Dense B-spline",
-                          &controls->show_subject_shape_bspline,
-                          shape_enabled);
-    drawAvailableCheckbox("Body frame axes",
-                          &controls->show_subject_shape_body_axes,
-                          shape_enabled);
-    drawAvailableCheckbox(
-        "Spline debug points",
-        &controls->show_subject_shape_bspline_debug_points, shape_enabled);
-    ImGui::SameLine();
-    drawAvailableCheckbox(
-        "Control points",
-        &controls->show_subject_shape_bspline_control_points, shape_enabled);
-    drawAvailableCheckbox("Tail samples",
-                          &controls->show_subject_shape_tail_samples,
-                          shape_enabled);
-    ImGui::SameLine();
-    drawAvailableCheckbox("Tail normals",
-                          &controls->show_subject_shape_tail_normals,
-                          shape_enabled);
+  ImGui::SeparatorText("Motion and Insets");
+  ImGui::BeginDisabled();
+  ImGui::Checkbox("Motion trail", &presentation->show_motion_trail);
+  ImGui::SetNextItemWidth(140.0f);
+  ImGui::SliderFloat("Trail duration", &presentation->motion_trail_seconds,
+                     0.25f, 10.0f, "%.2f s");
+  ImGui::Checkbox("Valid samples only", &presentation->motion_valid_only);
+  ImGui::EndDisabled();
+  ImGui::TextDisabled(
+      "Motion-trail input is unavailable in the current read-only adapter.");
+
+  if (!polar_available) {
+    ImGui::BeginDisabled();
+  }
+  ImGui::Checkbox("Polar inset", &presentation->polar_inset.show_inset);
+  ImGui::BeginDisabled(!presentation->polar_inset.show_inset);
+  ImGui::SetNextItemWidth(140.0f);
+  ImGui::SliderFloat("Polar inset width", &presentation->polar_inset.width_px,
+                     140.0f, 360.0f, "%.0f px");
+  presentation->polar_inset.width_px =
+      std::clamp(presentation->polar_inset.width_px, 140.0f, 360.0f);
+  ImGui::SetNextItemWidth(140.0f);
+  ImGui::SliderFloat("Polar inset opacity", &presentation->polar_inset.opacity,
+                     0.20f, 1.0f, "%.2f");
+  presentation->polar_inset.opacity =
+      std::clamp(presentation->polar_inset.opacity, 0.20f, 1.0f);
+  ImGui::Checkbox("Polar labels", &presentation->polar_inset.show_labels);
+  ImGui::SameLine();
+  ImGui::Checkbox("Polar readout", &presentation->polar_inset.show_readout);
+  ImGui::EndDisabled();
+  if (!polar_available) {
+    ImGui::EndDisabled();
   }
 
   if (!interactive) {
     ImGui::EndDisabled();
+  }
+  ImGui::End();
+}
+
+void drawAppleAdvancedCropPreviewWindow(bool *open,
+                                        const AppleVideoAssetInfo &crop_info,
+                                        AppleMetalVideoViewport *viewport) {
+  if (viewport == nullptr) {
+    return;
+  }
+  *viewport = {};
+  if (open == nullptr || !*open) {
+    return;
+  }
+  setFirstUseGeometry(currentWorkspaceLayout().advanced_crop_preview);
+  ImGui::SetNextWindowSizeConstraints(ImVec2(120.0f, 120.0f),
+                                      ImVec2(420.0f, 700.0f));
+  ImGui::SetNextWindowBgAlpha(0.0f);
+  if (!ImGui::Begin("Advanced Crop Preview", open,
+                    ImGuiWindowFlags_NoBackground)) {
+    ImGui::End();
+    return;
+  }
+  constrainCurrentWindowToWorkspace();
+  const ImVec2 position = ImGui::GetCursorScreenPos();
+  const ImVec2 size = ImGui::GetContentRegionAvail();
+  ImGui::InvisibleButton(
+      "##advanced-crop-presentation",
+      ImVec2(std::max(1.0f, size.x), std::max(1.0f, size.y)));
+  *viewport = contentViewport(position, size, crop_info);
+  ImGui::End();
+}
+
+void drawAppleStimulusDebugWindows(
+    bool enabled, const AppleVideoAssetInfo &stimulus_info,
+    const AppleStimulusPlaybackMetrics &metrics,
+    const std::vector<int64_t> &buffered_frame_numbers,
+    AppleStimulusDebugState *state, AppleMetalVideoViewport *viewport,
+    bool interactive) {
+  if (viewport == nullptr || state == nullptr) {
+    return;
+  }
+  *viewport = {};
+  if (!enabled) {
+    return;
+  }
+  setFirstUseGeometry(currentWorkspaceLayout().stimulus);
+  ImGui::SetNextWindowBgAlpha(0.0f);
+  if (ImGui::Begin("Stimulus", nullptr, ImGuiWindowFlags_NoBackground)) {
+    constrainCurrentWindowToWorkspace();
+    const ImVec2 position = ImGui::GetCursorScreenPos();
+    const ImVec2 size = ImGui::GetContentRegionAvail();
+    ImGui::InvisibleButton(
+        "##stimulus-presentation",
+        ImVec2(std::max(1.0f, size.x), std::max(1.0f, size.y)));
+    *viewport = contentViewport(position, size, stimulus_info);
+  }
+  ImGui::End();
+
+  setFirstUseGeometry(currentWorkspaceLayout().stimulus_frames_in_buffer);
+  if (ImGui::Begin("Stimulus Frames in Buffer")) {
+    ImGui::Text("Valid frames: %zu", metrics.decoder.buffered_frames);
+    ImGui::Text("Target stimulus frame: %d",
+                metrics.last_target_stimulus_frame);
+    ImGui::Text("Last decoded frame: %lld",
+                static_cast<long long>(metrics.decoder.last_decoded_frame));
+    ImGui::Separator();
+    if (buffered_frame_numbers.empty()) {
+      ImGui::TextDisabled("No decoded stimulus frames are buffered.");
+    } else {
+      for (const int64_t frame : buffered_frame_numbers) {
+        const bool selected = state->selected_frame == frame;
+        if (ImGui::Selectable(
+                ("Stimulus frame " + std::to_string(frame)).c_str(),
+                selected) &&
+            interactive) {
+          state->selected_frame = frame;
+        }
+      }
+    }
+    ImGui::Separator();
+    ImGui::Text("Mapped requests: %llu",
+                static_cast<unsigned long long>(metrics.mapped_requests));
+    ImGui::Text("Hold %llu  Follow %llu  Seek %llu",
+                static_cast<unsigned long long>(metrics.hold_requests),
+                static_cast<unsigned long long>(metrics.follow_requests),
+                static_cast<unsigned long long>(metrics.seek_requests));
   }
   ImGui::End();
 }
@@ -1325,10 +2291,8 @@ void drawAppleCropPreviewOverlay(
   }
   const float x = static_cast<float>(viewport.x / framebuffer_scale);
   const float y = static_cast<float>(viewport.y / framebuffer_scale);
-  const float width =
-      static_cast<float>(viewport.width / framebuffer_scale);
-  const float height =
-      static_cast<float>(viewport.height / framebuffer_scale);
+  const float width = static_cast<float>(viewport.width / framebuffer_scale);
+  const float height = static_cast<float>(viewport.height / framebuffer_scale);
   ImDrawList *draw_list = ImGui::GetBackgroundDrawList();
   draw_list->AddRect(ImVec2(x, y), ImVec2(x + width, y + height),
                      IM_COL32(210, 216, 222, 210), 0.0f, 0, 1.0f);
@@ -1337,20 +2301,17 @@ void drawAppleCropPreviewOverlay(
   if (selection != nullptr && selection->source) {
     source_name = cropSourceName(*selection->source);
   }
-  const std::string label =
-      std::string("Crop Preview  ") + source_name + "  " +
-      cropStatusName(status);
+  const std::string label = std::string("Crop Preview  ") + source_name + "  " +
+                            cropStatusName(status);
   const ImVec2 label_size = ImGui::CalcTextSize(label.c_str());
   draw_list->AddRectFilled(ImVec2(x, y),
-                           ImVec2(std::min(x + width,
-                                           x + label_size.x + 14.0f),
+                           ImVec2(std::min(x + width, x + label_size.x + 14.0f),
                                   y + label_size.y + 8.0f),
                            IM_COL32(12, 15, 18, 220));
-  draw_list->AddText(ImVec2(x + 7.0f, y + 4.0f),
-                     IM_COL32(240, 243, 246, 255), label.c_str());
+  draw_list->AddText(ImVec2(x + 7.0f, y + 4.0f), IM_COL32(240, 243, 246, 255),
+                     label.c_str());
 
-  if (selection == nullptr || !selection->geometry ||
-      selection->blank_frame ||
+  if (selection == nullptr || !selection->geometry || selection->blank_frame ||
       !selection->geometry->full_frame_detection) {
     return;
   }
@@ -1360,18 +2321,44 @@ void drawAppleCropPreviewOverlay(
     return;
   }
   const auto &geometry = *selection->geometry;
-  const float x0 = x + static_cast<float>(
-                           crop_detection->x / geometry.output_width * width);
-  const float y0 = y + static_cast<float>(
-                           crop_detection->y / geometry.output_height * height);
-  const float x1 = x + static_cast<float>(
-                           (crop_detection->x + crop_detection->width) /
-                           geometry.output_width * width);
-  const float y1 = y + static_cast<float>(
-                           (crop_detection->y + crop_detection->height) /
-                           geometry.output_height * height);
+  const float x0 =
+      x + static_cast<float>(crop_detection->x / geometry.output_width * width);
+  const float y0 = y + static_cast<float>(crop_detection->y /
+                                          geometry.output_height * height);
+  const float x1 =
+      x + static_cast<float>((crop_detection->x + crop_detection->width) /
+                             geometry.output_width * width);
+  const float y1 =
+      y + static_cast<float>((crop_detection->y + crop_detection->height) /
+                             geometry.output_height * height);
   draw_list->AddRect(ImVec2(x0, y0), ImVec2(x1, y1),
                      IM_COL32(58, 214, 132, 255), 0.0f, 0, 2.0f);
+}
+
+void drawAppleStimulusInsetOverlay(const AppleMetalVideoViewport &viewport,
+                                   float framebuffer_scale,
+                                   int64_t camera_frame,
+                                   int64_t stimulus_frame) {
+  if (viewport.width <= 0.0 || viewport.height <= 0.0 ||
+      framebuffer_scale <= 0.0f || camera_frame < 0 || stimulus_frame < 0) {
+    return;
+  }
+  const float x = static_cast<float>(viewport.x / framebuffer_scale);
+  const float y = static_cast<float>(viewport.y / framebuffer_scale);
+  const float width = static_cast<float>(viewport.width / framebuffer_scale);
+  const float height = static_cast<float>(viewport.height / framebuffer_scale);
+  const std::string label = "Stimulus " + std::to_string(stimulus_frame) +
+                            "  Camera " + std::to_string(camera_frame);
+  const ImVec2 label_size = ImGui::CalcTextSize(label.c_str());
+  ImDrawList *draw_list = ImGui::GetBackgroundDrawList();
+  draw_list->AddRect(ImVec2(x, y), ImVec2(x + width, y + height),
+                     IM_COL32(210, 216, 222, 210), 0.0f, 0, 1.0f);
+  draw_list->AddRectFilled(ImVec2(x, y),
+                           ImVec2(std::min(x + width, x + label_size.x + 14.0f),
+                                  y + label_size.y + 8.0f),
+                           IM_COL32(12, 15, 18, 220));
+  draw_list->AddText(ImVec2(x + 7.0f, y + 4.0f), IM_COL32(240, 243, 246, 255),
+                     label.c_str());
 }
 
 size_t drawAppleReadOnlyOverlayText(
@@ -1381,8 +2368,8 @@ size_t drawAppleReadOnlyOverlayText(
   if (framebuffer_scale_x <= 0.0f || framebuffer_scale_y <= 0.0f) {
     return 0;
   }
-  const auto labels = crimson::overlay::layoutReadOnlyOverlayText(scene,
-                                                                  transform);
+  const auto labels =
+      crimson::overlay::layoutReadOnlyOverlayText(scene, transform);
   ImDrawList *draw_list = ImGui::GetBackgroundDrawList();
   ImFont *font = ImGui::GetFont();
   size_t drawn = 0;
@@ -1397,10 +2384,11 @@ size_t drawAppleReadOnlyOverlayText(
                            framebuffer_scale_y));
     const float font_size =
         ImGui::GetFontSize() * static_cast<float>(label.font_scale);
-    const ImVec2 text_size = font->CalcTextSizeA(
-        font_size, FLT_MAX, 0.0f, label.content.c_str());
-    const ImVec2 anchor(static_cast<float>(label.anchor.x / framebuffer_scale_x),
-                        static_cast<float>(label.anchor.y / framebuffer_scale_y));
+    const ImVec2 text_size =
+        font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, label.content.c_str());
+    const ImVec2 anchor(
+        static_cast<float>(label.anchor.x / framebuffer_scale_x),
+        static_cast<float>(label.anchor.y / framebuffer_scale_y));
     const ImVec2 text_min(
         label.centered ? anchor.x - text_size.x * 0.5f : anchor.x,
         label.centered ? anchor.y - text_size.y * 0.5f : anchor.y);
@@ -1422,79 +2410,117 @@ size_t drawAppleReadOnlyOverlayText(
   return drawn;
 }
 
-AppleMetalVideoViewport appleVideoViewport(int framebuffer_width,
-                                           int framebuffer_height,
-                                           float framebuffer_scale,
-                                           const AppleVideoAssetInfo &info) {
-  const double control_height = 108.0 * framebuffer_scale;
-  const double available_width = framebuffer_width;
-  const double available_height =
-      std::max(1.0, framebuffer_height - control_height);
-  return fitVideoViewport(0.0, 0.0, available_width, available_height, info);
+size_t drawAppleChaserDistancePolarText(
+    const crimson::polar::ChaserDistancePolarScene &scene,
+    const AppleMetalVideoViewport &camera_viewport, float framebuffer_scale_x,
+    float framebuffer_scale_y) {
+  if (!scene.ready() || framebuffer_scale_x <= 0.0f ||
+      framebuffer_scale_y <= 0.0f || camera_viewport.width <= 0.0 ||
+      camera_viewport.height <= 0.0) {
+    return 0;
+  }
+  const ImVec2 origin(
+      static_cast<float>(camera_viewport.x / framebuffer_scale_x),
+      static_cast<float>(camera_viewport.y / framebuffer_scale_y));
+  const ImVec2 clip_min = origin;
+  const ImVec2 clip_max(origin.x + static_cast<float>(camera_viewport.width /
+                                                      framebuffer_scale_x),
+                        origin.y + static_cast<float>(camera_viewport.height /
+                                                      framebuffer_scale_y));
+  ImDrawList *draw_list = ImGui::GetBackgroundDrawList();
+  draw_list->PushClipRect(clip_min, clip_max, true);
+  for (const auto &annotation : scene.text) {
+    ImVec2 anchor(origin.x + static_cast<float>(annotation.anchor.x),
+                  origin.y + static_cast<float>(annotation.anchor.y));
+    if (annotation.centered) {
+      const ImVec2 text_size = ImGui::CalcTextSize(annotation.content.c_str());
+      anchor.x -= text_size.x * 0.5f;
+      anchor.y -= text_size.y * 0.5f;
+    }
+    draw_list->AddText(anchor, polarColor(annotation.color),
+                       annotation.content.c_str());
+  }
+  draw_list->PopClipRect();
+  return scene.text.size();
 }
 
-AppleCompositeVideoViewports appleCompositeVideoViewports(
-    int framebuffer_width, int framebuffer_height, float framebuffer_scale,
-    const AppleVideoAssetInfo &camera_info,
-    const AppleVideoAssetInfo *crop_info,
-    const AppleVideoAssetInfo *stimulus_info) {
+size_t drawAppleStimulusCameraOverlayText(
+    const crimson::stimulus::StimulusCameraOverlayScene &scene,
+    const AppleMetalVideoViewport &camera_viewport, float framebuffer_scale_x,
+    float framebuffer_scale_y) {
+  if (!scene.ready() || framebuffer_scale_x <= 0.0f ||
+      framebuffer_scale_y <= 0.0f || camera_viewport.width <= 0.0 ||
+      camera_viewport.height <= 0.0) {
+    return 0;
+  }
+  const ImVec2 origin(
+      static_cast<float>(camera_viewport.x / framebuffer_scale_x),
+      static_cast<float>(camera_viewport.y / framebuffer_scale_y));
+  const ImVec2 clip_min = origin;
+  const ImVec2 clip_max(origin.x + static_cast<float>(camera_viewport.width /
+                                                      framebuffer_scale_x),
+                        origin.y + static_cast<float>(camera_viewport.height /
+                                                      framebuffer_scale_y));
+  ImDrawList *draw_list = ImGui::GetBackgroundDrawList();
+  draw_list->PushClipRect(clip_min, clip_max, true);
+  for (const auto &annotation : scene.text) {
+    const ImVec2 anchor(origin.x + static_cast<float>(annotation.anchor.x),
+                        origin.y + static_cast<float>(annotation.anchor.y));
+    draw_list->AddText(anchor, stimulusOverlayColor(annotation.color),
+                       annotation.content.c_str());
+  }
+  draw_list->PopClipRect();
+  return scene.text.size();
+}
+
+AppleCompositeVideoViewports
+appleWorkspaceVideoViewports(const AppleMetalVideoViewport &camera,
+                             const AppleMetalVideoViewport &crop_preview,
+                             const AppleMetalVideoViewport &stimulus_debug,
+                             const AppleVideoAssetInfo *crop_info,
+                             const AppleVideoAssetInfo *stimulus_info,
+                             double crop_inset_width,
+                             double stimulus_inset_width) {
   AppleCompositeVideoViewports result;
-  if (stimulus_info == nullptr && crop_info == nullptr) {
-    result.camera = appleVideoViewport(framebuffer_width, framebuffer_height,
-                                       framebuffer_scale, camera_info);
+  result.camera = camera;
+  result.crop_preview = crop_preview;
+  result.stimulus_debug = stimulus_debug;
+  if (camera.width <= 0.0 || camera.height <= 0.0) {
     return result;
   }
 
-  const double control_height =
-      transportHeight(stimulus_info != nullptr, crop_info != nullptr) *
-      framebuffer_scale;
-  const double available_width = std::max(1, framebuffer_width);
-  const double available_height =
-      std::max(1.0, framebuffer_height - control_height);
-  if (available_width < 4.0) {
-    result.camera = fitVideoViewport(0.0, 0.0, available_width,
-                                     available_height, camera_info);
-    if (crop_info != nullptr) {
-      result.crop = fitVideoViewport(
-          std::max(0.0, available_width - 1.0), 0.0, 1.0,
-          available_height, *crop_info);
-    } else if (stimulus_info != nullptr) {
-      result.stimulus = fitVideoViewport(
-          std::max(0.0, available_width - 1.0), 0.0, 1.0,
-          available_height, *stimulus_info);
-    }
-    return result;
+  auto insets = crimson::macos::workspace::makeCameraInsetLayout(
+      {camera.x, camera.y, camera.width, camera.height}, crop_info != nullptr,
+      stimulus_info != nullptr);
+  if (crop_info != nullptr && crop_inset_width > 0.0 && insets.crop.valid()) {
+    const double edge = std::clamp(crop_inset_width, 1.0,
+                                   std::min(camera.width, camera.height) * 0.8);
+    const double right_margin = camera.x + camera.width - insets.crop.right();
+    const double bottom_margin =
+        camera.y + camera.height - insets.crop.bottom();
+    insets.crop = {camera.x + camera.width - right_margin - edge,
+                   camera.y + camera.height - bottom_margin - edge, edge, edge};
   }
-  const double gutter = std::min(
-      std::max(8.0, 12.0 * framebuffer_scale), available_width * 0.05);
-  const double maximum_rail_width = std::max(
-      1.0, std::min(360.0 * framebuffer_scale, available_width * 0.4));
-  const double minimum_rail_width =
-      std::min(160.0 * framebuffer_scale, maximum_rail_width);
-  const double rail_width =
-      std::clamp(available_width * 0.24, minimum_rail_width,
-                 maximum_rail_width);
-  const double camera_width =
-      std::max(1.0, available_width - rail_width - gutter);
-  result.camera = fitVideoViewport(0.0, 0.0, camera_width, available_height,
-                                   camera_info);
-  const double rail_x = camera_width + gutter;
-  if (crop_info != nullptr && stimulus_info != nullptr) {
-    const double rail_gutter = std::min(8.0 * framebuffer_scale,
-                                        available_height * 0.04);
-    const double panel_height =
-        std::max(1.0, (available_height - rail_gutter) * 0.5);
-    result.crop = fitVideoViewport(rail_x, 0.0, rail_width, panel_height,
-                                   *crop_info);
-    result.stimulus = fitVideoViewport(
-        rail_x, panel_height + rail_gutter, rail_width, panel_height,
-        *stimulus_info);
-  } else if (crop_info != nullptr) {
-    result.crop = fitVideoViewport(rail_x, 0.0, rail_width, available_height,
-                                   *crop_info);
-  } else {
-    result.stimulus = fitVideoViewport(
-        rail_x, 0.0, rail_width, available_height, *stimulus_info);
+  if (stimulus_info != nullptr && stimulus_inset_width > 0.0 &&
+      insets.stimulus.valid()) {
+    const double edge = std::clamp(stimulus_inset_width, 1.0,
+                                   std::min(camera.width, camera.height) * 0.8);
+    const double left_margin = insets.stimulus.x - camera.x;
+    const double bottom_margin =
+        camera.y + camera.height - insets.stimulus.bottom();
+    insets.stimulus = {camera.x + left_margin,
+                       camera.y + camera.height - bottom_margin - edge, edge,
+                       edge};
+  }
+  if (crop_info != nullptr && insets.crop.valid()) {
+    result.crop_inset =
+        fitVideoViewport(insets.crop.x, insets.crop.y, insets.crop.width,
+                         insets.crop.height, *crop_info);
+  }
+  if (stimulus_info != nullptr && insets.stimulus.valid()) {
+    result.stimulus_inset = fitVideoViewport(
+        insets.stimulus.x, insets.stimulus.y, insets.stimulus.width,
+        insets.stimulus.height, *stimulus_info);
   }
   return result;
 }

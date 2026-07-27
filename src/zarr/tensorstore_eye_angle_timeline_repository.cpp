@@ -1,8 +1,5 @@
 #include "zarr/tensorstore_eye_angle_timeline_repository.h"
 
-#include "zarr/archive_context_internal.h"
-
-#include <nlohmann/json.hpp>
 #include <tensorstore/box.h>
 #include <tensorstore/index_space/index_transform.h>
 #include <tensorstore/open.h>
@@ -10,15 +7,20 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <mutex>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+#include "zarr/archive_context_internal.h"
 
 namespace crimson::zarr {
 namespace ts = tensorstore;
@@ -28,15 +30,7 @@ namespace {
 
 std::optional<json> makeArraySpec(const ArchiveContext::Impl& archive,
                                   const std::string& path) {
-  const auto spec = archive.store.spec();
-  if (!spec.ok()) {
-    return std::nullopt;
-  }
-  const auto kvstore = spec->ToJson();
-  if (!kvstore.ok()) {
-    return std::nullopt;
-  }
-  return json{{"driver", "zarr3"}, {"kvstore", *kvstore}, {"path", path}};
+  return internal::MakeReadOnlyArraySpec(archive, path);
 }
 
 template <typename T, size_t Rank>
@@ -198,8 +192,8 @@ bool endsWith(const std::string& value, const std::string& suffix) {
 std::string unsmoothedName(const std::string& name) {
   constexpr const char* suffix = "_smoothed";
   return endsWith(name, suffix)
-             ? name.substr(0, name.size() - std::char_traits<char>::length(
-                                               suffix))
+             ? name.substr(0,
+                           name.size() - std::char_traits<char>::length(suffix))
              : std::string{};
 }
 
@@ -223,10 +217,10 @@ std::string humanFieldName(const std::string& source_name,
   return label;
 }
 
-std::optional<crimson::timeline::EyeAngleTimelineFieldDescriptor>
-resolveField(const std::string& requested,
-             const std::unordered_map<std::string, size_t>& channels,
-             const json& field_metadata, const std::string& default_units) {
+std::optional<crimson::timeline::EyeAngleTimelineFieldDescriptor> resolveField(
+    const std::string& requested,
+    const std::unordered_map<std::string, size_t>& channels,
+    const json& field_metadata, const std::string& default_units) {
   std::string source = requested;
   bool fallback = false;
   if (channels.find(source) == channels.end()) {
@@ -261,8 +255,7 @@ std::vector<std::string> representationFields(const json& representation) {
     return fields;
   }
   const auto primary = stringVector(representation, "primary_roi_fields");
-  const auto aggregate =
-      stringVector(representation, "aggregate_roi_fields");
+  const auto aggregate = stringVector(representation, "aggregate_roi_fields");
   std::unordered_set<std::string> seen;
   for (const auto& field : primary) {
     if (seen.insert(field).second) {
@@ -289,15 +282,78 @@ class TensorStoreTimelineRepository final
       crimson::timeline::EyeAngleTimelineDescriptor descriptor,
       ts::TensorStore<float, 2> frame_angles,
       std::optional<ts::TensorStore<float, 1>> frame_times,
-      std::unordered_map<std::string, size_t> channels)
+      std::unordered_map<std::string, size_t> channels,
+      crimson::data::SmallSeriesPreloadPolicy preload_policy)
       : descriptor_(std::move(descriptor)),
         frame_angles_(std::move(frame_angles)),
         frame_times_(std::move(frame_times)),
-        channels_(std::move(channels)) {}
+        channels_(std::move(channels)),
+        frame_column_count_(
+            static_cast<size_t>(frame_angles_.domain().shape()[1])) {
+    std::vector<size_t> preload_channels;
+    std::unordered_set<size_t> unique_channels;
+    const auto* default_representation =
+        crimson::timeline::findEyeAngleTimelineRepresentation(
+            descriptor_, descriptor_.default_representation);
+    if (default_representation != nullptr) {
+      for (const auto& field : default_representation->fields) {
+        const auto channel = channels_.find(field.source_name);
+        if (channel != channels_.end() &&
+            unique_channels.insert(channel->second).second) {
+          preload_channels.push_back(channel->second);
+        }
+      }
+    }
+    metrics_.preload_candidate_bytes =
+        static_cast<uint64_t>(descriptor_.frame_count) *
+        preload_channels.size() * sizeof(float);
+    if (frame_times_) {
+      metrics_.preload_candidate_bytes +=
+          static_cast<uint64_t>(descriptor_.frame_count) * sizeof(float);
+    }
+    if (!preload_channels.empty() &&
+        preload_policy.admits(metrics_.preload_candidate_bytes)) {
+      const auto started = std::chrono::steady_clock::now();
+      std::unordered_map<size_t, std::vector<float>> angles;
+      std::optional<std::vector<float>> times;
+      bool ready = readSelectedChannels(preload_channels, &angles);
+      if (ready && frame_times_) {
+        std::vector<float> retained_times;
+        ready = readAllTimes(&retained_times);
+        if (ready) {
+          times = std::move(retained_times);
+        }
+      }
+      metrics_.preload_ms = std::chrono::duration<double, std::milli>(
+                                std::chrono::steady_clock::now() - started)
+                                .count();
+      if (ready) {
+        preloaded_channels_ = std::move(angles);
+        preloaded_times_ = std::move(times);
+        preloaded_representation_ = descriptor_.default_representation;
+        metrics_.frame_series_preloaded = true;
+        for (const auto& channel : preloaded_channels_) {
+          metrics_.preloaded_retained_bytes +=
+              static_cast<uint64_t>(channel.second.capacity()) * sizeof(float);
+        }
+        if (preloaded_times_) {
+          metrics_.preloaded_retained_bytes +=
+              static_cast<uint64_t>(preloaded_times_->capacity()) *
+              sizeof(float);
+        }
+      }
+    }
+  }
 
   const crimson::timeline::EyeAngleTimelineDescriptor& descriptor()
       const override {
     return descriptor_;
+  }
+
+  crimson::timeline::EyeAngleTimelineRepositoryMetrics metrics()
+      const override {
+    std::lock_guard<std::mutex> lock(metrics_mutex_);
+    return metrics_;
   }
 
   crimson::timeline::EyeAngleTimelineWindow resolveWindow(
@@ -311,55 +367,95 @@ class TensorStoreTimelineRepository final
     if (representation == nullptr || request.first_frame < 0 ||
         request.last_frame < request.first_frame ||
         request.last_frame >= static_cast<int64_t>(descriptor_.frame_count)) {
-      failure.status = representation == nullptr
-                           ? crimson::timeline::EyeAngleTimelineStatus::InvalidRequest
-                           : crimson::timeline::EyeAngleTimelineStatus::OutOfRange;
+      failure.status =
+          representation == nullptr
+              ? crimson::timeline::EyeAngleTimelineStatus::InvalidRequest
+              : crimson::timeline::EyeAngleTimelineStatus::OutOfRange;
       failure.error = "Eye-angle timeline window is invalid or out of range";
       return failure;
     }
     const size_t row_count =
         static_cast<size_t>(request.last_frame - request.first_frame + 1);
-    const auto read = ts::Read(sliceRows(
-                                   frame_angles_, request.first_frame,
-                                   request.last_frame + 1))
-                          .result();
-    if (!read.ok() || read->rank() != 2 ||
-        read->shape()[0] != static_cast<ts::Index>(row_count) ||
-        read->byte_strides().size() != 2) {
-      failure.status = crimson::timeline::EyeAngleTimelineStatus::ReadFailed;
-      failure.error = "Failed to read the eye-angle frame window";
-      return failure;
+    const bool use_preloaded =
+        request.representation_key == preloaded_representation_ &&
+        !preloaded_channels_.empty();
+    {
+      std::lock_guard<std::mutex> lock(metrics_mutex_);
+      if (use_preloaded) {
+        ++metrics_.preloaded_window_resolves;
+      } else {
+        ++metrics_.paged_window_resolves;
+      }
     }
-    const auto strides = read->byte_strides();
-    const auto* origin = reinterpret_cast<const uint8_t*>(
-        read->byte_strided_origin_pointer().get());
     std::vector<crimson::timeline::EyeAngleTimelineFieldSeries> fields;
     fields.reserve(representation->fields.size());
-    for (const auto& field : representation->fields) {
-      const auto channel = channels_.find(field.source_name);
-      if (channel == channels_.end() ||
-          channel->second >= static_cast<size_t>(read->shape()[1])) {
-        continue;
+    if (use_preloaded) {
+      for (const auto& field : representation->fields) {
+        const auto channel = channels_.find(field.source_name);
+        if (channel == channels_.end()) {
+          continue;
+        }
+        const auto retained = preloaded_channels_.find(channel->second);
+        if (retained == preloaded_channels_.end() ||
+            retained->second.size() != descriptor_.frame_count) {
+          continue;
+        }
+        crimson::timeline::EyeAngleTimelineFieldSeries series;
+        series.source_name = field.source_name;
+        series.frame_values.resize(row_count);
+        for (size_t row = 0; row < row_count; ++row) {
+          const size_t source_row =
+              static_cast<size_t>(request.first_frame) + row;
+          series.frame_values[row] =
+              static_cast<double>(retained->second[source_row]);
+        }
+        fields.push_back(std::move(series));
       }
-      crimson::timeline::EyeAngleTimelineFieldSeries series;
-      series.source_name = field.source_name;
-      series.frame_values.resize(row_count);
-      for (size_t row = 0; row < row_count; ++row) {
-        const auto* value = origin + static_cast<ts::Index>(row) * strides[0] +
-                            static_cast<ts::Index>(channel->second) *
-                                strides[1];
-        series.frame_values[row] =
-            static_cast<double>(*reinterpret_cast<const float*>(value));
+    } else {
+      const auto read = ts::Read(sliceRows(frame_angles_, request.first_frame,
+                                           request.last_frame + 1))
+                            .result();
+      if (!read.ok() || read->rank() != 2 ||
+          read->shape()[0] != static_cast<ts::Index>(row_count) ||
+          read->byte_strides().size() != 2) {
+        failure.status = crimson::timeline::EyeAngleTimelineStatus::ReadFailed;
+        failure.error = "Failed to read the eye-angle frame window";
+        return failure;
       }
-      fields.push_back(std::move(series));
+      const auto strides = read->byte_strides();
+      const auto* origin = reinterpret_cast<const uint8_t*>(
+          read->byte_strided_origin_pointer().get());
+      for (const auto& field : representation->fields) {
+        const auto channel = channels_.find(field.source_name);
+        if (channel == channels_.end() ||
+            channel->second >= static_cast<size_t>(read->shape()[1])) {
+          continue;
+        }
+        crimson::timeline::EyeAngleTimelineFieldSeries series;
+        series.source_name = field.source_name;
+        series.frame_values.resize(row_count);
+        for (size_t row = 0; row < row_count; ++row) {
+          const auto* value =
+              origin + static_cast<ts::Index>(row) * strides[0] +
+              static_cast<ts::Index>(channel->second) * strides[1];
+          series.frame_values[row] =
+              static_cast<double>(*reinterpret_cast<const float*>(value));
+        }
+        fields.push_back(std::move(series));
+      }
     }
 
     std::vector<double> times;
-    if (frame_times_) {
-      const auto time_read = ts::Read(sliceRows(
-                                          *frame_times_, request.first_frame,
-                                          request.last_frame + 1))
-                                 .result();
+    if (preloaded_times_) {
+      const auto first = preloaded_times_->begin() +
+                         static_cast<std::ptrdiff_t>(request.first_frame);
+      const auto last = first + static_cast<std::ptrdiff_t>(row_count);
+      times.assign(first, last);
+    } else if (frame_times_) {
+      const auto time_read =
+          ts::Read(sliceRows(*frame_times_, request.first_frame,
+                             request.last_frame + 1))
+              .result();
       if (!time_read.ok() || time_read->rank() != 1 ||
           time_read->shape()[0] != static_cast<ts::Index>(row_count) ||
           time_read->byte_strides().size() != 1) {
@@ -372,8 +468,8 @@ class TensorStoreTimelineRepository final
       times.resize(row_count);
       for (size_t row = 0; row < row_count; ++row) {
         times[row] = static_cast<double>(*reinterpret_cast<const float*>(
-            time_origin + static_cast<ts::Index>(row) *
-                              time_read->byte_strides()[0]));
+            time_origin +
+            static_cast<ts::Index>(row) * time_read->byte_strides()[0]));
       }
     }
     return crimson::timeline::buildEyeAngleTimelineWindow(
@@ -381,18 +477,75 @@ class TensorStoreTimelineRepository final
   }
 
  private:
+  bool readSelectedChannels(
+      const std::vector<size_t>& channels,
+      std::unordered_map<size_t, std::vector<float>>* output) const {
+    const auto read = ts::Read(frame_angles_).result();
+    if (!read.ok() || read->rank() != 2 ||
+        read->shape()[0] != static_cast<ts::Index>(descriptor_.frame_count) ||
+        read->shape()[1] != static_cast<ts::Index>(frame_column_count_) ||
+        read->byte_strides().size() != 2) {
+      return false;
+    }
+    output->clear();
+    for (const size_t channel : channels) {
+      if (channel >= frame_column_count_) {
+        return false;
+      }
+      output->emplace(channel, std::vector<float>(descriptor_.frame_count));
+    }
+    const auto* origin = reinterpret_cast<const uint8_t*>(
+        read->byte_strided_origin_pointer().get());
+    for (size_t row = 0; row < descriptor_.frame_count; ++row) {
+      for (const size_t channel : channels) {
+        (*output)[channel][row] = *reinterpret_cast<const float*>(
+            origin + static_cast<ts::Index>(row) * read->byte_strides()[0] +
+            static_cast<ts::Index>(channel) * read->byte_strides()[1]);
+      }
+    }
+    return true;
+  }
+
+  bool readAllTimes(std::vector<float>* output) const {
+    if (!frame_times_) {
+      output->clear();
+      return true;
+    }
+    const auto read = ts::Read(*frame_times_).result();
+    if (!read.ok() || read->rank() != 1 ||
+        read->shape()[0] != static_cast<ts::Index>(descriptor_.frame_count) ||
+        read->byte_strides().size() != 1) {
+      return false;
+    }
+    output->resize(descriptor_.frame_count);
+    const auto* origin = reinterpret_cast<const uint8_t*>(
+        read->byte_strided_origin_pointer().get());
+    for (size_t row = 0; row < descriptor_.frame_count; ++row) {
+      (*output)[row] = *reinterpret_cast<const float*>(
+          origin + static_cast<ts::Index>(row) * read->byte_strides()[0]);
+    }
+    return true;
+  }
+
   crimson::timeline::EyeAngleTimelineDescriptor descriptor_;
   ts::TensorStore<float, 2> frame_angles_;
   std::optional<ts::TensorStore<float, 1>> frame_times_;
   std::unordered_map<std::string, size_t> channels_;
+  size_t frame_column_count_ = 0;
+  std::unordered_map<size_t, std::vector<float>> preloaded_channels_;
+  std::optional<std::vector<float>> preloaded_times_;
+  std::string preloaded_representation_;
+  mutable std::mutex metrics_mutex_;
+  mutable crimson::timeline::EyeAngleTimelineRepositoryMetrics metrics_;
 };
 
 }  // namespace
 
 std::unique_ptr<crimson::timeline::EyeAngleTimelineRepository>
-OpenEyeAngleTimelineRepository(const std::shared_ptr<ArchiveContext>& archive,
-                               const std::string& requested_run,
-                               std::string* error_message) {
+OpenEyeAngleTimelineRepository(
+    const std::shared_ptr<ArchiveContext>& archive,
+    const std::string& requested_run, std::string* error_message,
+    crimson::data::SmallSeriesPreloadPolicy preload_policy) {
   auto fail = [&](std::string message)
       -> std::unique_ptr<crimson::timeline::EyeAngleTimelineRepository> {
     if (error_message != nullptr) {
@@ -430,7 +583,8 @@ OpenEyeAngleTimelineRepository(const std::shared_ptr<ArchiveContext>& archive,
       static_cast<size_t>(frame_angles->domain().shape()[0]);
   const size_t column_count =
       static_cast<size_t>(frame_angles->domain().shape()[1]);
-  auto frame_times = openArray<float, 1>(impl, base + "/support/frame_time_seconds");
+  auto frame_times =
+      openArray<float, 1>(impl, base + "/support/frame_time_seconds");
   if (frame_times &&
       frame_times->domain().shape()[0] != static_cast<ts::Index>(frame_count)) {
     return fail("Eye-angle frame-time count does not match frame angles");
@@ -474,10 +628,10 @@ OpenEyeAngleTimelineRepository(const std::shared_ptr<ArchiveContext>& archive,
       order.push_back(it.key());
     }
   }
-  const auto field_metadata = variant_schema.contains("fields") &&
-                                      variant_schema["fields"].is_object()
-                                  ? variant_schema["fields"]
-                                  : json::object();
+  const auto field_metadata =
+      variant_schema.contains("fields") && variant_schema["fields"].is_object()
+          ? variant_schema["fields"]
+          : json::object();
 
   crimson::timeline::EyeAngleTimelineDescriptor descriptor;
   descriptor.source_group = group;
@@ -515,9 +669,11 @@ OpenEyeAngleTimelineRepository(const std::shared_ptr<ArchiveContext>& archive,
     }
     descriptor.representations.push_back(std::move(representation));
   }
-  const bool has_fields = std::any_of(
-      descriptor.representations.begin(), descriptor.representations.end(),
-      [](const auto& representation) { return !representation.fields.empty(); });
+  const bool has_fields = std::any_of(descriptor.representations.begin(),
+                                      descriptor.representations.end(),
+                                      [](const auto& representation) {
+                                        return !representation.fields.empty();
+                                      });
   if (!has_fields) {
     return fail("No representation has frame-available eye-angle fields");
   }
@@ -531,7 +687,7 @@ OpenEyeAngleTimelineRepository(const std::shared_ptr<ArchiveContext>& archive,
   }
   return std::make_unique<TensorStoreTimelineRepository>(
       std::move(descriptor), std::move(*frame_angles), std::move(frame_times),
-      channels);
+      channels, preload_policy);
 }
 
 }  // namespace crimson::zarr

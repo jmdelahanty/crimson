@@ -1,8 +1,5 @@
 #include "zarr/tensorstore_subject_shape_overlay_repository.h"
 
-#include "zarr/archive_context_internal.h"
-
-#include <nlohmann/json.hpp>
 #include <tensorstore/box.h>
 #include <tensorstore/index_space/index_transform.h>
 #include <tensorstore/open.h>
@@ -16,11 +13,14 @@
 #include <future>
 #include <limits>
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include "zarr/archive_context_internal.h"
 
 namespace crimson::zarr {
 namespace ts = tensorstore;
@@ -28,22 +28,14 @@ using json = nlohmann::json;
 
 namespace {
 
-std::optional<json> MakeArraySpec(const ArchiveContext::Impl &archive,
-                                  const std::string &path) {
-  auto store_spec = archive.store.spec();
-  if (!store_spec.ok()) {
-    return std::nullopt;
-  }
-  auto kvstore_json = store_spec->ToJson();
-  if (!kvstore_json.ok()) {
-    return std::nullopt;
-  }
-  return json{{"driver", "zarr3"}, {"kvstore", *kvstore_json}, {"path", path}};
+std::optional<json> MakeArraySpec(const ArchiveContext::Impl& archive,
+                                  const std::string& path) {
+  return internal::MakeReadOnlyArraySpec(archive, path);
 }
 
 template <typename T, size_t Rank>
-std::optional<ts::TensorStore<T, Rank>>
-OpenArray(const ArchiveContext::Impl &archive, const std::string &path) {
+std::optional<ts::TensorStore<T, Rank>> OpenArray(
+    const ArchiveContext::Impl& archive, const std::string& path) {
   const auto spec = MakeArraySpec(archive, path);
   if (!spec) {
     return std::nullopt;
@@ -58,8 +50,8 @@ OpenArray(const ArchiveContext::Impl &archive, const std::string &path) {
 }
 
 template <typename T, ts::DimensionIndex Rank>
-auto SliceFirstDimension(const ts::TensorStore<T, Rank> &store,
-                         ts::Index start, ts::Index stop) {
+auto SliceFirstDimension(const ts::TensorStore<T, Rank>& store, ts::Index start,
+                         ts::Index stop) {
   ts::Box<Rank> domain(store.domain().box());
   domain.origin()[0] = start;
   domain.shape()[0] = stop - start;
@@ -67,8 +59,8 @@ auto SliceFirstDimension(const ts::TensorStore<T, Rank> &store,
 }
 
 template <typename Source>
-bool ReadIntegerVector(const ArchiveContext::Impl &archive,
-                       const std::string &path, std::vector<int64_t> *output) {
+bool ReadIntegerVector(const ArchiveContext::Impl& archive,
+                       const std::string& path, std::vector<int64_t>* output) {
   const auto store = OpenArray<Source, 1>(archive, path);
   if (!store) {
     return false;
@@ -78,7 +70,7 @@ bool ReadIntegerVector(const ArchiveContext::Impl &archive,
     return false;
   }
   const size_t count = static_cast<size_t>(read->shape()[0]);
-  const Source *values = static_cast<const Source *>(read->data());
+  const Source* values = static_cast<const Source*>(read->data());
   output->resize(count);
   for (size_t index = 0; index < count; ++index) {
     (*output)[index] = static_cast<int64_t>(values[index]);
@@ -86,8 +78,8 @@ bool ReadIntegerVector(const ArchiveContext::Impl &archive,
   return true;
 }
 
-bool ReadIntegers(const ArchiveContext::Impl &archive, const std::string &path,
-                  std::vector<int64_t> *output) {
+bool ReadIntegers(const ArchiveContext::Impl& archive, const std::string& path,
+                  std::vector<int64_t>* output) {
   return ReadIntegerVector<int64_t>(archive, path, output) ||
          ReadIntegerVector<uint64_t>(archive, path, output) ||
          ReadIntegerVector<int32_t>(archive, path, output) ||
@@ -99,9 +91,9 @@ bool ReadIntegers(const ArchiveContext::Impl &archive, const std::string &path,
 }
 
 template <typename Source>
-bool ReadMatrix(const ArchiveContext::Impl &archive, const std::string &path,
+bool ReadMatrix(const ArchiveContext::Impl& archive, const std::string& path,
                 size_t minimum_columns,
-                std::vector<std::vector<double>> *output) {
+                std::vector<std::vector<double>>* output) {
   const auto store = OpenArray<Source, 2>(archive, path);
   if (!store) {
     return false;
@@ -113,7 +105,7 @@ bool ReadMatrix(const ArchiveContext::Impl &archive, const std::string &path,
   }
   const size_t rows = static_cast<size_t>(read->shape()[0]);
   const size_t columns = static_cast<size_t>(read->shape()[1]);
-  const Source *values = static_cast<const Source *>(read->data());
+  const Source* values = static_cast<const Source*>(read->data());
   output->assign(rows, std::vector<double>(columns));
   for (size_t row = 0; row < rows; ++row) {
     for (size_t column = 0; column < columns; ++column) {
@@ -124,39 +116,39 @@ bool ReadMatrix(const ArchiveContext::Impl &archive, const std::string &path,
   return true;
 }
 
-bool ReadNumericMatrix(const ArchiveContext::Impl &archive,
-                       const std::string &path, size_t minimum_columns,
-                       std::vector<std::vector<double>> *output) {
+bool ReadNumericMatrix(const ArchiveContext::Impl& archive,
+                       const std::string& path, size_t minimum_columns,
+                       std::vector<std::vector<double>>* output) {
   return ReadMatrix<double>(archive, path, minimum_columns, output) ||
          ReadMatrix<float>(archive, path, minimum_columns, output) ||
          ReadMatrix<int64_t>(archive, path, minimum_columns, output) ||
          ReadMatrix<int32_t>(archive, path, minimum_columns, output);
 }
 
-std::string StringValue(const json &attributes, const char *key) {
+std::string StringValue(const json& attributes, const char* key) {
   const auto found = attributes.find(key);
   return found != attributes.end() && found->is_string()
              ? found->get<std::string>()
              : std::string{};
 }
 
-int IntegerValue(const json &attributes, const char *key) {
+int IntegerValue(const json& attributes, const char* key) {
   const auto found = attributes.find(key);
   return found != attributes.end() && found->is_number_integer()
              ? found->get<int>()
              : 0;
 }
 
-std::string LatestRun(const ArchiveContext::Impl &archive,
-                      const std::string &group) {
+std::string LatestRun(const ArchiveContext::Impl& archive,
+                      const std::string& group) {
   const auto attributes = internal::ReadArchiveAttributes(archive, group);
   if (!attributes) {
     return {};
   }
-  constexpr std::array<const char *, 5> keys = {
+  constexpr std::array<const char*, 5> keys = {
       "latest_complete", "latest_completed", "latest", "latest_success",
       "latest_subject_shape_run"};
-  for (const char *key : keys) {
+  for (const char* key : keys) {
     const std::string value = StringValue(*attributes, key);
     if (!value.empty()) {
       return value;
@@ -165,12 +157,12 @@ std::string LatestRun(const ArchiveContext::Impl &archive,
   return {};
 }
 
-bool ValidRunName(const std::string &run_name) {
+bool ValidRunName(const std::string& run_name) {
   return !run_name.empty() && run_name != "." && run_name != ".." &&
          run_name.find('/') == std::string::npos;
 }
 
-bool ReadRoiSize(const json &attributes, double *width, double *height) {
+bool ReadRoiSize(const json& attributes, double* width, double* height) {
   const auto found = attributes.find("roi_size");
   if (found == attributes.end() || !found->is_array() || found->size() < 2 ||
       !(*found)[0].is_number() || !(*found)[1].is_number()) {
@@ -189,8 +181,8 @@ struct BoolSource {
   ts::TensorStore<uint8_t, 1> bytes;
 };
 
-BoolSource OpenBoolSource(const ArchiveContext::Impl &archive,
-                          const std::string &path, size_t rows) {
+BoolSource OpenBoolSource(const ArchiveContext::Impl& archive,
+                          const std::string& path, size_t rows) {
   BoolSource source;
   if (auto store = OpenArray<bool, 1>(archive, path);
       store && store->domain().shape()[0] == static_cast<ts::Index>(rows)) {
@@ -212,8 +204,8 @@ struct PointSource {
   ts::TensorStore<float, 2> values;
 };
 
-PointSource OpenPointSource(const ArchiveContext::Impl &archive,
-                            const std::string &path, size_t rows) {
+PointSource OpenPointSource(const ArchiveContext::Impl& archive,
+                            const std::string& path, size_t rows) {
   PointSource source;
   if (auto store = OpenArray<float, 2>(archive, path);
       store && store->domain().shape()[0] == static_cast<ts::Index>(rows) &&
@@ -230,8 +222,8 @@ struct SequenceSource {
   ts::TensorStore<float, 3> values;
 };
 
-SequenceSource OpenSequenceSource(const ArchiveContext::Impl &archive,
-                                  const std::string &path, size_t rows) {
+SequenceSource OpenSequenceSource(const ArchiveContext::Impl& archive,
+                                  const std::string& path, size_t rows) {
   SequenceSource source;
   if (auto store = OpenArray<float, 3>(archive, path);
       store && store->domain().shape()[0] == static_cast<ts::Index>(rows) &&
@@ -243,59 +235,57 @@ SequenceSource OpenSequenceSource(const ArchiveContext::Impl &archive,
   return source;
 }
 
-std::optional<std::vector<uint8_t>>
-ReadBoolRange(const BoolSource &source, size_t start, size_t stop) {
+std::optional<std::vector<uint8_t>> ReadBoolRange(const BoolSource& source,
+                                                  size_t start, size_t stop) {
   if (!source.available || stop <= start) {
     return std::nullopt;
   }
   std::vector<uint8_t> values(stop - start, 0);
   if (source.byte_storage) {
-    auto slice = SliceFirstDimension(source.bytes,
-                                     static_cast<ts::Index>(start),
-                                     static_cast<ts::Index>(stop));
+    auto slice =
+        SliceFirstDimension(source.bytes, static_cast<ts::Index>(start),
+                            static_cast<ts::Index>(stop));
     auto read = ts::Read(slice).result();
     if (!read.ok() || read->rank() != 1 ||
         read->shape()[0] != static_cast<ts::Index>(values.size()) ||
         read->byte_strides().size() != 1) {
       return std::nullopt;
     }
-    const auto *origin = reinterpret_cast<const uint8_t *>(
+    const auto* origin = reinterpret_cast<const uint8_t*>(
         read->byte_strided_origin_pointer().get());
     for (size_t index = 0; index < values.size(); ++index) {
       values[index] = *(origin + static_cast<ts::Index>(index) *
-                                    read->byte_strides()[0]) != 0;
+                                     read->byte_strides()[0]) != 0;
     }
     return values;
   }
-  auto slice = SliceFirstDimension(source.booleans,
-                                   static_cast<ts::Index>(start),
-                                   static_cast<ts::Index>(stop));
+  auto slice =
+      SliceFirstDimension(source.booleans, static_cast<ts::Index>(start),
+                          static_cast<ts::Index>(stop));
   auto read = ts::Read(slice).result();
   if (!read.ok() || read->rank() != 1 ||
       read->shape()[0] != static_cast<ts::Index>(values.size()) ||
       read->byte_strides().size() != 1) {
     return std::nullopt;
   }
-  const auto *origin = reinterpret_cast<const uint8_t *>(
+  const auto* origin = reinterpret_cast<const uint8_t*>(
       read->byte_strided_origin_pointer().get());
   for (size_t index = 0; index < values.size(); ++index) {
     values[index] =
-        *reinterpret_cast<const bool *>(
-            origin + static_cast<ts::Index>(index) *
-                         read->byte_strides()[0])
+        *reinterpret_cast<const bool*>(origin + static_cast<ts::Index>(index) *
+                                                    read->byte_strides()[0])
             ? 1
             : 0;
   }
   return values;
 }
 
-std::optional<std::vector<SubjectShapeOverlayPoint>>
-ReadPointRange(const PointSource &source, size_t start, size_t stop) {
+std::optional<std::vector<SubjectShapeOverlayPoint>> ReadPointRange(
+    const PointSource& source, size_t start, size_t stop) {
   if (!source.available || stop <= start) {
     return std::nullopt;
   }
-  auto slice = SliceFirstDimension(source.values,
-                                   static_cast<ts::Index>(start),
+  auto slice = SliceFirstDimension(source.values, static_cast<ts::Index>(start),
                                    static_cast<ts::Index>(stop));
   auto read = ts::Read(slice).result();
   if (!read.ok() || read->rank() != 2 ||
@@ -304,25 +294,23 @@ ReadPointRange(const PointSource &source, size_t start, size_t stop) {
     return std::nullopt;
   }
   const auto strides = read->byte_strides();
-  const auto *origin = reinterpret_cast<const uint8_t *>(
+  const auto* origin = reinterpret_cast<const uint8_t*>(
       read->byte_strided_origin_pointer().get());
   std::vector<SubjectShapeOverlayPoint> values(stop - start);
   for (size_t index = 0; index < values.size(); ++index) {
-    const auto *value = origin + static_cast<ts::Index>(index) * strides[0];
-    values[index].x = *reinterpret_cast<const float *>(value);
-    values[index].y =
-        *reinterpret_cast<const float *>(value + strides[1]);
+    const auto* value = origin + static_cast<ts::Index>(index) * strides[0];
+    values[index].x = *reinterpret_cast<const float*>(value);
+    values[index].y = *reinterpret_cast<const float*>(value + strides[1]);
   }
   return values;
 }
 
 std::optional<std::vector<std::vector<SubjectShapeOverlayPoint>>>
-ReadSequenceRange(const SequenceSource &source, size_t start, size_t stop) {
+ReadSequenceRange(const SequenceSource& source, size_t start, size_t stop) {
   if (!source.available || stop <= start) {
     return std::nullopt;
   }
-  auto slice = SliceFirstDimension(source.values,
-                                   static_cast<ts::Index>(start),
+  auto slice = SliceFirstDimension(source.values, static_cast<ts::Index>(start),
                                    static_cast<ts::Index>(stop));
   auto read = ts::Read(slice).result();
   if (!read.ok() || read->rank() != 3 ||
@@ -331,16 +319,16 @@ ReadSequenceRange(const SequenceSource &source, size_t start, size_t stop) {
     return std::nullopt;
   }
   const auto strides = read->byte_strides();
-  const auto *origin = reinterpret_cast<const uint8_t *>(
+  const auto* origin = reinterpret_cast<const uint8_t*>(
       read->byte_strided_origin_pointer().get());
   std::vector<std::vector<SubjectShapeOverlayPoint>> values(stop - start);
   for (size_t row = 0; row < values.size(); ++row) {
     values[row].reserve(static_cast<size_t>(read->shape()[1]));
     for (ts::Index point = 0; point < read->shape()[1]; ++point) {
-      const auto *value = origin + static_cast<ts::Index>(row) * strides[0] +
+      const auto* value = origin + static_cast<ts::Index>(row) * strides[0] +
                           point * strides[1];
-      const double x = *reinterpret_cast<const float *>(value);
-      const double y = *reinterpret_cast<const float *>(value + strides[2]);
+      const double x = *reinterpret_cast<const float*>(value);
+      const double y = *reinterpret_cast<const float*>(value + strides[2]);
       if (std::isfinite(x) && std::isfinite(y)) {
         values[row].push_back({x, y});
       }
@@ -391,24 +379,25 @@ struct GeometryChunk {
 
 class TensorStoreSubjectShapeOverlayRepository final
     : public SubjectShapeOverlayRepository {
-public:
+ public:
   TensorStoreSubjectShapeOverlayRepository(
       SubjectShapeOverlayDescriptor descriptor, std::vector<RowMetadata> rows,
       GeometrySources sources)
-      : descriptor_(std::move(descriptor)), rows_(std::move(rows)),
+      : descriptor_(std::move(descriptor)),
+        rows_(std::move(rows)),
         sources_(std::move(sources)) {
     for (size_t index = 0; index < rows_.size(); ++index) {
       rows_by_frame_[rows_[index].camera_frame].push_back(index);
     }
   }
 
-  const SubjectShapeOverlayDescriptor &descriptor() const override {
+  const SubjectShapeOverlayDescriptor& descriptor() const override {
     return descriptor_;
   }
 
-  SubjectShapeOverlayResolution
-  resolveCameraFrame(int64_t camera_frame, int full_frame_width,
-                     int full_frame_height) const override {
+  SubjectShapeOverlayResolution resolveCameraFrame(
+      int64_t camera_frame, int full_frame_width,
+      int full_frame_height) const override {
     SubjectShapeOverlayResolution result;
     result.camera_frame = camera_frame;
     if (camera_frame < 0 ||
@@ -430,11 +419,16 @@ public:
     result.status = SubjectShapeOverlayStatus::Mapped;
     result.detections.reserve(found->second.size());
     for (const size_t index : found->second) {
-      const auto &row = rows_[index];
-      SubjectShapeOverlayDetection detection{
-          row.shape_row, row.detection_index, row.source_refined_row_id,
-          row.source_crop_row_id, row.roi_x, row.roi_y, row.roi_width,
-          row.roi_height, {}};
+      const auto& row = rows_[index];
+      SubjectShapeOverlayDetection detection{row.shape_row,
+                                             row.detection_index,
+                                             row.source_refined_row_id,
+                                             row.source_crop_row_id,
+                                             row.roi_x,
+                                             row.roi_y,
+                                             row.roi_width,
+                                             row.roi_height,
+                                             {}};
       if (!readGeometry(row.shape_row, &detection.geometry)) {
         result.status = SubjectShapeOverlayStatus::ReadFailed;
         result.error = "Subject-shape geometry row could not be read";
@@ -446,11 +440,11 @@ public:
     return result;
   }
 
-private:
-  bool readGeometry(size_t row, SubjectShapeOverlayGeometry *geometry) const {
+ private:
+  bool readGeometry(size_t row, SubjectShapeOverlayGeometry* geometry) const {
     {
       std::lock_guard<std::mutex> lock(chunk_mutex_);
-      for (const auto &chunk : chunks_) {
+      for (const auto& chunk : chunks_) {
         if (row >= chunk.start_row &&
             row - chunk.start_row < chunk.rows.size()) {
           *geometry = chunk.rows[row - chunk.start_row];
@@ -463,9 +457,8 @@ private:
       return false;
     }
     std::lock_guard<std::mutex> lock(chunk_mutex_);
-    for (const auto &chunk : chunks_) {
-      if (row >= chunk.start_row &&
-          row - chunk.start_row < chunk.rows.size()) {
+    for (const auto& chunk : chunks_) {
+      if (row >= chunk.start_row && row - chunk.start_row < chunk.rows.size()) {
         *geometry = chunk.rows[row - chunk.start_row];
         return true;
       }
@@ -474,16 +467,15 @@ private:
     while (chunks_.size() > 2) {
       chunks_.pop_front();
     }
-    const auto &chunk = chunks_.back();
+    const auto& chunk = chunks_.back();
     *geometry = chunk.rows[row - chunk.start_row];
     return true;
   }
 
-  bool loadGeometryChunk(size_t row, GeometryChunk *chunk) const {
+  bool loadGeometryChunk(size_t row, GeometryChunk* chunk) const {
     constexpr size_t kRowsPerChunk = 256;
     const size_t start = row / kRowsPerChunk * kRowsPerChunk;
-    const size_t stop =
-        std::min(descriptor_.row_count, start + kRowsPerChunk);
+    const size_t stop = std::min(descriptor_.row_count, start + kRowsPerChunk);
 
     auto body_valid_future = std::async(std::launch::async, [&] {
       return ReadBoolRange(sources_.body_frame_valid, start, stop);
@@ -577,7 +569,7 @@ private:
     chunk->start_row = start;
     chunk->rows.resize(stop - start);
     for (size_t index = 0; index < chunk->rows.size(); ++index) {
-      auto &geometry = chunk->rows[index];
+      auto& geometry = chunk->rows[index];
       geometry.body_frame_valid = (*body_valid)[index] != 0;
       geometry.body_origin = (*body_origin)[index];
       geometry.body_forward_axis = (*forward)[index];
@@ -610,18 +602,18 @@ private:
   mutable std::deque<GeometryChunk> chunks_;
 };
 
-} // namespace
+}  // namespace
 
 std::unique_ptr<SubjectShapeOverlayRepository>
-OpenSubjectShapeOverlayRepository(const std::shared_ptr<ArchiveContext> &archive,
-                                  const std::string &requested_run,
-                                  std::string *error_message) {
+OpenSubjectShapeOverlayRepository(
+    const std::shared_ptr<ArchiveContext>& archive,
+    const std::string& requested_run, std::string* error_message) {
   if (!archive || !archive->impl_) {
     internal::SetArchiveError(error_message, "Archive context is not open");
     return nullptr;
   }
-  const auto &impl = *archive->impl_;
-  constexpr const char *group = "analysis/subject_shape_runs";
+  const auto& impl = *archive->impl_;
+  constexpr const char* group = "analysis/subject_shape_runs";
   std::string run_name = requested_run;
   if (run_name.rfind(std::string(group) + "/", 0) == 0) {
     run_name.erase(0, std::string(group).size() + 1);
@@ -711,14 +703,14 @@ OpenSubjectShapeOverlayRepository(const std::shared_ptr<ArchiveContext> &archive
       refined_frames.size() != refined_detections.size() ||
       refined_frames.size() != refined_crop_rows.size() ||
       refined_frames.size() != refined_source_row_ids.size()) {
-    internal::SetArchiveError(
-        error_message, "Referenced refined-mask lineage is unreadable");
+    internal::SetArchiveError(error_message,
+                              "Referenced refined-mask lineage is unreadable");
     return nullptr;
   }
   if (refined_frames.size() != frames.size()) {
-    internal::SetArchiveError(
-        error_message,
-        "Subject-shape row count does not match the referenced refined-mask run");
+    internal::SetArchiveError(error_message,
+                              "Subject-shape row count does not match the "
+                              "referenced refined-mask run");
     return nullptr;
   }
   descriptor.source_crop_run =
@@ -727,8 +719,8 @@ OpenSubjectShapeOverlayRepository(const std::shared_ptr<ArchiveContext> &archive
     descriptor.source_crop_run.erase(0, std::string("crop_runs/").size());
   }
   if (!ValidRunName(descriptor.source_crop_run)) {
-    internal::SetArchiveError(error_message,
-                              "Referenced refined-mask run lacks source_crop_run");
+    internal::SetArchiveError(
+        error_message, "Referenced refined-mask run lacks source_crop_run");
     return nullptr;
   }
 
@@ -751,12 +743,14 @@ OpenSubjectShapeOverlayRepository(const std::shared_ptr<ArchiveContext> &archive
   }
 
   auto mask_store = OpenArray<uint8_t, 4>(impl, refined_base + "/masks_roi");
-  if (!mask_store || mask_store->domain().shape()[0] !=
-                         static_cast<ts::Index>(refined_frames.size()) ||
+  if (!mask_store ||
+      mask_store->domain().shape()[0] !=
+          static_cast<ts::Index>(refined_frames.size()) ||
       mask_store->domain().shape()[2] <= 0 ||
       mask_store->domain().shape()[3] <= 0) {
     internal::SetArchiveError(
-        error_message, "Referenced refined-mask coordinate dimensions are invalid");
+        error_message,
+        "Referenced refined-mask coordinate dimensions are invalid");
     return nullptr;
   }
   descriptor.coordinate_height =
@@ -777,7 +771,8 @@ OpenSubjectShapeOverlayRepository(const std::shared_ptr<ArchiveContext> &archive
     if (shape_row >= refined_frames.size() || crop_rows[shape_row] < 0 ||
         static_cast<uint64_t>(crop_rows[shape_row]) >= source_frames.size()) {
       internal::SetArchiveError(
-          error_message, "Subject-shape row lineage contains an out-of-range row");
+          error_message,
+          "Subject-shape row lineage contains an out-of-range row");
       return nullptr;
     }
     const size_t crop_row = static_cast<size_t>(crop_rows[shape_row]);
@@ -788,20 +783,20 @@ OpenSubjectShapeOverlayRepository(const std::shared_ptr<ArchiveContext> &archive
         source_frames[crop_row] != frames[shape_row] ||
         source_detections[crop_row] != detections[shape_row]) {
       internal::SetArchiveError(
-          error_message, "Subject-shape row does not match its refined-mask and crop lineage");
+          error_message,
+          "Subject-shape row does not match its refined-mask and crop lineage");
       return nullptr;
     }
-    if (frames[shape_row] < 0 ||
-        !std::isfinite(crop_offsets[crop_row][0]) ||
+    if (frames[shape_row] < 0 || !std::isfinite(crop_offsets[crop_row][0]) ||
         !std::isfinite(crop_offsets[crop_row][1])) {
       continue;
     }
     rows.push_back({shape_row, frames[shape_row], detections[shape_row],
-                    refined_rows[shape_row],
-                    static_cast<int64_t>(crop_row), crop_offsets[crop_row][0],
-                    crop_offsets[crop_row][1], roi_width, roi_height});
-    camera_frame_count = std::max(
-        camera_frame_count, static_cast<size_t>(frames[shape_row]) + 1);
+                    refined_rows[shape_row], static_cast<int64_t>(crop_row),
+                    crop_offsets[crop_row][0], crop_offsets[crop_row][1],
+                    roi_width, roi_height});
+    camera_frame_count = std::max(camera_frame_count,
+                                  static_cast<size_t>(frames[shape_row]) + 1);
   }
   descriptor.camera_frame_count = camera_frame_count;
   if (rows.empty()) {
@@ -844,16 +839,16 @@ OpenSubjectShapeOverlayRepository(const std::shared_ptr<ArchiveContext> &archive
       OpenSequenceSource(impl, subject + "/centerline_xy", frames.size());
   sources.bspline_valid =
       OpenBoolSource(impl, subject + "/bspline_valid", frames.size());
-  sources.bspline_sample = OpenSequenceSource(
-      impl, subject + "/bspline_sample_xy", frames.size());
+  sources.bspline_sample =
+      OpenSequenceSource(impl, subject + "/bspline_sample_xy", frames.size());
   sources.bspline_control_points = OpenSequenceSource(
       impl, subject + "/bspline_control_points_xy", frames.size());
   sources.tail_sample_valid =
       OpenBoolSource(impl, subject + "/tail_sample_valid", frames.size());
-  sources.tail_samples = OpenSequenceSource(
-      impl, subject + "/tail_sample_xy", frames.size());
-  sources.tail_normals = OpenSequenceSource(
-      impl, subject + "/tail_normal_xy", frames.size());
+  sources.tail_samples =
+      OpenSequenceSource(impl, subject + "/tail_sample_xy", frames.size());
+  sources.tail_normals =
+      OpenSequenceSource(impl, subject + "/tail_normal_xy", frames.size());
 
   const bool complete =
       sources.body_frame_valid.available && sources.body_origin.available &&
@@ -888,4 +883,4 @@ OpenSubjectShapeOverlayRepository(const std::shared_ptr<ArchiveContext> &archive
       std::move(descriptor), std::move(rows), std::move(sources));
 }
 
-} // namespace crimson::zarr
+}  // namespace crimson::zarr

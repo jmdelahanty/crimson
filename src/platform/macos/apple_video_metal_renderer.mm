@@ -16,7 +16,8 @@ struct ColorConversion {
     float g_cb = -0.187324f;
     float g_cr = -0.468124f;
     float b_cb = 1.8556f;
-    float padding[2] = {};
+    float opacity = 1.0f;
+    float padding = 0.0f;
 };
 
 struct SourceRegion {
@@ -89,7 +90,8 @@ struct ColorConversion {
     float g_cb;
     float g_cr;
     float b_cb;
-    float2 padding;
+    float opacity;
+    float padding;
 };
 
 vertex VertexOutput crimsonVideoVertex(
@@ -121,15 +123,18 @@ fragment float4 crimsonNv12Fragment(
         y + conversion.r_cr * uv.y,
         y + conversion.g_cb * uv.x + conversion.g_cr * uv.y,
         y + conversion.b_cb * uv.x);
-    return float4(clamp(rgb, 0.0, 1.0), 1.0);
+    return float4(clamp(rgb, 0.0, 1.0), conversion.opacity);
 }
 
 fragment float4 crimsonBgraFragment(
     VertexOutput input [[stage_in]],
-    texture2d<float> color [[texture(0)]]) {
+    texture2d<float> color [[texture(0)]],
+    constant float& opacity [[buffer(0)]]) {
     constexpr sampler video_sampler(coord::normalized, address::clamp_to_edge,
                                     filter::linear);
-    return color.sample(video_sampler, input.uv);
+    float4 sample = color.sample(video_sampler, input.uv);
+    sample.a *= opacity;
+    return sample;
 }
 )METAL";
 }
@@ -190,6 +195,16 @@ bool AppleVideoMetalRenderer::initialize(uintptr_t metal_device,
             [library newFunctionWithName:fragment_name];
         descriptor.colorAttachments[0].pixelFormat =
             static_cast<MTLPixelFormat>(drawable_pixel_format);
+        auto* attachment = descriptor.colorAttachments[0];
+        attachment.blendingEnabled = YES;
+        attachment.rgbBlendOperation = MTLBlendOperationAdd;
+        attachment.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+        attachment.destinationRGBBlendFactor =
+            MTLBlendFactorOneMinusSourceAlpha;
+        attachment.alphaBlendOperation = MTLBlendOperationAdd;
+        attachment.sourceAlphaBlendFactor = MTLBlendFactorOne;
+        attachment.destinationAlphaBlendFactor =
+            MTLBlendFactorOneMinusSourceAlpha;
         NSError* pipeline_error = nil;
         id<MTLRenderPipelineState> pipeline =
             [impl_->device newRenderPipelineStateWithDescriptor:descriptor
@@ -249,6 +264,8 @@ bool AppleVideoMetalRenderer::encodeRegion(
         !std::isfinite(source_region.height) || source_region.x < 0.0 ||
         source_region.y < 0.0 || source_region.width <= 0.0 ||
         source_region.height <= 0.0 ||
+        !std::isfinite(source_region.opacity) || source_region.opacity < 0.0 ||
+        source_region.opacity > 1.0 ||
         source_region.x + source_region.width > 1.0 + 1e-9 ||
         source_region.y + source_region.height > 1.0 + 1e-9) {
         assignError(error, "Metal video source region is invalid");
@@ -279,9 +296,12 @@ bool AppleVideoMetalRenderer::encodeRegion(
                                      static_cast<double>(height), 0.0, 1.0}];
     [encoder setScissorRect:MTLScissorRect{x, y, width, height}];
     const SourceRegion normalized_region{
-        static_cast<float>(source_region.x),
+        static_cast<float>(source_region.mirror_x
+                               ? source_region.x + source_region.width
+                               : source_region.x),
         static_cast<float>(source_region.y),
-        static_cast<float>(source_region.width),
+        static_cast<float>(source_region.mirror_x ? -source_region.width
+                                                  : source_region.width),
         static_cast<float>(source_region.height)};
     [encoder setVertexBytes:&normalized_region
                      length:sizeof(normalized_region)
@@ -303,7 +323,8 @@ bool AppleVideoMetalRenderer::encodeRegion(
             CVPixelBufferGetHeightOfPlane(pixel_buffer, 1), 1, &second_ref);
         if (y_status == kCVReturnSuccess && uv_status == kCVReturnSuccess &&
             first_ref != nullptr && second_ref != nullptr) {
-            const ColorConversion conversion = conversionFor(frame.metadata);
+            ColorConversion conversion = conversionFor(frame.metadata);
+            conversion.opacity = static_cast<float>(source_region.opacity);
             [encoder setRenderPipelineState:impl_->nv12_pipeline];
             [encoder setFragmentTexture:CVMetalTextureGetTexture(first_ref)
                                  atIndex:0];
@@ -323,6 +344,8 @@ bool AppleVideoMetalRenderer::encodeRegion(
             [encoder setRenderPipelineState:impl_->bgra_pipeline];
             [encoder setFragmentTexture:CVMetalTextureGetTexture(first_ref)
                                  atIndex:0];
+            const float opacity = static_cast<float>(source_region.opacity);
+            [encoder setFragmentBytes:&opacity length:sizeof(opacity) atIndex:0];
             encoded = true;
         }
     }

@@ -21,6 +21,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -111,17 +112,20 @@ bool WriteJson(const std::filesystem::path &path, const json &value) {
 }
 
 template <typename T, size_t Rank>
-bool WriteArray(const std::filesystem::path &root, const std::string &path,
-                const std::string &data_type,
-                const std::array<ts::Index, Rank> &shape,
-                const std::vector<T> &values) {
+bool WriteArrayWithChunks(
+    const std::filesystem::path &root, const std::string &path,
+    const std::string &data_type,
+    const std::array<ts::Index, Rank> &shape,
+    const std::array<ts::Index, Rank> &chunk_shape,
+    const std::vector<T> &values) {
   size_t count = 1;
   json shape_json = json::array();
   json chunk_json = json::array();
-  for (const auto extent : shape) {
+  for (size_t dimension = 0; dimension < Rank; ++dimension) {
+    const auto extent = shape[dimension];
     count *= static_cast<size_t>(extent);
     shape_json.push_back(extent);
-    chunk_json.push_back(std::max<ts::Index>(1, extent));
+    chunk_json.push_back(std::max<ts::Index>(1, chunk_shape[dimension]));
   }
   if (count != values.size()) {
     return false;
@@ -157,6 +161,14 @@ bool WriteArray(const std::filesystem::path &root, const std::string &path,
   return ts::Write(source, *store).commit_future.result().ok();
 }
 
+template <typename T, size_t Rank>
+bool WriteArray(const std::filesystem::path &root, const std::string &path,
+                const std::string &data_type,
+                const std::array<ts::Index, Rank> &shape,
+                const std::vector<T> &values) {
+  return WriteArrayWithChunks(root, path, data_type, shape, shape, values);
+}
+
 bool WriteCropFixture(const std::filesystem::path &root) {
   constexpr const char *run = "crop_fixture";
   const std::string base = std::string("crop_runs/") + run;
@@ -168,12 +180,13 @@ bool WriteCropFixture(const std::filesystem::path &root) {
                   {{"zarr_format", 3},
                    {"node_type", "group"},
                    {"attributes", {{"roi_size", {4, 4}}}}}));
-  CHECK((WriteArray<int32_t, 1>(root, base + "/frame_indices", "int32", {3},
-                                {1, 2, 2})));
-  CHECK((WriteArray<int32_t, 1>(root, base + "/detection_indices", "int32", {3},
-                                {0, 0, 1})));
+  CHECK((WriteArray<int32_t, 1>(root, base + "/frame_indices", "int32", {4},
+                                {1, 2, 2, 4})));
+  CHECK((WriteArray<int32_t, 1>(root, base + "/detection_indices", "int32", {4},
+                                {0, 0, 1, 0})));
   CHECK((WriteArray<int32_t, 2>(root, base + "/roi_coordinates_full", "int32",
-                                {3, 2}, {10, 20, 30, 40, 50, 60})));
+                                {4, 2},
+                                {10, 20, 30, 40, 50, 60, 70, 80})));
   return true;
 }
 
@@ -211,6 +224,8 @@ bool WriteDenseFixture(const std::filesystem::path &root) {
                      {"label_schema_id", "subject_v1_lr"},
                      {"mask_labels", labels}}}}));
   CHECK(WriteCommonRunRows(root, base, {2, 1, 2}, {1, 0, 0}, {2, 0, 1}));
+  CHECK((WriteArray<int32_t, 1>(root, base + "/frame_counts", "int32", {3},
+                                {0, 1, 2})));
   CHECK((WriteArray<uint8_t, 1>(root, base + "/available_channels", "uint8",
                                 {4}, {1, 1, 1, 1})));
   std::vector<uint8_t> masks(3 * 4 * 4 * 4, 0);
@@ -241,6 +256,24 @@ bool WriteDenseFixture(const std::filesystem::path &root) {
     CHECK((WriteArray<float, 3>(root, contour + "/points_xy", "float32",
                                 {3, 4, 2}, points)));
   }
+  return true;
+}
+
+bool WriteInvalidFrameCountsFixture(const std::filesystem::path &root) {
+  constexpr const char *run = "invalid_frame_counts_fixture";
+  const std::string base = std::string("refined_subject_masks_runs/") + run;
+  CHECK(WriteJson(root / base / "zarr.json",
+                  {{"zarr_format", 3},
+                   {"node_type", "group"},
+                   {"attributes",
+                    {{"source_crop_run", "crop_fixture"},
+                     {"mask_labels", {"subject_body"}}}}}));
+  CHECK(WriteCommonRunRows(root, base, {1, 2}, {0, 0}, {0, 1}));
+  CHECK((WriteArray<int32_t, 1>(root, base + "/frame_counts", "int32", {3},
+                                {0, 1, 0})));
+  CHECK((WriteArray<uint8_t, 4>(root, base + "/masks_roi", "uint8",
+                                {2, 1, 2, 2},
+                                {1, 0, 0, 0, 0, 1, 0, 0})));
   return true;
 }
 
@@ -309,6 +342,45 @@ bool WriteRleFixture(const std::filesystem::path &root) {
   return true;
 }
 
+bool WriteChunkedDenseFixture(const std::filesystem::path &root) {
+  constexpr const char *run = "chunked_dense_fixture";
+  constexpr const char *crop_run = "chunk_crop_fixture";
+  const std::string base = std::string("refined_subject_masks_runs/") + run;
+  const std::string crop_base = std::string("crop_runs/") + crop_run;
+  CHECK(WriteJson(root / crop_base / "zarr.json",
+                  {{"zarr_format", 3},
+                   {"node_type", "group"},
+                   {"attributes", {{"roi_size", {2, 2}}}}}));
+  CHECK((WriteArray<int32_t, 1>(root, crop_base + "/frame_indices", "int32",
+                                {8}, {1, 2, 3, 4, 5, 6, 7, 8})));
+  CHECK((WriteArray<int32_t, 1>(root, crop_base + "/detection_indices",
+                                "int32", {8}, {0, 0, 0, 0, 0, 0, 0, 0})));
+  CHECK((WriteArray<int32_t, 2>(
+      root, crop_base + "/roi_coordinates_full", "int32", {8, 2},
+      {10, 20, 20, 30, 30, 40, 40, 50, 50, 60, 60, 70, 70, 80, 80,
+       90})));
+  CHECK(WriteJson(root / base / "zarr.json",
+                  {{"zarr_format", 3},
+                   {"node_type", "group"},
+                   {"attributes",
+                    {{"source_crop_run", crop_run},
+                     {"mask_labels", {"subject_body"}}}}}));
+  CHECK(WriteCommonRunRows(root, base, {1, 2, 3, 4, 5, 6, 7, 8},
+                           {0, 0, 0, 0, 0, 0, 0, 0},
+                           {0, 1, 2, 3, 4, 5, 6, 7}));
+  CHECK((WriteArrayWithChunks<int32_t, 1>(
+      root, base + "/frame_counts", "int32", {10}, {5},
+      {0, 1, 1, 1, 1, 1, 1, 1, 1, 0})));
+  std::vector<uint8_t> masks(8 * 1 * 2 * 2, 0);
+  for (size_t row = 0; row < 8; ++row) {
+    masks[row * 4 + row % 4] = 1;
+  }
+  CHECK((WriteArrayWithChunks<uint8_t, 4>(
+      root, base + "/masks_roi", "uint8", {8, 1, 2, 2}, {2, 1, 2, 2},
+      masks)));
+  return true;
+}
+
 bool TestDenseRepositoryAndScene(
     const std::shared_ptr<crimson::zarr::ArchiveContext> &archive) {
   std::string error;
@@ -320,9 +392,35 @@ bool TestDenseRepositoryAndScene(
   CHECK(descriptor.storage == crimson::zarr::SubjectMaskStorage::Dense);
   CHECK(descriptor.row_count == 3);
   CHECK(descriptor.component_labels.size() == 4);
+  const auto open_metrics = repository->metrics();
+  CHECK(open_metrics.open_total_ms >= 0.0);
+  CHECK(open_metrics.catalog_ms >= 0.0);
+  CHECK(open_metrics.mapping_read_ms >= 0.0);
+  CHECK(open_metrics.frame_indices_ms >= 0.0);
+  CHECK(open_metrics.detection_indices_ms >= 0.0);
+  CHECK(open_metrics.source_crop_row_ids_ms >= 0.0);
+  CHECK(open_metrics.crop_frame_indices_ms >= 0.0);
+  CHECK(open_metrics.crop_coordinates_ms >= 0.0);
+  CHECK(open_metrics.crop_detection_indices_ms >= 0.0);
+  CHECK(open_metrics.storage_open_ms >= 0.0);
+  CHECK(open_metrics.contour_open_ms >= 0.0);
+  CHECK(open_metrics.metadata_index_ms >= 0.0);
+  CHECK(open_metrics.metadata_decoded_bytes > 0);
+  CHECK(open_metrics.lazy_mapping);
+  CHECK(open_metrics.subject_mapping_bytes == 0);
+  CHECK(open_metrics.crop_mapping_bytes == 0);
+  CHECK(open_metrics.frame_index_rows_read == 0);
+  CHECK(open_metrics.metadata_decoded_bytes >=
+        open_metrics.subject_mapping_bytes + open_metrics.crop_mapping_bytes);
+  CHECK(open_metrics.metadata_retained_bytes > 0);
   const auto frame = repository->resolveCameraFrame(2, 100, 80);
   CHECK(frame.status == crimson::zarr::SubjectMaskOverlayStatus::Mapped);
   CHECK(frame.detections.size() == 2);
+  const auto resolved_metrics = repository->metrics();
+  CHECK(resolved_metrics.fallback_frame_index_builds == 1);
+  CHECK(resolved_metrics.fallback_frame_index_rows == 3);
+  CHECK(resolved_metrics.frame_index_rows_read == 6);
+  CHECK(resolved_metrics.mapping_page_reads == 2);
   CHECK(frame.detections[0].source_crop_row_id == 2);
   CHECK(frame.detections[0].roi_x == 50.0);
   CHECK(frame.detections[0].components.size() == 4);
@@ -374,6 +472,12 @@ bool TestDenseRepositoryAndScene(
   CHECK(ready->status == crimson::zarr::SubjectMaskOverlayStatus::Mapped);
   CHECK(buffer.metrics().resolved_frames >= 1);
   buffer.close();
+  CHECK(buffer.repositoryMetrics().demand_chunk_loads == 1);
+  CHECK(buffer.repositoryMetrics().chunk_source_bytes_read > 0);
+  CHECK(buffer.repositoryMetrics().peak_cached_payload_bytes > 0);
+  CHECK(buffer.metrics().cached_payload_bytes == 0);
+  CHECK(buffer.metrics().peak_cached_payload_bytes > 0);
+  CHECK(buffer.metrics().released_payload_bytes > 0);
   return true;
 }
 
@@ -398,6 +502,121 @@ bool TestCompactRepositories(
   CHECK(rle_frame.status == crimson::zarr::SubjectMaskOverlayStatus::Mapped);
   const auto &rle_mask = *rle_frame.detections[0].components[0].mask;
   CHECK(rle_mask == std::vector<uint8_t>({0, 255, 0, 0, 255, 0, 0, 0}));
+  return true;
+}
+
+bool TestChunkCacheAndPrefetch(
+    const std::shared_ptr<crimson::zarr::ArchiveContext> &archive) {
+  std::string error;
+  auto repository = crimson::zarr::OpenSubjectMaskOverlayRepository(
+      archive, "chunked_dense_fixture", &error);
+  CHECK(repository != nullptr);
+  CHECK(repository->descriptor().storage_chunk_rows == 2);
+  CHECK(repository->descriptor().camera_frame_count == 10);
+  const auto open_metrics = repository->metrics();
+  CHECK(open_metrics.lazy_mapping);
+  CHECK(open_metrics.frame_index_rows_read == 0);
+  CHECK(open_metrics.mapping_page_reads == 0);
+  CHECK(open_metrics.subject_mapping_bytes == 0);
+  CHECK(open_metrics.crop_mapping_bytes == 0);
+
+  const auto first = repository->resolveCameraFrame(1, 100, 80);
+  CHECK(first.status == crimson::zarr::SubjectMaskOverlayStatus::Mapped);
+  CHECK(*first.detections[0].components[0].mask ==
+        std::vector<uint8_t>({255, 0, 0, 0}));
+  CHECK(repository->metrics().demand_chunk_loads == 1);
+  const auto first_metrics = repository->metrics();
+  CHECK(first_metrics.frame_index_rows_read == 10);
+  CHECK(first_metrics.frame_index_source_bytes > 0);
+  CHECK(first_metrics.frame_index_retained_bytes > 0);
+  CHECK(first_metrics.mapping_page_reads == 2);
+  CHECK(first_metrics.mapping_page_cache_hits == 0);
+  CHECK(first_metrics.mapping_page_source_bytes > 0);
+  CHECK(first_metrics.cached_mapping_bytes > 0);
+  CHECK(first_metrics.peak_cached_mapping_bytes >=
+        first_metrics.cached_mapping_bytes);
+  CHECK(first_metrics.mapping_initialize_failures == 0);
+  CHECK(repository->resolveCameraFrame(0, 100, 80).status ==
+        crimson::zarr::SubjectMaskOverlayStatus::Missing);
+  CHECK(repository->resolveCameraFrame(10, 100, 80).status ==
+        crimson::zarr::SubjectMaskOverlayStatus::OutOfRange);
+
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (repository->metrics().prefetched_chunk_loads < 2 &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  CHECK(repository->metrics().prefetched_chunk_loads == 2);
+
+  const auto prefetched = repository->resolveCameraFrame(3, 100, 80);
+  CHECK(prefetched.status == crimson::zarr::SubjectMaskOverlayStatus::Mapped);
+  CHECK(*prefetched.detections[0].components[0].mask ==
+        std::vector<uint8_t>({0, 0, 255, 0}));
+
+  const auto final_deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (repository->metrics().prefetched_chunk_loads < 3 &&
+         std::chrono::steady_clock::now() < final_deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  CHECK(repository->metrics().prefetched_chunk_loads == 3);
+  for (int repeat = 0; repeat < 4; ++repeat) {
+    CHECK(repository->resolveCameraFrame(3, 100, 80).status ==
+          crimson::zarr::SubjectMaskOverlayStatus::Mapped);
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  const auto metrics = repository->metrics();
+  CHECK(metrics.demand_chunk_loads == 1);
+  CHECK(metrics.prefetch_requests == 3);
+  CHECK(metrics.chunk_cache_hits >= 5);
+  CHECK(metrics.cached_chunks == 3);
+  CHECK(metrics.peak_cached_chunks == 3);
+  CHECK(metrics.chunk_evictions == 1);
+  CHECK(metrics.chunk_load_failures == 0);
+  CHECK(metrics.chunk_source_bytes_read == 32);
+  CHECK(metrics.chunk_retained_bytes_produced > 0);
+  CHECK(metrics.cached_payload_bytes > 0);
+  CHECK(metrics.peak_cached_payload_bytes >= metrics.cached_payload_bytes);
+  CHECK(metrics.evicted_payload_bytes > 0);
+  CHECK(metrics.chunk_read_ms >= 0.0);
+  CHECK(metrics.chunk_convert_ms >= 0.0);
+  CHECK(metrics.contour_load_ms >= 0.0);
+  CHECK(metrics.maximum_chunk_read_ms >= 0.0);
+  CHECK(metrics.maximum_chunk_convert_ms >= 0.0);
+  CHECK(metrics.maximum_contour_load_ms >= 0.0);
+  CHECK(metrics.mapping_page_reads == 2);
+  CHECK(metrics.mapping_page_cache_hits >= 5);
+  CHECK(metrics.mapping_page_evictions == 0);
+  CHECK(metrics.maximum_mapping_page_read_ms >= 0.0);
+  return true;
+}
+
+bool TestInvalidFrameCountsFailOnce(
+    const std::shared_ptr<crimson::zarr::ArchiveContext> &archive) {
+  std::string error;
+  auto repository = crimson::zarr::OpenSubjectMaskOverlayRepository(
+      archive, "invalid_frame_counts_fixture", &error);
+  CHECK(repository != nullptr);
+  CHECK(repository->metrics().lazy_mapping);
+  CHECK(repository->metrics().frame_index_rows_read == 0);
+
+  const auto first = repository->resolveCameraFrame(1, 100, 80);
+  CHECK(first.status == crimson::zarr::SubjectMaskOverlayStatus::ReadFailed);
+  CHECK(first.error.find("do not sum") != std::string::npos);
+  const auto first_metrics = repository->metrics();
+  CHECK(first_metrics.frame_index_rows_read == 3);
+  CHECK(first_metrics.mapping_initialize_failures == 1);
+  CHECK(first_metrics.frame_index_retained_bytes == 0);
+  CHECK(first_metrics.mapping_page_reads == 0);
+
+  const auto second = repository->resolveCameraFrame(1, 100, 80);
+  CHECK(second.status == crimson::zarr::SubjectMaskOverlayStatus::ReadFailed);
+  const auto second_metrics = repository->metrics();
+  CHECK(second_metrics.frame_index_rows_read ==
+        first_metrics.frame_index_rows_read);
+  CHECK(second_metrics.mapping_initialize_failures ==
+        first_metrics.mapping_initialize_failures);
   return true;
 }
 
@@ -489,13 +708,17 @@ int main() {
   const auto root = temporary.path() / "analysis.zarr";
   std::filesystem::create_directories(root);
   if (!WriteCropFixture(root) || !WriteDenseFixture(root) ||
-      !WriteBitpackedFixture(root) || !WriteRleFixture(root)) {
+      !WriteInvalidFrameCountsFixture(root) ||
+      !WriteBitpackedFixture(root) || !WriteRleFixture(root) ||
+      !WriteChunkedDenseFixture(root)) {
     return 1;
   }
   std::string error;
   auto archive = crimson::zarr::ArchiveContext::Open(root, &error);
   if (!archive || !TestDenseRepositoryAndScene(archive) ||
       !TestCompactRepositories(archive) ||
+      !TestChunkCacheAndPrefetch(archive) ||
+      !TestInvalidFrameCountsFailOnce(archive) ||
       !TestNeutralRepositoryContract() ||
       !TestBoundedBufferAndDiscontinuity()) {
     std::cerr << error << '\n';

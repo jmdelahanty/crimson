@@ -1,0 +1,38 @@
+{
+  "binary": "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_storage_benchmark",
+  "cache_mib": [
+    0,
+    16,
+    32,
+    64,
+    128
+  ],
+  "captured_at": "2026-07-25T04:14:55.965907+00:00",
+  "crimson_commit": "34ff3c38229450b4e6bbe9b16fed99e9ca966197",
+  "fixture_root": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/workflows/sleepyfish_det_storage_access_aware_full_20260724_03/candidates/sleepyfish_det_storage_access_aware_full_20260724_03/frames_full",
+  "frozen_gates": {
+    "cancellation_p95_ms_max": 250.0,
+    "minimum_peak_concurrent_field_reads": 2,
+    "offset_read_calls": 1,
+    "peak_rss_bytes_max": 805306368,
+    "post_cancel_file_bytes_p95_max": 1048576,
+    "post_warmup_deadline_miss_rate_max": 0.01,
+    "stale_publications_max": 0
+  },
+  "machine": "arm64",
+  "macos": "ProductName:\t\tmacOS\nProductVersion:\t\t26.3.1\nBuildVersion:\t\t25D2128",
+  "mount": [
+    "//delahantyj@prfs.hhmi.org/johnsonlab on /Volumes/johnsonlab (smbfs, nodev, nosuid, mounted by jmdelahanty)"
+  ],
+  "network_label": "mounted_smb_os_cache_uncontrolled",
+  "platform": "macOS-26.3.1-arm64-arm-64bit",
+  "playback_frames": 3500,
+  "production_tensorstore_cache_bytes": 67108864,
+  "python": "3.10.14",
+  "read_ahead_seconds": [
+    0.0,
+    0.5,
+    1.0
+  ],
+  "tensorstore_commit": "cc9fb6641b2b661d3569e1b16004af1c024251ad"
+}

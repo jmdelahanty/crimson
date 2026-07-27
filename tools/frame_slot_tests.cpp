@@ -508,6 +508,19 @@ void testLogicalPlaybackClock() {
 
     clock.seek(-50, start + 20s);
     CHECK(clock.requestedFrame(start + 20s) == 0);
+
+    clock.configure(100.0, 1000, start);
+    clock.setPlaybackRate(0.5, start);
+    CHECK(clock.playbackRate() == 0.5);
+    CHECK(clock.effectiveFramesPerSecond() == 50.0);
+    clock.play(start);
+    CHECK(clock.requestedFrame(start + 1s) == 50);
+    clock.setPlaybackRate(0.25, start + 1s);
+    CHECK(clock.requestedFrame(start + 1s) == 50);
+    CHECK(clock.requestedFrame(start + 2s) == 75);
+    clock.setPlaybackRate(2.0, start + 2s);
+    CHECK(clock.playbackRate() == 1.0);
+    CHECK(clock.requestedFrame(start + 3s) == 175);
 }
 
 int findNearestReadableSlot(PictureBuffer* slots, int slot_count,

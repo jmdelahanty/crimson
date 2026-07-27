@@ -457,7 +457,7 @@ void prewarmInsetMaskTextures(
     const CameraViewActiveRoiInsetOptions& inset_options,
     const CameraViewSubjectMaskPreview* edit_preview,
     CameraViewMaskPerfMetrics& metrics) {
-    if (!inset_options.show_inset) {
+    if (!inset_options.visible) {
         return;
     }
     auto find_component = [&](const std::string& label) {
@@ -470,9 +470,14 @@ void prewarmInsetMaskTextures(
             });
     };
     auto component_visible = [&](const std::string& label) {
-        if (!inset_options.mirror_enabled_overlays &&
-            !mask_options.highlighted_component_name.empty()) {
-            return label == mask_options.highlighted_component_name;
+        if (inset_options.overlay_policy ==
+            crimson::crop::RoiInsetOverlayPolicy::None) {
+            return false;
+        }
+        if (inset_options.overlay_policy ==
+            crimson::crop::RoiInsetOverlayPolicy::SelectedComponent) {
+            return !mask_options.highlighted_component_name.empty() &&
+                   label == mask_options.highlighted_component_name;
         }
         return shouldDrawSubjectMaskComponent(label, mask_options);
     };
@@ -1152,7 +1157,7 @@ CameraViewMaskPerfMetrics prewarmCameraViewEyeMaskOverlayTextures(
     metrics.roi_count = static_cast<int>(mask_details.eye_masks.size());
     const bool prewarm_inset =
         active_roi_inset_options != nullptr &&
-        active_roi_inset_options->show_inset;
+        active_roi_inset_options->visible;
     int32_t inset_roi_index = options.highlighted_roi_index;
     const ZarrDetectionLoader::FrameDetections::EyeMask* inset_mask = nullptr;
 
@@ -1200,7 +1205,7 @@ void drawCameraViewActiveRoiInsetOverlay(
     bool show_keypoint_markers,
     const CameraViewSubjectMaskPreview* edit_preview,
     const CameraViewActiveRoiInsetOptions& options) {
-    if (!options.show_inset || camera_texture_id == 0 || image_width_px <= 0 ||
+    if (!options.visible || camera_texture_id == 0 || image_width_px <= 0 ||
         image_height_px <= 0) {
         return;
     }
@@ -1318,8 +1323,11 @@ void drawCameraViewActiveRoiInsetOverlay(
     const bool heading_available =
         resolve_heading_for_detection(mask_details, inset_heading_deg) ||
         resolve_heading_for_detection(detection_details, inset_heading_deg);
+    const bool heading_normalized_requested =
+        options.orientation ==
+        crimson::crop::RoiInsetOrientation::HeadingNormalized;
     const bool use_heading_normalized =
-        options.heading_normalized_view && heading_available;
+        heading_normalized_requested && heading_available;
 
     const ImVec2 plot_pos = ImPlot::GetPlotPos();
     const ImVec2 plot_size = ImPlot::GetPlotSize();
@@ -1524,9 +1532,14 @@ void drawCameraViewActiveRoiInsetOverlay(
                                thickness);
     };
     auto component_visible = [&](const std::string& label) {
-        if (!options.mirror_enabled_overlays &&
-            !mask_options.highlighted_component_name.empty()) {
-            return label == mask_options.highlighted_component_name;
+        if (options.overlay_policy ==
+            crimson::crop::RoiInsetOverlayPolicy::None) {
+            return false;
+        }
+        if (options.overlay_policy ==
+            crimson::crop::RoiInsetOverlayPolicy::SelectedComponent) {
+            return !mask_options.highlighted_component_name.empty() &&
+                   label == mask_options.highlighted_component_name;
         }
         return shouldDrawSubjectMaskComponent(label, mask_options);
     };
@@ -1599,7 +1612,9 @@ void drawCameraViewActiveRoiInsetOverlay(
 
     const ZarrDetectionLoader::FrameDetections* keypoint_details =
         detection_details != nullptr ? detection_details : mask_details;
-    if (options.mirror_enabled_overlays && show_keypoint_markers &&
+    if (options.overlay_policy ==
+            crimson::crop::RoiInsetOverlayPolicy::MatchCamera &&
+        show_keypoint_markers &&
         keypoint_details != nullptr &&
         keypoint_details->has_keypoints &&
         detection_index < keypoint_details->keypoints_pixels.size()) {
@@ -1703,7 +1718,7 @@ void drawCameraViewActiveRoiInsetOverlay(
         }
         if (use_heading_normalized) {
             label += " | heading-normalized";
-        } else if (options.heading_normalized_view) {
+        } else if (heading_normalized_requested) {
             label += " | heading unavailable";
         }
         if (drew_preview) {

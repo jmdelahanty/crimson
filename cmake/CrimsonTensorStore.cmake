@@ -91,6 +91,23 @@ function(crimson_fetch_tensorstore)
     )
     FetchContent_MakeAvailable(tensorstore)
 
+    # TensorStore's generated dav1d targets inherit an upstream fast-math
+    # option. Keep all repository-controlled dependency builds on precise
+    # floating-point semantics as well.
+    foreach(_target IN ITEMS
+            dav1d_dav1d_core
+            dav1d_dav1d_16bit
+            dav1d_dav1d_8bit)
+        if(TARGET ${_target})
+            get_target_property(_options ${_target} COMPILE_OPTIONS)
+            if(_options)
+                list(FILTER _options EXCLUDE REGEX "^-ffast-math$")
+                set_property(TARGET ${_target} PROPERTY
+                    COMPILE_OPTIONS "${_options}")
+            endif()
+        endif()
+    endforeach()
+
     if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
         # Abseil adds paired -Xarch selectors for universal Apple builds.
         # CMake de-duplicates the repeated selector and exposes an x86 SSE flag

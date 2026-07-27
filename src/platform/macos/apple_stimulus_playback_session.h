@@ -11,6 +11,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 struct AppleAlignedStimulusFrame {
   crimson::zarr::StimulusFrameResolution resolution;
@@ -63,6 +64,9 @@ class AppleStimulusPlaybackSession {
       std::string* error = nullptr);
   std::optional<AppleAlignedStimulusFrame> frameForCameraFrame(
       int32_t camera_frame) const;
+  std::optional<AppleDecodedVideoFrame> frameForStimulusFrame(
+      int64_t stimulus_frame) const;
+  std::vector<int64_t> bufferedFrameNumbers() const;
   crimson::zarr::StimulusFrameResolution resolveCameraFrame(
       int32_t camera_frame) const;
 

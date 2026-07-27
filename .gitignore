@@ -41,6 +41,7 @@ Makefile
 __pycache__/
 *.pyc
 *.pyo
+/.venv*/
 
 # --- Jupyter notebooks checkpoints ---
 .ipynb_checkpoints/
@@ -55,6 +56,15 @@ __pycache__/
 !tests/fixtures/macos_main_camera_frame_identity.csv
 *.h5
 *.zarr
+
+# --- Versioned benchmark evidence ---
+!docs/diagnostics/canonical_detection_storage_macos_20260724/cache-profile.png
+!docs/diagnostics/canonical_detection_storage_macos_20260724/initialization.csv
+!docs/diagnostics/canonical_detection_storage_macos_20260724/workloads.csv
+!docs/diagnostics/canonical_detection_prefetch_macos_20260724/cache-prefetch-profile.png
+!docs/diagnostics/canonical_detection_prefetch_macos_20260724/offset_initialization.csv
+!docs/diagnostics/canonical_detection_prefetch_macos_20260724/prefetch.csv
+!docs/diagnostics/canonical_detection_prefetch_macos_20260724/seek_cancellation.csv
 
 # --- Backups ---
 lib_backup/

@@ -1,34 +1,55 @@
-#include "apple_metal_presentation_texture.h"
+#include "IconsForkAwesome.h"
+#include "analysis_series_timeline_buffer.h"
 #include "apple_acquisition_crop_playback_session.h"
+#include "apple_analysis_repository_loader.h"
+#include "apple_metal_presentation_texture.h"
 #include "apple_overlay_metal_renderer.h"
 #include "apple_stimulus_playback_session.h"
+#include "apple_video_frame_provider.h"
 #include "apple_video_metal_renderer.h"
 #include "apple_video_playback_buffer.h"
 #include "apple_video_viewer_ui.h"
-#include "analysis_series_timeline_buffer.h"
+#include "chaser_distance_polar_buffer.h"
+#include "chaser_distance_polar_scene.h"
+#include "canonical_detection_buffer.h"
+#include "crop_presentation_coordinator.h"
+#include "data_access_scheduler.h"
+#include "debug_flags.h"
+#include "diagnostic_report.h"
+#include "eye_angle_timeline_buffer.h"
+#include "eye_geometry_overlay_buffer.h"
+#include "frame_presentation.h"
+#include "gui/session_loading_modal.h"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_metal.h"
+#include "imgui_semantic_snapshot.h"
 #include "implot.h"
+#include "keypoint_overlay_buffer.h"
 #include "playback_clock.h"
-#include "crop_presentation_coordinator.h"
-#include "eye_angle_timeline_buffer.h"
-#include "eye_geometry_overlay_buffer.h"
-#include "stimulus_presentation_coordinator.h"
+#include "recording_open_workflow.h"
+#include "session_readiness.h"
+#include "stimulus_camera_overlay_scene.h"
 #include "stimulus_context_timeline.h"
+#include "stimulus_presentation_coordinator.h"
 #include "subject_mask_overlay_buffer.h"
 #include "subject_shape_overlay_buffer.h"
+#include "swim_bout_timeline_buffer.h"
+#include "ui_path_config.h"
+#include "zarr/affiliated_video_repository.h"
 #include "zarr/analysis_crop_geometry_repository.h"
 #include "zarr/archive_context.h"
+#include "zarr/canonical_detection_overlay_scene_adapter.h"
 #include "zarr/eye_geometry_overlay_scene_adapter.h"
 #include "zarr/keypoint_overlay_repository.h"
 #include "zarr/keypoint_overlay_scene_adapter.h"
 #include "zarr/subject_mask_overlay_repository.h"
 #include "zarr/subject_mask_overlay_scene_adapter.h"
 #include "zarr/subject_shape_overlay_scene_adapter.h"
-#include "zarr/tensorstore_analysis_crop_geometry_repository.h"
 #include "zarr/tensorstore_acquisition_crop_repository.h"
+#include "zarr/tensorstore_analysis_crop_geometry_repository.h"
 #include "zarr/tensorstore_analysis_series_timeline_repository.h"
+#include "zarr/tensorstore_chaser_distance_polar_repository.h"
 #include "zarr/tensorstore_eye_angle_timeline_repository.h"
 #include "zarr/tensorstore_eye_geometry_overlay_repository.h"
 #include "zarr/tensorstore_keypoint_overlay_repository.h"
@@ -36,12 +57,15 @@
 #include "zarr/tensorstore_stimulus_repository.h"
 #include "zarr/tensorstore_subject_mask_overlay_repository.h"
 #include "zarr/tensorstore_subject_shape_overlay_repository.h"
+#include "zarr/tensorstore_swim_bout_timeline_repository.h"
 
 #define GLFW_INCLUDE_NONE
 #define GLFW_EXPOSE_NATIVE_COCOA
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 
+#import <AppKit/AppKit.h>
+#import <CoreImage/CoreImage.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
 
@@ -49,13 +73,21 @@
 #include <array>
 #include <charconv>
 #include <chrono>
-#include <cstdio>
-#include <cstdint>
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <exception>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
 #include <limits>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <optional>
+#include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 #if !defined(__arm64__)
@@ -68,6 +100,75 @@
 
 namespace {
 
+enum class AppleUiReferenceState : uint8_t {
+  Empty,
+  Workspace,
+  Overlays,
+  Polar,
+  StimulusOverlay,
+  CropPreview,
+  AnalysisEye,
+  StimulusDebug,
+};
+
+const char *appleUiReferenceStateName(AppleUiReferenceState state) {
+  switch (state) {
+  case AppleUiReferenceState::Empty:
+    return "empty";
+  case AppleUiReferenceState::Workspace:
+    return "workspace";
+  case AppleUiReferenceState::Overlays:
+    return "overlays";
+  case AppleUiReferenceState::Polar:
+    return "polar";
+  case AppleUiReferenceState::StimulusOverlay:
+    return "stimulus-overlay";
+  case AppleUiReferenceState::CropPreview:
+    return "crop-preview";
+  case AppleUiReferenceState::AnalysisEye:
+    return "analysis-eye";
+  case AppleUiReferenceState::StimulusDebug:
+    return "stimulus-debug";
+  }
+  return "unknown";
+}
+
+bool parseAppleUiReferenceState(const std::string &value,
+                                AppleUiReferenceState *state) {
+  if (state == nullptr) {
+    return false;
+  }
+  static const std::array<std::pair<const char *, AppleUiReferenceState>, 8>
+      states = {{{"empty", AppleUiReferenceState::Empty},
+                 {"workspace", AppleUiReferenceState::Workspace},
+                 {"overlays", AppleUiReferenceState::Overlays},
+                 {"polar", AppleUiReferenceState::Polar},
+                 {"stimulus-overlay", AppleUiReferenceState::StimulusOverlay},
+                 {"crop-preview", AppleUiReferenceState::CropPreview},
+                 {"analysis-eye", AppleUiReferenceState::AnalysisEye},
+                 {"stimulus-debug", AppleUiReferenceState::StimulusDebug}}};
+  for (const auto &candidate : states) {
+    if (value == candidate.first) {
+      *state = candidate.second;
+      return true;
+    }
+  }
+  return false;
+}
+
+struct AppleUiReferenceConfig {
+  bool enabled = false;
+  bool state_set = false;
+  bool frame_set = false;
+  bool ready_file_set = false;
+  AppleUiReferenceState state = AppleUiReferenceState::Workspace;
+  int target_frame = 0;
+  std::filesystem::path ready_file;
+  int logical_width = 1920;
+  int logical_height = 1080;
+  double timeout_seconds = 90.0;
+};
+
 struct LaunchOptions {
   bool smoke = false;
   bool validate_metal = false;
@@ -79,6 +180,7 @@ struct LaunchOptions {
   bool subject_shapes_enabled = true;
   bool eye_geometry_enabled = true;
   bool motion_timeline_enabled = true;
+  bool swim_bout_timeline_enabled = true;
   bool eye_angle_timeline_enabled = true;
   bool tail_kinematics_timeline_enabled = true;
   bool stimulus_context_timeline_enabled = true;
@@ -86,16 +188,26 @@ struct LaunchOptions {
   bool show_eye_angle_timeline = false;
   bool show_stimulus_timeline = false;
   bool require_motion_timeline = false;
+  bool require_swim_bout_timeline = false;
   bool require_eye_angle_timeline = false;
   bool require_tail_kinematics_timeline = false;
   bool require_stimulus_context_timeline = false;
   int smoke_frames = 12;
   int video_smoke_start = 0;
   int video_smoke_end = 0;
+  std::optional<int> start_paused_frame;
   std::string video_path;
   std::string zarr_path;
+  std::string stimulus_video_path;
+  std::string detection_run;
+  std::string refined_detection_run;
+  bool allow_selector_ineligible_refined_run = false;
   std::string stimulus_run;
   std::string crop_run;
+  std::string swim_bout_run;
+  size_t video_buffer_capacity = 6;
+  size_t stimulus_buffer_capacity = 6;
+  AppleUiReferenceConfig ui_reference;
   crimson::crop::CropSourcePreference crop_preference =
       crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
 };
@@ -172,14 +284,534 @@ bool parseFrameRange(const std::string &value, int *start, int *end) {
   return true;
 }
 
+bool parsePositiveSize(const std::string &value, int *width, int *height) {
+  const size_t separator = value.find('x');
+  if (separator == std::string::npos) {
+    return false;
+  }
+  const auto parsed_width =
+      parsePositiveInt(value.substr(0, separator).c_str());
+  const auto parsed_height =
+      parsePositiveInt(value.substr(separator + 1).c_str());
+  if (!parsed_width || !parsed_height || *parsed_width > 4096 ||
+      *parsed_height > 4096) {
+    return false;
+  }
+  *width = *parsed_width;
+  *height = *parsed_height;
+  return true;
+}
+
 bool viewportFitsDrawable(const AppleMetalVideoViewport &viewport,
                           int framebuffer_width, int framebuffer_height) {
   return std::isfinite(viewport.x) && std::isfinite(viewport.y) &&
          std::isfinite(viewport.width) && std::isfinite(viewport.height) &&
-         viewport.x >= 0.0 && viewport.y >= 0.0 && viewport.width > 0.0 &&
+         viewport.x >= -0.001 && viewport.y >= -0.001 && viewport.width > 0.0 &&
          viewport.height > 0.0 &&
          viewport.x + viewport.width <= framebuffer_width + 0.001 &&
          viewport.y + viewport.height <= framebuffer_height + 0.001;
+}
+
+bool viewportHasArea(const AppleMetalVideoViewport &viewport) {
+  return std::isfinite(viewport.x) && std::isfinite(viewport.y) &&
+         std::isfinite(viewport.width) && std::isfinite(viewport.height) &&
+         viewport.width > 0.0 && viewport.height > 0.0;
+}
+
+bool writeJsonAtomically(const std::filesystem::path &output_path,
+                         const nlohmann::json &contents, std::string *error) {
+  std::error_code ec;
+  if (output_path.empty()) {
+    if (error != nullptr) {
+      *error = "output path is empty";
+    }
+    return false;
+  }
+  if (output_path.has_parent_path()) {
+    std::filesystem::create_directories(output_path.parent_path(), ec);
+    if (ec) {
+      if (error != nullptr) {
+        *error = "failed to create parent directory: " + ec.message();
+      }
+      return false;
+    }
+  }
+  std::filesystem::path temporary = output_path;
+  temporary += ".tmp";
+  std::filesystem::remove(temporary, ec);
+  ec.clear();
+  {
+    std::ofstream stream(temporary, std::ios::out | std::ios::trunc);
+    if (!stream.is_open()) {
+      if (error != nullptr) {
+        *error = "failed to open temporary marker";
+      }
+      return false;
+    }
+    stream << contents.dump(2) << '\n';
+    stream.flush();
+    if (!stream.good()) {
+      if (error != nullptr) {
+        *error = "failed to write temporary marker";
+      }
+      return false;
+    }
+  }
+  std::filesystem::remove(output_path, ec);
+  ec.clear();
+  std::filesystem::rename(temporary, output_path, ec);
+  if (ec) {
+    if (error != nullptr) {
+      *error = "failed to publish marker: " + ec.message();
+    }
+    std::filesystem::remove(temporary, ec);
+    return false;
+  }
+  return true;
+}
+
+bool writeBgraPng(const std::filesystem::path &output_path,
+                  const uint8_t *pixels, size_t width, size_t height,
+                  size_t source_bytes_per_row, std::string *error) {
+  if (pixels == nullptr || width == 0 || height == 0 ||
+      source_bytes_per_row < width * 4) {
+    if (error != nullptr) {
+      *error = "invalid BGRA image buffer";
+    }
+    return false;
+  }
+  std::error_code ec;
+  if (output_path.has_parent_path()) {
+    std::filesystem::create_directories(output_path.parent_path(), ec);
+    if (ec) {
+      if (error != nullptr) {
+        *error = "failed to create PNG parent directory: " + ec.message();
+      }
+      return false;
+    }
+  }
+
+  std::vector<uint8_t> rgba(width * height * 4);
+  for (size_t y = 0; y < height; ++y) {
+    const uint8_t *source = pixels + y * source_bytes_per_row;
+    uint8_t *destination = rgba.data() + y * width * 4;
+    for (size_t x = 0; x < width; ++x) {
+      destination[x * 4 + 0] = source[x * 4 + 2];
+      destination[x * 4 + 1] = source[x * 4 + 1];
+      destination[x * 4 + 2] = source[x * 4 + 0];
+      destination[x * 4 + 3] = source[x * 4 + 3];
+    }
+  }
+
+  CGDataProviderRef provider =
+      CGDataProviderCreateWithData(nullptr, rgba.data(), rgba.size(), nullptr);
+  CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
+  CGImageRef image =
+      provider == nullptr || color_space == nullptr
+          ? nullptr
+          : CGImageCreate(width, height, 8, 32, width * 4, color_space,
+                          kCGImageAlphaLast | kCGBitmapByteOrder32Big, provider,
+                          nullptr, false, kCGRenderingIntentDefault);
+  bool written = false;
+  if (image != nullptr) {
+    NSBitmapImageRep *representation =
+        [[NSBitmapImageRep alloc] initWithCGImage:image];
+    NSData *png =
+        [representation representationUsingType:NSBitmapImageFileTypePNG
+                                     properties:@{}];
+    NSString *path =
+        [NSString stringWithUTF8String:output_path.string().c_str()];
+    written = png != nil && path != nil &&
+              [png writeToFile:path options:NSDataWritingAtomic error:nil];
+  }
+  if (image != nullptr) {
+    CGImageRelease(image);
+  }
+  if (color_space != nullptr) {
+    CGColorSpaceRelease(color_space);
+  }
+  if (provider != nullptr) {
+    CGDataProviderRelease(provider);
+  }
+  if (!written && error != nullptr) {
+    *error = "AppKit failed to encode the Metal capture as PNG";
+  }
+  return written;
+}
+
+nlohmann::json viewportJson(const AppleMetalVideoViewport &viewport) {
+  return {{"x", viewport.x},
+          {"y", viewport.y},
+          {"width", viewport.width},
+          {"height", viewport.height}};
+}
+
+nlohmann::json polarSceneReferenceJson(
+    const crimson::polar::ChaserDistancePolarScene &scene,
+    double display_origin_x, double display_origin_y, double scale_x,
+    double scale_y,
+    const crimson::polar::ChaserDistancePolarDescriptor *descriptor) {
+  nlohmann::json result = {
+      {"ready", scene.ready()},
+      {"status",
+       crimson::polar::chaserDistancePolarSceneStatusName(scene.status)},
+      {"availability", crimson::polar::chaserDistancePolarAvailabilityName(
+                           scene.frame_availability)},
+      {"requested_frame", scene.requested_camera_frame},
+      {"source_frame", scene.source_camera_frame
+                           ? nlohmann::json(*scene.source_camera_frame)
+                           : nlohmann::json(nullptr)},
+      {"point_count", scene.point_count},
+      {"primitive_count", scene.primitives.size()},
+      {"text_count", scene.text.size()},
+      {"semantic_signature",
+       crimson::polar::chaserDistancePolarSceneSemanticSignature(scene)},
+  };
+  if (descriptor != nullptr) {
+    result["descriptor"] = {
+        {"availability", crimson::polar::chaserDistancePolarAvailabilityName(
+                             descriptor->availability)},
+        {"source_group", descriptor->provenance.source_group},
+        {"run_name", descriptor->provenance.run_name},
+        {"component_name", descriptor->provenance.component_name},
+        {"run_selection",
+         crimson::polar::chaserDistancePolarSelectionProvenanceName(
+             descriptor->provenance.run_selection)},
+        {"component_selection",
+         crimson::polar::chaserDistancePolarSelectionProvenanceName(
+             descriptor->provenance.component_selection)},
+        {"row_count", descriptor->row_count},
+        {"chaser_count", descriptor->chaser_count},
+        {"distance_unit", crimson::polar::chaserDistancePolarDistanceUnitName(
+                              descriptor->distance_unit)},
+        {"coordinate_frame", descriptor->coordinate_frame},
+        {"angle_convention", descriptor->angle_convention},
+        {"normalized_coordinate_frame",
+         static_cast<int>(descriptor->normalized_coordinate_frame)},
+        {"normalized_angle_convention",
+         static_cast<int>(descriptor->normalized_angle_convention)},
+        {"dataset_global_max_distance_mm",
+         descriptor->dataset_global_max_distance_mm},
+        {"display_max_distance_mm",
+         descriptor->radial_scale.display_max_distance_mm},
+    };
+  }
+  if (!scene.ready() || !std::isfinite(display_origin_x) ||
+      !std::isfinite(display_origin_y) || !std::isfinite(scale_x) ||
+      !std::isfinite(scale_y) || scale_x <= 0.0 || scale_y <= 0.0) {
+    return result;
+  }
+
+  auto pointJson = [&](crimson::polar::ChaserDistancePolarScenePoint point) {
+    return nlohmann::json{{"x", point.x - scene.box.x},
+                          {"y", point.y - scene.box.y}};
+  };
+  auto colorJson = [](const crimson::polar::ChaserDistancePolarRgba &color) {
+    return nlohmann::json::array(
+        {color.red, color.green, color.blue, color.alpha});
+  };
+  result["viewport"] = {{"width", scene.viewport.width_px},
+                        {"height", scene.viewport.height_px}};
+  result["box"] = {{"x", scene.box.x},
+                   {"y", scene.box.y},
+                   {"width", scene.box.width},
+                   {"height", scene.box.height}};
+  result["screen_box"] = {
+      {"x", display_origin_x + scene.box.x * scale_x},
+      {"y", display_origin_y + scene.box.y * scale_y},
+      {"width", scene.box.width * scale_x},
+      {"height", scene.box.height * scale_y},
+  };
+  result["graph"] = {
+      {"x", scene.graph.x - scene.box.x},
+      {"y", scene.graph.y - scene.box.y},
+      {"width", scene.graph.width},
+      {"height", scene.graph.height},
+  };
+  result["center"] = pointJson(scene.center);
+  result["radius_px"] = scene.radius_px;
+  result["display_max_distance_mm"] = scene.display_max_distance_mm;
+
+  result["points"] = nlohmann::json::array();
+  for (const auto &primitive : scene.primitives) {
+    if (primitive.type !=
+        crimson::polar::ChaserDistancePolarScenePrimitiveType::Marker) {
+      continue;
+    }
+    result["points"].push_back({
+        {"chaser_index", primitive.chaser_index},
+        {"center", pointJson(primitive.first)},
+        {"screen_center",
+         {{"x", display_origin_x + primitive.first.x * scale_x},
+          {"y", display_origin_y + primitive.first.y * scale_y}}},
+        {"radius_px", primitive.radius_px},
+        {"fill", colorJson(primitive.fill)},
+        {"stroke", colorJson(primitive.stroke)},
+    });
+  }
+  result["text"] = nlohmann::json::array();
+  for (const auto &annotation : scene.text) {
+    result["text"].push_back({
+        {"layer",
+         crimson::polar::chaserDistancePolarSceneLayerName(annotation.layer)},
+        {"anchor", pointJson(annotation.anchor)},
+        {"centered", annotation.centered},
+        {"color", colorJson(annotation.color)},
+        {"content", annotation.content},
+    });
+  }
+  return result;
+}
+
+nlohmann::json stimulusCameraOverlaySceneReferenceJson(
+    const crimson::stimulus::StimulusCameraOverlayScene &scene,
+    double display_origin_x, double display_origin_y, double scale_x,
+    double scale_y,
+    const crimson::timeline::StimulusContextTimelineDescriptor *descriptor) {
+  nlohmann::json result = {
+      {"ready", scene.ready()},
+      {"status",
+       crimson::stimulus::stimulusCameraOverlaySceneStatusName(scene.status)},
+      {"availability",
+       crimson::stimulus::stimulusCameraOverlayFrameAvailabilityName(
+           scene.frame_availability)},
+      {"requested_frame", scene.requested_camera_frame},
+      {"source_frame", scene.source_camera_frame
+                           ? nlohmann::json(*scene.source_camera_frame)
+                           : nlohmann::json(nullptr)},
+      {"event_source_frame",
+       scene.event_source_camera_frame
+           ? nlohmann::json(*scene.event_source_camera_frame)
+           : nlohmann::json(nullptr)},
+      {"step_index", scene.step_index ? nlohmann::json(*scene.step_index)
+                                      : nlohmann::json(nullptr)},
+      {"grating_direction_camera_deg",
+       scene.grating_direction_camera_deg
+           ? nlohmann::json(*scene.grating_direction_camera_deg)
+           : nlohmann::json(nullptr)},
+      {"primitive_count", scene.primitives.size()},
+      {"text_count", scene.text.size()},
+      {"event_box",
+       {{"x", scene.event_box.x},
+        {"y", scene.event_box.y},
+        {"width", scene.event_box.width},
+        {"height", scene.event_box.height}}},
+      {"step_box",
+       {{"x", scene.step_box.x},
+        {"y", scene.step_box.y},
+        {"width", scene.step_box.width},
+        {"height", scene.step_box.height}}},
+      {"viewport",
+       {{"width", scene.viewport.width_px},
+        {"height", scene.viewport.height_px}}},
+      {"display_origin", {{"x", display_origin_x}, {"y", display_origin_y}}},
+      {"display_scale", {{"x", scale_x}, {"y", scale_y}}},
+      {"semantic_signature",
+       crimson::stimulus::stimulusCameraOverlaySceneSemanticSignature(scene)},
+      {"screen_event_box",
+       {{"x", display_origin_x + scene.event_box.x * scale_x},
+        {"y", display_origin_y + scene.event_box.y * scale_y},
+        {"width", scene.event_box.width * scale_x},
+        {"height", scene.event_box.height * scale_y}}},
+      {"screen_step_box",
+       {{"x", display_origin_x + scene.step_box.x * scale_x},
+        {"y", display_origin_y + scene.step_box.y * scale_y},
+        {"width", scene.step_box.width * scale_x},
+        {"height", scene.step_box.height * scale_y}}},
+      {"descriptor",
+       descriptor != nullptr
+           ? nlohmann::json{{"run_name", descriptor->run_name},
+                            {"frame_count", descriptor->frame_count},
+                            {"event_count", descriptor->event_count},
+                            {"step_count", descriptor->step_count}}
+           : nlohmann::json(nullptr)}};
+  auto colorJson = [](const auto &color) {
+    return nlohmann::json::array(
+        {color.red, color.green, color.blue, color.alpha});
+  };
+  result["primitives"] = nlohmann::json::array();
+  for (const auto &primitive : scene.primitives) {
+    result["primitives"].push_back({
+        {"type", static_cast<int>(primitive.type)},
+        {"layer", crimson::stimulus::stimulusCameraOverlaySceneLayerName(
+                      primitive.layer)},
+        {"first", {{"x", primitive.first.x}, {"y", primitive.first.y}}},
+        {"second", {{"x", primitive.second.x}, {"y", primitive.second.y}}},
+        {"third", {{"x", primitive.third.x}, {"y", primitive.third.y}}},
+        {"corner_radius_px", primitive.corner_radius_px},
+        {"stroke_width_px", primitive.stroke_width_px},
+        {"fill", colorJson(primitive.fill)},
+        {"stroke", colorJson(primitive.stroke)},
+        {"has_fill", primitive.has_fill},
+        {"has_stroke", primitive.has_stroke},
+    });
+  }
+  result["text"] = nlohmann::json::array();
+  for (const auto &annotation : scene.text) {
+    result["text"].push_back({
+        {"layer", crimson::stimulus::stimulusCameraOverlaySceneLayerName(
+                      annotation.layer)},
+        {"anchor", {{"x", annotation.anchor.x}, {"y", annotation.anchor.y}}},
+        {"color", colorJson(annotation.color)},
+        {"content", annotation.content},
+    });
+  }
+  return result;
+}
+
+std::filesystem::path decodeDumpRoot() {
+  if (const char *configured = std::getenv("CRIMSON_BUFFER_DUMP_DIR");
+      configured != nullptr && *configured != '\0') {
+    return configured;
+  }
+  return GetDefaultCrimsonBufferDumpRoot();
+}
+
+bool dumpAppleDecodeBuffer(const AppleVideoPlaybackBuffer &playback,
+                           const std::filesystem::path &root,
+                           const std::string &reason, std::string *status) {
+  const auto frames = playback.bufferedFrameNumbers();
+  if (frames.empty()) {
+    if (status != nullptr) {
+      *status = "No decoded camera frames are buffered.";
+    }
+    return false;
+  }
+  const auto stamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::system_clock::now().time_since_epoch())
+                         .count();
+  const std::filesystem::path output =
+      root / (reason + "_" + std::to_string(stamp));
+  std::error_code ec;
+  std::filesystem::create_directories(output, ec);
+  if (ec) {
+    if (status != nullptr) {
+      *status = "Could not create " + output.string() + ": " + ec.message();
+    }
+    return false;
+  }
+
+  CIContext *context = [CIContext contextWithOptions:nil];
+  CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
+  nlohmann::json manifest = {
+      {"schema", "crimson.apple_decode_buffer_dump.v1"},
+      {"reason", reason},
+      {"source_video", playback.info().path},
+      {"frames", nlohmann::json::array()},
+  };
+  size_t written = 0;
+  for (const int64_t frame_number : frames) {
+    const auto frame = playback.frameForTarget(frame_number, true);
+    if (!frame || !frame->surface) {
+      continue;
+    }
+    CVPixelBufferRef pixel_buffer =
+        reinterpret_cast<CVPixelBufferRef>(frame->surface->nativeHandle());
+    if (pixel_buffer == nullptr) {
+      continue;
+    }
+    CIImage *image = [CIImage imageWithCVPixelBuffer:pixel_buffer];
+    const std::string filename =
+        "camera_" + std::to_string(frame_number) + ".png";
+    NSURL *url = [NSURL
+        fileURLWithPath:[NSString stringWithUTF8String:(output / filename)
+                                                           .string()
+                                                           .c_str()]];
+    NSError *write_error = nil;
+    const bool frame_written =
+        [context writePNGRepresentationOfImage:image
+                                         toURL:url
+                                        format:kCIFormatRGBA8
+                                    colorSpace:color_space
+                                       options:@{}
+                                         error:&write_error];
+    manifest["frames"].push_back(
+        {{"frame", frame_number},
+         {"file", frame_written ? filename : std::string{}},
+         {"width", frame->metadata.width},
+         {"height", frame->metadata.height},
+         {"pts", frame->metadata.frame_pts},
+         {"error",
+          frame_written || write_error == nil
+              ? std::string{}
+              : std::string(write_error.localizedDescription.UTF8String)}});
+    written += frame_written ? 1 : 0;
+  }
+  CGColorSpaceRelease(color_space);
+
+  std::ofstream manifest_stream(output / "manifest.json");
+  manifest_stream << manifest.dump(2) << '\n';
+  if (!manifest_stream || written == 0) {
+    if (status != nullptr) {
+      *status = written == 0 ? "No buffered frames could be written."
+                             : "Could not write decode dump manifest.";
+    }
+    return false;
+  }
+  if (status != nullptr) {
+    *status = "Wrote " + std::to_string(written) + " frame images to " +
+              output.string();
+  }
+  return true;
+}
+
+bool launchReplacementSession(const AppleSessionRelaunchRequest &request,
+                              const char *executable_path, std::string *error) {
+  if (!request.requested || executable_path == nullptr ||
+      request.video_path.empty()) {
+    return false;
+  }
+  NSMutableArray<NSString *> *arguments = [NSMutableArray array];
+  [arguments addObject:@"--video"];
+  [arguments
+      addObject:[NSString stringWithUTF8String:request.video_path.c_str()]];
+  if (!request.zarr_path.empty()) {
+    [arguments addObject:@"--zarr"];
+    [arguments
+        addObject:[NSString stringWithUTF8String:request.zarr_path.c_str()]];
+  }
+  if (!request.stimulus_video_path.empty()) {
+    [arguments addObject:@"--stimulus-video"];
+    [arguments
+        addObject:[NSString stringWithUTF8String:request.stimulus_video_path
+                                                     .c_str()]];
+  }
+  [arguments addObject:@"--video-buffer-size"];
+  [arguments
+      addObject:[NSString
+                    stringWithFormat:@"%d", request.video_buffer_capacity]];
+  [arguments addObject:@"--stimulus-buffer-size"];
+  [arguments
+      addObject:[NSString
+                    stringWithFormat:@"%d", request.stimulus_buffer_capacity]];
+  NSTask *task = [[NSTask alloc] init];
+  task.executableURL =
+      [NSURL fileURLWithPath:[NSString stringWithUTF8String:executable_path]];
+  task.arguments = arguments;
+  NSError *launch_error = nil;
+  if (![task launchAndReturnError:&launch_error]) {
+    if (error != nullptr) {
+      *error = launch_error == nil
+                   ? "Could not launch the replacement Crimson session."
+                   : launch_error.localizedDescription.UTF8String;
+    }
+    return false;
+  }
+  return true;
+}
+
+std::string recordingWindowName(const std::string &path) {
+  if (path.empty()) {
+    return "Camera";
+  }
+  const size_t separator = path.find_last_of("/\\");
+  const size_t start = separator == std::string::npos ? 0 : separator + 1;
+  const size_t extension = path.find_last_of('.');
+  const size_t end = extension == std::string::npos || extension < start
+                         ? path.size()
+                         : extension;
+  const std::string name = path.substr(start, end - start);
+  return name.empty() ? "Camera" : name;
 }
 
 std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
@@ -214,6 +846,10 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
       options.motion_timeline_enabled = false;
       continue;
     }
+    if (argument == "--no-swim-bout-timeline") {
+      options.swim_bout_timeline_enabled = false;
+      continue;
+    }
     if (argument == "--no-tail-kinematics-timeline") {
       options.tail_kinematics_timeline_enabled = false;
       continue;
@@ -238,6 +874,10 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
     }
     if (argument == "--require-motion-timeline") {
       options.require_motion_timeline = true;
+      continue;
+    }
+    if (argument == "--require-swim-bout-timeline") {
+      options.require_swim_bout_timeline = true;
       continue;
     }
     if (argument == "--require-eye-angle-timeline") {
@@ -268,6 +908,55 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
       options.zarr_path = argv[++i];
       continue;
     }
+    if (argument == "--stimulus-video") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "Missing value for --stimulus-video\n");
+        return std::nullopt;
+      }
+      options.stimulus_video_path = argv[++i];
+      continue;
+    }
+    if (argument == "--video-buffer-size") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "Missing value for --video-buffer-size\n");
+        return std::nullopt;
+      }
+      const auto capacity = parsePositiveInt(argv[++i]);
+      if (!capacity || *capacity < 2 || *capacity > 256) {
+        std::fprintf(stderr,
+                     "Invalid --video-buffer-size; expected 2 through 256\n");
+        return std::nullopt;
+      }
+      options.video_buffer_capacity = static_cast<size_t>(*capacity);
+      continue;
+    }
+    if (argument == "--stimulus-buffer-size") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "Missing value for --stimulus-buffer-size\n");
+        return std::nullopt;
+      }
+      const auto capacity = parsePositiveInt(argv[++i]);
+      if (!capacity || *capacity < 2 || *capacity > 64) {
+        std::fprintf(stderr,
+                     "Invalid --stimulus-buffer-size; expected 2 through 64\n");
+        return std::nullopt;
+      }
+      options.stimulus_buffer_capacity = static_cast<size_t>(*capacity);
+      continue;
+    }
+    if (argument == "--start-paused") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "Missing value for --start-paused\n");
+        return std::nullopt;
+      }
+      options.start_paused_frame = parseNonNegativeInt(argv[++i]);
+      if (!options.start_paused_frame.has_value()) {
+        std::fprintf(stderr,
+                     "Invalid --start-paused value; expected a frame >= 0\n");
+        return std::nullopt;
+      }
+      continue;
+    }
     if (argument == "--stimulus-run") {
       if (i + 1 >= argc) {
         std::fprintf(stderr, "Missing value for --stimulus-run\n");
@@ -276,12 +965,127 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
       options.stimulus_run = argv[++i];
       continue;
     }
+    if (argument == "--detection-run") {
+      if (i + 1 >= argc || argv[i + 1][0] == '\0') {
+        std::fprintf(stderr, "Missing value for --detection-run\n");
+        return std::nullopt;
+      }
+      options.detection_run = argv[++i];
+      continue;
+    }
+    if (argument == "--refined-detection-run") {
+      if (i + 1 >= argc || argv[i + 1][0] == '\0') {
+        std::fprintf(stderr,
+                     "Missing value for --refined-detection-run\n");
+        return std::nullopt;
+      }
+      if (!options.refined_detection_run.empty()) {
+        std::fprintf(stderr,
+                     "Only one refined-detection run may be requested\n");
+        return std::nullopt;
+      }
+      options.refined_detection_run = argv[++i];
+      continue;
+    }
+    if (argument == "--benchmark-refined-detection-run") {
+      if (i + 1 >= argc || argv[i + 1][0] == '\0') {
+        std::fprintf(
+            stderr,
+            "Missing value for --benchmark-refined-detection-run\n");
+        return std::nullopt;
+      }
+      if (!options.refined_detection_run.empty()) {
+        std::fprintf(stderr,
+                     "Only one refined-detection run may be requested\n");
+        return std::nullopt;
+      }
+      options.refined_detection_run = argv[++i];
+      options.allow_selector_ineligible_refined_run = true;
+      continue;
+    }
+    if (argument == "--swim-bout-run") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "Missing value for --swim-bout-run\n");
+        return std::nullopt;
+      }
+      options.swim_bout_run = argv[++i];
+      continue;
+    }
     if (argument == "--crop-run") {
       if (i + 1 >= argc) {
         std::fprintf(stderr, "Missing value for --crop-run\n");
         return std::nullopt;
       }
       options.crop_run = argv[++i];
+      continue;
+    }
+    if (argument == "--ui-reference-state") {
+      if (i + 1 >= argc ||
+          !parseAppleUiReferenceState(argv[++i], &options.ui_reference.state)) {
+        std::fprintf(
+            stderr,
+            "Invalid --ui-reference-state; expected empty, workspace, "
+            "overlays, polar, crop-preview, analysis-eye, or stimulus-debug\n");
+        return std::nullopt;
+      }
+      options.ui_reference.enabled = true;
+      options.ui_reference.state_set = true;
+      continue;
+    }
+    if (argument == "--ui-reference-frame") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "Missing value for --ui-reference-frame\n");
+        return std::nullopt;
+      }
+      const auto frame = parseNonNegativeInt(argv[++i]);
+      if (!frame) {
+        std::fprintf(stderr,
+                     "Invalid --ui-reference-frame; expected a frame >= 0\n");
+        return std::nullopt;
+      }
+      options.ui_reference.enabled = true;
+      options.ui_reference.frame_set = true;
+      options.ui_reference.target_frame = *frame;
+      continue;
+    }
+    if (argument == "--ui-reference-ready-file") {
+      if (i + 1 >= argc || argv[i + 1][0] == '\0') {
+        std::fprintf(stderr, "Missing value for --ui-reference-ready-file\n");
+        return std::nullopt;
+      }
+      options.ui_reference.enabled = true;
+      options.ui_reference.ready_file_set = true;
+      options.ui_reference.ready_file = argv[++i];
+      continue;
+    }
+    if (argument == "--ui-reference-size") {
+      if (i + 1 >= argc ||
+          !parsePositiveSize(argv[++i], &options.ui_reference.logical_width,
+                             &options.ui_reference.logical_height)) {
+        std::fprintf(stderr,
+                     "Invalid --ui-reference-size; expected WIDTHxHEIGHT up "
+                     "to 4096x4096\n");
+        return std::nullopt;
+      }
+      options.ui_reference.enabled = true;
+      continue;
+    }
+    if (argument == "--ui-reference-timeout") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "Missing value for --ui-reference-timeout\n");
+        return std::nullopt;
+      }
+      char *end = nullptr;
+      const char *value = argv[++i];
+      const double timeout = std::strtod(value, &end);
+      if (end == value || end == nullptr || *end != '\0' ||
+          !std::isfinite(timeout) || timeout <= 0.0) {
+        std::fprintf(stderr,
+                     "Invalid --ui-reference-timeout; expected seconds > 0\n");
+        return std::nullopt;
+      }
+      options.ui_reference.enabled = true;
+      options.ui_reference.timeout_seconds = timeout;
       continue;
     }
     if (argument == "--video-smoke") {
@@ -342,8 +1146,7 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
     }
     if (argument == "--crop-source") {
       if (i + 1 >= argc) {
-        std::fprintf(stderr,
-                     "Missing value for --crop-source\n");
+        std::fprintf(stderr, "Missing value for --crop-source\n");
         return std::nullopt;
       }
       const std::string source = argv[++i];
@@ -382,6 +1185,56 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
     std::fprintf(stderr, "Unknown argument: %s\n", argument.c_str());
     return std::nullopt;
   }
+  if (options.ui_reference.enabled) {
+    if (!options.ui_reference.state_set || !options.ui_reference.frame_set ||
+        !options.ui_reference.ready_file_set) {
+      std::fprintf(stderr,
+                   "UI reference capture requires --ui-reference-state, "
+                   "--ui-reference-frame, and --ui-reference-ready-file\n");
+      return std::nullopt;
+    }
+    if (options.smoke || options.validate_metal) {
+      std::fprintf(stderr,
+                   "UI reference capture cannot be combined with smoke or "
+                   "Metal validation modes\n");
+      return std::nullopt;
+    }
+    const bool empty_state =
+        options.ui_reference.state == AppleUiReferenceState::Empty;
+    if (empty_state &&
+        (!options.video_path.empty() || !options.zarr_path.empty())) {
+      std::fprintf(stderr,
+                   "The empty UI reference state cannot load video or Zarr\n");
+      return std::nullopt;
+    }
+    if (!empty_state &&
+        (options.video_path.empty() || options.zarr_path.empty())) {
+      std::fprintf(stderr,
+                   "Loaded UI reference states require --video and --zarr\n");
+      return std::nullopt;
+    }
+    if (!empty_state) {
+      if (options.start_paused_frame &&
+          *options.start_paused_frame != options.ui_reference.target_frame) {
+        std::fprintf(stderr,
+                     "--start-paused must match --ui-reference-frame\n");
+        return std::nullopt;
+      }
+      options.start_paused_frame = options.ui_reference.target_frame;
+    }
+    if (options.ui_reference.state == AppleUiReferenceState::CropPreview) {
+      options.crop_preference =
+          crimson::crop::CropSourcePreference::PreferLiveGeometry;
+    }
+    if (options.ui_reference.state == AppleUiReferenceState::AnalysisEye) {
+      options.show_analysis_timeline = true;
+      options.show_eye_angle_timeline = true;
+      options.require_eye_angle_timeline = true;
+    }
+    if (options.ui_reference.state == AppleUiReferenceState::StimulusOverlay) {
+      options.require_stimulus_context_timeline = true;
+    }
+  }
   if (options.smoke && options.validate_metal) {
     std::fprintf(stderr,
                  "--smoke and --validate-metal cannot be used together\n");
@@ -395,8 +1248,30 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
     std::fprintf(stderr, "--zarr requires --video PATH\n");
     return std::nullopt;
   }
+  if (options.start_paused_frame.has_value() && options.video_path.empty()) {
+    std::fprintf(stderr, "--start-paused requires --video PATH\n");
+    return std::nullopt;
+  }
+  if (options.start_paused_frame.has_value() && options.video_smoke) {
+    std::fprintf(stderr,
+                 "--start-paused cannot be combined with a video smoke\n");
+    return std::nullopt;
+  }
   if (!options.stimulus_run.empty() && options.zarr_path.empty()) {
     std::fprintf(stderr, "--stimulus-run requires --zarr PATH\n");
+    return std::nullopt;
+  }
+  if (!options.detection_run.empty() && options.zarr_path.empty()) {
+    std::fprintf(stderr, "--detection-run requires --zarr PATH\n");
+    return std::nullopt;
+  }
+  if (!options.refined_detection_run.empty() && options.zarr_path.empty()) {
+    std::fprintf(stderr,
+                 "A refined-detection run requires --zarr PATH\n");
+    return std::nullopt;
+  }
+  if (!options.stimulus_video_path.empty() && options.zarr_path.empty()) {
+    std::fprintf(stderr, "--stimulus-video requires --zarr PATH\n");
     return std::nullopt;
   }
   if (!options.crop_run.empty() && options.zarr_path.empty()) {
@@ -412,52 +1287,58 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
     return std::nullopt;
   }
   if ((options.show_analysis_timeline || options.require_motion_timeline ||
+       options.require_swim_bout_timeline ||
        options.require_eye_angle_timeline ||
        options.require_stimulus_context_timeline) &&
       options.zarr_path.empty()) {
-    std::fprintf(stderr,
-                 "Analysis timeline options require --zarr PATH\n");
+    std::fprintf(stderr, "Analysis timeline options require --zarr PATH\n");
     return std::nullopt;
   }
-  if (options.require_tail_kinematics_timeline &&
-      options.zarr_path.empty()) {
+  if (options.require_tail_kinematics_timeline && options.zarr_path.empty()) {
     std::fprintf(stderr,
                  "Tail-kinematics timeline options require --zarr PATH\n");
     return std::nullopt;
   }
   if (options.require_stimulus_context_timeline &&
       !options.stimulus_context_timeline_enabled) {
-    std::fprintf(stderr,
-                 "--require-stimulus-context-timeline conflicts with "
-                 "--no-stimulus-context-timeline\n");
+    std::fprintf(stderr, "--require-stimulus-context-timeline conflicts with "
+                         "--no-stimulus-context-timeline\n");
     return std::nullopt;
   }
   if (options.require_motion_timeline && !options.motion_timeline_enabled) {
-    std::fprintf(stderr,
-                 "--require-motion-timeline conflicts with "
-                 "--no-motion-timeline\n");
+    std::fprintf(stderr, "--require-motion-timeline conflicts with "
+                         "--no-motion-timeline\n");
+    return std::nullopt;
+  }
+  if (options.require_swim_bout_timeline &&
+      !options.swim_bout_timeline_enabled) {
+    std::fprintf(stderr, "--require-swim-bout-timeline conflicts with "
+                         "--no-swim-bout-timeline\n");
+    return std::nullopt;
+  }
+  if (!options.swim_bout_run.empty() && options.zarr_path.empty()) {
+    std::fprintf(stderr, "--swim-bout-run requires --zarr PATH\n");
     return std::nullopt;
   }
   if (options.require_eye_angle_timeline &&
       !options.eye_angle_timeline_enabled) {
-    std::fprintf(stderr,
-                 "--require-eye-angle-timeline conflicts with "
-                 "--no-eye-angle-timeline\n");
+    std::fprintf(stderr, "--require-eye-angle-timeline conflicts with "
+                         "--no-eye-angle-timeline\n");
     return std::nullopt;
   }
   if (options.require_tail_kinematics_timeline &&
       !options.tail_kinematics_timeline_enabled) {
-    std::fprintf(stderr,
-                 "--require-tail-kinematics-timeline conflicts with "
-                 "--no-tail-kinematics-timeline\n");
+    std::fprintf(stderr, "--require-tail-kinematics-timeline conflicts with "
+                         "--no-tail-kinematics-timeline\n");
     return std::nullopt;
   }
   return options;
 }
 
-std::optional<std::string> bundledFontPath() {
+std::optional<std::string> bundledFontPath(const char *resource) {
   NSBundle *bundle = [NSBundle mainBundle];
-  NSURL *url = [bundle URLForResource:@"Roboto-Regular"
+  NSString *resource_name = [NSString stringWithUTF8String:resource];
+  NSURL *url = [bundle URLForResource:resource_name
                         withExtension:@"ttf"
                          subdirectory:@"fonts"];
   if (url == nil || !url.isFileURL) {
@@ -470,15 +1351,56 @@ std::optional<std::string> bundledFontPath() {
   return std::string(path);
 }
 
+bool loadBundledFonts(ImGuiIO &io, std::string *roboto_path = nullptr) {
+  const auto text_font = bundledFontPath("Roboto-Regular");
+  const auto icon_font = bundledFontPath("forkawesome-webfont");
+  if (!text_font || !icon_font ||
+      io.Fonts->AddFontFromFileTTF(text_font->c_str(), 15.0f) == nullptr) {
+    return false;
+  }
+  ImFontConfig icon_config;
+  icon_config.MergeMode = true;
+  icon_config.PixelSnapH = true;
+  static const ImWchar icon_ranges[] = {ICON_MIN_FK, ICON_MAX_16_FK, 0};
+  if (io.Fonts->AddFontFromFileTTF(icon_font->c_str(), 15.0f, &icon_config,
+                                   icon_ranges) == nullptr) {
+    return false;
+  }
+  if (roboto_path != nullptr) {
+    *roboto_path = *text_font;
+  }
+  return true;
+}
+
+std::optional<std::string> workspaceIniPath() {
+  NSArray<NSURL *> *application_support = [[NSFileManager defaultManager]
+      URLsForDirectory:NSApplicationSupportDirectory
+             inDomains:NSUserDomainMask];
+  if (application_support.count == 0) {
+    return std::nullopt;
+  }
+  NSURL *directory =
+      [application_support.firstObject URLByAppendingPathComponent:@"Crimson"
+                                                       isDirectory:YES];
+  NSError *error = nil;
+  if (![[NSFileManager defaultManager] createDirectoryAtURL:directory
+                                withIntermediateDirectories:YES
+                                                 attributes:nil
+                                                      error:&error]) {
+    std::fprintf(stderr, "[MacShell] Workspace persistence unavailable: %s\n",
+                 error.localizedDescription.UTF8String);
+    return std::nullopt;
+  }
+  NSURL *file = [directory URLByAppendingPathComponent:@"imgui.ini"];
+  const char *path = file.fileSystemRepresentation;
+  return path != nullptr && *path != '\0' ? std::optional<std::string>(path)
+                                          : std::nullopt;
+}
+
 void configureStyle() {
-  ImGui::StyleColorsDark();
-  ImGuiStyle &style = ImGui::GetStyle();
-  style.WindowRounding = 4.0f;
-  style.FrameRounding = 3.0f;
-  style.GrabRounding = 3.0f;
-  style.Colors[ImGuiCol_Button] = ImVec4(0.52f, 0.10f, 0.15f, 1.0f);
-  style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.68f, 0.15f, 0.20f, 1.0f);
-  style.Colors[ImGuiCol_CheckMark] = ImVec4(0.90f, 0.30f, 0.34f, 1.0f);
+  ImGui::StyleColorsClassic();
+  ImPlot::GetStyle().Colors[ImPlotCol_Crosshairs] =
+      ImVec4(0.58f, 0.28f, 0.78f, 1.0f);
 }
 
 void drawShellSurface(const std::array<float, 120> &frame_times_ms,
@@ -512,6 +1434,73 @@ void drawShellSurface(const std::array<float, 120> &frame_times_ms,
   ImGui::End();
 }
 
+bool renderAppleLoadingFrame(GLFWwindow *window, CAMetalLayer *layer,
+                             id<MTLCommandQueue> command_queue,
+                             const std::string &phase, size_t completed,
+                             size_t total) {
+  int width = 0;
+  int height = 0;
+  glfwGetFramebufferSize(window, &width, &height);
+  if (width <= 0 || height <= 0) {
+    return true;
+  }
+  layer.drawableSize = CGSizeMake(width, height);
+  id<CAMetalDrawable> drawable = [layer nextDrawable];
+  if (drawable == nil) {
+    return true;
+  }
+
+  MTLRenderPassDescriptor *render_pass = [MTLRenderPassDescriptor new];
+  render_pass.colorAttachments[0].texture = drawable.texture;
+  render_pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+  render_pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+  render_pass.colorAttachments[0].clearColor =
+      MTLClearColorMake(0.055, 0.060, 0.065, 1.0);
+  id<MTLCommandBuffer> command_buffer = [command_queue commandBuffer];
+  id<MTLRenderCommandEncoder> encoder =
+      [command_buffer renderCommandEncoderWithDescriptor:render_pass];
+  if (command_buffer == nil || encoder == nil) {
+    return false;
+  }
+
+  ImGui_ImplMetal_NewFrame(render_pass);
+  ImGui_ImplGlfw_NewFrame();
+  ImGui::NewFrame();
+  const ImGuiViewport *viewport = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(viewport->WorkPos);
+  ImGui::SetNextWindowSize(viewport->WorkSize);
+  ImGui::Begin("Crimson loading", nullptr,
+               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                   ImGuiWindowFlags_NoResize |
+                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav);
+  const float content_width =
+      std::max(1.0f, std::min(420.0f, viewport->WorkSize.x - 48.0f));
+  const float content_height = 92.0f;
+  ImGui::SetCursorPos(
+      ImVec2(std::max(24.0f, (viewport->WorkSize.x - content_width) * 0.5f),
+             std::max(24.0f, (viewport->WorkSize.y - content_height) * 0.5f)));
+  ImGui::BeginGroup();
+  ImGui::TextUnformatted("Crimson");
+  ImGui::Spacing();
+  ImGui::TextUnformatted(phase.empty() ? "Preparing session" : phase.c_str());
+  const float progress = total == 0 ? 0.0f
+                                    : std::clamp(static_cast<float>(completed) /
+                                                     static_cast<float>(total),
+                                                 0.0f, 1.0f);
+  ImGui::ProgressBar(progress, ImVec2(content_width, 5.0f), "");
+  if (total > 0) {
+    ImGui::TextDisabled("%zu of %zu stages", std::min(completed, total), total);
+  }
+  ImGui::EndGroup();
+  ImGui::End();
+  ImGui::Render();
+  ImGui_ImplMetal_RenderDrawData(ImGui::GetDrawData(), command_buffer, encoder);
+  [encoder endEncoding];
+  [command_buffer presentDrawable:drawable];
+  [command_buffer commit];
+  return true;
+}
+
 int runHeadlessMetalValidation() {
   constexpr NSUInteger width = 384;
   constexpr NSUInteger height = 240;
@@ -535,10 +1524,7 @@ int runHeadlessMetalValidation() {
   io.DeltaTime = 1.0f / 60.0f;
   configureStyle();
 
-  const auto font_path = bundledFontPath();
-  const bool bundled_font_loaded =
-      font_path &&
-      io.Fonts->AddFontFromFileTTF(font_path->c_str(), 15.0f) != nullptr;
+  const bool bundled_font_loaded = loadBundledFonts(io);
   if (!bundled_font_loaded) {
     std::fprintf(stderr, "[MacMetalHeadless] Failed to load bundled font\n");
     ImPlot::DestroyContext();
@@ -668,8 +1654,16 @@ int main(int argc, char **argv) {
   }
 
   glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-  glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_TRUE);
-  GLFWwindow *window = glfwCreateWindow(1280, 800, "Crimson", nullptr, nullptr);
+  glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER,
+                 options->ui_reference.enabled ? GLFW_FALSE : GLFW_TRUE);
+  const int initial_window_width = options->ui_reference.enabled
+                                       ? options->ui_reference.logical_width
+                                       : 1280;
+  const int initial_window_height = options->ui_reference.enabled
+                                        ? options->ui_reference.logical_height
+                                        : 800;
+  GLFWwindow *window = glfwCreateWindow(
+      initial_window_width, initial_window_height, "Crimson", nullptr, nullptr);
   if (window == nullptr) {
     std::fprintf(stderr, "[MacShell] Failed to create the Cocoa window\n");
     glfwTerminate();
@@ -690,7 +1684,7 @@ int main(int argc, char **argv) {
   CAMetalLayer *layer = [CAMetalLayer layer];
   layer.device = device;
   layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
-  layer.framebufferOnly = YES;
+  layer.framebufferOnly = options->ui_reference.enabled ? NO : YES;
   cocoa_window.contentView.layer = layer;
   cocoa_window.contentView.wantsLayer = YES;
   [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
@@ -702,13 +1696,18 @@ int main(int argc, char **argv) {
   ImPlot::CreateContext();
   ImGuiIO &io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-  io.IniFilename = nullptr;
+  const auto workspace_ini_path =
+      options->smoke || options->video_smoke || options->ui_reference.enabled
+          ? std::nullopt
+          : workspaceIniPath();
+  io.IniFilename = workspace_ini_path ? workspace_ini_path->c_str() : nullptr;
+  if (options->ui_reference.enabled) {
+    io.ConfigFlags |= ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoKeyboard;
+  }
   configureStyle();
 
-  const auto font_path = bundledFontPath();
-  const bool bundled_font_loaded =
-      font_path &&
-      io.Fonts->AddFontFromFileTTF(font_path->c_str(), 15.0f) != nullptr;
+  std::string font_path;
+  const bool bundled_font_loaded = loadBundledFonts(io, &font_path);
   if (!bundled_font_loaded) {
     std::fprintf(
         stderr, "[MacShell] Failed to load bundled fonts/Roboto-Regular.ttf\n");
@@ -729,31 +1728,185 @@ int main(int argc, char **argv) {
     glfwTerminate();
     return 7;
   }
+  crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(),
+                                         options->ui_reference.enabled);
+  auto workspace_layout_profile =
+      crimson::macos::workspace::LayoutProfile::Standard;
+  if (options->ui_reference.enabled &&
+      options->ui_reference.state == AppleUiReferenceState::CropPreview) {
+    workspace_layout_profile =
+        crimson::macos::workspace::LayoutProfile::CropReference;
+  } else if (options->ui_reference.enabled &&
+             options->ui_reference.state ==
+                 AppleUiReferenceState::StimulusDebug) {
+    workspace_layout_profile =
+        crimson::macos::workspace::LayoutProfile::StimulusReference;
+  }
+  setAppleWorkspaceLayoutProfile(workspace_layout_profile);
 
   std::printf("[MacShell] renderer=Metal window=GLFW/Cocoa architecture=arm64 "
-              "revision=%s font=%s\n",
-              CRIMSON_GIT_COMMIT, font_path->c_str());
+              "revision=%s font=%s workspace=%s\n",
+              CRIMSON_GIT_COMMIT, font_path.c_str(),
+              workspace_ini_path ? workspace_ini_path->c_str() : "transient");
+  if (options->ui_reference.enabled) {
+    std::error_code reference_ec;
+    std::filesystem::remove(options->ui_reference.ready_file, reference_ec);
+    std::filesystem::path image_path = options->ui_reference.ready_file;
+    image_path += ".png";
+    std::filesystem::remove(image_path, reference_ec);
+    std::printf("[AppleUiReference] START state=%s target_frame=%d size=%dx%d "
+                "ready_file=%s timeout_s=%.1f\n",
+                appleUiReferenceStateName(options->ui_reference.state),
+                options->ui_reference.target_frame,
+                options->ui_reference.logical_width,
+                options->ui_reference.logical_height,
+                options->ui_reference.ready_file.string().c_str(),
+                options->ui_reference.timeout_seconds);
+  }
 
   AppleVideoPlaybackBuffer video_playback;
   AppleVideoMetalRenderer video_renderer;
   AppleOverlayMetalRenderer overlay_renderer;
-  LogicalPlaybackClock video_clock;
+  crimson::playback::PlaybackTransportController video_clock;
   AppleVideoViewerStats viewer_stats;
-  crimson::overlay::ReadOnlyOverlayControlState overlay_controls;
+  crimson::playback::FramePresentationTracker camera_presentation_tracker;
+  crimson::workspace::WorkspaceState workspace_state;
+  AppleFileBrowserState file_browser_state;
+  file_browser_state.video_buffer_capacity =
+      static_cast<int>(options->video_buffer_capacity);
+  file_browser_state.stimulus_buffer_capacity =
+      static_cast<int>(options->stimulus_buffer_capacity);
+  file_browser_state.selected_zarr_path = options->zarr_path;
+  {
+    std::error_code cwd_error;
+    const auto cwd = std::filesystem::current_path(cwd_error);
+    file_browser_state.path_config =
+        LoadUiPathConfig(cwd_error ? std::filesystem::path{} : cwd, argv[0]);
+    file_browser_state.persisted_path_config = file_browser_state.path_config;
+    file_browser_state.start_folder =
+        file_browser_state.path_config.default_start_path;
+  }
+  AppleCameraViewState camera_view_state;
+  AppleFrameInspectPresentationState frame_inspect_presentation;
+  AppleStimulusDebugState stimulus_debug_state;
+  crimson::session::SessionLifecycle session_lifecycle;
+  crimson::loading::LoadingProgressTracker session_open_progress;
+  crimson::session::RecordingOpenWorkflowController recording_open_workflow(
+      session_lifecycle, session_open_progress);
+  const crimson::session::SessionDescriptor initial_session{
+      options->video_path, options->zarr_path, options->stimulus_video_path};
+  std::string decode_debug_status;
+  const std::filesystem::path decode_dump_root = decodeDumpRoot();
+  bool show_error_popup = false;
+  std::string error_popup_message;
+  std::mt19937_64 diagnostic_random{0x4352494d534f4eULL};
+  auto &overlay_controls = workspace_state.overlayControls();
+  if (options->ui_reference.enabled) {
+    const bool masks_visible =
+        options->ui_reference.state == AppleUiReferenceState::Overlays ||
+        options->ui_reference.state == AppleUiReferenceState::AnalysisEye;
+    overlay_controls.show_subject_masks = masks_visible;
+    if (options->ui_reference.state == AppleUiReferenceState::Polar) {
+      overlay_controls.show_keypoints = false;
+      overlay_controls.show_headings = false;
+      overlay_controls.show_subject_masks = false;
+      overlay_controls.show_eye_geometry = false;
+      overlay_controls.show_subject_shape = false;
+      frame_inspect_presentation.roi_inset.visible = false;
+      frame_inspect_presentation.show_motion_trail = false;
+      frame_inspect_presentation.show_stimulus_inset = false;
+      frame_inspect_presentation.polar_inset = {};
+    } else if (options->ui_reference.state ==
+               AppleUiReferenceState::StimulusOverlay) {
+      overlay_controls.show_keypoints = false;
+      overlay_controls.show_headings = false;
+      overlay_controls.show_subject_masks = false;
+      overlay_controls.show_eye_geometry = false;
+      overlay_controls.show_subject_shape = false;
+      frame_inspect_presentation.roi_inset.visible = false;
+      frame_inspect_presentation.show_motion_trail = false;
+      frame_inspect_presentation.show_stimulus_inset = false;
+      frame_inspect_presentation.polar_inset.show_inset = false;
+    }
+  }
   crimson::overlay::ReadOnlyOverlayAvailability overlay_availability;
-  bool overlay_controls_open = false;
   AppleAnalysisTimelineControls analysis_timeline_controls;
-  analysis_timeline_controls.open = options->show_analysis_timeline;
+  analysis_timeline_controls.selections = &workspace_state.selections();
+  analysis_timeline_controls.open = true;
   analysis_timeline_controls.initial_tab =
-      options->show_stimulus_timeline
-          ? AppleAnalysisTimelineTab::Stimulus
-          : options->show_eye_angle_timeline
-                ? AppleAnalysisTimelineTab::EyeAngles
-                : AppleAnalysisTimelineTab::Motion;
+      options->show_stimulus_timeline    ? AppleAnalysisTimelineTab::Stimulus
+      : options->show_eye_angle_timeline ? AppleAnalysisTimelineTab::EyeAngles
+                                         : AppleAnalysisTimelineTab::Motion;
   std::optional<AppleDecodedVideoFrame> current_video_frame;
   std::optional<AppleDecodedVideoFrame> pending_video_frame;
   const bool video_enabled = !options->video_path.empty();
+  const std::string camera_window_name =
+      recordingWindowName(options->video_path);
   const bool analysis_requested = video_enabled && !options->zarr_path.empty();
+  std::vector<crimson::session::SessionReadinessProductRule>
+      analysis_readiness_products;
+  if (analysis_requested) {
+    analysis_readiness_products.push_back(
+        {"archive",
+         crimson::session::ProductAvailabilityRequirement::Required});
+    if (!options->detection_run.empty() ||
+        !options->refined_detection_run.empty()) {
+      analysis_readiness_products.push_back(
+          {"canonical_detection",
+           crimson::session::ProductAvailabilityRequirement::Required});
+    }
+  }
+  crimson::session::SessionOpenReadinessBinding
+      initial_session_readiness_binding;
+  initial_session_readiness_binding.readiness_products =
+      analysis_readiness_products;
+  initial_session_readiness_binding.resolved = initial_session;
+  if (analysis_requested) {
+    initial_session_readiness_binding.transaction_product = "analysis";
+    initial_session_readiness_binding.product_ready_phase = "Analysis ready";
+    initial_session_readiness_binding.product_failed_phase =
+        "Analysis unavailable";
+  }
+  uint64_t initial_recording_open_generation = 0;
+  if (!initial_session.empty()) {
+    std::vector<crimson::session::SessionReadinessProductRule> session_products;
+    if (video_enabled) {
+      session_products.push_back(
+          {"media",
+           crimson::session::ProductAvailabilityRequirement::Required});
+    }
+    if (analysis_requested) {
+      session_products.push_back(
+          {"analysis",
+           crimson::session::ProductAvailabilityRequirement::Required});
+    }
+    recording_open_workflow.begin(
+        {initial_session, "Opening session", std::move(session_products)},
+        initial_session_readiness_binding);
+    initial_recording_open_generation = recording_open_workflow.generation();
+    if (video_enabled) {
+      recording_open_workflow.startProduct("media", "Opening camera media");
+    }
+  }
+  auto fail_initial_media_open = [&](const std::string &error) {
+    if (!recording_open_workflow.active()) {
+      return;
+    }
+    recording_open_workflow.failProduct("media", "Camera media unavailable",
+                                        error, "Session unavailable");
+  };
+  if (options->crop_smoke ||
+      (options->ui_reference.enabled &&
+       options->ui_reference.state == AppleUiReferenceState::CropPreview)) {
+    workspace_state.setWindowRequested(
+        crimson::workspace::Window::AdvancedCropPreview, true);
+  }
+  if (options->stimulus_smoke ||
+      (options->ui_reference.enabled &&
+       options->ui_reference.state == AppleUiReferenceState::StimulusDebug)) {
+    workspace_state.setWindowRequested(crimson::workspace::Window::Stimulus,
+                                       true);
+  }
   bool stimulus_enabled = false;
   AppleStimulusPlaybackSession stimulus_playback;
   crimson::playback::StimulusPresentationCoordinator stimulus_presentation;
@@ -771,13 +1924,46 @@ int main(int argc, char **argv) {
   AppleAcquisitionCropPlaybackSession crop_playback;
   std::unique_ptr<crimson::zarr::AnalysisCropGeometryRepository>
       analysis_crop_geometry;
-  std::unique_ptr<crimson::zarr::KeypointOverlayRepository>
-      keypoint_overlay_repository;
-  SubjectMaskOverlayBuffer subject_mask_overlay_buffer;
+  auto analysis_data_scheduler =
+      std::make_shared<crimson::data::DataAccessScheduler>(64, 4, 1);
+  AppleAnalysisRepositoryLoader analysis_loader;
+  std::string analysis_loading_start_error;
+  bool analysis_loading_failure_reported = false;
+  std::function<void(AppleAnalysisRepositoryBundle)> adopt_analysis_result;
+  std::optional<AppleAnalysisRepositoryBundle> deferred_swim_bout_result;
+  const std::string analysis_archive_identity = options->zarr_path;
+  CanonicalDetectionBuffer canonical_detection_buffer(
+      analysis_data_scheduler, analysis_archive_identity);
+  crimson::zarr::CanonicalDetectionDescriptor canonical_detection_descriptor;
+  crimson::zarr::CanonicalDetectionRepositoryOpenMetrics
+      canonical_detection_open_metrics;
+  bool canonical_detection_available = false;
+  bool canonical_detection_failed = false;
+  int64_t last_canonical_detection_camera_request = -1;
+  std::string canonical_detection_error;
+  KeypointOverlayBuffer keypoint_overlay_buffer(analysis_data_scheduler,
+                                                analysis_archive_identity);
+  crimson::zarr::KeypointOverlayDescriptor keypoint_descriptor;
+  bool keypoint_overlay_available = false;
+  bool keypoint_overlay_failed = false;
+  int64_t last_keypoint_camera_request = -1;
+  std::string keypoint_error;
+  crimson::polar::ChaserDistancePolarBuffer chaser_distance_polar_buffer;
+  crimson::polar::ChaserDistancePolarDescriptor
+      chaser_distance_polar_descriptor;
+  bool chaser_distance_polar_available = false;
+  bool chaser_distance_polar_failed = false;
+  std::string chaser_distance_polar_error;
+  SubjectMaskOverlayBuffer subject_mask_overlay_buffer(
+      analysis_data_scheduler, analysis_archive_identity);
   crimson::zarr::SubjectMaskOverlayDescriptor subject_mask_descriptor;
   bool subject_mask_overlay_available = false;
   bool subject_mask_overlay_failed = false;
   bool subject_mask_smoke_start_pending = false;
+  bool subject_mask_first_ready_logged = false;
+  std::optional<std::chrono::steady_clock::time_point>
+      subject_mask_initial_request_started;
+  std::optional<int64_t> subject_mask_initial_request_frame;
   std::string subject_mask_error;
   SubjectShapeOverlayBuffer subject_shape_overlay_buffer;
   crimson::zarr::SubjectShapeOverlayDescriptor subject_shape_descriptor;
@@ -789,20 +1975,28 @@ int main(int argc, char **argv) {
   bool eye_geometry_overlay_available = false;
   bool eye_geometry_overlay_failed = false;
   std::string eye_geometry_error;
-  AnalysisSeriesTimelineBuffer motion_timeline_buffer;
+  AnalysisSeriesTimelineBuffer motion_timeline_buffer(
+      analysis_data_scheduler, analysis_archive_identity);
   crimson::timeline::AnalysisSeriesTimelineDescriptor
       motion_timeline_descriptor;
   bool motion_timeline_available = false;
   bool motion_timeline_failed = false;
   std::string motion_timeline_error;
   uint64_t motion_timeline_presentations = 0;
+  SwimBoutTimelineBuffer swim_bout_timeline_buffer;
+  crimson::timeline::SwimBoutTimelineDescriptor swim_bout_timeline_descriptor;
+  bool swim_bout_timeline_available = false;
+  bool swim_bout_timeline_failed = false;
+  std::string swim_bout_timeline_error;
+  uint64_t swim_bout_timeline_presentations = 0;
   EyeAngleTimelineBuffer eye_angle_timeline_buffer;
   crimson::timeline::EyeAngleTimelineDescriptor eye_angle_timeline_descriptor;
   bool eye_angle_timeline_available = false;
   bool eye_angle_timeline_failed = false;
   std::string eye_angle_timeline_error;
   uint64_t eye_angle_timeline_presentations = 0;
-  AnalysisSeriesTimelineBuffer tail_kinematics_timeline_buffer;
+  AnalysisSeriesTimelineBuffer tail_kinematics_timeline_buffer(
+      analysis_data_scheduler, analysis_archive_identity);
   crimson::timeline::AnalysisSeriesTimelineDescriptor
       tail_kinematics_timeline_descriptor;
   bool tail_kinematics_timeline_available = false;
@@ -823,12 +2017,19 @@ int main(int argc, char **argv) {
   std::optional<AppleAlignedAcquisitionCropFrame> current_crop_frame;
   crimson::crop::CropSourceSelection current_crop_selection;
   AppleCropViewerControls crop_controls;
-  crop_controls.preference = options->crop_preference;
+  workspace_state.setCropSourcePreference(options->crop_preference);
+  crop_controls.preference = workspace_state.cropSourcePreference();
   auto active_crop_preference = crop_controls.preference;
   bool crop_enabled = false;
+  bool composite_enabled = false;
   bool crop_failed = false;
   bool crop_smoke_end_satisfied = false;
   uint64_t read_only_overlay_presentations = 0;
+  uint64_t canonical_detection_presentations = 0;
+  uint64_t canonical_detection_detections = 0;
+  uint64_t chaser_distance_polar_presentations = 0;
+  uint64_t chaser_distance_polar_points = 0;
+  int64_t last_chaser_distance_polar_camera_request = -1;
   uint64_t keypoint_overlay_presentations = 0;
   uint64_t keypoint_overlay_detections = 0;
   uint64_t subject_mask_overlay_presentations = 0;
@@ -847,6 +2048,58 @@ int main(int argc, char **argv) {
   std::string crop_error;
   MultistreamSmokeState multistream_smoke;
   double smoke_start_memory_mib = 0.0;
+  auto logSubjectMaskFirstReady = [&]() {
+    if (subject_mask_first_ready_logged ||
+        !subject_mask_initial_request_started) {
+      return;
+    }
+    const auto repository_metrics =
+        subject_mask_overlay_buffer.repositoryMetrics();
+    const auto buffer_metrics = subject_mask_overlay_buffer.metrics();
+    const double elapsed_ms = std::chrono::duration<double, std::milli>(
+                                  std::chrono::steady_clock::now() -
+                                  *subject_mask_initial_request_started)
+                                  .count();
+    std::printf(
+        "[AppleDataAccess] source=subject_masks phase=first_ready "
+        "elapsed_ms=%.1f lazy_mapping=%d frame_index_ms=%.1f "
+        "frame_index_bytes=%llu mapping_page_reads=%llu "
+        "mapping_page_hits=%llu cached_mapping_bytes=%llu "
+        "peak_mapping_bytes=%llu fallback_index_builds=%llu "
+        "source_bytes=%llu retained_chunk_bytes=%llu "
+        "cached_chunk_bytes=%llu peak_chunk_bytes=%llu "
+        "cached_frame_bytes=%llu peak_frame_bytes=%llu demand_chunks=%llu "
+        "prefetched_chunks=%llu\n",
+        elapsed_ms, repository_metrics.lazy_mapping ? 1 : 0,
+        repository_metrics.frame_index_initialize_ms,
+        static_cast<unsigned long long>(
+            repository_metrics.frame_index_retained_bytes),
+        static_cast<unsigned long long>(repository_metrics.mapping_page_reads),
+        static_cast<unsigned long long>(
+            repository_metrics.mapping_page_cache_hits),
+        static_cast<unsigned long long>(
+            repository_metrics.cached_mapping_bytes),
+        static_cast<unsigned long long>(
+            repository_metrics.peak_cached_mapping_bytes),
+        static_cast<unsigned long long>(
+            repository_metrics.fallback_frame_index_builds),
+        static_cast<unsigned long long>(
+            repository_metrics.chunk_source_bytes_read),
+        static_cast<unsigned long long>(
+            repository_metrics.chunk_retained_bytes_produced),
+        static_cast<unsigned long long>(
+            repository_metrics.cached_payload_bytes),
+        static_cast<unsigned long long>(
+            repository_metrics.peak_cached_payload_bytes),
+        static_cast<unsigned long long>(buffer_metrics.cached_payload_bytes),
+        static_cast<unsigned long long>(
+            buffer_metrics.peak_cached_payload_bytes),
+        static_cast<unsigned long long>(repository_metrics.demand_chunk_loads),
+        static_cast<unsigned long long>(
+            repository_metrics.prefetched_chunk_loads));
+    std::fflush(stdout);
+    subject_mask_first_ready_logged = true;
+  };
   auto video_smoke_started = std::chrono::steady_clock::now();
   if (video_enabled) {
     std::string video_error;
@@ -856,10 +2109,13 @@ int main(int argc, char **argv) {
         !overlay_renderer.initialize(
             reinterpret_cast<uintptr_t>((__bridge void *)device),
             static_cast<uint64_t>(layer.pixelFormat), &video_error) ||
-        !video_playback.open(options->video_path, "camera-main", 6,
-                             &video_error)) {
+        !video_playback.open(options->video_path, "camera-main",
+                             options->video_buffer_capacity, &video_error)) {
       std::fprintf(stderr, "[AppleVideo] Initialization failed: %s\n",
                    video_error.c_str());
+      fail_initial_media_open(video_error.empty()
+                                  ? "Camera media initialization failed"
+                                  : video_error);
       ImGui_ImplMetal_Shutdown();
       ImGui_ImplGlfw_Shutdown();
       ImPlot::DestroyContext();
@@ -870,12 +2126,30 @@ int main(int argc, char **argv) {
     }
     video_clock.configure(video_playback.info().nominal_frame_rate,
                           video_playback.info().frame_count);
-    const int64_t initial_frame =
-        options->video_smoke ? options->video_smoke_start : 0;
+    const int64_t initial_frame = options->video_smoke
+                                      ? options->video_smoke_start
+                                      : options->start_paused_frame.value_or(0);
+    if (initial_frame >= video_playback.info().frame_count) {
+      std::fprintf(stderr,
+                   "[AppleVideo] Initial frame %lld is outside the video "
+                   "sample range\n",
+                   static_cast<long long>(initial_frame));
+      fail_initial_media_open("Initial camera frame is outside the media");
+      video_playback.close();
+      ImGui_ImplMetal_Shutdown();
+      ImGui_ImplGlfw_Shutdown();
+      ImPlot::DestroyContext();
+      ImGui::DestroyContext();
+      glfwDestroyWindow(window);
+      glfwTerminate();
+      return 9;
+    }
     if (initial_frame > 0 &&
         !video_playback.requestSeek(initial_frame, &video_error)) {
       std::fprintf(stderr, "[AppleVideo] Initial seek failed: %s\n",
                    video_error.c_str());
+      fail_initial_media_open(video_error.empty() ? "Initial seek failed"
+                                                  : video_error);
       video_playback.close();
       ImGui_ImplMetal_Shutdown();
       ImGui_ImplGlfw_Shutdown();
@@ -888,13 +2162,32 @@ int main(int argc, char **argv) {
     const int64_t prebuffer_frame = std::min<int64_t>(
         video_playback.info().frame_count - 1,
         initial_frame + static_cast<int64_t>(video_playback.capacity()) - 1);
-    if (!video_playback.waitForFrame(prebuffer_frame,
-                                     std::chrono::seconds(10))) {
+    const auto prebuffer_deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    bool prebuffer_ready = false;
+    while (!glfwWindowShouldClose(window) &&
+           std::chrono::steady_clock::now() < prebuffer_deadline) {
+      prebuffer_ready = video_playback.waitForFrame(
+          prebuffer_frame, std::chrono::milliseconds(16));
+      if (prebuffer_ready) {
+        break;
+      }
+      glfwPollEvents();
+      if (!renderAppleLoadingFrame(window, layer, command_queue,
+                                   "Preparing first video frames", 0, 1)) {
+        break;
+      }
+      glfwWaitEventsTimeout(1.0 / 60.0);
+    }
+    if (!prebuffer_ready && !glfwWindowShouldClose(window)) {
       const auto metrics = video_playback.metrics();
-      std::fprintf(stderr,
-                   "[AppleVideo] Timed out prebuffering through frame %lld: %s\n",
-                   static_cast<long long>(prebuffer_frame),
-                   metrics.last_error.c_str());
+      std::fprintf(
+          stderr,
+          "[AppleVideo] Timed out prebuffering through frame %lld: %s\n",
+          static_cast<long long>(prebuffer_frame), metrics.last_error.c_str());
+      fail_initial_media_open(metrics.last_error.empty()
+                                  ? "Camera prebuffer timed out"
+                                  : metrics.last_error);
       video_playback.close();
       ImGui_ImplMetal_Shutdown();
       ImGui_ImplGlfw_Shutdown();
@@ -904,564 +2197,1105 @@ int main(int argc, char **argv) {
       glfwTerminate();
       return 9;
     }
+    if (recording_open_workflow.active()) {
+      recording_open_workflow.completeProduct("media", "Camera media ready",
+                                              true);
+    }
     if (analysis_requested) {
+      recording_open_workflow.startProduct("analysis", "Loading analysis");
+      AppleAnalysisRepositoryLoadRequest load_request;
+      load_request.archive_path = options->zarr_path;
+      load_request.detection_run = options->detection_run;
+      load_request.refined_detection_run = options->refined_detection_run;
+      load_request.allow_selector_ineligible_refined_run =
+          options->allow_selector_ineligible_refined_run;
+      load_request.stimulus_run = options->stimulus_run;
+      load_request.stimulus_video_override = options->stimulus_video_path;
+      load_request.crop_run = options->crop_run;
+      load_request.swim_bout_run = options->swim_bout_run;
+      load_request.camera_frame_count =
+          static_cast<size_t>(video_playback.info().frame_count);
+      load_request.subject_masks_enabled = options->subject_masks_enabled;
+      load_request.subject_shapes_enabled = options->subject_shapes_enabled;
+      load_request.eye_geometry_enabled = options->eye_geometry_enabled;
+      load_request.motion_timeline_enabled = options->motion_timeline_enabled;
+      load_request.swim_bout_timeline_enabled =
+          options->swim_bout_timeline_enabled;
+      load_request.eye_angle_timeline_enabled =
+          options->eye_angle_timeline_enabled;
+      load_request.tail_kinematics_timeline_enabled =
+          options->tail_kinematics_timeline_enabled;
+      load_request.stimulus_context_timeline_enabled =
+          options->stimulus_context_timeline_enabled;
+      load_request.scheduler = analysis_data_scheduler;
+
       std::string archive_error;
-      auto archive = crimson::zarr::ArchiveContext::Open(options->zarr_path,
-                                                          &archive_error);
-      if (!archive) {
+      std::optional<AppleAnalysisRepositoryBundle> loaded_analysis;
+      if (!analysis_loader.start(std::move(load_request), &archive_error)) {
+        std::fprintf(stderr, "[AppleAnalysisLoad] Failed to start: %s\n",
+                     archive_error.c_str());
+        analysis_loading_start_error = archive_error.empty()
+                                           ? "Failed to start analysis loading"
+                                           : archive_error;
+      } else {
+        while (!loaded_analysis && analysis_loader.loading() &&
+               !glfwWindowShouldClose(window)) {
+          loaded_analysis = analysis_loader.takeReady();
+          if (loaded_analysis) {
+            break;
+          }
+          glfwPollEvents();
+          const auto progress = analysis_loader.progress();
+          if (!renderAppleLoadingFrame(
+                  window, layer, command_queue, progress.phase,
+                  progress.completed_products, progress.total_products)) {
+            archive_error = "Failed to render the analysis loading view";
+            analysis_loader.cancel();
+            break;
+          }
+          glfwWaitEventsTimeout(1.0 / 60.0);
+        }
+        if (glfwWindowShouldClose(window) || !archive_error.empty()) {
+          analysis_loader.cancel();
+          analysis_loader.close();
+        } else if (!loaded_analysis) {
+          loaded_analysis = analysis_loader.takeReady();
+        }
+      }
+      if (!loaded_analysis || !loaded_analysis->archive ||
+          loaded_analysis->cancelled) {
+        if (archive_error.empty() && loaded_analysis) {
+          archive_error = loaded_analysis->archive_error;
+        }
+        if (archive_error.empty()) {
+          archive_error = loaded_analysis && loaded_analysis->cancelled
+                              ? "Analysis loading was cancelled"
+                              : "Analysis archive is unavailable";
+        }
         std::fprintf(stderr, "[AppleZarr] Unavailable: %s\n",
                      archive_error.c_str());
       } else {
-        auto stimulus_repository = crimson::zarr::OpenStimulusRepository(
-            archive, options->stimulus_run, &stimulus_error);
-        const std::string stimulus_run =
-            stimulus_repository ? stimulus_repository->runName()
-                                : std::string{};
-        bool stimulus_initialization_ready =
-            stimulus_repository &&
-            stimulus_playback.open(std::move(stimulus_repository), 6,
-                                   &stimulus_error) &&
-            initial_frame <= std::numeric_limits<int32_t>::max() &&
-            stimulus_playback.requestCameraFrame(
-                static_cast<int32_t>(initial_frame), true, &stimulus_error);
-        if (stimulus_initialization_ready) {
-          const auto initial_resolution = stimulus_playback.resolveCameraFrame(
-              static_cast<int32_t>(initial_frame));
-          if (initial_resolution.status ==
-                  crimson::zarr::StimulusMappingStatus::Mapped) {
-            stimulus_initialization_ready =
-                stimulus_playback.waitForCameraFrame(
-                    static_cast<int32_t>(initial_frame),
-                    std::chrono::seconds(10), &stimulus_error);
+        adopt_analysis_result = [&, initial_frame](
+                                    AppleAnalysisRepositoryBundle result) {
+          auto loaded_analysis =
+              std::optional<AppleAnalysisRepositoryBundle>(std::move(result));
+          if (loaded_analysis->hasResultFor("swim_bouts") &&
+              !motion_timeline_available && !motion_timeline_failed) {
+            deferred_swim_bout_result = std::move(*loaded_analysis);
+            return;
           }
-        }
-        if (stimulus_initialization_ready) {
-          stimulus_enabled = true;
-          const auto &stimulus_info = stimulus_playback.info();
+          const bool request_initial_analysis_frame =
+              options->video_smoke || options->ui_reference.enabled ||
+              !analysis_loader.loading();
           std::printf(
-              "[AppleStimulus] run=%s asset=%dx%d frames=%lld fps=%.6f "
-              "buffer_capacity=6 startup_ms=%.1f path=%s\n",
-              stimulus_run.c_str(), stimulus_info.width, stimulus_info.height,
-              static_cast<long long>(stimulus_info.frame_count),
-              stimulus_info.nominal_frame_rate,
-              stimulus_playback.metrics().decoder.startup_ms,
-              stimulus_info.path.c_str());
-        } else {
-          stimulus_playback.close();
-          std::fprintf(stderr, "[AppleStimulus] Unavailable: %s\n",
-                       stimulus_error.c_str());
-        }
+              "[AppleAnalysisLoad] state=ready total_ms=%.1f products=%zu "
+              "preloaded_trace_bytes=%llu preload_budget_bytes=%llu\n",
+              loaded_analysis->total_elapsed_ms,
+              loaded_analysis->timings.size(),
+              static_cast<unsigned long long>(
+                  loaded_analysis->preloaded_trace_bytes),
+              static_cast<unsigned long long>(128ULL * 1024ULL * 1024ULL));
+          for (const auto &timing : loaded_analysis->timings) {
+            std::printf(
+                "[AppleAnalysisLoad] product=%s state=%s elapsed_ms=%.1f "
+                "error=%s\n",
+                timing.product.c_str(),
+                timing.available ? "ready" : "unavailable", timing.elapsed_ms,
+                timing.error.c_str());
+          }
+          if (loaded_analysis->hasResultFor("archive") &&
+              loaded_analysis->archive) {
+            std::printf(
+                "[AppleTensorStore] cache_pool_bytes=%zu "
+                "recheck_cached_metadata=open recheck_cached_data=open\n",
+                loaded_analysis->archive->cachePoolBytes());
+          }
+          if (loaded_analysis->hasResultFor("chaser_polar")) {
+            auto chaser_distance_polar_repository =
+                std::move(loaded_analysis->chaser_distance_polar);
+            chaser_distance_polar_error =
+                loaded_analysis->errorFor("chaser_polar");
+            if (chaser_distance_polar_repository) {
+              chaser_distance_polar_descriptor =
+                  chaser_distance_polar_repository->descriptor();
+              if (!chaser_distance_polar_descriptor.ready() &&
+                  chaser_distance_polar_error.empty()) {
+                chaser_distance_polar_error =
+                    chaser_distance_polar_descriptor.error;
+              }
+            }
+            bool chaser_distance_polar_initialization_ready =
+                chaser_distance_polar_repository != nullptr &&
+                chaser_distance_polar_descriptor.ready() &&
+                chaser_distance_polar_buffer.open(
+                    std::move(chaser_distance_polar_repository), 8, 16,
+                    &chaser_distance_polar_error);
+            if (chaser_distance_polar_initialization_ready &&
+                request_initial_analysis_frame) {
+              chaser_distance_polar_initialization_ready =
+                  chaser_distance_polar_buffer.requestFrame(
+                      initial_frame, true, &chaser_distance_polar_error) &&
+                  (!options->video_smoke ||
+                   chaser_distance_polar_buffer.waitForFrame(
+                       initial_frame, std::chrono::seconds(10)));
+            }
+            if (chaser_distance_polar_initialization_ready) {
+              chaser_distance_polar_available = true;
+              if (request_initial_analysis_frame) {
+                last_chaser_distance_polar_camera_request = initial_frame;
+              }
+              std::printf(
+                  "[AppleChaserPolar] run=%s component=%s rows=%zu "
+                  "chasers=%zu radial_max_mm=%.3f buffer=16 lookahead=8\n",
+                  chaser_distance_polar_descriptor.provenance.run_name.c_str(),
+                  chaser_distance_polar_descriptor.provenance.component_name
+                      .c_str(),
+                  chaser_distance_polar_descriptor.row_count,
+                  chaser_distance_polar_descriptor.chaser_count,
+                  chaser_distance_polar_descriptor.radial_scale
+                      .display_max_distance_mm);
+            } else {
+              chaser_distance_polar_buffer.close();
+              chaser_distance_polar_failed =
+                  chaser_distance_polar_descriptor.ready();
+              if (chaser_distance_polar_error.empty()) {
+                chaser_distance_polar_error =
+                    "chaser-distance polar dataset is unavailable";
+              }
+              std::fprintf(stderr, "[AppleChaserPolar] Unavailable: %s\n",
+                           chaser_distance_polar_error.c_str());
+            }
+          }
 
-        std::string keypoint_error;
-        keypoint_overlay_repository =
-            crimson::zarr::OpenKeypointOverlayRepository(
-                archive, {}, &keypoint_error);
-        if (keypoint_overlay_repository) {
-          const auto &descriptor = keypoint_overlay_repository->descriptor();
-          const char *coordinate_space =
-              descriptor.coordinate_space ==
-                      crimson::zarr::KeypointCoordinateSpace::Image
-                  ? "image"
-                  : descriptor.coordinate_space ==
+          if (loaded_analysis->hasResultFor("stimulus")) {
+            stimulus_error = loaded_analysis->errorFor("stimulus");
+            auto stimulus_repository = std::move(loaded_analysis->stimulus);
+            const std::string stimulus_run =
+                stimulus_repository ? stimulus_repository->runName()
+                                    : std::string{};
+            bool stimulus_initialization_ready =
+                stimulus_repository &&
+                stimulus_playback.open(std::move(stimulus_repository),
+                                       options->stimulus_buffer_capacity,
+                                       &stimulus_error) &&
+                initial_frame <= std::numeric_limits<int32_t>::max() &&
+                stimulus_playback.requestCameraFrame(
+                    static_cast<int32_t>(initial_frame), true, &stimulus_error);
+            if (stimulus_initialization_ready) {
+              const auto initial_resolution =
+                  stimulus_playback.resolveCameraFrame(
+                      static_cast<int32_t>(initial_frame));
+              if (options->video_smoke &&
+                  initial_resolution.status ==
+                      crimson::zarr::StimulusMappingStatus::Mapped) {
+                stimulus_initialization_ready =
+                    stimulus_playback.waitForCameraFrame(
+                        static_cast<int32_t>(initial_frame),
+                        std::chrono::seconds(10), &stimulus_error);
+              }
+            }
+            if (stimulus_initialization_ready) {
+              stimulus_enabled = true;
+              const auto &stimulus_info = stimulus_playback.info();
+              std::printf(
+                  "[AppleStimulus] run=%s asset=%dx%d frames=%lld fps=%.6f "
+                  "buffer_capacity=%zu startup_ms=%.1f path=%s\n",
+                  stimulus_run.c_str(), stimulus_info.width,
+                  stimulus_info.height,
+                  static_cast<long long>(stimulus_info.frame_count),
+                  stimulus_info.nominal_frame_rate,
+                  options->stimulus_buffer_capacity,
+                  stimulus_playback.metrics().decoder.startup_ms,
+                  stimulus_info.path.c_str());
+            } else {
+              stimulus_playback.close();
+              std::fprintf(stderr, "[AppleStimulus] Unavailable: %s\n",
+                           stimulus_error.c_str());
+            }
+          }
+
+          if (loaded_analysis->hasResultFor("canonical_detection")) {
+            canonical_detection_error =
+                loaded_analysis->errorFor("canonical_detection");
+            canonical_detection_open_metrics =
+                loaded_analysis->canonical_detection_open_metrics;
+            auto repository =
+                std::move(loaded_analysis->canonical_detection);
+            bool canonical_ready = repository != nullptr;
+            if (canonical_ready) {
+              canonical_detection_descriptor = repository->descriptor();
+              canonical_ready = canonical_detection_buffer.open(
+                  std::move(repository), 70, 32,
+                  &canonical_detection_error);
+            }
+            if (canonical_ready) {
+              canonical_ready = canonical_detection_buffer.requestFrame(
+                  initial_frame, true, &canonical_detection_error);
+            }
+            if (canonical_ready && options->video_smoke) {
+              canonical_ready = canonical_detection_buffer.waitForFrame(
+                  initial_frame, std::chrono::seconds(20));
+            }
+            if (!canonical_ready) {
+              canonical_detection_failed = true;
+              canonical_detection_buffer.close();
+              if (canonical_detection_error.empty()) {
+                canonical_detection_error =
+                    "Canonical detection initialization failed";
+              }
+              if (!options->detection_run.empty() ||
+                  !options->refined_detection_run.empty()) {
+                analysis_loading_start_error =
+                    canonical_detection_error;
+              }
+              std::fprintf(stderr,
+                           "[AppleCanonicalDetection] Unavailable: %s\n",
+                           canonical_detection_error.c_str());
+            } else {
+              canonical_detection_available = true;
+              last_canonical_detection_camera_request = initial_frame;
+              std::printf(
+                  "[AppleCanonicalDetection] surface=%s group=%s run=%s "
+                  "rows=%zu "
+                  "camera_frames=%zu page_frames=70 cache_pages=32 "
+                  "stable_identity=%d source_audit_lazy=%d consolidated=%d "
+                  "root_reads=%zu declarations=%zu "
+                  "exact_opens=%zu fallback_metadata=%zu fallback_dtype=%zu "
+                  "offset_reads=%zu offset_bytes=%zu open_ms=%.1f "
+                  "offset_ms=%.1f\n",
+                  canonical_detection_descriptor.surface_kind ==
+                          crimson::zarr::DetectionSurfaceKind::RefinedSnapshotV1
+                      ? "refined_v1"
+                      : "canonical_raw_v1",
+                  canonical_detection_descriptor.source_group.c_str(),
+                  canonical_detection_descriptor.run_name.c_str(),
+                  canonical_detection_descriptor.row_count,
+                  canonical_detection_descriptor.camera_frame_count,
+                  canonical_detection_descriptor.stable_identity ? 1 : 0,
+                  canonical_detection_descriptor.source_audit_lazy ? 1 : 0,
+                  canonical_detection_descriptor.consolidated_metadata ? 1
+                                                                       : 0,
+                  canonical_detection_open_metrics.root_metadata_reads,
+                  canonical_detection_open_metrics
+                      .consolidated_array_declarations,
+                  canonical_detection_open_metrics.exact_handle_opens,
+                  canonical_detection_open_metrics.fallback_metadata_reads,
+                  canonical_detection_open_metrics.fallback_dtype_opens,
+                  canonical_detection_open_metrics.offset_read_calls,
+                  canonical_detection_open_metrics.retained_offset_bytes,
+                  canonical_detection_open_metrics.total_ms,
+                  canonical_detection_open_metrics.offset_read_ms);
+            }
+          }
+
+          if (loaded_analysis->hasResultFor("keypoints")) {
+            keypoint_error = loaded_analysis->errorFor("keypoints");
+            const auto &open_metrics = loaded_analysis->keypoint_open_metrics;
+            const char *open_mode = open_metrics.lazy_path       ? "lazy"
+                                    : open_metrics.fallback_path ? "fallback"
+                                                                 : "failed";
+            std::printf(
+                "[AppleKeypointOpen] mode=%s total_ms=%.1f selection_ms=%.1f "
+                "run_attributes_ms=%.1f required_handles_ms=%.1f "
+                "frame_counts_read_ms=%.1f prefix_sum_ms=%.1f "
+                "crop_lineage_ms=%.1f optional_handles_ms=%.1f "
+                "fallback_ms=%.1f attributes=%zu array_open_attempts=%zu "
+                "array_open_successes=%zu array_open_failures=%zu "
+                "array_reads=%zu events=%zu\n",
+                open_mode, open_metrics.total_ms, open_metrics.selection_ms,
+                open_metrics.run_attributes_ms,
+                open_metrics.required_handles_ms,
+                open_metrics.frame_counts_read_ms, open_metrics.prefix_sum_ms,
+                open_metrics.crop_lineage_ms, open_metrics.optional_handles_ms,
+                open_metrics.fallback_materialization_ms,
+                open_metrics.attribute_reads, open_metrics.array_open_attempts,
+                open_metrics.array_open_successes,
+                open_metrics.array_open_failures, open_metrics.array_reads,
+                open_metrics.events.size());
+            if (crimson_env_flag_enabled("CRIMSON_STARTUP_TRACE")) {
+              for (const auto &event : open_metrics.events) {
+                std::printf(
+                    "[AppleKeypointOpenTrace] phase=%s operation=%s state=%s "
+                    "elapsed_ms=%.1f candidate=%s path=%s\n",
+                    event.phase.c_str(), event.operation.c_str(),
+                    event.success ? "ready" : "unavailable", event.elapsed_ms,
+                    event.candidate.c_str(), event.path.c_str());
+              }
+            }
+            auto keypoint_repository = std::move(loaded_analysis->keypoints);
+            if (keypoint_repository) {
+              keypoint_descriptor = keypoint_repository->descriptor();
+              bool keypoint_ready = keypoint_overlay_buffer.open(
+                  std::move(keypoint_repository), 12, 24, &keypoint_error);
+              if (keypoint_ready && request_initial_analysis_frame) {
+                keypoint_ready = keypoint_overlay_buffer.requestFrame(
+                    initial_frame, video_playback.info().width,
+                    video_playback.info().height, true, &keypoint_error);
+              }
+              if (keypoint_ready && request_initial_analysis_frame &&
+                  options->video_smoke) {
+                keypoint_ready = keypoint_overlay_buffer.waitForFrame(
+                    initial_frame, std::chrono::seconds(20));
+              }
+              if (!keypoint_ready) {
+                keypoint_overlay_failed = true;
+                keypoint_overlay_buffer.close();
+                if (keypoint_error.empty()) {
+                  keypoint_error = "Initial keypoint frame did not settle";
+                }
+                std::fprintf(stderr,
+                             "[AppleKeypoints] Initialization failed: %s\n",
+                             keypoint_error.c_str());
+              } else {
+                keypoint_overlay_available = true;
+                if (request_initial_analysis_frame) {
+                  last_keypoint_camera_request = initial_frame;
+                }
+                const auto &descriptor = keypoint_descriptor;
+                const char *coordinate_space =
+                    descriptor.coordinate_space ==
+                            crimson::zarr::KeypointCoordinateSpace::Image
+                        ? "image"
+                    : descriptor.coordinate_space ==
                             crimson::zarr::KeypointCoordinateSpace::Roi
                         ? "roi"
                         : "normalized-roi";
-          std::printf(
-              "[AppleKeypoints] group=%s run=%s refined=%d crop_run=%s "
-              "rows=%zu camera_frames=%zu labels=%zu edges=%zu space=%s\n",
-              descriptor.source_group.c_str(), descriptor.run_name.c_str(),
-              descriptor.refined, descriptor.source_crop_run.c_str(),
-              descriptor.row_count, descriptor.camera_frame_count,
-              descriptor.keypoint_labels.size(),
-              descriptor.skeleton_edges.size(), coordinate_space);
-        } else {
-          std::fprintf(stderr, "[AppleKeypoints] Unavailable: %s\n",
-                       keypoint_error.c_str());
-        }
-
-        if (options->subject_masks_enabled) {
-          auto subject_mask_repository =
-              crimson::zarr::OpenSubjectMaskOverlayRepository(
-                  archive, {}, &subject_mask_error);
-          if (subject_mask_repository) {
-            subject_mask_descriptor = subject_mask_repository->descriptor();
-            if (subject_mask_overlay_buffer.open(
-                    std::move(subject_mask_repository), 12, 24,
-                    &subject_mask_error) &&
-                subject_mask_overlay_buffer.requestFrame(
-                    initial_frame, video_playback.info().width,
-                    video_playback.info().height, true,
-                    &subject_mask_error) &&
-                (!options->video_smoke ||
-                 subject_mask_overlay_buffer.waitForFrame(
-                     initial_frame, std::chrono::seconds(15)))) {
-              subject_mask_overlay_available = true;
-              subject_mask_smoke_start_pending = options->video_smoke;
-              const char *storage =
-                  subject_mask_descriptor.storage ==
-                          crimson::zarr::SubjectMaskStorage::Dense
-                      ? "dense"
-                      : subject_mask_descriptor.storage ==
-                                crimson::zarr::SubjectMaskStorage::Bitpacked
-                            ? "bitpacked"
-                            : "rle";
-              std::printf(
-                  "[AppleSubjectMasks] group=%s run=%s crop_run=%s "
-                  "storage=%s rows=%zu camera_frames=%zu components=%zu "
-                  "mask=%zux%zu lookahead=12 cache=24\n",
-                  subject_mask_descriptor.source_group.c_str(),
-                  subject_mask_descriptor.run_name.c_str(),
-                  subject_mask_descriptor.source_crop_run.c_str(), storage,
-                  subject_mask_descriptor.row_count,
-                  subject_mask_descriptor.camera_frame_count,
-                  subject_mask_descriptor.component_labels.size(),
-                  subject_mask_descriptor.mask_width,
-                  subject_mask_descriptor.mask_height);
-            } else {
-              subject_mask_overlay_failed = true;
-              subject_mask_overlay_buffer.close();
-              if (subject_mask_error.empty()) {
-                subject_mask_error =
-                    "Timed out settling the initial subject-mask smoke frame";
+                std::printf(
+                    "[AppleKeypoints] group=%s run=%s refined=%d crop_run=%s "
+                    "rows=%zu camera_frames=%zu labels=%zu edges=%zu "
+                    "space=%s\n",
+                    descriptor.source_group.c_str(),
+                    descriptor.run_name.c_str(), descriptor.refined,
+                    descriptor.source_crop_run.c_str(), descriptor.row_count,
+                    descriptor.camera_frame_count,
+                    descriptor.keypoint_labels.size(),
+                    descriptor.skeleton_edges.size(), coordinate_space);
               }
-              std::fprintf(stderr,
-                           "[AppleSubjectMasks] Initialization failed: %s\n",
+            } else {
+              std::fprintf(stderr, "[AppleKeypoints] Unavailable: %s\n",
+                           keypoint_error.c_str());
+            }
+          }
+
+          if (loaded_analysis->hasResultFor("subject_masks") &&
+              options->subject_masks_enabled) {
+            std::printf("[AppleDataAccess] source=subject_masks phase=open "
+                        "state=begin\n");
+            std::fflush(stdout);
+            const auto subject_mask_open_started =
+                std::chrono::steady_clock::now();
+            subject_mask_error = loaded_analysis->errorFor("subject_masks");
+            auto subject_mask_repository =
+                std::move(loaded_analysis->subject_masks);
+            const double subject_mask_open_ms =
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() -
+                    subject_mask_open_started)
+                    .count();
+            if (subject_mask_repository) {
+              const auto open_metrics = subject_mask_repository->metrics();
+              std::printf(
+                  "[AppleDataAccess] source=subject_masks phase=open "
+                  "state=ready elapsed_ms=%.1f repository_ms=%.1f "
+                  "lazy_mapping=%d catalog_ms=%.1f mapping_ms=%.1f "
+                  "storage_ms=%.1f "
+                  "contour_ms=%.1f index_ms=%.1f metadata_decoded_bytes=%llu "
+                  "metadata_retained_bytes=%llu\n",
+                  subject_mask_open_ms, open_metrics.open_total_ms,
+                  open_metrics.lazy_mapping ? 1 : 0, open_metrics.catalog_ms,
+                  open_metrics.mapping_read_ms, open_metrics.storage_open_ms,
+                  open_metrics.contour_open_ms, open_metrics.metadata_index_ms,
+                  static_cast<unsigned long long>(
+                      open_metrics.metadata_decoded_bytes),
+                  static_cast<unsigned long long>(
+                      open_metrics.metadata_retained_bytes));
+              std::printf(
+                  "[AppleDataAccess] source=subject_masks phase=mapping "
+                  "frame_indices_ms=%.1f detection_indices_ms=%.1f "
+                  "source_crop_row_ids_ms=%.1f crop_frame_indices_ms=%.1f "
+                  "crop_coordinates_ms=%.1f crop_detection_indices_ms=%.1f "
+                  "subject_bytes=%llu crop_bytes=%llu\n",
+                  open_metrics.frame_indices_ms,
+                  open_metrics.detection_indices_ms,
+                  open_metrics.source_crop_row_ids_ms,
+                  open_metrics.crop_frame_indices_ms,
+                  open_metrics.crop_coordinates_ms,
+                  open_metrics.crop_detection_indices_ms,
+                  static_cast<unsigned long long>(
+                      open_metrics.subject_mapping_bytes),
+                  static_cast<unsigned long long>(
+                      open_metrics.crop_mapping_bytes));
+              std::fflush(stdout);
+              subject_mask_descriptor = subject_mask_repository->descriptor();
+              bool subject_mask_initialization_ready =
+                  subject_mask_overlay_buffer.open(
+                      std::move(subject_mask_repository), 12, 24,
+                      &subject_mask_error);
+              if (subject_mask_initialization_ready &&
+                  request_initial_analysis_frame) {
+                subject_mask_initial_request_started =
+                    std::chrono::steady_clock::now();
+                subject_mask_initial_request_frame = initial_frame;
+                subject_mask_initialization_ready =
+                    subject_mask_overlay_buffer.requestFrame(
+                        initial_frame, video_playback.info().width,
+                        video_playback.info().height, true,
+                        &subject_mask_error);
+              }
+              if (subject_mask_initialization_ready &&
+                  request_initial_analysis_frame && options->video_smoke) {
+                subject_mask_initialization_ready =
+                    subject_mask_overlay_buffer.waitForFrame(
+                        initial_frame, std::chrono::seconds(15));
+              }
+              if (subject_mask_initialization_ready) {
+                subject_mask_overlay_available = true;
+                subject_mask_smoke_start_pending = options->video_smoke;
+                if (options->video_smoke) {
+                  logSubjectMaskFirstReady();
+                }
+                const char *storage =
+                    subject_mask_descriptor.storage ==
+                            crimson::zarr::SubjectMaskStorage::Dense
+                        ? "dense"
+                    : subject_mask_descriptor.storage ==
+                            crimson::zarr::SubjectMaskStorage::Bitpacked
+                        ? "bitpacked"
+                        : "rle";
+                std::printf(
+                    "[AppleSubjectMasks] group=%s run=%s crop_run=%s "
+                    "storage=%s rows=%zu camera_frames=%zu components=%zu "
+                    "mask=%zux%zu chunk_rows=%zu lookahead=12 cache=24\n",
+                    subject_mask_descriptor.source_group.c_str(),
+                    subject_mask_descriptor.run_name.c_str(),
+                    subject_mask_descriptor.source_crop_run.c_str(), storage,
+                    subject_mask_descriptor.row_count,
+                    subject_mask_descriptor.camera_frame_count,
+                    subject_mask_descriptor.component_labels.size(),
+                    subject_mask_descriptor.mask_width,
+                    subject_mask_descriptor.mask_height,
+                    subject_mask_descriptor.storage_chunk_rows);
+              } else {
+                subject_mask_overlay_failed = true;
+                subject_mask_overlay_buffer.close();
+                if (subject_mask_error.empty()) {
+                  subject_mask_error =
+                      "Timed out settling the initial subject-mask smoke frame";
+                }
+                std::fprintf(stderr,
+                             "[AppleSubjectMasks] Initialization failed: %s\n",
+                             subject_mask_error.c_str());
+              }
+            } else {
+              std::printf("[AppleDataAccess] source=subject_masks phase=open "
+                          "state=failed elapsed_ms=%.1f error=%s\n",
+                          subject_mask_open_ms, subject_mask_error.c_str());
+              std::fflush(stdout);
+              std::fprintf(stderr, "[AppleSubjectMasks] Unavailable: %s\n",
                            subject_mask_error.c_str());
             }
-          } else {
-            std::fprintf(stderr, "[AppleSubjectMasks] Unavailable: %s\n",
-                         subject_mask_error.c_str());
           }
-        }
 
-        if (options->subject_shapes_enabled) {
-          auto subject_shape_repository =
-              crimson::zarr::OpenSubjectShapeOverlayRepository(
-                  archive, {}, &subject_shape_error);
-          if (subject_shape_repository) {
-            subject_shape_descriptor = subject_shape_repository->descriptor();
-            if (subject_shape_overlay_buffer.open(
-                    std::move(subject_shape_repository), 6, 16,
-                    &subject_shape_error) &&
-                subject_shape_overlay_buffer.requestFrame(
-                    initial_frame, video_playback.info().width,
-                    video_playback.info().height, true,
-                    &subject_shape_error) &&
-                (!options->video_smoke ||
-                 subject_shape_overlay_buffer.waitForFrame(
-                     initial_frame, std::chrono::seconds(20)))) {
-              subject_shape_overlay_available = true;
-              std::printf(
-                  "[AppleSubjectShape] group=%s run=%s refined_masks=%s "
-                  "crop_run=%s rows=%zu camera_frames=%zu coordinates=%zux%zu "
-                  "centerline=%zu bspline=%zu lookahead=6 cache=16\n",
-                  subject_shape_descriptor.source_group.c_str(),
-                  subject_shape_descriptor.run_name.c_str(),
-                  subject_shape_descriptor.source_refined_subject_masks_run
-                      .c_str(),
-                  subject_shape_descriptor.source_crop_run.c_str(),
-                  subject_shape_descriptor.row_count,
-                  subject_shape_descriptor.camera_frame_count,
-                  subject_shape_descriptor.coordinate_width,
-                  subject_shape_descriptor.coordinate_height,
-                  subject_shape_descriptor.centerline_point_count,
-                  subject_shape_descriptor.bspline_sample_point_count);
-            } else {
-              subject_shape_overlay_failed = true;
-              subject_shape_overlay_buffer.close();
-              if (subject_shape_error.empty()) {
-                subject_shape_error =
-                    "Timed out settling the initial subject-shape smoke frame";
+          if (loaded_analysis->hasResultFor("subject_shape") &&
+              options->subject_shapes_enabled) {
+            subject_shape_error = loaded_analysis->errorFor("subject_shape");
+            auto subject_shape_repository =
+                std::move(loaded_analysis->subject_shape);
+            if (subject_shape_repository) {
+              subject_shape_descriptor = subject_shape_repository->descriptor();
+              bool subject_shape_ready = subject_shape_overlay_buffer.open(
+                  std::move(subject_shape_repository), 6, 16,
+                  &subject_shape_error);
+              if (subject_shape_ready && request_initial_analysis_frame) {
+                subject_shape_ready =
+                    subject_shape_overlay_buffer.requestFrame(
+                        initial_frame, video_playback.info().width,
+                        video_playback.info().height, true,
+                        &subject_shape_error) &&
+                    (!options->video_smoke ||
+                     subject_shape_overlay_buffer.waitForFrame(
+                         initial_frame, std::chrono::seconds(20)));
               }
-              std::fprintf(stderr,
-                           "[AppleSubjectShape] Initialization failed: %s\n",
+              if (subject_shape_ready) {
+                subject_shape_overlay_available = true;
+                std::printf(
+                    "[AppleSubjectShape] group=%s run=%s refined_masks=%s "
+                    "crop_run=%s rows=%zu camera_frames=%zu "
+                    "coordinates=%zux%zu "
+                    "centerline=%zu bspline=%zu lookahead=6 cache=16\n",
+                    subject_shape_descriptor.source_group.c_str(),
+                    subject_shape_descriptor.run_name.c_str(),
+                    subject_shape_descriptor.source_refined_subject_masks_run
+                        .c_str(),
+                    subject_shape_descriptor.source_crop_run.c_str(),
+                    subject_shape_descriptor.row_count,
+                    subject_shape_descriptor.camera_frame_count,
+                    subject_shape_descriptor.coordinate_width,
+                    subject_shape_descriptor.coordinate_height,
+                    subject_shape_descriptor.centerline_point_count,
+                    subject_shape_descriptor.bspline_sample_point_count);
+              } else {
+                subject_shape_overlay_failed = true;
+                subject_shape_overlay_buffer.close();
+                if (subject_shape_error.empty()) {
+                  subject_shape_error = "Timed out settling the initial "
+                                        "subject-shape smoke frame";
+                }
+                std::fprintf(stderr,
+                             "[AppleSubjectShape] Initialization failed: %s\n",
+                             subject_shape_error.c_str());
+              }
+            } else {
+              std::fprintf(stderr, "[AppleSubjectShape] Unavailable: %s\n",
                            subject_shape_error.c_str());
             }
-          } else {
-            std::fprintf(stderr, "[AppleSubjectShape] Unavailable: %s\n",
-                         subject_shape_error.c_str());
           }
-        }
 
-        if (options->eye_geometry_enabled) {
-          auto eye_geometry_repository =
-              crimson::zarr::OpenEyeGeometryOverlayRepository(
-                  archive, {}, &eye_geometry_error);
-          if (eye_geometry_repository) {
-            eye_geometry_descriptor = eye_geometry_repository->descriptor();
-            if (eye_geometry_overlay_buffer.open(
-                    std::move(eye_geometry_repository), 6, 16,
-                    &eye_geometry_error) &&
-                eye_geometry_overlay_buffer.requestFrame(
-                    initial_frame, video_playback.info().width,
-                    video_playback.info().height, true,
-                    &eye_geometry_error) &&
-                (!options->video_smoke ||
-                 eye_geometry_overlay_buffer.waitForFrame(
-                     initial_frame, std::chrono::seconds(20)))) {
-              eye_geometry_overlay_available = true;
-              std::printf(
-                  "[AppleEyeGeometry] group=%s run=%s refined_masks=%s "
-                  "crop_run=%s schema=%s:%d method=%s rows=%zu "
-                  "camera_frames=%zu coordinates=%zux%zu lookahead=6 "
-                  "cache=16\n",
-                  eye_geometry_descriptor.source_group.c_str(),
-                  eye_geometry_descriptor.run_name.c_str(),
-                  eye_geometry_descriptor.source_refined_subject_masks_run
-                      .c_str(),
-                  eye_geometry_descriptor.source_crop_run.c_str(),
-                  eye_geometry_descriptor.schema_id.c_str(),
-                  eye_geometry_descriptor.schema_version,
-                  eye_geometry_descriptor.method.c_str(),
-                  eye_geometry_descriptor.row_count,
-                  eye_geometry_descriptor.camera_frame_count,
-                  eye_geometry_descriptor.coordinate_width,
-                  eye_geometry_descriptor.coordinate_height);
-            } else {
-              eye_geometry_overlay_failed = true;
-              eye_geometry_overlay_buffer.close();
-              if (eye_geometry_error.empty()) {
-                eye_geometry_error =
-                    "Timed out settling the initial eye-geometry smoke frame";
+          if (loaded_analysis->hasResultFor("eye_geometry") &&
+              options->eye_geometry_enabled) {
+            eye_geometry_error = loaded_analysis->errorFor("eye_geometry");
+            auto eye_geometry_repository =
+                std::move(loaded_analysis->eye_geometry);
+            if (eye_geometry_repository) {
+              eye_geometry_descriptor = eye_geometry_repository->descriptor();
+              bool eye_geometry_ready = eye_geometry_overlay_buffer.open(
+                  std::move(eye_geometry_repository), 6, 16,
+                  &eye_geometry_error);
+              if (eye_geometry_ready && request_initial_analysis_frame) {
+                eye_geometry_ready =
+                    eye_geometry_overlay_buffer.requestFrame(
+                        initial_frame, video_playback.info().width,
+                        video_playback.info().height, true,
+                        &eye_geometry_error) &&
+                    (!options->video_smoke ||
+                     eye_geometry_overlay_buffer.waitForFrame(
+                         initial_frame, std::chrono::seconds(20)));
               }
-              std::fprintf(stderr,
-                           "[AppleEyeGeometry] Initialization failed: %s\n",
+              if (eye_geometry_ready) {
+                eye_geometry_overlay_available = true;
+                std::printf(
+                    "[AppleEyeGeometry] group=%s run=%s refined_masks=%s "
+                    "crop_run=%s schema=%s:%d method=%s rows=%zu "
+                    "camera_frames=%zu coordinates=%zux%zu lookahead=6 "
+                    "cache=16\n",
+                    eye_geometry_descriptor.source_group.c_str(),
+                    eye_geometry_descriptor.run_name.c_str(),
+                    eye_geometry_descriptor.source_refined_subject_masks_run
+                        .c_str(),
+                    eye_geometry_descriptor.source_crop_run.c_str(),
+                    eye_geometry_descriptor.schema_id.c_str(),
+                    eye_geometry_descriptor.schema_version,
+                    eye_geometry_descriptor.method.c_str(),
+                    eye_geometry_descriptor.row_count,
+                    eye_geometry_descriptor.camera_frame_count,
+                    eye_geometry_descriptor.coordinate_width,
+                    eye_geometry_descriptor.coordinate_height);
+              } else {
+                eye_geometry_overlay_failed = true;
+                eye_geometry_overlay_buffer.close();
+                if (eye_geometry_error.empty()) {
+                  eye_geometry_error =
+                      "Timed out settling the initial eye-geometry smoke frame";
+                }
+                std::fprintf(stderr,
+                             "[AppleEyeGeometry] Initialization failed: %s\n",
+                             eye_geometry_error.c_str());
+              }
+            } else {
+              std::fprintf(stderr, "[AppleEyeGeometry] Unavailable: %s\n",
                            eye_geometry_error.c_str());
             }
-          } else {
-            std::fprintf(stderr, "[AppleEyeGeometry] Unavailable: %s\n",
-                         eye_geometry_error.c_str());
           }
-        }
 
-        if (options->motion_timeline_enabled) {
-          auto motion_repository =
-              crimson::zarr::OpenMotionSeriesTimelineRepository(
-                  archive,
-                  static_cast<size_t>(video_playback.info().frame_count),
+          if (loaded_analysis->hasResultFor("motion") &&
+              options->motion_timeline_enabled) {
+            motion_timeline_error = loaded_analysis->errorFor("motion");
+            auto motion_repository = std::move(loaded_analysis->motion);
+            if (motion_repository) {
+              const auto preload_metrics = motion_repository->metrics();
+              motion_timeline_descriptor = motion_repository->descriptor();
+              workspace_state.selections().motion_source_key =
+                  crimson::timeline::defaultAnalysisSeriesSource(
+                      motion_timeline_descriptor);
+              const double fps = video_playback.info().nominal_frame_rate;
+              bool timeline_initialization_ready = motion_timeline_buffer.open(
+                  std::move(motion_repository), 4096, 2048, 1200, 3,
                   &motion_timeline_error);
-          if (motion_repository) {
-            motion_timeline_descriptor = motion_repository->descriptor();
-            analysis_timeline_controls.motion.source_key =
-                crimson::timeline::defaultAnalysisSeriesSource(
-                    motion_timeline_descriptor);
-            const double fps = video_playback.info().nominal_frame_rate;
-            bool timeline_initialization_ready = motion_timeline_buffer.open(
-                std::move(motion_repository), 4096, 2048, 1200, 3,
-                &motion_timeline_error);
-            const bool initial_page_required =
-                options->show_analysis_timeline || options->video_smoke ||
-                options->require_motion_timeline;
-            if (timeline_initialization_ready && initial_page_required) {
-              timeline_initialization_ready =
-                  motion_timeline_buffer.requestFrame(
-                      initial_frame,
-                      analysis_timeline_controls.motion.source_key, fps, true,
-                      &motion_timeline_error) &&
-                  (!options->video_smoke ||
-                   motion_timeline_buffer.waitForFrame(
-                       initial_frame,
-                       analysis_timeline_controls.motion.source_key, fps,
-                       std::chrono::seconds(20)));
-            }
-            if (timeline_initialization_ready) {
-              motion_timeline_available = true;
-              std::printf(
-                  "[AppleMotionTimeline] sources=%zu camera_frames=%zu "
-                  "default=%s page=4096 step=2048 points=1200 cache=3\n",
-                  motion_timeline_descriptor.sources.size(),
-                  motion_timeline_descriptor.frame_count,
-                  motion_timeline_descriptor.default_source.c_str());
-            } else {
-              motion_timeline_failed = true;
-              motion_timeline_buffer.close();
-              if (motion_timeline_error.empty()) {
-                motion_timeline_error =
-                    "Timed out settling the initial motion timeline page";
+              const bool initial_page_required =
+                  request_initial_analysis_frame &&
+                  (options->show_analysis_timeline || options->video_smoke ||
+                   options->require_motion_timeline);
+              if (timeline_initialization_ready && initial_page_required) {
+                timeline_initialization_ready =
+                    motion_timeline_buffer.requestFrame(
+                        initial_frame,
+                        workspace_state.selections().motion_source_key, fps,
+                        true, &motion_timeline_error) &&
+                    (!options->video_smoke ||
+                     motion_timeline_buffer.waitForFrame(
+                         initial_frame,
+                         workspace_state.selections().motion_source_key, fps,
+                         std::chrono::seconds(20)));
               }
-              std::fprintf(stderr,
-                           "[AppleMotionTimeline] Initialization failed: %s\n",
+              if (timeline_initialization_ready) {
+                motion_timeline_available = true;
+                std::printf(
+                    "[AppleMotionTimeline] sources=%zu camera_frames=%zu "
+                    "default=%s page=4096 step=2048 points=1200 cache=3 "
+                    "preloaded=%d preload_bytes=%llu preload_ms=%.1f\n",
+                    motion_timeline_descriptor.sources.size(),
+                    motion_timeline_descriptor.frame_count,
+                    motion_timeline_descriptor.default_source.c_str(),
+                    preload_metrics.default_source_preloaded ? 1 : 0,
+                    static_cast<unsigned long long>(
+                        preload_metrics.preloaded_retained_bytes),
+                    preload_metrics.preload_ms);
+              } else {
+                motion_timeline_failed = true;
+                motion_timeline_buffer.close();
+                if (motion_timeline_error.empty()) {
+                  motion_timeline_error =
+                      "Timed out settling the initial motion timeline page";
+                }
+                std::fprintf(
+                    stderr, "[AppleMotionTimeline] Initialization failed: %s\n",
+                    motion_timeline_error.c_str());
+              }
+            } else {
+              if (options->require_motion_timeline) {
+                motion_timeline_failed = true;
+              }
+              std::fprintf(stderr, "[AppleMotionTimeline] Unavailable: %s\n",
                            motion_timeline_error.c_str());
             }
-          } else {
-            if (options->require_motion_timeline) {
-              motion_timeline_failed = true;
-            }
-            std::fprintf(stderr, "[AppleMotionTimeline] Unavailable: %s\n",
-                         motion_timeline_error.c_str());
           }
-        }
 
-        if (options->eye_angle_timeline_enabled) {
-          auto eye_angle_repository =
-              crimson::zarr::OpenEyeAngleTimelineRepository(
-                  archive, {}, &eye_angle_timeline_error);
-          if (eye_angle_repository) {
-            eye_angle_timeline_descriptor = eye_angle_repository->descriptor();
-            analysis_timeline_controls.eye_angles.representation_key =
-                crimson::timeline::defaultEyeAngleTimelineRepresentation(
-                    eye_angle_timeline_descriptor);
-            const double fps = video_playback.info().nominal_frame_rate;
-            bool timeline_initialization_ready =
-                eye_angle_timeline_buffer.open(
-                    std::move(eye_angle_repository), 4096, 2048, 1200, 3,
-                    &eye_angle_timeline_error);
-            const bool initial_page_required =
-                options->show_analysis_timeline || options->video_smoke ||
-                options->require_eye_angle_timeline;
-            if (timeline_initialization_ready && initial_page_required) {
-              timeline_initialization_ready =
-                  eye_angle_timeline_buffer.requestFrame(
-                      initial_frame,
-                      analysis_timeline_controls.eye_angles.representation_key,
-                      fps, true,
-                      &eye_angle_timeline_error) &&
-                  (!options->video_smoke ||
-                   eye_angle_timeline_buffer.waitForFrame(
-                       initial_frame,
-                       analysis_timeline_controls.eye_angles.representation_key,
-                       fps,
-                       std::chrono::seconds(20)));
-            }
-            if (timeline_initialization_ready) {
-              eye_angle_timeline_available = true;
-              std::printf(
-                  "[AppleEyeAngleTimeline] group=%s run=%s schema=%s:%d "
-                  "layout=%s rows=%zu camera_frames=%zu default=%s "
-                  "representations=%zu page=4096 step=2048 points=1200 "
-                  "cache=3\n",
-                  eye_angle_timeline_descriptor.source_group.c_str(),
-                  eye_angle_timeline_descriptor.run_name.c_str(),
-                  eye_angle_timeline_descriptor.schema_id.c_str(),
-                  eye_angle_timeline_descriptor.schema_version,
-                  eye_angle_timeline_descriptor.layout.c_str(),
-                  eye_angle_timeline_descriptor.roi_row_count,
-                  eye_angle_timeline_descriptor.frame_count,
-                  eye_angle_timeline_descriptor.default_representation.c_str(),
-                  eye_angle_timeline_descriptor.representations.size());
-            } else {
-              eye_angle_timeline_failed = true;
-              eye_angle_timeline_buffer.close();
-              if (eye_angle_timeline_error.empty()) {
-                eye_angle_timeline_error =
-                    "Timed out settling the initial eye-angle timeline page";
+          if (loaded_analysis->hasResultFor("swim_bouts") &&
+              options->swim_bout_timeline_enabled &&
+              motion_timeline_available) {
+            swim_bout_timeline_error = loaded_analysis->errorFor("swim_bouts");
+            auto swim_bout_repository = std::move(loaded_analysis->swim_bouts);
+            if (swim_bout_repository) {
+              swim_bout_timeline_descriptor =
+                  swim_bout_repository->descriptor();
+              const auto *motion_source =
+                  crimson::timeline::findAnalysisSeriesSource(
+                      motion_timeline_descriptor,
+                      workspace_state.selections().motion_source_key);
+              if (motion_source != nullptr) {
+                workspace_state.selections().swim_bout_candidate_key =
+                    crimson::timeline::defaultSwimBoutCandidate(
+                        swim_bout_timeline_descriptor, *motion_source);
               }
+              bool timeline_initialization_ready =
+                  !workspace_state.selections()
+                       .swim_bout_candidate_key.empty() &&
+                  swim_bout_timeline_buffer.open(
+                      std::move(swim_bout_repository), 4096, 2048, 1200, 4,
+                      &swim_bout_timeline_error);
+              const bool initial_page_required =
+                  request_initial_analysis_frame &&
+                  (options->show_analysis_timeline || options->video_smoke ||
+                   options->require_swim_bout_timeline);
+              const double fps = video_playback.info().nominal_frame_rate;
+              if (timeline_initialization_ready && initial_page_required) {
+                timeline_initialization_ready =
+                    swim_bout_timeline_buffer.requestFrame(
+                        initial_frame,
+                        workspace_state.selections().swim_bout_candidate_key,
+                        fps,
+                        analysis_timeline_controls.swim_bouts
+                            .show_detector_response,
+                        true, &swim_bout_timeline_error) &&
+                    (!options->video_smoke ||
+                     swim_bout_timeline_buffer.waitForFrame(
+                         initial_frame,
+                         workspace_state.selections().swim_bout_candidate_key,
+                         fps,
+                         analysis_timeline_controls.swim_bouts
+                             .show_detector_response,
+                         std::chrono::seconds(20)));
+              }
+              if (timeline_initialization_ready) {
+                swim_bout_timeline_available = true;
+                std::printf(
+                    "[AppleSwimBoutTimeline] candidates=%zu camera_frames=%zu "
+                    "default=%s page=4096 step=2048 points=1200 cache=4\n",
+                    swim_bout_timeline_descriptor.candidates.size(),
+                    swim_bout_timeline_descriptor.frame_count,
+                    workspace_state.selections()
+                        .swim_bout_candidate_key.c_str());
+              } else {
+                swim_bout_timeline_failed = true;
+                swim_bout_timeline_buffer.close();
+                if (swim_bout_timeline_error.empty()) {
+                  swim_bout_timeline_error =
+                      "No swim-bout candidate is compatible with the selected "
+                      "motion source";
+                }
+                std::fprintf(
+                    stderr,
+                    "[AppleSwimBoutTimeline] Initialization failed: %s\n",
+                    swim_bout_timeline_error.c_str());
+              }
+            } else {
+              if (options->require_swim_bout_timeline) {
+                swim_bout_timeline_failed = true;
+              }
+              std::fprintf(stderr, "[AppleSwimBoutTimeline] Unavailable: %s\n",
+                           swim_bout_timeline_error.c_str());
+            }
+          } else if (loaded_analysis->hasResultFor("swim_bouts") &&
+                     options->require_swim_bout_timeline) {
+            swim_bout_timeline_failed = true;
+            swim_bout_timeline_error =
+                "Swim-bout timelines require a compatible motion timeline";
+            std::fprintf(stderr, "[AppleSwimBoutTimeline] Unavailable: %s\n",
+                         swim_bout_timeline_error.c_str());
+          }
+
+          if (loaded_analysis->hasResultFor("eye_angles") &&
+              options->eye_angle_timeline_enabled) {
+            eye_angle_timeline_error = loaded_analysis->errorFor("eye_angles");
+            auto eye_angle_repository = std::move(loaded_analysis->eye_angles);
+            if (eye_angle_repository) {
+              const auto preload_metrics = eye_angle_repository->metrics();
+              eye_angle_timeline_descriptor =
+                  eye_angle_repository->descriptor();
+              workspace_state.selections().eye_angle_representation_key =
+                  crimson::timeline::defaultEyeAngleTimelineRepresentation(
+                      eye_angle_timeline_descriptor);
+              if (options->ui_reference.enabled &&
+                  options->ui_reference.state ==
+                      AppleUiReferenceState::AnalysisEye &&
+                  eye_angle_timeline_descriptor.representations.size() > 1) {
+                const std::string default_representation =
+                    workspace_state.selections().eye_angle_representation_key;
+                const auto alternate = std::find_if(
+                    eye_angle_timeline_descriptor.representations.begin(),
+                    eye_angle_timeline_descriptor.representations.end(),
+                    [&default_representation](const auto &candidate) {
+                      return candidate.key != default_representation;
+                    });
+                if (alternate !=
+                    eye_angle_timeline_descriptor.representations.end()) {
+                  workspace_state.selections().eye_angle_representation_key =
+                      alternate->key;
+                }
+              }
+              const double fps = video_playback.info().nominal_frame_rate;
+              bool timeline_initialization_ready =
+                  eye_angle_timeline_buffer.open(
+                      std::move(eye_angle_repository), 4096, 2048, 1200, 3,
+                      &eye_angle_timeline_error);
+              const bool initial_page_required =
+                  request_initial_analysis_frame &&
+                  (options->show_analysis_timeline || options->video_smoke ||
+                   options->require_eye_angle_timeline);
+              if (timeline_initialization_ready && initial_page_required) {
+                timeline_initialization_ready =
+                    eye_angle_timeline_buffer.requestFrame(
+                        initial_frame,
+                        workspace_state.selections()
+                            .eye_angle_representation_key,
+                        fps, true, &eye_angle_timeline_error) &&
+                    (!options->video_smoke ||
+                     eye_angle_timeline_buffer.waitForFrame(
+                         initial_frame,
+                         workspace_state.selections()
+                             .eye_angle_representation_key,
+                         fps, std::chrono::seconds(20)));
+              }
+              if (timeline_initialization_ready) {
+                eye_angle_timeline_available = true;
+                std::printf(
+                    "[AppleEyeAngleTimeline] group=%s run=%s schema=%s:%d "
+                    "layout=%s rows=%zu camera_frames=%zu default=%s "
+                    "representations=%zu page=4096 step=2048 points=1200 "
+                    "cache=3 preloaded=%d preload_bytes=%llu preload_ms=%.1f\n",
+                    eye_angle_timeline_descriptor.source_group.c_str(),
+                    eye_angle_timeline_descriptor.run_name.c_str(),
+                    eye_angle_timeline_descriptor.schema_id.c_str(),
+                    eye_angle_timeline_descriptor.schema_version,
+                    eye_angle_timeline_descriptor.layout.c_str(),
+                    eye_angle_timeline_descriptor.roi_row_count,
+                    eye_angle_timeline_descriptor.frame_count,
+                    eye_angle_timeline_descriptor.default_representation
+                        .c_str(),
+                    eye_angle_timeline_descriptor.representations.size(),
+                    preload_metrics.frame_series_preloaded ? 1 : 0,
+                    static_cast<unsigned long long>(
+                        preload_metrics.preloaded_retained_bytes),
+                    preload_metrics.preload_ms);
+              } else {
+                eye_angle_timeline_failed = true;
+                eye_angle_timeline_buffer.close();
+                if (eye_angle_timeline_error.empty()) {
+                  eye_angle_timeline_error =
+                      "Timed out settling the initial eye-angle timeline page";
+                }
+                std::fprintf(
+                    stderr,
+                    "[AppleEyeAngleTimeline] Initialization failed: %s\n",
+                    eye_angle_timeline_error.c_str());
+              }
+            } else {
+              if (options->require_eye_angle_timeline) {
+                eye_angle_timeline_failed = true;
+              }
+              std::fprintf(stderr, "[AppleEyeAngleTimeline] Unavailable: %s\n",
+                           eye_angle_timeline_error.c_str());
+            }
+          }
+
+          if (loaded_analysis->hasResultFor("tail_kinematics") &&
+              options->tail_kinematics_timeline_enabled) {
+            tail_kinematics_timeline_error =
+                loaded_analysis->errorFor("tail_kinematics");
+            auto tail_repository = std::move(loaded_analysis->tail_kinematics);
+            if (tail_repository) {
+              const auto preload_metrics = tail_repository->metrics();
+              tail_kinematics_timeline_descriptor =
+                  tail_repository->descriptor();
+              workspace_state.selections().tail_kinematics_source_key =
+                  crimson::timeline::defaultAnalysisSeriesSource(
+                      tail_kinematics_timeline_descriptor);
+              const double fps = video_playback.info().nominal_frame_rate;
+              bool timeline_initialization_ready =
+                  tail_kinematics_timeline_buffer.open(
+                      std::move(tail_repository), 4096, 2048, 1200, 3,
+                      &tail_kinematics_timeline_error);
+              const bool initial_page_required =
+                  request_initial_analysis_frame &&
+                  (options->show_analysis_timeline || options->video_smoke ||
+                   options->require_tail_kinematics_timeline);
+              if (timeline_initialization_ready && initial_page_required) {
+                timeline_initialization_ready =
+                    tail_kinematics_timeline_buffer.requestFrame(
+                        initial_frame,
+                        workspace_state.selections().tail_kinematics_source_key,
+                        fps, true, &tail_kinematics_timeline_error) &&
+                    (!options->video_smoke ||
+                     tail_kinematics_timeline_buffer.waitForFrame(
+                         initial_frame,
+                         workspace_state.selections()
+                             .tail_kinematics_source_key,
+                         fps, std::chrono::seconds(20)));
+              }
+              if (timeline_initialization_ready) {
+                tail_kinematics_timeline_available = true;
+                std::printf(
+                    "[AppleTailKinematicsTimeline] sources=%zu "
+                    "camera_frames=%zu default=%s page=4096 step=2048 "
+                    "points=1200 cache=3 preloaded=%d preload_bytes=%llu "
+                    "preload_ms=%.1f\n",
+                    tail_kinematics_timeline_descriptor.sources.size(),
+                    tail_kinematics_timeline_descriptor.frame_count,
+                    tail_kinematics_timeline_descriptor.default_source.c_str(),
+                    preload_metrics.default_source_preloaded ? 1 : 0,
+                    static_cast<unsigned long long>(
+                        preload_metrics.preloaded_retained_bytes),
+                    preload_metrics.preload_ms);
+              } else {
+                tail_kinematics_timeline_failed = true;
+                tail_kinematics_timeline_buffer.close();
+                if (tail_kinematics_timeline_error.empty()) {
+                  tail_kinematics_timeline_error =
+                      "Timed out settling the initial tail-kinematics timeline "
+                      "page";
+                }
+                std::fprintf(
+                    stderr,
+                    "[AppleTailKinematicsTimeline] Initialization failed: %s\n",
+                    tail_kinematics_timeline_error.c_str());
+              }
+            } else {
+              if (options->require_tail_kinematics_timeline) {
+                tail_kinematics_timeline_failed = true;
+              }
+              std::fprintf(stderr,
+                           "[AppleTailKinematicsTimeline] Unavailable: %s\n",
+                           tail_kinematics_timeline_error.c_str());
+            }
+          }
+
+          if (loaded_analysis->hasResultFor("stimulus_context") &&
+              options->stimulus_context_timeline_enabled) {
+            stimulus_context_timeline_error =
+                loaded_analysis->errorFor("stimulus_context");
+            auto stimulus_context_repository =
+                std::move(loaded_analysis->stimulus_context);
+            if (stimulus_context_repository) {
+              stimulus_context_timeline_descriptor =
+                  stimulus_context_repository->descriptor();
+              stimulus_context_timeline_snapshot =
+                  stimulus_context_repository->snapshot();
+              stimulus_context_timeline_available =
+                  stimulus_context_timeline_snapshot != nullptr &&
+                  (!stimulus_context_timeline_snapshot->events.empty() ||
+                   !stimulus_context_timeline_snapshot->steps.empty());
+              if (stimulus_context_timeline_available) {
+                size_t unresolved_camera_frames = 0;
+                for (const auto &event :
+                     stimulus_context_timeline_snapshot->events) {
+                  unresolved_camera_frames += event.camera_frame < 0 ? 1 : 0;
+                }
+                std::printf(
+                    "[AppleStimulusContextTimeline] run=%s events=%zu "
+                    "steps=%zu "
+                    "event_types=%zu camera_frames=%zu unresolved=%zu\n",
+                    stimulus_context_timeline_descriptor.run_name.c_str(),
+                    stimulus_context_timeline_descriptor.event_count,
+                    stimulus_context_timeline_descriptor.step_count,
+                    stimulus_context_timeline_descriptor.event_types.size(),
+                    stimulus_context_timeline_descriptor.frame_count,
+                    unresolved_camera_frames);
+              }
+            }
+            if (!stimulus_context_timeline_available) {
+              if (options->require_stimulus_context_timeline) {
+                stimulus_context_timeline_failed = true;
+              }
+              std::fprintf(stderr,
+                           "[AppleStimulusContextTimeline] Unavailable: %s\n",
+                           stimulus_context_timeline_error.c_str());
+            }
+          }
+
+          if (loaded_analysis->hasResultFor("crop_geometry")) {
+            std::string geometry_error;
+            geometry_error = loaded_analysis->errorFor("crop_geometry");
+            analysis_crop_geometry = std::move(loaded_analysis->crop_geometry);
+            if (analysis_crop_geometry) {
+              crop_controls.live_geometry_available = true;
+              const auto &descriptor = analysis_crop_geometry->descriptor();
+              AppleVideoAssetInfo geometry_info;
+              geometry_info.stream_id = "analysis-crop-geometry";
+              geometry_info.width = descriptor.output_width;
+              geometry_info.height = descriptor.output_height;
+              geometry_info.frame_count =
+                  static_cast<int64_t>(descriptor.camera_frame_count);
+              geometry_info.nominal_frame_rate =
+                  video_playback.info().nominal_frame_rate;
+              analysis_crop_view_info = geometry_info;
+              crop_view_info = std::move(geometry_info);
+              std::printf(
+                  "[AppleCropGeometry] run=%s rows=%zu camera_frames=%zu "
+                  "output=%dx%d pixel_source=full-camera\n",
+                  descriptor.run_name.c_str(), descriptor.row_count,
+                  descriptor.camera_frame_count, descriptor.output_width,
+                  descriptor.output_height);
+            } else {
+              std::fprintf(stderr, "[AppleCropGeometry] Unavailable: %s\n",
+                           geometry_error.c_str());
+            }
+          }
+
+          if (loaded_analysis->hasResultFor("acquisition_crop")) {
+            crop_error = loaded_analysis->errorFor("acquisition_crop");
+            auto acquisition_repository =
+                std::move(loaded_analysis->acquisition_crop);
+            if (acquisition_repository &&
+                crop_playback.open(
+                    std::move(acquisition_repository),
+                    video_playback.info().width, video_playback.info().height,
+                    kAcquisitionCropBufferCapacity, &crop_error)) {
+              crop_controls.acquisition_available = true;
+              crop_controls.live_geometry_available = true;
+              crop_view_info = crop_playback.info();
+              const auto &crop_info = crop_playback.info();
+              std::printf(
+                  "[AppleCrop] stream=%s asset=%dx%d frames=%lld fps=%.6f "
+                  "buffer_capacity=%zu startup_ms=%.1f path=%s\n",
+                  crop_playback.repository()->descriptor().stream_id.c_str(),
+                  crop_info.width, crop_info.height,
+                  static_cast<long long>(crop_info.frame_count),
+                  crop_info.nominal_frame_rate, kAcquisitionCropBufferCapacity,
+                  crop_playback.metrics().decoder.startup_ms,
+                  crop_info.path.c_str());
+            } else {
+              crop_playback.close();
+              std::fprintf(stderr, "[AppleCrop] Acquisition unavailable: %s\n",
+                           crop_error.c_str());
+            }
+          }
+
+          if ((loaded_analysis->hasResultFor("crop_geometry") ||
+               loaded_analysis->hasResultFor("acquisition_crop")) &&
+              !crop_controls.acquisition_available &&
+              crop_controls.live_geometry_available) {
+            crop_controls.preference =
+                crimson::crop::CropSourcePreference::PreferLiveGeometry;
+          }
+          active_crop_preference = crop_controls.preference;
+          crop_enabled = crop_controls.acquisition_available ||
+                         crop_controls.live_geometry_available;
+
+          if (loaded_analysis->hasResultFor("acquisition_crop") &&
+              crop_controls.acquisition_available) {
+            bool acquisition_ready = true;
+            if (crop_controls.preference ==
+                crimson::crop::CropSourcePreference::PreferAcquisitionVideo) {
+              acquisition_ready = crop_playback.requestCameraFrame(
+                  initial_frame, true, &crop_error);
+              const auto initial_crop_resolution =
+                  crop_playback.resolveCameraFrame(initial_frame);
+              if (options->video_smoke && acquisition_ready &&
+                  initial_crop_resolution.status ==
+                      crimson::zarr::AcquisitionCropMappingStatus::Mapped) {
+                acquisition_ready = crop_playback.waitForCameraFrame(
+                    initial_frame, std::chrono::seconds(10), &crop_error);
+              }
+            } else {
+              crop_playback.suspend();
+            }
+            if (!acquisition_ready) {
+              crop_controls.acquisition_available = false;
+              crop_playback.close();
+              crop_controls.live_geometry_available =
+                  analysis_crop_geometry != nullptr;
+              crop_view_info = analysis_crop_view_info;
               std::fprintf(
-                  stderr,
-                  "[AppleEyeAngleTimeline] Initialization failed: %s\n",
-                  eye_angle_timeline_error.c_str());
-            }
-          } else {
-            if (options->require_eye_angle_timeline) {
-              eye_angle_timeline_failed = true;
-            }
-            std::fprintf(stderr, "[AppleEyeAngleTimeline] Unavailable: %s\n",
-                         eye_angle_timeline_error.c_str());
-          }
-        }
-
-        if (options->tail_kinematics_timeline_enabled) {
-          auto tail_repository =
-              crimson::zarr::OpenTailKinematicsTimelineRepository(
-                  archive,
-                  static_cast<size_t>(video_playback.info().frame_count), {},
-                  &tail_kinematics_timeline_error);
-          if (tail_repository) {
-            tail_kinematics_timeline_descriptor =
-                tail_repository->descriptor();
-            analysis_timeline_controls.tail_kinematics.source_key =
-                crimson::timeline::defaultAnalysisSeriesSource(
-                    tail_kinematics_timeline_descriptor);
-            const double fps = video_playback.info().nominal_frame_rate;
-            bool timeline_initialization_ready =
-                tail_kinematics_timeline_buffer.open(
-                    std::move(tail_repository), 4096, 2048, 1200, 3,
-                    &tail_kinematics_timeline_error);
-            const bool initial_page_required =
-                options->show_analysis_timeline || options->video_smoke ||
-                options->require_tail_kinematics_timeline;
-            if (timeline_initialization_ready && initial_page_required) {
-              timeline_initialization_ready =
-                  tail_kinematics_timeline_buffer.requestFrame(
-                      initial_frame,
-                      analysis_timeline_controls.tail_kinematics.source_key,
-                      fps, true, &tail_kinematics_timeline_error) &&
-                  (!options->video_smoke ||
-                   tail_kinematics_timeline_buffer.waitForFrame(
-                       initial_frame,
-                       analysis_timeline_controls.tail_kinematics.source_key,
-                       fps, std::chrono::seconds(20)));
-            }
-            if (timeline_initialization_ready) {
-              tail_kinematics_timeline_available = true;
-              std::printf(
-                  "[AppleTailKinematicsTimeline] sources=%zu "
-                  "camera_frames=%zu default=%s page=4096 step=2048 "
-                  "points=1200 cache=3\n",
-                  tail_kinematics_timeline_descriptor.sources.size(),
-                  tail_kinematics_timeline_descriptor.frame_count,
-                  tail_kinematics_timeline_descriptor.default_source.c_str());
-            } else {
-              tail_kinematics_timeline_failed = true;
-              tail_kinematics_timeline_buffer.close();
-              if (tail_kinematics_timeline_error.empty()) {
-                tail_kinematics_timeline_error =
-                    "Timed out settling the initial tail-kinematics timeline "
-                    "page";
+                  stderr, "[AppleCrop] Acquisition initialization failed: %s\n",
+                  crop_error.c_str());
+              if (crop_controls.live_geometry_available) {
+                crop_controls.preference =
+                    crimson::crop::CropSourcePreference::PreferLiveGeometry;
+                active_crop_preference = crop_controls.preference;
+              } else {
+                crop_enabled = false;
               }
-              std::fprintf(
-                  stderr,
-                  "[AppleTailKinematicsTimeline] Initialization failed: %s\n",
-                  tail_kinematics_timeline_error.c_str());
-            }
-          } else {
-            if (options->require_tail_kinematics_timeline) {
-              tail_kinematics_timeline_failed = true;
-            }
-            std::fprintf(stderr,
-                         "[AppleTailKinematicsTimeline] Unavailable: %s\n",
-                         tail_kinematics_timeline_error.c_str());
-          }
-        }
-
-        if (options->stimulus_context_timeline_enabled) {
-          auto stimulus_context_repository =
-              crimson::zarr::OpenStimulusContextTimelineRepository(
-                  archive,
-                  static_cast<size_t>(video_playback.info().frame_count),
-                  options->stimulus_run, &stimulus_context_timeline_error);
-          if (stimulus_context_repository) {
-            stimulus_context_timeline_descriptor =
-                stimulus_context_repository->descriptor();
-            stimulus_context_timeline_snapshot =
-                stimulus_context_repository->snapshot();
-            stimulus_context_timeline_available =
-                stimulus_context_timeline_snapshot != nullptr &&
-                (!stimulus_context_timeline_snapshot->events.empty() ||
-                 !stimulus_context_timeline_snapshot->steps.empty());
-            if (stimulus_context_timeline_available) {
-              size_t unresolved_camera_frames = 0;
-              for (const auto &event :
-                   stimulus_context_timeline_snapshot->events) {
-                unresolved_camera_frames += event.camera_frame < 0 ? 1 : 0;
-              }
-              std::printf(
-                  "[AppleStimulusContextTimeline] run=%s events=%zu steps=%zu "
-                  "event_types=%zu camera_frames=%zu unresolved=%zu\n",
-                  stimulus_context_timeline_descriptor.run_name.c_str(),
-                  stimulus_context_timeline_descriptor.event_count,
-                  stimulus_context_timeline_descriptor.step_count,
-                  stimulus_context_timeline_descriptor.event_types.size(),
-                  stimulus_context_timeline_descriptor.frame_count,
-                  unresolved_camera_frames);
             }
           }
-          if (!stimulus_context_timeline_available) {
-            if (options->require_stimulus_context_timeline) {
-              stimulus_context_timeline_failed = true;
-            }
-            std::fprintf(stderr,
-                         "[AppleStimulusContextTimeline] Unavailable: %s\n",
-                         stimulus_context_timeline_error.c_str());
+          composite_enabled = stimulus_enabled || crop_enabled;
+          if (loaded_analysis->hasResultFor("motion") &&
+              deferred_swim_bout_result) {
+            auto deferred = std::move(*deferred_swim_bout_result);
+            deferred_swim_bout_result.reset();
+            adopt_analysis_result(std::move(deferred));
           }
-        }
-
-        std::string geometry_error;
-        analysis_crop_geometry =
-            crimson::zarr::OpenAnalysisCropGeometryRepository(
-                archive, options->crop_run, &geometry_error);
-        if (analysis_crop_geometry) {
-          crop_controls.live_geometry_available = true;
-          const auto &descriptor = analysis_crop_geometry->descriptor();
-          AppleVideoAssetInfo geometry_info;
-          geometry_info.stream_id = "analysis-crop-geometry";
-          geometry_info.width = descriptor.output_width;
-          geometry_info.height = descriptor.output_height;
-          geometry_info.frame_count =
-              static_cast<int64_t>(descriptor.camera_frame_count);
-          geometry_info.nominal_frame_rate =
-              video_playback.info().nominal_frame_rate;
-          analysis_crop_view_info = geometry_info;
-          crop_view_info = std::move(geometry_info);
-          std::printf(
-              "[AppleCropGeometry] run=%s rows=%zu camera_frames=%zu "
-              "output=%dx%d pixel_source=full-camera\n",
-              descriptor.run_name.c_str(), descriptor.row_count,
-              descriptor.camera_frame_count, descriptor.output_width,
-              descriptor.output_height);
-        } else {
-          std::fprintf(stderr, "[AppleCropGeometry] Unavailable: %s\n",
-                       geometry_error.c_str());
-        }
-
-        auto acquisition_repository =
-            crimson::zarr::OpenAcquisitionCropRepository(archive, &crop_error);
-        if (acquisition_repository &&
-            crop_playback.open(std::move(acquisition_repository),
-                               video_playback.info().width,
-                               video_playback.info().height,
-                               kAcquisitionCropBufferCapacity, &crop_error)) {
-          crop_controls.acquisition_available = true;
-          crop_controls.live_geometry_available = true;
-          crop_view_info = crop_playback.info();
-          const auto &crop_info = crop_playback.info();
-          std::printf(
-              "[AppleCrop] stream=%s asset=%dx%d frames=%lld fps=%.6f "
-              "buffer_capacity=%zu startup_ms=%.1f path=%s\n",
-              crop_playback.repository()->descriptor().stream_id.c_str(),
-              crop_info.width, crop_info.height,
-              static_cast<long long>(crop_info.frame_count),
-              crop_info.nominal_frame_rate, kAcquisitionCropBufferCapacity,
-              crop_playback.metrics().decoder.startup_ms,
-              crop_info.path.c_str());
-        } else {
-          crop_playback.close();
-          std::fprintf(stderr, "[AppleCrop] Acquisition unavailable: %s\n",
-                       crop_error.c_str());
-        }
-
-        if (!crop_controls.acquisition_available &&
-            crop_controls.live_geometry_available) {
-          crop_controls.preference =
-              crimson::crop::CropSourcePreference::PreferLiveGeometry;
-        }
-        active_crop_preference = crop_controls.preference;
-        crop_enabled = crop_controls.acquisition_available ||
-                       crop_controls.live_geometry_available;
-
-        if (crop_controls.acquisition_available) {
-          bool acquisition_ready = true;
-          if (crop_controls.preference ==
-              crimson::crop::CropSourcePreference::PreferAcquisitionVideo) {
-            acquisition_ready = crop_playback.requestCameraFrame(
-                initial_frame, true, &crop_error);
-            const auto initial_crop_resolution =
-                crop_playback.resolveCameraFrame(initial_frame);
-            if (acquisition_ready &&
-                initial_crop_resolution.status ==
-                    crimson::zarr::AcquisitionCropMappingStatus::Mapped) {
-              acquisition_ready = crop_playback.waitForCameraFrame(
-                  initial_frame, std::chrono::seconds(10), &crop_error);
+        };
+        adopt_analysis_result(std::move(*loaded_analysis));
+        const bool deterministic_analysis_start =
+            options->video_smoke || options->ui_reference.enabled;
+        if (deterministic_analysis_start) {
+          while (analysis_loader.loading() && !glfwWindowShouldClose(window)) {
+            if (auto ready = analysis_loader.takeReady()) {
+              adopt_analysis_result(std::move(*ready));
+              continue;
             }
-          } else {
-            crop_playback.suspend();
+            glfwPollEvents();
+            const auto progress = analysis_loader.progress();
+            if (!renderAppleLoadingFrame(
+                    window, layer, command_queue, progress.phase,
+                    progress.completed_products, progress.total_products)) {
+              analysis_loader.cancel();
+              break;
+            }
+            glfwWaitEventsTimeout(1.0 / 60.0);
           }
-          if (!acquisition_ready) {
-            crop_controls.acquisition_available = false;
-            crop_playback.close();
-            crop_controls.live_geometry_available =
-                analysis_crop_geometry != nullptr;
-            crop_view_info = analysis_crop_view_info;
-            std::fprintf(stderr,
-                         "[AppleCrop] Acquisition initialization failed: %s\n",
-                         crop_error.c_str());
-            if (crop_controls.live_geometry_available) {
-              crop_controls.preference =
-                  crimson::crop::CropSourcePreference::PreferLiveGeometry;
-              active_crop_preference = crop_controls.preference;
-            } else {
-              crop_enabled = false;
-            }
+          while (auto ready = analysis_loader.takeReady()) {
+            adopt_analysis_result(std::move(*ready));
           }
         }
       }
@@ -1517,14 +3351,14 @@ int main(int argc, char **argv) {
         std::optional<crimson::crop::CropFrameGeometry> geometry;
         if (analysis_crop_geometry) {
           geometry = analysis_crop_geometry
-                         ->resolveCameraFrame(
-                             camera_frame, video_playback.info().width,
-                             video_playback.info().height)
+                         ->resolveCameraFrame(camera_frame,
+                                              video_playback.info().width,
+                                              video_playback.info().height)
                          .geometry;
         } else if (const auto *repository = crop_playback.repository()) {
-          geometry = repository->liveGeometry(
-              camera_frame, video_playback.info().width,
-              video_playback.info().height);
+          geometry = repository->liveGeometry(camera_frame,
+                                              video_playback.info().width,
+                                              video_playback.info().height);
         }
         return geometry && geometry->usableForLiveCrop();
       };
@@ -1533,8 +3367,7 @@ int main(int argc, char **argv) {
                             bool require_next) -> std::optional<int64_t> {
         for (int64_t frame = begin; frame <= end; ++frame) {
           if (frame_supports_exact_composite(frame) &&
-              (!require_next ||
-               frame_supports_exact_composite(frame + 1))) {
+              (!require_next || frame_supports_exact_composite(frame + 1))) {
             return frame;
           }
         }
@@ -1544,18 +3377,16 @@ int main(int argc, char **argv) {
       const int64_t start = options->video_smoke_start;
       const int64_t end = options->video_smoke_end;
       const int64_t span = end - start;
-      const auto pause = find_frame(start + std::max<int64_t>(2, span / 5),
-                                    start + std::max<int64_t>(4, span / 3),
-                                    true);
-      const auto backward = pause
-                                ? find_frame(start + 1, *pause - 2, false)
-                                : std::nullopt;
-      const auto forward = pause
-                               ? find_frame(
-                                     std::max<int64_t>(*pause + 2,
-                                                       start + span * 3 / 5),
-                                     end - 1, false)
-                               : std::nullopt;
+      const auto pause =
+          find_frame(start + std::max<int64_t>(2, span / 5),
+                     start + std::max<int64_t>(4, span / 3), true);
+      const auto backward =
+          pause ? find_frame(start + 1, *pause - 2, false) : std::nullopt;
+      const auto forward =
+          pause
+              ? find_frame(std::max<int64_t>(*pause + 2, start + span * 3 / 5),
+                           end - 1, false)
+              : std::nullopt;
       if (!pause || !backward || !forward ||
           !frame_supports_exact_composite(end)) {
         std::fprintf(
@@ -1591,12 +3422,17 @@ int main(int argc, char **argv) {
           static_cast<long long>(multistream_smoke.end_frame));
     }
     video_clock.seek(initial_frame);
-    if (!subject_mask_smoke_start_pending) {
+    const bool hold_for_analysis_start = analysis_requested &&
+                                         !options->video_smoke &&
+                                         !options->ui_reference.enabled;
+    const bool start_playing = !subject_mask_smoke_start_pending &&
+                               !options->start_paused_frame.has_value() &&
+                               !hold_for_analysis_start;
+    if (start_playing) {
       video_clock.play();
     }
-    video_playback.setPlaybackState(
-        initial_frame, !subject_mask_smoke_start_pending,
-        video_playback.info().nominal_frame_rate);
+    video_playback.setPlaybackState(initial_frame, start_playing,
+                                    video_clock.effectiveFramesPerSecond());
     video_smoke_started = std::chrono::steady_clock::now();
     const auto &info = video_playback.info();
     std::printf("[AppleVideo] asset=%dx%d frames=%lld fps=%.6f "
@@ -1606,15 +3442,14 @@ int main(int argc, char **argv) {
                 info.nominal_frame_rate, video_playback.capacity(),
                 video_playback.metrics().startup_ms, info.path.c_str());
   }
-  const bool composite_enabled = stimulus_enabled || crop_enabled;
+  composite_enabled = stimulus_enabled || crop_enabled;
   const double video_smoke_timeout_seconds =
       options->video_smoke
-          ? std::max(
-                30.0,
-                static_cast<double>(options->video_smoke_end -
-                                    options->video_smoke_start) /
-                        video_playback.info().nominal_frame_rate * 1.5 +
-                    30.0)
+          ? std::max(30.0, static_cast<double>(options->video_smoke_end -
+                                               options->video_smoke_start) /
+                                   video_playback.info().nominal_frame_rate *
+                                   1.5 +
+                               30.0)
           : 30.0;
 
   MTLRenderPassDescriptor *render_pass = [MTLRenderPassDescriptor new];
@@ -1624,16 +3459,71 @@ int main(int argc, char **argv) {
   int frame_time_count = 0;
   int presented_frames = 0;
   bool render_failed = false;
+  bool invalid_workspace_viewport_logged = false;
   auto previous_frame_time = std::chrono::steady_clock::now();
   auto last_process_metric_time = LogicalPlaybackClock::TimePoint{};
+  const auto ui_reference_started = std::chrono::steady_clock::now();
+  int ui_reference_stable_frames = 0;
+  bool ui_reference_written = false;
+  crimson::ui::SemanticSnapshot ui_semantic_snapshot;
+
+  auto current_analysis_progress = [&] {
+    auto progress = analysis_loader.progress();
+    if (!analysis_loading_start_error.empty()) {
+      progress.state = crimson::loading::LoadingState::Failed;
+      progress.running = false;
+      progress.error = analysis_loading_start_error;
+      progress.phase = "Analysis loading failed";
+    }
+    return progress;
+  };
+  auto analysis_progress = current_analysis_progress();
+  auto analysis_readiness =
+      recording_open_workflow
+          .settle(initial_recording_open_generation, analysis_progress)
+          .readiness;
 
   while (!glfwWindowShouldClose(window)) {
     @autoreleasepool {
       glfwPollEvents();
 
+      while (adopt_analysis_result) {
+        auto ready = analysis_loader.takeReady();
+        if (!ready) {
+          break;
+        }
+        adopt_analysis_result(std::move(*ready));
+      }
+      analysis_progress = current_analysis_progress();
+      if (analysis_progress.terminal() && adopt_analysis_result) {
+        while (auto ready = analysis_loader.takeReady()) {
+          adopt_analysis_result(std::move(*ready));
+        }
+        analysis_progress = current_analysis_progress();
+      }
+      analysis_readiness =
+          recording_open_workflow
+              .settle(initial_recording_open_generation, analysis_progress)
+              .readiness;
+      const bool analysis_presentation_demand_enabled =
+          analysis_readiness.ready();
+
+      if (!subject_mask_first_ready_logged &&
+          subject_mask_initial_request_started &&
+          subject_mask_initial_request_frame &&
+          subject_mask_overlay_available &&
+          subject_mask_overlay_buffer.frame(
+              *subject_mask_initial_request_frame)) {
+        logSubjectMaskFirstReady();
+      }
+
       int width = 0;
       int height = 0;
       glfwGetFramebufferSize(window, &width, &height);
+      if (options->ui_reference.enabled) {
+        width = options->ui_reference.logical_width;
+        height = options->ui_reference.logical_height;
+      }
       if (width <= 0 || height <= 0) {
         glfwWaitEventsTimeout(0.01);
         continue;
@@ -1643,11 +3533,11 @@ int main(int argc, char **argv) {
       const auto drawable_started = std::chrono::steady_clock::now();
       id<CAMetalDrawable> drawable = [layer nextDrawable];
       if (video_enabled) {
-        viewer_stats.max_next_drawable_ms = std::max(
-            viewer_stats.max_next_drawable_ms,
-            std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now() - drawable_started)
-                .count());
+        viewer_stats.max_next_drawable_ms =
+            std::max(viewer_stats.max_next_drawable_ms,
+                     std::chrono::duration<double, std::milli>(
+                         std::chrono::steady_clock::now() - drawable_started)
+                         .count());
       }
       if (drawable == nil) {
         glfwWaitEventsTimeout(0.01);
@@ -1687,9 +3577,40 @@ int main(int argc, char **argv) {
 
       ImGui_ImplMetal_NewFrame(render_pass);
       ImGui_ImplGlfw_NewFrame();
+      if (options->ui_reference.enabled) {
+        io.DisplaySize =
+            ImVec2(static_cast<float>(options->ui_reference.logical_width),
+                   static_cast<float>(options->ui_reference.logical_height));
+        io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+      }
+      crimson::ui::beginSemanticFrame(ImGui::GetCurrentContext());
       ImGui::NewFrame();
+      const bool base_ui_interactive = !options->smoke &&
+                                       !options->video_smoke &&
+                                       !options->ui_reference.enabled;
+      const bool session_ui_interactive =
+          base_ui_interactive && analysis_readiness.session_interaction_enabled;
+      const bool ui_interactive =
+          base_ui_interactive && analysis_readiness.playback_controls_enabled;
 
       const auto now = std::chrono::steady_clock::now();
+      const bool playback_transport_enabled =
+          !analysis_requested || analysis_readiness.playback_controls_enabled;
+      const bool playback_paused_for_readiness =
+          video_enabled &&
+          video_clock.setControlsEnabled(playback_transport_enabled, now);
+      if (playback_paused_for_readiness) {
+        video_playback.setPlaybackState(video_clock.requestedFrame(now), false,
+                                        video_clock.effectiveFramesPerSecond());
+      }
+      if (analysis_requested && analysis_readiness.show_error_ui &&
+          !analysis_loading_failure_reported) {
+        error_popup_message = analysis_readiness.reason.empty()
+                                  ? "Analysis loading failed"
+                                  : analysis_readiness.reason;
+        show_error_popup = true;
+        analysis_loading_failure_reported = true;
+      }
       const float frame_ms =
           std::chrono::duration<float, std::milli>(now - previous_frame_time)
               .count();
@@ -1702,8 +3623,135 @@ int main(int argc, char **argv) {
         frame_times_ms.back() = frame_ms;
       }
       ++frame_time_count;
+      const int average_sample_count =
+          std::min(frame_time_count, static_cast<int>(frame_times_ms.size()));
+      double average_frame_ms = 0.0;
+      for (int sample = 0; sample < average_sample_count; ++sample) {
+        average_frame_ms += frame_times_ms[static_cast<size_t>(sample)];
+      }
+      if (average_sample_count > 0) {
+        average_frame_ms /= average_sample_count;
+      }
+      const auto file_browser_result = drawAppleFileBrowserWindow(
+          &file_browser_state, options->video_path, options->zarr_path,
+          options->stimulus_video_path, average_frame_ms,
+          video_enabled ? &video_clock : nullptr, session_ui_interactive);
+      if (!file_browser_result.error.empty()) {
+        error_popup_message = file_browser_result.error;
+        show_error_popup = true;
+      }
+      if (file_browser_result.zarr_open_request.has_value()) {
+        std::string discovery_error;
+        try {
+          auto selected_archive = crimson::zarr::ArchiveContext::Open(
+              *file_browser_result.zarr_open_request, &discovery_error);
+          auto affiliated_video = selected_archive
+                                      ? crimson::zarr::DiscoverAffiliatedVideo(
+                                            selected_archive, &discovery_error)
+                                      : std::nullopt;
+          if (!affiliated_video.has_value()) {
+            error_popup_message =
+                discovery_error.empty()
+                    ? "The selected Zarr archive does not identify an "
+                      "affiliated acquisition video."
+                    : discovery_error;
+            show_error_popup = true;
+          } else {
+            AppleVideoFrameProvider video_preflight;
+            const std::string resolved_video_path =
+                affiliated_video->resolved_path.string();
+            if (!video_preflight.open(resolved_video_path, "camera-main",
+                                      &discovery_error)) {
+              error_popup_message =
+                  discovery_error.empty()
+                      ? "The affiliated acquisition video could not be opened."
+                      : discovery_error;
+              show_error_popup = true;
+            } else {
+              video_preflight.close();
+              const AppleSessionRelaunchRequest replacement = {
+                  true,
+                  resolved_video_path,
+                  *file_browser_result.zarr_open_request,
+                  {},
+                  file_browser_state.video_buffer_capacity,
+                  file_browser_state.stimulus_buffer_capacity};
+              std::string replacement_error;
+              if (!session_lifecycle.requestReplacement(replacement,
+                                                        &replacement_error)) {
+                error_popup_message = replacement_error;
+                show_error_popup = true;
+                continue;
+              }
+              std::printf("[MacSession] Discovered affiliated video source=%s "
+                          "stored=%s resolved=%s\n",
+                          crimson::zarr::AffiliatedVideoSourceName(
+                              affiliated_video->source),
+                          affiliated_video->stored_path.string().c_str(),
+                          resolved_video_path.c_str());
+              glfwSetWindowShouldClose(window, GLFW_TRUE);
+            }
+          }
+        } catch (const std::exception &exception) {
+          error_popup_message = "Could not open the selected Zarr archive: " +
+                                std::string(exception.what());
+          show_error_popup = true;
+        }
+      }
+      if (file_browser_result.relaunch.requested) {
+        std::string replacement_error;
+        if (!session_lifecycle.requestReplacement(file_browser_result.relaunch,
+                                                  &replacement_error)) {
+          error_popup_message = replacement_error;
+          show_error_popup = true;
+        } else {
+          glfwSetWindowShouldClose(window, GLFW_TRUE);
+        }
+      }
+      if (video_enabled && file_browser_result.accurate_seek_frame) {
+        const int64_t target =
+            std::clamp<int64_t>(*file_browser_result.accurate_seek_frame, 0,
+                                video_playback.info().frame_count - 1);
+        video_clock.pause(now);
+        video_clock.seek(target, now);
+        std::string seek_error;
+        if (!video_playback.requestSeek(target, &seek_error)) {
+          error_popup_message = seek_error;
+          show_error_popup = true;
+        } else {
+          pending_camera_discontinuity = true;
+          viewer_presentation_discontinuity = true;
+        }
+      }
+      if (ui_interactive && !io.WantTextInput &&
+          ImGui::IsKeyPressed(ImGuiKey_H, false)) {
+        workspace_state.setWindowRequested(
+            crimson::workspace::Window::Help,
+            !workspace_state.windowRequested(crimson::workspace::Window::Help));
+      }
+      drawAppleHelpWindow(
+          workspace_state.windowRequested(crimson::workspace::Window::Help));
+      drawAppleErrorPopup(&show_error_popup, error_popup_message);
+      AppleMetalVideoViewport camera_window_viewport;
+      AppleMetalVideoViewport crop_preview_window_viewport;
+      AppleMetalVideoViewport stimulus_debug_window_viewport;
+      std::optional<AppleDecodedVideoFrame> selected_stimulus_debug_frame;
+      AppleCompositeVideoViewports video_viewports;
       bool multistream_composite_exact = false;
       int64_t multistream_composite_frame = -1;
+      bool ui_reference_overlay_ready = false;
+      bool ui_reference_analysis_ready = false;
+      bool ui_reference_camera_exact = false;
+      bool ui_reference_crop_exact = false;
+      bool ui_reference_stimulus_exact = false;
+      bool ui_reference_polar_ready = false;
+      crimson::polar::ChaserDistancePolarScene ui_reference_polar_scene;
+      AppleMetalVideoViewport ui_reference_polar_viewport;
+      bool ui_reference_stimulus_overlay_ready = false;
+      crimson::stimulus::StimulusCameraOverlayScene
+          ui_reference_stimulus_overlay_scene;
+      AppleMetalVideoViewport ui_reference_stimulus_overlay_viewport;
+      nlohmann::json ui_reference_overlay_counts = nlohmann::json::object();
       if (video_enabled) {
         if (viewer_stats.process_memory_mib == 0.0 ||
             std::chrono::duration<double>(now - last_process_metric_time)
@@ -1716,16 +3764,15 @@ int main(int argc, char **argv) {
           }
         }
         const bool was_playing = video_clock.isPlaying();
-        viewer_stats.requested_frame = video_clock.requestedFrame(now);
+        const auto transport_tick = video_clock.update(now);
+        viewer_stats.requested_frame = transport_tick.requested_frame;
         if (options->multistream_smoke && video_clock.isPlaying() &&
-            multistream_smoke.stage ==
-                MultistreamSmokeStage::PlayToPause &&
+            multistream_smoke.stage == MultistreamSmokeStage::PlayToPause &&
             viewer_stats.requested_frame >= multistream_smoke.pause_frame) {
           video_clock.pause(now);
           video_clock.seek(multistream_smoke.pause_frame, now);
           viewer_stats.requested_frame = multistream_smoke.pause_frame;
-          multistream_smoke.stage =
-              MultistreamSmokeStage::WaitForPausedExact;
+          multistream_smoke.stage = MultistreamSmokeStage::WaitForPausedExact;
           pending_camera_discontinuity = true;
           viewer_presentation_discontinuity = true;
         } else if (options->multistream_smoke && video_clock.isPlaying() &&
@@ -1739,114 +3786,138 @@ int main(int argc, char **argv) {
           multistream_smoke.stage = MultistreamSmokeStage::WaitForEndExact;
           pending_camera_discontinuity = true;
           viewer_presentation_discontinuity = true;
-        } else if (options->video_smoke &&
-                   !options->multistream_smoke && video_clock.isPlaying() &&
+        } else if (options->video_smoke && !options->multistream_smoke &&
+                   video_clock.isPlaying() &&
                    viewer_stats.requested_frame >= options->video_smoke_end) {
           video_clock.pause(now);
           video_clock.seek(options->video_smoke_end, now);
           viewer_stats.requested_frame = options->video_smoke_end;
           pending_camera_discontinuity = true;
           viewer_presentation_discontinuity = true;
-        } else if (!options->video_smoke && video_clock.isPlaying() &&
-                   viewer_stats.requested_frame >=
-                       video_playback.info().frame_count - 1) {
-          video_clock.pause(now);
-          video_clock.seek(video_playback.info().frame_count - 1, now);
-          viewer_stats.requested_frame =
-              video_playback.info().frame_count - 1;
+        } else if (!options->video_smoke && transport_tick.reached_end) {
+          viewer_stats.requested_frame = video_playback.info().frame_count - 1;
           pending_camera_discontinuity = true;
           viewer_presentation_discontinuity = true;
         }
         crop_controls.metrics =
             crop_enabled ? &crop_presentation.metrics() : nullptr;
-        overlay_availability.keypoints =
-            keypoint_overlay_repository != nullptr;
-        overlay_availability.headings =
-            keypoint_overlay_repository != nullptr;
+        overlay_availability.keypoints = keypoint_overlay_available;
+        overlay_availability.headings = keypoint_overlay_available;
         overlay_availability.subject_masks = subject_mask_overlay_available;
         overlay_availability.subject_shape = subject_shape_overlay_available;
         overlay_availability.eye_geometry = eye_geometry_overlay_available;
         std::shared_ptr<const crimson::timeline::AnalysisSeriesTimelineWindow>
             motion_timeline_window;
-        if (motion_timeline_available &&
-            (analysis_timeline_controls.open || options->video_smoke ||
-             options->require_motion_timeline) &&
+        if (analysis_presentation_demand_enabled && motion_timeline_available &&
             viewer_stats.requested_frame >= 0 &&
             viewer_stats.requested_frame <
                 static_cast<int64_t>(motion_timeline_descriptor.frame_count)) {
           if (!motion_timeline_buffer.requestFrame(
                   viewer_stats.requested_frame,
-                  analysis_timeline_controls.motion.source_key,
+                  workspace_state.selections().motion_source_key,
                   video_playback.info().nominal_frame_rate,
                   pending_camera_discontinuity, &motion_timeline_error)) {
             motion_timeline_failed = true;
             motion_timeline_available = false;
-            std::fprintf(stderr,
-                         "[AppleMotionTimeline] Request failed: %s\n",
+            std::fprintf(stderr, "[AppleMotionTimeline] Request failed: %s\n",
                          motion_timeline_error.c_str());
           } else {
             motion_timeline_window = motion_timeline_buffer.window(
                 viewer_stats.requested_frame,
-                analysis_timeline_controls.motion.source_key);
+                workspace_state.selections().motion_source_key);
             if (motion_timeline_window && motion_timeline_window->ready()) {
               ++motion_timeline_presentations;
             }
           }
         }
+        std::shared_ptr<const crimson::timeline::SwimBoutTimelineWindow>
+            swim_bout_timeline_window;
+        if (analysis_presentation_demand_enabled &&
+            swim_bout_timeline_available &&
+            !workspace_state.selections().swim_bout_candidate_key.empty() &&
+            viewer_stats.requested_frame >= 0 &&
+            viewer_stats.requested_frame <
+                static_cast<int64_t>(
+                    swim_bout_timeline_descriptor.frame_count)) {
+          const bool include_detector =
+              analysis_timeline_controls.swim_bouts.show_detector_response;
+          if (!swim_bout_timeline_buffer.requestFrame(
+                  viewer_stats.requested_frame,
+                  workspace_state.selections().swim_bout_candidate_key,
+                  video_playback.info().nominal_frame_rate, include_detector,
+                  pending_camera_discontinuity, &swim_bout_timeline_error)) {
+            swim_bout_timeline_failed = true;
+            swim_bout_timeline_available = false;
+            std::fprintf(stderr, "[AppleSwimBoutTimeline] Request failed: %s\n",
+                         swim_bout_timeline_error.c_str());
+          } else {
+            swim_bout_timeline_window = swim_bout_timeline_buffer.window(
+                viewer_stats.requested_frame,
+                workspace_state.selections().swim_bout_candidate_key,
+                include_detector);
+            if (swim_bout_timeline_window &&
+                swim_bout_timeline_window->ready()) {
+              ++swim_bout_timeline_presentations;
+            }
+          }
+        }
         std::shared_ptr<const crimson::timeline::EyeAngleTimelineWindow>
             eye_angle_window;
-        if (eye_angle_timeline_available &&
-            (analysis_timeline_controls.open || options->video_smoke ||
-             options->require_eye_angle_timeline) &&
-            viewer_stats.requested_frame >= 0 &&
-            viewer_stats.requested_frame < static_cast<int64_t>(
-                                               eye_angle_timeline_descriptor
-                                                   .frame_count)) {
+        if (analysis_presentation_demand_enabled &&
+            eye_angle_timeline_available && viewer_stats.requested_frame >= 0 &&
+            viewer_stats.requested_frame <
+                static_cast<int64_t>(
+                    eye_angle_timeline_descriptor.frame_count)) {
           if (!eye_angle_timeline_buffer.requestFrame(
                   viewer_stats.requested_frame,
-                  analysis_timeline_controls.eye_angles.representation_key,
+                  workspace_state.selections().eye_angle_representation_key,
                   video_playback.info().nominal_frame_rate,
                   pending_camera_discontinuity, &eye_angle_timeline_error)) {
             eye_angle_timeline_failed = true;
             eye_angle_timeline_available = false;
-            std::fprintf(stderr,
-                         "[AppleEyeAngleTimeline] Request failed: %s\n",
+            std::fprintf(stderr, "[AppleEyeAngleTimeline] Request failed: %s\n",
                          eye_angle_timeline_error.c_str());
           } else {
             eye_angle_window = eye_angle_timeline_buffer.window(
                 viewer_stats.requested_frame,
-                analysis_timeline_controls.eye_angles.representation_key);
+                workspace_state.selections().eye_angle_representation_key);
             if (eye_angle_window && eye_angle_window->ready()) {
               ++eye_angle_timeline_presentations;
+              ui_reference_analysis_ready =
+                  options->ui_reference.enabled &&
+                  options->ui_reference.state ==
+                      AppleUiReferenceState::AnalysisEye &&
+                  eye_angle_window->coversFrame(
+                      options->ui_reference.target_frame,
+                      workspace_state.selections()
+                          .eye_angle_representation_key);
             }
           }
         }
         std::shared_ptr<const crimson::timeline::AnalysisSeriesTimelineWindow>
             tail_kinematics_timeline_window;
-        if (tail_kinematics_timeline_available &&
-            (analysis_timeline_controls.open || options->video_smoke ||
-             options->require_tail_kinematics_timeline) &&
+        if (analysis_presentation_demand_enabled &&
+            tail_kinematics_timeline_available &&
             viewer_stats.requested_frame >= 0 &&
-            viewer_stats.requested_frame < static_cast<int64_t>(
-                                               tail_kinematics_timeline_descriptor
-                                                   .frame_count)) {
+            viewer_stats.requested_frame <
+                static_cast<int64_t>(
+                    tail_kinematics_timeline_descriptor.frame_count)) {
           if (!tail_kinematics_timeline_buffer.requestFrame(
                   viewer_stats.requested_frame,
-                  analysis_timeline_controls.tail_kinematics.source_key,
+                  workspace_state.selections().tail_kinematics_source_key,
                   video_playback.info().nominal_frame_rate,
                   pending_camera_discontinuity,
                   &tail_kinematics_timeline_error)) {
             tail_kinematics_timeline_failed = true;
             tail_kinematics_timeline_available = false;
-            std::fprintf(
-                stderr,
-                "[AppleTailKinematicsTimeline] Request failed: %s\n",
-                tail_kinematics_timeline_error.c_str());
+            std::fprintf(stderr,
+                         "[AppleTailKinematicsTimeline] Request failed: %s\n",
+                         tail_kinematics_timeline_error.c_str());
           } else {
             tail_kinematics_timeline_window =
                 tail_kinematics_timeline_buffer.window(
                     viewer_stats.requested_frame,
-                    analysis_timeline_controls.tail_kinematics.source_key);
+                    workspace_state.selections().tail_kinematics_source_key);
             if (tail_kinematics_timeline_window &&
                 tail_kinematics_timeline_window->ready()) {
               ++tail_kinematics_timeline_presentations;
@@ -1854,34 +3925,149 @@ int main(int argc, char **argv) {
           }
         }
         if (stimulus_context_timeline_available &&
-            (analysis_timeline_controls.open || options->video_smoke ||
-             options->require_stimulus_context_timeline) &&
             viewer_stats.requested_frame >= 0 &&
-            viewer_stats.requested_frame < static_cast<int64_t>(
-                                               stimulus_context_timeline_descriptor
-                                                   .frame_count)) {
+            viewer_stats.requested_frame <
+                static_cast<int64_t>(
+                    stimulus_context_timeline_descriptor.frame_count)) {
           ++stimulus_context_timeline_presentations;
         }
         const bool analysis_timeline_available =
             motion_timeline_available || eye_angle_timeline_available ||
             tail_kinematics_timeline_available ||
             stimulus_context_timeline_available;
-        const auto control_result = drawAppleVideoControls(
-            video_clock, video_playback, viewer_stats,
+        crimson::workspace::WorkspaceCapabilities workspace_capabilities;
+        workspace_capabilities.video_loaded = true;
+        workspace_capabilities.playback_ready = video_playback.isOpen();
+        workspace_capabilities.playing = video_clock.isPlaying();
+        workspace_capabilities.zarr_loaded = analysis_requested;
+        workspace_capabilities.crop_preview_available = crop_enabled;
+        workspace_capabilities.stimulus_video_loaded = stimulus_enabled;
+        workspace_capabilities.analysis_timeline_available =
+            analysis_timeline_available;
+        if (!workspace_state.readOnlyInvariant(workspace_capabilities)) {
+          error_popup_message = "A write-capable repository was opened in the "
+                                "read-only workspace.";
+          show_error_popup = true;
+          render_failed = true;
+          glfwSetWindowShouldClose(window, GLFW_TRUE);
+        }
+
+        bool crop_preview_requested = workspace_state.windowRequested(
+            crimson::workspace::Window::AdvancedCropPreview);
+        bool stimulus_debug_requested = workspace_state.windowRequested(
+            crimson::workspace::Window::Stimulus);
+        drawAppleFrameInspectWindow(
+            &workspace_state.selections(), &overlay_controls,
+            overlay_availability, crop_enabled ? &crop_controls : nullptr,
+            stimulus_enabled, chaser_distance_polar_available, viewer_stats,
+            &frame_inspect_presentation, &crop_preview_requested,
+            &stimulus_debug_requested, ui_interactive);
+        workspace_state.setWindowRequested(
+            crimson::workspace::Window::AdvancedCropPreview,
+            crop_preview_requested);
+        workspace_state.setWindowRequested(crimson::workspace::Window::Stimulus,
+                                           stimulus_debug_requested);
+
+        const AppleVideoPlaybackBufferMetrics playback_metrics =
+            video_playback.metrics();
+        const auto diagnostics_result = drawAppleDiagnosticsWindow(
+            viewer_stats, playback_metrics, video_playback.capacity(),
+            video_clock.isPlaying(), decode_dump_root.string(),
+            decode_debug_status,
             stimulus_enabled ? &stimulus_presentation.metrics() : nullptr,
-            crop_enabled ? &crop_controls : nullptr,
-            analysis_timeline_available,
-            !options->video_smoke);
-        if (control_result.toggle_overlay_controls) {
-          overlay_controls_open = !overlay_controls_open;
+            ui_interactive);
+        if (diagnostics_result.request_random_seek_dump) {
+          std::uniform_int_distribution<int64_t> distribution(
+              0, video_playback.info().frame_count - 1);
+          const int64_t target = distribution(diagnostic_random);
+          video_clock.pause(now);
+          video_clock.seek(target, now);
+          std::string seek_error;
+          if (!video_playback.requestSeek(target, &seek_error) ||
+              !video_playback.waitForFrame(target, std::chrono::seconds(10))) {
+            decode_debug_status =
+                seek_error.empty() ? "Random seek did not settle in 10 seconds."
+                                   : seek_error;
+          } else {
+            dumpAppleDecodeBuffer(video_playback, decode_dump_root,
+                                  "random_seek_" + std::to_string(target),
+                                  &decode_debug_status);
+          }
+          pending_camera_discontinuity = true;
+          viewer_presentation_discontinuity = true;
+        } else if (diagnostics_result.request_dump_decode_buffers) {
+          dumpAppleDecodeBuffer(video_playback, decode_dump_root, "manual_dump",
+                                &decode_debug_status);
         }
-        if (control_result.toggle_analysis_timeline) {
-          analysis_timeline_controls.open =
-              !analysis_timeline_controls.open;
+        if (workspace_state.shouldSubmit(
+                crimson::workspace::Window::FramesInBuffer,
+                workspace_capabilities)) {
+          const auto buffered_frame_numbers =
+              video_playback.bufferedFrameNumbers();
+          const bool buffer_discontinuity = drawAppleFramesInBufferWindow(
+              viewer_stats, playback_metrics, video_playback.capacity(),
+              buffered_frame_numbers, video_clock, video_playback,
+              ui_interactive);
+          pending_camera_discontinuity =
+              pending_camera_discontinuity || buffer_discontinuity;
+          viewer_presentation_discontinuity =
+              viewer_presentation_discontinuity || buffer_discontinuity;
         }
-        drawAppleReadOnlyOverlayControls(
-            &overlay_controls_open, &overlay_controls, overlay_availability,
-            !options->video_smoke);
+        const auto control_result = drawAppleCameraViewWindow(
+            camera_window_name, video_clock, video_playback, viewer_stats,
+            &camera_window_viewport, &camera_view_state, ui_interactive);
+
+        if (workspace_state.shouldSubmit(
+                crimson::workspace::Window::AdvancedCropPreview,
+                workspace_capabilities) &&
+            crop_view_info) {
+          drawAppleAdvancedCropPreviewWindow(&crop_preview_requested,
+                                             *crop_view_info,
+                                             &crop_preview_window_viewport);
+          workspace_state.setWindowRequested(
+              crimson::workspace::Window::AdvancedCropPreview,
+              crop_preview_requested);
+        }
+        if (workspace_state.shouldSubmit(crimson::workspace::Window::Stimulus,
+                                         workspace_capabilities)) {
+          drawAppleStimulusDebugWindows(
+              true, stimulus_playback.info(), stimulus_playback.metrics(),
+              stimulus_playback.bufferedFrameNumbers(), &stimulus_debug_state,
+              &stimulus_debug_window_viewport, ui_interactive);
+          if (stimulus_debug_state.selected_frame) {
+            selected_stimulus_debug_frame =
+                stimulus_playback.frameForStimulusFrame(
+                    *stimulus_debug_state.selected_frame);
+            if (!selected_stimulus_debug_frame) {
+              stimulus_debug_state.selected_frame.reset();
+            }
+          }
+        }
+        video_viewports = appleWorkspaceVideoViewports(
+            camera_window_viewport, crop_preview_window_viewport,
+            stimulus_debug_window_viewport,
+            crop_enabled && crop_view_info &&
+                    frame_inspect_presentation.roi_inset.visible
+                ? &*crop_view_info
+                : nullptr,
+            stimulus_enabled && frame_inspect_presentation.show_stimulus_inset
+                ? &stimulus_playback.info()
+                : nullptr,
+            frame_inspect_presentation.roi_inset.width_px *
+                io.DisplayFramebufferScale.x,
+            frame_inspect_presentation.stimulus_inset_width *
+                io.DisplayFramebufferScale.x);
+
+        bool stimulus_timeline_discontinuity = false;
+        if (stimulus_context_timeline_available &&
+            stimulus_context_timeline_snapshot) {
+          stimulus_timeline_discontinuity = drawAppleStimulusEventTimeline(
+              &analysis_timeline_controls, stimulus_context_timeline_descriptor,
+              stimulus_context_timeline_snapshot,
+              viewer_stats.presented_frame >= 0 ? viewer_stats.presented_frame
+                                                : viewer_stats.requested_frame,
+              video_clock, video_playback, ui_interactive);
+        }
         const bool analysis_timeline_discontinuity =
             analysis_timeline_available &&
             drawAppleAnalysisTimeline(
@@ -1889,6 +4075,9 @@ int main(int argc, char **argv) {
                 motion_timeline_available ? &motion_timeline_descriptor
                                           : nullptr,
                 motion_timeline_window,
+                swim_bout_timeline_available ? &swim_bout_timeline_descriptor
+                                             : nullptr,
+                swim_bout_timeline_window,
                 eye_angle_timeline_available ? &eye_angle_timeline_descriptor
                                              : nullptr,
                 eye_angle_window,
@@ -1900,16 +4089,18 @@ int main(int argc, char **argv) {
                     ? &stimulus_context_timeline_descriptor
                     : nullptr,
                 stimulus_context_timeline_snapshot,
-                viewer_stats.requested_frame, video_clock, video_playback,
-                !options->video_smoke);
-        pending_camera_discontinuity =
-            pending_camera_discontinuity ||
-            control_result.camera_discontinuity ||
-            analysis_timeline_discontinuity;
+                viewer_stats.presented_frame >= 0
+                    ? viewer_stats.presented_frame
+                    : viewer_stats.requested_frame,
+                video_clock, video_playback, ui_interactive);
+        pending_camera_discontinuity = pending_camera_discontinuity ||
+                                       control_result.camera_discontinuity ||
+                                       stimulus_timeline_discontinuity ||
+                                       analysis_timeline_discontinuity;
         viewer_presentation_discontinuity =
             viewer_presentation_discontinuity ||
             control_result.camera_discontinuity ||
-            analysis_timeline_discontinuity;
+            stimulus_timeline_discontinuity || analysis_timeline_discontinuity;
         viewer_stats.requested_frame = video_clock.requestedFrame();
         const bool is_playing = video_clock.isPlaying();
         if (was_playing && !is_playing) {
@@ -1925,9 +4116,9 @@ int main(int argc, char **argv) {
         }
         pending_crop_discontinuity =
             pending_crop_discontinuity || pending_camera_discontinuity;
-        video_playback.setPlaybackState(
-            viewer_stats.requested_frame, video_clock.isPlaying(),
-            video_playback.info().nominal_frame_rate);
+        video_playback.setPlaybackState(viewer_stats.requested_frame,
+                                        video_clock.isPlaying(),
+                                        video_clock.effectiveFramesPerSecond());
         if (composite_enabled && pending_camera_discontinuity) {
           pending_video_frame.reset();
           candidate_stimulus_frame.reset();
@@ -1935,14 +4126,35 @@ int main(int argc, char **argv) {
         }
         auto selected = video_playback.frameForTarget(
             viewer_stats.requested_frame, !video_clock.isPlaying());
+        const auto selected_camera_frame =
+            selected ? std::optional<int64_t>(selected->metadata.frame_number)
+                     : std::nullopt;
+        const auto visible_camera_frame =
+            current_video_frame
+                ? std::optional<int64_t>(
+                      current_video_frame->metadata.frame_number)
+                : std::nullopt;
+        const auto camera_presentation_decision =
+            crimson::playback::resolveFramePresentation(
+                {viewer_stats.requested_frame, selected_camera_frame,
+                 visible_camera_frame,
+                 video_clock.isPlaying()
+                     ? crimson::playback::MissingFramePolicy::HoldVisible
+                     : crimson::playback::MissingFramePolicy::ClearVisible,
+                 pending_camera_discontinuity});
         if (!composite_enabled) {
-          if (selected) {
+          if (camera_presentation_decision.action ==
+                  crimson::playback::FramePresentationAction::Present &&
+              selected) {
             current_video_frame = std::move(selected);
-          } else if (!video_clock.isPlaying()) {
+          } else if (camera_presentation_decision.action ==
+                     crimson::playback::FramePresentationAction::Clear) {
             current_video_frame.reset();
           }
         } else if (!stimulus_enabled) {
-          if (selected &&
+          if (camera_presentation_decision.action ==
+                  crimson::playback::FramePresentationAction::Present &&
+              selected &&
               (!pending_video_frame || pending_camera_discontinuity)) {
             pending_video_frame = std::move(selected);
           }
@@ -1951,7 +4163,9 @@ int main(int argc, char **argv) {
           stimulus_candidate_ready = pending_video_frame.has_value();
           pending_camera_discontinuity = false;
         } else if (!stimulus_failed) {
-          if (selected &&
+          if (camera_presentation_decision.action ==
+                  crimson::playback::FramePresentationAction::Present &&
+              selected &&
               (!pending_video_frame || pending_camera_discontinuity)) {
             pending_video_frame = std::move(selected);
           }
@@ -1992,8 +4206,7 @@ int main(int argc, char **argv) {
                                   aligned->decoded_frame.metadata.frame_number)
                             : std::nullopt;
                 const auto presentation = stimulus_presentation.update(
-                    mapped_camera_frame, resolution,
-                    decoded_stimulus_frame);
+                    mapped_camera_frame, resolution, decoded_stimulus_frame);
                 if (presentation.commit_composite) {
                   candidate_stimulus_resolution = resolution;
                   if (presentation.render_current) {
@@ -2025,7 +4238,9 @@ int main(int argc, char **argv) {
             stimulus_presentation.resetVisibleFrame();
           }
         } else {
-          if (selected &&
+          if (camera_presentation_decision.action ==
+                  crimson::playback::FramePresentationAction::Present &&
+              selected &&
               (!pending_video_frame || pending_camera_discontinuity)) {
             pending_video_frame = std::move(selected);
           }
@@ -2049,6 +4264,7 @@ int main(int argc, char **argv) {
         if (crop_enabled &&
             crop_controls.preference != active_crop_preference) {
           active_crop_preference = crop_controls.preference;
+          workspace_state.setCropSourcePreference(active_crop_preference);
           last_crop_camera_request = -1;
           pending_crop_discontinuity = true;
           if (active_crop_preference ==
@@ -2059,8 +4275,8 @@ int main(int argc, char **argv) {
           }
         }
 
-        if (crop_enabled && pending_video_frame &&
-            stimulus_candidate_ready && !crop_failed) {
+        if (crop_enabled && pending_video_frame && stimulus_candidate_ready &&
+            !crop_failed) {
           const int64_t camera_frame =
               pending_video_frame->metadata.frame_number;
           const bool acquisition_preferred =
@@ -2072,10 +4288,9 @@ int main(int argc, char **argv) {
                pending_crop_discontinuity)) {
             if (!crop_playback.requestCameraFrame(
                     camera_frame, pending_crop_discontinuity, &crop_error)) {
-              std::fprintf(stderr,
-                           "[AppleCrop] Camera frame %lld request failed: %s\n",
-                           static_cast<long long>(camera_frame),
-                           crop_error.c_str());
+              std::fprintf(
+                  stderr, "[AppleCrop] Camera frame %lld request failed: %s\n",
+                  static_cast<long long>(camera_frame), crop_error.c_str());
               crop_failed = true;
             } else {
               last_crop_camera_request = camera_frame;
@@ -2084,10 +4299,10 @@ int main(int argc, char **argv) {
           }
 
           if (!crop_failed) {
-            auto aligned = acquisition_preferred
-                               ? crop_playback.frameForCameraFrame(camera_frame)
-                               : std::optional<
-                                     AppleAlignedAcquisitionCropFrame>{};
+            auto aligned =
+                acquisition_preferred
+                    ? crop_playback.frameForCameraFrame(camera_frame)
+                    : std::optional<AppleAlignedAcquisitionCropFrame>{};
             crimson::crop::CropFrameSourceState source_state;
             source_state.camera_frame = camera_frame;
             source_state.exact_full_frame = camera_frame;
@@ -2116,12 +4331,11 @@ int main(int argc, char **argv) {
               source_capabilities.live_geometry = true;
               crop_camera_frame_count = std::max<int64_t>(
                   crop_camera_frame_count,
-                  static_cast<int64_t>(analysis_crop_geometry->descriptor()
-                                           .camera_frame_count));
+                  static_cast<int64_t>(
+                      analysis_crop_geometry->descriptor().camera_frame_count));
             }
             const auto selection = crimson::crop::SelectCropSource(
-                source_capabilities, source_state,
-                crop_controls.preference,
+                source_capabilities, source_state, crop_controls.preference,
                 crimson::crop::CropFallbackPolicy::WaitForPreferred,
                 crop_camera_frame_count);
             crop_controls.selection_status = selection.status;
@@ -2168,8 +4382,7 @@ int main(int argc, char **argv) {
               commit_stimulus_candidate();
             }
           }
-        } else if ((!crop_enabled || crop_failed) &&
-                   stimulus_candidate_ready) {
+        } else if ((!crop_enabled || crop_failed) && stimulus_candidate_ready) {
           commit_stimulus_candidate();
         }
 
@@ -2178,25 +4391,19 @@ int main(int argc, char **argv) {
               viewer_presentation_discontinuity;
           viewer_stats.presented_frame =
               current_video_frame->metadata.frame_number;
-          if (viewer_stats.presented_frame ==
-              viewer_stats.last_presented_frame) {
-            ++viewer_stats.repeated_presentations;
-          } else if (viewer_stats.last_presented_frame >= 0 &&
-                     !viewer_presentation_discontinuity &&
-                     viewer_stats.presented_frame >
-                         viewer_stats.last_presented_frame + 1) {
-            viewer_stats.skipped_source_frames += static_cast<uint64_t>(
-                viewer_stats.presented_frame -
-                viewer_stats.last_presented_frame - 1);
-          }
-          if (viewer_stats.presented_frame !=
-              viewer_stats.last_presented_frame) {
+          const int64_t previous_presented_frame =
+              viewer_stats.last_presented_frame;
+          if (viewer_stats.presented_frame != previous_presented_frame) {
             viewer_presentation_discontinuity = false;
           }
-          viewer_stats.last_presented_frame =
-              viewer_stats.presented_frame;
-          ++viewer_stats.presentation_count;
           const auto &metadata = current_video_frame->metadata;
+          ui_reference_camera_exact =
+              options->ui_reference.enabled && !video_clock.isPlaying() &&
+              viewer_stats.requested_frame ==
+                  options->ui_reference.target_frame &&
+              metadata.frame_number == options->ui_reference.target_frame &&
+              viewportHasArea(video_viewports.camera);
+          std::optional<double> presentation_lag_frames;
           if (metadata.time_base.isValid() &&
               video_playback.info().nominal_frame_rate > 0.0) {
             const double presented_seconds =
@@ -2211,95 +4418,226 @@ int main(int argc, char **argv) {
                 video_playback.info().nominal_frame_rate;
             const double lag_frames =
                 std::max(0.0, -viewer_stats.pts_error_frames);
-            if (!viewer_presentation_discontinuity && lag_frames > 0.5) {
-              ++viewer_stats.late_presentations;
-              viewer_stats.max_lag_frames =
-                  std::max(viewer_stats.max_lag_frames, lag_frames);
-            }
+            presentation_lag_frames = lag_frames;
           }
+          camera_presentation_tracker.record(
+              viewer_stats.requested_frame, viewer_stats.presented_frame,
+              presentation_was_discontinuous, presentation_lag_frames);
+          const auto &camera_presentation_metrics =
+              camera_presentation_tracker.metrics();
+          viewer_stats.repeated_presentations =
+              camera_presentation_metrics.repeated_presentations;
+          viewer_stats.skipped_source_frames =
+              camera_presentation_metrics.skipped_source_frames;
+          viewer_stats.late_presentations =
+              camera_presentation_metrics.late_presentations;
+          viewer_stats.presentation_count =
+              camera_presentation_metrics.presentation_count;
+          viewer_stats.last_presented_frame =
+              camera_presentation_metrics.last_presented_frame;
+          viewer_stats.max_lag_frames =
+              camera_presentation_metrics.max_lag_frames;
           bool stimulus_frame_encoded = false;
           bool crop_frame_encoded = false;
           std::string render_error;
-          const AppleCompositeVideoViewports video_viewports =
-              appleCompositeVideoViewports(
-                  width, height, io.DisplayFramebufferScale.y,
-                  video_playback.info(),
-                  crop_view_info ? &*crop_view_info : nullptr,
-                  stimulus_enabled ? &stimulus_playback.info() : nullptr);
-          if (!viewportFitsDrawable(video_viewports.camera, width, height) ||
-              (crop_enabled &&
-               !viewportFitsDrawable(video_viewports.crop, width, height)) ||
-              (stimulus_enabled &&
-               !viewportFitsDrawable(video_viewports.stimulus, width,
-                                      height))) {
-            std::fprintf(stderr,
-                         "[MacShell] Composite viewport exceeds drawable\n");
-            render_failed = true;
-            break;
+          std::shared_ptr<const crimson::polar::ChaserDistancePolarFrameSample>
+              chaser_distance_polar_sample;
+          crimson::polar::ChaserDistancePolarScene chaser_distance_polar_scene;
+          crimson::stimulus::StimulusCameraOverlayScene
+              stimulus_camera_overlay_scene;
+          if (analysis_presentation_demand_enabled &&
+              chaser_distance_polar_available) {
+            const bool polar_discontinuity =
+                presentation_was_discontinuous &&
+                last_chaser_distance_polar_camera_request >= 0;
+            if (!chaser_distance_polar_buffer.requestFrame(
+                    metadata.frame_number, polar_discontinuity,
+                    &chaser_distance_polar_error)) {
+              std::fprintf(stderr, "[AppleChaserPolar] Request failed: %s\n",
+                           chaser_distance_polar_error.c_str());
+              chaser_distance_polar_failed = true;
+              chaser_distance_polar_available = false;
+            } else {
+              last_chaser_distance_polar_camera_request = metadata.frame_number;
+              chaser_distance_polar_sample =
+                  chaser_distance_polar_buffer.frame(metadata.frame_number);
+            }
           }
-          if (!video_renderer.encode(
+          if (chaser_distance_polar_sample &&
+              viewportHasArea(video_viewports.camera) &&
+              io.DisplayFramebufferScale.x > 0.0f &&
+              io.DisplayFramebufferScale.y > 0.0f) {
+            chaser_distance_polar_scene =
+                crimson::polar::buildChaserDistancePolarScene(
+                    *chaser_distance_polar_sample,
+                    {video_viewports.camera.width /
+                         io.DisplayFramebufferScale.x,
+                     video_viewports.camera.height /
+                         io.DisplayFramebufferScale.y},
+                    frame_inspect_presentation.polar_inset);
+          }
+          if (stimulus_context_timeline_snapshot &&
+              viewportHasArea(video_viewports.camera) &&
+              io.DisplayFramebufferScale.x > 0.0f &&
+              io.DisplayFramebufferScale.y > 0.0f) {
+            const auto stimulus_camera_overlay_frame =
+                crimson::stimulus::resolveStimulusCameraOverlayFrame(
+                    stimulus_context_timeline_snapshot.get(),
+                    metadata.frame_number);
+            const std::string stimulus_event_text =
+                crimson::stimulus::stimulusCameraOverlayEventText(
+                    stimulus_camera_overlay_frame);
+            ImVec2 event_text_size{};
+            if (!stimulus_event_text.empty()) {
+              event_text_size = ImGui::CalcTextSize(stimulus_event_text.c_str(),
+                                                    nullptr, false, -1.0f);
+            }
+            stimulus_camera_overlay_scene =
+                crimson::stimulus::buildStimulusCameraOverlayScene(
+                    stimulus_camera_overlay_frame,
+                    {video_viewports.camera.width /
+                         io.DisplayFramebufferScale.x,
+                     video_viewports.camera.height /
+                         io.DisplayFramebufferScale.y},
+                    {event_text_size.x, event_text_size.y});
+          }
+          const std::array<AppleMetalVideoViewport *, 5> requested_viewports = {
+              &video_viewports.camera, &video_viewports.crop_inset,
+              &video_viewports.crop_preview, &video_viewports.stimulus_inset,
+              &video_viewports.stimulus_debug};
+          for (AppleMetalVideoViewport *viewport : requested_viewports) {
+            if (!viewportHasArea(*viewport) ||
+                viewportFitsDrawable(*viewport, width, height)) {
+              continue;
+            }
+            if (!invalid_workspace_viewport_logged) {
+              std::fprintf(
+                  stderr,
+                  "[MacShell] Suppressed out-of-bounds workspace viewport "
+                  "drawable=%dx%d scale=%.3f viewport=%.3f,%.3f %.3fx%.3f\n",
+                  width, height, io.DisplayFramebufferScale.y, viewport->x,
+                  viewport->y, viewport->width, viewport->height);
+              invalid_workspace_viewport_logged = true;
+            }
+            *viewport = {};
+          }
+          if (viewportHasArea(video_viewports.camera) &&
+              !video_renderer.encodeRegion(
                   *current_video_frame,
                   reinterpret_cast<uintptr_t>((__bridge void *)command_buffer),
                   reinterpret_cast<uintptr_t>((__bridge void *)encoder),
-                  video_viewports.camera, &render_error)) {
+                  video_viewports.camera,
+                  {camera_view_state.source_region.x,
+                   camera_view_state.source_region.y,
+                   camera_view_state.source_region.width,
+                   camera_view_state.source_region.height},
+                  &render_error)) {
             std::fprintf(stderr, "[AppleVideo] Metal encode failed: %s\n",
                          render_error.c_str());
             render_failed = true;
+            [encoder endEncoding];
             break;
           }
           if (stimulus_enabled && current_stimulus_frame) {
-            if (!video_renderer.encode(
-                    current_stimulus_frame->decoded_frame,
+            if (viewportHasArea(video_viewports.stimulus_inset)) {
+              if (!video_renderer.encodeRegion(
+                      current_stimulus_frame->decoded_frame,
+                      reinterpret_cast<uintptr_t>(
+                          (__bridge void *)command_buffer),
+                      reinterpret_cast<uintptr_t>((__bridge void *)encoder),
+                      video_viewports.stimulus_inset,
+                      {0.0, 0.0, 1.0, 1.0, false,
+                       frame_inspect_presentation.stimulus_inset_opacity},
+                      &render_error)) {
+                std::fprintf(stderr,
+                             "[AppleStimulus] Metal encode failed: %s\n",
+                             render_error.c_str());
+                render_failed = true;
+              } else {
+                stimulus_frame_encoded = true;
+              }
+            }
+            if (render_failed) {
+              [encoder endEncoding];
+              break;
+            }
+          }
+          if (stimulus_enabled &&
+              viewportHasArea(video_viewports.stimulus_debug)) {
+            const AppleDecodedVideoFrame *debug_frame =
+                selected_stimulus_debug_frame ? &*selected_stimulus_debug_frame
+                : current_stimulus_frame
+                    ? &current_stimulus_frame->decoded_frame
+                    : nullptr;
+            if (debug_frame != nullptr &&
+                !video_renderer.encode(
+                    *debug_frame,
                     reinterpret_cast<uintptr_t>(
                         (__bridge void *)command_buffer),
                     reinterpret_cast<uintptr_t>((__bridge void *)encoder),
-                    video_viewports.stimulus, &render_error)) {
+                    video_viewports.stimulus_debug, &render_error)) {
               std::fprintf(stderr,
-                           "[AppleStimulus] Metal encode failed: %s\n",
+                           "[AppleStimulus] Debug Metal encode failed: %s\n",
                            render_error.c_str());
               render_failed = true;
+              [encoder endEncoding];
               break;
             }
-            stimulus_frame_encoded = true;
           }
           if (crop_enabled && current_crop_selection.selected() &&
               current_crop_selection.camera_frame == metadata.frame_number) {
-            bool crop_encoded = false;
-            if (current_crop_selection.source ==
-                    crimson::crop::CropSourceKind::AcquisitionVideo &&
-                current_crop_frame &&
-                current_crop_frame->resolution.camera_frame ==
-                    metadata.frame_number) {
-              crop_encoded = video_renderer.encode(
-                  current_crop_frame->decoded_frame,
-                  reinterpret_cast<uintptr_t>(
-                      (__bridge void *)command_buffer),
-                  reinterpret_cast<uintptr_t>((__bridge void *)encoder),
-                  video_viewports.crop, &render_error);
-            } else if (current_crop_selection.source ==
-                           crimson::crop::CropSourceKind::LiveGeometry &&
-                       current_crop_selection.geometry) {
-              const auto &geometry = *current_crop_selection.geometry;
-              const AppleMetalVideoSourceRegion source_region{
-                  geometry.full_frame_crop.x / geometry.source_width,
-                  geometry.full_frame_crop.y / geometry.source_height,
-                  geometry.full_frame_crop.width / geometry.source_width,
-                  geometry.full_frame_crop.height / geometry.source_height};
-              crop_encoded = video_renderer.encodeRegion(
-                  *current_video_frame,
-                  reinterpret_cast<uintptr_t>(
-                      (__bridge void *)command_buffer),
-                  reinterpret_cast<uintptr_t>((__bridge void *)encoder),
-                  video_viewports.crop, source_region, &render_error);
+            auto encode_crop = [&](const AppleMetalVideoViewport &viewport) {
+              if (!viewportHasArea(viewport)) {
+                return true;
+              }
+              bool encoded = false;
+              if (current_crop_selection.source ==
+                      crimson::crop::CropSourceKind::AcquisitionVideo &&
+                  current_crop_frame &&
+                  current_crop_frame->resolution.camera_frame ==
+                      metadata.frame_number) {
+                encoded = video_renderer.encodeRegion(
+                    current_crop_frame->decoded_frame,
+                    reinterpret_cast<uintptr_t>(
+                        (__bridge void *)command_buffer),
+                    reinterpret_cast<uintptr_t>((__bridge void *)encoder),
+                    viewport, {0.0, 0.0, 1.0, 1.0, false}, &render_error);
+              } else if (current_crop_selection.source ==
+                             crimson::crop::CropSourceKind::LiveGeometry &&
+                         current_crop_selection.geometry) {
+                const auto &geometry = *current_crop_selection.geometry;
+                const AppleMetalVideoSourceRegion source_region{
+                    geometry.full_frame_crop.x / geometry.source_width,
+                    geometry.full_frame_crop.y / geometry.source_height,
+                    geometry.full_frame_crop.width / geometry.source_width,
+                    geometry.full_frame_crop.height / geometry.source_height,
+                    false};
+                encoded = video_renderer.encodeRegion(
+                    *current_video_frame,
+                    reinterpret_cast<uintptr_t>(
+                        (__bridge void *)command_buffer),
+                    reinterpret_cast<uintptr_t>((__bridge void *)encoder),
+                    viewport, source_region, &render_error);
+              }
+              crop_frame_encoded = crop_frame_encoded || encoded;
+              return encoded;
+            };
+            for (const AppleMetalVideoViewport *viewport :
+                 {&video_viewports.crop_inset, &video_viewports.crop_preview}) {
+              if (!viewportHasArea(*viewport)) {
+                continue;
+              }
+              if (!encode_crop(*viewport)) {
+                std::fprintf(stderr, "[AppleCrop] Metal encode failed: %s\n",
+                             render_error.c_str());
+                render_failed = true;
+                break;
+              }
             }
-            if (!crop_encoded) {
-              std::fprintf(stderr,
-                           "[AppleCrop] Metal encode failed: %s\n",
-                           render_error.c_str());
-              render_failed = true;
+            if (render_failed) {
+              [encoder endEncoding];
               break;
             }
-            crop_frame_encoded = true;
           }
           crimson::overlay::ReadOnlyOverlayInput overlay_input;
           overlay_input.identity = {0, metadata.frame_number, 0,
@@ -2307,40 +4645,85 @@ int main(int argc, char **argv) {
           overlay_input.source_width = video_playback.info().width;
           overlay_input.source_height = video_playback.info().height;
           overlay_input.show_boxes = false;
+          bool canonical_detection_ready = false;
+          size_t presented_canonical_detections = 0;
+          std::shared_ptr<const crimson::zarr::CanonicalDetectionFrame>
+              canonical_detection_frame;
+          if (analysis_presentation_demand_enabled &&
+              canonical_detection_available) {
+            const bool detection_discontinuity =
+                presentation_was_discontinuous &&
+                last_canonical_detection_camera_request >= 0;
+            if (!canonical_detection_buffer.requestFrame(
+                    metadata.frame_number, detection_discontinuity,
+                    &canonical_detection_error)) {
+              canonical_detection_failed = true;
+              canonical_detection_available = false;
+              std::fprintf(
+                  stderr, "[AppleCanonicalDetection] Request failed: %s\n",
+                  canonical_detection_error.c_str());
+            } else {
+              last_canonical_detection_camera_request = metadata.frame_number;
+              canonical_detection_frame =
+                  canonical_detection_buffer.frame(metadata.frame_number);
+              canonical_detection_ready =
+                  canonical_detection_frame &&
+                  canonical_detection_frame->camera_frame ==
+                      metadata.frame_number;
+              if (canonical_detection_ready) {
+                presented_canonical_detections =
+                    canonical_detection_frame->detections.size();
+              }
+            }
+          }
           bool keypoint_overlay_ready = false;
           size_t presented_keypoint_detections = 0;
-          if (keypoint_overlay_repository) {
-            const auto keypoint_resolution =
-                keypoint_overlay_repository->resolveCameraFrame(
+          if (analysis_presentation_demand_enabled &&
+              keypoint_overlay_available) {
+            const bool keypoint_discontinuity =
+                presentation_was_discontinuous &&
+                last_keypoint_camera_request >= 0;
+            if (!keypoint_overlay_buffer.requestFrame(
                     metadata.frame_number, video_playback.info().width,
-                    video_playback.info().height);
-            if (keypoint_resolution.status ==
+                    video_playback.info().height, keypoint_discontinuity,
+                    &keypoint_error)) {
+              keypoint_overlay_failed = true;
+              keypoint_overlay_available = false;
+              std::fprintf(stderr, "[AppleKeypoints] Request failed: %s\n",
+                           keypoint_error.c_str());
+            } else {
+              last_keypoint_camera_request = metadata.frame_number;
+            }
+            const auto keypoint_resolution =
+                keypoint_overlay_buffer.frame(metadata.frame_number);
+            if (keypoint_resolution &&
+                keypoint_resolution->status ==
                     crimson::zarr::KeypointOverlayStatus::Mapped &&
-                keypoint_resolution.camera_frame == metadata.frame_number) {
+                keypoint_resolution->camera_frame == metadata.frame_number) {
               overlay_input = crimson::zarr::makeKeypointOverlaySceneInput(
-                  keypoint_overlay_repository->descriptor(),
-                  keypoint_resolution, 0, metadata.frame_number, 0,
-                  video_playback.info().width,
+                  keypoint_descriptor, *keypoint_resolution, 0,
+                  metadata.frame_number, 0, video_playback.info().width,
                   video_playback.info().height);
               keypoint_overlay_ready = true;
               presented_keypoint_detections =
-                  keypoint_resolution.detections.size();
+                  keypoint_resolution->detections.size();
             }
           }
 
           bool subject_mask_overlay_ready = false;
           size_t presented_subject_mask_detections = 0;
           size_t presented_subject_mask_components = 0;
-          if (subject_mask_overlay_available) {
+          if (analysis_presentation_demand_enabled &&
+              subject_mask_overlay_available &&
+              overlay_controls.show_subject_masks) {
             const bool subject_mask_discontinuity =
                 presentation_was_discontinuous &&
                 last_subject_mask_camera_request >= 0;
             if (!subject_mask_overlay_buffer.requestFrame(
                     metadata.frame_number, video_playback.info().width,
-                    video_playback.info().height,
-                    subject_mask_discontinuity, &subject_mask_error)) {
-              std::fprintf(stderr,
-                           "[AppleSubjectMasks] Request failed: %s\n",
+                    video_playback.info().height, subject_mask_discontinuity,
+                    &subject_mask_error)) {
+              std::fprintf(stderr, "[AppleSubjectMasks] Request failed: %s\n",
                            subject_mask_error.c_str());
               subject_mask_overlay_failed = true;
               subject_mask_overlay_available = false;
@@ -2352,6 +4735,7 @@ int main(int argc, char **argv) {
                   resolution->status ==
                       crimson::zarr::SubjectMaskOverlayStatus::Mapped &&
                   resolution->camera_frame == metadata.frame_number) {
+                logSubjectMaskFirstReady();
                 subject_mask_overlay_ready =
                     crimson::zarr::appendSubjectMaskOverlaySceneInput(
                         subject_mask_descriptor, *resolution,
@@ -2360,14 +4744,13 @@ int main(int argc, char **argv) {
                   presented_subject_mask_detections =
                       resolution->detections.size();
                   for (const auto &detection : resolution->detections) {
-                    presented_subject_mask_components +=
-                        static_cast<size_t>(std::count_if(
-                            detection.components.begin(),
-                            detection.components.end(),
-                            [](const auto &component) {
-                              return component.present ||
-                                     !component.contour.empty();
-                            }));
+                    presented_subject_mask_components += static_cast<size_t>(
+                        std::count_if(detection.components.begin(),
+                                      detection.components.end(),
+                                      [](const auto &component) {
+                                        return component.present ||
+                                               !component.contour.empty();
+                                      }));
                   }
                 }
               }
@@ -2376,16 +4759,16 @@ int main(int argc, char **argv) {
 
           bool subject_shape_overlay_ready = false;
           size_t presented_subject_shape_detections = 0;
-          if (subject_shape_overlay_available) {
+          if (analysis_presentation_demand_enabled &&
+              subject_shape_overlay_available) {
             const bool subject_shape_discontinuity =
                 presentation_was_discontinuous &&
                 last_subject_shape_camera_request >= 0;
             if (!subject_shape_overlay_buffer.requestFrame(
                     metadata.frame_number, video_playback.info().width,
-                    video_playback.info().height,
-                    subject_shape_discontinuity, &subject_shape_error)) {
-              std::fprintf(stderr,
-                           "[AppleSubjectShape] Request failed: %s\n",
+                    video_playback.info().height, subject_shape_discontinuity,
+                    &subject_shape_error)) {
+              std::fprintf(stderr, "[AppleSubjectShape] Request failed: %s\n",
                            subject_shape_error.c_str());
               subject_shape_overlay_failed = true;
               subject_shape_overlay_available = false;
@@ -2411,7 +4794,8 @@ int main(int argc, char **argv) {
 
           bool eye_geometry_overlay_ready = false;
           size_t presented_eye_geometry_detections = 0;
-          if (eye_geometry_overlay_available) {
+          if (analysis_presentation_demand_enabled &&
+              eye_geometry_overlay_available) {
             const bool eye_geometry_discontinuity =
                 presentation_was_discontinuous &&
                 last_eye_geometry_camera_request >= 0;
@@ -2419,8 +4803,7 @@ int main(int argc, char **argv) {
                     metadata.frame_number, video_playback.info().width,
                     video_playback.info().height, eye_geometry_discontinuity,
                     &eye_geometry_error)) {
-              std::fprintf(stderr,
-                           "[AppleEyeGeometry] Request failed: %s\n",
+              std::fprintf(stderr, "[AppleEyeGeometry] Request failed: %s\n",
                            eye_geometry_error.c_str());
               eye_geometry_overlay_failed = true;
               eye_geometry_overlay_available = false;
@@ -2448,6 +4831,54 @@ int main(int argc, char **argv) {
                                                          &overlay_input);
           auto overlay_scene =
               crimson::overlay::buildReadOnlyOverlayScene(overlay_input);
+          if (canonical_detection_ready && canonical_detection_frame) {
+            auto detection_input =
+                crimson::zarr::makeCanonicalDetectionOverlaySceneInput(
+                    canonical_detection_descriptor,
+                    *canonical_detection_frame, 0, metadata.frame_number, 0,
+                    video_playback.info().width,
+                    video_playback.info().height);
+            auto detection_scene =
+                crimson::overlay::buildReadOnlyOverlayScene(detection_input);
+            overlay_scene.primitives.insert(
+                overlay_scene.primitives.end(),
+                detection_scene.primitives.begin(),
+                detection_scene.primitives.end());
+            overlay_scene.text_annotations.insert(
+                overlay_scene.text_annotations.end(),
+                detection_scene.text_annotations.begin(),
+                detection_scene.text_annotations.end());
+          }
+          if (options->ui_reference.enabled &&
+              (options->ui_reference.state == AppleUiReferenceState::Overlays ||
+               options->ui_reference.state ==
+                   AppleUiReferenceState::AnalysisEye) &&
+              metadata.frame_number == options->ui_reference.target_frame) {
+            ui_reference_overlay_counts = {
+                {"keypoints",
+                 overlay_scene.count(
+                     crimson::overlay::CameraOverlayLayer::Keypoints)},
+                {"headings",
+                 overlay_scene.count(
+                     crimson::overlay::CameraOverlayLayer::KeypointHeading)},
+                {"subject_mask_primitives",
+                 overlay_scene.count(
+                     crimson::overlay::CameraOverlayLayer::SubjectMasks)},
+                {"subject_mask_rasters",
+                 overlay_scene.rasterCount(
+                     crimson::overlay::CameraOverlayLayer::SubjectMasks)},
+                {"subject_mask_text",
+                 overlay_scene.textCount(
+                     crimson::overlay::CameraOverlayLayer::SubjectMasks)},
+                {"subject_shape",
+                 overlay_scene.count(
+                     crimson::overlay::CameraOverlayLayer::SubjectShape)}};
+            ui_reference_overlay_ready =
+                overlay_scene.ready() && keypoint_overlay_ready &&
+                subject_mask_overlay_ready && eye_geometry_overlay_ready &&
+                overlay_scene.rasterCount(
+                    crimson::overlay::CameraOverlayLayer::SubjectMasks) > 0;
+          }
           if (current_crop_selection.selected() &&
               current_crop_selection.camera_frame == metadata.frame_number &&
               current_crop_selection.geometry &&
@@ -2458,15 +4889,16 @@ int main(int argc, char **argv) {
                 geometry.source_height == video_playback.info().height) {
               const auto &box = *geometry.full_frame_detection;
               crimson::overlay::ReadOnlyOverlayInput overlay_input;
-              overlay_input.identity = {
-                  0, metadata.frame_number, 0, geometry.camera_frame};
+              overlay_input.identity = {0, metadata.frame_number, 0,
+                                        geometry.camera_frame};
               overlay_input.source_width = geometry.source_width;
               overlay_input.source_height = geometry.source_height;
               overlay_input.show_headings = false;
               overlay_input.show_keypoints = false;
               crimson::overlay::DetectionOverlayInput detection;
               detection.box = crimson::overlay::DetectionBoxInput{
-                  {box.x, box.y, box.width, box.height}, 0,
+                  {box.x, box.y, box.width, box.height},
+                  0,
                   crimson::overlay::BoxProvenance::Clean};
               overlay_input.detections.push_back(std::move(detection));
               const auto crop_overlay_scene =
@@ -2477,31 +4909,42 @@ int main(int argc, char **argv) {
                   crop_overlay_scene.primitives.end());
             }
           }
-          if (overlay_scene.ready() &&
+          if (viewportHasArea(video_viewports.camera) &&
+              overlay_scene.ready() &&
               (!overlay_scene.primitives.empty() ||
                !overlay_scene.raster_masks.empty() ||
                !overlay_scene.text_annotations.empty())) {
             const crimson::overlay::SourceViewportTransform transform{
-                {0.0, 0.0, overlay_scene.source_width,
-                 overlay_scene.source_height},
+                {camera_view_state.source_region.x * overlay_scene.source_width,
+                 camera_view_state.source_region.y *
+                     overlay_scene.source_height,
+                 camera_view_state.source_region.width *
+                     overlay_scene.source_width,
+                 camera_view_state.source_region.height *
+                     overlay_scene.source_height},
                 {video_viewports.camera.x, video_viewports.camera.y,
-                 video_viewports.camera.width,
-                 video_viewports.camera.height}};
+                 video_viewports.camera.width, video_viewports.camera.height}};
             if (!overlay_renderer.encode(
                     overlay_scene, transform,
                     reinterpret_cast<uintptr_t>((__bridge void *)encoder),
-                    static_cast<uint32_t>(width),
-                    static_cast<uint32_t>(height), &render_error)) {
-              std::fprintf(stderr,
-                           "[AppleOverlay] Metal encode failed: %s\n",
+                    static_cast<uint32_t>(width), static_cast<uint32_t>(height),
+                    &render_error)) {
+              std::fprintf(stderr, "[AppleOverlay] Metal encode failed: %s\n",
                            render_error.c_str());
               render_failed = true;
+              [encoder endEncoding];
               break;
             }
             const size_t drawn_overlay_labels = drawAppleReadOnlyOverlayText(
                 overlay_scene, transform, io.DisplayFramebufferScale.x,
                 io.DisplayFramebufferScale.y);
             ++read_only_overlay_presentations;
+            if (canonical_detection_ready &&
+                presented_canonical_detections > 0) {
+              ++canonical_detection_presentations;
+              canonical_detection_detections +=
+                  presented_canonical_detections;
+            }
             if (keypoint_overlay_ready &&
                 (overlay_scene.count(
                      crimson::overlay::CameraOverlayLayer::KeypointHeading) >
@@ -2509,15 +4952,13 @@ int main(int argc, char **argv) {
                  overlay_scene.count(
                      crimson::overlay::CameraOverlayLayer::Keypoints) > 0)) {
               ++keypoint_overlay_presentations;
-              keypoint_overlay_detections +=
-                  presented_keypoint_detections;
+              keypoint_overlay_detections += presented_keypoint_detections;
             }
             if (subject_mask_overlay_ready &&
                 (overlay_scene.rasterCount(
                      crimson::overlay::CameraOverlayLayer::SubjectMasks) > 0 ||
                  overlay_scene.count(
-                     crimson::overlay::CameraOverlayLayer::SubjectMasks) >
-                     0)) {
+                     crimson::overlay::CameraOverlayLayer::SubjectMasks) > 0)) {
               ++subject_mask_overlay_presentations;
               subject_mask_overlay_detections +=
                   presented_subject_mask_detections;
@@ -2539,19 +4980,121 @@ int main(int argc, char **argv) {
               eye_geometry_overlay_labels += drawn_overlay_labels;
             }
           }
+          if (stimulus_camera_overlay_scene.ready()) {
+            if (!overlay_renderer.encodeStimulusCameraOverlay(
+                    stimulus_camera_overlay_scene,
+                    {video_viewports.camera.x, video_viewports.camera.y},
+                    io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y,
+                    reinterpret_cast<uintptr_t>((__bridge void *)encoder),
+                    static_cast<uint32_t>(width), static_cast<uint32_t>(height),
+                    &render_error)) {
+              std::fprintf(
+                  stderr,
+                  "[AppleStimulusCameraOverlay] Metal encode failed: %s\n",
+                  render_error.c_str());
+              render_failed = true;
+              [encoder endEncoding];
+              break;
+            }
+            drawAppleStimulusCameraOverlayText(
+                stimulus_camera_overlay_scene, video_viewports.camera,
+                io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
+            if (options->ui_reference.enabled &&
+                options->ui_reference.state ==
+                    AppleUiReferenceState::StimulusOverlay &&
+                metadata.frame_number == options->ui_reference.target_frame) {
+              ui_reference_stimulus_overlay_ready =
+                  stimulus_camera_overlay_scene.requested_camera_frame ==
+                      options->ui_reference.target_frame &&
+                  stimulus_camera_overlay_scene.source_camera_frame ==
+                      options->ui_reference.target_frame &&
+                  !stimulus_camera_overlay_scene.primitives.empty() &&
+                  !stimulus_camera_overlay_scene.text.empty();
+              ui_reference_stimulus_overlay_scene =
+                  stimulus_camera_overlay_scene;
+              ui_reference_stimulus_overlay_viewport = video_viewports.camera;
+            }
+          }
+          if (chaser_distance_polar_scene.ready()) {
+            if (!overlay_renderer.encodePolar(
+                    chaser_distance_polar_scene,
+                    {video_viewports.camera.x, video_viewports.camera.y},
+                    io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y,
+                    reinterpret_cast<uintptr_t>((__bridge void *)encoder),
+                    static_cast<uint32_t>(width), static_cast<uint32_t>(height),
+                    &render_error)) {
+              std::fprintf(stderr,
+                           "[AppleChaserPolar] Metal encode failed: %s\n",
+                           render_error.c_str());
+              render_failed = true;
+              [encoder endEncoding];
+              break;
+            }
+            drawAppleChaserDistancePolarText(
+                chaser_distance_polar_scene, video_viewports.camera,
+                io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
+            ++chaser_distance_polar_presentations;
+            chaser_distance_polar_points +=
+                chaser_distance_polar_scene.point_count;
+            if (options->ui_reference.enabled &&
+                options->ui_reference.state == AppleUiReferenceState::Polar &&
+                metadata.frame_number == options->ui_reference.target_frame) {
+              ui_reference_polar_ready =
+                  chaser_distance_polar_scene.requested_camera_frame ==
+                      options->ui_reference.target_frame &&
+                  chaser_distance_polar_scene.source_camera_frame ==
+                      options->ui_reference.target_frame &&
+                  chaser_distance_polar_scene.point_count > 0;
+              ui_reference_polar_scene = chaser_distance_polar_scene;
+              ui_reference_polar_viewport = video_viewports.camera;
+            }
+          }
           if (crop_enabled) {
+            if (frame_inspect_presentation.roi_inset.show_label) {
+              drawAppleCropPreviewOverlay(
+                  video_viewports.crop_inset, io.DisplayFramebufferScale.y,
+                  crop_frame_encoded ? &current_crop_selection : nullptr,
+                  crop_frame_encoded ? current_crop_selection.status
+                                     : crop_controls.selection_status);
+            }
             drawAppleCropPreviewOverlay(
-                video_viewports.crop, io.DisplayFramebufferScale.y,
+                video_viewports.crop_preview, io.DisplayFramebufferScale.y,
                 crop_frame_encoded ? &current_crop_selection : nullptr,
                 crop_frame_encoded ? current_crop_selection.status
                                    : crop_controls.selection_status);
+          }
+          if (stimulus_frame_encoded &&
+              frame_inspect_presentation.show_stimulus_frame_label &&
+              current_stimulus_frame) {
+            drawAppleStimulusInsetOverlay(
+                video_viewports.stimulus_inset, io.DisplayFramebufferScale.y,
+                metadata.frame_number,
+                current_stimulus_frame->decoded_frame.metadata.frame_number);
+          }
+          if (options->ui_reference.enabled) {
+            ui_reference_crop_exact =
+                crop_frame_encoded && current_crop_selection.selected() &&
+                current_crop_selection.source ==
+                    crimson::crop::CropSourceKind::LiveGeometry &&
+                current_crop_selection.camera_frame ==
+                    options->ui_reference.target_frame &&
+                crop_presentation.metrics().presented_crop_camera_frame ==
+                    options->ui_reference.target_frame;
+            ui_reference_stimulus_exact =
+                stimulus_frame_encoded && current_stimulus_frame &&
+                current_stimulus_resolution.status ==
+                    crimson::zarr::StimulusMappingStatus::Mapped &&
+                current_stimulus_resolution.camera_frame ==
+                    options->ui_reference.target_frame &&
+                current_stimulus_resolution.stimulus_frame &&
+                current_stimulus_frame->decoded_frame.metadata.frame_number ==
+                    *current_stimulus_resolution.stimulus_frame;
           }
           if (options->stimulus_smoke &&
               metadata.frame_number >= options->video_smoke_end) {
             if (current_stimulus_resolution.status !=
                 crimson::zarr::StimulusMappingStatus::Mapped) {
-              stimulus_error =
-                  "stimulus smoke end camera frame is not mapped";
+              stimulus_error = "stimulus smoke end camera frame is not mapped";
               stimulus_failed = true;
             } else {
               stimulus_smoke_end_satisfied =
@@ -2602,26 +5145,285 @@ int main(int argc, char **argv) {
             multistream_composite_frame = metadata.frame_number;
           }
         }
-      } else {
-        drawShellSurface(frame_times_ms, frame_time_count, width, height);
       }
 
+      crimson::ui::drawSessionLoadingModal(
+          crimson::session::makeSessionLoadingPresentation(analysis_progress,
+                                                           analysis_readiness));
       ImGui::Render();
+      bool ui_reference_state_ready = false;
+      if (options->ui_reference.enabled) {
+        ui_semantic_snapshot =
+            crimson::ui::finishSemanticFrame(ImGui::GetCurrentContext());
+        auto has_window = [&](const std::string &name) {
+          return std::any_of(ui_semantic_snapshot.windows.begin(),
+                             ui_semantic_snapshot.windows.end(),
+                             [&](const crimson::ui::SemanticWindow &candidate) {
+                               return candidate.visible_name == name &&
+                                      !candidate.collapsed;
+                             });
+        };
+        const bool loaded_windows_ready =
+            has_window("File Browser") && has_window("Frame Inspect") &&
+            has_window("Diagnostics") && has_window("Frames in the buffer") &&
+            has_window(camera_window_name) &&
+            has_window("Stimulus Event Timeline") &&
+            has_window("Analysis Timeline");
+        switch (options->ui_reference.state) {
+        case AppleUiReferenceState::Empty:
+          ui_reference_state_ready =
+              !video_enabled && has_window("File Browser");
+          break;
+        case AppleUiReferenceState::Workspace:
+          ui_reference_state_ready =
+              ui_reference_camera_exact && loaded_windows_ready;
+          break;
+        case AppleUiReferenceState::Overlays:
+          ui_reference_state_ready = ui_reference_camera_exact &&
+                                     loaded_windows_ready &&
+                                     ui_reference_overlay_ready;
+          break;
+        case AppleUiReferenceState::Polar:
+          ui_reference_state_ready = ui_reference_camera_exact &&
+                                     loaded_windows_ready &&
+                                     ui_reference_polar_ready;
+          break;
+        case AppleUiReferenceState::StimulusOverlay:
+          ui_reference_state_ready = ui_reference_camera_exact &&
+                                     loaded_windows_ready &&
+                                     ui_reference_stimulus_overlay_ready;
+          break;
+        case AppleUiReferenceState::CropPreview:
+          ui_reference_state_ready =
+              ui_reference_camera_exact && loaded_windows_ready &&
+              ui_reference_crop_exact && has_window("Advanced Crop Preview");
+          break;
+        case AppleUiReferenceState::AnalysisEye:
+          ui_reference_state_ready =
+              ui_reference_camera_exact && loaded_windows_ready &&
+              ui_reference_overlay_ready && ui_reference_analysis_ready;
+          break;
+        case AppleUiReferenceState::StimulusDebug:
+          ui_reference_state_ready =
+              ui_reference_camera_exact && loaded_windows_ready &&
+              ui_reference_stimulus_exact && has_window("Stimulus") &&
+              has_window("Stimulus Frames in Buffer");
+          break;
+        }
+        if (ui_reference_state_ready) {
+          ++ui_reference_stable_frames;
+        } else {
+          ui_reference_stable_frames = 0;
+        }
+      }
       ImGui_ImplMetal_RenderDrawData(ImGui::GetDrawData(), command_buffer,
                                      encoder);
       [encoder endEncoding];
+
+      const bool capture_ui_reference = options->ui_reference.enabled &&
+                                        !ui_reference_written &&
+                                        ui_reference_stable_frames >= 60;
+      id<MTLBuffer> ui_reference_buffer = nil;
+      size_t ui_reference_bytes_per_row = 0;
+      if (capture_ui_reference) {
+        ui_reference_bytes_per_row =
+            (static_cast<size_t>(width) * 4 + 255u) & ~size_t(255u);
+        ui_reference_buffer =
+            [device newBufferWithLength:ui_reference_bytes_per_row *
+                                        static_cast<size_t>(height)
+                                options:MTLResourceStorageModeShared];
+        id<MTLBlitCommandEncoder> blit =
+            ui_reference_buffer == nil ? nil
+                                       : [command_buffer blitCommandEncoder];
+        if (blit == nil) {
+          std::fprintf(stderr,
+                       "[AppleUiReference] Failed to create Metal readback\n");
+          render_failed = true;
+        } else {
+          [blit copyFromTexture:drawable.texture
+                           sourceSlice:0
+                           sourceLevel:0
+                          sourceOrigin:MTLOriginMake(0, 0, 0)
+                            sourceSize:MTLSizeMake(width, height, 1)
+                              toBuffer:ui_reference_buffer
+                     destinationOffset:0
+                destinationBytesPerRow:ui_reference_bytes_per_row
+              destinationBytesPerImage:ui_reference_bytes_per_row *
+                                       static_cast<size_t>(height)];
+          [blit endEncoding];
+        }
+      }
       [command_buffer presentDrawable:drawable];
       [command_buffer commit];
       last_command_buffer = command_buffer;
+
+      if (capture_ui_reference && !render_failed) {
+        [command_buffer waitUntilCompleted];
+        if (command_buffer.status != MTLCommandBufferStatusCompleted) {
+          std::fprintf(stderr,
+                       "[AppleUiReference] Metal capture command failed: %s\n",
+                       command_buffer.error.localizedDescription.UTF8String);
+          render_failed = true;
+        } else {
+          std::filesystem::path image_path = options->ui_reference.ready_file;
+          image_path += ".png";
+          std::string capture_error;
+          if (!writeBgraPng(
+                  image_path,
+                  static_cast<const uint8_t *>(ui_reference_buffer.contents),
+                  static_cast<size_t>(width), static_cast<size_t>(height),
+                  ui_reference_bytes_per_row, &capture_error)) {
+            std::fprintf(stderr, "[AppleUiReference] PNG capture failed: %s\n",
+                         capture_error.c_str());
+            render_failed = true;
+          } else {
+            int client_width = 0;
+            int client_height = 0;
+            glfwGetWindowSize(window, &client_width, &client_height);
+            const auto buffered_frames =
+                video_enabled ? video_playback.bufferedFrameNumbers()
+                              : std::vector<int64_t>{};
+            const char *crop_source =
+                current_crop_selection.source ==
+                        crimson::crop::CropSourceKind::LiveGeometry
+                    ? "live-geometry"
+                : current_crop_selection.source ==
+                        crimson::crop::CropSourceKind::AcquisitionVideo
+                    ? "acquisition-video"
+                    : "none";
+            const nlohmann::json marker = {
+                {"format", "crimson_ui_reference_v1"},
+                {"platform", "macos-metal"},
+                {"state",
+                 appleUiReferenceStateName(options->ui_reference.state)},
+                {"video", options->video_path},
+                {"archive", options->zarr_path},
+                {"write_contract", "read-only"},
+                {"target_frame", options->ui_reference.target_frame},
+                {"requested_frame", viewer_stats.requested_frame},
+                {"presented_frame", viewer_stats.presented_frame},
+                {"stable_frames", ui_reference_stable_frames},
+                {"client_size",
+                 {{"width", client_width}, {"height", client_height}}},
+                {"logical_content_size",
+                 {{"width", options->ui_reference.logical_width},
+                  {"height", options->ui_reference.logical_height}}},
+                {"framebuffer_size", {{"width", width}, {"height", height}}},
+                {"framebuffer_scale",
+                 {{"x", io.DisplayFramebufferScale.x},
+                  {"y", io.DisplayFramebufferScale.y}}},
+                {"buffers",
+                 {{"camera_valid", buffered_frames.size()},
+                  {"camera_capacity",
+                   video_enabled ? video_playback.capacity() : 0},
+                  {"stimulus_valid",
+                   stimulus_enabled
+                       ? stimulus_playback.bufferedFrameNumbers().size()
+                       : 0},
+                  {"stimulus_capacity",
+                   stimulus_enabled ? options->stimulus_buffer_capacity : 0}}},
+                {"rendered_image",
+                 {{"path", image_path.string()},
+                  {"width", width},
+                  {"height", height},
+                  {"surface", "metal_drawable_pre_present"}}},
+                {"viewports",
+                 {{"camera", viewportJson(video_viewports.camera)},
+                  {"crop_inset", viewportJson(video_viewports.crop_inset)},
+                  {"crop_preview", viewportJson(video_viewports.crop_preview)},
+                  {"stimulus_inset",
+                   viewportJson(video_viewports.stimulus_inset)},
+                  {"stimulus_debug",
+                   viewportJson(video_viewports.stimulus_debug)}}},
+                {"overlays",
+                 {{"ready", ui_reference_overlay_ready},
+                  {"counts", ui_reference_overlay_counts}}},
+                {"polar",
+                 polarSceneReferenceJson(
+                     ui_reference_polar_scene, ui_reference_polar_viewport.x,
+                     ui_reference_polar_viewport.y,
+                     io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y,
+                     &chaser_distance_polar_descriptor)},
+                {"stimulus_camera_overlay",
+                 stimulusCameraOverlaySceneReferenceJson(
+                     ui_reference_stimulus_overlay_scene,
+                     ui_reference_stimulus_overlay_viewport.x,
+                     ui_reference_stimulus_overlay_viewport.y,
+                     io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y,
+                     stimulus_context_timeline_snapshot != nullptr
+                         ? &stimulus_context_timeline_descriptor
+                         : nullptr)},
+                {"crop",
+                 {{"ready", ui_reference_crop_exact},
+                  {"source", crop_source},
+                  {"camera_frame", current_crop_selection.camera_frame}}},
+                {"stimulus",
+                 {{"ready", ui_reference_stimulus_exact},
+                  {"camera_frame", current_stimulus_resolution.camera_frame},
+                  {"target_frame",
+                   current_stimulus_resolution.stimulus_frame
+                       ? *current_stimulus_resolution.stimulus_frame
+                       : -1},
+                  {"presented_frame",
+                   current_stimulus_frame
+                       ? current_stimulus_frame->decoded_frame.metadata
+                             .frame_number
+                       : -1}}},
+                {"analysis",
+                 {{"ready", ui_reference_analysis_ready},
+                  {"eye_representation",
+                   workspace_state.selections().eye_angle_representation_key}}},
+                {"semantic_snapshot",
+                 crimson::ui::semanticSnapshotJson(ui_semantic_snapshot)}};
+            if (!writeJsonAtomically(options->ui_reference.ready_file, marker,
+                                     &capture_error)) {
+              std::fprintf(stderr,
+                           "[AppleUiReference] Marker write failed: %s\n",
+                           capture_error.c_str());
+              render_failed = true;
+            } else {
+              ui_reference_written = true;
+              std::printf(
+                  "[AppleUiReference] READY state=%s target_frame=%d "
+                  "presented_frame=%lld stable_frames=%d image=%s\n",
+                  appleUiReferenceStateName(options->ui_reference.state),
+                  options->ui_reference.target_frame,
+                  static_cast<long long>(viewer_stats.presented_frame),
+                  ui_reference_stable_frames, image_path.string().c_str());
+              glfwSetWindowShouldClose(window, GLFW_TRUE);
+            }
+          }
+        }
+      }
+
+      if (options->ui_reference.enabled && !ui_reference_written &&
+          std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                        ui_reference_started)
+                  .count() > options->ui_reference.timeout_seconds) {
+        std::fprintf(
+            stderr,
+            "[AppleUiReference] Timed out state=%s target=%d requested=%lld "
+            "presented=%lld stable=%d camera=%d overlay=%d crop=%d "
+            "stimulus=%d analysis=%d polar=%d\n",
+            appleUiReferenceStateName(options->ui_reference.state),
+            options->ui_reference.target_frame,
+            static_cast<long long>(viewer_stats.requested_frame),
+            static_cast<long long>(viewer_stats.presented_frame),
+            ui_reference_stable_frames, ui_reference_camera_exact,
+            ui_reference_overlay_ready, ui_reference_crop_exact,
+            ui_reference_stimulus_exact, ui_reference_analysis_ready,
+            ui_reference_polar_ready);
+        render_failed = true;
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+      }
 
       if (subject_mask_smoke_start_pending &&
           viewer_stats.presented_frame == options->video_smoke_start) {
         subject_mask_smoke_start_pending = false;
         const auto playback_started = std::chrono::steady_clock::now();
         video_clock.play(playback_started);
-        video_playback.setPlaybackState(
-            viewer_stats.presented_frame, true,
-            video_playback.info().nominal_frame_rate);
+        video_playback.setPlaybackState(viewer_stats.presented_frame, true,
+                                        video_clock.effectiveFramesPerSecond());
         video_smoke_started = playback_started;
       }
 
@@ -2673,9 +5475,8 @@ int main(int argc, char **argv) {
                    multistream_composite_frame ==
                        multistream_smoke.step_frame) {
           ++multistream_smoke.exact_settlements;
-          request_exact_frame(
-              multistream_smoke.backward_frame,
-              MultistreamSmokeStage::WaitForBackwardSeekExact);
+          request_exact_frame(multistream_smoke.backward_frame,
+                              MultistreamSmokeStage::WaitForBackwardSeekExact);
         } else if (multistream_smoke.stage ==
                        MultistreamSmokeStage::WaitForBackwardSeekExact &&
                    multistream_composite_frame ==
@@ -2691,7 +5492,7 @@ int main(int argc, char **argv) {
           video_clock.play();
           video_playback.setPlaybackState(
               multistream_smoke.forward_frame, true,
-              video_playback.info().nominal_frame_rate);
+              video_clock.effectiveFramesPerSecond());
           multistream_smoke.stage = MultistreamSmokeStage::ResumeToEnd;
         } else if (multistream_smoke.stage ==
                        MultistreamSmokeStage::WaitForEndExact &&
@@ -2710,22 +5511,24 @@ int main(int argc, char **argv) {
           multistream_smoke.stage == MultistreamSmokeStage::Complete) {
         glfwSetWindowShouldClose(window, GLFW_TRUE);
       } else if (options->video_smoke && !options->multistream_smoke &&
-          viewer_stats.presented_frame >= options->video_smoke_end &&
-          (!options->stimulus_smoke || stimulus_smoke_end_satisfied ||
-           stimulus_failed) &&
-          (!options->crop_smoke || crop_smoke_end_satisfied || crop_failed)) {
+                 viewer_stats.presented_frame >= options->video_smoke_end &&
+                 (!options->stimulus_smoke || stimulus_smoke_end_satisfied ||
+                  stimulus_failed) &&
+                 (!options->crop_smoke || crop_smoke_end_satisfied ||
+                  crop_failed)) {
         glfwSetWindowShouldClose(window, GLFW_TRUE);
       }
       if (options->video_smoke &&
           std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                         video_smoke_started)
                   .count() > video_smoke_timeout_seconds) {
-        std::fprintf(stderr,
-                     "[AppleVideoSmoke] Timed out requested=%lld presented=%lld "
-                     "end=%d\n",
-                     static_cast<long long>(viewer_stats.requested_frame),
-                     static_cast<long long>(viewer_stats.presented_frame),
-                     options->video_smoke_end);
+        std::fprintf(
+            stderr,
+            "[AppleVideoSmoke] Timed out requested=%lld presented=%lld "
+            "end=%d\n",
+            static_cast<long long>(viewer_stats.requested_frame),
+            static_cast<long long>(viewer_stats.presented_frame),
+            options->video_smoke_end);
         render_failed = true;
         glfwSetWindowShouldClose(window, GLFW_TRUE);
       }
@@ -2740,6 +5543,8 @@ int main(int argc, char **argv) {
       render_failed = true;
     }
   }
+
+  session_lifecycle.beginClose();
 
   const AppleVideoPlaybackBufferMetrics final_video_metrics =
       video_enabled ? video_playback.metrics()
@@ -2766,11 +5571,26 @@ int main(int argc, char **argv) {
       current_stimulus_frame
           ? current_stimulus_frame->decoded_frame.metadata.frame_number
           : -1;
+  const auto final_analysis_loading_progress = analysis_loader.progress();
   current_stimulus_frame.reset();
   current_crop_frame.reset();
+  analysis_loader.close();
+  const auto final_canonical_detection_repository_metrics =
+      canonical_detection_buffer.repositoryMetrics();
+  canonical_detection_buffer.close();
+  const auto final_canonical_detection_buffer_metrics =
+      canonical_detection_buffer.metrics();
+  keypoint_overlay_buffer.close();
+  chaser_distance_polar_buffer.close();
+  const crimson::polar::ChaserDistancePolarBufferMetrics
+      final_chaser_distance_polar_metrics =
+          chaser_distance_polar_buffer.metrics();
   subject_mask_overlay_buffer.close();
   const SubjectMaskOverlayBufferMetrics final_subject_mask_metrics =
       subject_mask_overlay_buffer.metrics();
+  const crimson::zarr::SubjectMaskOverlayRepositoryMetrics
+      final_subject_mask_repository_metrics =
+          subject_mask_overlay_buffer.repositoryMetrics();
   subject_shape_overlay_buffer.close();
   const SubjectShapeOverlayBufferMetrics final_subject_shape_metrics =
       subject_shape_overlay_buffer.metrics();
@@ -2780,6 +5600,9 @@ int main(int argc, char **argv) {
   motion_timeline_buffer.close();
   const AnalysisSeriesTimelineBufferMetrics final_motion_timeline_metrics =
       motion_timeline_buffer.metrics();
+  swim_bout_timeline_buffer.close();
+  const SwimBoutTimelineBufferMetrics final_swim_bout_timeline_metrics =
+      swim_bout_timeline_buffer.metrics();
   eye_angle_timeline_buffer.close();
   const EyeAngleTimelineBufferMetrics final_eye_angle_timeline_metrics =
       eye_angle_timeline_buffer.metrics();
@@ -2787,6 +5610,11 @@ int main(int argc, char **argv) {
   const AnalysisSeriesTimelineBufferMetrics
       final_tail_kinematics_timeline_metrics =
           tail_kinematics_timeline_buffer.metrics();
+  analysis_data_scheduler->waitUntilIdle();
+  const crimson::data::DataAccessSchedulerMetrics
+      final_analysis_data_scheduler_metrics =
+          analysis_data_scheduler->metrics();
+  analysis_data_scheduler->shutdown();
   if (crop_enabled) {
     crop_playback.close();
   }
@@ -2806,19 +5634,127 @@ int main(int argc, char **argv) {
   ImGui::DestroyContext();
   glfwDestroyWindow(window);
   glfwTerminate();
+  session_lifecycle.completeClose();
+
+  const auto session_relaunch = session_lifecycle.replacementRequest();
+  if (session_relaunch && session_relaunch->requested) {
+    std::string relaunch_error;
+    if (!launchReplacementSession(*session_relaunch, argv[0],
+                                  &relaunch_error)) {
+      std::fprintf(stderr, "[MacSession] Relaunch failed: %s\n",
+                   relaunch_error.c_str());
+      render_failed = true;
+    } else {
+      std::printf("[MacSession] Relaunched video=%s zarr=%s stimulus=%s\n",
+                  session_relaunch->video_path.c_str(),
+                  session_relaunch->zarr_path.c_str(),
+                  session_relaunch->stimulus_video_path.c_str());
+    }
+  }
+  crimson::diagnostics::writeRuntimeDiagnostics(
+      std::cout, "Apple",
+      {session_lifecycle.snapshot(), final_analysis_loading_progress,
+       camera_presentation_tracker.metrics()});
+
+  const crimson::data::DataAccessQueueMetrics &final_analysis_queue_metrics =
+      final_analysis_data_scheduler_metrics.queue;
+  std::printf(
+      "[AppleDataScheduler] workers=%zu submissions=%llu accepted=%llu "
+      "duplicates=%llu promotions=%llu rejected_invalid=%llu "
+      "rejected_stale=%llu rejected_capacity=%llu cancelled=%llu "
+      "capacity_evictions=%llu completed=%llu discarded=%llu failed=%llu "
+      "work_started=%llu work_completed=%llu work_exceptions=%llu "
+      "peak_pending=%zu peak_active=%zu peak_speculative=%zu\n",
+      final_analysis_data_scheduler_metrics.worker_count,
+      static_cast<unsigned long long>(final_analysis_queue_metrics.submissions),
+      static_cast<unsigned long long>(final_analysis_queue_metrics.accepted),
+      static_cast<unsigned long long>(final_analysis_queue_metrics.duplicates),
+      static_cast<unsigned long long>(final_analysis_queue_metrics.promotions),
+      static_cast<unsigned long long>(
+          final_analysis_queue_metrics.rejected_invalid),
+      static_cast<unsigned long long>(
+          final_analysis_queue_metrics.rejected_stale),
+      static_cast<unsigned long long>(
+          final_analysis_queue_metrics.rejected_capacity),
+      static_cast<unsigned long long>(
+          final_analysis_queue_metrics.cancelled_requests),
+      static_cast<unsigned long long>(
+          final_analysis_queue_metrics.capacity_evictions),
+      static_cast<unsigned long long>(
+          final_analysis_queue_metrics.completed_requests),
+      static_cast<unsigned long long>(
+          final_analysis_queue_metrics.discarded_completions),
+      static_cast<unsigned long long>(
+          final_analysis_queue_metrics.failed_completions),
+      static_cast<unsigned long long>(
+          final_analysis_data_scheduler_metrics.work_started),
+      static_cast<unsigned long long>(
+          final_analysis_data_scheduler_metrics.work_completed),
+      static_cast<unsigned long long>(
+          final_analysis_data_scheduler_metrics.work_exceptions),
+      final_analysis_queue_metrics.peak_pending_requests,
+      final_analysis_queue_metrics.peak_active_requests,
+      final_analysis_data_scheduler_metrics.peak_active_speculative_requests);
+
+  if (!canonical_detection_descriptor.run_name.empty()) {
+    std::printf(
+        "[AppleCanonicalDetection] presentations=%llu detections=%llu "
+        "requests=%llu cache_hits=%llu demand_pages=%llu lead_pages=%llu "
+        "resolved_pages=%llu failed_pages=%llu discarded_pages=%llu "
+        "evicted_pages=%llu peak_cached_pages=%zu peak_cached_bytes=%llu "
+        "peak_pending=%zu range_reads=%llu resolved_frames=%llu "
+        "resolved_rows=%llu field_reads=%llu peak_concurrent_fields=%zu "
+        "max_resolve_ms=%.1f error=%s\n",
+        static_cast<unsigned long long>(canonical_detection_presentations),
+        static_cast<unsigned long long>(canonical_detection_detections),
+        static_cast<unsigned long long>(
+            final_canonical_detection_buffer_metrics.requests),
+        static_cast<unsigned long long>(
+            final_canonical_detection_buffer_metrics.cache_hits),
+        static_cast<unsigned long long>(
+            final_canonical_detection_buffer_metrics.demand_pages),
+        static_cast<unsigned long long>(
+            final_canonical_detection_buffer_metrics.lead_pages),
+        static_cast<unsigned long long>(
+            final_canonical_detection_buffer_metrics.resolved_pages),
+        static_cast<unsigned long long>(
+            final_canonical_detection_buffer_metrics.failed_pages),
+        static_cast<unsigned long long>(
+            final_canonical_detection_buffer_metrics.discarded_pages),
+        static_cast<unsigned long long>(
+            final_canonical_detection_buffer_metrics.evicted_pages),
+        final_canonical_detection_buffer_metrics.peak_cached_pages,
+        static_cast<unsigned long long>(
+            final_canonical_detection_buffer_metrics.peak_cached_bytes),
+        final_canonical_detection_buffer_metrics.peak_pending_pages,
+        static_cast<unsigned long long>(
+            final_canonical_detection_repository_metrics.range_reads),
+        static_cast<unsigned long long>(
+            final_canonical_detection_repository_metrics.resolved_frames),
+        static_cast<unsigned long long>(
+            final_canonical_detection_repository_metrics.resolved_rows),
+        static_cast<unsigned long long>(
+            final_canonical_detection_repository_metrics.ui_field_reads),
+        final_canonical_detection_repository_metrics
+            .peak_concurrent_ui_field_reads,
+        final_canonical_detection_buffer_metrics.maximum_resolve_ms,
+        final_canonical_detection_buffer_metrics.last_error.c_str());
+  }
 
   if (!subject_mask_descriptor.run_name.empty()) {
     std::printf(
         "[AppleSubjectMasks] presentations=%llu detections=%llu "
         "components=%llu requests=%llu cache_hits=%llu resolved=%llu "
         "missing=%llu failed=%llu discarded=%llu peak_cached=%zu "
-        "peak_pending=%zu max_resolve_ms=%.1f error=%s\n",
+        "peak_pending=%zu max_resolve_ms=%.1f demand_chunks=%llu "
+        "prefetched_chunks=%llu chunk_cache_hits=%llu prefetch_requests=%llu "
+        "chunk_evictions=%llu chunk_failures=%llu peak_chunks=%zu "
+        "max_chunk_ms=%.1f error=%s\n",
         static_cast<unsigned long long>(subject_mask_overlay_presentations),
         static_cast<unsigned long long>(subject_mask_overlay_detections),
         static_cast<unsigned long long>(subject_mask_overlay_components),
         static_cast<unsigned long long>(final_subject_mask_metrics.requests),
-        static_cast<unsigned long long>(
-            final_subject_mask_metrics.cache_hits),
+        static_cast<unsigned long long>(final_subject_mask_metrics.cache_hits),
         static_cast<unsigned long long>(
             final_subject_mask_metrics.resolved_frames),
         static_cast<unsigned long long>(
@@ -2830,7 +5766,131 @@ int main(int argc, char **argv) {
         final_subject_mask_metrics.peak_cached_frames,
         final_subject_mask_metrics.peak_pending_frames,
         final_subject_mask_metrics.maximum_resolve_ms,
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.demand_chunk_loads),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.prefetched_chunk_loads),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.chunk_cache_hits),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.prefetch_requests),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.chunk_evictions),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.chunk_load_failures),
+        final_subject_mask_repository_metrics.peak_cached_chunks,
+        final_subject_mask_repository_metrics.maximum_chunk_load_ms,
         final_subject_mask_metrics.last_error.c_str());
+    std::printf(
+        "[AppleDataAccess] source=subject_masks phase=summary "
+        "open_ms=%.1f lazy_mapping=%d catalog_ms=%.1f mapping_ms=%.1f "
+        "storage_ms=%.1f "
+        "contour_open_ms=%.1f index_ms=%.1f metadata_decoded_bytes=%llu "
+        "metadata_retained_bytes=%llu frame_index_ms=%.1f "
+        "frame_index_rows=%llu frame_index_source_bytes=%llu "
+        "frame_index_retained_bytes=%llu fallback_index_builds=%llu "
+        "fallback_index_rows=%llu mapping_page_reads=%llu "
+        "mapping_page_hits=%llu mapping_page_evictions=%llu "
+        "mapping_page_source_bytes=%llu cached_mapping_bytes=%llu "
+        "peak_mapping_bytes=%llu mapping_initialize_failures=%llu "
+        "source_bytes=%llu "
+        "retained_chunk_bytes=%llu cached_chunk_bytes=%llu "
+        "peak_chunk_bytes=%llu evicted_chunk_bytes=%llu "
+        "chunk_read_ms=%.1f chunk_convert_ms=%.1f contour_load_ms=%.1f "
+        "max_read_ms=%.1f max_convert_ms=%.1f max_contour_ms=%.1f "
+        "cached_frame_bytes=%llu peak_frame_bytes=%llu "
+        "released_frame_bytes=%llu\n",
+        final_subject_mask_repository_metrics.open_total_ms,
+        final_subject_mask_repository_metrics.lazy_mapping ? 1 : 0,
+        final_subject_mask_repository_metrics.catalog_ms,
+        final_subject_mask_repository_metrics.mapping_read_ms,
+        final_subject_mask_repository_metrics.storage_open_ms,
+        final_subject_mask_repository_metrics.contour_open_ms,
+        final_subject_mask_repository_metrics.metadata_index_ms,
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.metadata_decoded_bytes),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.metadata_retained_bytes),
+        final_subject_mask_repository_metrics.frame_index_initialize_ms,
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.frame_index_rows_read),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.frame_index_source_bytes),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.frame_index_retained_bytes),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.fallback_frame_index_builds),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.fallback_frame_index_rows),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.mapping_page_reads),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.mapping_page_cache_hits),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.mapping_page_evictions),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.mapping_page_source_bytes),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.cached_mapping_bytes),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.peak_cached_mapping_bytes),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.mapping_initialize_failures),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.chunk_source_bytes_read),
+        static_cast<unsigned long long>(final_subject_mask_repository_metrics
+                                            .chunk_retained_bytes_produced),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.cached_payload_bytes),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.peak_cached_payload_bytes),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.evicted_payload_bytes),
+        final_subject_mask_repository_metrics.chunk_read_ms,
+        final_subject_mask_repository_metrics.chunk_convert_ms,
+        final_subject_mask_repository_metrics.contour_load_ms,
+        final_subject_mask_repository_metrics.maximum_chunk_read_ms,
+        final_subject_mask_repository_metrics.maximum_chunk_convert_ms,
+        final_subject_mask_repository_metrics.maximum_contour_load_ms,
+        static_cast<unsigned long long>(
+            final_subject_mask_metrics.cached_payload_bytes),
+        static_cast<unsigned long long>(
+            final_subject_mask_metrics.peak_cached_payload_bytes),
+        static_cast<unsigned long long>(
+            final_subject_mask_metrics.released_payload_bytes));
+  }
+  if (!chaser_distance_polar_descriptor.provenance.run_name.empty()) {
+    std::printf(
+        "[AppleChaserPolar] presentations=%llu points=%llu requests=%llu "
+        "cache_hits=%llu ready=%llu empty=%llu missing=%llu failed=%llu "
+        "discarded=%llu source_points=%llu published_points=%llu "
+        "peak_cached=%zu peak_pending=%zu max_resolve_ms=%.1f "
+        "runtime_failed=%d error=%s\n",
+        static_cast<unsigned long long>(chaser_distance_polar_presentations),
+        static_cast<unsigned long long>(chaser_distance_polar_points),
+        static_cast<unsigned long long>(
+            final_chaser_distance_polar_metrics.requests),
+        static_cast<unsigned long long>(
+            final_chaser_distance_polar_metrics.cache_hits),
+        static_cast<unsigned long long>(
+            final_chaser_distance_polar_metrics.ready_frames),
+        static_cast<unsigned long long>(
+            final_chaser_distance_polar_metrics.empty_frames),
+        static_cast<unsigned long long>(
+            final_chaser_distance_polar_metrics.missing_frames),
+        static_cast<unsigned long long>(
+            final_chaser_distance_polar_metrics.failed_frames),
+        static_cast<unsigned long long>(
+            final_chaser_distance_polar_metrics.discarded_results),
+        static_cast<unsigned long long>(
+            final_chaser_distance_polar_metrics.source_points),
+        static_cast<unsigned long long>(
+            final_chaser_distance_polar_metrics.published_points),
+        final_chaser_distance_polar_metrics.peak_cached_frames,
+        final_chaser_distance_polar_metrics.peak_pending_frames,
+        final_chaser_distance_polar_metrics.maximum_resolve_ms,
+        chaser_distance_polar_failed ? 1 : 0,
+        final_chaser_distance_polar_metrics.last_error.c_str());
   }
   if (!subject_shape_descriptor.run_name.empty()) {
     std::printf(
@@ -2840,8 +5900,7 @@ int main(int argc, char **argv) {
         static_cast<unsigned long long>(subject_shape_overlay_presentations),
         static_cast<unsigned long long>(subject_shape_overlay_detections),
         static_cast<unsigned long long>(final_subject_shape_metrics.requests),
-        static_cast<unsigned long long>(
-            final_subject_shape_metrics.cache_hits),
+        static_cast<unsigned long long>(final_subject_shape_metrics.cache_hits),
         static_cast<unsigned long long>(
             final_subject_shape_metrics.resolved_frames),
         static_cast<unsigned long long>(
@@ -2870,7 +5929,8 @@ int main(int argc, char **argv) {
             final_eye_geometry_metrics.resolved_frames),
         static_cast<unsigned long long>(
             final_eye_geometry_metrics.missing_frames),
-        static_cast<unsigned long long>(final_eye_geometry_metrics.failed_frames),
+        static_cast<unsigned long long>(
+            final_eye_geometry_metrics.failed_frames),
         static_cast<unsigned long long>(
             final_eye_geometry_metrics.discarded_results),
         final_eye_geometry_metrics.peak_cached_frames,
@@ -2883,7 +5943,10 @@ int main(int argc, char **argv) {
         "[AppleMotionTimeline] presentations=%llu requests=%llu "
         "cache_hits=%llu resolved=%llu missing=%llu failed=%llu "
         "discarded=%llu rows_read=%llu points=%llu peak_cached=%zu "
-        "peak_pending=%zu max_resolve_ms=%.1f error=%s\n",
+        "peak_pending=%zu index_reads=%llu index_hits=%llu "
+        "index_evictions=%llu index_source_bytes=%llu "
+        "index_cached_bytes=%llu index_peak_bytes=%llu "
+        "max_index_read_ms=%.1f max_resolve_ms=%.1f error=%s\n",
         static_cast<unsigned long long>(motion_timeline_presentations),
         static_cast<unsigned long long>(final_motion_timeline_metrics.requests),
         static_cast<unsigned long long>(
@@ -2902,8 +5965,54 @@ int main(int argc, char **argv) {
             final_motion_timeline_metrics.published_points),
         final_motion_timeline_metrics.peak_cached_windows,
         final_motion_timeline_metrics.peak_pending_windows,
+        static_cast<unsigned long long>(
+            final_motion_timeline_metrics.frame_index_block_reads),
+        static_cast<unsigned long long>(
+            final_motion_timeline_metrics.frame_index_cache_hits),
+        static_cast<unsigned long long>(
+            final_motion_timeline_metrics.frame_index_cache_evictions),
+        static_cast<unsigned long long>(
+            final_motion_timeline_metrics.frame_index_source_bytes),
+        static_cast<unsigned long long>(
+            final_motion_timeline_metrics.cached_frame_index_bytes),
+        static_cast<unsigned long long>(
+            final_motion_timeline_metrics.peak_cached_frame_index_bytes),
+        final_motion_timeline_metrics.maximum_frame_index_read_ms,
         final_motion_timeline_metrics.maximum_resolve_ms,
         final_motion_timeline_metrics.last_error.c_str());
+  }
+  if (!swim_bout_timeline_descriptor.candidates.empty()) {
+    std::printf(
+        "[AppleSwimBoutTimeline] presentations=%llu requests=%llu "
+        "cache_hits=%llu resolved=%llu missing=%llu failed=%llu "
+        "discarded=%llu intervals_scanned=%llu detector_rows=%llu "
+        "intervals=%llu detector_points=%llu peak_cached=%zu "
+        "peak_pending=%zu max_resolve_ms=%.1f error=%s\n",
+        static_cast<unsigned long long>(swim_bout_timeline_presentations),
+        static_cast<unsigned long long>(
+            final_swim_bout_timeline_metrics.requests),
+        static_cast<unsigned long long>(
+            final_swim_bout_timeline_metrics.cache_hits),
+        static_cast<unsigned long long>(
+            final_swim_bout_timeline_metrics.resolved_windows),
+        static_cast<unsigned long long>(
+            final_swim_bout_timeline_metrics.missing_windows),
+        static_cast<unsigned long long>(
+            final_swim_bout_timeline_metrics.failed_windows),
+        static_cast<unsigned long long>(
+            final_swim_bout_timeline_metrics.discarded_results),
+        static_cast<unsigned long long>(
+            final_swim_bout_timeline_metrics.candidate_intervals_scanned),
+        static_cast<unsigned long long>(
+            final_swim_bout_timeline_metrics.source_detector_rows_read),
+        static_cast<unsigned long long>(
+            final_swim_bout_timeline_metrics.published_intervals),
+        static_cast<unsigned long long>(
+            final_swim_bout_timeline_metrics.published_detector_points),
+        final_swim_bout_timeline_metrics.peak_cached_windows,
+        final_swim_bout_timeline_metrics.peak_pending_windows,
+        final_swim_bout_timeline_metrics.maximum_resolve_ms,
+        final_swim_bout_timeline_metrics.last_error.c_str());
   }
   if (!eye_angle_timeline_descriptor.run_name.empty()) {
     std::printf(
@@ -2938,9 +6047,11 @@ int main(int argc, char **argv) {
         "[AppleTailKinematicsTimeline] presentations=%llu requests=%llu "
         "cache_hits=%llu resolved=%llu missing=%llu failed=%llu "
         "discarded=%llu rows_read=%llu points=%llu peak_cached=%zu "
-        "peak_pending=%zu max_resolve_ms=%.1f error=%s\n",
-        static_cast<unsigned long long>(
-            tail_kinematics_timeline_presentations),
+        "peak_pending=%zu index_reads=%llu index_hits=%llu "
+        "index_evictions=%llu index_source_bytes=%llu "
+        "index_cached_bytes=%llu index_peak_bytes=%llu "
+        "max_index_read_ms=%.1f max_resolve_ms=%.1f error=%s\n",
+        static_cast<unsigned long long>(tail_kinematics_timeline_presentations),
         static_cast<unsigned long long>(
             final_tail_kinematics_timeline_metrics.requests),
         static_cast<unsigned long long>(
@@ -2959,20 +6070,32 @@ int main(int argc, char **argv) {
             final_tail_kinematics_timeline_metrics.published_points),
         final_tail_kinematics_timeline_metrics.peak_cached_windows,
         final_tail_kinematics_timeline_metrics.peak_pending_windows,
+        static_cast<unsigned long long>(
+            final_tail_kinematics_timeline_metrics.frame_index_block_reads),
+        static_cast<unsigned long long>(
+            final_tail_kinematics_timeline_metrics.frame_index_cache_hits),
+        static_cast<unsigned long long>(
+            final_tail_kinematics_timeline_metrics.frame_index_cache_evictions),
+        static_cast<unsigned long long>(
+            final_tail_kinematics_timeline_metrics.frame_index_source_bytes),
+        static_cast<unsigned long long>(
+            final_tail_kinematics_timeline_metrics.cached_frame_index_bytes),
+        static_cast<unsigned long long>(final_tail_kinematics_timeline_metrics
+                                            .peak_cached_frame_index_bytes),
+        final_tail_kinematics_timeline_metrics.maximum_frame_index_read_ms,
         final_tail_kinematics_timeline_metrics.maximum_resolve_ms,
         final_tail_kinematics_timeline_metrics.last_error.c_str());
   }
   if (!stimulus_context_timeline_descriptor.run_name.empty()) {
-    std::printf(
-        "[AppleStimulusContextTimeline] presentations=%llu events=%zu "
-        "steps=%zu event_types=%zu camera_frames=%zu error=%s\n",
-        static_cast<unsigned long long>(
-            stimulus_context_timeline_presentations),
-        stimulus_context_timeline_descriptor.event_count,
-        stimulus_context_timeline_descriptor.step_count,
-        stimulus_context_timeline_descriptor.event_types.size(),
-        stimulus_context_timeline_descriptor.frame_count,
-        stimulus_context_timeline_error.c_str());
+    std::printf("[AppleStimulusContextTimeline] presentations=%llu events=%zu "
+                "steps=%zu event_types=%zu camera_frames=%zu error=%s\n",
+                static_cast<unsigned long long>(
+                    stimulus_context_timeline_presentations),
+                stimulus_context_timeline_descriptor.event_count,
+                stimulus_context_timeline_descriptor.step_count,
+                stimulus_context_timeline_descriptor.event_types.size(),
+                stimulus_context_timeline_descriptor.frame_count,
+                stimulus_context_timeline_error.c_str());
   }
 
   if (options->video_smoke) {
@@ -3008,6 +6131,14 @@ int main(int argc, char **argv) {
           final_motion_timeline_metrics.failed_windows != 0 ||
           final_motion_timeline_metrics.resolved_windows == 0 ||
           motion_timeline_presentations == 0));
+    const bool swim_bout_timeline_validation_failed =
+        (options->require_swim_bout_timeline &&
+         swim_bout_timeline_descriptor.candidates.empty()) ||
+        (!swim_bout_timeline_descriptor.candidates.empty() &&
+         (swim_bout_timeline_failed ||
+          final_swim_bout_timeline_metrics.failed_windows != 0 ||
+          final_swim_bout_timeline_metrics.resolved_windows == 0 ||
+          swim_bout_timeline_presentations == 0));
     const bool eye_angle_timeline_validation_failed =
         (options->require_eye_angle_timeline &&
          eye_angle_timeline_descriptor.run_name.empty()) ||
@@ -3045,6 +6176,10 @@ int main(int argc, char **argv) {
             ? (!motion_timeline_error.empty()
                    ? motion_timeline_error
                    : final_motion_timeline_metrics.last_error)
+        : swim_bout_timeline_validation_failed
+            ? (!swim_bout_timeline_error.empty()
+                   ? swim_bout_timeline_error
+                   : final_swim_bout_timeline_metrics.last_error)
         : eye_geometry_validation_failed
             ? (!eye_geometry_error.empty()
                    ? eye_geometry_error
@@ -3061,6 +6196,7 @@ int main(int argc, char **argv) {
     if (render_failed || subject_mask_validation_failed ||
         subject_shape_validation_failed || eye_geometry_validation_failed ||
         motion_timeline_validation_failed ||
+        swim_bout_timeline_validation_failed ||
         eye_angle_timeline_validation_failed ||
         tail_kinematics_timeline_validation_failed ||
         stimulus_context_timeline_validation_failed ||
@@ -3080,14 +6216,11 @@ int main(int argc, char **argv) {
           static_cast<long long>(viewer_stats.requested_frame),
           static_cast<long long>(viewer_stats.presented_frame),
           static_cast<unsigned long long>(final_video_metrics.decoded_frames),
-          final_video_metrics.peak_buffered_frames,
-          viewer_stats.max_lag_frames, maximum_accepted_lag_frames,
-          elapsed_seconds,
-          viewer_stats.process_memory_mib,
-          viewer_stats.peak_process_memory_mib,
+          final_video_metrics.peak_buffered_frames, viewer_stats.max_lag_frames,
+          maximum_accepted_lag_frames, elapsed_seconds,
+          viewer_stats.process_memory_mib, viewer_stats.peak_process_memory_mib,
           appleViewerThermalStateName(viewer_stats.thermal_state),
-          static_cast<unsigned long long>(
-              subject_mask_overlay_presentations),
+          static_cast<unsigned long long>(subject_mask_overlay_presentations),
           static_cast<unsigned long long>(
               final_subject_mask_metrics.resolved_frames),
           static_cast<unsigned long long>(
@@ -3099,7 +6232,8 @@ int main(int argc, char **argv) {
         "[AppleVideoSmoke] PASS start=%d end=%d requested=%lld "
         "presented=%lld decoded=%llu "
         "peak_buffer=%zu repeats=%llu "
-        "skipped_source_frames=%llu late_presentations=%llu max_lag_frames=%.1f "
+        "skipped_source_frames=%llu late_presentations=%llu "
+        "max_lag_frames=%.1f "
         "catchup_discarded_frames=%llu catchup_seeks=%llu "
         "pts_error_frames=%+.3f startup_ms=%.1f "
         "seek_ms=%.1f "
@@ -3119,12 +6253,10 @@ int main(int argc, char **argv) {
         static_cast<unsigned long long>(
             final_video_metrics.catchup_discarded_frames),
         static_cast<unsigned long long>(final_video_metrics.catchup_seeks),
-        viewer_stats.pts_error_frames,
-        final_video_metrics.startup_ms, final_video_metrics.last_seek_ms,
-        viewer_stats.max_next_drawable_ms,
+        viewer_stats.pts_error_frames, final_video_metrics.startup_ms,
+        final_video_metrics.last_seek_ms, viewer_stats.max_next_drawable_ms,
         viewer_stats.max_command_wait_ms, elapsed_seconds,
-        viewer_stats.process_memory_mib,
-        viewer_stats.peak_process_memory_mib,
+        viewer_stats.process_memory_mib, viewer_stats.peak_process_memory_mib,
         appleViewerThermalStateName(viewer_stats.thermal_state),
         static_cast<unsigned long long>(subject_mask_overlay_presentations),
         static_cast<unsigned long long>(
@@ -3144,9 +6276,8 @@ int main(int argc, char **argv) {
           final_stimulus_presentation.max_abs_camera_skew_frames != 0 ||
           final_stimulus_metrics.failed_requests != 0;
       const std::string &reported_stimulus_error =
-          stimulus_error.empty()
-              ? final_stimulus_metrics.decoder.last_error
-              : stimulus_error;
+          stimulus_error.empty() ? final_stimulus_metrics.decoder.last_error
+                                 : stimulus_error;
       if (stimulus_smoke_failed) {
         std::fprintf(
             stderr,
@@ -3233,8 +6364,7 @@ int main(int argc, char **argv) {
       const bool crop_smoke_failed =
           crop_failed || !crop_smoke_end_satisfied || !source_matches ||
           read_only_overlay_presentations == 0 ||
-          (keypoint_overlay_repository &&
-           keypoint_overlay_presentations == 0) ||
+          (keypoint_overlay_available && keypoint_overlay_presentations == 0) ||
           final_crop_presentation.presented_crop_camera_frame !=
               options->video_smoke_end ||
           final_crop_presentation.camera_skew_frames != 0 ||
@@ -3283,13 +6413,10 @@ int main(int argc, char **argv) {
             static_cast<long long>(final_crop_presentation.camera_skew_frames),
             static_cast<unsigned long long>(
                 final_crop_presentation.max_abs_camera_skew_frames),
-            static_cast<unsigned long long>(
-                read_only_overlay_presentations),
-            static_cast<unsigned long long>(
-                keypoint_overlay_presentations),
+            static_cast<unsigned long long>(read_only_overlay_presentations),
+            static_cast<unsigned long long>(keypoint_overlay_presentations),
             static_cast<unsigned long long>(keypoint_overlay_detections),
-            static_cast<unsigned long long>(
-                final_crop_metrics.failed_requests),
+            static_cast<unsigned long long>(final_crop_metrics.failed_requests),
             reported_crop_error.c_str());
         return 8;
       }
@@ -3323,8 +6450,7 @@ int main(int argc, char **argv) {
           static_cast<long long>(final_crop_presentation.camera_skew_frames),
           static_cast<unsigned long long>(
               final_crop_presentation.max_abs_camera_skew_frames),
-          static_cast<unsigned long long>(
-              read_only_overlay_presentations),
+          static_cast<unsigned long long>(read_only_overlay_presentations),
           static_cast<unsigned long long>(keypoint_overlay_presentations),
           static_cast<unsigned long long>(keypoint_overlay_detections));
     }
@@ -3336,8 +6462,10 @@ int main(int argc, char **argv) {
               : 0.0;
       const bool buffers_bounded =
           final_video_metrics.peak_buffered_frames <= final_video_capacity &&
-          final_stimulus_metrics.decoder.peak_buffered_frames <= 6 &&
-          final_crop_metrics.decoder.peak_buffered_frames <= 6;
+          final_stimulus_metrics.decoder.peak_buffered_frames <=
+              options->stimulus_buffer_capacity &&
+          final_crop_metrics.decoder.peak_buffered_frames <=
+              kAcquisitionCropBufferCapacity;
       const bool memory_metrics_available =
           smoke_start_memory_mib > 0.0 &&
           viewer_stats.peak_process_memory_mib >= smoke_start_memory_mib;
@@ -3353,7 +6481,7 @@ int main(int argc, char **argv) {
             stderr,
             "[AppleMultistreamSmoke] FAIL pause=%lld step=%lld backward=%lld "
             "forward=%lld end=%lld exact_settlements=%llu camera_peak=%zu/%zu "
-            "stimulus_peak=%zu/6 crop_peak=%zu/6 "
+            "stimulus_peak=%zu/%zu crop_peak=%zu/%zu "
             "memory_growth_mib=%.1f/%.1f memory_metrics=%s error=%s\n",
             static_cast<long long>(multistream_smoke.pause_frame),
             static_cast<long long>(multistream_smoke.step_frame),
@@ -3364,8 +6492,10 @@ int main(int argc, char **argv) {
                 multistream_smoke.exact_settlements),
             final_video_metrics.peak_buffered_frames, final_video_capacity,
             final_stimulus_metrics.decoder.peak_buffered_frames,
+            options->stimulus_buffer_capacity,
             final_crop_metrics.decoder.peak_buffered_frames,
-            memory_growth_mib, kMultistreamMemoryGrowthLimitMiB,
+            kAcquisitionCropBufferCapacity, memory_growth_mib,
+            kMultistreamMemoryGrowthLimitMiB,
             memory_metrics_available ? "available" : "unavailable",
             multistream_smoke.error.c_str());
         return 8;
@@ -3373,7 +6503,7 @@ int main(int argc, char **argv) {
       std::printf(
           "[AppleMultistreamSmoke] PASS pause=%lld step=%lld backward=%lld "
           "forward=%lld end=%lld exact_settlements=%llu camera_peak=%zu/%zu "
-          "stimulus_peak=%zu/6 crop_peak=%zu/6 memory_start_mib=%.1f "
+          "stimulus_peak=%zu/%zu crop_peak=%zu/%zu memory_start_mib=%.1f "
           "memory_end_mib=%.1f memory_peak_mib=%.1f "
           "memory_growth_mib=%.1f/%.1f elapsed_s=%.3f\n",
           static_cast<long long>(multistream_smoke.pause_frame),
@@ -3384,10 +6514,11 @@ int main(int argc, char **argv) {
           static_cast<unsigned long long>(multistream_smoke.exact_settlements),
           final_video_metrics.peak_buffered_frames, final_video_capacity,
           final_stimulus_metrics.decoder.peak_buffered_frames,
+          options->stimulus_buffer_capacity,
           final_crop_metrics.decoder.peak_buffered_frames,
-          smoke_start_memory_mib, viewer_stats.process_memory_mib,
-          viewer_stats.peak_process_memory_mib, memory_growth_mib,
-          kMultistreamMemoryGrowthLimitMiB, elapsed_seconds);
+          kAcquisitionCropBufferCapacity, smoke_start_memory_mib,
+          viewer_stats.process_memory_mib, viewer_stats.peak_process_memory_mib,
+          memory_growth_mib, kMultistreamMemoryGrowthLimitMiB, elapsed_seconds);
     }
   } else if (options->smoke) {
     if (render_failed || presented_frames < options->smoke_frames) {

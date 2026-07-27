@@ -1,0 +1,15 @@
+{
+  "schema": "crimson.phase5m.nonmutation-summary.v1",
+  "date": "2026-07-18",
+  "archive": "/groups/johnson/johnsonlab/jeremy/recordings/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop/zarr/2026-06-14T21-12-08Z_arena_1_GoodCopBadCop_analysis.zarr",
+  "subtree": "analysis/chaser_distance_runs",
+  "file_count_before": 10736,
+  "file_count_after": 10736,
+  "path_size_mtime_snapshot_sha256_before": "c08d19dd4031a49cd41572a7bae659e63cdafd3e8647953e9c6b77865bda296f",
+  "path_size_mtime_snapshot_sha256_after": "c08d19dd4031a49cd41572a7bae659e63cdafd3e8647953e9c6b77865bda296f",
+  "file_content_snapshot_sha256_before": "6f6af9d05b620ac3f4636934a38f28e592210bdf559b69b86cac809c710a40e1",
+  "file_content_snapshot_sha256_after": "6f6af9d05b620ac3f4636934a38f28e592210bdf559b69b86cac809c710a40e1",
+  "path_size_mtime_exact_match": true,
+  "file_content_sha256_exact_match": true,
+  "archive_unchanged": true
+}

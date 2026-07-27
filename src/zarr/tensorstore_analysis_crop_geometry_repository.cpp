@@ -1,8 +1,5 @@
 #include "zarr/tensorstore_analysis_crop_geometry_repository.h"
 
-#include "zarr/archive_context_internal.h"
-
-#include <nlohmann/json.hpp>
 #include <tensorstore/open.h>
 #include <tensorstore/tensorstore.h>
 
@@ -11,11 +8,14 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+#include "zarr/archive_context_internal.h"
 
 namespace crimson::zarr {
 namespace ts = tensorstore;
@@ -23,24 +23,90 @@ using json = nlohmann::json;
 
 namespace {
 
+bool ValidRunName(const std::string& run_name) {
+  return !run_name.empty() && run_name != "." && run_name != ".." &&
+         run_name.find('/') == std::string::npos;
+}
+
+std::string NormalizeRunName(std::string run_name, const std::string& group) {
+  const std::string prefix = group + "/";
+  if (run_name.rfind(prefix, 0) == 0) {
+    run_name.erase(0, prefix.size());
+  }
+  return ValidRunName(run_name) ? run_name : std::string{};
+}
+
+std::string LatestRun(const ArchiveContext::Impl& archive,
+                      const std::string& group) {
+  const auto attributes = internal::ReadArchiveAttributes(archive, group);
+  if (!attributes) {
+    return {};
+  }
+  constexpr std::array<const char*, 6> latest_keys = {
+      "latest",          "latest_completed",
+      "latest_complete", "latest_success",
+      "latest_any",      "refined_subject_mask_review_status_latest"};
+  for (const char* key : latest_keys) {
+    const auto found = attributes->find(key);
+    if (found != attributes->end() && found->is_string()) {
+      const std::string run_name =
+          NormalizeRunName(found->get<std::string>(), group);
+      if (!run_name.empty()) {
+        return run_name;
+      }
+    }
+  }
+  return {};
+}
+
+std::string CropRunFromLatestLineage(const ArchiveContext::Impl& archive,
+                                     const std::string& group) {
+  const std::string lineage_run = LatestRun(archive, group);
+  if (lineage_run.empty()) {
+    return {};
+  }
+  const auto attributes =
+      internal::ReadArchiveAttributes(archive, group + "/" + lineage_run);
+  if (!attributes) {
+    return {};
+  }
+  const auto source_crop_run = attributes->find("source_crop_run");
+  if (source_crop_run == attributes->end() || !source_crop_run->is_string()) {
+    return {};
+  }
+  return NormalizeRunName(source_crop_run->get<std::string>(), "crop_runs");
+}
+
+std::string DiscoverCropRun(const ArchiveContext::Impl& archive) {
+  std::string run_name = LatestRun(archive, "crop_runs");
+  if (!run_name.empty()) {
+    return run_name;
+  }
+
+  // Subject masks are the coordinate lineage shared by masks, subject shape,
+  // and eye geometry, so prefer them when independently selected products
+  // reference a different crop run.
+  constexpr std::array<const char*, 3> lineage_groups = {
+      "refined_subject_masks_runs", "refined_keypoints_runs", "keypoints_runs"};
+  for (const char* group : lineage_groups) {
+    run_name = CropRunFromLatestLineage(archive, group);
+    if (!run_name.empty()) {
+      return run_name;
+    }
+  }
+  return {};
+}
+
 template <typename Source>
 bool ReadIntegerArray(const ArchiveContext::Impl& archive,
-                      const std::string& path,
-                      std::vector<int64_t>* output) {
-  auto store_spec = archive.store.spec();
-  if (!store_spec.ok()) {
+                      const std::string& path, std::vector<int64_t>* output) {
+  const auto spec = internal::MakeReadOnlyArraySpec(archive, path);
+  if (!spec) {
     return false;
   }
-  auto kvstore_json = store_spec->ToJson();
-  if (!kvstore_json.ok()) {
-    return false;
-  }
-  json spec = { {"driver", "zarr3"},
-                {"kvstore", *kvstore_json},
-                {"path", path} };
   auto open_result =
-      ts::Open<Source, 1>(spec, ts::OpenMode::open,
-                          ts::ReadWriteMode::read, archive.context)
+      ts::Open<Source, 1>(*spec, ts::OpenMode::open, ts::ReadWriteMode::read,
+                          archive.context)
           .result();
   if (!open_result.ok()) {
     return false;
@@ -59,8 +125,7 @@ bool ReadIntegerArray(const ArchiveContext::Impl& archive,
 }
 
 bool ReadFrameIndices(const ArchiveContext::Impl& archive,
-                      const std::string& path,
-                      std::vector<int64_t>* output) {
+                      const std::string& path, std::vector<int64_t>* output) {
   return ReadIntegerArray<int64_t>(archive, path, output) ||
          ReadIntegerArray<uint64_t>(archive, path, output) ||
          ReadIntegerArray<int32_t>(archive, path, output) ||
@@ -72,24 +137,16 @@ bool ReadFrameIndices(const ArchiveContext::Impl& archive,
 }
 
 template <typename Source>
-bool ReadMatrix(const ArchiveContext::Impl& archive,
-                const std::string& path,
+bool ReadMatrix(const ArchiveContext::Impl& archive, const std::string& path,
                 size_t minimum_columns,
                 std::vector<std::vector<double>>* output) {
-  auto store_spec = archive.store.spec();
-  if (!store_spec.ok()) {
+  const auto spec = internal::MakeReadOnlyArraySpec(archive, path);
+  if (!spec) {
     return false;
   }
-  auto kvstore_json = store_spec->ToJson();
-  if (!kvstore_json.ok()) {
-    return false;
-  }
-  json spec = { {"driver", "zarr3"},
-                {"kvstore", *kvstore_json},
-                {"path", path} };
   auto open_result =
-      ts::Open<Source, 2>(spec, ts::OpenMode::open,
-                          ts::ReadWriteMode::read, archive.context)
+      ts::Open<Source, 2>(*spec, ts::OpenMode::open, ts::ReadWriteMode::read,
+                          archive.context)
           .result();
   if (!open_result.ok()) {
     return false;
@@ -113,8 +170,7 @@ bool ReadMatrix(const ArchiveContext::Impl& archive,
 }
 
 bool ReadNumericMatrix(const ArchiveContext::Impl& archive,
-                       const std::string& path,
-                       size_t minimum_columns,
+                       const std::string& path, size_t minimum_columns,
                        std::vector<std::vector<double>>* output) {
   return ReadMatrix<double>(archive, path, minimum_columns, output) ||
          ReadMatrix<float>(archive, path, minimum_columns, output) ||
@@ -123,14 +179,12 @@ bool ReadNumericMatrix(const ArchiveContext::Impl& archive,
 }
 
 bool ReadRoiSize(const ArchiveContext::Impl& archive,
-                 const std::string& run_base,
-                 int* output_width,
+                 const std::string& run_base, int* output_width,
                  int* output_height) {
   if (auto attributes = internal::ReadArchiveAttributes(archive, run_base)) {
     const auto found = attributes->find("roi_size");
-    if (found != attributes->end() && found->is_array() &&
-        found->size() >= 2 && (*found)[0].is_number() &&
-        (*found)[1].is_number()) {
+    if (found != attributes->end() && found->is_array() && found->size() >= 2 &&
+        (*found)[0].is_number() && (*found)[1].is_number()) {
       const double height = (*found)[0].get<double>();
       const double width = (*found)[1].get<double>();
       if (std::isfinite(width) && std::isfinite(height) && width >= 1.0 &&
@@ -143,20 +197,13 @@ bool ReadRoiSize(const ArchiveContext::Impl& archive,
     }
   }
 
-  auto store_spec = archive.store.spec();
-  if (!store_spec.ok()) {
+  const auto spec =
+      internal::MakeReadOnlyArraySpec(archive, run_base + "/roi_images");
+  if (!spec) {
     return false;
   }
-  auto kvstore_json = store_spec->ToJson();
-  if (!kvstore_json.ok()) {
-    return false;
-  }
-  json spec = {{"driver", "zarr3"},
-               {"kvstore", *kvstore_json},
-               {"path", run_base + "/roi_images"}};
-  auto rank3 = ts::Open<uint8_t, 3>(
-                   spec, ts::OpenMode::open, ts::ReadWriteMode::read,
-                   archive.context)
+  auto rank3 = ts::Open<uint8_t, 3>(*spec, ts::OpenMode::open,
+                                    ts::ReadWriteMode::read, archive.context)
                    .result();
   if (rank3.ok()) {
     const auto shape = rank3->domain().shape();
@@ -168,9 +215,8 @@ bool ReadRoiSize(const ArchiveContext::Impl& archive,
       return true;
     }
   }
-  auto rank4 = ts::Open<uint8_t, 4>(
-                   spec, ts::OpenMode::open, ts::ReadWriteMode::read,
-                   archive.context)
+  auto rank4 = ts::Open<uint8_t, 4>(*spec, ts::OpenMode::open,
+                                    ts::ReadWriteMode::read, archive.context)
                    .result();
   if (rank4.ok()) {
     const auto shape = rank4->domain().shape();
@@ -190,40 +236,29 @@ bool ReadRoiSize(const ArchiveContext::Impl& archive,
 std::unique_ptr<AnalysisCropGeometryRepository>
 OpenAnalysisCropGeometryRepository(
     const std::shared_ptr<ArchiveContext>& archive,
-    const std::string& requested_run,
-    std::string* error_message) {
+    const std::string& requested_run, std::string* error_message) {
   if (!archive || !archive->impl_) {
     internal::SetArchiveError(error_message, "Archive context is not open");
     return nullptr;
   }
   const auto& impl = *archive->impl_;
 
-  std::string run_name = requested_run;
-  if (run_name.empty()) {
-    auto attributes = internal::ReadArchiveAttributes(impl, "crop_runs");
-    if (attributes) {
-      constexpr std::array<const char*, 5> latest_keys = {
-          "latest", "latest_completed", "latest_complete", "latest_success",
-          "latest_any"};
-      for (const char* key : latest_keys) {
-        const auto found = attributes->find(key);
-        if (found != attributes->end() && found->is_string() &&
-            !found->get_ref<const std::string&>().empty()) {
-          run_name = found->get<std::string>();
-          break;
-        }
-      }
+  std::string run_name;
+  if (!requested_run.empty()) {
+    run_name = NormalizeRunName(requested_run, "crop_runs");
+    if (run_name.empty()) {
+      internal::SetArchiveError(error_message,
+                                "Requested crop run name is invalid");
+      return nullptr;
     }
+  } else {
+    run_name = DiscoverCropRun(impl);
   }
-  if (run_name.rfind("crop_runs/", 0) == 0) {
-    run_name.erase(0, std::string("crop_runs/").size());
-  }
-  if (run_name.empty() || run_name.find('/') != std::string::npos ||
-      run_name == "." || run_name == "..") {
+  if (run_name.empty()) {
     internal::SetArchiveError(
         error_message,
-        "No valid crop run was requested and crop_runs has no supported "
-        "latest run pointer");
+        "No valid crop run was requested, selected by crop_runs, or "
+        "referenced by the maintained mask/keypoint lineage");
     return nullptr;
   }
 
@@ -237,7 +272,8 @@ OpenAnalysisCropGeometryRepository(
     return nullptr;
   }
   if (!ReadNumericMatrix(impl, run_base + "/roi_coordinates_full", 2,
-                         &offsets) || offsets.size() != frame_indices.size()) {
+                         &offsets) ||
+      offsets.size() != frame_indices.size()) {
     internal::SetArchiveError(
         error_message,
         "Crop run roi_coordinates_full does not match frame_indices");

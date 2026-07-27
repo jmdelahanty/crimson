@@ -65,17 +65,13 @@ std::vector<size_t> decimatedIndices(const std::vector<int64_t> &frames,
   return selected;
 }
 
-const AnalysisSeriesTimelineTrace *
-mappingTrace(const AnalysisSeriesTimelineWindow &window) {
-  const auto found = std::find_if(
-      window.traces.begin(), window.traces.end(), [](const auto &trace) {
-        return trace.frames.size() >= 2 &&
-               trace.frames.size() == trace.times_seconds.size() &&
-               std::is_sorted(trace.frames.begin(), trace.frames.end()) &&
-               std::is_sorted(trace.times_seconds.begin(),
-                              trace.times_seconds.end());
-      });
-  return found == window.traces.end() ? nullptr : &*found;
+bool hasCanonicalMapping(const AnalysisSeriesTimelineWindow &window) {
+  return window.mapping_frames.size() >= 2 &&
+         window.mapping_frames.size() == window.mapping_times_seconds.size() &&
+         std::is_sorted(window.mapping_frames.begin(),
+                        window.mapping_frames.end()) &&
+         std::is_sorted(window.mapping_times_seconds.begin(),
+                        window.mapping_times_seconds.end());
 }
 
 class VectorRepository final : public AnalysisSeriesTimelineRepository {
@@ -212,6 +208,8 @@ AnalysisSeriesTimelineWindow buildAnalysisSeriesTimelineWindow(
             : static_cast<double>(selected_frames[offset]) /
                   request.fallback_frames_per_second;
   }
+  window.mapping_frames = selected_frames;
+  window.mapping_times_seconds = selected_times;
 
   std::unordered_map<std::string, const std::vector<double> *> mapped_fields;
   for (const auto &field : fields) {
@@ -257,64 +255,67 @@ double
 analysisSeriesTimelineTimeForFrame(const AnalysisSeriesTimelineWindow &window,
                                    int64_t frame,
                                    double fallback_frames_per_second) {
-  const auto *trace = mappingTrace(window);
-  if (trace == nullptr) {
+  if (!hasCanonicalMapping(window)) {
     return fallback_frames_per_second > 0.0
                ? static_cast<double>(frame) / fallback_frames_per_second
                : 0.0;
   }
-  const auto upper =
-      std::lower_bound(trace->frames.begin(), trace->frames.end(), frame);
-  if (upper == trace->frames.begin()) {
-    return trace->times_seconds.front();
+  const auto upper = std::lower_bound(window.mapping_frames.begin(),
+                                      window.mapping_frames.end(), frame);
+  if (upper == window.mapping_frames.begin()) {
+    return window.mapping_times_seconds.front();
   }
-  if (upper == trace->frames.end()) {
-    return trace->times_seconds.back();
+  if (upper == window.mapping_frames.end()) {
+    return window.mapping_times_seconds.back();
   }
-  const size_t right = static_cast<size_t>(upper - trace->frames.begin());
-  if (trace->frames[right] == frame) {
-    return trace->times_seconds[right];
+  const size_t right =
+      static_cast<size_t>(upper - window.mapping_frames.begin());
+  if (window.mapping_frames[right] == frame) {
+    return window.mapping_times_seconds[right];
   }
   const size_t left = right - 1;
   const double fraction =
-      static_cast<double>(frame - trace->frames[left]) /
-      static_cast<double>(trace->frames[right] - trace->frames[left]);
-  return trace->times_seconds[left] +
-         fraction * (trace->times_seconds[right] - trace->times_seconds[left]);
+      static_cast<double>(frame - window.mapping_frames[left]) /
+      static_cast<double>(window.mapping_frames[right] -
+                          window.mapping_frames[left]);
+  return window.mapping_times_seconds[left] +
+         fraction * (window.mapping_times_seconds[right] -
+                     window.mapping_times_seconds[left]);
 }
 
 int64_t
 analysisSeriesTimelineNearestFrame(const AnalysisSeriesTimelineWindow &window,
                                    double time_seconds,
                                    double fallback_frames_per_second) {
-  const auto *trace = mappingTrace(window);
-  if (trace == nullptr) {
+  if (!hasCanonicalMapping(window)) {
     return fallback_frames_per_second > 0.0 && std::isfinite(time_seconds)
                ? static_cast<int64_t>(
                      std::llround(time_seconds * fallback_frames_per_second))
                : -1;
   }
-  const auto upper = std::lower_bound(trace->times_seconds.begin(),
-                                      trace->times_seconds.end(), time_seconds);
-  if (upper == trace->times_seconds.begin()) {
-    return trace->frames.front();
+  const auto upper =
+      std::lower_bound(window.mapping_times_seconds.begin(),
+                       window.mapping_times_seconds.end(), time_seconds);
+  if (upper == window.mapping_times_seconds.begin()) {
+    return window.mapping_frames.front();
   }
-  if (upper == trace->times_seconds.end()) {
-    return trace->frames.back();
+  if (upper == window.mapping_times_seconds.end()) {
+    return window.mapping_frames.back();
   }
   const size_t right =
-      static_cast<size_t>(upper - trace->times_seconds.begin());
+      static_cast<size_t>(upper - window.mapping_times_seconds.begin());
   const size_t left = right - 1;
-  const double span = trace->times_seconds[right] - trace->times_seconds[left];
+  const double span =
+      window.mapping_times_seconds[right] - window.mapping_times_seconds[left];
   if (!std::isfinite(span) || span <= 0.0) {
-    return trace->frames[left];
+    return window.mapping_frames[left];
   }
-  const double fraction =
-      std::clamp((time_seconds - trace->times_seconds[left]) / span, 0.0, 1.0);
-  return static_cast<int64_t>(
-      std::llround(static_cast<double>(trace->frames[left]) +
-                   fraction * static_cast<double>(trace->frames[right] -
-                                                  trace->frames[left])));
+  const double fraction = std::clamp(
+      (time_seconds - window.mapping_times_seconds[left]) / span, 0.0, 1.0);
+  return static_cast<int64_t>(std::llround(
+      static_cast<double>(window.mapping_frames[left]) +
+      fraction * static_cast<double>(window.mapping_frames[right] -
+                                     window.mapping_frames[left])));
 }
 
 std::unique_ptr<AnalysisSeriesTimelineRepository>
