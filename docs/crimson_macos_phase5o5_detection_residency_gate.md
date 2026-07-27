@@ -4,7 +4,47 @@ Date: 2026-07-26
 
 Contract version: 1
 
-Status: frozen; implementation and measurement pending
+Status: complete; isolated and full-archive gates passed
+
+## Result
+
+The byte-budgeted residency strategy passed both frozen checkpoints on
+2026-07-26. This authorizes a separately reviewed production policy; it does
+not enable residency automatically and does not promote a Palette physical
+storage profile.
+
+The 20-process isolated comparison passed every correctness, latency, I/O,
+memory, cancellation, and playback gate. Evidence is in:
+
+```text
+docs/diagnostics/canonical_detection_residency_strategy_2026-07-26/
+```
+
+The ten-process hybrid full-archive interference comparison also passed. Its
+five paged and five resident processes used balanced order with uncontrolled
+OS, SMB, and server caches. Evidence is in:
+
+```text
+docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/
+```
+
+Median required-product readiness was 71.00 seconds paged and 69.35 seconds
+resident. No maintained product regressed by 10%, median resident peak RSS was
+81.3 MiB lower rather than higher, and both modes had zero post-warmup playback
+deadline misses. Resident construction took 12.35 seconds median while the
+other repositories initialized.
+
+Median current-frame request-to-publication latency during construction was
+514.1 ms paged and 561.7 ms resident: a 9.25% and 47.6 ms regression, within
+the pre-execution 10% and 250 ms noise limits. Resident samples nevertheless
+included a 2.99-second maximum. Production review must therefore keep paging
+available throughout construction and must not treat an active TensorStore
+read as preemptible.
+
+The fixture run is a canonical `detect_runs` surface declaring `stage: detect`.
+These results validate canonical detection storage and access, not the separate
+production selection rule that should prefer explicitly selected refined or
+corrected detections when available.
 
 ## Decision
 
@@ -28,8 +68,8 @@ The resident hot set contains exactly:
 
 The already retained `int64 frame_row_offsets` index is shared with both access
 strategies and is not copied into the resident snapshot. For the current
-fixture, UI columns occupy 28,489,392 decoded bytes and offsets occupy 9,504,008
-bytes, for 37,993,400 bytes total.
+fixture, UI columns occupy 28,490,088 decoded bytes and offsets occupy 9,504,008
+bytes, for 37,994,096 bytes total.
 
 The resident transition is:
 

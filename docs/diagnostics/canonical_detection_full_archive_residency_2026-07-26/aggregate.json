@@ -1,0 +1,1425 @@
+{
+  "schema_id": "crimson.canonical_detection_full_archive_residency_gate",
+  "schema_version": 1,
+  "classification": "full_duration_residency_interference",
+  "created_unix_seconds": 1785114255.815306,
+  "wall_elapsed_seconds": 1057.655123949051,
+  "fixture_root": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1",
+  "fixture_evidence": {
+    "regular_manifest.json": {
+      "path": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/regular_manifest.json",
+      "sha256": "d84f2c982ec8983a5b437c2d539fe4a3966bcb36866f28fb9daa6c1724fef9f1"
+    },
+    "hybrid_manifest.json": {
+      "path": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid_manifest.json",
+      "sha256": "51e4dd1ad35c3eb6481a15604e537dd756f7c4b29534f0081e5501a3c26bae74"
+    },
+    "pair_manifest.json": {
+      "path": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/pair_manifest.json",
+      "sha256": "25e49003d63f74e5c7f1aa940aa77acee8df0153476847afeb99b98238574432"
+    },
+    "publication_receipt.json": {
+      "path": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/publication_receipt.json",
+      "sha256": "22763ffce084446cfa797b567ebd7bb66d682e7e1f1f031e7af781c575fdcd1d"
+    }
+  },
+  "detection_run": "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+  "video": "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+  "binary": "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+  "balanced_order": [
+    {
+      "position": 0,
+      "repetition": 0,
+      "strategy": "paged"
+    },
+    {
+      "position": 1,
+      "repetition": 0,
+      "strategy": "resident"
+    },
+    {
+      "position": 2,
+      "repetition": 1,
+      "strategy": "resident"
+    },
+    {
+      "position": 3,
+      "repetition": 1,
+      "strategy": "paged"
+    },
+    {
+      "position": 4,
+      "repetition": 2,
+      "strategy": "paged"
+    },
+    {
+      "position": 5,
+      "repetition": 2,
+      "strategy": "resident"
+    },
+    {
+      "position": 6,
+      "repetition": 3,
+      "strategy": "resident"
+    },
+    {
+      "position": 7,
+      "repetition": 3,
+      "strategy": "paged"
+    },
+    {
+      "position": 8,
+      "repetition": 4,
+      "strategy": "paged"
+    },
+    {
+      "position": 9,
+      "repetition": 4,
+      "strategy": "resident"
+    }
+  ],
+  "cache_policy": {
+    "tensorstore_cache_bytes": 67108864,
+    "resident_budget_bytes": 67108864,
+    "resident_chunk_decoded_bytes": 524288,
+    "speculative_workers": 1,
+    "scheduler_workers": 4,
+    "page_frames": 70
+  },
+  "queue_regression_interpretation": "A 10% and 250 ms paired-median tolerance distinguishes material regression from process-first mount noise; both limits must pass.",
+  "environment": {
+    "crimson_commit": "34ff3c38229450b4e6bbe9b16fed99e9ca966197",
+    "crimson_worktree": "M .gitignore\n M CMakeLists.txt\n M CMakePresets.json\n M README.md\n M build_opencv_crimson.sh\n M cmake/CrimsonTensorStore.cmake\n M docs/crimson_app_architecture_refactor_todo.md\n M docs/crimson_gui_smoke_testing_todo.md\n M docs/crimson_macos_port_codex_goal.md\n M docs/crimson_subject_mask_editable_dense_storage_decision_2026-07-08.md\n M scripts/README.md\n M src/analysis_series_timeline.cpp\n M src/analysis_series_timeline.h\n M src/analysis_series_timeline_buffer.cpp\n M src/analysis_series_timeline_buffer.h\n M src/eye_angle_timeline.h\n M src/gui/camera_view_frame_context_builder.cpp\n M src/gui/camera_view_frame_context_builder.h\n M src/gui/camera_view_mask_overlay.cpp\n M src/gui/camera_view_overlay_renderer.h\n M src/gui/camera_view_presenter.cpp\n M src/gui/camera_view_stimulus_overlay.cpp\n M src/gui/camera_view_window.cpp\n M src/gui/camera_view_window.h\n M src/gui/frame_debug_status_panel.cpp\n M src/gui/frame_debug_window.h\n M src/gui/overlay_debug_panel.cpp\n M src/media_session_loader.cpp\n M src/media_session_loader.h\n M src/platform/macos/apple_overlay_metal_renderer.h\n M src/platform/macos/apple_overlay_metal_renderer.mm\n M src/platform/macos/apple_stimulus_playback_session.cpp\n M src/platform/macos/apple_stimulus_playback_session.h\n M src/platform/macos/apple_video_metal_renderer.h\n M src/platform/macos/apple_video_metal_renderer.mm\n M src/platform/macos/apple_video_playback_buffer.cpp\n M src/platform/macos/apple_video_playback_buffer.h\n M src/platform/macos/apple_video_viewer_ui.h\n M src/platform/macos/apple_video_viewer_ui.mm\n M src/platform/macos/crimson_macos_main.mm\n M src/playback_clock.cpp\n M src/playback_clock.h\n M src/playback_session_controller.cpp\n M src/playback_session_controller.h\n M src/red.cpp\n M src/subject_mask_overlay_buffer.cpp\n M src/subject_mask_overlay_buffer.h\n M src/zarr/archive_context.h\n M src/zarr/archive_context_internal.h\n M src/zarr/keypoint_overlay_repository.h\n M src/zarr/subject_mask_overlay_repository.h\n M src/zarr/tensorstore_analysis_crop_geometry_repository.cpp\n M src/zarr/tensorstore_analysis_series_timeline_repository.cpp\n M src/zarr/tensorstore_analysis_series_timeline_repository.h\n M src/zarr/tensorstore_archive_context.cpp\n M src/zarr/tensorstore_eye_angle_timeline_repository.cpp\n M src/zarr/tensorstore_eye_angle_timeline_repository.h\n M src/zarr/tensorstore_eye_geometry_overlay_repository.cpp\n M src/zarr/tensorstore_keypoint_overlay_repository.cpp\n M src/zarr/tensorstore_keypoint_overlay_repository.h\n M src/zarr/tensorstore_stimulus_context_timeline_repository.cpp\n M src/zarr/tensorstore_stimulus_repository.cpp\n M src/zarr/tensorstore_stimulus_repository.h\n M src/zarr/tensorstore_subject_mask_overlay_repository.cpp\n M src/zarr/tensorstore_subject_shape_overlay_repository.cpp\n M src/zarr_loader.h\n M src/zarr_loader_stimulus.cpp\n M tools/analysis_crop_geometry_repository_tests.cpp\n M tools/analysis_series_timeline_repository_tests.cpp\n M tools/analysis_series_timeline_tests.cpp\n M tools/apple_read_only_overlay_metal_tests.mm\n M tools/apple_stimulus_playback_tests.mm\n M tools/apple_video_metal_tests.mm\n M tools/build_opencv_ffmpeg_nvidia_linux.sh\n M tools/eye_angle_timeline_repository_tests.cpp\n M tools/eye_angle_timeline_tests.cpp\n M tools/frame_slot_tests.cpp\n M tools/keypoint_overlay_repository_probe.cpp\n M tools/keypoint_overlay_repository_tests.cpp\n M tools/subject_mask_overlay_repository_probe.cpp\n M tools/subject_mask_overlay_repository_tests.cpp",
+    "platform": "macOS-26.3.1-arm64-arm-64bit",
+    "machine": "arm64",
+    "macos": "ProductName:\t\tmacOS\nProductVersion:\t\t26.3.1\nBuildVersion:\t\t25D2128",
+    "mount": "/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)\ndevfs on /dev (devfs, local, nobrowse)\n/dev/disk3s6 on /System/Volumes/VM (apfs, local, noexec, journaled, noatime, nobrowse)\n/dev/disk3s2 on /System/Volumes/Preboot (apfs, local, journaled, nobrowse)\n/dev/disk3s4 on /System/Volumes/Update (apfs, local, journaled, nobrowse)\n/dev/disk1s2 on /System/Volumes/xarts (apfs, local, noexec, journaled, noatime, nobrowse)\n/dev/disk1s1 on /System/Volumes/iSCPreboot (apfs, local, journaled, nobrowse)\n/dev/disk1s3 on /System/Volumes/Hardware (apfs, local, journaled, nobrowse)\n/dev/disk3s5 on /System/Volumes/Data (apfs, local, journaled, nobrowse, protect, root data)\nmap auto_home on /System/Volumes/Data/home (autofs, automounted, nobrowse)\n/dev/disk2s1 on /System/Volumes/Update/SFR/mnt1 (apfs, local, journaled, nobrowse)\n//delahantyj@prfs.hhmi.org/johnsonlab on /Volumes/johnsonlab (smbfs, nodev, nosuid, mounted by jmdelahanty)\n/dev/disk3s1 on /System/Volumes/Update/mnt1 (apfs, sealed, local, journaled, nobrowse)",
+    "network": "No network information",
+    "vpn": "Available network connection services in the current set (*=enabled):",
+    "cache_condition": "process-first, OS/filesystem/server cache uncontrolled"
+  },
+  "limits": {
+    "ready_regression_ratio": 1.1,
+    "ready_regression_ms": 5000.0,
+    "peak_rss_regression_bytes": 67108864,
+    "product_regression_ratio": 1.1,
+    "first_page_regression_ratio": 1.1,
+    "first_page_regression_ms": 250.0,
+    "current_frame_regression_ratio": 1.1,
+    "current_frame_regression_ms": 250.0,
+    "post_warmup_deadline_miss_rate": 0.01,
+    "shutdown_ms": 2000.0
+  },
+  "trials": [
+    {
+      "position": 0,
+      "repetition": 0,
+      "layout": "hybrid",
+      "strategy": "paged",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "hybrid",
+        "0",
+        "paged",
+        "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/00_repetition_0_hybrid_paged.json"
+      ],
+      "result_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/00_repetition_0_hybrid_paged.json",
+      "stdout_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/00_repetition_0_hybrid_paged.stdout.log",
+      "stderr_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/00_repetition_0_hybrid_paged.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 106086.20604127645,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "required_products_ready_ms": 70980.566875,
+        "loading_elapsed_ms": 70967.005708,
+        "first_page_request_to_publish_ms": 55883.528459,
+        "first_page_inferred_queue_wait_ms": 45688.521584,
+        "current_frame_request_to_publish_ms": 1108.5491669999974,
+        "current_frame_inferred_queue_wait_ms": 1108.5491669999974,
+        "product_elapsed_ms": {
+          "canonical_detection": 563.094542,
+          "keypoints": 46251.341584,
+          "subject_masks": 57072.401167,
+          "subject_shape": 62003.242417,
+          "eye_geometry": 61463.211875,
+          "motion": 6181.808,
+          "eye_angles": 6592.139833,
+          "tail_kinematics": 1742.448417,
+          "crop_geometry": 3277.933667
+        },
+        "peak_rss_bytes": 1950973952,
+        "loading_peak_rss_bytes": 1756807168,
+        "total_file_bytes": 577660560,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "failed_pages": 0,
+        "stale_page_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0,
+        "shutdown_ms": 12.316708,
+        "residency_state": "disabled",
+        "residency_publications": 0,
+        "residency_stale_chunks": 0,
+        "residency_failed_chunks": 0,
+        "resident_retained_bytes": 0,
+        "resident_elapsed_ms": 0.0,
+        "resident_ready_elapsed_ms": null
+      }
+    },
+    {
+      "position": 1,
+      "repetition": 0,
+      "layout": "hybrid",
+      "strategy": "resident",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "hybrid",
+        "0",
+        "resident",
+        "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/01_repetition_0_hybrid_resident.json"
+      ],
+      "result_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/01_repetition_0_hybrid_resident.json",
+      "stdout_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/01_repetition_0_hybrid_resident.stdout.log",
+      "stderr_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/01_repetition_0_hybrid_resident.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 105253.85895790532,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "required_products_ready_ms": 70971.986708,
+        "loading_elapsed_ms": 70947.178542,
+        "first_page_request_to_publish_ms": 56851.076292,
+        "first_page_inferred_queue_wait_ms": 55863.166501,
+        "current_frame_request_to_publish_ms": 2990.9703750000044,
+        "current_frame_inferred_queue_wait_ms": 2990.9703750000044,
+        "product_elapsed_ms": {
+          "canonical_detection": 972.030666,
+          "keypoints": 57129.972,
+          "subject_masks": 56834.937917,
+          "subject_shape": 62039.914375,
+          "eye_geometry": 61134.144542,
+          "motion": 5343.147666,
+          "eye_angles": 6918.201791,
+          "tail_kinematics": 1555.466542,
+          "crop_geometry": 2928.973667
+        },
+        "peak_rss_bytes": 1919418368,
+        "loading_peak_rss_bytes": 1752449024,
+        "total_file_bytes": 581333407,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "failed_pages": 0,
+        "stale_page_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0,
+        "shutdown_ms": 14.196584,
+        "residency_state": "ready",
+        "residency_publications": 1,
+        "residency_stale_chunks": 0,
+        "residency_failed_chunks": 0,
+        "resident_retained_bytes": 28490088,
+        "resident_elapsed_ms": 11966.113792,
+        "resident_ready_elapsed_ms": 69818.81175
+      }
+    },
+    {
+      "position": 2,
+      "repetition": 1,
+      "layout": "hybrid",
+      "strategy": "resident",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "hybrid",
+        "1",
+        "resident",
+        "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/02_repetition_1_hybrid_resident.json"
+      ],
+      "result_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/02_repetition_1_hybrid_resident.json",
+      "stdout_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/02_repetition_1_hybrid_resident.stdout.log",
+      "stderr_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/02_repetition_1_hybrid_resident.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 106948.88262543827,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "required_products_ready_ms": 69346.371084,
+        "loading_elapsed_ms": 69315.284958,
+        "first_page_request_to_publish_ms": 55274.722083,
+        "first_page_inferred_queue_wait_ms": 54796.441374,
+        "current_frame_request_to_publish_ms": 1139.7567500000005,
+        "current_frame_inferred_queue_wait_ms": 1081.9867070000005,
+        "product_elapsed_ms": {
+          "canonical_detection": 674.87925,
+          "keypoints": 55529.139,
+          "subject_masks": 56612.41225,
+          "subject_shape": 61343.788375,
+          "eye_geometry": 60719.987958,
+          "motion": 5678.594875,
+          "eye_angles": 6270.042583,
+          "tail_kinematics": 1415.842333,
+          "crop_geometry": 3093.899959
+        },
+        "peak_rss_bytes": 1597440000,
+        "loading_peak_rss_bytes": 1554956288,
+        "total_file_bytes": 581341273,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "failed_pages": 0,
+        "stale_page_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0,
+        "shutdown_ms": 23.555791,
+        "residency_state": "ready",
+        "residency_publications": 1,
+        "residency_stale_chunks": 0,
+        "residency_failed_chunks": 0,
+        "resident_retained_bytes": 28490088,
+        "resident_elapsed_ms": 12427.442666,
+        "resident_ready_elapsed_ms": 68409.898875
+      }
+    },
+    {
+      "position": 3,
+      "repetition": 1,
+      "layout": "hybrid",
+      "strategy": "paged",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "hybrid",
+        "1",
+        "paged",
+        "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/03_repetition_1_hybrid_paged.json"
+      ],
+      "result_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/03_repetition_1_hybrid_paged.json",
+      "stdout_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/03_repetition_1_hybrid_paged.stdout.log",
+      "stderr_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/03_repetition_1_hybrid_paged.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 105094.82308430597,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "required_products_ready_ms": 69398.402625,
+        "loading_elapsed_ms": 69374.883709,
+        "first_page_request_to_publish_ms": 54946.549125,
+        "first_page_inferred_queue_wait_ms": 54491.122833,
+        "current_frame_request_to_publish_ms": 514.094207999995,
+        "current_frame_inferred_queue_wait_ms": 514.094207999995,
+        "product_elapsed_ms": {
+          "canonical_detection": 1165.49875,
+          "keypoints": 55656.821833,
+          "subject_masks": 56565.163417,
+          "subject_shape": 60920.363,
+          "eye_geometry": 59935.35025,
+          "motion": 5173.278709,
+          "eye_angles": 6585.33475,
+          "tail_kinematics": 1503.648625,
+          "crop_geometry": 3191.619375
+        },
+        "peak_rss_bytes": 1866383360,
+        "loading_peak_rss_bytes": 1710161920,
+        "total_file_bytes": 577789338,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "failed_pages": 0,
+        "stale_page_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0,
+        "shutdown_ms": 0.821208,
+        "residency_state": "disabled",
+        "residency_publications": 0,
+        "residency_stale_chunks": 0,
+        "residency_failed_chunks": 0,
+        "resident_retained_bytes": 0,
+        "resident_elapsed_ms": 0.0,
+        "resident_ready_elapsed_ms": null
+      }
+    },
+    {
+      "position": 4,
+      "repetition": 2,
+      "layout": "hybrid",
+      "strategy": "paged",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "hybrid",
+        "2",
+        "paged",
+        "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/04_repetition_2_hybrid_paged.json"
+      ],
+      "result_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/04_repetition_2_hybrid_paged.json",
+      "stdout_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/04_repetition_2_hybrid_paged.stdout.log",
+      "stderr_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/04_repetition_2_hybrid_paged.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 109238.63258305937,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "required_products_ready_ms": 73671.370042,
+        "loading_elapsed_ms": 73555.052166,
+        "first_page_request_to_publish_ms": 58471.804708,
+        "first_page_inferred_queue_wait_ms": 58240.327875,
+        "current_frame_request_to_publish_ms": 484.1236659999995,
+        "current_frame_inferred_queue_wait_ms": 484.1236659999995,
+        "product_elapsed_ms": {
+          "canonical_detection": 566.718208,
+          "keypoints": 58807.177625,
+          "subject_masks": 59498.332791,
+          "subject_shape": 63621.522541,
+          "eye_geometry": 63547.1325,
+          "motion": 5699.075459,
+          "eye_angles": 7442.946167,
+          "tail_kinematics": 1373.863125,
+          "crop_geometry": 2819.263334
+        },
+        "peak_rss_bytes": 1809514496,
+        "loading_peak_rss_bytes": 1481654272,
+        "total_file_bytes": 577664482,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "failed_pages": 0,
+        "stale_page_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0,
+        "shutdown_ms": 23.75175,
+        "residency_state": "disabled",
+        "residency_publications": 0,
+        "residency_stale_chunks": 0,
+        "residency_failed_chunks": 0,
+        "resident_retained_bytes": 0,
+        "resident_elapsed_ms": 0.0,
+        "resident_ready_elapsed_ms": null
+      }
+    },
+    {
+      "position": 5,
+      "repetition": 2,
+      "layout": "hybrid",
+      "strategy": "resident",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "hybrid",
+        "2",
+        "resident",
+        "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/05_repetition_2_hybrid_resident.json"
+      ],
+      "result_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/05_repetition_2_hybrid_resident.json",
+      "stdout_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/05_repetition_2_hybrid_resident.stdout.log",
+      "stderr_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/05_repetition_2_hybrid_resident.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 106090.32320883125,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "required_products_ready_ms": 71584.532625,
+        "loading_elapsed_ms": 71566.482625,
+        "first_page_request_to_publish_ms": 57062.281375,
+        "first_page_inferred_queue_wait_ms": 56419.999292,
+        "current_frame_request_to_publish_ms": 561.6663329999938,
+        "current_frame_inferred_queue_wait_ms": 561.6663329999938,
+        "product_elapsed_ms": {
+          "canonical_detection": 765.432208,
+          "keypoints": 57185.894167,
+          "subject_masks": 58342.490083,
+          "subject_shape": 62885.103625,
+          "eye_geometry": 62164.798458,
+          "motion": 5343.779083,
+          "eye_angles": 7102.049416,
+          "tail_kinematics": 1291.060792,
+          "crop_geometry": 3392.644625
+        },
+        "peak_rss_bytes": 1782218752,
+        "loading_peak_rss_bytes": 1782218752,
+        "total_file_bytes": 581344175,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "failed_pages": 0,
+        "stale_page_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0,
+        "shutdown_ms": 0.913875,
+        "residency_state": "ready",
+        "residency_publications": 1,
+        "residency_stale_chunks": 0,
+        "residency_failed_chunks": 0,
+        "resident_retained_bytes": 28490088,
+        "resident_elapsed_ms": 12354.333708,
+        "resident_ready_elapsed_ms": 70201.3565
+      }
+    },
+    {
+      "position": 6,
+      "repetition": 3,
+      "layout": "hybrid",
+      "strategy": "resident",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "hybrid",
+        "3",
+        "resident",
+        "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/06_repetition_3_hybrid_resident.json"
+      ],
+      "result_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/06_repetition_3_hybrid_resident.json",
+      "stdout_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/06_repetition_3_hybrid_resident.stdout.log",
+      "stderr_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/06_repetition_3_hybrid_resident.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 102480.57829216123,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "required_products_ready_ms": 67600.486458,
+        "loading_elapsed_ms": 67582.508542,
+        "first_page_request_to_publish_ms": 53058.350583,
+        "first_page_inferred_queue_wait_ms": 52500.873583,
+        "current_frame_request_to_publish_ms": 88.25629199999821,
+        "current_frame_inferred_queue_wait_ms": 88.25629199999821,
+        "product_elapsed_ms": {
+          "canonical_detection": 713.386083,
+          "keypoints": 53215.356084,
+          "subject_masks": 53816.698208,
+          "subject_shape": 57695.881791,
+          "eye_geometry": 57282.7545,
+          "motion": 4784.661625,
+          "eye_angles": 7601.385542,
+          "tail_kinematics": 1423.091625,
+          "crop_geometry": 2960.442667
+        },
+        "peak_rss_bytes": 1840021504,
+        "loading_peak_rss_bytes": 1750532096,
+        "total_file_bytes": 581361118,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "failed_pages": 0,
+        "stale_page_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0,
+        "shutdown_ms": 0.503958,
+        "residency_state": "ready",
+        "residency_publications": 1,
+        "residency_stale_chunks": 0,
+        "residency_failed_chunks": 0,
+        "resident_retained_bytes": 28490088,
+        "resident_elapsed_ms": 12628.36725,
+        "resident_ready_elapsed_ms": 66419.742125
+      }
+    },
+    {
+      "position": 7,
+      "repetition": 3,
+      "layout": "hybrid",
+      "strategy": "paged",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "hybrid",
+        "3",
+        "paged",
+        "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/07_repetition_3_hybrid_paged.json"
+      ],
+      "result_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/07_repetition_3_hybrid_paged.json",
+      "stdout_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/07_repetition_3_hybrid_paged.stdout.log",
+      "stderr_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/07_repetition_3_hybrid_paged.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 107700.96558425575,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "required_products_ready_ms": 72877.388958,
+        "loading_elapsed_ms": 72864.44175,
+        "first_page_request_to_publish_ms": 56830.422125000005,
+        "first_page_inferred_queue_wait_ms": 56309.65420900001,
+        "current_frame_request_to_publish_ms": 581.7709590000013,
+        "current_frame_inferred_queue_wait_ms": 539.0419600000014,
+        "product_elapsed_ms": {
+          "canonical_detection": 734.742583,
+          "keypoints": 57086.505375,
+          "subject_masks": 57626.729917,
+          "subject_shape": 62014.567708,
+          "eye_geometry": 61348.522125,
+          "motion": 5223.422208,
+          "eye_angles": 8387.805166,
+          "tail_kinematics": 1687.958208,
+          "crop_geometry": 2974.2575
+        },
+        "peak_rss_bytes": 1892368384,
+        "loading_peak_rss_bytes": 1605795840,
+        "total_file_bytes": 577527660,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "failed_pages": 0,
+        "stale_page_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0,
+        "shutdown_ms": 0.775875,
+        "residency_state": "disabled",
+        "residency_publications": 0,
+        "residency_stale_chunks": 0,
+        "residency_failed_chunks": 0,
+        "resident_retained_bytes": 0,
+        "resident_elapsed_ms": 0.0,
+        "resident_ready_elapsed_ms": null
+      }
+    },
+    {
+      "position": 8,
+      "repetition": 4,
+      "layout": "hybrid",
+      "strategy": "paged",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "hybrid",
+        "4",
+        "paged",
+        "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/08_repetition_4_hybrid_paged.json"
+      ],
+      "result_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/08_repetition_4_hybrid_paged.json",
+      "stdout_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/08_repetition_4_hybrid_paged.stdout.log",
+      "stderr_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/08_repetition_4_hybrid_paged.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 105651.80383296683,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "required_products_ready_ms": 71004.8825,
+        "loading_elapsed_ms": 70876.347084,
+        "first_page_request_to_publish_ms": 54767.027666,
+        "first_page_inferred_queue_wait_ms": 54192.898457,
+        "current_frame_request_to_publish_ms": 98.95616699999664,
+        "current_frame_inferred_queue_wait_ms": 98.95616699999664,
+        "product_elapsed_ms": {
+          "canonical_detection": 819.553541,
+          "keypoints": 55012.040791,
+          "subject_masks": 55637.687333,
+          "subject_shape": 60194.23775,
+          "eye_geometry": 59178.921,
+          "motion": 5086.301916,
+          "eye_angles": 8620.162417,
+          "tail_kinematics": 1582.7215,
+          "crop_geometry": 3395.849333
+        },
+        "peak_rss_bytes": 2128068608,
+        "loading_peak_rss_bytes": 1551646720,
+        "total_file_bytes": 577625914,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "failed_pages": 0,
+        "stale_page_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0,
+        "shutdown_ms": 21.344917,
+        "residency_state": "disabled",
+        "residency_publications": 0,
+        "residency_stale_chunks": 0,
+        "residency_failed_chunks": 0,
+        "resident_retained_bytes": 0,
+        "resident_elapsed_ms": 0.0,
+        "resident_ready_elapsed_ms": null
+      }
+    },
+    {
+      "position": 9,
+      "repetition": 4,
+      "layout": "hybrid",
+      "strategy": "resident",
+      "command": [
+        "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark",
+        "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+        "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+        "hybrid",
+        "4",
+        "resident",
+        "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/09_repetition_4_hybrid_resident.json"
+      ],
+      "result_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/09_repetition_4_hybrid_resident.json",
+      "stdout_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/09_repetition_4_hybrid_resident.stdout.log",
+      "stderr_path": "docs/diagnostics/canonical_detection_full_archive_residency_2026-07-26/09_repetition_4_hybrid_resident.stderr.log",
+      "subprocess_returncode": 0,
+      "subprocess_elapsed_ms": 103096.80041717365,
+      "timed_out": false,
+      "pass": true,
+      "metrics": {
+        "required_products_ready_ms": 68511.777417,
+        "loading_elapsed_ms": 68406.08025,
+        "first_page_request_to_publish_ms": 54624.067458000005,
+        "first_page_inferred_queue_wait_ms": 54463.597624,
+        "current_frame_request_to_publish_ms": 43.00504099999671,
+        "current_frame_inferred_queue_wait_ms": 43.00504099999671,
+        "product_elapsed_ms": {
+          "canonical_detection": 792.996458,
+          "keypoints": 55255.980167,
+          "subject_masks": 55434.794417,
+          "subject_shape": 59616.714292,
+          "eye_geometry": 59098.100417,
+          "motion": 4753.614083,
+          "eye_angles": 6766.832917,
+          "tail_kinematics": 1467.758792,
+          "crop_geometry": 3164.737
+        },
+        "peak_rss_bytes": 1807073280,
+        "loading_peak_rss_bytes": 1807073280,
+        "total_file_bytes": 581340545,
+        "post_warmup_pages": 98,
+        "post_warmup_misses": 0,
+        "post_warmup_miss_rate": 0.0,
+        "forward_digest": "202210a60f50dcc8",
+        "reverse_digest": "97f58695f8c11ffc",
+        "failed_pages": 0,
+        "stale_page_publications": 0,
+        "offset_reads": 1,
+        "fallback_metadata_reads": 0,
+        "fallback_dtype_opens": 0,
+        "scheduler_failed": 0,
+        "scheduler_work_exceptions": 0,
+        "shutdown_ms": 0.686041,
+        "residency_state": "ready",
+        "residency_publications": 1,
+        "residency_stale_chunks": 0,
+        "residency_failed_chunks": 0,
+        "resident_retained_bytes": 28490088,
+        "resident_elapsed_ms": 11868.814,
+        "resident_ready_elapsed_ms": 67392.591459
+      }
+    }
+  ],
+  "reduction": {
+    "status": "pass",
+    "full_archive_residency_gate_satisfied": true,
+    "production_residency_enabled": false,
+    "production_policy_requires_separate_review": true,
+    "layout_matrix_remains_paused": true,
+    "summaries": {
+      "paged": {
+        "required_products_ready_ms": {
+          "values": [
+            70980.566875,
+            69398.402625,
+            73671.370042,
+            72877.388958,
+            71004.8825
+          ],
+          "median": 71004.8825,
+          "p95_nearest_rank": 73671.370042,
+          "maximum": 73671.370042
+        },
+        "loading_elapsed_ms": {
+          "values": [
+            70967.005708,
+            69374.883709,
+            73555.052166,
+            72864.44175,
+            70876.347084
+          ],
+          "median": 70967.005708,
+          "p95_nearest_rank": 73555.052166,
+          "maximum": 73555.052166
+        },
+        "first_page_request_to_publish_ms": {
+          "values": [
+            55883.528459,
+            54946.549125,
+            58471.804708,
+            56830.422125000005,
+            54767.027666
+          ],
+          "median": 55883.528459,
+          "p95_nearest_rank": 58471.804708,
+          "maximum": 58471.804708
+        },
+        "first_page_inferred_queue_wait_ms": {
+          "values": [
+            45688.521584,
+            54491.122833,
+            58240.327875,
+            56309.65420900001,
+            54192.898457
+          ],
+          "median": 54491.122833,
+          "p95_nearest_rank": 58240.327875,
+          "maximum": 58240.327875
+        },
+        "current_frame_request_to_publish_ms": {
+          "values": [
+            1108.5491669999974,
+            514.094207999995,
+            484.1236659999995,
+            581.7709590000013,
+            98.95616699999664
+          ],
+          "median": 514.094207999995,
+          "p95_nearest_rank": 1108.5491669999974,
+          "maximum": 1108.5491669999974
+        },
+        "current_frame_inferred_queue_wait_ms": {
+          "values": [
+            1108.5491669999974,
+            514.094207999995,
+            484.1236659999995,
+            539.0419600000014,
+            98.95616699999664
+          ],
+          "median": 514.094207999995,
+          "p95_nearest_rank": 1108.5491669999974,
+          "maximum": 1108.5491669999974
+        },
+        "peak_rss_bytes": {
+          "values": [
+            1950973952.0,
+            1866383360.0,
+            1809514496.0,
+            1892368384.0,
+            2128068608.0
+          ],
+          "median": 1892368384.0,
+          "p95_nearest_rank": 2128068608.0,
+          "maximum": 2128068608.0
+        },
+        "loading_peak_rss_bytes": {
+          "values": [
+            1756807168.0,
+            1710161920.0,
+            1481654272.0,
+            1605795840.0,
+            1551646720.0
+          ],
+          "median": 1605795840.0,
+          "p95_nearest_rank": 1756807168.0,
+          "maximum": 1756807168.0
+        },
+        "total_file_bytes": {
+          "values": [
+            577660560.0,
+            577789338.0,
+            577664482.0,
+            577527660.0,
+            577625914.0
+          ],
+          "median": 577660560.0,
+          "p95_nearest_rank": 577789338.0,
+          "maximum": 577789338.0
+        },
+        "post_warmup_miss_rate": {
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "median": 0.0,
+          "p95_nearest_rank": 0.0,
+          "maximum": 0.0
+        },
+        "shutdown_ms": {
+          "values": [
+            12.316708,
+            0.821208,
+            23.75175,
+            0.775875,
+            21.344917
+          ],
+          "median": 12.316708,
+          "p95_nearest_rank": 23.75175,
+          "maximum": 23.75175
+        },
+        "resident_elapsed_ms": {
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "median": 0.0,
+          "p95_nearest_rank": 0.0,
+          "maximum": 0.0
+        },
+        "products": {
+          "canonical_detection": {
+            "values": [
+              563.094542,
+              1165.49875,
+              566.718208,
+              734.742583,
+              819.553541
+            ],
+            "median": 734.742583,
+            "p95_nearest_rank": 1165.49875,
+            "maximum": 1165.49875
+          },
+          "keypoints": {
+            "values": [
+              46251.341584,
+              55656.821833,
+              58807.177625,
+              57086.505375,
+              55012.040791
+            ],
+            "median": 55656.821833,
+            "p95_nearest_rank": 58807.177625,
+            "maximum": 58807.177625
+          },
+          "subject_masks": {
+            "values": [
+              57072.401167,
+              56565.163417,
+              59498.332791,
+              57626.729917,
+              55637.687333
+            ],
+            "median": 57072.401167,
+            "p95_nearest_rank": 59498.332791,
+            "maximum": 59498.332791
+          },
+          "subject_shape": {
+            "values": [
+              62003.242417,
+              60920.363,
+              63621.522541,
+              62014.567708,
+              60194.23775
+            ],
+            "median": 62003.242417,
+            "p95_nearest_rank": 63621.522541,
+            "maximum": 63621.522541
+          },
+          "eye_geometry": {
+            "values": [
+              61463.211875,
+              59935.35025,
+              63547.1325,
+              61348.522125,
+              59178.921
+            ],
+            "median": 61348.522125,
+            "p95_nearest_rank": 63547.1325,
+            "maximum": 63547.1325
+          },
+          "motion": {
+            "values": [
+              6181.808,
+              5173.278709,
+              5699.075459,
+              5223.422208,
+              5086.301916
+            ],
+            "median": 5223.422208,
+            "p95_nearest_rank": 6181.808,
+            "maximum": 6181.808
+          },
+          "eye_angles": {
+            "values": [
+              6592.139833,
+              6585.33475,
+              7442.946167,
+              8387.805166,
+              8620.162417
+            ],
+            "median": 7442.946167,
+            "p95_nearest_rank": 8620.162417,
+            "maximum": 8620.162417
+          },
+          "tail_kinematics": {
+            "values": [
+              1742.448417,
+              1503.648625,
+              1373.863125,
+              1687.958208,
+              1582.7215
+            ],
+            "median": 1582.7215,
+            "p95_nearest_rank": 1742.448417,
+            "maximum": 1742.448417
+          },
+          "crop_geometry": {
+            "values": [
+              3277.933667,
+              3191.619375,
+              2819.263334,
+              2974.2575,
+              3395.849333
+            ],
+            "median": 3191.619375,
+            "p95_nearest_rank": 3395.849333,
+            "maximum": 3395.849333
+          }
+        },
+        "post_warmup_pages": 490,
+        "post_warmup_misses": 0
+      },
+      "resident": {
+        "required_products_ready_ms": {
+          "values": [
+            70971.986708,
+            69346.371084,
+            71584.532625,
+            67600.486458,
+            68511.777417
+          ],
+          "median": 69346.371084,
+          "p95_nearest_rank": 71584.532625,
+          "maximum": 71584.532625
+        },
+        "loading_elapsed_ms": {
+          "values": [
+            70947.178542,
+            69315.284958,
+            71566.482625,
+            67582.508542,
+            68406.08025
+          ],
+          "median": 69315.284958,
+          "p95_nearest_rank": 71566.482625,
+          "maximum": 71566.482625
+        },
+        "first_page_request_to_publish_ms": {
+          "values": [
+            56851.076292,
+            55274.722083,
+            57062.281375,
+            53058.350583,
+            54624.067458000005
+          ],
+          "median": 55274.722083,
+          "p95_nearest_rank": 57062.281375,
+          "maximum": 57062.281375
+        },
+        "first_page_inferred_queue_wait_ms": {
+          "values": [
+            55863.166501,
+            54796.441374,
+            56419.999292,
+            52500.873583,
+            54463.597624
+          ],
+          "median": 54796.441374,
+          "p95_nearest_rank": 56419.999292,
+          "maximum": 56419.999292
+        },
+        "current_frame_request_to_publish_ms": {
+          "values": [
+            2990.9703750000044,
+            1139.7567500000005,
+            561.6663329999938,
+            88.25629199999821,
+            43.00504099999671
+          ],
+          "median": 561.6663329999938,
+          "p95_nearest_rank": 2990.9703750000044,
+          "maximum": 2990.9703750000044
+        },
+        "current_frame_inferred_queue_wait_ms": {
+          "values": [
+            2990.9703750000044,
+            1081.9867070000005,
+            561.6663329999938,
+            88.25629199999821,
+            43.00504099999671
+          ],
+          "median": 561.6663329999938,
+          "p95_nearest_rank": 2990.9703750000044,
+          "maximum": 2990.9703750000044
+        },
+        "peak_rss_bytes": {
+          "values": [
+            1919418368.0,
+            1597440000.0,
+            1782218752.0,
+            1840021504.0,
+            1807073280.0
+          ],
+          "median": 1807073280.0,
+          "p95_nearest_rank": 1919418368.0,
+          "maximum": 1919418368.0
+        },
+        "loading_peak_rss_bytes": {
+          "values": [
+            1752449024.0,
+            1554956288.0,
+            1782218752.0,
+            1750532096.0,
+            1807073280.0
+          ],
+          "median": 1752449024.0,
+          "p95_nearest_rank": 1807073280.0,
+          "maximum": 1807073280.0
+        },
+        "total_file_bytes": {
+          "values": [
+            581333407.0,
+            581341273.0,
+            581344175.0,
+            581361118.0,
+            581340545.0
+          ],
+          "median": 581341273.0,
+          "p95_nearest_rank": 581361118.0,
+          "maximum": 581361118.0
+        },
+        "post_warmup_miss_rate": {
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "median": 0.0,
+          "p95_nearest_rank": 0.0,
+          "maximum": 0.0
+        },
+        "shutdown_ms": {
+          "values": [
+            14.196584,
+            23.555791,
+            0.913875,
+            0.503958,
+            0.686041
+          ],
+          "median": 0.913875,
+          "p95_nearest_rank": 23.555791,
+          "maximum": 23.555791
+        },
+        "resident_elapsed_ms": {
+          "values": [
+            11966.113792,
+            12427.442666,
+            12354.333708,
+            12628.36725,
+            11868.814
+          ],
+          "median": 12354.333708,
+          "p95_nearest_rank": 12628.36725,
+          "maximum": 12628.36725
+        },
+        "products": {
+          "canonical_detection": {
+            "values": [
+              972.030666,
+              674.87925,
+              765.432208,
+              713.386083,
+              792.996458
+            ],
+            "median": 765.432208,
+            "p95_nearest_rank": 972.030666,
+            "maximum": 972.030666
+          },
+          "keypoints": {
+            "values": [
+              57129.972,
+              55529.139,
+              57185.894167,
+              53215.356084,
+              55255.980167
+            ],
+            "median": 55529.139,
+            "p95_nearest_rank": 57185.894167,
+            "maximum": 57185.894167
+          },
+          "subject_masks": {
+            "values": [
+              56834.937917,
+              56612.41225,
+              58342.490083,
+              53816.698208,
+              55434.794417
+            ],
+            "median": 56612.41225,
+            "p95_nearest_rank": 58342.490083,
+            "maximum": 58342.490083
+          },
+          "subject_shape": {
+            "values": [
+              62039.914375,
+              61343.788375,
+              62885.103625,
+              57695.881791,
+              59616.714292
+            ],
+            "median": 61343.788375,
+            "p95_nearest_rank": 62885.103625,
+            "maximum": 62885.103625
+          },
+          "eye_geometry": {
+            "values": [
+              61134.144542,
+              60719.987958,
+              62164.798458,
+              57282.7545,
+              59098.100417
+            ],
+            "median": 60719.987958,
+            "p95_nearest_rank": 62164.798458,
+            "maximum": 62164.798458
+          },
+          "motion": {
+            "values": [
+              5343.147666,
+              5678.594875,
+              5343.779083,
+              4784.661625,
+              4753.614083
+            ],
+            "median": 5343.147666,
+            "p95_nearest_rank": 5678.594875,
+            "maximum": 5678.594875
+          },
+          "eye_angles": {
+            "values": [
+              6918.201791,
+              6270.042583,
+              7102.049416,
+              7601.385542,
+              6766.832917
+            ],
+            "median": 6918.201791,
+            "p95_nearest_rank": 7601.385542,
+            "maximum": 7601.385542
+          },
+          "tail_kinematics": {
+            "values": [
+              1555.466542,
+              1415.842333,
+              1291.060792,
+              1423.091625,
+              1467.758792
+            ],
+            "median": 1423.091625,
+            "p95_nearest_rank": 1555.466542,
+            "maximum": 1555.466542
+          },
+          "crop_geometry": {
+            "values": [
+              2928.973667,
+              3093.899959,
+              3392.644625,
+              2960.442667,
+              3164.737
+            ],
+            "median": 3093.899959,
+            "p95_nearest_rank": 3392.644625,
+            "maximum": 3392.644625
+          }
+        },
+        "post_warmup_pages": 490,
+        "post_warmup_misses": 0
+      }
+    },
+    "product_regressions": {
+      "canonical_detection": {
+        "paged_ms": 734.742583,
+        "resident_ms": 765.432208,
+        "ratio": 1.0417692205543503
+      },
+      "keypoints": {
+        "paged_ms": 55656.821833,
+        "resident_ms": 55529.139,
+        "ratio": 0.9977058906923735
+      },
+      "subject_masks": {
+        "paged_ms": 57072.401167,
+        "resident_ms": 56612.41225,
+        "ratio": 0.991940256453307
+      },
+      "subject_shape": {
+        "paged_ms": 62003.242417,
+        "resident_ms": 61343.788375,
+        "ratio": 0.9893642007047813
+      },
+      "eye_geometry": {
+        "paged_ms": 61348.522125,
+        "resident_ms": 60719.987958,
+        "ratio": 0.9897546975016066
+      },
+      "motion": {
+        "paged_ms": 5223.422208,
+        "resident_ms": 5343.147666,
+        "ratio": 1.022920884667648
+      },
+      "eye_angles": {
+        "paged_ms": 7442.946167,
+        "resident_ms": 6918.201791,
+        "ratio": 0.9294977601307163
+      },
+      "tail_kinematics": {
+        "paged_ms": 1582.7215,
+        "resident_ms": 1423.091625,
+        "ratio": 0.8991421579854699
+      },
+      "crop_geometry": {
+        "paged_ms": 3191.619375,
+        "resident_ms": 3093.899959,
+        "ratio": 0.9693824969338644
+      }
+    },
+    "gates": [
+      {
+        "name": "correctness",
+        "pass": true,
+        "observed": [],
+        "limit": []
+      },
+      {
+        "name": "median_required_products_ready_regression",
+        "pass": true,
+        "observed": {
+          "paged": 71004.8825,
+          "resident": 69346.371084,
+          "ratio": 0.9766422905354429,
+          "delta": -1658.5114160000085
+        },
+        "limit": {
+          "ratio": 1.1,
+          "milliseconds": 5000.0
+        }
+      },
+      {
+        "name": "median_first_page_regression",
+        "pass": true,
+        "observed": {
+          "paged": 55883.528459,
+          "resident": 55274.722083,
+          "ratio": 0.9891057992795379,
+          "delta": -608.8063760000005
+        },
+        "limit": {
+          "ratio": 1.1,
+          "milliseconds": 250.0
+        }
+      },
+      {
+        "name": "median_current_frame_latency_regression",
+        "pass": true,
+        "observed": {
+          "paged": 514.094207999995,
+          "resident": 561.6663329999938,
+          "ratio": 1.0925358120354456,
+          "delta": 47.57212499999878
+        },
+        "limit": {
+          "ratio": 1.1,
+          "milliseconds": 250.0
+        }
+      },
+      {
+        "name": "median_current_frame_queue_wait_regression",
+        "pass": true,
+        "observed": {
+          "paged": 514.094207999995,
+          "resident": 561.6663329999938,
+          "ratio": 1.0925358120354456,
+          "delta": 47.57212499999878
+        },
+        "limit": {
+          "ratio": 1.1,
+          "milliseconds": 250.0
+        }
+      },
+      {
+        "name": "maintained_product_initialization_regression",
+        "pass": true,
+        "observed": {},
+        "limit": 1.1
+      },
+      {
+        "name": "median_peak_rss_regression",
+        "pass": true,
+        "observed": -85295104.0,
+        "limit": 67108864
+      },
+      {
+        "name": "playback_deadline_miss_regression",
+        "pass": true,
+        "observed": {
+          "paged": 0.0,
+          "resident": 0.0
+        },
+        "limit": {
+          "no_regression": true,
+          "absolute_limit": 0.01
+        }
+      }
+    ]
+  }
+}

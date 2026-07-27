@@ -1,0 +1,539 @@
+{
+  "affiliated_video": {
+    "discovery_error": "Affiliated video file does not exist for stored path: /groups/johnson/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+    "discovery_succeeded": false,
+    "explicit_exists": true,
+    "explicit_path": "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4"
+  },
+  "archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+  "archive_context": {
+    "cache_pool_bytes": 67108864
+  },
+  "canonical_open": {
+    "consolidated_declarations": 9,
+    "elapsed_ms": 554.374916,
+    "exact_handle_opens": 4,
+    "fallback_dtype_opens": 0,
+    "fallback_metadata_reads": 0,
+    "frames": 1188000,
+    "offset_ms": 210.705417,
+    "offset_reads": 1,
+    "retained_offset_bytes": 9504008,
+    "root_metadata_reads": 1,
+    "rows": 1187087,
+    "run": "crimson_storage_fixture_sleepyfish_cam2010095_v1"
+  },
+  "classification": "full_duration_stage1",
+  "condition": "hybrid_paged",
+  "first_presentations": {
+    "canonical_detections": 1,
+    "crop_rows": 1,
+    "crop_status": 0,
+    "elapsed_ms": 12236.4775,
+    "eye_angle_points": 3594,
+    "eye_detections": 1,
+    "eye_status": 0,
+    "first_detection_overlay_after_archive_ms": 56447.741042,
+    "first_detection_scheduling": {
+      "active_requests_at_request": 4,
+      "archive_ready_to_request_ms": 564.212583,
+      "inferred_queue_wait_ms": 45688.521584,
+      "interpretation": "queue wait is inferred because scheduler work is non-preemptive",
+      "pending_requests_at_request": 5,
+      "repository_read_decode_max_ms": 10195.006875,
+      "request_to_publish_ms": 55883.528459,
+      "resolved_pages_at_publish": 3
+    },
+    "frame": 0,
+    "keypoint_detections": 1,
+    "keypoint_status": 0,
+    "mask_detections": 1,
+    "mask_status": 0,
+    "motion_points": 6601,
+    "overlay_boxes": 1,
+    "phase_elapsed_ms": 12237.818791,
+    "physical": {
+      "cache_evictions": 24443,
+      "cache_hits": 0,
+      "cache_misses": 1318,
+      "file_batch_reads": 1263,
+      "file_bytes": 4768038,
+      "file_reads": 1272
+    },
+    "ready_elapsed_ms": 83764.171042,
+    "shape_detections": 1,
+    "shape_status": 0,
+    "tail_points": 4792
+  },
+  "frame_range": [
+    0,
+    1188000
+  ],
+  "interference_probe": {
+    "active_requests_at_request": 4,
+    "frame": 271085,
+    "inferred_queue_wait_lower_bound_ms": 1108.5491669999974,
+    "interpretation": "queue wait is inferred because scheduler work is non-preemptive",
+    "pending_requests_at_request": 3,
+    "publish_elapsed_ms": 57572.425209,
+    "repository_service_upper_bound_ms": 0.0,
+    "request_elapsed_ms": 56463.876042,
+    "request_to_publish_ms": 1108.5491669999974
+  },
+  "layout": "hybrid",
+  "loading": {
+    "completed_products": 13,
+    "elapsed_ms": 70967.005708,
+    "peak_rss_bytes": 1756807168,
+    "physical": {
+      "cache_evictions": 13104,
+      "cache_hits": 2721,
+      "cache_misses": 36327,
+      "file_batch_reads": 5359,
+      "file_bytes": 506608746,
+      "file_reads": 11111
+    },
+    "preloaded_trace_bytes": 91486620,
+    "products": {
+      "acquisition_crop": {
+        "available": false,
+        "elapsed_ms": 0.072458,
+        "error": "Archive has no acquisition crop inventory attributes"
+      },
+      "archive": {
+        "available": true,
+        "elapsed_ms": 1.05875,
+        "error": ""
+      },
+      "canonical_detection": {
+        "available": true,
+        "elapsed_ms": 563.094542,
+        "error": ""
+      },
+      "chaser_polar": {
+        "available": true,
+        "elapsed_ms": 13.909042,
+        "error": ""
+      },
+      "crop_geometry": {
+        "available": true,
+        "elapsed_ms": 3277.933667,
+        "error": ""
+      },
+      "eye_angles": {
+        "available": true,
+        "elapsed_ms": 6592.139833,
+        "error": ""
+      },
+      "eye_geometry": {
+        "available": true,
+        "elapsed_ms": 61463.211875,
+        "error": ""
+      },
+      "keypoints": {
+        "available": true,
+        "elapsed_ms": 46251.341584,
+        "error": ""
+      },
+      "motion": {
+        "available": true,
+        "elapsed_ms": 6181.808,
+        "error": ""
+      },
+      "stimulus": {
+        "available": false,
+        "elapsed_ms": 17.307792,
+        "error": "No stimulus run was requested and analysis/stimulus_runs has no latest run"
+      },
+      "subject_masks": {
+        "available": true,
+        "elapsed_ms": 57072.401167,
+        "error": ""
+      },
+      "subject_shape": {
+        "available": true,
+        "elapsed_ms": 62003.242417,
+        "error": ""
+      },
+      "tail_kinematics": {
+        "available": true,
+        "elapsed_ms": 1742.448417,
+        "error": ""
+      }
+    },
+    "readiness": "ready",
+    "readiness_reason": "",
+    "required_products_ready_elapsed_ms": 70980.566875,
+    "state": "ready",
+    "total_products": 13
+  },
+  "pass": true,
+  "peak_rss_bytes": 1950973952,
+  "physical_total": {
+    "cache_evictions": 38895,
+    "cache_hits": 3383,
+    "cache_misses": 38991,
+    "file_batch_reads": 7594,
+    "file_bytes": 577660560,
+    "file_reads": 13390
+  },
+  "random_settles": {
+    "elapsed_ms": 11983.455334,
+    "frames": [
+      {
+        "canonical_detections": 1,
+        "crop_rows": 0,
+        "crop_status": 1,
+        "elapsed_ms": 95.640792,
+        "eye_angle_points": 3594,
+        "eye_detections": 0,
+        "eye_status": 1,
+        "frame": 271085,
+        "keypoint_detections": 0,
+        "keypoint_status": 1,
+        "mask_detections": 0,
+        "mask_status": 1,
+        "motion_points": 6872,
+        "physical": {
+          "cache_evictions": 0,
+          "cache_hits": 0,
+          "cache_misses": 9,
+          "file_batch_reads": 8,
+          "file_bytes": 125756,
+          "file_reads": 5
+        },
+        "shape_detections": 0,
+        "shape_status": 1,
+        "tail_points": 4795
+      },
+      {
+        "canonical_detections": 1,
+        "crop_rows": 1,
+        "crop_status": 0,
+        "elapsed_ms": 1571.094166,
+        "eye_angle_points": 3594,
+        "eye_detections": 1,
+        "eye_status": 0,
+        "frame": 85499,
+        "keypoint_detections": 1,
+        "keypoint_status": 0,
+        "mask_detections": 1,
+        "mask_status": 0,
+        "motion_points": 6986,
+        "physical": {
+          "cache_evictions": 172,
+          "cache_hits": 16,
+          "cache_misses": 173,
+          "file_batch_reads": 126,
+          "file_bytes": 7735923,
+          "file_reads": 129
+        },
+        "shape_detections": 1,
+        "shape_status": 0,
+        "tail_points": 4796
+      },
+      {
+        "canonical_detections": 1,
+        "crop_rows": 1,
+        "crop_status": 0,
+        "elapsed_ms": 1694.841917,
+        "eye_angle_points": 3595,
+        "eye_detections": 1,
+        "eye_status": 0,
+        "frame": 397712,
+        "keypoint_detections": 1,
+        "keypoint_status": 0,
+        "mask_detections": 1,
+        "mask_status": 0,
+        "motion_points": 6531,
+        "physical": {
+          "cache_evictions": 180,
+          "cache_hits": 6,
+          "cache_misses": 180,
+          "file_batch_reads": 132,
+          "file_bytes": 7918069,
+          "file_reads": 135
+        },
+        "shape_detections": 1,
+        "shape_status": 0,
+        "tail_points": 4796
+      },
+      {
+        "canonical_detections": 1,
+        "crop_rows": 1,
+        "crop_status": 0,
+        "elapsed_ms": 1713.602583,
+        "eye_angle_points": 3595,
+        "eye_detections": 1,
+        "eye_status": 0,
+        "frame": 1003450,
+        "keypoint_detections": 1,
+        "keypoint_status": 0,
+        "mask_detections": 1,
+        "mask_status": 0,
+        "motion_points": 6424,
+        "physical": {
+          "cache_evictions": 183,
+          "cache_hits": 4,
+          "cache_misses": 180,
+          "file_batch_reads": 132,
+          "file_bytes": 7153583,
+          "file_reads": 132
+        },
+        "shape_detections": 1,
+        "shape_status": 0,
+        "tail_points": 4795
+      },
+      {
+        "canonical_detections": 1,
+        "crop_rows": 1,
+        "crop_status": 0,
+        "elapsed_ms": 1474.929917,
+        "eye_angle_points": 3596,
+        "eye_detections": 1,
+        "eye_status": 0,
+        "frame": 939795,
+        "keypoint_detections": 1,
+        "keypoint_status": 0,
+        "mask_detections": 1,
+        "mask_status": 0,
+        "motion_points": 6370,
+        "physical": {
+          "cache_evictions": 195,
+          "cache_hits": 4,
+          "cache_misses": 179,
+          "file_batch_reads": 132,
+          "file_bytes": 5707912,
+          "file_reads": 132
+        },
+        "shape_detections": 1,
+        "shape_status": 0,
+        "tail_points": 4792
+      },
+      {
+        "canonical_detections": 1,
+        "crop_rows": 1,
+        "crop_status": 0,
+        "elapsed_ms": 1791.999125,
+        "eye_angle_points": 3594,
+        "eye_detections": 1,
+        "eye_status": 0,
+        "frame": 903492,
+        "keypoint_detections": 1,
+        "keypoint_status": 0,
+        "mask_detections": 1,
+        "mask_status": 0,
+        "motion_points": 6239,
+        "physical": {
+          "cache_evictions": 168,
+          "cache_hits": 4,
+          "cache_misses": 182,
+          "file_batch_reads": 132,
+          "file_bytes": 6047250,
+          "file_reads": 135
+        },
+        "shape_detections": 1,
+        "shape_status": 0,
+        "tail_points": 4795
+      },
+      {
+        "canonical_detections": 1,
+        "crop_rows": 1,
+        "crop_status": 0,
+        "elapsed_ms": 1666.005458,
+        "eye_angle_points": 3595,
+        "eye_detections": 1,
+        "eye_status": 0,
+        "frame": 351953,
+        "keypoint_detections": 1,
+        "keypoint_status": 0,
+        "mask_detections": 1,
+        "mask_status": 0,
+        "motion_points": 6836,
+        "physical": {
+          "cache_evictions": 203,
+          "cache_hits": 4,
+          "cache_misses": 185,
+          "file_batch_reads": 132,
+          "file_bytes": 7121176,
+          "file_reads": 137
+        },
+        "shape_detections": 1,
+        "shape_status": 0,
+        "tail_points": 4796
+      },
+      {
+        "canonical_detections": 1,
+        "crop_rows": 1,
+        "crop_status": 0,
+        "elapsed_ms": 1974.721458,
+        "eye_angle_points": 3594,
+        "eye_detections": 1,
+        "eye_status": 0,
+        "frame": 1141796,
+        "keypoint_detections": 1,
+        "keypoint_status": 0,
+        "mask_detections": 1,
+        "mask_status": 0,
+        "motion_points": 6359,
+        "physical": {
+          "cache_evictions": 180,
+          "cache_hits": 4,
+          "cache_misses": 179,
+          "file_batch_reads": 132,
+          "file_bytes": 6962460,
+          "file_reads": 132
+        },
+        "shape_detections": 1,
+        "shape_status": 0,
+        "tail_points": 4795
+      }
+    ],
+    "peak_rss_bytes": 1950973952,
+    "physical": {
+      "cache_evictions": 1281,
+      "cache_hits": 42,
+      "cache_misses": 1279,
+      "file_batch_reads": 926,
+      "file_bytes": 48772129,
+      "file_reads": 950
+    }
+  },
+  "repetition": 0,
+  "requested_run": "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+  "residency": {
+    "metrics": {
+      "attempts": 0,
+      "completed_chunks": 0,
+      "decoded_hot_bytes": 0,
+      "decoded_source_bytes": 0,
+      "elapsed_ms": 0.0,
+      "failed_chunks": 0,
+      "last_error": "",
+      "maximum_chunk_decoded_bytes": 0,
+      "maximum_chunk_ms": 0.0,
+      "maximum_resident_bytes": 0,
+      "planned_chunks": 0,
+      "publications": 0,
+      "retained_bytes": 0,
+      "stale_chunks": 0,
+      "state": "disabled"
+    },
+    "started_after_first_page": false,
+    "strategy": "paged"
+  },
+  "scheduler": {
+    "accepted": 149,
+    "cancelled": 16,
+    "completed": 138,
+    "discarded": 5,
+    "failed": 0,
+    "peak_active": 4,
+    "peak_pending": 7,
+    "submissions": 149,
+    "work_exceptions": 0,
+    "workers": 4
+  },
+  "schema_id": "crimson.canonical_detection_full_archive_stage1",
+  "schema_version": 1,
+  "seek_burst": {
+    "cancelled_requests": 14,
+    "discarded_completions": 4,
+    "frames": [
+      560111,
+      1066017,
+      905397,
+      100063,
+      996466,
+      909512,
+      639969,
+      378251
+    ],
+    "physical": {
+      "cache_evictions": 37,
+      "cache_hits": 16,
+      "cache_misses": 30,
+      "file_batch_reads": 19,
+      "file_bytes": 1139372,
+      "file_reads": 18
+    },
+    "physical_metric_scope": "process-global TensorStore delta",
+    "post_cancel_file_bytes_per_superseded_seek": 162767.42857142858,
+    "post_cancel_file_bytes_total": 1139372,
+    "seek_count": 8,
+    "settle_ms": 250.672583,
+    "source_scope": "canonical_detection_only_after_scheduler_idle",
+    "stale_publications": 0
+  },
+  "shutdown_ms": 12.316708,
+  "strategy": "paged",
+  "total_elapsed_ms": 105895.971542,
+  "traversal": {
+    "forward": {
+      "deadline_misses": 0,
+      "detections": 3500,
+      "direction": "forward",
+      "discarded_pages": 0,
+      "failed_pages": 0,
+      "field_reads": 150,
+      "frames": 3500,
+      "logical_digest_fnv1a64": "202210a60f50dcc8",
+      "maximum_resolve_ms": 10519.309875,
+      "page_deadline_ms": 100,
+      "pages": 50,
+      "peak_cached_bytes": 143360,
+      "peak_concurrent_fields": 12,
+      "peak_rss_bytes": 1950973952,
+      "physical": {
+        "cache_evictions": 30,
+        "cache_hits": 294,
+        "cache_misses": 25,
+        "file_batch_reads": 21,
+        "file_bytes": 1191646,
+        "file_reads": 21
+      },
+      "physical_metric_scope": "process-global TensorStore delta",
+      "post_warmup_deadline_miss_rate": 0.0,
+      "post_warmup_misses": 0,
+      "post_warmup_pages": 49,
+      "range_reads": 50,
+      "resolved_pages": 50,
+      "source_fps": 700,
+      "source_scope": "canonical_detection_only_after_scheduler_idle",
+      "wall_ms": 4904.957417
+    },
+    "reverse": {
+      "deadline_misses": 0,
+      "detections": 3500,
+      "direction": "reverse",
+      "discarded_pages": 0,
+      "failed_pages": 0,
+      "field_reads": 150,
+      "frames": 3500,
+      "logical_digest_fnv1a64": "97f58695f8c11ffc",
+      "maximum_resolve_ms": 10519.309875,
+      "page_deadline_ms": 100,
+      "pages": 50,
+      "peak_cached_bytes": 143360,
+      "peak_concurrent_fields": 12,
+      "peak_rss_bytes": 1950973952,
+      "physical": {
+        "cache_evictions": 0,
+        "cache_hits": 300,
+        "cache_misses": 0,
+        "file_batch_reads": 0,
+        "file_bytes": 0,
+        "file_reads": 0
+      },
+      "physical_metric_scope": "process-global TensorStore delta",
+      "post_warmup_deadline_miss_rate": 0.0,
+      "post_warmup_misses": 0,
+      "post_warmup_pages": 49,
+      "range_reads": 50,
+      "resolved_pages": 50,
+      "source_fps": 700,
+      "source_scope": "canonical_detection_only_after_scheduler_idle",
+      "wall_ms": 4903.607417
+    }
+  }
+}
