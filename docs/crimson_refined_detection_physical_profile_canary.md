@@ -4,7 +4,7 @@ Date: 2026-07-27
 
 Contract version: 1
 
-Status: frozen; mounted-macOS execution pending
+Status: mounted-macOS consumer gate passed; access-aware promotion recommended
 
 ## Purpose
 
@@ -104,3 +104,19 @@ not SMB wire bytes.
 Passing recommends the access-aware physical profile to Palette for a separate
 versioned promotion decision. Crimson never sets `profile_promoted=true` and
 does not modify a writer, registry, selector, or production archive.
+
+## Result
+
+The five-pair fresh-process matrix passed at clean Crimson implementation
+commit `9cf04acee9682a6f4f5fae005c0af6077ec5cc4b`. Access-aware transferred a
+median `0.13195x` as many traversal bytes and `0.31461x` as many whole-process
+bytes as regular, with exact paired logical digests and zero post-warmup
+deadline misses. It also showed no readiness, current-frame, seek, RSS, or
+shutdown regression.
+
+Crimson therefore recommends promotion of the unchanged access-aware physical
+profile: 128 KiB windowed/indexed inner chunks, 1 MiB eager offset chunks, and
+8 MiB outer shards. Palette retains ownership of versioning and production
+activation; the structured result keeps `profile_promoted=false`. Full
+evidence and the comparison plot are in
+`docs/diagnostics/refined_detection_physical_profile_canary_2026-07-27/`.

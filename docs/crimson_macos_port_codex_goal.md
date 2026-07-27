@@ -883,7 +883,16 @@ overlay, cancellation, lazy-audit, and residency checks. The deterministic
 suite covers the required `[2, 0, 1, 3]` raw/manual frame pattern. The result is
 bound to clean immutable Crimson implementation commit
 `28537f64bcae765b062374b17dd879c0a9614ade`. The paired
-regular/access-aware refined-snapshot physical gate may now proceed.
+regular/access-aware refined-snapshot physical gate is now complete. Five
+fresh mounted-macOS processes per layout passed every correctness, readiness,
+current-frame, cancellation, deadline, RSS, transfer, and shutdown gate at
+clean Crimson commit `9cf04acee9682a6f4f5fae005c0af6077ec5cc4b`.
+Access-aware transferred median `0.132x` traversal bytes and `0.315x` total
+process bytes relative to regular, with exact paired logical digests and zero
+post-warmup deadline misses. Crimson recommends the unchanged access-aware
+profile for Palette's separate versioned promotion; Crimson does not activate
+Palette profiles itself. Evidence is in
+`docs/diagnostics/refined_detection_physical_profile_canary_2026-07-27/`.
 The implementation boundary is documented in
 `docs/crimson_refined_detection_v1_consumer.md`.
 

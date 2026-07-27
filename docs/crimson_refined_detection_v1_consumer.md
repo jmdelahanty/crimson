@@ -2,9 +2,8 @@
 
 Date: 2026-07-27
 
-Status: read-only consumer implemented; real Palette shadow-snapshot acceptance
-passed at Crimson commit `28537f64bcae765b062374b17dd879c0a9614ade`;
-legacy editing remains unchanged and production write routing remains blocked.
+Status: read-only consumer and mounted physical-profile gates passed; legacy
+editing remains unchanged and production write routing remains blocked.
 
 ## Scope
 
@@ -123,3 +122,13 @@ evidence is in
 `docs/diagnostics/refined_detection_v1_shadow_gate_2026-07-27/result.json`.
 The gate was rebuilt and rerun from clean immutable implementation commit
 `28537f64bcae765b062374b17dd879c0a9614ade`.
+
+The paired full-duration regular/access-aware canary subsequently passed five
+fresh processes per layout at clean Crimson implementation commit
+`9cf04acee9682a6f4f5fae005c0af6077ec5cc4b`. Access-aware retained exact
+decoded results and zero post-warmup deadline misses while reducing median
+traversal file bytes by 86.8% and median whole-process file bytes by 68.5%.
+Crimson recommends that Palette promote the unchanged access-aware physical
+profile through Palette's separate versioned activation process. Evidence is
+in
+`docs/diagnostics/refined_detection_physical_profile_canary_2026-07-27/`.

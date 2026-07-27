@@ -1,0 +1,234 @@
+{
+  "archive_context": {
+    "cache_pool_bytes": 67108864,
+    "elapsed_ms": 12.177167
+  },
+  "buffer": {
+    "cache_hits": 101,
+    "demand_pages": 20,
+    "discarded_pages": 11,
+    "evicted_pages": 39,
+    "failed_pages": 0,
+    "last_error": "",
+    "lead_pages": 121,
+    "maximum_resolve_ms": 145.33775,
+    "peak_cached_bytes": 215040,
+    "peak_cached_pages": 32,
+    "peak_pending_pages": 2,
+    "requests": 121,
+    "resolved_pages": 114
+  },
+  "cache_pool_bytes": 67108864,
+  "canary_manifest": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/refined_detection_storage/profile_canary/sleepyfish_accept_all_regular_vs_access_aware_20260727_v1/canary_manifest.json",
+  "classification": "mounted_macos_detection_isolated",
+  "crimson_commit": "9cf04acee9682a6f4f5fae005c0af6077ec5cc4b",
+  "crimson_worktree_dirty": false,
+  "current_frames": {
+    "frames": [
+      271085,
+      85499,
+      397712,
+      1003450,
+      939795,
+      903492,
+      351953,
+      1141796
+    ],
+    "latencies_ms": [
+      59.22875,
+      33.496167,
+      24.278041,
+      49.291167,
+      19.642334,
+      19.37225,
+      22.722542,
+      22.532
+    ],
+    "maximum_ms": 59.22875,
+    "p50_ms": 22.722542,
+    "p95_ms": 59.22875,
+    "physical": {
+      "cache_evictions": 0,
+      "cache_hits": 298,
+      "cache_misses": 67,
+      "file_batch_reads": 55,
+      "file_bytes": 2522679,
+      "file_reads": 55
+    },
+    "row_counts": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ]
+  },
+  "expected_canary_payload_digest": "2c00649c378c7a33f5621c4cd91ad787db46dcd0a512d6391ece92b383cd5609",
+  "immutable_crimson_revision_bound": true,
+  "input": {
+    "archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/refined_detection_storage/profile_canary/sleepyfish_accept_all_regular_vs_access_aware_20260727_v1/candidates/access_aware.zarr",
+    "frames": 1188000,
+    "manifest_digest": "eb598ae8def4678ebf45dab2b10517c3ceaec7c87b39bd1cbf77f90ef25e6aba",
+    "offsets": 1188001,
+    "palette_commit": "a94abaea1206ae232b65185d1c98f250499af45b",
+    "payload_objects": 42,
+    "rows": 1187087,
+    "run": "refined_detect_access_aware_sleepyfish_refined_profile_20260727_v1",
+    "storage_profile_id": "published_http_v1__benchmark_sharded__chunk_131072__eager_chunk_1048576__shard_8388608"
+  },
+  "layout": "access_aware",
+  "pass": true,
+  "peak_rss_bytes": 49594368,
+  "physical_total": {
+    "cache_evictions": 0,
+    "cache_hits": 2471,
+    "cache_misses": 167,
+    "file_batch_reads": 113,
+    "file_bytes": 5940040,
+    "file_reads": 116
+  },
+  "process_elapsed_ms": 11217.673291,
+  "readiness": {
+    "first_frame_rows": 1,
+    "first_page_request_to_publish_ms": 107.58875,
+    "physical": {
+      "cache_evictions": 0,
+      "cache_hits": 0,
+      "cache_misses": 30,
+      "file_batch_reads": 16,
+      "file_bytes": 356288,
+      "file_reads": 18
+    },
+    "total_ms": 918.1595
+  },
+  "refined_open": {
+    "consolidated_array_declarations": 28,
+    "direct_group_metadata_reads": 3,
+    "direct_run_metadata_reads": 1,
+    "exact_handle_open_ms": 2.235542,
+    "exact_handle_opens": 11,
+    "manifest_validation_ms": 1.392666,
+    "offset_read_calls": 1,
+    "offset_read_ms": 358.179625,
+    "retained_offset_bytes": 9504008,
+    "root_metadata_ms": 69.337,
+    "root_metadata_reads": 1,
+    "selection_elapsed_ms": 615.045708,
+    "source_audit_handle_opens": 0,
+    "total_ms": 614.372375
+  },
+  "repetition": 2,
+  "repository": {
+    "failed_reads": 0,
+    "last_error": "",
+    "maximum_range_read_ms": 145.334666,
+    "paged_range_reads": 125,
+    "peak_concurrent_ui_field_reads": 31,
+    "range_reads": 125,
+    "resident_range_reads": 0,
+    "resolved_frames": 8750,
+    "resolved_rows": 8750,
+    "ui_field_reads": 1250
+  },
+  "scheduler": {
+    "cancelled": 23,
+    "completed": 125,
+    "discarded": 11,
+    "failed": 0,
+    "peak_active": 4,
+    "peak_pending": 2,
+    "submissions": 141,
+    "work_exceptions": 0,
+    "workers": 4
+  },
+  "schema_id": "crimson.refined_detection_physical_profile_trial",
+  "schema_version": 1,
+  "seek_burst": {
+    "cancelled_requests": 15,
+    "discarded_completions": 3,
+    "frames": [
+      560111,
+      1066017,
+      905397,
+      100063,
+      996466,
+      909512,
+      639969,
+      378251
+    ],
+    "physical": {
+      "cache_evictions": 0,
+      "cache_hits": 100,
+      "cache_misses": 17,
+      "file_batch_reads": 14,
+      "file_bytes": 636311,
+      "file_reads": 14
+    },
+    "settle_ms": 39.814958,
+    "stale_publications": 0
+  },
+  "shutdown_ms": 0.093,
+  "traversal": {
+    "forward": {
+      "deadline_misses": 0,
+      "deadline_ms": 100,
+      "direction": "forward",
+      "elapsed_ms": 4900.747,
+      "frames": 3500,
+      "logical_digest_fnv1a64": "1ab3dd2f608420d3",
+      "low_frame": 500010,
+      "maximum_ready_lateness_ms": 5.740792,
+      "pages": 50,
+      "physical": {
+        "cache_evictions": 0,
+        "cache_hits": 1041,
+        "cache_misses": 11,
+        "file_batch_reads": 9,
+        "file_bytes": 336763,
+        "file_reads": 9
+      },
+      "post_warmup_misses": 0,
+      "post_warmup_pages": 40,
+      "rows": 3500,
+      "warmup_pages": 10
+    },
+    "reverse": {
+      "deadline_misses": 1,
+      "deadline_ms": 100,
+      "direction": "reverse",
+      "elapsed_ms": 4902.345917,
+      "frames": 3500,
+      "logical_digest_fnv1a64": "aa25a3865af9cb46",
+      "low_frame": 1050000,
+      "maximum_ready_lateness_ms": 5.151875,
+      "pages": 50,
+      "physical": {
+        "cache_evictions": 0,
+        "cache_hits": 1032,
+        "cache_misses": 18,
+        "file_batch_reads": 12,
+        "file_bytes": 302517,
+        "file_reads": 12
+      },
+      "post_warmup_misses": 0,
+      "post_warmup_pages": 40,
+      "rows": 3500,
+      "warmup_pages": 10
+    }
+  },
+  "runner": {
+    "command": [
+      "/Users/jmdelahanty/gitrepos/crimson-macos/build/macos-arm64-release/refined_detection_physical_profile_benchmark",
+      "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/refined_detection_storage/profile_canary/sleepyfish_accept_all_regular_vs_access_aware_20260727_v1/canary_manifest.json",
+      "2c00649c378c7a33f5621c4cd91ad787db46dcd0a512d6391ece92b383cd5609",
+      "access_aware",
+      "2",
+      "/tmp/crimson-refined-profile-canary-9cf04ac/05_rep2_access_aware.json"
+    ],
+    "returncode": 0,
+    "wall_seconds": 11.261620334349573
+  }
+}
