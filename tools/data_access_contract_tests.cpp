@@ -2,6 +2,7 @@
 #include "data_access_cache.h"
 #include "data_access_scheduler.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -9,6 +10,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -51,16 +53,15 @@ bool testRequestAndResultContract() {
   CHECK((FrameRange{4, 9}.intersects({9, 12})));
   CHECK(!(FrameRange{4, 9}.intersects({10, 12})));
 
-  const auto named =
-      FieldSelection::Named({"mask", "contours", "mask", ""});
+  const auto named = FieldSelection::Named({"mask", "contours", "mask", ""});
   CHECK(named.valid());
   CHECK(named.names == std::vector<std::string>({"contours", "mask"}));
   CHECK(FieldSelection::All().valid());
   CHECK(!(FieldSelection{true, {"mask"}}.valid()));
 
   auto left = request(10, 20, RequestPriority::Speculative);
-  auto right = request(10, 20, RequestPriority::CurrentFrame,
-                       1, AccessPattern::RandomSeek);
+  auto right = request(10, 20, RequestPriority::CurrentFrame, 1,
+                       AccessPattern::RandomSeek);
   right.fields = FieldSelection::Named({"mask", "contours"});
   CHECK(left.valid());
   CHECK(equivalentDataWork(left, right));
@@ -108,9 +109,8 @@ bool testPriorityDeduplicationAndGenerationCancellation() {
   CHECK(scheduled->request.priority == RequestPriority::CurrentFrame);
   CHECK(scheduled->request.access_pattern == AccessPattern::RandomSeek);
   CHECK(!scheduled->cancellation.cancelled());
-  const auto active_duplicate = queue.submit(
-      request(100, 119, RequestPriority::CurrentFrame, 1,
-              AccessPattern::Paused));
+  const auto active_duplicate = queue.submit(request(
+      100, 119, RequestPriority::CurrentFrame, 1, AccessPattern::Paused));
   CHECK(active_duplicate.status == DataRequestSubmitStatus::Duplicate);
   CHECK(active_duplicate.sequence == scheduled->sequence);
   CHECK(queue.advanceGeneration(source(), 2) == 1);
@@ -145,8 +145,8 @@ bool testBoundedDemandFirstQueue() {
   using namespace crimson::data;
   DataAccessQueue queue(2);
   CHECK(queue.submit(request(0, 9, RequestPriority::Speculative)).accepted());
-  CHECK(queue.submit(request(10, 19, RequestPriority::VisibleWindow))
-            .accepted());
+  CHECK(
+      queue.submit(request(10, 19, RequestPriority::VisibleWindow)).accepted());
   const auto demand =
       queue.submit(request(20, 20, RequestPriority::CurrentFrame));
   CHECK(demand.status == DataRequestSubmitStatus::Accepted);
@@ -160,8 +160,8 @@ bool testBoundedDemandFirstQueue() {
   CHECK((second->request.frames == FrameRange{10, 19}));
   CHECK(!queue.popNext());
 
-  CHECK(queue.submit(request(30, 39, RequestPriority::CurrentFrame))
-            .accepted());
+  CHECK(
+      queue.submit(request(30, 39, RequestPriority::CurrentFrame)).accepted());
   CHECK(queue.submit(request(40, 49, RequestPriority::Inspection)).accepted());
   const auto rejected =
       queue.submit(request(50, 59, RequestPriority::Speculative));
@@ -172,9 +172,12 @@ bool testBoundedDemandFirstQueue() {
   CHECK(metrics.pending_requests == 2);
 
   DataAccessQueue retained(4);
-  CHECK(retained.submit(request(0, 0, RequestPriority::Speculative)).accepted());
-  CHECK(retained.submit(request(1, 1, RequestPriority::Speculative)).accepted());
-  CHECK(retained.submit(request(2, 2, RequestPriority::Speculative)).accepted());
+  CHECK(
+      retained.submit(request(0, 0, RequestPriority::Speculative)).accepted());
+  CHECK(
+      retained.submit(request(1, 1, RequestPriority::Speculative)).accepted());
+  CHECK(
+      retained.submit(request(2, 2, RequestPriority::Speculative)).accepted());
   CHECK(retained.retainSourceRange(source(), 1, {1, 1}) == 2);
   CHECK(retained.size() == 1);
   CHECK(retained.containsSource(source()));
@@ -420,6 +423,96 @@ bool testDemandReservationAndSourceIsolation() {
   return true;
 }
 
+bool testSchedulerTimingTelemetry() {
+  using namespace crimson::data;
+  DataAccessScheduler scheduler(8, 1);
+  std::mutex mutex;
+  std::condition_variable condition;
+  bool blocker_started = false;
+  bool release_blocker = false;
+  bool promoted_work_started = false;
+
+  auto blocker = request(0, 0, RequestPriority::Inspection);
+  blocker.source = source("timing-blocker");
+  CHECK(scheduler
+            .submit(std::move(blocker),
+                    [&](const ScheduledDataRequest &) {
+                      std::unique_lock<std::mutex> lock(mutex);
+                      blocker_started = true;
+                      condition.notify_all();
+                      condition.wait(lock, [&] { return release_blocker; });
+                      return DataResultStatus::Ready;
+                    })
+            .accepted());
+  {
+    std::unique_lock<std::mutex> lock(mutex);
+    CHECK(condition.wait_for(lock, std::chrono::seconds(2),
+                             [&] { return blocker_started; }));
+  }
+
+  auto speculative = request(10, 10, RequestPriority::Speculative);
+  speculative.source = source("timing-promoted");
+  const auto initial =
+      scheduler.submit(speculative, [&](const ScheduledDataRequest &) {
+        std::lock_guard<std::mutex> lock(mutex);
+        promoted_work_started = true;
+        return DataResultStatus::Ready;
+      });
+  CHECK(initial.status == DataRequestSubmitStatus::Accepted);
+
+  // The wait before promotion must not be charged to current-frame demand.
+  std::this_thread::sleep_for(std::chrono::milliseconds(130));
+  speculative.priority = RequestPriority::CurrentFrame;
+  speculative.access_pattern = AccessPattern::RandomSeek;
+  const auto promoted = scheduler.submit(
+      std::move(speculative),
+      [](const ScheduledDataRequest &) { return DataResultStatus::Failed; });
+  CHECK(promoted.status == DataRequestSubmitStatus::Promoted);
+  CHECK(promoted.sequence == initial.sequence);
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    release_blocker = true;
+    condition.notify_all();
+  }
+  scheduler.waitUntilIdle();
+  CHECK(promoted_work_started);
+
+  const auto metrics = scheduler.metrics();
+  const size_t current = static_cast<size_t>(RequestPriority::CurrentFrame);
+  const size_t inspection = static_cast<size_t>(RequestPriority::Inspection);
+  const size_t speculative_priority =
+      static_cast<size_t>(RequestPriority::Speculative);
+  CHECK(metrics.timing_by_priority[current].started == 1);
+  CHECK(metrics.timing_by_priority[current].completed == 1);
+  CHECK(metrics.timing_by_priority[inspection].service_over_100_ms == 1);
+  CHECK(metrics.timing_by_priority[speculative_priority].started == 0);
+  CHECK(metrics.timing_by_priority[inspection].maximum_service_ms -
+            metrics.timing_by_priority[current].maximum_queue_wait_ms >=
+        100.0);
+  CHECK(metrics.timing_by_priority[current].averageQueueWaitMs() >= 0.0);
+  CHECK(metrics.timing_by_priority[current].averageServiceMs() >= 0.0);
+
+  const auto promoted_source = std::find_if(
+      metrics.timing_by_source.begin(), metrics.timing_by_source.end(),
+      [](const DataAccessSourceTimingMetrics &timing) {
+        return timing.source == source("timing-promoted");
+      });
+  CHECK(promoted_source != metrics.timing_by_source.end());
+  CHECK(promoted_source->by_priority[current].started == 1);
+  CHECK(promoted_source->by_priority[speculative_priority].started == 0);
+  CHECK(std::is_sorted(
+      metrics.timing_by_source.begin(), metrics.timing_by_source.end(),
+      [](const DataAccessSourceTimingMetrics &left,
+         const DataAccessSourceTimingMetrics &right) {
+        return std::tie(left.source.archive, left.source.product,
+                        left.source.run) < std::tie(right.source.archive,
+                                                    right.source.product,
+                                                    right.source.run);
+      }));
+  scheduler.shutdown();
+  return true;
+}
+
 bool testByteBudgetedWeightedLru() {
   using namespace crimson::data;
   ByteBudgetLruCache<std::string, int> cache({100, 50, 3});
@@ -483,7 +576,7 @@ int main() {
       !testPriorityDeduplicationAndGenerationCancellation() ||
       !testBoundedDemandFirstQueue() || !testSharedWorkerScheduler() ||
       !testDemandReservationAndSourceIsolation() ||
-      !testByteBudgetedWeightedLru()) {
+      !testSchedulerTimingTelemetry() || !testByteBudgetedWeightedLru()) {
     return 1;
   }
   std::cout << "data_access_contract_tests: PASS\n";

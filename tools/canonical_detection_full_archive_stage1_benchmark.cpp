@@ -985,6 +985,47 @@ void validateAffiliatedVideo(const LoadedProducts &products,
 
 json schedulerJson(
     const crimson::data::DataAccessSchedulerMetrics &scheduler_metrics) {
+  auto timing_json = [](const crimson::data::DataAccessTimingMetrics &timing) {
+    return json{
+        {"started", timing.started},
+        {"completed", timing.completed},
+        {"queue_average_ms", timing.averageQueueWaitMs()},
+        {"queue_maximum_ms", timing.maximum_queue_wait_ms},
+        {"service_average_ms", timing.averageServiceMs()},
+        {"service_maximum_ms", timing.maximum_service_ms},
+        {"queue_wait_over_100_ms", timing.queue_wait_over_100_ms},
+        {"queue_wait_over_1000_ms", timing.queue_wait_over_1000_ms},
+        {"queue_wait_over_5000_ms", timing.queue_wait_over_5000_ms},
+        {"service_over_100_ms", timing.service_over_100_ms},
+        {"service_over_1000_ms", timing.service_over_1000_ms},
+        {"service_over_5000_ms", timing.service_over_5000_ms},
+    };
+  };
+  json by_priority = json::object();
+  for (size_t index = 0; index < crimson::data::kDataRequestPriorityCount;
+       ++index) {
+    const auto priority = static_cast<crimson::data::RequestPriority>(index);
+    by_priority[crimson::data::requestPriorityName(priority)] =
+        timing_json(scheduler_metrics.timing_by_priority[index]);
+  }
+  json by_source = json::array();
+  for (const auto &source : scheduler_metrics.timing_by_source) {
+    json source_priorities = json::object();
+    for (size_t index = 0; index < crimson::data::kDataRequestPriorityCount;
+         ++index) {
+      const auto priority = static_cast<crimson::data::RequestPriority>(index);
+      if (source.by_priority[index].started > 0) {
+        source_priorities[crimson::data::requestPriorityName(priority)] =
+            timing_json(source.by_priority[index]);
+      }
+    }
+    by_source.push_back({
+        {"archive", source.source.archive},
+        {"product", source.source.product},
+        {"run", source.source.run},
+        {"by_priority", std::move(source_priorities)},
+    });
+  }
   return {
       {"workers", scheduler_metrics.worker_count},
       {"peak_active", scheduler_metrics.queue.peak_active_requests},
@@ -996,6 +1037,8 @@ json schedulerJson(
       {"discarded", scheduler_metrics.queue.discarded_completions},
       {"failed", scheduler_metrics.queue.failed_completions},
       {"work_exceptions", scheduler_metrics.work_exceptions},
+      {"timing_by_priority", std::move(by_priority)},
+      {"timing_by_source", std::move(by_source)},
   };
 }
 

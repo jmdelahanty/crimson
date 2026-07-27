@@ -2,12 +2,14 @@
 
 #include "data_access.h"
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <vector>
 
 namespace crimson::data {
 
@@ -109,6 +111,36 @@ const char *dataRequestSubmitStatusName(DataRequestSubmitStatus status);
 using DataAccessWork =
     std::function<DataResultStatus(const ScheduledDataRequest &request)>;
 
+constexpr size_t kDataRequestPriorityCount =
+    static_cast<size_t>(RequestPriority::Speculative) + 1;
+
+struct DataAccessTimingMetrics {
+  uint64_t started = 0;
+  uint64_t completed = 0;
+  double total_queue_wait_ms = 0.0;
+  double maximum_queue_wait_ms = 0.0;
+  double total_service_ms = 0.0;
+  double maximum_service_ms = 0.0;
+  uint64_t queue_wait_over_100_ms = 0;
+  uint64_t queue_wait_over_1000_ms = 0;
+  uint64_t queue_wait_over_5000_ms = 0;
+  uint64_t service_over_100_ms = 0;
+  uint64_t service_over_1000_ms = 0;
+  uint64_t service_over_5000_ms = 0;
+
+  double averageQueueWaitMs() const {
+    return started == 0 ? 0.0 : total_queue_wait_ms / started;
+  }
+  double averageServiceMs() const {
+    return completed == 0 ? 0.0 : total_service_ms / completed;
+  }
+};
+
+struct DataAccessSourceTimingMetrics {
+  SourceIdentity source;
+  std::array<DataAccessTimingMetrics, kDataRequestPriorityCount> by_priority;
+};
+
 struct DataAccessSchedulerMetrics {
   DataAccessQueueMetrics queue;
   uint64_t work_started = 0;
@@ -116,6 +148,9 @@ struct DataAccessSchedulerMetrics {
   uint64_t work_exceptions = 0;
   size_t worker_count = 0;
   size_t peak_active_speculative_requests = 0;
+  std::array<DataAccessTimingMetrics, kDataRequestPriorityCount>
+      timing_by_priority;
+  std::vector<DataAccessSourceTimingMetrics> timing_by_source;
 };
 
 class DataAccessScheduler {

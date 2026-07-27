@@ -1,10 +1,12 @@
 #include "data_access_scheduler.h"
 
 #include <algorithm>
+#include <chrono>
 #include <condition_variable>
 #include <exception>
 #include <mutex>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -68,23 +70,21 @@ struct DataAccessQueue::Impl {
     }
     generations[source] = generation;
     size_t cancelled = 0;
-    pending.erase(
-        std::remove_if(
-            pending.begin(), pending.end(), [&](const ScheduledDataRequest &item) {
-              if (item.request.source != source ||
-                  item.request.generation >= generation) {
-                return false;
-              }
-              if (cancel(item)) {
-                ++cancelled;
-              }
-              return true;
-            }),
-        pending.end());
+    pending.erase(std::remove_if(pending.begin(), pending.end(),
+                                 [&](const ScheduledDataRequest &item) {
+                                   if (item.request.source != source ||
+                                       item.request.generation >= generation) {
+                                     return false;
+                                   }
+                                   if (cancel(item)) {
+                                     ++cancelled;
+                                   }
+                                   return true;
+                                 }),
+                  pending.end());
     for (const auto &item : active) {
       if (item.second.request.source == source &&
-          item.second.request.generation < generation &&
-          cancel(item.second)) {
+          item.second.request.generation < generation && cancel(item.second)) {
         ++cancelled;
       }
     }
@@ -122,11 +122,11 @@ DataRequestSubmitOutcome DataAccessQueue::submit(DataRangeRequest request) {
         impl_->advanceGenerationLocked(request.source, request.generation);
   }
 
-  const auto duplicate = std::find_if(
-      impl_->pending.begin(), impl_->pending.end(),
-      [&](const ScheduledDataRequest &item) {
-        return equivalentDataWork(item.request, request);
-      });
+  const auto duplicate =
+      std::find_if(impl_->pending.begin(), impl_->pending.end(),
+                   [&](const ScheduledDataRequest &item) {
+                     return equivalentDataWork(item.request, request);
+                   });
   if (duplicate != impl_->pending.end()) {
     outcome.sequence = duplicate->sequence;
     duplicate->request.access_pattern = request.access_pattern;
@@ -142,8 +142,7 @@ DataRequestSubmitOutcome DataAccessQueue::submit(DataRangeRequest request) {
     return outcome;
   }
   const auto active_duplicate = std::find_if(
-      impl_->active.begin(), impl_->active.end(),
-      [&](const auto &item) {
+      impl_->active.begin(), impl_->active.end(), [&](const auto &item) {
         return !item.second.cancellation.cancelled() &&
                equivalentDataWork(item.second.request, request);
       });
@@ -155,8 +154,8 @@ DataRequestSubmitOutcome DataAccessQueue::submit(DataRangeRequest request) {
   }
 
   auto state = std::make_shared<DataCancellationToken::State>();
-  ScheduledDataRequest scheduled{
-      std::move(request), impl_->next_sequence++, DataCancellationToken(state)};
+  ScheduledDataRequest scheduled{std::move(request), impl_->next_sequence++,
+                                 DataCancellationToken(state)};
 
   if (impl_->pending.size() >= impl_->capacity) {
     const auto worst = std::max_element(impl_->pending.begin(),
@@ -269,19 +268,18 @@ size_t DataAccessQueue::retainSourceRange(const SourceIdentity &source,
   std::lock_guard<std::mutex> lock(impl_->mutex);
   size_t cancelled = 0;
   impl_->pending.erase(
-      std::remove_if(
-          impl_->pending.begin(), impl_->pending.end(),
-          [&](const ScheduledDataRequest &item) {
-            if (item.request.source != source ||
-                item.request.generation != generation ||
-                item.request.frames.intersects(frames)) {
-              return false;
-            }
-            if (impl_->cancel(item)) {
-              ++cancelled;
-            }
-            return true;
-          }),
+      std::remove_if(impl_->pending.begin(), impl_->pending.end(),
+                     [&](const ScheduledDataRequest &item) {
+                       if (item.request.source != source ||
+                           item.request.generation != generation ||
+                           item.request.frames.intersects(frames)) {
+                         return false;
+                       }
+                       if (impl_->cancel(item)) {
+                         ++cancelled;
+                       }
+                       return true;
+                     }),
       impl_->pending.end());
   impl_->metrics.cancelled_requests += cancelled;
   impl_->metrics.pending_requests = impl_->pending.size();
@@ -291,19 +289,18 @@ size_t DataAccessQueue::retainSourceRange(const SourceIdentity &source,
 size_t DataAccessQueue::cancelSource(const SourceIdentity &source) {
   std::lock_guard<std::mutex> lock(impl_->mutex);
   size_t cancelled = 0;
-  impl_->pending.erase(
-      std::remove_if(
-          impl_->pending.begin(), impl_->pending.end(),
-          [&](const ScheduledDataRequest &item) {
-            if (item.request.source != source) {
-              return false;
-            }
-            if (impl_->cancel(item)) {
-              ++cancelled;
-            }
-            return true;
-          }),
-      impl_->pending.end());
+  impl_->pending.erase(std::remove_if(impl_->pending.begin(),
+                                      impl_->pending.end(),
+                                      [&](const ScheduledDataRequest &item) {
+                                        if (item.request.source != source) {
+                                          return false;
+                                        }
+                                        if (impl_->cancel(item)) {
+                                          ++cancelled;
+                                        }
+                                        return true;
+                                      }),
+                       impl_->pending.end());
   for (const auto &item : impl_->active) {
     if (item.second.request.source == source && impl_->cancel(item.second)) {
       ++cancelled;
@@ -359,21 +356,20 @@ bool DataAccessQueue::containsSource(const SourceIdentity &source) const {
 
 bool DataAccessQueue::hasRunnable(RequestPriority maximum_priority) const {
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  return std::any_of(
-      impl_->pending.begin(), impl_->pending.end(),
-      [&](const ScheduledDataRequest &candidate) {
-        if (static_cast<uint8_t>(candidate.request.priority) >
-            static_cast<uint8_t>(maximum_priority)) {
-          return false;
-        }
-        return std::none_of(
-            impl_->active.begin(), impl_->active.end(),
-            [&](const auto &active) {
-              return !active.second.cancellation.cancelled() &&
-                     active.second.request.source ==
-                         candidate.request.source;
-            });
-      });
+  return std::any_of(impl_->pending.begin(), impl_->pending.end(),
+                     [&](const ScheduledDataRequest &candidate) {
+                       if (static_cast<uint8_t>(candidate.request.priority) >
+                           static_cast<uint8_t>(maximum_priority)) {
+                         return false;
+                       }
+                       return std::none_of(
+                           impl_->active.begin(), impl_->active.end(),
+                           [&](const auto &active) {
+                             return !active.second.cancellation.cancelled() &&
+                                    active.second.request.source ==
+                                        candidate.request.source;
+                           });
+                     });
 }
 
 size_t DataAccessQueue::size() const {
@@ -407,6 +403,13 @@ const char *dataRequestSubmitStatusName(DataRequestSubmitStatus status) {
 }
 
 struct DataAccessScheduler::Impl {
+  using Clock = std::chrono::steady_clock;
+
+  struct Task {
+    DataAccessWork work;
+    Clock::time_point priority_queued_at;
+  };
+
   Impl(size_t pending_capacity, size_t requested_workers,
        size_t requested_speculative_workers)
       : queue(pending_capacity), worker_count(requested_workers),
@@ -421,11 +424,56 @@ struct DataAccessScheduler::Impl {
   size_t active_speculative_requests = 0;
   size_t peak_active_speculative_requests = 0;
   bool stopping = false;
-  std::unordered_map<uint64_t, DataAccessWork> tasks;
+  std::unordered_map<uint64_t, Task> tasks;
   std::vector<std::thread> workers;
   uint64_t work_started = 0;
   uint64_t work_completed = 0;
   uint64_t work_exceptions = 0;
+  std::array<DataAccessTimingMetrics, kDataRequestPriorityCount>
+      timing_by_priority;
+  std::unordered_map<
+      SourceIdentity,
+      std::array<DataAccessTimingMetrics, kDataRequestPriorityCount>,
+      SourceIdentityHash>
+      timing_by_source;
+
+  static size_t priorityIndex(RequestPriority priority) {
+    return static_cast<size_t>(priority);
+  }
+
+  static void recordQueueWait(DataAccessTimingMetrics *metrics,
+                              double elapsed_ms) {
+    ++metrics->started;
+    metrics->total_queue_wait_ms += elapsed_ms;
+    metrics->maximum_queue_wait_ms =
+        std::max(metrics->maximum_queue_wait_ms, elapsed_ms);
+    metrics->queue_wait_over_100_ms += elapsed_ms >= 100.0 ? 1 : 0;
+    metrics->queue_wait_over_1000_ms += elapsed_ms >= 1000.0 ? 1 : 0;
+    metrics->queue_wait_over_5000_ms += elapsed_ms >= 5000.0 ? 1 : 0;
+  }
+
+  static void recordService(DataAccessTimingMetrics *metrics,
+                            double elapsed_ms) {
+    ++metrics->completed;
+    metrics->total_service_ms += elapsed_ms;
+    metrics->maximum_service_ms =
+        std::max(metrics->maximum_service_ms, elapsed_ms);
+    metrics->service_over_100_ms += elapsed_ms >= 100.0 ? 1 : 0;
+    metrics->service_over_1000_ms += elapsed_ms >= 1000.0 ? 1 : 0;
+    metrics->service_over_5000_ms += elapsed_ms >= 5000.0 ? 1 : 0;
+  }
+
+  void recordQueueWait(const DataRangeRequest &request, double elapsed_ms) {
+    const size_t index = priorityIndex(request.priority);
+    recordQueueWait(&timing_by_priority[index], elapsed_ms);
+    recordQueueWait(&timing_by_source[request.source][index], elapsed_ms);
+  }
+
+  void recordService(const DataRangeRequest &request, double elapsed_ms) {
+    const size_t index = priorityIndex(request.priority);
+    recordService(&timing_by_priority[index], elapsed_ms);
+    recordService(&timing_by_source[request.source][index], elapsed_ms);
+  }
 
   bool workCanStartLocked() const {
     if (queue.hasRunnable(RequestPriority::VisibleWindow)) {
@@ -449,6 +497,7 @@ struct DataAccessScheduler::Impl {
     while (true) {
       ScheduledDataRequest request;
       DataAccessWork work;
+      Clock::time_point service_started;
       {
         std::unique_lock<std::mutex> lock(mutex);
         condition.wait(lock, [&] { return stopping || workCanStartLocked(); });
@@ -466,9 +515,8 @@ struct DataAccessScheduler::Impl {
         request = std::move(*scheduled);
         if (request.request.priority == RequestPriority::Speculative) {
           ++active_speculative_requests;
-          peak_active_speculative_requests =
-              std::max(peak_active_speculative_requests,
-                       active_speculative_requests);
+          peak_active_speculative_requests = std::max(
+              peak_active_speculative_requests, active_speculative_requests);
         }
         const auto task = tasks.find(request.sequence);
         if (task == tasks.end()) {
@@ -479,7 +527,14 @@ struct DataAccessScheduler::Impl {
           condition.notify_all();
           continue;
         }
-        work = task->second;
+        const auto worker_started = Clock::now();
+        const double queue_wait_ms =
+            std::chrono::duration<double, std::milli>(
+                worker_started - task->second.priority_queued_at)
+                .count();
+        recordQueueWait(request.request, queue_wait_ms);
+        work = task->second.work;
+        service_started = Clock::now();
         ++work_started;
       }
 
@@ -499,12 +554,16 @@ struct DataAccessScheduler::Impl {
           status != DataResultStatus::Discarded) {
         status = DataResultStatus::Discarded;
       }
+      const double service_ms = std::chrono::duration<double, std::milli>(
+                                    Clock::now() - service_started)
+                                    .count();
 
       {
         std::lock_guard<std::mutex> lock(mutex);
         if (request.request.priority == RequestPriority::Speculative) {
           --active_speculative_requests;
         }
+        recordService(request.request, service_ms);
         queue.complete(request.sequence, status);
         tasks.erase(request.sequence);
         ++work_completed;
@@ -536,9 +595,16 @@ DataRequestSubmitOutcome DataAccessScheduler::submit(DataRangeRequest request,
   if (impl_->stopping || impl_->workers.empty() || !work) {
     return {DataRequestSubmitStatus::RejectedInvalid};
   }
+  const auto queued_at = Impl::Clock::now();
   auto outcome = impl_->queue.submit(std::move(request));
   if (outcome.status == DataRequestSubmitStatus::Accepted) {
-    impl_->tasks.emplace(outcome.sequence, std::move(work));
+    impl_->tasks.emplace(outcome.sequence,
+                         Impl::Task{std::move(work), queued_at});
+  } else if (outcome.status == DataRequestSubmitStatus::Promoted) {
+    const auto task = impl_->tasks.find(outcome.sequence);
+    if (task != impl_->tasks.end()) {
+      task->second.priority_queued_at = queued_at;
+    }
   }
   impl_->removeDetachedTasksLocked();
   if (outcome.accepted()) {
@@ -577,8 +643,8 @@ size_t DataAccessScheduler::cancelSource(const SourceIdentity &source) {
 
 void DataAccessScheduler::waitForSourceIdle(const SourceIdentity &source) {
   std::unique_lock<std::mutex> lock(impl_->mutex);
-  impl_->condition.wait(
-      lock, [&] { return !impl_->queue.containsSource(source); });
+  impl_->condition.wait(lock,
+                        [&] { return !impl_->queue.containsSource(source); });
 }
 
 void DataAccessScheduler::waitUntilIdle() {
@@ -617,9 +683,28 @@ bool DataAccessScheduler::running() const {
 
 DataAccessSchedulerMetrics DataAccessScheduler::metrics() const {
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  return {impl_->queue.metrics(), impl_->work_started, impl_->work_completed,
-          impl_->work_exceptions, impl_->worker_count,
-          impl_->peak_active_speculative_requests};
+  DataAccessSchedulerMetrics result;
+  result.queue = impl_->queue.metrics();
+  result.work_started = impl_->work_started;
+  result.work_completed = impl_->work_completed;
+  result.work_exceptions = impl_->work_exceptions;
+  result.worker_count = impl_->worker_count;
+  result.peak_active_speculative_requests =
+      impl_->peak_active_speculative_requests;
+  result.timing_by_priority = impl_->timing_by_priority;
+  result.timing_by_source.reserve(impl_->timing_by_source.size());
+  for (const auto &source : impl_->timing_by_source) {
+    result.timing_by_source.push_back({source.first, source.second});
+  }
+  std::sort(result.timing_by_source.begin(), result.timing_by_source.end(),
+            [](const DataAccessSourceTimingMetrics &left,
+               const DataAccessSourceTimingMetrics &right) {
+              return std::tie(left.source.archive, left.source.product,
+                              left.source.run) < std::tie(right.source.archive,
+                                                          right.source.product,
+                                                          right.source.run);
+            });
+  return result;
 }
 
 } // namespace crimson::data

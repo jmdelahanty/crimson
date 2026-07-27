@@ -180,6 +180,31 @@ can also increase contention over VPN or Wi-Fi. A future in-flight decoded-byte
 budget should allow multiple small timeline prefetches while limiting large
 dense-mask chunk decodes.
 
+### Queue and service telemetry
+
+The shared scheduler records bounded timing aggregates by request priority and
+by source identity. It does not retain a record for every request. For each
+aggregate it reports counts, average and maximum queue wait, average and maximum
+callback service time, and counts exceeding 100 ms, 1 second, and 5 seconds.
+
+Queue wait begins when work is accepted and ends when a worker starts it. If
+queued speculative work is promoted, the queue clock restarts at promotion so
+current-frame latency does not inherit time spent waiting as lookahead. Duplicate
+submissions do not create timing samples, and cancelled work that never starts
+has no service sample.
+
+Service time covers the complete scheduler callback. Depending on the adapter,
+that can include repository reads, decompression, conversion, validation, and
+immutable-result publication. Repository and buffer metrics remain the source
+for subdividing that interval. The macOS shell emits priority and source timing
+summaries at shutdown, and the full-archive and refined-profile benchmark JSON
+preserve the same aggregates.
+
+This checkpoint adds evidence, not a reserved current-frame worker or
+preemption. A long callback that has already started remains non-preemptive.
+The measurements will show whether long initialization work consumes all four
+workers often enough to justify a backend-neutral demand reservation policy.
+
 ## Cache Policy
 
 Application caches should have explicit CPU and GPU byte budgets. Item-count
@@ -346,14 +371,17 @@ Phase 5O.2.
 
 Status: in progress. The portable scheduler worker layer is implemented with
 demand-first ordering, generation cancellation, source isolation, bounded
-speculation, shutdown draining, and aggregate metrics. Native archive
+speculation, shutdown draining, and bounded queue/service timing aggregates.
+Native archive
 initialization, keypoints, subject masks, and the generic motion/tail timeline
 buffer use it, and the Mac application injects one shared four-worker instance.
 Deterministic tests verify that three visible sources run while one speculative
 source is active, one source cannot occupy multiple workers, product
 completions publish independently, and keypoint seeks discard stale
-generations. Remaining buffers, direction-aware timeline prefetch, queue-delay
-telemetry, and decoded-byte-weighted in-flight admission remain open.
+generations. Scheduler tests also verify promotion-aware timing attribution and
+deterministic per-source summaries. Remaining buffers, direction-aware timeline
+prefetch, a measured demand-reservation decision, and decoded-byte-weighted
+in-flight admission remain open.
 
 ### Phase 5O.4: Converge maintained adapters
 

@@ -266,6 +266,47 @@ json bufferMetricsJson(const CanonicalDetectionBufferMetrics &metrics) {
 }
 
 json schedulerMetricsJson(const crimson::data::DataAccessSchedulerMetrics &m) {
+  auto timing_json = [](const crimson::data::DataAccessTimingMetrics &timing) {
+    return json{
+        {"started", timing.started},
+        {"completed", timing.completed},
+        {"queue_average_ms", timing.averageQueueWaitMs()},
+        {"queue_maximum_ms", timing.maximum_queue_wait_ms},
+        {"service_average_ms", timing.averageServiceMs()},
+        {"service_maximum_ms", timing.maximum_service_ms},
+        {"queue_wait_over_100_ms", timing.queue_wait_over_100_ms},
+        {"queue_wait_over_1000_ms", timing.queue_wait_over_1000_ms},
+        {"queue_wait_over_5000_ms", timing.queue_wait_over_5000_ms},
+        {"service_over_100_ms", timing.service_over_100_ms},
+        {"service_over_1000_ms", timing.service_over_1000_ms},
+        {"service_over_5000_ms", timing.service_over_5000_ms},
+    };
+  };
+  json by_priority = json::object();
+  for (size_t index = 0; index < crimson::data::kDataRequestPriorityCount;
+       ++index) {
+    const auto priority = static_cast<crimson::data::RequestPriority>(index);
+    by_priority[crimson::data::requestPriorityName(priority)] =
+        timing_json(m.timing_by_priority[index]);
+  }
+  json by_source = json::array();
+  for (const auto &source : m.timing_by_source) {
+    json source_priorities = json::object();
+    for (size_t index = 0; index < crimson::data::kDataRequestPriorityCount;
+         ++index) {
+      const auto priority = static_cast<crimson::data::RequestPriority>(index);
+      if (source.by_priority[index].started > 0) {
+        source_priorities[crimson::data::requestPriorityName(priority)] =
+            timing_json(source.by_priority[index]);
+      }
+    }
+    by_source.push_back({
+        {"archive", source.source.archive},
+        {"product", source.source.product},
+        {"run", source.source.run},
+        {"by_priority", std::move(source_priorities)},
+    });
+  }
   return {
       {"workers", m.worker_count},
       {"submissions", m.queue.submissions},
@@ -276,6 +317,8 @@ json schedulerMetricsJson(const crimson::data::DataAccessSchedulerMetrics &m) {
       {"work_exceptions", m.work_exceptions},
       {"peak_active", m.queue.peak_active_requests},
       {"peak_pending", m.queue.peak_pending_requests},
+      {"timing_by_priority", std::move(by_priority)},
+      {"timing_by_source", std::move(by_source)},
   };
 }
 

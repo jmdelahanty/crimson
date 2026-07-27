@@ -768,9 +768,12 @@ macOS. Four workers provide bounded cross-product concurrency; one source cannot
 consume multiple workers. Current frame demand outranks initialization and
 lookahead, stale generations are cancelled, and deterministic tests cover
 archive-first/product-level publication, demand reservation, source isolation,
-keypoint cache reuse, and seek invalidation. The one-speculative setting is an
-initial baseline. Byte-weighted in-flight admission, remaining buffer
-migrations, queue-delay telemetry, and Linux/Windows adapters remain open.
+keypoint cache reuse, seek invalidation, and promotion-aware timing attribution.
+Bounded queue-wait and callback-service aggregates are now available by priority
+and source in macOS shutdown diagnostics and benchmark JSON. This is telemetry,
+not preemption or a reserved worker. The one-speculative setting is an initial
+baseline. Byte-weighted in-flight admission, the measured demand-reservation
+decision, remaining buffer migrations, and Linux/Windows adapters remain open.
 
 Phase 5O.4 is in progress. The native Mac loader shares a 128 MiB preload budget
 across the selected default motion, eye-angle, and tail series. Repositories

@@ -9,9 +9,9 @@
 #include "apple_video_metal_renderer.h"
 #include "apple_video_playback_buffer.h"
 #include "apple_video_viewer_ui.h"
+#include "canonical_detection_buffer.h"
 #include "chaser_distance_polar_buffer.h"
 #include "chaser_distance_polar_scene.h"
-#include "canonical_detection_buffer.h"
 #include "crop_presentation_coordinator.h"
 #include "data_access_scheduler.h"
 #include "debug_flags.h"
@@ -975,8 +975,7 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
     }
     if (argument == "--refined-detection-run") {
       if (i + 1 >= argc || argv[i + 1][0] == '\0') {
-        std::fprintf(stderr,
-                     "Missing value for --refined-detection-run\n");
+        std::fprintf(stderr, "Missing value for --refined-detection-run\n");
         return std::nullopt;
       }
       if (!options.refined_detection_run.empty()) {
@@ -989,9 +988,8 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
     }
     if (argument == "--benchmark-refined-detection-run") {
       if (i + 1 >= argc || argv[i + 1][0] == '\0') {
-        std::fprintf(
-            stderr,
-            "Missing value for --benchmark-refined-detection-run\n");
+        std::fprintf(stderr,
+                     "Missing value for --benchmark-refined-detection-run\n");
         return std::nullopt;
       }
       if (!options.refined_detection_run.empty()) {
@@ -1266,8 +1264,7 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
     return std::nullopt;
   }
   if (!options.refined_detection_run.empty() && options.zarr_path.empty()) {
-    std::fprintf(stderr,
-                 "A refined-detection run requires --zarr PATH\n");
+    std::fprintf(stderr, "A refined-detection run requires --zarr PATH\n");
     return std::nullopt;
   }
   if (!options.stimulus_video_path.empty() && options.zarr_path.empty()) {
@@ -2419,14 +2416,12 @@ int main(int argc, char **argv) {
                 loaded_analysis->errorFor("canonical_detection");
             canonical_detection_open_metrics =
                 loaded_analysis->canonical_detection_open_metrics;
-            auto repository =
-                std::move(loaded_analysis->canonical_detection);
+            auto repository = std::move(loaded_analysis->canonical_detection);
             bool canonical_ready = repository != nullptr;
             if (canonical_ready) {
               canonical_detection_descriptor = repository->descriptor();
               canonical_ready = canonical_detection_buffer.open(
-                  std::move(repository), 70, 32,
-                  &canonical_detection_error);
+                  std::move(repository), 70, 32, &canonical_detection_error);
             }
             if (canonical_ready) {
               canonical_ready = canonical_detection_buffer.requestFrame(
@@ -2445,8 +2440,7 @@ int main(int argc, char **argv) {
               }
               if (!options->detection_run.empty() ||
                   !options->refined_detection_run.empty()) {
-                analysis_loading_start_error =
-                    canonical_detection_error;
+                analysis_loading_start_error = canonical_detection_error;
               }
               std::fprintf(stderr,
                            "[AppleCanonicalDetection] Unavailable: %s\n",
@@ -2473,8 +2467,7 @@ int main(int argc, char **argv) {
                   canonical_detection_descriptor.camera_frame_count,
                   canonical_detection_descriptor.stable_identity ? 1 : 0,
                   canonical_detection_descriptor.source_audit_lazy ? 1 : 0,
-                  canonical_detection_descriptor.consolidated_metadata ? 1
-                                                                       : 0,
+                  canonical_detection_descriptor.consolidated_metadata ? 1 : 0,
                   canonical_detection_open_metrics.root_metadata_reads,
                   canonical_detection_open_metrics
                       .consolidated_array_declarations,
@@ -4659,9 +4652,9 @@ int main(int argc, char **argv) {
                     &canonical_detection_error)) {
               canonical_detection_failed = true;
               canonical_detection_available = false;
-              std::fprintf(
-                  stderr, "[AppleCanonicalDetection] Request failed: %s\n",
-                  canonical_detection_error.c_str());
+              std::fprintf(stderr,
+                           "[AppleCanonicalDetection] Request failed: %s\n",
+                           canonical_detection_error.c_str());
             } else {
               last_canonical_detection_camera_request = metadata.frame_number;
               canonical_detection_frame =
@@ -4834,16 +4827,14 @@ int main(int argc, char **argv) {
           if (canonical_detection_ready && canonical_detection_frame) {
             auto detection_input =
                 crimson::zarr::makeCanonicalDetectionOverlaySceneInput(
-                    canonical_detection_descriptor,
-                    *canonical_detection_frame, 0, metadata.frame_number, 0,
-                    video_playback.info().width,
+                    canonical_detection_descriptor, *canonical_detection_frame,
+                    0, metadata.frame_number, 0, video_playback.info().width,
                     video_playback.info().height);
             auto detection_scene =
                 crimson::overlay::buildReadOnlyOverlayScene(detection_input);
-            overlay_scene.primitives.insert(
-                overlay_scene.primitives.end(),
-                detection_scene.primitives.begin(),
-                detection_scene.primitives.end());
+            overlay_scene.primitives.insert(overlay_scene.primitives.end(),
+                                            detection_scene.primitives.begin(),
+                                            detection_scene.primitives.end());
             overlay_scene.text_annotations.insert(
                 overlay_scene.text_annotations.end(),
                 detection_scene.text_annotations.begin(),
@@ -4942,8 +4933,7 @@ int main(int argc, char **argv) {
             if (canonical_detection_ready &&
                 presented_canonical_detections > 0) {
               ++canonical_detection_presentations;
-              canonical_detection_detections +=
-                  presented_canonical_detections;
+              canonical_detection_detections += presented_canonical_detections;
             }
             if (keypoint_overlay_ready &&
                 (overlay_scene.count(
@@ -5695,6 +5685,67 @@ int main(int argc, char **argv) {
       final_analysis_queue_metrics.peak_pending_requests,
       final_analysis_queue_metrics.peak_active_requests,
       final_analysis_data_scheduler_metrics.peak_active_speculative_requests);
+  for (size_t priority_index = 0;
+       priority_index < crimson::data::kDataRequestPriorityCount;
+       ++priority_index) {
+    const auto priority =
+        static_cast<crimson::data::RequestPriority>(priority_index);
+    const auto &timing = final_analysis_data_scheduler_metrics
+                             .timing_by_priority[priority_index];
+    if (timing.started == 0) {
+      continue;
+    }
+    std::printf(
+        "[AppleDataSchedulerTiming] scope=priority priority=%s "
+        "started=%llu completed=%llu queue_avg_ms=%.1f queue_max_ms=%.1f "
+        "service_avg_ms=%.1f service_max_ms=%.1f queue_over_100ms=%llu "
+        "queue_over_1000ms=%llu queue_over_5000ms=%llu "
+        "service_over_100ms=%llu service_over_1000ms=%llu "
+        "service_over_5000ms=%llu\n",
+        crimson::data::requestPriorityName(priority),
+        static_cast<unsigned long long>(timing.started),
+        static_cast<unsigned long long>(timing.completed),
+        timing.averageQueueWaitMs(), timing.maximum_queue_wait_ms,
+        timing.averageServiceMs(), timing.maximum_service_ms,
+        static_cast<unsigned long long>(timing.queue_wait_over_100_ms),
+        static_cast<unsigned long long>(timing.queue_wait_over_1000_ms),
+        static_cast<unsigned long long>(timing.queue_wait_over_5000_ms),
+        static_cast<unsigned long long>(timing.service_over_100_ms),
+        static_cast<unsigned long long>(timing.service_over_1000_ms),
+        static_cast<unsigned long long>(timing.service_over_5000_ms));
+  }
+  for (const auto &source :
+       final_analysis_data_scheduler_metrics.timing_by_source) {
+    for (size_t priority_index = 0;
+         priority_index < crimson::data::kDataRequestPriorityCount;
+         ++priority_index) {
+      const auto priority =
+          static_cast<crimson::data::RequestPriority>(priority_index);
+      const auto &timing = source.by_priority[priority_index];
+      if (timing.started == 0) {
+        continue;
+      }
+      std::printf(
+          "[AppleDataSchedulerTiming] scope=source product=%s run=%s "
+          "priority=%s started=%llu completed=%llu queue_avg_ms=%.1f "
+          "queue_max_ms=%.1f service_avg_ms=%.1f service_max_ms=%.1f "
+          "queue_over_100ms=%llu queue_over_1000ms=%llu "
+          "queue_over_5000ms=%llu service_over_100ms=%llu "
+          "service_over_1000ms=%llu service_over_5000ms=%llu\n",
+          source.source.product.c_str(), source.source.run.c_str(),
+          crimson::data::requestPriorityName(priority),
+          static_cast<unsigned long long>(timing.started),
+          static_cast<unsigned long long>(timing.completed),
+          timing.averageQueueWaitMs(), timing.maximum_queue_wait_ms,
+          timing.averageServiceMs(), timing.maximum_service_ms,
+          static_cast<unsigned long long>(timing.queue_wait_over_100_ms),
+          static_cast<unsigned long long>(timing.queue_wait_over_1000_ms),
+          static_cast<unsigned long long>(timing.queue_wait_over_5000_ms),
+          static_cast<unsigned long long>(timing.service_over_100_ms),
+          static_cast<unsigned long long>(timing.service_over_1000_ms),
+          static_cast<unsigned long long>(timing.service_over_5000_ms));
+    }
+  }
 
   if (!canonical_detection_descriptor.run_name.empty()) {
     std::printf(
