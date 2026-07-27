@@ -147,6 +147,8 @@ struct DataAccessSchedulerMetrics {
   uint64_t work_completed = 0;
   uint64_t work_exceptions = 0;
   size_t worker_count = 0;
+  size_t reserved_current_frame_workers = 0;
+  size_t peak_active_non_current_requests = 0;
   size_t peak_active_speculative_requests = 0;
   std::array<DataAccessTimingMetrics, kDataRequestPriorityCount>
       timing_by_priority;
@@ -156,7 +158,8 @@ struct DataAccessSchedulerMetrics {
 class DataAccessScheduler {
 public:
   DataAccessScheduler(size_t pending_capacity, size_t worker_count,
-                      size_t maximum_speculative_workers = 1);
+                      size_t maximum_speculative_workers = 1,
+                      size_t reserved_current_frame_workers = 0);
   ~DataAccessScheduler();
 
   DataAccessScheduler(const DataAccessScheduler &) = delete;

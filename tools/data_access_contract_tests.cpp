@@ -423,6 +423,89 @@ bool testDemandReservationAndSourceIsolation() {
   return true;
 }
 
+bool testCurrentFrameWorkerReservation() {
+  using namespace crimson::data;
+  DataAccessScheduler scheduler(16, 4, 1, 1);
+  std::mutex mutex;
+  std::condition_variable condition;
+  bool release_background = false;
+  size_t blocking_background_started = 0;
+  bool queued_background_started = false;
+  bool current_frame_started = false;
+
+  for (const char *run : {"background-a", "background-b", "background-c"}) {
+    auto background = request(0, 100, RequestPriority::VisibleWindow);
+    background.source = source(run);
+    CHECK(scheduler
+              .submit(std::move(background),
+                      [&](const ScheduledDataRequest &) {
+                        std::unique_lock<std::mutex> lock(mutex);
+                        ++blocking_background_started;
+                        condition.notify_all();
+                        condition.wait(lock,
+                                       [&] { return release_background; });
+                        return DataResultStatus::Ready;
+                      })
+              .accepted());
+  }
+  {
+    std::unique_lock<std::mutex> lock(mutex);
+    CHECK(condition.wait_for(lock, std::chrono::seconds(2),
+                             [&] { return blocking_background_started == 3; }));
+  }
+
+  auto queued_background = request(101, 200, RequestPriority::VisibleWindow);
+  queued_background.source = source("background-queued");
+  CHECK(scheduler
+            .submit(std::move(queued_background),
+                    [&](const ScheduledDataRequest &) {
+                      std::lock_guard<std::mutex> lock(mutex);
+                      queued_background_started = true;
+                      condition.notify_all();
+                      return DataResultStatus::Ready;
+                    })
+            .accepted());
+
+  auto current_frame = request(50, 50, RequestPriority::CurrentFrame);
+  current_frame.source = source("current-frame");
+  CHECK(scheduler
+            .submit(std::move(current_frame),
+                    [&](const ScheduledDataRequest &) {
+                      std::lock_guard<std::mutex> lock(mutex);
+                      current_frame_started = true;
+                      condition.notify_all();
+                      return DataResultStatus::Ready;
+                    })
+            .accepted());
+  {
+    std::unique_lock<std::mutex> lock(mutex);
+    CHECK(condition.wait_for(lock, std::chrono::seconds(2),
+                             [&] { return current_frame_started; }));
+    CHECK(!queued_background_started);
+    release_background = true;
+    condition.notify_all();
+  }
+  scheduler.waitUntilIdle();
+  CHECK(queued_background_started);
+  const auto metrics = scheduler.metrics();
+  CHECK(metrics.reserved_current_frame_workers == 1);
+  CHECK(metrics.peak_active_non_current_requests == 3);
+  CHECK(metrics.queue.peak_active_requests == 4);
+  scheduler.shutdown();
+
+  DataAccessScheduler single_worker(4, 1, 1, 1);
+  CHECK(single_worker.metrics().reserved_current_frame_workers == 0);
+  CHECK(single_worker
+            .submit(request(0, 1, RequestPriority::VisibleWindow),
+                    [](const ScheduledDataRequest &) {
+                      return DataResultStatus::Ready;
+                    })
+            .accepted());
+  single_worker.waitUntilIdle();
+  single_worker.shutdown();
+  return true;
+}
+
 bool testSchedulerTimingTelemetry() {
   using namespace crimson::data;
   DataAccessScheduler scheduler(8, 1);
@@ -576,7 +659,8 @@ int main() {
       !testPriorityDeduplicationAndGenerationCancellation() ||
       !testBoundedDemandFirstQueue() || !testSharedWorkerScheduler() ||
       !testDemandReservationAndSourceIsolation() ||
-      !testSchedulerTimingTelemetry() || !testByteBudgetedWeightedLru()) {
+      !testCurrentFrameWorkerReservation() || !testSchedulerTimingTelemetry() ||
+      !testByteBudgetedWeightedLru()) {
     return 1;
   }
   std::cout << "data_access_contract_tests: PASS\n";

@@ -411,8 +411,12 @@ struct DataAccessScheduler::Impl {
   };
 
   Impl(size_t pending_capacity, size_t requested_workers,
-       size_t requested_speculative_workers)
+       size_t requested_speculative_workers,
+       size_t requested_current_frame_reserve)
       : queue(pending_capacity), worker_count(requested_workers),
+        reserved_current_frame_workers(
+            std::min(requested_current_frame_reserve,
+                     requested_workers > 0 ? requested_workers - 1 : 0)),
         maximum_speculative_workers(
             std::min(requested_workers, requested_speculative_workers)) {}
 
@@ -420,7 +424,10 @@ struct DataAccessScheduler::Impl {
   std::condition_variable condition;
   DataAccessQueue queue;
   size_t worker_count = 0;
+  size_t reserved_current_frame_workers = 0;
   size_t maximum_speculative_workers = 0;
+  size_t active_non_current_requests = 0;
+  size_t peak_active_non_current_requests = 0;
   size_t active_speculative_requests = 0;
   size_t peak_active_speculative_requests = 0;
   bool stopping = false;
@@ -476,6 +483,13 @@ struct DataAccessScheduler::Impl {
   }
 
   bool workCanStartLocked() const {
+    if (queue.hasRunnable(RequestPriority::CurrentFrame)) {
+      return true;
+    }
+    if (active_non_current_requests >=
+        worker_count - reserved_current_frame_workers) {
+      return false;
+    }
     if (queue.hasRunnable(RequestPriority::VisibleWindow)) {
       return true;
     }
@@ -513,6 +527,11 @@ struct DataAccessScheduler::Impl {
           continue;
         }
         request = std::move(*scheduled);
+        if (request.request.priority != RequestPriority::CurrentFrame) {
+          ++active_non_current_requests;
+          peak_active_non_current_requests = std::max(
+              peak_active_non_current_requests, active_non_current_requests);
+        }
         if (request.request.priority == RequestPriority::Speculative) {
           ++active_speculative_requests;
           peak_active_speculative_requests = std::max(
@@ -520,6 +539,9 @@ struct DataAccessScheduler::Impl {
         }
         const auto task = tasks.find(request.sequence);
         if (task == tasks.end()) {
+          if (request.request.priority != RequestPriority::CurrentFrame) {
+            --active_non_current_requests;
+          }
           if (request.request.priority == RequestPriority::Speculative) {
             --active_speculative_requests;
           }
@@ -560,6 +582,9 @@ struct DataAccessScheduler::Impl {
 
       {
         std::lock_guard<std::mutex> lock(mutex);
+        if (request.request.priority != RequestPriority::CurrentFrame) {
+          --active_non_current_requests;
+        }
         if (request.request.priority == RequestPriority::Speculative) {
           --active_speculative_requests;
         }
@@ -575,9 +600,11 @@ struct DataAccessScheduler::Impl {
 
 DataAccessScheduler::DataAccessScheduler(size_t pending_capacity,
                                          size_t worker_count,
-                                         size_t maximum_speculative_workers)
+                                         size_t maximum_speculative_workers,
+                                         size_t reserved_current_frame_workers)
     : impl_(std::make_unique<Impl>(pending_capacity, worker_count,
-                                   maximum_speculative_workers)) {
+                                   maximum_speculative_workers,
+                                   reserved_current_frame_workers)) {
   if (pending_capacity == 0 || worker_count == 0) {
     return;
   }
@@ -689,6 +716,9 @@ DataAccessSchedulerMetrics DataAccessScheduler::metrics() const {
   result.work_completed = impl_->work_completed;
   result.work_exceptions = impl_->work_exceptions;
   result.worker_count = impl_->worker_count;
+  result.reserved_current_frame_workers = impl_->reserved_current_frame_workers;
+  result.peak_active_non_current_requests =
+      impl_->peak_active_non_current_requests;
   result.peak_active_speculative_requests =
       impl_->peak_active_speculative_requests;
   result.timing_by_priority = impl_->timing_by_priority;

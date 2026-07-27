@@ -1028,7 +1028,11 @@ json schedulerJson(
   }
   return {
       {"workers", scheduler_metrics.worker_count},
+      {"reserved_current_frame_workers",
+       scheduler_metrics.reserved_current_frame_workers},
       {"peak_active", scheduler_metrics.queue.peak_active_requests},
+      {"peak_active_non_current",
+       scheduler_metrics.peak_active_non_current_requests},
       {"peak_pending", scheduler_metrics.queue.peak_pending_requests},
       {"submissions", scheduler_metrics.queue.submissions},
       {"accepted", scheduler_metrics.queue.accepted},
@@ -1083,7 +1087,7 @@ int main(int argc, char **argv) {
   };
 
   auto scheduler =
-      std::make_shared<crimson::data::DataAccessScheduler>(64, 4, 1);
+      std::make_shared<crimson::data::DataAccessScheduler>(64, 4, 1, 1);
   std::unique_ptr<CanonicalDetectionBuffer> buffer_for_cleanup;
   try {
     require(layout == "regular" || layout == "hybrid",

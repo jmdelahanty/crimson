@@ -1,0 +1,858 @@
+{
+  "affiliated_video": {
+    "discovery_error": "Affiliated video file does not exist for stored path: /groups/johnson/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+    "discovery_succeeded": false,
+    "explicit_exists": true,
+    "explicit_path": "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4"
+  },
+  "archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+  "archive_context": {
+    "cache_pool_bytes": 67108864
+  },
+  "canonical_open": {
+    "consolidated_declarations": 9,
+    "elapsed_ms": 1364.678458,
+    "exact_handle_opens": 4,
+    "fallback_dtype_opens": 0,
+    "fallback_metadata_reads": 0,
+    "frames": 1188000,
+    "offset_ms": 133.714958,
+    "offset_reads": 1,
+    "retained_offset_bytes": 9504008,
+    "root_metadata_reads": 1,
+    "rows": 1187087,
+    "run": "crimson_storage_fixture_sleepyfish_cam2010095_v1"
+  },
+  "classification": "full_duration_stage1",
+  "condition": "hybrid_paged",
+  "first_presentations": {
+    "canonical_detections": 1,
+    "crop_rows": 1,
+    "crop_status": 0,
+    "elapsed_ms": 8234.185125,
+    "eye_angle_points": 3594,
+    "eye_detections": 1,
+    "eye_status": 0,
+    "first_detection_overlay_after_archive_ms": 30636.354499999998,
+    "first_detection_scheduling": {
+      "active_requests_at_request": 4,
+      "archive_ready_to_request_ms": 1399.335917,
+      "inferred_queue_wait_ms": 28992.447707999996,
+      "interpretation": "queue wait is inferred because scheduler work is non-preemptive",
+      "pending_requests_at_request": 5,
+      "repository_read_decode_max_ms": 244.570875,
+      "request_to_publish_ms": 29237.018582999997,
+      "resolved_pages_at_publish": 3
+    },
+    "frame": 0,
+    "keypoint_detections": 1,
+    "keypoint_status": 0,
+    "mask_detections": 1,
+    "mask_status": 0,
+    "motion_points": 6601,
+    "overlay_boxes": 1,
+    "phase_elapsed_ms": 8235.346375,
+    "physical": {
+      "cache_evictions": 24451,
+      "cache_hits": 0,
+      "cache_misses": 1321,
+      "file_batch_reads": 1263,
+      "file_bytes": 4768038,
+      "file_reads": 1276
+    },
+    "ready_elapsed_ms": 61676.395833,
+    "shape_detections": 1,
+    "shape_status": 0,
+    "tail_points": 4792
+  },
+  "frame_range": [
+    0,
+    1188000
+  ],
+  "interference_probe": {
+    "active_requests_at_request": 4,
+    "frame": 271085,
+    "inferred_queue_wait_lower_bound_ms": 2190.758249999999,
+    "interpretation": "queue wait is inferred because scheduler work is non-preemptive",
+    "pending_requests_at_request": 2,
+    "publish_elapsed_ms": 32847.736583,
+    "repository_service_upper_bound_ms": 0.0,
+    "request_elapsed_ms": 30656.978333,
+    "request_to_publish_ms": 2190.758249999999
+  },
+  "layout": "hybrid",
+  "loading": {
+    "completed_products": 13,
+    "elapsed_ms": 52622.522209,
+    "peak_rss_bytes": 1757495296,
+    "physical": {
+      "cache_evictions": 13103,
+      "cache_hits": 2723,
+      "cache_misses": 36325,
+      "file_batch_reads": 5359,
+      "file_bytes": 506608157,
+      "file_reads": 9753
+    },
+    "preloaded_trace_bytes": 91486620,
+    "products": {
+      "acquisition_crop": {
+        "available": false,
+        "elapsed_ms": 15.654583,
+        "error": "Archive has no acquisition crop inventory attributes"
+      },
+      "archive": {
+        "available": true,
+        "elapsed_ms": 1.17425,
+        "error": ""
+      },
+      "canonical_detection": {
+        "available": true,
+        "elapsed_ms": 1397.417458,
+        "error": ""
+      },
+      "chaser_polar": {
+        "available": true,
+        "elapsed_ms": 13.302625,
+        "error": ""
+      },
+      "crop_geometry": {
+        "available": true,
+        "elapsed_ms": 2168.882291,
+        "error": ""
+      },
+      "eye_angles": {
+        "available": true,
+        "elapsed_ms": 16642.297666,
+        "error": ""
+      },
+      "eye_geometry": {
+        "available": true,
+        "elapsed_ms": 32795.212375,
+        "error": ""
+      },
+      "keypoints": {
+        "available": true,
+        "elapsed_ms": 30390.137958,
+        "error": ""
+      },
+      "motion": {
+        "available": true,
+        "elapsed_ms": 4033.199208,
+        "error": ""
+      },
+      "stimulus": {
+        "available": false,
+        "elapsed_ms": 19.805209,
+        "error": "No stimulus run was requested and analysis/stimulus_runs has no latest run"
+      },
+      "subject_masks": {
+        "available": true,
+        "elapsed_ms": 30444.803708,
+        "error": ""
+      },
+      "subject_shape": {
+        "available": true,
+        "elapsed_ms": 33727.863292,
+        "error": ""
+      },
+      "tail_kinematics": {
+        "available": true,
+        "elapsed_ms": 1486.058125,
+        "error": ""
+      }
+    },
+    "readiness": "ready",
+    "readiness_reason": "",
+    "required_products_ready_elapsed_ms": 52641.007375,
+    "state": "ready",
+    "total_products": 13
+  },
+  "pass": true,
+  "peak_rss_bytes": 1789493248,
+  "physical_total": {
+    "cache_evictions": 38902,
+    "cache_hits": 3373,
+    "cache_misses": 38998,
+    "file_batch_reads": 7600,
+    "file_bytes": 577749185,
+    "file_reads": 12038
+  },
+  "random_settles": {
+    "elapsed_ms": 8849.50475,
+    "frames": [
+      {
+        "canonical_detections": 1,
+        "crop_rows": 0,
+        "crop_status": 1,
+        "elapsed_ms": 54.399209,
+        "eye_angle_points": 3594,
+        "eye_detections": 0,
+        "eye_status": 1,
+        "frame": 271085,
+        "keypoint_detections": 0,
+        "keypoint_status": 1,
+        "mask_detections": 0,
+        "mask_status": 1,
+        "motion_points": 6872,
+        "physical": {
+          "cache_evictions": 0,
+          "cache_hits": 0,
+          "cache_misses": 9,
+          "file_batch_reads": 4,
+          "file_bytes": 79828,
+          "file_reads": 5
+        },
+        "shape_detections": 0,
+        "shape_status": 1,
+        "tail_points": 4795
+      },
+      {
+        "canonical_detections": 1,
+        "crop_rows": 1,
+        "crop_status": 0,
+        "elapsed_ms": 1029.657417,
+        "eye_angle_points": 3594,
+        "eye_detections": 1,
+        "eye_status": 0,
+        "frame": 85499,
+        "keypoint_detections": 1,
+        "keypoint_status": 0,
+        "mask_detections": 1,
+        "mask_status": 0,
+        "motion_points": 6986,
+        "physical": {
+          "cache_evictions": 172,
+          "cache_hits": 14,
+          "cache_misses": 176,
+          "file_batch_reads": 132,
+          "file_bytes": 7821864,
+          "file_reads": 131
+        },
+        "shape_detections": 1,
+        "shape_status": 0,
+        "tail_points": 4796
+      },
+      {
+        "canonical_detections": 1,
+        "crop_rows": 1,
+        "crop_status": 0,
+        "elapsed_ms": 1289.01525,
+        "eye_angle_points": 3595,
+        "eye_detections": 1,
+        "eye_status": 0,
+        "frame": 397712,
+        "keypoint_detections": 1,
+        "keypoint_status": 0,
+        "mask_detections": 1,
+        "mask_status": 0,
+        "motion_points": 6531,
+        "physical": {
+          "cache_evictions": 177,
+          "cache_hits": 2,
+          "cache_misses": 186,
+          "file_batch_reads": 134,
+          "file_bytes": 7945381,
+          "file_reads": 138
+        },
+        "shape_detections": 1,
+        "shape_status": 0,
+        "tail_points": 4796
+      },
+      {
+        "canonical_detections": 1,
+        "crop_rows": 1,
+        "crop_status": 0,
+        "elapsed_ms": 1189.132375,
+        "eye_angle_points": 3595,
+        "eye_detections": 1,
+        "eye_status": 0,
+        "frame": 1003450,
+        "keypoint_detections": 1,
+        "keypoint_status": 0,
+        "mask_detections": 1,
+        "mask_status": 0,
+        "motion_points": 6424,
+        "physical": {
+          "cache_evictions": 186,
+          "cache_hits": 4,
+          "cache_misses": 179,
+          "file_batch_reads": 132,
+          "file_bytes": 7153583,
+          "file_reads": 132
+        },
+        "shape_detections": 1,
+        "shape_status": 0,
+        "tail_points": 4795
+      },
+      {
+        "canonical_detections": 1,
+        "crop_rows": 1,
+        "crop_status": 0,
+        "elapsed_ms": 1035.417083,
+        "eye_angle_points": 3596,
+        "eye_detections": 1,
+        "eye_status": 0,
+        "frame": 939795,
+        "keypoint_detections": 1,
+        "keypoint_status": 0,
+        "mask_detections": 1,
+        "mask_status": 0,
+        "motion_points": 6370,
+        "physical": {
+          "cache_evictions": 195,
+          "cache_hits": 4,
+          "cache_misses": 183,
+          "file_batch_reads": 132,
+          "file_bytes": 5707912,
+          "file_reads": 136
+        },
+        "shape_detections": 1,
+        "shape_status": 0,
+        "tail_points": 4792
+      },
+      {
+        "canonical_detections": 1,
+        "crop_rows": 1,
+        "crop_status": 0,
+        "elapsed_ms": 1260.016709,
+        "eye_angle_points": 3594,
+        "eye_detections": 1,
+        "eye_status": 0,
+        "frame": 903492,
+        "keypoint_detections": 1,
+        "keypoint_status": 0,
+        "mask_detections": 1,
+        "mask_status": 0,
+        "motion_points": 6239,
+        "physical": {
+          "cache_evictions": 171,
+          "cache_hits": 4,
+          "cache_misses": 179,
+          "file_batch_reads": 132,
+          "file_bytes": 6047250,
+          "file_reads": 132
+        },
+        "shape_detections": 1,
+        "shape_status": 0,
+        "tail_points": 4795
+      },
+      {
+        "canonical_detections": 1,
+        "crop_rows": 1,
+        "crop_status": 0,
+        "elapsed_ms": 1595.502583,
+        "eye_angle_points": 3595,
+        "eye_detections": 1,
+        "eye_status": 0,
+        "frame": 351953,
+        "keypoint_detections": 1,
+        "keypoint_status": 0,
+        "mask_detections": 1,
+        "mask_status": 0,
+        "motion_points": 6836,
+        "physical": {
+          "cache_evictions": 202,
+          "cache_hits": 4,
+          "cache_misses": 179,
+          "file_batch_reads": 132,
+          "file_bytes": 7121176,
+          "file_reads": 132
+        },
+        "shape_detections": 1,
+        "shape_status": 0,
+        "tail_points": 4796
+      },
+      {
+        "canonical_detections": 1,
+        "crop_rows": 1,
+        "crop_status": 0,
+        "elapsed_ms": 1395.680833,
+        "eye_angle_points": 3594,
+        "eye_detections": 1,
+        "eye_status": 0,
+        "frame": 1141796,
+        "keypoint_detections": 1,
+        "keypoint_status": 0,
+        "mask_detections": 1,
+        "mask_status": 0,
+        "motion_points": 6359,
+        "physical": {
+          "cache_evictions": 178,
+          "cache_hits": 6,
+          "cache_misses": 180,
+          "file_batch_reads": 132,
+          "file_bytes": 6962460,
+          "file_reads": 135
+        },
+        "shape_detections": 1,
+        "shape_status": 0,
+        "tail_points": 4795
+      }
+    ],
+    "peak_rss_bytes": 1789493248,
+    "physical": {
+      "cache_evictions": 1281,
+      "cache_hits": 38,
+      "cache_misses": 1287,
+      "file_batch_reads": 930,
+      "file_bytes": 48839454,
+      "file_reads": 957
+    }
+  },
+  "repetition": 0,
+  "requested_run": "crimson_storage_fixture_sleepyfish_cam2010095_v1",
+  "residency": {
+    "metrics": {
+      "attempts": 0,
+      "completed_chunks": 0,
+      "decoded_hot_bytes": 0,
+      "decoded_source_bytes": 0,
+      "elapsed_ms": 0.0,
+      "failed_chunks": 0,
+      "last_error": "",
+      "maximum_chunk_decoded_bytes": 0,
+      "maximum_chunk_ms": 0.0,
+      "maximum_resident_bytes": 0,
+      "planned_chunks": 0,
+      "publications": 0,
+      "retained_bytes": 0,
+      "stale_chunks": 0,
+      "state": "disabled"
+    },
+    "started_after_first_page": false,
+    "strategy": "paged"
+  },
+  "scheduler": {
+    "accepted": 149,
+    "cancelled": 17,
+    "completed": 136,
+    "discarded": 4,
+    "failed": 0,
+    "peak_active": 4,
+    "peak_pending": 6,
+    "submissions": 149,
+    "timing_by_priority": {
+      "current_frame": {
+        "completed": 17,
+        "queue_average_ms": 1832.9299020588242,
+        "queue_maximum_ms": 28991.357875,
+        "queue_wait_over_1000_ms": 2,
+        "queue_wait_over_100_ms": 2,
+        "queue_wait_over_5000_ms": 1,
+        "service_average_ms": 541.2336274117648,
+        "service_maximum_ms": 6737.861542,
+        "service_over_1000_ms": 1,
+        "service_over_100_ms": 8,
+        "service_over_5000_ms": 1,
+        "started": 17
+      },
+      "history": {
+        "completed": 0,
+        "queue_average_ms": 0.0,
+        "queue_maximum_ms": 0.0,
+        "queue_wait_over_1000_ms": 0,
+        "queue_wait_over_100_ms": 0,
+        "queue_wait_over_5000_ms": 0,
+        "service_average_ms": 0.0,
+        "service_maximum_ms": 0.0,
+        "service_over_1000_ms": 0,
+        "service_over_100_ms": 0,
+        "service_over_5000_ms": 0,
+        "started": 0
+      },
+      "inspection": {
+        "completed": 0,
+        "queue_average_ms": 0.0,
+        "queue_maximum_ms": 0.0,
+        "queue_wait_over_1000_ms": 0,
+        "queue_wait_over_100_ms": 0,
+        "queue_wait_over_5000_ms": 0,
+        "service_average_ms": 0.0,
+        "service_maximum_ms": 0.0,
+        "service_over_1000_ms": 0,
+        "service_over_100_ms": 0,
+        "service_over_5000_ms": 0,
+        "started": 0
+      },
+      "speculative": {
+        "completed": 0,
+        "queue_average_ms": 0.0,
+        "queue_maximum_ms": 0.0,
+        "queue_wait_over_1000_ms": 0,
+        "queue_wait_over_100_ms": 0,
+        "queue_wait_over_5000_ms": 0,
+        "service_average_ms": 0.0,
+        "service_maximum_ms": 0.0,
+        "service_over_1000_ms": 0,
+        "service_over_100_ms": 0,
+        "service_over_5000_ms": 0,
+        "started": 0
+      },
+      "visible_window": {
+        "completed": 119,
+        "queue_average_ms": 836.255873252101,
+        "queue_maximum_ms": 32826.558542,
+        "queue_wait_over_1000_ms": 5,
+        "queue_wait_over_100_ms": 11,
+        "queue_wait_over_5000_ms": 3,
+        "service_average_ms": 1295.45090264706,
+        "service_maximum_ms": 33727.866333,
+        "service_over_1000_ms": 7,
+        "service_over_100_ms": 10,
+        "service_over_5000_ms": 5,
+        "started": 119
+      }
+    },
+    "timing_by_source": [
+      {
+        "archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "by_priority": {
+          "visible_window": {
+            "completed": 1,
+            "queue_average_ms": 32826.558542,
+            "queue_maximum_ms": 32826.558542,
+            "queue_wait_over_1000_ms": 1,
+            "queue_wait_over_100_ms": 1,
+            "queue_wait_over_5000_ms": 1,
+            "service_average_ms": 15.656458,
+            "service_maximum_ms": 15.656458,
+            "service_over_1000_ms": 0,
+            "service_over_100_ms": 0,
+            "service_over_5000_ms": 0,
+            "started": 1
+          }
+        },
+        "product": "analysis_initialization",
+        "run": "acquisition_crop"
+      },
+      {
+        "archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "by_priority": {
+          "visible_window": {
+            "completed": 1,
+            "queue_average_ms": 0.006833,
+            "queue_maximum_ms": 0.006833,
+            "queue_wait_over_1000_ms": 0,
+            "queue_wait_over_100_ms": 0,
+            "queue_wait_over_5000_ms": 0,
+            "service_average_ms": 1397.422958,
+            "service_maximum_ms": 1397.422958,
+            "service_over_1000_ms": 1,
+            "service_over_100_ms": 1,
+            "service_over_5000_ms": 0,
+            "started": 1
+          }
+        },
+        "product": "analysis_initialization",
+        "run": "canonical_detection"
+      },
+      {
+        "archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "by_priority": {
+          "visible_window": {
+            "completed": 1,
+            "queue_average_ms": 0.0285,
+            "queue_maximum_ms": 0.0285,
+            "queue_wait_over_1000_ms": 0,
+            "queue_wait_over_100_ms": 0,
+            "queue_wait_over_5000_ms": 0,
+            "service_average_ms": 13.305875,
+            "service_maximum_ms": 13.305875,
+            "service_over_1000_ms": 0,
+            "service_over_100_ms": 0,
+            "service_over_5000_ms": 0,
+            "started": 1
+          }
+        },
+        "product": "analysis_initialization",
+        "run": "chaser_polar"
+      },
+      {
+        "archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "by_priority": {
+          "visible_window": {
+            "completed": 1,
+            "queue_average_ms": 30634.738625,
+            "queue_maximum_ms": 30634.738625,
+            "queue_wait_over_1000_ms": 1,
+            "queue_wait_over_100_ms": 1,
+            "queue_wait_over_5000_ms": 1,
+            "service_average_ms": 2168.886875,
+            "service_maximum_ms": 2168.886875,
+            "service_over_1000_ms": 1,
+            "service_over_100_ms": 1,
+            "service_over_5000_ms": 0,
+            "started": 1
+          }
+        },
+        "product": "analysis_initialization",
+        "run": "crop_geometry"
+      },
+      {
+        "archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "by_priority": {
+          "visible_window": {
+            "completed": 1,
+            "queue_average_ms": 1397.387333,
+            "queue_maximum_ms": 1397.387333,
+            "queue_wait_over_1000_ms": 1,
+            "queue_wait_over_100_ms": 1,
+            "queue_wait_over_5000_ms": 0,
+            "service_average_ms": 32795.216,
+            "service_maximum_ms": 32795.216,
+            "service_over_1000_ms": 1,
+            "service_over_100_ms": 1,
+            "service_over_5000_ms": 1,
+            "started": 1
+          }
+        },
+        "product": "analysis_initialization",
+        "run": "eye_geometry"
+      },
+      {
+        "archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "by_priority": {
+          "visible_window": {
+            "completed": 1,
+            "queue_average_ms": 0.011458,
+            "queue_maximum_ms": 0.011458,
+            "queue_wait_over_1000_ms": 0,
+            "queue_wait_over_100_ms": 0,
+            "queue_wait_over_5000_ms": 0,
+            "service_average_ms": 30390.1465,
+            "service_maximum_ms": 30390.1465,
+            "service_over_1000_ms": 1,
+            "service_over_100_ms": 1,
+            "service_over_5000_ms": 1,
+            "started": 1
+          }
+        },
+        "product": "analysis_initialization",
+        "run": "keypoints"
+      },
+      {
+        "archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "by_priority": {
+          "visible_window": {
+            "completed": 1,
+            "queue_average_ms": 30458.235542,
+            "queue_maximum_ms": 30458.235542,
+            "queue_wait_over_1000_ms": 1,
+            "queue_wait_over_100_ms": 1,
+            "queue_wait_over_5000_ms": 1,
+            "service_average_ms": 22161.606959,
+            "service_maximum_ms": 22161.606959,
+            "service_over_1000_ms": 1,
+            "service_over_100_ms": 1,
+            "service_over_5000_ms": 1,
+            "started": 1
+          }
+        },
+        "product": "analysis_initialization",
+        "run": "small_traces"
+      },
+      {
+        "archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "by_priority": {
+          "visible_window": {
+            "completed": 1,
+            "queue_average_ms": 0.004333,
+            "queue_maximum_ms": 0.004333,
+            "queue_wait_over_1000_ms": 0,
+            "queue_wait_over_100_ms": 0,
+            "queue_wait_over_5000_ms": 0,
+            "service_average_ms": 19.807916,
+            "service_maximum_ms": 19.807916,
+            "service_over_1000_ms": 0,
+            "service_over_100_ms": 0,
+            "service_over_5000_ms": 0,
+            "started": 1
+          }
+        },
+        "product": "analysis_initialization",
+        "run": "stimulus"
+      },
+      {
+        "archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "by_priority": {
+          "visible_window": {
+            "completed": 1,
+            "queue_average_ms": 13.449292,
+            "queue_maximum_ms": 13.449292,
+            "queue_wait_over_1000_ms": 0,
+            "queue_wait_over_100_ms": 0,
+            "queue_wait_over_5000_ms": 0,
+            "service_average_ms": 30444.810291,
+            "service_maximum_ms": 30444.810291,
+            "service_over_1000_ms": 1,
+            "service_over_100_ms": 1,
+            "service_over_5000_ms": 1,
+            "started": 1
+          }
+        },
+        "product": "analysis_initialization",
+        "run": "subject_masks"
+      },
+      {
+        "archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "by_priority": {
+          "visible_window": {
+            "completed": 1,
+            "queue_average_ms": 19.787958,
+            "queue_maximum_ms": 19.787958,
+            "queue_wait_over_1000_ms": 0,
+            "queue_wait_over_100_ms": 0,
+            "queue_wait_over_5000_ms": 0,
+            "service_average_ms": 33727.866333,
+            "service_maximum_ms": 33727.866333,
+            "service_over_1000_ms": 1,
+            "service_over_100_ms": 1,
+            "service_over_5000_ms": 1,
+            "started": 1
+          }
+        },
+        "product": "analysis_initialization",
+        "run": "subject_shape"
+      },
+      {
+        "archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/canonical_detection_storage/full_analysis/sleepyfish_cam2010095_v1/hybrid.zarr",
+        "by_priority": {
+          "current_frame": {
+            "completed": 17,
+            "queue_average_ms": 1832.9299020588242,
+            "queue_maximum_ms": 28991.357875,
+            "queue_wait_over_1000_ms": 2,
+            "queue_wait_over_100_ms": 2,
+            "queue_wait_over_5000_ms": 1,
+            "service_average_ms": 541.2336274117648,
+            "service_maximum_ms": 6737.861542,
+            "service_over_1000_ms": 1,
+            "service_over_100_ms": 8,
+            "service_over_5000_ms": 1,
+            "started": 17
+          },
+          "visible_window": {
+            "completed": 109,
+            "queue_average_ms": 38.20404129357799,
+            "queue_maximum_ms": 2206.382834,
+            "queue_wait_over_1000_ms": 1,
+            "queue_wait_over_100_ms": 7,
+            "queue_wait_over_5000_ms": 0,
+            "service_average_ms": 9.393864678899085,
+            "service_maximum_ms": 309.159917,
+            "service_over_1000_ms": 0,
+            "service_over_100_ms": 3,
+            "service_over_5000_ms": 0,
+            "started": 109
+          }
+        },
+        "product": "canonical_detection",
+        "run": "detect_runs/crimson_storage_fixture_sleepyfish_cam2010095_v1"
+      }
+    ],
+    "work_exceptions": 0,
+    "workers": 4
+  },
+  "schema_id": "crimson.canonical_detection_full_archive_stage1",
+  "schema_version": 1,
+  "seek_burst": {
+    "cancelled_requests": 14,
+    "discarded_completions": 3,
+    "frames": [
+      560111,
+      1066017,
+      905397,
+      100063,
+      996466,
+      909512,
+      639969,
+      378251
+    ],
+    "physical": {
+      "cache_evictions": 44,
+      "cache_hits": 14,
+      "cache_misses": 31,
+      "file_batch_reads": 20,
+      "file_bytes": 434649,
+      "file_reads": 18
+    },
+    "physical_metric_scope": "process-global TensorStore delta",
+    "post_cancel_file_bytes_per_superseded_seek": 62092.71428571428,
+    "post_cancel_file_bytes_total": 434649,
+    "seek_count": 8,
+    "settle_ms": 135.017375,
+    "source_scope": "canonical_detection_only_after_scheduler_idle",
+    "stale_publications": 0
+  },
+  "shutdown_ms": 0.5615,
+  "strategy": "paged",
+  "total_elapsed_ms": 80492.083292,
+  "traversal": {
+    "forward": {
+      "deadline_misses": 0,
+      "detections": 3500,
+      "direction": "forward",
+      "discarded_pages": 0,
+      "failed_pages": 0,
+      "field_reads": 150,
+      "frames": 3500,
+      "logical_digest_fnv1a64": "202210a60f50dcc8",
+      "maximum_resolve_ms": 6737.839458,
+      "page_deadline_ms": 100,
+      "pages": 50,
+      "peak_cached_bytes": 215040,
+      "peak_concurrent_fields": 12,
+      "peak_rss_bytes": 1789493248,
+      "physical": {
+        "cache_evictions": 23,
+        "cache_hits": 294,
+        "cache_misses": 29,
+        "file_batch_reads": 24,
+        "file_bytes": 1971764,
+        "file_reads": 25
+      },
+      "physical_metric_scope": "process-global TensorStore delta",
+      "post_warmup_deadline_miss_rate": 0.0,
+      "post_warmup_misses": 0,
+      "post_warmup_pages": 49,
+      "range_reads": 50,
+      "resolved_pages": 50,
+      "source_fps": 700,
+      "source_scope": "canonical_detection_only_after_scheduler_idle",
+      "wall_ms": 4902.134292
+    },
+    "reverse": {
+      "deadline_misses": 0,
+      "detections": 3500,
+      "direction": "reverse",
+      "discarded_pages": 0,
+      "failed_pages": 0,
+      "field_reads": 147,
+      "frames": 3500,
+      "logical_digest_fnv1a64": "97f58695f8c11ffc",
+      "maximum_resolve_ms": 6737.839458,
+      "page_deadline_ms": 100,
+      "pages": 50,
+      "peak_cached_bytes": 215040,
+      "peak_concurrent_fields": 12,
+      "peak_rss_bytes": 1789493248,
+      "physical": {
+        "cache_evictions": 0,
+        "cache_hits": 294,
+        "cache_misses": 0,
+        "file_batch_reads": 0,
+        "file_bytes": 0,
+        "file_reads": 0
+      },
+      "physical_metric_scope": "process-global TensorStore delta",
+      "post_warmup_deadline_miss_rate": 0.0,
+      "post_warmup_misses": 0,
+      "post_warmup_pages": 49,
+      "range_reads": 49,
+      "resolved_pages": 49,
+      "source_fps": 700,
+      "source_scope": "canonical_detection_only_after_scheduler_idle",
+      "wall_ms": 4901.103916
+    }
+  }
+}

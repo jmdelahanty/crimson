@@ -507,7 +507,7 @@ int main(int argc, char **argv) {
   };
 
   auto scheduler =
-      std::make_shared<crimson::data::DataAccessScheduler>(64, 4, 1);
+      std::make_shared<crimson::data::DataAccessScheduler>(64, 4, 1, 1);
   try {
     require(std::filesystem::exists(archive_path / "zarr.json"),
             "Archive root is unavailable");

@@ -770,10 +770,14 @@ lookahead, stale generations are cancelled, and deterministic tests cover
 archive-first/product-level publication, demand reservation, source isolation,
 keypoint cache reuse, seek invalidation, and promotion-aware timing attribution.
 Bounded queue-wait and callback-service aggregates are now available by priority
-and source in macOS shutdown diagnostics and benchmark JSON. This is telemetry,
-not preemption or a reserved worker. The one-speculative setting is an initial
-baseline. Byte-weighted in-flight admission, the measured demand-reservation
-decision, remaining buffer migrations, and Linux/Windows adapters remain open.
+and source in macOS shutdown diagnostics and benchmark JSON. A mounted
+full-archive trace measured a 28.99-second current-frame wait behind four long
+initialization callbacks. The portable scheduler now reserves one current-frame
+slot in the four-worker application pool; the matching trace reduced maximum
+queue wait to 0.98 ms with zero traversal deadline misses. Active work remains
+non-preemptive. Byte-weighted in-flight admission, remaining buffer migrations,
+and Linux/Windows adapters remain open. Evidence is in
+`docs/diagnostics/scheduler_current_frame_reservation_2026-07-27.md`.
 
 Phase 5O.4 is in progress. The native Mac loader shares a 128 MiB preload budget
 across the selected default motion, eye-angle, and tail series. Repositories

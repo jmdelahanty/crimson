@@ -377,7 +377,7 @@ bool AppleAnalysisRepositoryLoader::start(
   impl_->owns_scheduler = !impl_->scheduler;
   if (!impl_->scheduler) {
     impl_->scheduler =
-        std::make_shared<crimson::data::DataAccessScheduler>(32, 3, 1);
+        std::make_shared<crimson::data::DataAccessScheduler>(32, 3, 1, 1);
   }
   impl_->running = true;
   impl_->progress.start(productCount(request), "Starting analysis");

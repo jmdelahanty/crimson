@@ -1922,7 +1922,7 @@ int main(int argc, char **argv) {
   std::unique_ptr<crimson::zarr::AnalysisCropGeometryRepository>
       analysis_crop_geometry;
   auto analysis_data_scheduler =
-      std::make_shared<crimson::data::DataAccessScheduler>(64, 4, 1);
+      std::make_shared<crimson::data::DataAccessScheduler>(64, 4, 1, 1);
   AppleAnalysisRepositoryLoader analysis_loader;
   std::string analysis_loading_start_error;
   bool analysis_loading_failure_reported = false;
@@ -5654,7 +5654,8 @@ int main(int argc, char **argv) {
       "rejected_stale=%llu rejected_capacity=%llu cancelled=%llu "
       "capacity_evictions=%llu completed=%llu discarded=%llu failed=%llu "
       "work_started=%llu work_completed=%llu work_exceptions=%llu "
-      "peak_pending=%zu peak_active=%zu peak_speculative=%zu\n",
+      "reserved_current=%zu peak_pending=%zu peak_active=%zu "
+      "peak_non_current=%zu peak_speculative=%zu\n",
       final_analysis_data_scheduler_metrics.worker_count,
       static_cast<unsigned long long>(final_analysis_queue_metrics.submissions),
       static_cast<unsigned long long>(final_analysis_queue_metrics.accepted),
@@ -5682,8 +5683,10 @@ int main(int argc, char **argv) {
           final_analysis_data_scheduler_metrics.work_completed),
       static_cast<unsigned long long>(
           final_analysis_data_scheduler_metrics.work_exceptions),
+      final_analysis_data_scheduler_metrics.reserved_current_frame_workers,
       final_analysis_queue_metrics.peak_pending_requests,
       final_analysis_queue_metrics.peak_active_requests,
+      final_analysis_data_scheduler_metrics.peak_active_non_current_requests,
       final_analysis_data_scheduler_metrics.peak_active_speculative_requests);
   for (size_t priority_index = 0;
        priority_index < crimson::data::kDataRequestPriorityCount;

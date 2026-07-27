@@ -169,10 +169,11 @@ repositories. It should provide:
 - no renderer, decoder, ImGui, Metal, OpenGL, or CUDA dependency.
 
 The first Mac integration uses a 64-request, four-worker pool for subject masks,
-motion, and tail. It admits at most one speculative task and at most one active
-task per source. Three demand-capable slots therefore remain available even
-when lookahead is running. This preserves concurrent visible service for the
-three migrated sources while bounding top-level read pressure.
+motion, and tail. It admits at most one speculative task, at most one active
+task per source, and at most three simultaneous non-current tasks. The remaining
+capacity is available for future current-frame demand. This is not a dedicated
+thread: current-frame work may use any idle worker, while non-current work keeps
+three workers and therefore continues to make progress.
 
 That count is an initial configuration for production measurement, not the
 final storage policy. More workers can reduce latency on independent reads, but
@@ -200,10 +201,14 @@ for subdividing that interval. The macOS shell emits priority and source timing
 summaries at shutdown, and the full-archive and refined-profile benchmark JSON
 preserve the same aggregates.
 
-This checkpoint adds evidence, not a reserved current-frame worker or
-preemption. A long callback that has already started remains non-preemptive.
-The measurements will show whether long initialization work consumes all four
-workers often enough to justify a backend-neutral demand reservation policy.
+The initial telemetry reproduced a 28.99-second current-frame queue wait behind
+four long initialization callbacks. Reserving one slot reduced the same
+workload's maximum current-frame wait to 0.98 ms and first detection overlay
+from 30.64 seconds to 1.64 seconds. All-products readiness increased by about
+5.36 seconds, while traversal deadline misses, stale publications, and physical
+bytes remained unchanged. Active callbacks remain non-preemptive. The evidence
+is in
+`docs/diagnostics/scheduler_current_frame_reservation_2026-07-27.md`.
 
 ## Cache Policy
 
@@ -379,9 +384,10 @@ Deterministic tests verify that three visible sources run while one speculative
 source is active, one source cannot occupy multiple workers, product
 completions publish independently, and keypoint seeks discard stale
 generations. Scheduler tests also verify promotion-aware timing attribution and
-deterministic per-source summaries. Remaining buffers, direction-aware timeline
-prefetch, a measured demand-reservation decision, and decoded-byte-weighted
-in-flight admission remain open.
+deterministic per-source summaries. A mounted full-archive trace and blocking
+fake-repository test now support one reserved current-frame slot in the
+four-worker application scheduler. Remaining buffers, direction-aware timeline
+prefetch, and decoded-byte-weighted in-flight admission remain open.
 
 ### Phase 5O.4: Converge maintained adapters
 
@@ -458,9 +464,9 @@ paired fixtures. The full-duration Stage 1 runner and reduction are now
 complete: all ten trials passed correctness and 700 FPS traversal, but the
 hybrid failed the frozen first-overlay, absolute peak-RSS, and `0.25x`
 traversal-byte gates. Its observed median traversal ratio was `0.606x`. Stage 2
-does not run, the profile remains unpromoted, and the next Crimson work is
-current-frame scheduler isolation plus full-duration memory attribution. The
-result is in
+does not run, and the frozen result did not promote the profile. Current-frame
+scheduler isolation is now complete; full-duration memory attribution remains
+open. The result is in
 `docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26.md`.
 
 ### Phase 5O.5: Cross-platform acceptance

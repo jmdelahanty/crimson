@@ -309,6 +309,7 @@ json schedulerMetricsJson(const crimson::data::DataAccessSchedulerMetrics &m) {
   }
   return {
       {"workers", m.worker_count},
+      {"reserved_current_frame_workers", m.reserved_current_frame_workers},
       {"submissions", m.queue.submissions},
       {"completed", m.queue.completed_requests},
       {"cancelled", m.queue.cancelled_requests},
@@ -316,6 +317,7 @@ json schedulerMetricsJson(const crimson::data::DataAccessSchedulerMetrics &m) {
       {"failed", m.queue.failed_completions},
       {"work_exceptions", m.work_exceptions},
       {"peak_active", m.queue.peak_active_requests},
+      {"peak_active_non_current", m.peak_active_non_current_requests},
       {"peak_pending", m.queue.peak_pending_requests},
       {"timing_by_priority", std::move(by_priority)},
       {"timing_by_source", std::move(by_source)},
