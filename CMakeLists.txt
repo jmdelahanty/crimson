@@ -289,6 +289,27 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
     set_target_properties(refined_detection_shadow_gate PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
+
+    add_executable(refined_detection_physical_profile_benchmark
+        tools/refined_detection_physical_profile_benchmark.cpp
+    )
+    target_compile_features(refined_detection_physical_profile_benchmark
+        PRIVATE cxx_std_17)
+    target_link_libraries(refined_detection_physical_profile_benchmark PRIVATE
+        crimson_overlay_contracts
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+        nlohmann_json::nlohmann_json
+        Threads::Threads
+    )
+    target_compile_definitions(
+        refined_detection_physical_profile_benchmark PRIVATE
+        CRIMSON_GIT_COMMIT="${CRIMSON_REFINED_GATE_GIT_COMMIT}"
+        CRIMSON_WORKTREE_DIRTY=${CRIMSON_REFINED_GATE_WORKTREE_DIRTY}
+    )
+    set_target_properties(refined_detection_physical_profile_benchmark
+        PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
     set_tests_properties(archive_context_tests PROPERTIES
         LABELS "cache;headless;portable;repository;tensorstore;zarr"
         TIMEOUT 60
