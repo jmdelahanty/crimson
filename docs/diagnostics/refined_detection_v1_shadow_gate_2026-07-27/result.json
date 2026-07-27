@@ -4,9 +4,9 @@
   "classification": "headless_real_shadow_integration",
   "pass": true,
   "handoff_payload_digest": "1fce7956f7f24bf6588900263366ca1c15d060bfdf3bddd4ac1f6c609bdaaf82",
-  "crimson_base_commit": "34ff3c38229450b4e6bbe9b16fed99e9ca966197",
-  "crimson_worktree_dirty": true,
-  "immutable_crimson_revision_bound": false,
+  "crimson_base_commit": "28537f64bcae765b062374b17dd879c0a9614ade",
+  "crimson_worktree_dirty": false,
+  "immutable_crimson_revision_bound": true,
   "refined": {
     "archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/refined_detection_storage/integration/20260128_refined_v1_crimson_20260727_v1/refined.zarr",
     "run": "refined_detect_shadow_crimson_20260727_v1",
@@ -30,11 +30,11 @@
     "implicit_selection_succeeded": false
   },
   "refined_open": {
-    "total_ms": 122.5165,
-    "root_metadata_ms": 4.514875,
-    "manifest_validation_ms": 0.6345,
-    "exact_handle_open_ms": 1.897417,
-    "offset_read_ms": 109.828125,
+    "total_ms": 105.186166,
+    "root_metadata_ms": 4.218708,
+    "manifest_validation_ms": 0.646875,
+    "exact_handle_open_ms": 2.361375,
+    "offset_read_ms": 92.106042,
     "root_metadata_reads": 1,
     "direct_run_metadata_reads": 1,
     "direct_group_metadata_reads": 3,
@@ -47,13 +47,13 @@
   "rapid_seek": {
     "requests": 97,
     "final_frame": 11643,
-    "elapsed_ms": 248.77675,
+    "elapsed_ms": 164.806209,
     "cancelled_requests": 145,
-    "discarded_completions": 4,
+    "discarded_completions": 3,
     "stale_publications": 0
   },
   "traversal": {
-    "elapsed_ms": 64.35175,
+    "elapsed_ms": 62.912333,
     "frames": 23287,
     "rows": 22926,
     "empty_frames": 361,
@@ -77,8 +77,8 @@
     "failed_chunks": 0,
     "stale_chunks": 0,
     "publications": 1,
-    "elapsed_ms": 5.533375,
-    "maximum_chunk_ms": 0.822708
+    "elapsed_ms": 5.505833,
+    "maximum_chunk_ms": 0.871875
   },
   "resident_probe": {
     "frame": 23286,
@@ -86,28 +86,28 @@
     "additional_resident_range_reads": 1
   },
   "repository": {
-    "range_reads": 340,
-    "paged_range_reads": 339,
+    "range_reads": 339,
+    "paged_range_reads": 338,
     "resident_range_reads": 1,
-    "resolved_frames": 23708,
-    "resolved_rows": 23347,
+    "resolved_frames": 23684,
+    "resolved_rows": 23323,
     "failed_reads": 0,
-    "ui_field_reads": 3440,
+    "ui_field_reads": 3430,
     "residency_chunk_reads": 5,
     "residency_rows_read": 22926,
     "residency_decoded_bytes": 1169226,
     "resident_publications": 1,
     "resident_retained_bytes": 1169226,
     "peak_concurrent_ui_field_reads": 40,
-    "maximum_range_read_ms": 234.060042,
-    "maximum_residency_chunk_read_ms": 0.787667
+    "maximum_range_read_ms": 164.532459,
+    "maximum_residency_chunk_read_ms": 0.807209
   },
   "scheduler": {
     "workers": 4,
-    "submissions": 816,
-    "completed": 345,
+    "submissions": 817,
+    "completed": 344,
     "cancelled": 145,
-    "discarded": 4,
+    "discarded": 3,
     "failed": 0,
     "work_exceptions": 0,
     "peak_active": 4

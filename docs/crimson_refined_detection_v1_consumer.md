@@ -3,8 +3,8 @@
 Date: 2026-07-27
 
 Status: read-only consumer implemented; real Palette shadow-snapshot acceptance
-pending; legacy editing remains unchanged and production write routing remains
-blocked.
+passed at Crimson commit `28537f64bcae765b062374b17dd879c0a9614ade`;
+legacy editing remains unchanged and production write routing remains blocked.
 
 ## Scope
 
@@ -96,12 +96,12 @@ opens, one retained offset read, lazy audit handles, resident publication,
 malformed offsets, duplicate keys, selector-ineligible gating,
 recomputed-envelope tampering, and terminal explicit-selection failure.
 
-The next gate is a real Palette selector-ineligible shadow snapshot. Crimson
-must open it with `--benchmark-refined-detection-run`, render all expected rows,
-retain offsets once, preserve identities through seeks and residency, publish
-no stale results, and confirm that no source-audit handles open during normal
-playback. Production routing and editing remain blocked until that gate passes
-and the legacy editing boundary is reviewed separately.
+The real Palette selector-ineligible shadow-snapshot gate opens through the
+benchmark-only selection policy, renders all expected rows, retains offsets
+once, preserves identities through seeks and residency, publishes no stale
+results, and leaves source-audit handles unopened during normal playback.
+Production routing and editing remain blocked pending the separate legacy
+editing-boundary review.
 
 The portable real-shadow harness is built as
 `refined_detection_shadow_gate`. It derives archive and run identities from the
@@ -121,5 +121,5 @@ array-level envelopes fail closed.
 The unchanged real handoff subsequently passed all consumer gates. Structured
 evidence is in
 `docs/diagnostics/refined_detection_v1_shadow_gate_2026-07-27/result.json`.
-The result is not yet bound to an immutable Crimson commit because the current
-worktree contains the broader phased implementation as uncommitted changes.
+The gate was rebuilt and rerun from clean immutable implementation commit
+`28537f64bcae765b062374b17dd879c0a9614ade`.

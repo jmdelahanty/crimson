@@ -880,10 +880,10 @@ and exact empty-inline nested consolidated declarations are equivalent for
 group nodes only; arrays and all other fields remain exact. The unchanged real
 Palette handoff passed typed open, selection, full traversal, identity,
 overlay, cancellation, lazy-audit, and residency checks. The deterministic
-suite covers the required `[2, 0, 1, 3]` raw/manual frame pattern. The remaining
-administrative checkpoint is binding this dirty worktree result to an immutable
-Crimson commit. After that, the paired regular/access-aware refined-snapshot
-physical gate may proceed.
+suite covers the required `[2, 0, 1, 3]` raw/manual frame pattern. The result is
+bound to clean immutable Crimson implementation commit
+`28537f64bcae765b062374b17dd879c0a9614ade`. The paired
+regular/access-aware refined-snapshot physical gate may now proceed.
 The implementation boundary is documented in
 `docs/crimson_refined_detection_v1_consumer.md`.
 

@@ -2,7 +2,7 @@
 
 Date: 2026-07-27
 
-Status: consumer gate passed; immutable Crimson commit binding pending
+Status: consumer gate passed; bound to immutable Crimson implementation commit
 
 ## Inputs
 
@@ -11,10 +11,11 @@ Status: consumer gate passed; immutable Crimson commit binding pending
 - Refined run: `refined_detect_shadow_crimson_20260727_v1`
 - Canonical companion: `detect_canonical_shadow_crimson_20260727_v1`
 - Palette comparator rule commit: `77f47b5a`
-- Crimson base commit: `34ff3c38229450b4e6bbe9b16fed99e9ca966197`
+- Crimson implementation commit: `28537f64bcae765b062374b17dd879c0a9614ade`
 
-The Crimson worktree was dirty during this run, so the result is bound to the
-handoff and recorded source tree but not yet to an immutable Crimson commit.
+The gate executable was reconfigured and rebuilt after the implementation
+commit. Its structured result records a clean worktree and
+`immutable_crimson_revision_bound=true`.
 
 ## Comparator Decision
 
