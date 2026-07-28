@@ -4,13 +4,15 @@ Date: 2026-07-26
 
 Contract version: 1
 
-Status: complete; isolated and full-archive gates passed
+Status: complete; isolated and full-archive gates passed; native macOS
+production activation completed 2026-07-28
 
 ## Result
 
 The byte-budgeted residency strategy passed both frozen checkpoints on
-2026-07-26. This authorizes a separately reviewed production policy; it does
-not enable residency automatically and does not promote a Palette physical
+2026-07-26. The separately reviewed native macOS production policy was
+activated on 2026-07-28 after a mounted full-duration rerun with reserved
+current-frame scheduler capacity. This does not promote a Palette physical
 storage profile.
 
 The 20-process isolated comparison passed every correctness, latency, I/O,
@@ -45,6 +47,13 @@ The fixture run is a canonical `detect_runs` surface declaring `stage: detect`.
 These results validate canonical detection storage and access, not the separate
 production selection rule that should prefer explicitly selected refined or
 corrected detections when available.
+
+The production adapter now applies the same policy to whichever typed
+canonical/refined repository wins selection. It waits for a real first-page
+publication, admits at most 64 MiB of decoded UI columns, builds 512 KiB chunks
+speculatively, and retains paging for rejection or failure. The activation
+evidence is in
+`docs/diagnostics/canonical_detection_production_residency_activation_2026-07-28.md`.
 
 ## Decision
 

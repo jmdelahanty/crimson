@@ -1633,6 +1633,56 @@ int runHeadlessMetalValidation() {
   return 0;
 }
 
+const char *canonicalDetectionResidencyDecisionName(
+    CanonicalDetectionResidencyState state) {
+  switch (state) {
+  case CanonicalDetectionResidencyState::Disabled:
+    return "disabled";
+  case CanonicalDetectionResidencyState::Ineligible:
+    return "rejected_budget";
+  case CanonicalDetectionResidencyState::Loading:
+    return "building";
+  case CanonicalDetectionResidencyState::Ready:
+    return "resident";
+  case CanonicalDetectionResidencyState::Cancelled:
+    return "cancelled";
+  case CanonicalDetectionResidencyState::Failed:
+    return "fallback_paged";
+  }
+  return "unknown";
+}
+
+void reportCanonicalDetectionResidency(
+    const char *event,
+    const crimson::zarr::CanonicalDetectionDescriptor &descriptor,
+    const CanonicalDetectionResidencyMetrics &metrics) {
+  std::printf(
+      "[AppleCanonicalDetectionResidency] event=%s state=%s decision=%s "
+      "surface=%s run=%s attempts=%llu candidate_bytes=%llu "
+      "budget_bytes=%llu chunk_bytes=%llu planned=%llu completed=%llu "
+      "source_bytes=%llu retained_bytes=%llu stale=%llu failed=%llu "
+      "publications=%llu elapsed_ms=%.1f max_chunk_ms=%.1f error=%s\n",
+      event, canonicalDetectionResidencyStateName(metrics.state),
+      canonicalDetectionResidencyDecisionName(metrics.state),
+      descriptor.surface_kind ==
+              crimson::zarr::DetectionSurfaceKind::RefinedSnapshotV1
+          ? "refined_v1"
+          : "canonical_raw_v1",
+      descriptor.run_name.c_str(),
+      static_cast<unsigned long long>(metrics.attempts),
+      static_cast<unsigned long long>(metrics.decoded_hot_bytes),
+      static_cast<unsigned long long>(metrics.maximum_resident_bytes),
+      static_cast<unsigned long long>(metrics.maximum_chunk_decoded_bytes),
+      static_cast<unsigned long long>(metrics.planned_chunks),
+      static_cast<unsigned long long>(metrics.completed_chunks),
+      static_cast<unsigned long long>(metrics.decoded_source_bytes),
+      static_cast<unsigned long long>(metrics.retained_bytes),
+      static_cast<unsigned long long>(metrics.stale_chunks),
+      static_cast<unsigned long long>(metrics.failed_chunks),
+      static_cast<unsigned long long>(metrics.publications), metrics.elapsed_ms,
+      metrics.maximum_chunk_ms, metrics.last_error.c_str());
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -1931,11 +1981,16 @@ int main(int argc, char **argv) {
   const std::string analysis_archive_identity = options->zarr_path;
   CanonicalDetectionBuffer canonical_detection_buffer(
       analysis_data_scheduler, analysis_archive_identity);
+  const CanonicalDetectionResidencyPolicy canonical_detection_residency_policy =
+      canonicalDetectionProductionResidencyPolicy();
   crimson::zarr::CanonicalDetectionDescriptor canonical_detection_descriptor;
   crimson::zarr::CanonicalDetectionRepositoryOpenMetrics
       canonical_detection_open_metrics;
   bool canonical_detection_available = false;
   bool canonical_detection_failed = false;
+  bool canonical_detection_residency_attempted = false;
+  std::optional<CanonicalDetectionResidencyState>
+      canonical_detection_residency_reported_state;
   int64_t last_canonical_detection_camera_request = -1;
   std::string canonical_detection_error;
   KeypointOverlayBuffer keypoint_overlay_buffer(analysis_data_scheduler,
@@ -2456,7 +2511,8 @@ int main(int argc, char **argv) {
                   "root_reads=%zu declarations=%zu "
                   "exact_opens=%zu fallback_metadata=%zu fallback_dtype=%zu "
                   "offset_reads=%zu offset_bytes=%zu open_ms=%.1f "
-                  "offset_ms=%.1f\n",
+                  "offset_ms=%.1f residency_budget_bytes=%llu "
+                  "residency_chunk_bytes=%llu\n",
                   canonical_detection_descriptor.surface_kind ==
                           crimson::zarr::DetectionSurfaceKind::RefinedSnapshotV1
                       ? "refined_v1"
@@ -2477,7 +2533,13 @@ int main(int argc, char **argv) {
                   canonical_detection_open_metrics.offset_read_calls,
                   canonical_detection_open_metrics.retained_offset_bytes,
                   canonical_detection_open_metrics.total_ms,
-                  canonical_detection_open_metrics.offset_read_ms);
+                  canonical_detection_open_metrics.offset_read_ms,
+                  static_cast<unsigned long long>(
+                      canonical_detection_residency_policy
+                          .maximum_resident_bytes),
+                  static_cast<unsigned long long>(
+                      canonical_detection_residency_policy
+                          .maximum_chunk_decoded_bytes));
             }
           }
 
@@ -3500,6 +3562,35 @@ int main(int argc, char **argv) {
               .readiness;
       const bool analysis_presentation_demand_enabled =
           analysis_readiness.ready();
+
+      if (canonical_detection_available &&
+          !canonical_detection_residency_attempted &&
+          last_canonical_detection_camera_request >= 0 &&
+          canonical_detection_buffer.frame(
+              last_canonical_detection_camera_request)) {
+        canonical_detection_residency_attempted = true;
+        std::string residency_error;
+        if (!canonical_detection_buffer.startUiResidency(
+                canonical_detection_residency_policy, &residency_error)) {
+          std::fprintf(stderr,
+                       "[AppleCanonicalDetectionResidency] Start failed: %s; "
+                       "continuing with paging\n",
+                       residency_error.c_str());
+        }
+        const auto residency = canonical_detection_buffer.residencyMetrics();
+        reportCanonicalDetectionResidency(
+            "activation", canonical_detection_descriptor, residency);
+        canonical_detection_residency_reported_state = residency.state;
+      }
+      if (canonical_detection_residency_attempted) {
+        const auto residency = canonical_detection_buffer.residencyMetrics();
+        if (!canonical_detection_residency_reported_state ||
+            *canonical_detection_residency_reported_state != residency.state) {
+          reportCanonicalDetectionResidency(
+              "transition", canonical_detection_descriptor, residency);
+          canonical_detection_residency_reported_state = residency.state;
+        }
+      }
 
       if (!subject_mask_first_ready_logged &&
           subject_mask_initial_request_started &&
@@ -5570,6 +5661,8 @@ int main(int argc, char **argv) {
   canonical_detection_buffer.close();
   const auto final_canonical_detection_buffer_metrics =
       canonical_detection_buffer.metrics();
+  const auto final_canonical_detection_residency_metrics =
+      canonical_detection_buffer.residencyMetrics();
   keypoint_overlay_buffer.close();
   chaser_distance_polar_buffer.close();
   const crimson::polar::ChaserDistancePolarBufferMetrics
@@ -5751,6 +5844,9 @@ int main(int argc, char **argv) {
   }
 
   if (!canonical_detection_descriptor.run_name.empty()) {
+    reportCanonicalDetectionResidency(
+        "summary", canonical_detection_descriptor,
+        final_canonical_detection_residency_metrics);
     std::printf(
         "[AppleCanonicalDetection] presentations=%llu detections=%llu "
         "requests=%llu cache_hits=%llu demand_pages=%llu lead_pages=%llu "

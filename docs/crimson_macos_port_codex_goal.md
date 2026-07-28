@@ -874,6 +874,16 @@ small decoded UI working sets may be promoted atomically after first-page
 readiness. The contract and evidence are in
 `docs/crimson_macos_phase5o5_detection_residency_gate.md`.
 
+Native macOS production activation is now complete. The selected canonical or
+refined detection repository starts a speculative resident build only after a
+real first page is available and only when its exact decoded UI hot set fits a
+64 MiB budget. Builds use 512 KiB chunks; current-frame work retains its
+reserved scheduler capacity, and rejection, cancellation, or failure remains
+paged and nonfatal. A mounted full-duration activation run kept current-frame
+queue wait below 0.15 ms, published one exact 28,490,088-byte snapshot, and had
+zero stale publications or traversal misses. Evidence is in
+`docs/diagnostics/canonical_detection_production_residency_activation_2026-07-28.md`.
+
 Phase 5O.6 is now in progress for Palette refined-detection v1 consumption.
 The backend-neutral repository, fail-closed refined-first selector, stable row
 identity, lazy source-audit boundary, paging/residency integration, shared

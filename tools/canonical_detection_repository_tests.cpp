@@ -969,9 +969,12 @@ bool testPageBuffer() {
   CHECK(repository_metrics.ui_field_reads ==
         repository_metrics.range_reads * 3);
 
-  CanonicalDetectionResidencyPolicy resident;
-  resident.maximum_resident_bytes = 1024;
-  resident.maximum_chunk_decoded_bytes = 24;
+  const auto resident = canonicalDetectionProductionResidencyPolicy();
+  CHECK(resident.enabled());
+  CHECK(resident.maximum_resident_bytes == 64ULL * 1024ULL * 1024ULL);
+  CHECK(resident.maximum_chunk_decoded_bytes == 512ULL * 1024ULL);
+  CHECK(resident.admits(resident.maximum_resident_bytes));
+  CHECK(!resident.admits(resident.maximum_resident_bytes + 1));
   CHECK(buffer.startUiResidency(resident, &error));
   CHECK(buffer.waitForUiResidency(std::chrono::seconds(2)));
   const auto residency = buffer.residencyMetrics();
@@ -1007,7 +1010,7 @@ bool testPageBuffer() {
 bool testDemandOvertakesResidencyAndCancellation() {
   {
     auto scheduler =
-        std::make_shared<crimson::data::DataAccessScheduler>(8, 2, 1);
+        std::make_shared<crimson::data::DataAccessScheduler>(8, 2, 1, 1);
     auto repository = std::make_unique<BlockingCanonicalDetectionRepository>();
     auto *repository_view = repository.get();
     CanonicalDetectionBuffer buffer(scheduler, "blocking-demand");
@@ -1040,7 +1043,7 @@ bool testDemandOvertakesResidencyAndCancellation() {
 
   {
     auto scheduler =
-        std::make_shared<crimson::data::DataAccessScheduler>(8, 2, 1);
+        std::make_shared<crimson::data::DataAccessScheduler>(8, 2, 1, 1);
     auto repository = std::make_unique<BlockingCanonicalDetectionRepository>();
     auto *repository_view = repository.get();
     CanonicalDetectionBuffer buffer(scheduler, "blocking-cancel");
@@ -1062,6 +1065,28 @@ bool testDemandOvertakesResidencyAndCancellation() {
     CHECK(cancelled.stale_chunks >= 1);
     CHECK(!repository_view->residentUiColumnsReady());
     buffer.close();
+    scheduler->shutdown();
+  }
+  {
+    auto scheduler =
+        std::make_shared<crimson::data::DataAccessScheduler>(8, 2, 1, 1);
+    auto repository = std::make_unique<BlockingCanonicalDetectionRepository>();
+    auto *repository_view = repository.get();
+    CanonicalDetectionBuffer buffer(scheduler, "blocking-close");
+    std::string error;
+    CHECK(buffer.open(std::move(repository), 2, 2, &error));
+    const auto policy = canonicalDetectionProductionResidencyPolicy();
+    CHECK(buffer.startUiResidency(policy, &error));
+    CHECK(repository_view->waitForPreloadStart(std::chrono::seconds(1)));
+
+    std::thread closer([&] { buffer.close(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    repository_view->releasePreload();
+    closer.join();
+    const auto cancelled = buffer.residencyMetrics();
+    CHECK(cancelled.state == CanonicalDetectionResidencyState::Cancelled);
+    CHECK(cancelled.elapsed_ms > 0.0);
+    CHECK(cancelled.publications == 0);
     scheduler->shutdown();
   }
   return true;

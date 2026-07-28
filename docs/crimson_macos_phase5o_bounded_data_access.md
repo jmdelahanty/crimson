@@ -477,6 +477,16 @@ open. The result is in
 - verify bounded CPU/GPU cache memory over long traversal; and
 - preserve scientific frame, coordinate, provenance, and missing-data behavior.
 
+Status: native macOS detection residency activation is complete. The selected
+canonical or refined surface retains its first paged result, then starts one
+bounded speculative build when its exact decoded UI hot set fits 64 MiB.
+Current-frame reservation remains active, and rejection, failure, or close
+retains paging without partial publication. The mounted activation gate and
+native close-during-build smoke are recorded in
+`docs/diagnostics/canonical_detection_production_residency_activation_2026-07-28.md`.
+Linux/Windows entry-point adoption, full-duration memory attribution, and the
+remaining adapter migrations remain open.
+
 ## Gate
 
 Phase 5O is complete only when:

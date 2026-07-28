@@ -402,6 +402,10 @@ void CanonicalDetectionBuffer::close() {
         CanonicalDetectionResidencyState::Loading) {
       impl_->residency_metrics.state =
           CanonicalDetectionResidencyState::Cancelled;
+      impl_->residency_metrics.elapsed_ms =
+          std::chrono::duration<double, std::milli>(Impl::Clock::now() -
+                                                    impl_->residency_started)
+              .count();
     }
     impl_->condition.notify_all();
     source = impl_->scheduler_source;
@@ -713,6 +717,14 @@ CanonicalDetectionBuffer::repositoryMetrics() const {
   return impl_->repository
              ? impl_->repository->metrics()
              : crimson::zarr::CanonicalDetectionRepositoryMetrics{};
+}
+
+CanonicalDetectionResidencyPolicy
+canonicalDetectionProductionResidencyPolicy() {
+  CanonicalDetectionResidencyPolicy policy;
+  policy.maximum_resident_bytes = 64ULL * 1024ULL * 1024ULL;
+  policy.maximum_chunk_decoded_bytes = 512ULL * 1024ULL;
+  return policy;
 }
 
 const char *

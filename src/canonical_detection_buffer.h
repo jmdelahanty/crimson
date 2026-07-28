@@ -30,6 +30,8 @@ struct CanonicalDetectionResidencyPolicy {
   }
 };
 
+CanonicalDetectionResidencyPolicy canonicalDetectionProductionResidencyPolicy();
+
 struct CanonicalDetectionResidencyMetrics {
   CanonicalDetectionResidencyState state =
       CanonicalDetectionResidencyState::Disabled;
