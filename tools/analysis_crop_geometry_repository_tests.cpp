@@ -211,7 +211,46 @@ bool BuildLineagePointers(const std::filesystem::path &root,
   return true;
 }
 
+bool TestCompactFrameIndex() {
+  crimson::zarr::AnalysisCropGeometryDescriptor descriptor;
+  descriptor.output_width = 64;
+  descriptor.output_height = 48;
+  descriptor.camera_frame_count = 4;
+
+  std::vector<crimson::zarr::AnalysisCropGeometryRow> rows;
+  auto append = [&](int64_t frame, int64_t roi, double offset_x) {
+    crimson::zarr::AnalysisCropGeometryRow row;
+    row.camera_frame = frame;
+    row.roi_index = roi;
+    row.offset_x = offset_x;
+    row.offset_y = offset_x + 1.0;
+    rows.push_back(std::move(row));
+  };
+  append(3, 30, 30.0);
+  append(0, 10, 10.0);
+  append(3, 31, 31.0);
+  append(2, 20, 20.0);
+
+  auto repository = crimson::zarr::MakeAnalysisCropGeometryRepository(
+      std::move(descriptor), std::move(rows));
+  CHECK(repository != nullptr);
+  CHECK(repository->descriptor().retained_frame_offsets);
+  CHECK(!repository->descriptor().pageable_payload);
+  CHECK(repository->resolveCameraFrame(0, 128, 96).roi_index == 10);
+  CHECK(repository->resolveCameraFrame(1, 128, 96).status ==
+        crimson::zarr::AnalysisCropGeometryStatus::Missing);
+  CHECK(repository->resolveCameraFrame(2, 128, 96).roi_index == 20);
+  const auto multi = repository->resolveCameraFrame(3, 128, 96);
+  CHECK(multi.status == crimson::zarr::AnalysisCropGeometryStatus::Mapped);
+  CHECK(multi.frame_row_count == 2);
+  CHECK(multi.roi_index == 30);
+  CHECK(multi.geometry.has_value());
+  CHECK(multi.geometry->full_frame_crop.x == 30.0);
+  return true;
+}
+
 bool RunTest() {
+  CHECK(TestCompactFrameIndex());
   TemporaryDirectory temporary;
   CHECK(!temporary.path().empty());
   const auto archive_root = temporary.path() / "recording/zarr/analysis.zarr";
@@ -229,12 +268,16 @@ bool RunTest() {
   CHECK(repository->descriptor().output_height == 48);
   CHECK(repository->descriptor().row_count == 4);
   CHECK(repository->descriptor().camera_frame_count == 5);
+  CHECK(repository->descriptor().retained_frame_offsets);
+  CHECK(!repository->descriptor().pageable_payload);
   CHECK(repository->sourceCapabilities().live_geometry);
   CHECK(!repository->sourceCapabilities().acquisition_video);
   CHECK(!repository->sourceCapabilities().persisted_zarr);
   const auto memory = repository->memoryMetrics();
   CHECK(memory.retained_payload_bytes > 0);
   CHECK(memory.retained_index_bytes > 0);
+  CHECK(memory.reportedRetainedBytes() <
+        4 * sizeof(crimson::zarr::AnalysisCropGeometryRow));
 
   const auto missing = repository->resolveCameraFrame(0, 128, 96);
   CHECK(missing.status == crimson::zarr::AnalysisCropGeometryStatus::Missing);

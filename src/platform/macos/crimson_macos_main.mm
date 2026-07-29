@@ -3235,12 +3235,20 @@ int main(int argc, char **argv) {
                   video_playback.info().nominal_frame_rate;
               analysis_crop_view_info = geometry_info;
               crop_view_info = std::move(geometry_info);
+              const auto geometry_memory =
+                  analysis_crop_geometry->memoryMetrics();
               std::printf(
                   "[AppleCropGeometry] run=%s rows=%zu camera_frames=%zu "
-                  "output=%dx%d pixel_source=full-camera\n",
+                  "output=%dx%d pixel_source=full-camera index=%s payload=%s "
+                  "retained_bytes=%llu\n",
                   descriptor.run_name.c_str(), descriptor.row_count,
                   descriptor.camera_frame_count, descriptor.output_width,
-                  descriptor.output_height);
+                  descriptor.output_height,
+                  descriptor.retained_frame_offsets ? "frame-offsets"
+                                                    : "legacy",
+                  descriptor.pageable_payload ? "pageable" : "resident",
+                  static_cast<unsigned long long>(
+                      geometry_memory.reportedRetainedBytes()));
             } else {
               std::fprintf(stderr, "[AppleCropGeometry] Unavailable: %s\n",
                            geometry_error.c_str());

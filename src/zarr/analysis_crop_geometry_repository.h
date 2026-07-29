@@ -28,6 +28,8 @@ struct AnalysisCropGeometryDescriptor {
   size_t source_height = 0;
   bool consolidated_metadata = false;
   bool coordinate_catalog_validated = false;
+  bool retained_frame_offsets = false;
+  bool pageable_payload = false;
 };
 
 struct AnalysisCropGeometryRow {
