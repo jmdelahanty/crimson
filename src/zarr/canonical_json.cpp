@@ -38,9 +38,12 @@ std::string CanonicalJsonSha256(const nlohmann::json &value) {
   if (!strictJson(value)) {
     return {};
   }
-  const std::string payload = value.dump();
+  return Sha256Hex(value.dump());
+}
+
+std::string Sha256Hex(std::string_view value) {
   tensorstore::internal::SHA256Digester digester;
-  digester.Write(payload);
+  digester.Write(value);
   const auto digest = digester.Digest();
   static constexpr char kHex[] = "0123456789abcdef";
   std::string encoded(digest.size() * 2, '0');

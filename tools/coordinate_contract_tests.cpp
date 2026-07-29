@@ -140,6 +140,15 @@ bool testRoiTransformsAndAuthority() {
   CHECK(near(source_from_pixels->x, 356.0));
   CHECK(near(source_from_pixels->y, 328.0));
 
+  const auto source_box = roiPixelXyxyBoxToSourceCamera(
+      {187.675048828125, 184.099853515625, 325.1500244140625, 328.625},
+      placement);
+  CHECK(source_box.has_value());
+  CHECK(near(source_box->x_min, 287.675048828125));
+  CHECK(near(source_box->y_min, 384.099853515625));
+  CHECK(near(source_box->x_max, 425.1500244140625));
+  CHECK(near(source_box->y_max, 528.625));
+
   const auto source_from_normalized =
       roiNormalizedPointToSourceCamera({0.5, 0.5}, placement);
   CHECK(source_from_normalized.has_value());

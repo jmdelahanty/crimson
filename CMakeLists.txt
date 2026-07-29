@@ -200,7 +200,9 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         src/zarr/tensorstore_chaser_distance_polar_repository.cpp
         src/zarr/detection_repository_selection.cpp
         src/zarr/canonical_json.cpp
+        src/zarr/canonical_detection_contract.cpp
         src/zarr/coordinate_catalog_contract.cpp
+        src/zarr/crop_geometry_contract.cpp
         src/zarr/refined_detection_contract.cpp
         src/zarr/tensorstore_canonical_detection_repository.cpp
         src/zarr/tensorstore_refined_detection_repository.cpp
@@ -323,6 +325,22 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         CRIMSON_WORKTREE_DIRTY=${CRIMSON_REFINED_GATE_WORKTREE_DIRTY}
     )
     set_target_properties(refined_detection_shadow_gate PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
+    add_executable(coordinate_catalog_canary_gate
+        tools/coordinate_catalog_canary_gate.cpp
+    )
+    target_compile_features(coordinate_catalog_canary_gate PRIVATE cxx_std_17)
+    target_link_libraries(coordinate_catalog_canary_gate PRIVATE
+        crimson_tensorstore_repositories
+        nlohmann_json::nlohmann_json
+    )
+    target_compile_definitions(coordinate_catalog_canary_gate PRIVATE
+        CRIMSON_GIT_COMMIT="${CRIMSON_REFINED_GATE_GIT_COMMIT}"
+        CRIMSON_WORKTREE_DIRTY=${CRIMSON_REFINED_GATE_WORKTREE_DIRTY}
+    )
+    set_target_properties(coordinate_catalog_canary_gate PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
 

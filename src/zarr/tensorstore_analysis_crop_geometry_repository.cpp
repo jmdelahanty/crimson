@@ -1,5 +1,6 @@
 #include "zarr/tensorstore_analysis_crop_geometry_repository.h"
 
+#include <tensorstore/index_space/dim_expression.h>
 #include <tensorstore/open.h>
 #include <tensorstore/tensorstore.h>
 
@@ -11,11 +12,14 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
 #include "zarr/archive_context_internal.h"
+#include "zarr/crop_geometry_contract.h"
+#include "zarr/zarr_metadata_equivalence.h"
 
 namespace crimson::zarr {
 namespace ts = tensorstore;
@@ -23,12 +27,288 @@ using json = nlohmann::json;
 
 namespace {
 
-bool ValidRunName(const std::string& run_name) {
+struct ArrayDeclaration {
+  const char *relative_path;
+  const char *dtype;
+  size_t rank;
+  size_t columns;
+};
+
+constexpr ArrayDeclaration kCoordinateAwareDeclarations[] = {
+    {"bbox_img_xyxy", "float32", 2, 4},
+    {"bbox_norm_coords", "float32", 2, 4},
+    {"bbox_roi_xyxy", "float32", 2, 4},
+    {"centers_img_xy", "float32", 2, 2},
+    {"frame_indices", "int64", 1, 1},
+    {"frame_row_offsets", "int64", 1, 1},
+    {"instance_key", "uint64", 1, 1},
+    {"roi_coordinates_full", "int32", 2, 2},
+    {"roi_sizes_full", "int32", 2, 2},
+    {"source_acquisition_frame_index", "int64", 1, 1},
+    {"source_crop_xywh", "float32", 2, 4},
+    {"source_refined_row_ids", "int64", 1, 1},
+    {"source_row_signature", "uint8", 2, 32},
+};
+
+const json *ConsolidatedEntry(const json &root, const std::string &path) {
+  try {
+    const auto &metadata = root.at("consolidated_metadata").at("metadata");
+    const auto found = metadata.find(path);
+    return found == metadata.end() ? nullptr : &*found;
+  } catch (const json::exception &) {
+    return nullptr;
+  }
+}
+
+template <typename T, ts::DimensionIndex Rank>
+std::optional<ts::TensorStore<T, Rank>>
+OpenExact(const ArchiveContext::Impl &archive, const json &root,
+          const std::string &path, std::string *error) {
+  auto spec = internal::MakeReadOnlyArraySpec(archive, path);
+  const auto *metadata = ConsolidatedEntry(root, path);
+  if (!spec || !metadata) {
+    internal::SetArchiveError(error, "Missing exact array metadata: " + path);
+    return std::nullopt;
+  }
+  (*spec)["metadata"] = *metadata;
+  auto opened = ts::Open<T, Rank>(
+                    *spec, ts::OpenMode::open | ts::OpenMode::assume_metadata,
+                    ts::ReadWriteMode::read, archive.context)
+                    .result();
+  if (!opened.ok()) {
+    internal::SetArchiveError(error, path + ": " + opened.status().ToString());
+    return std::nullopt;
+  }
+  return *opened;
+}
+
+template <typename T, ts::DimensionIndex Rank>
+bool ReadExact(const ts::TensorStore<T, Rank> &store, std::vector<T> *output,
+               std::string *error) {
+  auto read = ts::Read(store).result();
+  if (!read.ok()) {
+    internal::SetArchiveError(error, read.status().ToString());
+    return false;
+  }
+  size_t count = 1;
+  for (const auto extent : read->shape()) {
+    count *= static_cast<size_t>(extent);
+  }
+  const T *values = static_cast<const T *>(read->data());
+  output->assign(values, values + count);
+  return true;
+}
+
+bool ValidateCoordinateAwareDeclarations(
+    const json &root, const std::string &base,
+    const CropGeometryManifestSummary &manifest, std::string *error) {
+  try {
+    if (root.at("zarr_format") != 3 || root.at("node_type") != "group" ||
+        root.at("consolidated_metadata").at("kind") != "inline") {
+      internal::SetArchiveError(
+          error, "Crop archive lacks inline Zarr v3 consolidated metadata");
+      return false;
+    }
+    for (const auto &declaration : kCoordinateAwareDeclarations) {
+      const std::string path = base + "/" + declaration.relative_path;
+      const auto *metadata = ConsolidatedEntry(root, path);
+      if (!metadata) {
+        internal::SetArchiveError(
+            error, "Missing consolidated crop array declaration: " + path);
+        return false;
+      }
+      const auto shape = metadata->at("shape").get<std::vector<size_t>>();
+      const size_t expected_rows =
+          std::string_view(declaration.relative_path) == "frame_row_offsets"
+              ? manifest.frame_count + 1
+              : manifest.instance_count;
+      if (metadata->value("node_type", "") != "array" ||
+          metadata->contains("consolidated_metadata") ||
+          metadata->value("data_type", "") != declaration.dtype ||
+          shape.size() != declaration.rank || shape[0] != expected_rows ||
+          (declaration.rank == 2 && shape[1] != declaration.columns)) {
+        internal::SetArchiveError(error, "Crop array schema mismatch: " + path);
+        return false;
+      }
+    }
+    return true;
+  } catch (const json::exception &exception) {
+    internal::SetArchiveError(error,
+                              "Invalid coordinate-aware crop metadata: " +
+                                  std::string(exception.what()));
+    return false;
+  }
+}
+
+bool ValidateOffsets(const std::vector<int64_t> &frame_indices,
+                     const std::vector<int64_t> &offsets,
+                     const CropGeometryManifestSummary &manifest,
+                     std::string *error) {
+  if (offsets.size() != manifest.frame_count + 1 || offsets.empty() ||
+      offsets.front() != 0 ||
+      offsets.back() != static_cast<int64_t>(manifest.instance_count) ||
+      !std::is_sorted(offsets.begin(), offsets.end()) ||
+      frame_indices.size() != manifest.instance_count ||
+      !std::is_sorted(frame_indices.begin(), frame_indices.end())) {
+    internal::SetArchiveError(error,
+                              "Crop frame_row_offsets invariants failed");
+    return false;
+  }
+  for (size_t frame = 0; frame < manifest.frame_count; ++frame) {
+    const auto first = offsets[frame];
+    const auto last = offsets[frame + 1];
+    if (first < 0 || last < first ||
+        last > static_cast<int64_t>(frame_indices.size())) {
+      internal::SetArchiveError(error,
+                                "Crop frame_row_offsets range is invalid");
+      return false;
+    }
+    for (int64_t row = first; row < last; ++row) {
+      if (frame_indices[static_cast<size_t>(row)] !=
+          static_cast<int64_t>(frame)) {
+        internal::SetArchiveError(
+            error, "Crop frame_row_offsets disagree with frame_indices");
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+std::unique_ptr<AnalysisCropGeometryRepository>
+OpenCoordinateAwareCrop(const ArchiveContext::Impl &archive, const json &root,
+                        const json &direct, const std::string &run_name,
+                        const std::string &run_base, std::string *error) {
+  const auto *consolidated = ConsolidatedEntry(root, run_base);
+  if (!consolidated || !internal::EquivalentDirectAndConsolidatedZarrNode(
+                           direct, *consolidated)) {
+    internal::SetArchiveError(
+        error, "Crop direct and consolidated run metadata disagree");
+    return nullptr;
+  }
+  CropGeometryManifestSummary manifest;
+  try {
+    if (!ValidateCropGeometryRunManifest(
+            consolidated->at("attributes").at("run_manifest"), run_name,
+            &manifest, error)) {
+      return nullptr;
+    }
+  } catch (const json::exception &exception) {
+    internal::SetArchiveError(error, "Crop run_manifest is missing: " +
+                                         std::string(exception.what()));
+    return nullptr;
+  }
+  if (!ValidateCoordinateAwareDeclarations(root, run_base, manifest, error)) {
+    return nullptr;
+  }
+
+  auto frame_store =
+      OpenExact<int64_t, 1>(archive, root, run_base + "/frame_indices", error);
+  auto offset_store = OpenExact<int64_t, 1>(
+      archive, root, run_base + "/frame_row_offsets", error);
+  auto roi_store = OpenExact<int32_t, 2>(
+      archive, root, run_base + "/roi_coordinates_full", error);
+  auto size_store =
+      OpenExact<int32_t, 2>(archive, root, run_base + "/roi_sizes_full", error);
+  auto box_store =
+      OpenExact<float, 2>(archive, root, run_base + "/bbox_norm_coords", error);
+  auto roi_box_store =
+      OpenExact<float, 2>(archive, root, run_base + "/bbox_roi_xyxy", error);
+  auto key_store =
+      OpenExact<uint64_t, 1>(archive, root, run_base + "/instance_key", error);
+  if (!frame_store || !offset_store || !roi_store || !size_store ||
+      !box_store || !roi_box_store || !key_store) {
+    return nullptr;
+  }
+  std::vector<int64_t> frame_indices;
+  std::vector<int64_t> frame_offsets;
+  std::vector<int32_t> roi_coordinates;
+  std::vector<int32_t> roi_sizes;
+  std::vector<float> boxes;
+  std::vector<float> roi_boxes;
+  std::vector<uint64_t> instance_keys;
+  if (!ReadExact(*frame_store, &frame_indices, error) ||
+      !ReadExact(*offset_store, &frame_offsets, error) ||
+      !ReadExact(*roi_store, &roi_coordinates, error) ||
+      !ReadExact(*size_store, &roi_sizes, error) ||
+      !ReadExact(*box_store, &boxes, error) ||
+      !ReadExact(*roi_box_store, &roi_boxes, error) ||
+      !ReadExact(*key_store, &instance_keys, error) ||
+      !ValidateOffsets(frame_indices, frame_offsets, manifest, error) ||
+      roi_coordinates.size() != manifest.instance_count * 2 ||
+      roi_sizes.size() != manifest.instance_count * 2 ||
+      boxes.size() != manifest.instance_count * 4 ||
+      roi_boxes.size() != manifest.instance_count * 4 ||
+      instance_keys.size() != manifest.instance_count) {
+    if (error && error->empty()) {
+      *error = "Coordinate-aware crop arrays have inconsistent shapes";
+    }
+    return nullptr;
+  }
+
+  AnalysisCropGeometryDescriptor descriptor;
+  descriptor.run_name = run_name;
+  descriptor.run_manifest_digest = manifest.payload_digest;
+  descriptor.crop_policy_digest = manifest.crop_policy_digest;
+  descriptor.source_refined_run = manifest.source_refined_run;
+  descriptor.source_refined_manifest_digest =
+      manifest.source_refined_manifest_digest;
+  descriptor.source_pixel_authority_manifest_digest =
+      manifest.source_pixel_authority_manifest_digest;
+  descriptor.output_width = static_cast<int>(manifest.output_width);
+  descriptor.output_height = static_cast<int>(manifest.output_height);
+  descriptor.row_count = manifest.instance_count;
+  descriptor.camera_frame_count = manifest.frame_count;
+  descriptor.source_width = manifest.source_width;
+  descriptor.source_height = manifest.source_height;
+  descriptor.consolidated_metadata = true;
+  descriptor.coordinate_catalog_validated =
+      manifest.coordinate_catalog_validated;
+
+  std::vector<AnalysisCropGeometryRow> rows;
+  rows.reserve(manifest.instance_count);
+  for (size_t index = 0; index < manifest.instance_count; ++index) {
+    if (roi_sizes[index * 2] != descriptor.output_width ||
+        roi_sizes[index * 2 + 1] != descriptor.output_height) {
+      internal::SetArchiveError(
+          error, "Crop roi_sizes_full disagrees with the fixed policy size");
+      return nullptr;
+    }
+    std::array<double, 4> box = {boxes[index * 4], boxes[index * 4 + 1],
+                                 boxes[index * 4 + 2], boxes[index * 4 + 3]};
+    std::array<double, 4> roi_box = {
+        roi_boxes[index * 4], roi_boxes[index * 4 + 1],
+        roi_boxes[index * 4 + 2], roi_boxes[index * 4 + 3]};
+    if (!std::all_of(box.begin(), box.end(),
+                     [](double value) { return std::isfinite(value); }) ||
+        !std::all_of(roi_box.begin(), roi_box.end(),
+                     [](double value) { return std::isfinite(value); }) ||
+        box[2] <= 0.0 || box[3] <= 0.0 || roi_box[2] <= roi_box[0] ||
+        roi_box[3] <= roi_box[1]) {
+      internal::SetArchiveError(error,
+                                "Crop bbox_norm_coords contains invalid data");
+      return nullptr;
+    }
+    AnalysisCropGeometryRow row;
+    row.camera_frame = frame_indices[index];
+    row.roi_index = static_cast<int64_t>(index);
+    row.instance_key = instance_keys[index];
+    row.offset_x = roi_coordinates[index * 2];
+    row.offset_y = roi_coordinates[index * 2 + 1];
+    row.normalized_detection_cxcywh = box;
+    row.roi_bbox_xyxy = roi_box;
+    rows.push_back(std::move(row));
+  }
+  return MakeAnalysisCropGeometryRepository(std::move(descriptor),
+                                            std::move(rows));
+}
+
+bool ValidRunName(const std::string &run_name) {
   return !run_name.empty() && run_name != "." && run_name != ".." &&
          run_name.find('/') == std::string::npos;
 }
 
-std::string NormalizeRunName(std::string run_name, const std::string& group) {
+std::string NormalizeRunName(std::string run_name, const std::string &group) {
   const std::string prefix = group + "/";
   if (run_name.rfind(prefix, 0) == 0) {
     run_name.erase(0, prefix.size());
@@ -36,17 +316,17 @@ std::string NormalizeRunName(std::string run_name, const std::string& group) {
   return ValidRunName(run_name) ? run_name : std::string{};
 }
 
-std::string LatestRun(const ArchiveContext::Impl& archive,
-                      const std::string& group) {
+std::string LatestRun(const ArchiveContext::Impl &archive,
+                      const std::string &group) {
   const auto attributes = internal::ReadArchiveAttributes(archive, group);
   if (!attributes) {
     return {};
   }
-  constexpr std::array<const char*, 6> latest_keys = {
+  constexpr std::array<const char *, 6> latest_keys = {
       "latest",          "latest_completed",
       "latest_complete", "latest_success",
       "latest_any",      "refined_subject_mask_review_status_latest"};
-  for (const char* key : latest_keys) {
+  for (const char *key : latest_keys) {
     const auto found = attributes->find(key);
     if (found != attributes->end() && found->is_string()) {
       const std::string run_name =
@@ -59,8 +339,8 @@ std::string LatestRun(const ArchiveContext::Impl& archive,
   return {};
 }
 
-std::string CropRunFromLatestLineage(const ArchiveContext::Impl& archive,
-                                     const std::string& group) {
+std::string CropRunFromLatestLineage(const ArchiveContext::Impl &archive,
+                                     const std::string &group) {
   const std::string lineage_run = LatestRun(archive, group);
   if (lineage_run.empty()) {
     return {};
@@ -77,7 +357,7 @@ std::string CropRunFromLatestLineage(const ArchiveContext::Impl& archive,
   return NormalizeRunName(source_crop_run->get<std::string>(), "crop_runs");
 }
 
-std::string DiscoverCropRun(const ArchiveContext::Impl& archive) {
+std::string DiscoverCropRun(const ArchiveContext::Impl &archive) {
   std::string run_name = LatestRun(archive, "crop_runs");
   if (!run_name.empty()) {
     return run_name;
@@ -86,9 +366,9 @@ std::string DiscoverCropRun(const ArchiveContext::Impl& archive) {
   // Subject masks are the coordinate lineage shared by masks, subject shape,
   // and eye geometry, so prefer them when independently selected products
   // reference a different crop run.
-  constexpr std::array<const char*, 3> lineage_groups = {
+  constexpr std::array<const char *, 3> lineage_groups = {
       "refined_subject_masks_runs", "refined_keypoints_runs", "keypoints_runs"};
-  for (const char* group : lineage_groups) {
+  for (const char *group : lineage_groups) {
     run_name = CropRunFromLatestLineage(archive, group);
     if (!run_name.empty()) {
       return run_name;
@@ -98,8 +378,8 @@ std::string DiscoverCropRun(const ArchiveContext::Impl& archive) {
 }
 
 template <typename Source>
-bool ReadIntegerArray(const ArchiveContext::Impl& archive,
-                      const std::string& path, std::vector<int64_t>* output) {
+bool ReadIntegerArray(const ArchiveContext::Impl &archive,
+                      const std::string &path, std::vector<int64_t> *output) {
   const auto spec = internal::MakeReadOnlyArraySpec(archive, path);
   if (!spec) {
     return false;
@@ -116,7 +396,7 @@ bool ReadIntegerArray(const ArchiveContext::Impl& archive,
     return false;
   }
   const size_t count = static_cast<size_t>(read_result->shape()[0]);
-  const Source* values = static_cast<const Source*>(read_result->data());
+  const Source *values = static_cast<const Source *>(read_result->data());
   output->resize(count);
   for (size_t index = 0; index < count; ++index) {
     (*output)[index] = static_cast<int64_t>(values[index]);
@@ -124,8 +404,8 @@ bool ReadIntegerArray(const ArchiveContext::Impl& archive,
   return true;
 }
 
-bool ReadFrameIndices(const ArchiveContext::Impl& archive,
-                      const std::string& path, std::vector<int64_t>* output) {
+bool ReadFrameIndices(const ArchiveContext::Impl &archive,
+                      const std::string &path, std::vector<int64_t> *output) {
   return ReadIntegerArray<int64_t>(archive, path, output) ||
          ReadIntegerArray<uint64_t>(archive, path, output) ||
          ReadIntegerArray<int32_t>(archive, path, output) ||
@@ -137,9 +417,9 @@ bool ReadFrameIndices(const ArchiveContext::Impl& archive,
 }
 
 template <typename Source>
-bool ReadMatrix(const ArchiveContext::Impl& archive, const std::string& path,
+bool ReadMatrix(const ArchiveContext::Impl &archive, const std::string &path,
                 size_t minimum_columns,
-                std::vector<std::vector<double>>* output) {
+                std::vector<std::vector<double>> *output) {
   const auto spec = internal::MakeReadOnlyArraySpec(archive, path);
   if (!spec) {
     return false;
@@ -158,7 +438,7 @@ bool ReadMatrix(const ArchiveContext::Impl& archive, const std::string& path,
   }
   const size_t rows = static_cast<size_t>(read_result->shape()[0]);
   const size_t columns = static_cast<size_t>(read_result->shape()[1]);
-  const Source* values = static_cast<const Source*>(read_result->data());
+  const Source *values = static_cast<const Source *>(read_result->data());
   output->assign(rows, std::vector<double>(columns));
   for (size_t row = 0; row < rows; ++row) {
     for (size_t column = 0; column < columns; ++column) {
@@ -169,18 +449,18 @@ bool ReadMatrix(const ArchiveContext::Impl& archive, const std::string& path,
   return true;
 }
 
-bool ReadNumericMatrix(const ArchiveContext::Impl& archive,
-                       const std::string& path, size_t minimum_columns,
-                       std::vector<std::vector<double>>* output) {
+bool ReadNumericMatrix(const ArchiveContext::Impl &archive,
+                       const std::string &path, size_t minimum_columns,
+                       std::vector<std::vector<double>> *output) {
   return ReadMatrix<double>(archive, path, minimum_columns, output) ||
          ReadMatrix<float>(archive, path, minimum_columns, output) ||
          ReadMatrix<int64_t>(archive, path, minimum_columns, output) ||
          ReadMatrix<int32_t>(archive, path, minimum_columns, output);
 }
 
-bool ReadRoiSize(const ArchiveContext::Impl& archive,
-                 const std::string& run_base, int* output_width,
-                 int* output_height) {
+bool ReadRoiSize(const ArchiveContext::Impl &archive,
+                 const std::string &run_base, int *output_width,
+                 int *output_height) {
   if (auto attributes = internal::ReadArchiveAttributes(archive, run_base)) {
     const auto found = attributes->find("roi_size");
     if (found != attributes->end() && found->is_array() && found->size() >= 2 &&
@@ -231,17 +511,17 @@ bool ReadRoiSize(const ArchiveContext::Impl& archive,
   return false;
 }
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<AnalysisCropGeometryRepository>
 OpenAnalysisCropGeometryRepository(
-    const std::shared_ptr<ArchiveContext>& archive,
-    const std::string& requested_run, std::string* error_message) {
+    const std::shared_ptr<ArchiveContext> &archive,
+    const std::string &requested_run, std::string *error_message) {
   if (!archive || !archive->impl_) {
     internal::SetArchiveError(error_message, "Archive context is not open");
     return nullptr;
   }
-  const auto& impl = *archive->impl_;
+  const auto &impl = *archive->impl_;
 
   std::string run_name;
   if (!requested_run.empty()) {
@@ -263,6 +543,29 @@ OpenAnalysisCropGeometryRepository(
   }
 
   const std::string run_base = "crop_runs/" + run_name;
+  const auto direct_run =
+      internal::ReadArchiveJson(impl, run_base + "/zarr.json");
+  if (direct_run) {
+    try {
+      const auto &attributes = direct_run->at("attributes");
+      if (attributes.contains("run_manifest")) {
+        const auto root = internal::ReadArchiveJson(impl, "zarr.json");
+        if (!root) {
+          internal::SetArchiveError(
+              error_message,
+              "Coordinate-aware crop run requires consolidated root metadata");
+          return nullptr;
+        }
+        return OpenCoordinateAwareCrop(impl, *root, *direct_run, run_name,
+                                       run_base, error_message);
+      }
+    } catch (const json::exception &exception) {
+      internal::SetArchiveError(error_message,
+                                "Invalid crop run metadata: " +
+                                    std::string(exception.what()));
+      return nullptr;
+    }
+  }
   std::vector<int64_t> frame_indices;
   std::vector<std::vector<double>> offsets;
   if (!ReadFrameIndices(impl, run_base + "/frame_indices", &frame_indices) ||
@@ -326,4 +629,4 @@ OpenAnalysisCropGeometryRepository(
                                             std::move(rows));
 }
 
-}  // namespace crimson::zarr
+} // namespace crimson::zarr

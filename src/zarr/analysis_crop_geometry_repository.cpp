@@ -11,7 +11,7 @@ namespace {
 
 class VectorAnalysisCropGeometryRepository final
     : public AnalysisCropGeometryRepository {
- public:
+public:
   VectorAnalysisCropGeometryRepository(
       AnalysisCropGeometryDescriptor descriptor,
       std::vector<AnalysisCropGeometryRow> rows)
@@ -21,7 +21,7 @@ class VectorAnalysisCropGeometryRepository final
     }
   }
 
-  const AnalysisCropGeometryDescriptor& descriptor() const override {
+  const AnalysisCropGeometryDescriptor &descriptor() const override {
     return descriptor_;
   }
 
@@ -31,15 +31,13 @@ class VectorAnalysisCropGeometryRepository final
     return capabilities;
   }
 
-  AnalysisCropGeometryResolution resolveCameraFrame(
-      int64_t camera_frame,
-      int full_frame_width,
-      int full_frame_height) const override {
+  AnalysisCropGeometryResolution
+  resolveCameraFrame(int64_t camera_frame, int full_frame_width,
+                     int full_frame_height) const override {
     AnalysisCropGeometryResolution result;
     result.camera_frame = camera_frame;
     if (camera_frame < 0 ||
-        static_cast<uint64_t>(camera_frame) >=
-            descriptor_.camera_frame_count) {
+        static_cast<uint64_t>(camera_frame) >= descriptor_.camera_frame_count) {
       result.status = AnalysisCropGeometryStatus::OutOfRange;
       return result;
     }
@@ -52,10 +50,12 @@ class VectorAnalysisCropGeometryRepository final
 
     // This matches the legacy unselected Crop Preview fallback, which uses the
     // first crop row associated with the visible camera frame.
-    const auto& row = rows_[found->second.front()];
+    const auto &row = rows_[found->second.front()];
     result.status = AnalysisCropGeometryStatus::Mapped;
     result.roi_index = row.roi_index;
+    result.instance_key = row.instance_key;
     result.frame_row_count = found->second.size();
+    result.roi_bbox_xyxy = row.roi_bbox_xyxy;
 
     crop::CropFrameGeometry geometry;
     geometry.camera_frame = camera_frame;
@@ -63,14 +63,13 @@ class VectorAnalysisCropGeometryRepository final
     geometry.source_height = full_frame_height;
     geometry.output_width = descriptor_.output_width;
     geometry.output_height = descriptor_.output_height;
-    geometry.full_frame_crop = {
-        row.offset_x, row.offset_y,
-        static_cast<double>(descriptor_.output_width),
-        static_cast<double>(descriptor_.output_height)};
+    geometry.full_frame_crop = {row.offset_x, row.offset_y,
+                                static_cast<double>(descriptor_.output_width),
+                                static_cast<double>(descriptor_.output_height)};
     geometry.geometry_available = true;
 
     if (row.normalized_detection_cxcywh) {
-      const auto& box = *row.normalized_detection_cxcywh;
+      const auto &box = *row.normalized_detection_cxcywh;
       const double center_x = box[0] * full_frame_width;
       const double center_y = box[1] * full_frame_height;
       const double width = box[2] * full_frame_width;
@@ -95,32 +94,31 @@ class VectorAnalysisCropGeometryRepository final
     return result;
   }
 
- private:
+private:
   AnalysisCropGeometryDescriptor descriptor_;
   std::vector<AnalysisCropGeometryRow> rows_;
   std::unordered_map<int64_t, std::vector<size_t>> rows_by_frame_;
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<AnalysisCropGeometryRepository>
-MakeAnalysisCropGeometryRepository(
-    AnalysisCropGeometryDescriptor descriptor,
-    std::vector<AnalysisCropGeometryRow> rows) {
+MakeAnalysisCropGeometryRepository(AnalysisCropGeometryDescriptor descriptor,
+                                   std::vector<AnalysisCropGeometryRow> rows) {
   descriptor.row_count = rows.size();
   size_t camera_frame_count = 0;
-  for (const auto& row : rows) {
-    if (row.camera_frame >= 0 &&
-        static_cast<uint64_t>(row.camera_frame) <
-            std::numeric_limits<size_t>::max()) {
-      camera_frame_count =
-          std::max(camera_frame_count,
-                   static_cast<size_t>(row.camera_frame) + 1);
+  for (const auto &row : rows) {
+    if (row.camera_frame >= 0 && static_cast<uint64_t>(row.camera_frame) <
+                                     std::numeric_limits<size_t>::max()) {
+      camera_frame_count = std::max(camera_frame_count,
+                                    static_cast<size_t>(row.camera_frame) + 1);
     }
   }
-  descriptor.camera_frame_count = camera_frame_count;
+  if (descriptor.camera_frame_count == 0) {
+    descriptor.camera_frame_count = camera_frame_count;
+  }
   return std::make_unique<VectorAnalysisCropGeometryRepository>(
       std::move(descriptor), std::move(rows));
 }
 
-}  // namespace crimson::zarr
+} // namespace crimson::zarr

@@ -1,6 +1,8 @@
 #include "coordinate_contract.h"
+#include "zarr/canonical_detection_contract.h"
 #include "zarr/canonical_json.h"
 #include "zarr/coordinate_catalog_contract.h"
+#include "zarr/crop_geometry_contract.h"
 #include "zarr/refined_detection_contract.h"
 
 #include <cmath>
@@ -273,13 +275,174 @@ bool validateRefinedManifestV2(const json &fixture) {
   return true;
 }
 
+json publication(std::string_view scope, bool crop = false) {
+  json result = {
+      {"completion_contract", "palette.zarr_run_completion.v1"},
+      {"completion_status", "complete"},
+      {"stage_selector_eligible", false},
+      {"metadata_state", "direct_and_consolidated_validated"},
+      {"metadata_declarations_digest_scope", scope},
+      {"metadata_declarations_digest_algorithm", "sha256_canonical_json_v1"},
+      {"metadata_declarations_digest", std::string(64, 'a')},
+  };
+  if (crop) {
+    result["artifact_class"] = "geometry_only_analysis";
+  }
+  return result;
+}
+
+json canonicalManifestV3(const json &coordinate_envelope) {
+  json payload = {
+      {"run_id", "coordinate_canonical_fixture"},
+      {"stage", "detect"},
+      {"publication",
+       publication(
+           "normalized_group_and_array_declarations_excluding_attributes")},
+      {"logical_schema",
+       {{"schema_id", "palette.stage.canonical_detection"},
+        {"schema_version", 1},
+        {"stage", "detect"},
+        {"layout", "sparse_instances_with_frame_row_offsets_v1"},
+        {"base_path", "detect_runs/<run>"},
+        {"instance_group", "instances"},
+        {"dimensions",
+         {{"n_frames", 4},
+          {"n_instances", 6},
+          {"n_frame_boundaries", 5},
+          {"source_width", 4512},
+          {"source_height", 3000}}}}},
+      {"storage_plan", json::object()},
+      {"source_evidence_kind", "legacy_conversion"},
+      {"source_evidence", json::object()},
+      {"logical_content", json::object()},
+      {"coordinate_contract", coordinate_envelope},
+  };
+  return {{"schema_id", "palette.canonical_detection.run_manifest"},
+          {"schema_version", 3},
+          {"persisted_attribute", "run_manifest"},
+          {"digest_algorithm", "sha256_canonical_json_v1"},
+          {"payload_digest", crimson::zarr::CanonicalJsonSha256(payload)},
+          {"payload", std::move(payload)}};
+}
+
+json cropManifestV2(const json &coordinate_envelope) {
+  json crop_policy_payload = {
+      {"schema_id", "palette.crop_geometry_policy"},
+      {"schema_version", 1},
+      {"purpose", "contract_test"},
+      {"placement",
+       {{"center_source", "persisted_centers_img_xy"},
+        {"center_rounding", "numpy_round_ties_to_even_v1"},
+        {"top_left_rule", "rounded_center_minus_floor_size_over_two"},
+        {"size_mode", "fixed_per_run"},
+        {"fixed_size_wh", {512, 512}},
+        {"padding_mode", "zero_outside_source_frame"}}},
+  };
+  json payload = {
+      {"run_id", "coordinate_crop_fixture"},
+      {"stage", "crop"},
+      {"publication",
+       publication("exact_group_and_array_declarations_with_attributes_"
+                   "redacting_only_run_manifest",
+                   true)},
+      {"logical_schema",
+       {{"schema_id", "palette.stage.crop_geometry"},
+        {"schema_version", 1},
+        {"stage", "crop"},
+        {"layout", "geometry_only_sparse_rows_with_frame_row_offsets_v1"},
+        {"base_path", "crop_runs/<run>"},
+        {"dimensions",
+         {{"n_frames", 4},
+          {"n_instances", 6},
+          {"n_frame_boundaries", 5},
+          {"source_width", 4512},
+          {"source_height", 3000}}},
+        {"crop_policy",
+         {{"payload", crop_policy_payload},
+          {"payload_digest_algorithm", "sha256_canonical_json_v1"},
+          {"payload_digest",
+           crimson::zarr::CanonicalJsonSha256(crop_policy_payload)}}}}},
+      {"storage_plan", json::object()},
+      {"source_refined_snapshot",
+       {{"schema_id", "palette.crop_geometry.refined_source"},
+        {"schema_version", 1},
+        {"authority_kind", "refined_detection_run"},
+        {"stage", "refined_detect"},
+        {"row_coverage", "complete_instances_rowset"},
+        {"run_id", "coordinate_refined_fixture"},
+        {"run_manifest_digest_algorithm", "sha256_canonical_json_v1"},
+        {"run_manifest_digest", std::string(64, 'b')}}},
+      {"source_pixel_authority",
+       {{"schema_id", "palette.crop_geometry.pixel_authority"},
+        {"schema_version", 1},
+        {"frame_index_domain", "zero_based_acquisition_camera_frame"},
+        {"n_frames", 4},
+        {"source_width", 4512},
+        {"source_height", 3000},
+        {"authority_manifest_digest_algorithm", "sha256_canonical_json_v1"},
+        {"authority_manifest_digest", std::string(64, 'c')},
+        {"decoded_pixel_contract",
+         {{"dtype", "uint8"},
+          {"channels", "grayscale"},
+          {"axis_order", "yx"},
+          {"crop_sampling", "integer_half_open_xywh"}}}}},
+      {"row_signature", json::object()},
+      {"logical_content", json::object()},
+      {"coordinate_contract", coordinate_envelope},
+  };
+  return {
+      {"schema_id", "palette.crop_geometry.run_manifest"},
+      {"schema_version", 2},
+      {"persisted_attribute", "run_manifest"},
+      {"persisted_path", "crop_runs/<run>/zarr.json.attributes.run_manifest"},
+      {"digest_algorithm", "sha256_canonical_json_v1"},
+      {"payload_digest", crimson::zarr::CanonicalJsonSha256(payload)},
+      {"payload", std::move(payload)}};
+}
+
+bool validateCoordinateAwareManifests(const json &fixture) {
+  const auto *canonical = envelopeFor(fixture, "canonical_detection");
+  const auto *crop = envelopeFor(fixture, "geometry_only_crop");
+  CHECK(canonical != nullptr && crop != nullptr);
+
+  auto canonical_manifest = canonicalManifestV3(*canonical);
+  crimson::zarr::CanonicalDetectionManifestSummary canonical_summary;
+  std::string error;
+  CHECK(crimson::zarr::ValidateCanonicalDetectionRunManifest(
+      canonical_manifest, "coordinate_canonical_fixture", &canonical_summary,
+      &error));
+  CHECK(canonical_summary.coordinate_catalog_validated);
+  canonical_manifest["payload"]["logical_schema"]["dimensions"]
+                    ["n_frame_boundaries"] = 4;
+  canonical_manifest["payload_digest"] =
+      crimson::zarr::CanonicalJsonSha256(canonical_manifest["payload"]);
+  CHECK(!crimson::zarr::ValidateCanonicalDetectionRunManifest(
+      canonical_manifest, "coordinate_canonical_fixture", nullptr, &error));
+
+  auto crop_manifest = cropManifestV2(*crop);
+  crimson::zarr::CropGeometryManifestSummary crop_summary;
+  error.clear();
+  CHECK(crimson::zarr::ValidateCropGeometryRunManifest(
+      crop_manifest, "coordinate_crop_fixture", &crop_summary, &error));
+  CHECK(crop_summary.coordinate_catalog_validated);
+  CHECK(crop_summary.output_width == 512 && crop_summary.output_height == 512);
+  crop_manifest["payload"]["source_pixel_authority"]["source_width"] = 4000;
+  crop_manifest["payload_digest"] =
+      crimson::zarr::CanonicalJsonSha256(crop_manifest["payload"]);
+  error.clear();
+  CHECK(!crimson::zarr::ValidateCropGeometryRunManifest(
+      crop_manifest, "coordinate_crop_fixture", nullptr, &error));
+  return true;
+}
+
 } // namespace
 
 int main() {
   const json fixture = readFixture();
   if (!validateFixtureIdentity(fixture) ||
       !validateBindingsAndPresentation(fixture) || !rejectTampering(fixture) ||
-      !validateRefinedManifestV2(fixture)) {
+      !validateRefinedManifestV2(fixture) ||
+      !validateCoordinateAwareManifests(fixture)) {
     return 1;
   }
   std::cout << "coordinate_catalog_contract_tests: PASS\n";

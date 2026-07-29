@@ -210,6 +210,21 @@ roiPixelPointToSourceCamera(ContinuousPoint roi_pixels,
   };
 }
 
+std::optional<HalfOpenXyxyBox>
+roiPixelXyxyBoxToSourceCamera(HalfOpenXyxyBox roi_pixels,
+                              const RoiPlacement &placement) {
+  if (!roi_pixels.valid() || !placement.valid()) {
+    return std::nullopt;
+  }
+  HalfOpenXyxyBox result{
+      static_cast<double>(placement.source_window.x) + roi_pixels.x_min,
+      static_cast<double>(placement.source_window.y) + roi_pixels.y_min,
+      static_cast<double>(placement.source_window.x) + roi_pixels.x_max,
+      static_cast<double>(placement.source_window.y) + roi_pixels.y_max,
+  };
+  return result.valid() ? std::optional<HalfOpenXyxyBox>(result) : std::nullopt;
+}
+
 std::optional<ContinuousPoint>
 roiNormalizedPointToSourceCamera(ContinuousPoint roi_normalized,
                                  const RoiPlacement &placement) {

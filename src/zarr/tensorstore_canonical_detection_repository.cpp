@@ -1,6 +1,7 @@
 #include "zarr/tensorstore_canonical_detection_repository.h"
 
 #include "zarr/archive_context_internal.h"
+#include "zarr/canonical_detection_contract.h"
 #include "zarr/zarr_metadata_equivalence.h"
 
 #include <tensorstore/index_space/dim_expression.h>
@@ -94,6 +95,7 @@ bool validateBoxContract(const json &logical_schema, std::string *error) {
 }
 
 bool validateSchema(const json &root, const std::string &base,
+                    const std::string &requested_run,
                     CanonicalDetectionDescriptor *descriptor,
                     size_t *declaration_count, std::string *error) {
   try {
@@ -139,6 +141,28 @@ bool validateSchema(const json &root, const std::string &base,
     descriptor->row_count = row_count;
     descriptor->source_width = dimensions.value("source_width", size_t{0});
     descriptor->source_height = dimensions.value("source_height", size_t{0});
+
+    const auto &attributes = run_metadata->at("attributes");
+    if (attributes.contains("run_manifest")) {
+      CanonicalDetectionManifestSummary manifest;
+      if (!ValidateCanonicalDetectionRunManifest(
+              attributes.at("run_manifest"), requested_run, &manifest, error)) {
+        return false;
+      }
+      if (manifest.frame_count != frame_count ||
+          manifest.instance_count != row_count ||
+          manifest.source_width != descriptor->source_width ||
+          manifest.source_height != descriptor->source_height) {
+        assignError(error,
+                    "Canonical manifest and consolidated logical dimensions "
+                    "disagree");
+        return false;
+      }
+      descriptor->run_manifest_digest = manifest.payload_digest;
+      descriptor->coordinate_catalog_validated =
+          manifest.coordinate_catalog_validated;
+      descriptor->stable_identity = true;
+    }
 
     size_t validated = 0;
     for (const auto &declaration : kDeclarations) {
@@ -590,7 +614,7 @@ std::unique_ptr<CanonicalDetectionRepository> OpenCanonicalDetectionRepository(
   const auto root = internal::ReadArchiveJson(*archive->impl_, "zarr.json");
   metrics.root_metadata_ms = elapsedMilliseconds(root_started);
   metrics.root_metadata_reads = 1;
-  if (!root || !validateSchema(*root, base, &descriptor,
+  if (!root || !validateSchema(*root, base, requested_run, &descriptor,
                                &metrics.consolidated_array_declarations,
                                error_message)) {
     return nullptr;

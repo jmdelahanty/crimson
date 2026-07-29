@@ -190,6 +190,9 @@ continuousPixelXyxyToNormalizedCenterSize(HalfOpenXyxyBox pixels,
 std::optional<ContinuousPoint>
 roiPixelPointToSourceCamera(ContinuousPoint roi_pixels,
                             const RoiPlacement &placement);
+std::optional<HalfOpenXyxyBox>
+roiPixelXyxyBoxToSourceCamera(HalfOpenXyxyBox roi_pixels,
+                              const RoiPlacement &placement);
 std::optional<ContinuousPoint>
 roiNormalizedPointToSourceCamera(ContinuousPoint roi_normalized,
                                  const RoiPlacement &placement);
