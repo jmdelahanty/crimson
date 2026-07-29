@@ -959,6 +959,19 @@ integration checkpoint rather than storage-profile promotion evidence. The
 same frozen workload must be rerun against Palette's later persistent
 publisher-produced candidate.
 
+The first production-shaped full-duration memory-attribution checkpoint is
+also complete at Crimson commit `1ba2ba3`. A portable current/peak RSS sampler
+and repository-owned retained-byte contract passed the full macOS suite and an
+isolated Linux build. The mounted 1,188,000-frame hybrid/resident run peaked at
+1.764 GiB; 631.9 MiB of the 1,062.8 MiB pre-shutdown RSS was explicitly
+attributed. Crop geometry, subject shape, and eye geometry account for about
+468 MiB, while detection residency and its page cache account for 27.4 MiB.
+Repository release reduced RSS to 343.6 MiB. This changes the next memory
+priority from detection/cache tuning to compact, pageable geometry placement
+and frame-index representations. The result remains one diagnostic trial, not
+a leak, thermal, or promotion gate. Evidence is in
+`docs/diagnostics/full_duration_memory_attribution_2026-07-29/`.
+
 Phase 5 also remains open for production-tail acceptance, movement-trail
 coordinate policy, any required chaser-data densification, and edit/review
 workflows whose shared storage contracts are still changing. Those blockers

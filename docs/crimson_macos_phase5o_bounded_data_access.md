@@ -477,9 +477,23 @@ complete: all ten trials passed correctness and 700 FPS traversal, but the
 hybrid failed the frozen first-overlay, absolute peak-RSS, and `0.25x`
 traversal-byte gates. Its observed median traversal ratio was `0.606x`. Stage 2
 does not run, and the frozen result did not promote the profile. Current-frame
-scheduler isolation is now complete; full-duration memory attribution remains
-open. The result is in
+scheduler isolation is now complete; full-duration memory attribution was the
+remaining diagnostic at that checkpoint. The result is in
 `docs/diagnostics/crimson_macos_phase5o4_full_duration_stage1_2026-07-26.md`.
+
+The first production-shaped full-duration memory-attribution checkpoint is now
+complete. A backend-neutral 25 ms process sampler and repository-owned retained
+byte contract passed on macOS and in an isolated Linux build. On the mounted
+1,188,000-frame hybrid/resident workload, peak RSS was 1.764 GiB. Required
+products reported a 598.3 MiB retained lower bound at readiness; before
+shutdown, 631.9 MiB of 1,062.8 MiB current RSS was attributed. Crop geometry,
+subject shape, and eye geometry accounted for about 468 MiB together, while
+the detection page cache was 0.2 MiB and resident detection UI columns were
+27.2 MiB. Releasing repositories reduced current RSS to 343.6 MiB. This ranks
+eager geometry placement/index representations ahead of enlarging caches or
+changing detection residency. The single trial is diagnostic rather than a
+long-run leak or promotion gate. Evidence and the plot are in
+`docs/diagnostics/full_duration_memory_attribution_2026-07-29/`.
 
 ### Phase 5O.5: Cross-platform acceptance
 
@@ -497,8 +511,8 @@ retains paging without partial publication. The mounted activation gate and
 native close-during-build smoke are recorded in
 `docs/diagnostics/canonical_detection_production_residency_activation_2026-07-28.md`.
 The first Linux/Windows entry-point adoption slice is complete for refined
-subject masks. Full-duration memory attribution, native Windows runtime
-validation, and the remaining adapter migrations remain open.
+subject masks. Native Windows runtime validation, longer steady-state memory
+acceptance, and the remaining adapter migrations remain open.
 
 The coordinate-aware archive boundary is also consumer-validated. A mounted
 selector-ineligible canary passed canonical-detection v3, refined-detection v2,
