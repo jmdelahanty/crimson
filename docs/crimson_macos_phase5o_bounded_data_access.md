@@ -487,6 +487,15 @@ native close-during-build smoke are recorded in
 Linux/Windows entry-point adoption, full-duration memory attribution, and the
 remaining adapter migrations remain open.
 
+The coordinate-aware archive boundary is also consumer-validated. A mounted
+selector-ineligible canary passed canonical-detection v3, refined-detection v2,
+and geometry-only crop v2 manifest validation, exact typed TensorStore opens,
+consolidated declaration checks, retained offsets, cross-stage lineage, and
+coordinate samples at clean Crimson implementation commit `ce478c7d`. No
+production state changed. Palette owns any later selector or writer-default
+activation; the result is in
+`docs/diagnostics/coordinate_catalog_canary_2026-07-29/README.md`.
+
 ## Gate
 
 Phase 5O is complete only when:

@@ -4,8 +4,9 @@ Date: 2026-07-28
 
 Status: shared runtime vocabulary and transforms implemented. Canonical and
 refined detection presentation adopted. Palette coordinate-catalog envelopes
-accepted for a selector-ineligible canary; production persisted adoption awaits
-the archive-level gate.
+and their canonical-v3/refined-v2/crop-v2 mounted archives are consumer-
+accepted. Production selector and writer-default activation remains Palette-
+owned.
 
 ## Purpose
 
@@ -145,5 +146,10 @@ digest-bound coordinate catalogs for canonical detection v3, refined detection
 v2, and geometry-only crop v2. The exact producer-generated fixtures and
 cross-language verdict are recorded in
 `docs/diagnostics/coordinate_catalog_cross_language_review_2026-07-28.md`.
-Refined v2 manifest parsing is implemented; canonical v3 and crop v2 remain
-selector-ineligible canary work and do not alter legacy compatibility paths.
+The selector-ineligible mounted canary subsequently passed exact manifest,
+typed-open, consolidated-metadata, offset, lineage, and coordinate-sample
+validation for all three surfaces. Canonical v3, refined v2, and crop v2 are
+therefore accepted consumer contracts. Legacy compatibility paths remain
+unchanged, and Crimson did not change any Palette selector, registry, writer
+default, or production archive. The archive-level result is in
+`docs/diagnostics/coordinate_catalog_canary_2026-07-29/README.md`.

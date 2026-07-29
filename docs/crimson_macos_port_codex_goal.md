@@ -924,11 +924,20 @@ policy. The contract is in `docs/crimson_shared_coordinate_contract_v1.md`.
 Palette's persisted coordinate catalogs at commit `154d7888` have also passed
 Crimson's static cross-language digest, vocabulary, binding, tampering, and
 transform review. Refined run-manifest v2 validation is implemented without
-changing refined v1. Palette is unblocked to publish one selector-ineligible
-canonical-v3/refined-v2/crop-v2 canary; canonical v3 and crop v2 production
-adoption remain blocked on exact typed opens and live archive validation. The
-review is in
-`docs/diagnostics/coordinate_catalog_cross_language_review_2026-07-28.md`.
+changing refined v1. Palette's selector-ineligible canonical-v3/refined-v2/
+crop-v2 mounted canary is now complete and accepted. Crimson validated the
+handoff hash, exact manifests and dtypes, consolidated declarations, retained
+offsets, lazy refined source audit, crop lineage and pixel authority, and both
+frozen coordinate samples at clean implementation commit `ce478c7d`. The
+normalized float32-to-double projection differed by only `0.000109` pixel and
+passed the `0.001`-pixel cross-language tolerance; ROI-to-source placement was
+exact. No selector, registry, writer default, production archive, or canary was
+modified. Palette owns any later production activation. The static review and
+mounted result are in
+`docs/diagnostics/coordinate_catalog_cross_language_review_2026-07-28.md` and
+`docs/diagnostics/coordinate_catalog_canary_2026-07-29/README.md`. The
+Palette-facing decision is in
+`docs/coordinate_catalog_palette_acceptance_handoff_2026-07-29.md`.
 
 Phase 5 also remains open for production-tail acceptance, movement-trail
 coordinate policy, any required chaser-data densification, and edit/review
