@@ -236,6 +236,7 @@ bool TestCompactFrameIndex() {
   CHECK(repository != nullptr);
   CHECK(repository->descriptor().retained_frame_offsets);
   CHECK(!repository->descriptor().pageable_payload);
+  CHECK(!repository->descriptor().direct_compact_columns);
   CHECK(repository->resolveCameraFrame(0, 128, 96).roi_index == 10);
   CHECK(repository->resolveCameraFrame(1, 128, 96).status ==
         crimson::zarr::AnalysisCropGeometryStatus::Missing);
@@ -249,8 +250,59 @@ bool TestCompactFrameIndex() {
   return true;
 }
 
+bool TestDirectCompactColumns() {
+  crimson::zarr::AnalysisCropGeometryDescriptor descriptor;
+  descriptor.output_width = 64;
+  descriptor.output_height = 48;
+  descriptor.camera_frame_count = 4;
+
+  crimson::zarr::AnalysisCropGeometryColumns columns;
+  columns.frame_indices = {0, 2, 3, 3};
+  columns.frame_row_offsets = {0, 1, 1, 2, 4};
+  columns.offsets_xy = {
+      {{10.0, 11.0}}, {{20.0, 21.0}}, {{30.0, 31.0}}, {{32.0, 33.0}}};
+  columns.instance_keys = {100, 101, 102, 103};
+  columns.normalized_detection_cxcywh = {{{0.5, 0.5, 0.25, 0.25}},
+                                         {{0.5, 0.5, 0.25, 0.25}},
+                                         {{0.5, 0.5, 0.25, 0.25}},
+                                         {{0.5, 0.5, 0.25, 0.25}}};
+  columns.roi_bbox_xyxy = {{{1.0, 2.0, 11.0, 12.0}},
+                           {{2.0, 3.0, 12.0, 13.0}},
+                           {{3.0, 4.0, 13.0, 14.0}},
+                           {{4.0, 5.0, 14.0, 15.0}}};
+
+  auto repository = crimson::zarr::MakeAnalysisCropGeometryRepository(
+      std::move(descriptor), std::move(columns));
+  CHECK(repository != nullptr);
+  CHECK(repository->descriptor().direct_compact_columns);
+  CHECK(repository->descriptor().retained_frame_offsets);
+  CHECK(repository->descriptor().row_count == 4);
+  CHECK(repository->resolveCameraFrame(1, 128, 96).status ==
+        crimson::zarr::AnalysisCropGeometryStatus::Missing);
+  const auto multi = repository->resolveCameraFrame(3, 128, 96);
+  CHECK(multi.status == crimson::zarr::AnalysisCropGeometryStatus::Mapped);
+  CHECK(multi.frame_row_count == 2);
+  CHECK(multi.roi_index == 2);
+  CHECK(multi.instance_key == 102);
+  const std::optional<std::array<double, 4>> expected_roi_box =
+      std::array<double, 4>{3.0, 4.0, 13.0, 14.0};
+  CHECK(multi.roi_bbox_xyxy == expected_roi_box);
+
+  crimson::zarr::AnalysisCropGeometryDescriptor invalid_descriptor;
+  invalid_descriptor.camera_frame_count = 2;
+  crimson::zarr::AnalysisCropGeometryColumns invalid_columns;
+  invalid_columns.frame_indices = {0};
+  invalid_columns.frame_row_offsets = {0, 0, 1};
+  invalid_columns.offsets_xy = {{{0.0, 0.0}}};
+  CHECK(crimson::zarr::MakeAnalysisCropGeometryRepository(
+            std::move(invalid_descriptor), std::move(invalid_columns)) ==
+        nullptr);
+  return true;
+}
+
 bool RunTest() {
   CHECK(TestCompactFrameIndex());
+  CHECK(TestDirectCompactColumns());
   TemporaryDirectory temporary;
   CHECK(!temporary.path().empty());
   const auto archive_root = temporary.path() / "recording/zarr/analysis.zarr";
@@ -270,6 +322,7 @@ bool RunTest() {
   CHECK(repository->descriptor().camera_frame_count == 5);
   CHECK(repository->descriptor().retained_frame_offsets);
   CHECK(!repository->descriptor().pageable_payload);
+  CHECK(repository->descriptor().direct_compact_columns);
   CHECK(repository->sourceCapabilities().live_geometry);
   CHECK(!repository->sourceCapabilities().acquisition_video);
   CHECK(!repository->sourceCapabilities().persisted_zarr);
@@ -322,6 +375,7 @@ bool RunTest() {
   CHECK(legacy_repository != nullptr);
   CHECK(legacy_repository->descriptor().output_width == 40);
   CHECK(legacy_repository->descriptor().output_height == 32);
+  CHECK(legacy_repository->descriptor().direct_compact_columns);
   CHECK(!std::filesystem::exists(
       archive_root / "crop_runs/legacy_metadata_fixture/roi_images/c"));
 

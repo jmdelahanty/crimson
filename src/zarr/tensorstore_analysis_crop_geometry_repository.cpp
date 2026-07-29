@@ -220,32 +220,6 @@ OpenCoordinateAwareCrop(const ArchiveContext::Impl &archive, const json &root,
       !box_store || !roi_box_store || !key_store) {
     return nullptr;
   }
-  std::vector<int64_t> frame_indices;
-  std::vector<int64_t> frame_offsets;
-  std::vector<int32_t> roi_coordinates;
-  std::vector<int32_t> roi_sizes;
-  std::vector<float> boxes;
-  std::vector<float> roi_boxes;
-  std::vector<uint64_t> instance_keys;
-  if (!ReadExact(*frame_store, &frame_indices, error) ||
-      !ReadExact(*offset_store, &frame_offsets, error) ||
-      !ReadExact(*roi_store, &roi_coordinates, error) ||
-      !ReadExact(*size_store, &roi_sizes, error) ||
-      !ReadExact(*box_store, &boxes, error) ||
-      !ReadExact(*roi_box_store, &roi_boxes, error) ||
-      !ReadExact(*key_store, &instance_keys, error) ||
-      !ValidateOffsets(frame_indices, frame_offsets, manifest, error) ||
-      roi_coordinates.size() != manifest.instance_count * 2 ||
-      roi_sizes.size() != manifest.instance_count * 2 ||
-      boxes.size() != manifest.instance_count * 4 ||
-      roi_boxes.size() != manifest.instance_count * 4 ||
-      instance_keys.size() != manifest.instance_count) {
-    if (error && error->empty()) {
-      *error = "Coordinate-aware crop arrays have inconsistent shapes";
-    }
-    return nullptr;
-  }
-
   AnalysisCropGeometryDescriptor descriptor;
   descriptor.run_name = run_name;
   descriptor.run_manifest_digest = manifest.payload_digest;
@@ -265,8 +239,38 @@ OpenCoordinateAwareCrop(const ArchiveContext::Impl &archive, const json &root,
   descriptor.coordinate_catalog_validated =
       manifest.coordinate_catalog_validated;
 
-  std::vector<AnalysisCropGeometryRow> rows;
-  rows.reserve(manifest.instance_count);
+  AnalysisCropGeometryColumns columns;
+  if (!ReadExact(*frame_store, &columns.frame_indices, error) ||
+      !ReadExact(*offset_store, &columns.frame_row_offsets, error) ||
+      !ValidateOffsets(columns.frame_indices, columns.frame_row_offsets,
+                       manifest, error)) {
+    return nullptr;
+  }
+
+  std::vector<int32_t> roi_coordinates;
+  if (!ReadExact(*roi_store, &roi_coordinates, error) ||
+      roi_coordinates.size() != manifest.instance_count * 2) {
+    if (error && error->empty()) {
+      *error = "Crop roi_coordinates_full has an inconsistent shape";
+    }
+    return nullptr;
+  }
+  columns.offsets_xy.resize(manifest.instance_count);
+  for (size_t index = 0; index < manifest.instance_count; ++index) {
+    columns.offsets_xy[index] = {
+        static_cast<double>(roi_coordinates[index * 2]),
+        static_cast<double>(roi_coordinates[index * 2 + 1])};
+  }
+  std::vector<int32_t>{}.swap(roi_coordinates);
+
+  std::vector<int32_t> roi_sizes;
+  if (!ReadExact(*size_store, &roi_sizes, error) ||
+      roi_sizes.size() != manifest.instance_count * 2) {
+    if (error && error->empty()) {
+      *error = "Crop roi_sizes_full has an inconsistent shape";
+    }
+    return nullptr;
+  }
   for (size_t index = 0; index < manifest.instance_count; ++index) {
     if (roi_sizes[index * 2] != descriptor.output_width ||
         roi_sizes[index * 2 + 1] != descriptor.output_height) {
@@ -274,33 +278,74 @@ OpenCoordinateAwareCrop(const ArchiveContext::Impl &archive, const json &root,
           error, "Crop roi_sizes_full disagrees with the fixed policy size");
       return nullptr;
     }
-    std::array<double, 4> box = {boxes[index * 4], boxes[index * 4 + 1],
-                                 boxes[index * 4 + 2], boxes[index * 4 + 3]};
-    std::array<double, 4> roi_box = {
-        roi_boxes[index * 4], roi_boxes[index * 4 + 1],
-        roi_boxes[index * 4 + 2], roi_boxes[index * 4 + 3]};
+  }
+  std::vector<int32_t>{}.swap(roi_sizes);
+
+  std::vector<float> boxes;
+  if (!ReadExact(*box_store, &boxes, error) ||
+      boxes.size() != manifest.instance_count * 4) {
+    if (error && error->empty()) {
+      *error = "Crop bbox_norm_coords has an inconsistent shape";
+    }
+    return nullptr;
+  }
+  columns.normalized_detection_cxcywh.resize(manifest.instance_count);
+  for (size_t index = 0; index < manifest.instance_count; ++index) {
+    std::array<double, 4> box = {static_cast<double>(boxes[index * 4]),
+                                 static_cast<double>(boxes[index * 4 + 1]),
+                                 static_cast<double>(boxes[index * 4 + 2]),
+                                 static_cast<double>(boxes[index * 4 + 3])};
     if (!std::all_of(box.begin(), box.end(),
                      [](double value) { return std::isfinite(value); }) ||
-        !std::all_of(roi_box.begin(), roi_box.end(),
-                     [](double value) { return std::isfinite(value); }) ||
-        box[2] <= 0.0 || box[3] <= 0.0 || roi_box[2] <= roi_box[0] ||
-        roi_box[3] <= roi_box[1]) {
+        box[2] <= 0.0 || box[3] <= 0.0) {
       internal::SetArchiveError(error,
                                 "Crop bbox_norm_coords contains invalid data");
       return nullptr;
     }
-    AnalysisCropGeometryRow row;
-    row.camera_frame = frame_indices[index];
-    row.roi_index = static_cast<int64_t>(index);
-    row.instance_key = instance_keys[index];
-    row.offset_x = roi_coordinates[index * 2];
-    row.offset_y = roi_coordinates[index * 2 + 1];
-    row.normalized_detection_cxcywh = box;
-    row.roi_bbox_xyxy = roi_box;
-    rows.push_back(std::move(row));
+    columns.normalized_detection_cxcywh[index] = box;
   }
-  return MakeAnalysisCropGeometryRepository(std::move(descriptor),
-                                            std::move(rows));
+  std::vector<float>{}.swap(boxes);
+
+  std::vector<float> roi_boxes;
+  if (!ReadExact(*roi_box_store, &roi_boxes, error) ||
+      roi_boxes.size() != manifest.instance_count * 4) {
+    if (error && error->empty()) {
+      *error = "Crop bbox_roi_xyxy has an inconsistent shape";
+    }
+    return nullptr;
+  }
+  columns.roi_bbox_xyxy.resize(manifest.instance_count);
+  for (size_t index = 0; index < manifest.instance_count; ++index) {
+    std::array<double, 4> roi_box = {
+        static_cast<double>(roi_boxes[index * 4]),
+        static_cast<double>(roi_boxes[index * 4 + 1]),
+        static_cast<double>(roi_boxes[index * 4 + 2]),
+        static_cast<double>(roi_boxes[index * 4 + 3])};
+    if (!std::all_of(roi_box.begin(), roi_box.end(),
+                     [](double value) { return std::isfinite(value); }) ||
+        roi_box[2] <= roi_box[0] || roi_box[3] <= roi_box[1]) {
+      internal::SetArchiveError(error,
+                                "Crop bbox_roi_xyxy contains invalid data");
+      return nullptr;
+    }
+    columns.roi_bbox_xyxy[index] = roi_box;
+  }
+  std::vector<float>{}.swap(roi_boxes);
+
+  if (!ReadExact(*key_store, &columns.instance_keys, error) ||
+      columns.instance_keys.size() != manifest.instance_count) {
+    if (error && error->empty()) {
+      *error = "Crop instance_key has an inconsistent shape";
+    }
+    return nullptr;
+  }
+  auto repository = MakeAnalysisCropGeometryRepository(std::move(descriptor),
+                                                       std::move(columns));
+  if (!repository) {
+    internal::SetArchiveError(error,
+                              "Coordinate-aware crop columns are inconsistent");
+  }
+  return repository;
 }
 
 bool ValidRunName(const std::string &run_name) {
@@ -416,10 +461,10 @@ bool ReadFrameIndices(const ArchiveContext::Impl &archive,
          ReadIntegerArray<uint8_t>(archive, path, output);
 }
 
-template <typename Source>
-bool ReadMatrix(const ArchiveContext::Impl &archive, const std::string &path,
-                size_t minimum_columns,
-                std::vector<std::vector<double>> *output) {
+template <typename Source, size_t Columns>
+bool ReadFixedMatrix(const ArchiveContext::Impl &archive,
+                     const std::string &path,
+                     std::vector<std::array<double, Columns>> *output) {
   const auto spec = internal::MakeReadOnlyArraySpec(archive, path);
   if (!spec) {
     return false;
@@ -433,29 +478,30 @@ bool ReadMatrix(const ArchiveContext::Impl &archive, const std::string &path,
   }
   auto read_result = ts::Read(*open_result).result();
   if (!read_result.ok() || read_result->rank() != 2 ||
-      read_result->shape()[1] < static_cast<ts::Index>(minimum_columns)) {
+      read_result->shape()[1] < static_cast<ts::Index>(Columns)) {
     return false;
   }
   const size_t rows = static_cast<size_t>(read_result->shape()[0]);
-  const size_t columns = static_cast<size_t>(read_result->shape()[1]);
+  const size_t source_columns = static_cast<size_t>(read_result->shape()[1]);
   const Source *values = static_cast<const Source *>(read_result->data());
-  output->assign(rows, std::vector<double>(columns));
+  output->resize(rows);
   for (size_t row = 0; row < rows; ++row) {
-    for (size_t column = 0; column < columns; ++column) {
+    for (size_t column = 0; column < Columns; ++column) {
       (*output)[row][column] =
-          static_cast<double>(values[row * columns + column]);
+          static_cast<double>(values[row * source_columns + column]);
     }
   }
   return true;
 }
 
-bool ReadNumericMatrix(const ArchiveContext::Impl &archive,
-                       const std::string &path, size_t minimum_columns,
-                       std::vector<std::vector<double>> *output) {
-  return ReadMatrix<double>(archive, path, minimum_columns, output) ||
-         ReadMatrix<float>(archive, path, minimum_columns, output) ||
-         ReadMatrix<int64_t>(archive, path, minimum_columns, output) ||
-         ReadMatrix<int32_t>(archive, path, minimum_columns, output);
+template <size_t Columns>
+bool ReadNumericFixedMatrix(const ArchiveContext::Impl &archive,
+                            const std::string &path,
+                            std::vector<std::array<double, Columns>> *output) {
+  return ReadFixedMatrix<double, Columns>(archive, path, output) ||
+         ReadFixedMatrix<float, Columns>(archive, path, output) ||
+         ReadFixedMatrix<int64_t, Columns>(archive, path, output) ||
+         ReadFixedMatrix<int32_t, Columns>(archive, path, output);
 }
 
 bool ReadRoiSize(const ArchiveContext::Impl &archive,
@@ -566,17 +612,17 @@ OpenAnalysisCropGeometryRepository(
       return nullptr;
     }
   }
-  std::vector<int64_t> frame_indices;
-  std::vector<std::vector<double>> offsets;
-  if (!ReadFrameIndices(impl, run_base + "/frame_indices", &frame_indices) ||
-      frame_indices.empty()) {
+  AnalysisCropGeometryColumns columns;
+  if (!ReadFrameIndices(impl, run_base + "/frame_indices",
+                        &columns.frame_indices) ||
+      columns.frame_indices.empty()) {
     internal::SetArchiveError(error_message,
                               "Crop run has no readable frame_indices");
     return nullptr;
   }
-  if (!ReadNumericMatrix(impl, run_base + "/roi_coordinates_full", 2,
-                         &offsets) ||
-      offsets.size() != frame_indices.size()) {
+  if (!ReadNumericFixedMatrix<2>(impl, run_base + "/roi_coordinates_full",
+                                 &columns.offsets_xy) ||
+      columns.offsets_xy.size() != columns.frame_indices.size()) {
     internal::SetArchiveError(
         error_message,
         "Crop run roi_coordinates_full does not match frame_indices");
@@ -594,39 +640,56 @@ OpenAnalysisCropGeometryRepository(
     return nullptr;
   }
 
-  std::vector<std::vector<double>> boxes;
+  std::vector<std::array<double, 4>> boxes;
   const bool boxes_available =
-      ReadNumericMatrix(impl, run_base + "/bbox_norm_coords", 4, &boxes) &&
-      boxes.size() == frame_indices.size();
+      ReadNumericFixedMatrix<4>(impl, run_base + "/bbox_norm_coords", &boxes) &&
+      boxes.size() == columns.frame_indices.size();
 
-  std::vector<AnalysisCropGeometryRow> rows;
-  rows.reserve(frame_indices.size());
-  for (size_t index = 0; index < frame_indices.size(); ++index) {
-    if (frame_indices[index] < 0 || !std::isfinite(offsets[index][0]) ||
-        !std::isfinite(offsets[index][1])) {
+  for (size_t index = 0; index < columns.frame_indices.size(); ++index) {
+    if (columns.frame_indices[index] < 0 ||
+        !std::isfinite(columns.offsets_xy[index][0]) ||
+        !std::isfinite(columns.offsets_xy[index][1])) {
       internal::SetArchiveError(
           error_message, "Crop run contains invalid frame or ROI coordinates");
       return nullptr;
     }
-    AnalysisCropGeometryRow row;
-    row.camera_frame = frame_indices[index];
-    row.roi_index = static_cast<int64_t>(index);
-    row.offset_x = offsets[index][0];
-    row.offset_y = offsets[index][1];
-    if (boxes_available) {
-      std::array<double, 4> box = {boxes[index][0], boxes[index][1],
-                                   boxes[index][2], boxes[index][3]};
-      if (std::all_of(box.begin(), box.end(),
-                      [](double value) { return std::isfinite(value); }) &&
-          box[2] > 0.0 && box[3] > 0.0) {
-        row.normalized_detection_cxcywh = box;
-      }
-    }
-    rows.push_back(std::move(row));
   }
 
-  return MakeAnalysisCropGeometryRepository(std::move(descriptor),
-                                            std::move(rows));
+  if (boxes_available) {
+    columns.normalized_detection_cxcywh = std::move(boxes);
+    size_t valid_boxes = 0;
+    for (const auto &box : columns.normalized_detection_cxcywh) {
+      valid_boxes +=
+          std::all_of(box.begin(), box.end(),
+                      [](double value) { return std::isfinite(value); }) &&
+          box[2] > 0.0 && box[3] > 0.0;
+    }
+    if (valid_boxes == 0) {
+      std::vector<std::array<double, 4>>{}.swap(
+          columns.normalized_detection_cxcywh);
+    } else if (valid_boxes != columns.normalized_detection_cxcywh.size()) {
+      columns.normalized_detection_valid.assign(
+          columns.normalized_detection_cxcywh.size(), 0);
+      for (size_t index = 0; index < columns.normalized_detection_cxcywh.size();
+           ++index) {
+        const auto &box = columns.normalized_detection_cxcywh[index];
+        columns.normalized_detection_valid[index] =
+            std::all_of(box.begin(), box.end(),
+                        [](double value) { return std::isfinite(value); }) &&
+                    box[2] > 0.0 && box[3] > 0.0
+                ? 1
+                : 0;
+      }
+    }
+  }
+
+  auto repository = MakeAnalysisCropGeometryRepository(std::move(descriptor),
+                                                       std::move(columns));
+  if (!repository) {
+    internal::SetArchiveError(error_message,
+                              "Legacy crop columns are inconsistent");
+  }
+  return repository;
 }
 
 } // namespace crimson::zarr

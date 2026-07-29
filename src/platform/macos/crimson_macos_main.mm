@@ -3240,13 +3240,15 @@ int main(int argc, char **argv) {
               std::printf(
                   "[AppleCropGeometry] run=%s rows=%zu camera_frames=%zu "
                   "output=%dx%d pixel_source=full-camera index=%s payload=%s "
-                  "retained_bytes=%llu\n",
+                  "construction=%s retained_bytes=%llu\n",
                   descriptor.run_name.c_str(), descriptor.row_count,
                   descriptor.camera_frame_count, descriptor.output_width,
                   descriptor.output_height,
                   descriptor.retained_frame_offsets ? "frame-offsets"
                                                     : "legacy",
                   descriptor.pageable_payload ? "pageable" : "resident",
+                  descriptor.direct_compact_columns ? "direct-columns"
+                                                    : "row-adapter",
                   static_cast<unsigned long long>(
                       geometry_memory.reportedRetainedBytes()));
             } else {

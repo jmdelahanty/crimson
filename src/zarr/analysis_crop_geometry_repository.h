@@ -30,6 +30,7 @@ struct AnalysisCropGeometryDescriptor {
   bool coordinate_catalog_validated = false;
   bool retained_frame_offsets = false;
   bool pageable_payload = false;
+  bool direct_compact_columns = false;
 };
 
 struct AnalysisCropGeometryRow {
@@ -40,6 +41,19 @@ struct AnalysisCropGeometryRow {
   double offset_y = 0.0;
   std::optional<std::array<double, 4>> normalized_detection_cxcywh;
   std::optional<std::array<double, 4>> roi_bbox_xyxy;
+};
+
+struct AnalysisCropGeometryColumns {
+  std::vector<int64_t> frame_indices;
+  std::vector<int64_t> frame_row_offsets;
+  std::vector<int64_t> roi_indices;
+  std::vector<std::array<double, 2>> offsets_xy;
+  std::vector<uint64_t> instance_keys;
+  std::vector<uint8_t> instance_key_valid;
+  std::vector<std::array<double, 4>> normalized_detection_cxcywh;
+  std::vector<uint8_t> normalized_detection_valid;
+  std::vector<std::array<double, 4>> roi_bbox_xyxy;
+  std::vector<uint8_t> roi_bbox_valid;
 };
 
 enum class AnalysisCropGeometryStatus : uint8_t {
@@ -73,5 +87,9 @@ public:
 std::unique_ptr<AnalysisCropGeometryRepository>
 MakeAnalysisCropGeometryRepository(AnalysisCropGeometryDescriptor descriptor,
                                    std::vector<AnalysisCropGeometryRow> rows);
+
+std::unique_ptr<AnalysisCropGeometryRepository>
+MakeAnalysisCropGeometryRepository(AnalysisCropGeometryDescriptor descriptor,
+                                   AnalysisCropGeometryColumns columns);
 
 } // namespace crimson::zarr
