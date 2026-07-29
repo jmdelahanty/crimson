@@ -508,6 +508,17 @@ a byte-budgeted resident/pageable policy for larger multi-instance fixtures
 remain open. The checkpoint is in
 `docs/diagnostics/compact_crop_geometry_memory_2026-07-29/`.
 
+Direct compact construction is also complete. Coordinate-aware crop-v2
+retains its validated persisted offsets and builds final columns sequentially;
+the legacy compatibility reader uses flat fixed-width matrices and no longer
+creates one row object and nested allocation per crop. Two clean mounted runs
+reduced crop initialization from 7.62--8.23 seconds to 1.26--1.37 seconds and
+crop-ready RSS from 1,516.6--1,534.7 MiB to 739.1--777.3 MiB. Retained crop
+memory remained 62.6 MiB. Whole-workload peaks occurred later in other product
+settlement and are not attributed to this change. macOS 63/63 and isolated
+Linux CUDA/NVIDIA validation passed. Evidence is in
+`docs/diagnostics/direct_crop_geometry_construction_2026-07-29/`.
+
 ### Phase 5O.5: Cross-platform acceptance
 
 - validate cold open, warm playback, forward/reverse traversal, random seeks,

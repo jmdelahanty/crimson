@@ -988,6 +988,19 @@ larger multi-instance data, never a synchronous GUI-thread storage read.
 Evidence is in
 `docs/diagnostics/compact_crop_geometry_memory_2026-07-29/`.
 
+The direct-construction follow-up is complete at commit `bd62080`. Strict
+crop-v2 now retains its validated persisted offsets and converts exact typed
+arrays into final compact columns sequentially. The legacy reader now uses
+flat fixed-width matrices and derives offsets without constructing a
+million-row object vector. Two clean mounted trials reduced crop-product
+initialization from 7.62--8.23 seconds to 1.26--1.37 seconds and RSS at crop
+readiness from 1,516.6--1,534.7 MiB to 739.1--777.3 MiB. The retained crop
+lower bound stayed at 62.6 MiB, proving this removes temporary construction
+memory rather than changing the resident payload. Later whole-process peaks
+remained dominated by other products and allocator/cache timing. The full
+macOS suite and isolated Linux CUDA/NVIDIA build passed. Evidence is in
+`docs/diagnostics/direct_crop_geometry_construction_2026-07-29/`.
+
 Phase 5 also remains open for production-tail acceptance, movement-trail
 coordinate policy, any required chaser-data densification, and edit/review
 workflows whose shared storage contracts are still changing. Those blockers
