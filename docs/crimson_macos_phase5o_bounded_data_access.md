@@ -495,6 +495,19 @@ changing detection residency. The single trial is diagnostic rather than a
 long-run leak or promotion gate. Evidence and the plot are in
 `docs/diagnostics/full_duration_memory_attribution_2026-07-29/`.
 
+The first resulting geometry reduction is complete. Crop geometry now retains
+a dense frame-offset index plus compact columns instead of a per-row object and
+per-frame hash map. It remains a resident, memory-only repository, so current
+frame resolution cannot introduce a GUI-thread TensorStore/network stall. Two
+clean full-duration mounted trials reported the same 62.6 MiB crop lower bound,
+down from 199.9 MiB (68.7%). Required-ready RSS also fell in both trials;
+lifetime peak and post-release RSS varied substantially with later product and
+allocator/cache timing and are not treated as crop-owner evidence. macOS and
+isolated Linux CUDA/NVIDIA validation passed. Direct compact construction and
+a byte-budgeted resident/pageable policy for larger multi-instance fixtures
+remain open. The checkpoint is in
+`docs/diagnostics/compact_crop_geometry_memory_2026-07-29/`.
+
 ### Phase 5O.5: Cross-platform acceptance
 
 - validate cold open, warm playback, forward/reverse traversal, random seeks,

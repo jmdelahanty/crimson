@@ -972,6 +972,22 @@ and frame-index representations. The result remains one diagnostic trial, not
 a leak, thermal, or promotion gate. Evidence is in
 `docs/diagnostics/full_duration_memory_attribution_2026-07-29/`.
 
+The first compact geometry slice is now complete at implementation commit
+`9e5dd54c`. Crop geometry no longer retains a row object plus hash-map entry
+for every frame; it uses one dense frame-offset index and compact resident
+columns behind the same backend-neutral repository API. Empty frames, gaps,
+unsorted input, and multiple rows per frame are covered while legacy inset
+presentation retains its stable first-row behavior. The full macOS suite and
+an isolated Linux CUDA/NVIDIA `redgui` build passed. On two clean mounted
+full-duration trials, the crop repository lower bound fell reproducibly from
+199.9 MiB to 62.6 MiB, a 137.3 MiB / 68.7% reduction. Required-ready process
+RSS was 174.8--187.1 MiB lower, while later lifetime peaks remained too
+variable to attribute to this owner. Payload remains resident: the next step
+is direct compact construction followed by a byte-budgeted pageable policy for
+larger multi-instance data, never a synchronous GUI-thread storage read.
+Evidence is in
+`docs/diagnostics/compact_crop_geometry_memory_2026-07-29/`.
+
 Phase 5 also remains open for production-tail acceptance, movement-trail
 coordinate policy, any required chaser-data densification, and edit/review
 workflows whose shared storage contracts are still changing. Those blockers
