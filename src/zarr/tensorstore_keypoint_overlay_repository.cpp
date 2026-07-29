@@ -49,25 +49,35 @@ double ElapsedMilliseconds(std::chrono::steady_clock::time_point start) {
       .count();
 }
 
-template <typename T>
-const char* TypeName() {
-  if constexpr (std::is_same_v<T, bool>) return "bool";
-  if constexpr (std::is_same_v<T, int8_t>) return "int8";
-  if constexpr (std::is_same_v<T, uint8_t>) return "uint8";
-  if constexpr (std::is_same_v<T, int16_t>) return "int16";
-  if constexpr (std::is_same_v<T, uint16_t>) return "uint16";
-  if constexpr (std::is_same_v<T, int32_t>) return "int32";
-  if constexpr (std::is_same_v<T, uint32_t>) return "uint32";
-  if constexpr (std::is_same_v<T, int64_t>) return "int64";
-  if constexpr (std::is_same_v<T, uint64_t>) return "uint64";
-  if constexpr (std::is_same_v<T, float>) return "float32";
-  if constexpr (std::is_same_v<T, double>) return "float64";
+template <typename T> const char *TypeName() {
+  if constexpr (std::is_same_v<T, bool>)
+    return "bool";
+  if constexpr (std::is_same_v<T, int8_t>)
+    return "int8";
+  if constexpr (std::is_same_v<T, uint8_t>)
+    return "uint8";
+  if constexpr (std::is_same_v<T, int16_t>)
+    return "int16";
+  if constexpr (std::is_same_v<T, uint16_t>)
+    return "uint16";
+  if constexpr (std::is_same_v<T, int32_t>)
+    return "int32";
+  if constexpr (std::is_same_v<T, uint32_t>)
+    return "uint32";
+  if constexpr (std::is_same_v<T, int64_t>)
+    return "int64";
+  if constexpr (std::is_same_v<T, uint64_t>)
+    return "uint64";
+  if constexpr (std::is_same_v<T, float>)
+    return "float32";
+  if constexpr (std::is_same_v<T, double>)
+    return "float64";
   return "unknown";
 }
 
 class KeypointOpenTrace {
- public:
-  explicit KeypointOpenTrace(KeypointRepositoryOpenMetrics* metrics)
+public:
+  explicit KeypointOpenTrace(KeypointRepositoryOpenMetrics *metrics)
       : metrics_(metrics), started_(std::chrono::steady_clock::now()) {
     if (metrics_) {
       *metrics_ = {};
@@ -80,15 +90,15 @@ class KeypointOpenTrace {
     }
   }
 
-  void finishPhase(double KeypointRepositoryOpenMetrics::* field,
+  void finishPhase(double KeypointRepositoryOpenMetrics::*field,
                    std::chrono::steady_clock::time_point start) {
     if (metrics_) {
       metrics_->*field += ElapsedMilliseconds(start);
     }
   }
 
-  void record(const std::string& phase, const std::string& operation,
-              const std::string& path, const std::string& candidate,
+  void record(const std::string &phase, const std::string &operation,
+              const std::string &path, const std::string &candidate,
               std::chrono::steady_clock::time_point start, bool success) {
     if (!metrics_) {
       return;
@@ -110,26 +120,28 @@ class KeypointOpenTrace {
   }
 
   void setLazyAttempted() {
-    if (metrics_) metrics_->lazy_attempted = true;
+    if (metrics_)
+      metrics_->lazy_attempted = true;
   }
   void setLazyPath() {
-    if (metrics_) metrics_->lazy_path = true;
+    if (metrics_)
+      metrics_->lazy_path = true;
   }
   void setFallbackPath() {
-    if (metrics_) metrics_->fallback_path = true;
+    if (metrics_)
+      metrics_->fallback_path = true;
   }
 
- private:
-  KeypointRepositoryOpenMetrics* metrics_ = nullptr;
+private:
+  KeypointRepositoryOpenMetrics *metrics_ = nullptr;
   std::chrono::steady_clock::time_point started_;
 };
 
 class KeypointPhaseTimer {
- public:
-  KeypointPhaseTimer(KeypointOpenTrace* trace,
-                     double KeypointRepositoryOpenMetrics::* field)
-      : trace_(trace),
-        field_(field),
+public:
+  KeypointPhaseTimer(KeypointOpenTrace *trace,
+                     double KeypointRepositoryOpenMetrics::*field)
+      : trace_(trace), field_(field),
         started_(std::chrono::steady_clock::now()) {}
   ~KeypointPhaseTimer() {
     if (trace_) {
@@ -137,16 +149,16 @@ class KeypointPhaseTimer {
     }
   }
 
- private:
-  KeypointOpenTrace* trace_ = nullptr;
-  double KeypointRepositoryOpenMetrics::* field_ = nullptr;
+private:
+  KeypointOpenTrace *trace_ = nullptr;
+  double KeypointRepositoryOpenMetrics::*field_ = nullptr;
   std::chrono::steady_clock::time_point started_;
 };
 
-std::optional<json> ReadAttributes(const ArchiveContext::Impl& archive,
-                                   const std::string& path,
-                                   KeypointOpenTrace* trace,
-                                   const std::string& phase) {
+std::optional<json> ReadAttributes(const ArchiveContext::Impl &archive,
+                                   const std::string &path,
+                                   KeypointOpenTrace *trace,
+                                   const std::string &phase) {
   const auto started = std::chrono::steady_clock::now();
   auto attributes = internal::ReadArchiveAttributes(archive, path);
   if (trace) {
@@ -156,23 +168,23 @@ std::optional<json> ReadAttributes(const ArchiveContext::Impl& archive,
   return attributes;
 }
 
-std::optional<json> MakeArraySpec(const ArchiveContext::Impl& archive,
-                                  const std::string& path) {
+std::optional<json> MakeArraySpec(const ArchiveContext::Impl &archive,
+                                  const std::string &path) {
   return internal::MakeReadOnlyArraySpec(archive, path);
 }
 
 template <typename T, size_t Rank>
-std::optional<ts::TensorStore<T, Rank>> OpenArray(
-    const ArchiveContext::Impl& archive, const std::string& path,
-    KeypointOpenTrace* trace, const std::string& phase) {
+std::optional<ts::TensorStore<T, Rank>>
+OpenArray(const ArchiveContext::Impl &archive, const std::string &path,
+          KeypointOpenTrace *trace, const std::string &phase) {
   const auto started = std::chrono::steady_clock::now();
   const auto spec = MakeArraySpec(archive, path);
   if (!spec) {
     if (trace) {
-      trace->record(
-          phase, "array_open", path,
-          std::string(TypeName<T>()) + "[" + std::to_string(Rank) + "]",
-          started, false);
+      trace->record(phase, "array_open", path,
+                    std::string(TypeName<T>()) + "[" + std::to_string(Rank) +
+                        "]",
+                    started, false);
     }
     return std::nullopt;
   }
@@ -188,9 +200,9 @@ std::optional<ts::TensorStore<T, Rank>> OpenArray(
                     : std::nullopt;
 }
 
-std::optional<IntegerStore> OpenIntegerStore(
-    const ArchiveContext::Impl& archive, const std::string& path,
-    KeypointOpenTrace* trace, const std::string& phase) {
+std::optional<IntegerStore>
+OpenIntegerStore(const ArchiveContext::Impl &archive, const std::string &path,
+                 KeypointOpenTrace *trace, const std::string &phase) {
   if (auto store = OpenArray<int64_t, 1>(archive, path, trace, phase))
     return IntegerStore{*store};
   if (auto store = OpenArray<uint64_t, 1>(archive, path, trace, phase))
@@ -210,10 +222,10 @@ std::optional<IntegerStore> OpenIntegerStore(
   return std::nullopt;
 }
 
-std::optional<RealStore> OpenRealStore(const ArchiveContext::Impl& archive,
-                                       const std::string& path,
-                                       KeypointOpenTrace* trace,
-                                       const std::string& phase) {
+std::optional<RealStore> OpenRealStore(const ArchiveContext::Impl &archive,
+                                       const std::string &path,
+                                       KeypointOpenTrace *trace,
+                                       const std::string &phase) {
   if (auto store = OpenArray<double, 1>(archive, path, trace, phase))
     return RealStore{*store};
   if (auto store = OpenArray<float, 1>(archive, path, trace, phase))
@@ -225,10 +237,10 @@ std::optional<RealStore> OpenRealStore(const ArchiveContext::Impl& archive,
   return std::nullopt;
 }
 
-std::optional<BoolStore> OpenBoolStore(const ArchiveContext::Impl& archive,
-                                       const std::string& path,
-                                       KeypointOpenTrace* trace,
-                                       const std::string& phase) {
+std::optional<BoolStore> OpenBoolStore(const ArchiveContext::Impl &archive,
+                                       const std::string &path,
+                                       KeypointOpenTrace *trace,
+                                       const std::string &phase) {
   if (auto store = OpenArray<bool, 1>(archive, path, trace, phase))
     return BoolStore{*store};
   if (auto store = OpenArray<uint8_t, 1>(archive, path, trace, phase))
@@ -240,12 +252,12 @@ std::optional<BoolStore> OpenBoolStore(const ArchiveContext::Impl& archive,
   return std::nullopt;
 }
 
-std::optional<MatrixStore> OpenMatrixStore(const ArchiveContext::Impl& archive,
-                                           const std::string& path,
+std::optional<MatrixStore> OpenMatrixStore(const ArchiveContext::Impl &archive,
+                                           const std::string &path,
                                            size_t minimum_columns,
-                                           KeypointOpenTrace* trace,
-                                           const std::string& phase) {
-  auto valid = [minimum_columns](const auto& store) {
+                                           KeypointOpenTrace *trace,
+                                           const std::string &phase) {
+  auto valid = [minimum_columns](const auto &store) {
     return store.domain().shape()[1] >= static_cast<ts::Index>(minimum_columns);
   };
   if (auto store = OpenArray<double, 2>(archive, path, trace, phase);
@@ -263,10 +275,10 @@ std::optional<MatrixStore> OpenMatrixStore(const ArchiveContext::Impl& archive,
   return std::nullopt;
 }
 
-std::optional<KeypointStore> OpenKeypointStore(
-    const ArchiveContext::Impl& archive, const std::string& path,
-    KeypointOpenTrace* trace, const std::string& phase) {
-  auto valid = [](const auto& store) {
+std::optional<KeypointStore>
+OpenKeypointStore(const ArchiveContext::Impl &archive, const std::string &path,
+                  KeypointOpenTrace *trace, const std::string &phase) {
+  auto valid = [](const auto &store) {
     const auto shape = store.domain().shape();
     return shape[0] > 0 && shape[1] > 0 && shape[2] >= 2;
   };
@@ -280,7 +292,7 @@ std::optional<KeypointStore> OpenKeypointStore(
 }
 
 template <typename T, ts::DimensionIndex Rank>
-auto SliceRows(const ts::TensorStore<T, Rank>& store, size_t first,
+auto SliceRows(const ts::TensorStore<T, Rank> &store, size_t first,
                size_t last) {
   ts::Box<Rank> domain(store.domain().box());
   domain.origin()[0] = static_cast<ts::Index>(first);
@@ -288,10 +300,9 @@ auto SliceRows(const ts::TensorStore<T, Rank>& store, size_t first,
   return store | ts::IdentityTransform(domain);
 }
 
-template <typename Store>
-size_t RowCount(const Store& store) {
+template <typename Store> size_t RowCount(const Store &store) {
   return std::visit(
-      [](const auto& typed) {
+      [](const auto &typed) {
         const auto rows = typed.domain().shape()[0];
         return rows > 0 ? static_cast<size_t>(rows) : size_t{0};
       },
@@ -299,22 +310,23 @@ size_t RowCount(const Store& store) {
 }
 
 template <typename Store, typename Output, typename Convert>
-bool ReadRankOneRange(const Store& store, size_t first, size_t last,
-                      std::vector<Output>* output, Convert convert) {
-  if (!output || last < first || last > RowCount(store)) return false;
+bool ReadRankOneRange(const Store &store, size_t first, size_t last,
+                      std::vector<Output> *output, Convert convert) {
+  if (!output || last < first || last > RowCount(store))
+    return false;
   output->resize(last - first);
   return std::visit(
-      [&](const auto& typed) {
+      [&](const auto &typed) {
         auto read = ts::Read(SliceRows(typed, first, last)).result();
         if (!read.ok() || read->rank() != 1 ||
             static_cast<size_t>(read->shape()[0]) != last - first ||
             read->byte_strides().size() != 1)
           return false;
         using Source = typename std::decay_t<decltype(typed)>::Element;
-        const auto* origin = reinterpret_cast<const uint8_t*>(
+        const auto *origin = reinterpret_cast<const uint8_t *>(
             read->byte_strided_origin_pointer().get());
         for (size_t index = 0; index < output->size(); ++index) {
-          const Source value = *reinterpret_cast<const Source*>(
+          const Source value = *reinterpret_cast<const Source *>(
               origin + static_cast<ts::Index>(index) * read->byte_strides()[0]);
           (*output)[index] = convert(value);
         }
@@ -323,32 +335,33 @@ bool ReadRankOneRange(const Store& store, size_t first, size_t last,
       store);
 }
 
-bool ReadIntegerRange(const IntegerStore& store, size_t first, size_t last,
-                      std::vector<int64_t>* output) {
+bool ReadIntegerRange(const IntegerStore &store, size_t first, size_t last,
+                      std::vector<int64_t> *output) {
   return ReadRankOneRange(store, first, last, output, [](auto value) {
     return static_cast<int64_t>(value);
   });
 }
 
-bool ReadRealRange(const RealStore& store, size_t first, size_t last,
-                   std::vector<double>* output) {
+bool ReadRealRange(const RealStore &store, size_t first, size_t last,
+                   std::vector<double> *output) {
   return ReadRankOneRange(store, first, last, output, [](auto value) {
     return static_cast<double>(value);
   });
 }
 
-bool ReadBoolRange(const BoolStore& store, size_t first, size_t last,
-                   std::vector<uint8_t>* output) {
+bool ReadBoolRange(const BoolStore &store, size_t first, size_t last,
+                   std::vector<uint8_t> *output) {
   return ReadRankOneRange(store, first, last, output, [](auto value) {
     return value ? uint8_t{1} : uint8_t{0};
   });
 }
 
-bool ReadMatrixRange(const MatrixStore& store, size_t first, size_t last,
-                     size_t columns, std::vector<double>* output) {
-  if (!output || last < first || last > RowCount(store)) return false;
+bool ReadMatrixRange(const MatrixStore &store, size_t first, size_t last,
+                     size_t columns, std::vector<double> *output) {
+  if (!output || last < first || last > RowCount(store))
+    return false;
   return std::visit(
-      [&](const auto& typed) {
+      [&](const auto &typed) {
         auto read = ts::Read(SliceRows(typed, first, last)).result();
         if (!read.ok() || read->rank() != 2 ||
             static_cast<size_t>(read->shape()[0]) != last - first ||
@@ -356,12 +369,12 @@ bool ReadMatrixRange(const MatrixStore& store, size_t first, size_t last,
             read->byte_strides().size() != 2)
           return false;
         using Source = typename std::decay_t<decltype(typed)>::Element;
-        const auto* origin = reinterpret_cast<const uint8_t*>(
+        const auto *origin = reinterpret_cast<const uint8_t *>(
             read->byte_strided_origin_pointer().get());
         output->resize((last - first) * columns);
         for (size_t row = 0; row < last - first; ++row) {
           for (size_t column = 0; column < columns; ++column) {
-            const Source value = *reinterpret_cast<const Source*>(
+            const Source value = *reinterpret_cast<const Source *>(
                 origin + static_cast<ts::Index>(row) * read->byte_strides()[0] +
                 static_cast<ts::Index>(column) * read->byte_strides()[1]);
             (*output)[row * columns + column] = static_cast<double>(value);
@@ -372,11 +385,12 @@ bool ReadMatrixRange(const MatrixStore& store, size_t first, size_t last,
       store);
 }
 
-bool ReadKeypointRange(const KeypointStore& store, size_t first, size_t last,
-                       std::vector<std::vector<KeypointOverlayPoint>>* output) {
-  if (!output || last < first || last > RowCount(store)) return false;
+bool ReadKeypointRange(const KeypointStore &store, size_t first, size_t last,
+                       std::vector<std::vector<KeypointOverlayPoint>> *output) {
+  if (!output || last < first || last > RowCount(store))
+    return false;
   return std::visit(
-      [&](const auto& typed) {
+      [&](const auto &typed) {
         auto read = ts::Read(SliceRows(typed, first, last)).result();
         if (!read.ok() || read->rank() != 3 ||
             static_cast<size_t>(read->shape()[0]) != last - first ||
@@ -384,19 +398,19 @@ bool ReadKeypointRange(const KeypointStore& store, size_t first, size_t last,
             read->byte_strides().size() != 3)
           return false;
         using Source = typename std::decay_t<decltype(typed)>::Element;
-        const auto* origin = reinterpret_cast<const uint8_t*>(
+        const auto *origin = reinterpret_cast<const uint8_t *>(
             read->byte_strided_origin_pointer().get());
         const size_t keypoint_count = static_cast<size_t>(read->shape()[1]);
         output->assign(last - first,
                        std::vector<KeypointOverlayPoint>(keypoint_count));
         for (size_t row = 0; row < last - first; ++row) {
           for (size_t keypoint = 0; keypoint < keypoint_count; ++keypoint) {
-            const auto* point =
+            const auto *point =
                 origin + static_cast<ts::Index>(row) * read->byte_strides()[0] +
                 static_cast<ts::Index>(keypoint) * read->byte_strides()[1];
             (*output)[row][keypoint] = {
-                static_cast<double>(*reinterpret_cast<const Source*>(point)),
-                static_cast<double>(*reinterpret_cast<const Source*>(
+                static_cast<double>(*reinterpret_cast<const Source *>(point)),
+                static_cast<double>(*reinterpret_cast<const Source *>(
                     point + read->byte_strides()[2]))};
           }
         }
@@ -406,8 +420,8 @@ bool ReadKeypointRange(const KeypointStore& store, size_t first, size_t last,
 }
 
 template <typename Source>
-bool ReadIntegerVector(const ArchiveContext::Impl& archive,
-                       const std::string& path, std::vector<int64_t>* output) {
+bool ReadIntegerVector(const ArchiveContext::Impl &archive,
+                       const std::string &path, std::vector<int64_t> *output) {
   const auto spec = MakeArraySpec(archive, path);
   if (!spec) {
     return false;
@@ -423,7 +437,7 @@ bool ReadIntegerVector(const ArchiveContext::Impl& archive,
     return false;
   }
   const size_t count = static_cast<size_t>(read->shape()[0]);
-  const Source* values = static_cast<const Source*>(read->data());
+  const Source *values = static_cast<const Source *>(read->data());
   output->resize(count);
   for (size_t index = 0; index < count; ++index) {
     (*output)[index] = static_cast<int64_t>(values[index]);
@@ -431,8 +445,8 @@ bool ReadIntegerVector(const ArchiveContext::Impl& archive,
   return true;
 }
 
-bool ReadIntegers(const ArchiveContext::Impl& archive, const std::string& path,
-                  std::vector<int64_t>* output) {
+bool ReadIntegers(const ArchiveContext::Impl &archive, const std::string &path,
+                  std::vector<int64_t> *output) {
   return ReadIntegerVector<int64_t>(archive, path, output) ||
          ReadIntegerVector<uint64_t>(archive, path, output) ||
          ReadIntegerVector<int32_t>(archive, path, output) ||
@@ -444,8 +458,8 @@ bool ReadIntegers(const ArchiveContext::Impl& archive, const std::string& path,
 }
 
 template <typename Source>
-bool ReadRealVector(const ArchiveContext::Impl& archive,
-                    const std::string& path, std::vector<double>* output) {
+bool ReadRealVector(const ArchiveContext::Impl &archive,
+                    const std::string &path, std::vector<double> *output) {
   const auto spec = MakeArraySpec(archive, path);
   if (!spec) {
     return false;
@@ -461,7 +475,7 @@ bool ReadRealVector(const ArchiveContext::Impl& archive,
     return false;
   }
   const size_t count = static_cast<size_t>(read->shape()[0]);
-  const Source* values = static_cast<const Source*>(read->data());
+  const Source *values = static_cast<const Source *>(read->data());
   output->resize(count);
   for (size_t index = 0; index < count; ++index) {
     (*output)[index] = static_cast<double>(values[index]);
@@ -469,8 +483,8 @@ bool ReadRealVector(const ArchiveContext::Impl& archive,
   return true;
 }
 
-bool ReadReals(const ArchiveContext::Impl& archive, const std::string& path,
-               std::vector<double>* output) {
+bool ReadReals(const ArchiveContext::Impl &archive, const std::string &path,
+               std::vector<double> *output) {
   return ReadRealVector<double>(archive, path, output) ||
          ReadRealVector<float>(archive, path, output) ||
          ReadRealVector<int64_t>(archive, path, output) ||
@@ -478,8 +492,8 @@ bool ReadReals(const ArchiveContext::Impl& archive, const std::string& path,
 }
 
 template <typename Source>
-bool ReadBoolVector(const ArchiveContext::Impl& archive,
-                    const std::string& path, std::vector<uint8_t>* output) {
+bool ReadBoolVector(const ArchiveContext::Impl &archive,
+                    const std::string &path, std::vector<uint8_t> *output) {
   const auto spec = MakeArraySpec(archive, path);
   if (!spec) {
     return false;
@@ -495,7 +509,7 @@ bool ReadBoolVector(const ArchiveContext::Impl& archive,
     return false;
   }
   const size_t count = static_cast<size_t>(read->shape()[0]);
-  const Source* values = static_cast<const Source*>(read->data());
+  const Source *values = static_cast<const Source *>(read->data());
   output->resize(count);
   for (size_t index = 0; index < count; ++index) {
     (*output)[index] = values[index] ? 1 : 0;
@@ -503,8 +517,8 @@ bool ReadBoolVector(const ArchiveContext::Impl& archive,
   return true;
 }
 
-bool ReadBools(const ArchiveContext::Impl& archive, const std::string& path,
-               std::vector<uint8_t>* output) {
+bool ReadBools(const ArchiveContext::Impl &archive, const std::string &path,
+               std::vector<uint8_t> *output) {
   return ReadBoolVector<bool>(archive, path, output) ||
          ReadBoolVector<uint8_t>(archive, path, output) ||
          ReadBoolVector<int8_t>(archive, path, output) ||
@@ -512,9 +526,9 @@ bool ReadBools(const ArchiveContext::Impl& archive, const std::string& path,
 }
 
 template <typename Source>
-bool ReadMatrix(const ArchiveContext::Impl& archive, const std::string& path,
+bool ReadMatrix(const ArchiveContext::Impl &archive, const std::string &path,
                 size_t minimum_columns,
-                std::vector<std::vector<double>>* output) {
+                std::vector<std::vector<double>> *output) {
   const auto spec = MakeArraySpec(archive, path);
   if (!spec) {
     return false;
@@ -532,7 +546,7 @@ bool ReadMatrix(const ArchiveContext::Impl& archive, const std::string& path,
   }
   const size_t rows = static_cast<size_t>(read->shape()[0]);
   const size_t columns = static_cast<size_t>(read->shape()[1]);
-  const Source* values = static_cast<const Source*>(read->data());
+  const Source *values = static_cast<const Source *>(read->data());
   output->assign(rows, std::vector<double>(columns));
   for (size_t row = 0; row < rows; ++row) {
     for (size_t column = 0; column < columns; ++column) {
@@ -543,9 +557,9 @@ bool ReadMatrix(const ArchiveContext::Impl& archive, const std::string& path,
   return true;
 }
 
-bool ReadNumericMatrix(const ArchiveContext::Impl& archive,
-                       const std::string& path, size_t minimum_columns,
-                       std::vector<std::vector<double>>* output) {
+bool ReadNumericMatrix(const ArchiveContext::Impl &archive,
+                       const std::string &path, size_t minimum_columns,
+                       std::vector<std::vector<double>> *output) {
   return ReadMatrix<double>(archive, path, minimum_columns, output) ||
          ReadMatrix<float>(archive, path, minimum_columns, output) ||
          ReadMatrix<int64_t>(archive, path, minimum_columns, output) ||
@@ -553,9 +567,9 @@ bool ReadNumericMatrix(const ArchiveContext::Impl& archive,
 }
 
 template <typename Source>
-bool ReadKeypoints(const ArchiveContext::Impl& archive, const std::string& path,
+bool ReadKeypoints(const ArchiveContext::Impl &archive, const std::string &path,
                    size_t expected_rows,
-                   std::vector<std::vector<KeypointOverlayPoint>>* output) {
+                   std::vector<std::vector<KeypointOverlayPoint>> *output) {
   const auto spec = MakeArraySpec(archive, path);
   if (!spec) {
     return false;
@@ -574,7 +588,7 @@ bool ReadKeypoints(const ArchiveContext::Impl& archive, const std::string& path,
   }
   const size_t keypoint_count = static_cast<size_t>(read->shape()[1]);
   const size_t coordinate_count = static_cast<size_t>(read->shape()[2]);
-  const Source* values = static_cast<const Source*>(read->data());
+  const Source *values = static_cast<const Source *>(read->data());
   output->assign(expected_rows,
                  std::vector<KeypointOverlayPoint>(keypoint_count));
   for (size_t row = 0; row < expected_rows; ++row) {
@@ -589,33 +603,33 @@ bool ReadKeypoints(const ArchiveContext::Impl& archive, const std::string& path,
 }
 
 bool ReadNumericKeypoints(
-    const ArchiveContext::Impl& archive, const std::string& path,
+    const ArchiveContext::Impl &archive, const std::string &path,
     size_t expected_rows,
-    std::vector<std::vector<KeypointOverlayPoint>>* output) {
+    std::vector<std::vector<KeypointOverlayPoint>> *output) {
   return ReadKeypoints<double>(archive, path, expected_rows, output) ||
          ReadKeypoints<float>(archive, path, expected_rows, output);
 }
 
-std::string LatestRun(const ArchiveContext::Impl& archive,
-                      const std::string& group, KeypointOpenTrace* trace,
-                      const std::string& phase) {
+std::string LatestRun(const ArchiveContext::Impl &archive,
+                      const std::string &group, KeypointOpenTrace *trace,
+                      const std::string &phase) {
   const auto attributes = ReadAttributes(archive, group, trace, phase);
   if (!attributes) {
     return {};
   }
-  constexpr std::array<const char*, 4> keys = {
+  constexpr std::array<const char *, 4> keys = {
       "latest", "latest_completed", "latest_complete", "latest_success"};
-  for (const char* key : keys) {
+  for (const char *key : keys) {
     const auto found = attributes->find(key);
     if (found != attributes->end() && found->is_string() &&
-        !found->get_ref<const std::string&>().empty()) {
+        !found->get_ref<const std::string &>().empty()) {
       return found->get<std::string>();
     }
   }
   return {};
 }
 
-bool ValidRunName(const std::string& run_name) {
+bool ValidRunName(const std::string &run_name) {
   return !run_name.empty() && run_name != "." && run_name != ".." &&
          run_name.find('/') == std::string::npos;
 }
@@ -626,9 +640,9 @@ struct SelectedRun {
   bool refined = false;
 };
 
-std::optional<SelectedRun> SelectRun(const ArchiveContext::Impl& archive,
+std::optional<SelectedRun> SelectRun(const ArchiveContext::Impl &archive,
                                      std::string requested_run,
-                                     KeypointOpenTrace* trace) {
+                                     KeypointOpenTrace *trace) {
   SelectedRun selected;
   if (requested_run.rfind("refined_keypoints_runs/", 0) == 0) {
     selected.group = "refined_keypoints_runs";
@@ -667,9 +681,9 @@ std::optional<SelectedRun> SelectRun(const ArchiveContext::Impl& archive,
   return selected;
 }
 
-std::string ResolveCropRun(const ArchiveContext::Impl& archive,
-                           const json& run_attributes, KeypointOpenTrace* trace,
-                           const std::string& phase) {
+std::string ResolveCropRun(const ArchiveContext::Impl &archive,
+                           const json &run_attributes, KeypointOpenTrace *trace,
+                           const std::string &phase) {
   const auto source = run_attributes.find("source_crop_run");
   if (source != run_attributes.end() && source->is_string()) {
     std::string run_name = source->get<std::string>();
@@ -683,18 +697,18 @@ std::string ResolveCropRun(const ArchiveContext::Impl& archive,
   return LatestRun(archive, "crop_runs", trace, phase);
 }
 
-void LoadLabelsAndEdges(const json& attributes, size_t keypoint_count,
-                        KeypointOverlayDescriptor* descriptor) {
+void LoadLabelsAndEdges(const json &attributes, size_t keypoint_count,
+                        KeypointOverlayDescriptor *descriptor) {
   const auto labels = attributes.find("keypoint_labels");
   if (labels != attributes.end() && labels->is_array()) {
-    for (const auto& label : *labels) {
+    for (const auto &label : *labels) {
       if (label.is_string()) {
         descriptor->keypoint_labels.push_back(label.get<std::string>());
       }
     }
   }
   descriptor->keypoint_labels.resize(keypoint_count);
-  static constexpr std::array<const char*, 3> defaults = {
+  static constexpr std::array<const char *, 3> defaults = {
       "swim_bladder", "left_eye", "right_eye"};
   for (size_t index = 0; index < keypoint_count; ++index) {
     if (!descriptor->keypoint_labels[index].empty()) {
@@ -713,7 +727,7 @@ void LoadLabelsAndEdges(const json& attributes, size_t keypoint_count,
   if (edges == pose_schema->end() || !edges->is_array()) {
     return;
   }
-  for (const auto& edge : *edges) {
+  for (const auto &edge : *edges) {
     if (!edge.is_array() || edge.size() != 2 || !edge[0].is_number_integer() ||
         !edge[1].is_number_integer()) {
       continue;
@@ -729,7 +743,7 @@ void LoadLabelsAndEdges(const json& attributes, size_t keypoint_count,
   }
 }
 
-bool ReadRoiSize(const json& crop_attributes, double* width, double* height) {
+bool ReadRoiSize(const json &crop_attributes, double *width, double *height) {
   const auto size = crop_attributes.find("roi_size");
   if (size == crop_attributes.end() || !size->is_array() || size->size() < 2 ||
       !(*size)[0].is_number() || !(*size)[1].is_number()) {
@@ -759,24 +773,23 @@ struct LazyKeypointStores {
 };
 
 class LazyKeypointOverlayRepository final : public KeypointOverlayRepository {
- public:
+public:
   LazyKeypointOverlayRepository(KeypointOverlayDescriptor descriptor,
                                 std::vector<uint64_t> frame_row_offsets,
                                 LazyKeypointStores stores, double roi_width,
                                 double roi_height)
       : descriptor_(std::move(descriptor)),
         frame_row_offsets_(std::move(frame_row_offsets)),
-        stores_(std::move(stores)),
-        roi_width_(roi_width),
+        stores_(std::move(stores)), roi_width_(roi_width),
         roi_height_(roi_height) {}
 
-  const KeypointOverlayDescriptor& descriptor() const override {
+  const KeypointOverlayDescriptor &descriptor() const override {
     return descriptor_;
   }
 
-  KeypointOverlayResolution resolveCameraFrame(
-      int64_t camera_frame, int full_frame_width,
-      int full_frame_height) const override {
+  KeypointOverlayResolution
+  resolveCameraFrame(int64_t camera_frame, int full_frame_width,
+                     int full_frame_height) const override {
     KeypointOverlayResolution result;
     result.camera_frame = camera_frame;
     if (camera_frame < 0 ||
@@ -885,7 +898,8 @@ class LazyKeypointOverlayRepository final : public KeypointOverlayRepository {
                                 : crop_detections[local_crop];
       row.source_crop_row_id = crop_rows[index];
       row.keypoints = std::move(keypoints[index]);
-      if (std::isfinite(headings[index])) row.heading_degrees = headings[index];
+      if (std::isfinite(headings[index]))
+        row.heading_degrees = headings[index];
       row.heading_valid = heading_valid[index] != 0;
       row.detection_interpolated = crop_sources[local_crop] != 0;
       row.refined_keypoints = descriptor_.refined;
@@ -914,7 +928,14 @@ class LazyKeypointOverlayRepository final : public KeypointOverlayRepository {
                                                 full_frame_height);
   }
 
- private:
+  RepositoryMemoryMetrics memoryMetrics() const override {
+    RepositoryMemoryMetrics metrics;
+    metrics.retained_index_bytes =
+        memory::vectorAllocationBytes(frame_row_offsets_);
+    return metrics;
+  }
+
+private:
   KeypointOverlayDescriptor descriptor_;
   std::vector<uint64_t> frame_row_offsets_;
   LazyKeypointStores stores_;
@@ -923,9 +944,9 @@ class LazyKeypointOverlayRepository final : public KeypointOverlayRepository {
 };
 
 std::unique_ptr<KeypointOverlayRepository> TryOpenLazyKeypointRepository(
-    const ArchiveContext::Impl& archive, const SelectedRun& selected,
-    const json& run_attributes, const std::string& run_base,
-    KeypointOpenTrace* trace) {
+    const ArchiveContext::Impl &archive, const SelectedRun &selected,
+    const json &run_attributes, const std::string &run_base,
+    KeypointOpenTrace *trace) {
   std::optional<IntegerStore> frames;
   std::optional<IntegerStore> frame_counts;
   std::optional<IntegerStore> source_crop_rows;
@@ -952,7 +973,8 @@ std::unique_ptr<KeypointOverlayRepository> TryOpenLazyKeypointRepository(
     descriptor.camera_frame_count = RowCount(*frame_counts);
     descriptor.source_crop_run =
         ResolveCropRun(archive, run_attributes, trace, "required_handles");
-    if (!ValidRunName(descriptor.source_crop_run)) return nullptr;
+    if (!ValidRunName(descriptor.source_crop_run))
+      return nullptr;
 
     keypoints = OpenKeypointStore(archive, run_base + "/keypoints_img", trace,
                                   "required_handles");
@@ -969,9 +991,10 @@ std::unique_ptr<KeypointOverlayRepository> TryOpenLazyKeypointRepository(
     } else {
       return nullptr;
     }
-    if (RowCount(*keypoints) != descriptor.row_count) return nullptr;
+    if (RowCount(*keypoints) != descriptor.row_count)
+      return nullptr;
     const size_t keypoint_count = std::visit(
-        [](const auto& store) {
+        [](const auto &store) {
           return static_cast<size_t>(store.domain().shape()[1]);
         },
         *keypoints);
@@ -989,7 +1012,8 @@ std::unique_ptr<KeypointOverlayRepository> TryOpenLazyKeypointRepository(
       trace->record("frame_counts_read", "array_read",
                     run_base + "/frame_counts", "selected[1]", started, read);
     }
-    if (!read) return nullptr;
+    if (!read)
+      return nullptr;
   }
   std::vector<uint64_t> offsets(counts.size() + 1, 0);
   {
@@ -1003,7 +1027,8 @@ std::unique_ptr<KeypointOverlayRepository> TryOpenLazyKeypointRepository(
       }
       offsets[frame + 1] = offsets[frame] + counts[frame];
     }
-    if (offsets.back() != descriptor.row_count) return nullptr;
+    if (offsets.back() != descriptor.row_count)
+      return nullptr;
   }
 
   const std::string crop_base = "crop_runs/" + descriptor.source_crop_run;
@@ -1067,7 +1092,7 @@ std::unique_ptr<KeypointOverlayRepository> TryOpenLazyKeypointRepository(
       std::move(flip_corrected),    std::move(*crop_frames),
       std::move(crop_detections),   std::move(*crop_offsets),
       std::move(crop_boxes),        std::move(crop_detection_source)};
-  auto aligned = [row_count = descriptor.row_count](const auto& store) {
+  auto aligned = [row_count = descriptor.row_count](const auto &store) {
     return !store || RowCount(*store) == row_count;
   };
   if (!aligned(stores.detections) || !aligned(stores.headings) ||
@@ -1075,31 +1100,33 @@ std::unique_ptr<KeypointOverlayRepository> TryOpenLazyKeypointRepository(
       !aligned(stores.usable) || !aligned(stores.flip_corrected))
     return nullptr;
   const size_t crop_row_count = RowCount(stores.crop_frames);
-  auto crop_aligned = [crop_row_count](const auto& store) {
+  auto crop_aligned = [crop_row_count](const auto &store) {
     return !store || RowCount(*store) == crop_row_count;
   };
   if (!crop_aligned(stores.crop_detections) ||
       !crop_aligned(stores.crop_boxes) ||
       !crop_aligned(stores.crop_detection_source))
     return nullptr;
-  if (trace) trace->setLazyPath();
+  if (trace)
+    trace->setLazyPath();
   return std::make_unique<LazyKeypointOverlayRepository>(
       std::move(descriptor), std::move(offsets), std::move(stores), roi_width,
       roi_height);
 }
 
-}  // namespace
+} // namespace
 
-std::unique_ptr<KeypointOverlayRepository> OpenKeypointOverlayRepository(
-    const std::shared_ptr<ArchiveContext>& archive,
-    const std::string& requested_run, std::string* error_message,
-    KeypointRepositoryOpenMetrics* open_metrics) {
+std::unique_ptr<KeypointOverlayRepository>
+OpenKeypointOverlayRepository(const std::shared_ptr<ArchiveContext> &archive,
+                              const std::string &requested_run,
+                              std::string *error_message,
+                              KeypointRepositoryOpenMetrics *open_metrics) {
   KeypointOpenTrace trace(open_metrics);
   if (!archive || !archive->impl_) {
     internal::SetArchiveError(error_message, "Archive context is not open");
     return nullptr;
   }
-  const auto& impl = *archive->impl_;
+  const auto &impl = *archive->impl_;
   std::optional<SelectedRun> selected;
   {
     KeypointPhaseTimer timer(&trace,
@@ -1299,7 +1326,7 @@ std::unique_ptr<KeypointOverlayRepository> OpenKeypointOverlayRepository(
             "Keypoint camera frame is absent from the source crop run");
         return nullptr;
       }
-      auto& cursor = frame_cursors[frame_indices[index]];
+      auto &cursor = frame_cursors[frame_indices[index]];
       if (detection_indices[index] >= 0) {
         const auto exact =
             std::find_if(candidates->second.begin(), candidates->second.end(),
@@ -1358,4 +1385,4 @@ std::unique_ptr<KeypointOverlayRepository> OpenKeypointOverlayRepository(
   return MakeKeypointOverlayRepository(std::move(descriptor), std::move(rows));
 }
 
-}  // namespace crimson::zarr
+} // namespace crimson::zarr

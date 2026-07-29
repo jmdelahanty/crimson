@@ -1,5 +1,6 @@
 #include "canonical_detection_buffer.h"
 #include "platform/macos/apple_analysis_repository_loader.h"
+#include "process_memory.h"
 #include "read_only_overlay_scene.h"
 #include "session_readiness.h"
 #include "zarr/affiliated_video_repository.h"
@@ -28,7 +29,13 @@
 #include <utility>
 #include <vector>
 
-#include <sys/resource.h>
+#ifndef CRIMSON_GIT_COMMIT
+#define CRIMSON_GIT_COMMIT "unknown"
+#endif
+
+#ifndef CRIMSON_WORKTREE_DIRTY
+#define CRIMSON_WORKTREE_DIRTY 1
+#endif
 
 namespace {
 
@@ -98,6 +105,158 @@ struct LoadOutcome {
   size_t interference_active_at_request = 0;
   CanonicalDetectionResidencyMetrics residency;
 };
+
+json memoryAttributionJson(
+    const crimson::diagnostics::MemoryAttributionSnapshot &snapshot);
+
+std::vector<crimson::diagnostics::RetainedMemoryOwner>
+retainedMemoryOwners(const LoadOutcome &outcome) {
+  using Owner = crimson::diagnostics::RetainedMemoryOwner;
+  std::vector<Owner> owners;
+  if (outcome.products.archive) {
+    owners.push_back(
+        {"tensorstore", "decoded_cache", 0, false,
+         "Archive cachePoolBytes is a configured limit, not allocated bytes"});
+  }
+  if (outcome.detection_buffer) {
+    const auto descriptor = outcome.detection_buffer->descriptor();
+    const auto buffer = outcome.detection_buffer->metrics();
+    const auto residency = outcome.detection_buffer->residencyMetrics();
+    owners.push_back({"canonical_detection_offsets", "retained_index",
+                      descriptor.retained_offset_bytes, true,
+                      "Authoritative frame_row_offsets vector"});
+    owners.push_back({"canonical_detection_pages", "presentation_cache",
+                      buffer.cached_bytes, true,
+                      "Current bounded detection page cache"});
+    owners.push_back({"canonical_detection_residency", "resident_columns",
+                      residency.retained_bytes, true,
+                      "Atomically published UI-column snapshot"});
+  }
+  if (outcome.products.masks) {
+    const auto metrics = outcome.products.masks->metrics();
+    owners.push_back({"subject_masks_metadata", "retained_index",
+                      metrics.metadata_retained_bytes, false,
+                      "Reported metadata only; TensorStore handles excluded"});
+    owners.push_back({"subject_masks_frame_index", "retained_index",
+                      metrics.frame_index_retained_bytes, true,
+                      "Retained camera-frame index"});
+    owners.push_back({"subject_masks_mapping_pages", "decoded_cache",
+                      metrics.cached_mapping_bytes, true,
+                      "Current bounded mapping-page cache"});
+    owners.push_back({"subject_masks_payload_chunks", "decoded_cache",
+                      metrics.cached_payload_bytes, true,
+                      "Current bounded sparse mask payload cache"});
+  }
+  if (outcome.products.motion) {
+    const auto metrics = outcome.products.motion->metrics();
+    owners.push_back({"motion_preload", "resident_trace",
+                      metrics.preloaded_retained_bytes, true,
+                      "Decoded default-source trace preload"});
+    owners.push_back({"motion_frame_index", "retained_index",
+                      metrics.cached_frame_index_bytes, true,
+                      "Current frame-index cache"});
+  }
+  if (outcome.products.eye_angles) {
+    const auto metrics = outcome.products.eye_angles->metrics();
+    owners.push_back({"eye_angle_preload", "resident_trace",
+                      metrics.preloaded_retained_bytes, true,
+                      "Decoded frame-series preload"});
+  }
+  if (outcome.products.tail_kinematics) {
+    const auto metrics = outcome.products.tail_kinematics->metrics();
+    owners.push_back({"tail_kinematics_preload", "resident_trace",
+                      metrics.preloaded_retained_bytes, true,
+                      "Decoded default-source trace preload"});
+    owners.push_back({"tail_kinematics_frame_index", "retained_index",
+                      metrics.cached_frame_index_bytes, true,
+                      "Current frame-index cache"});
+  }
+  if (outcome.products.keypoints) {
+    const auto metrics = outcome.products.keypoints->memoryMetrics();
+    owners.push_back({"keypoints", "repository_lower_bound",
+                      metrics.reportedRetainedBytes(), metrics.complete,
+                      "Offsets/containers only; TensorStore handles excluded"});
+  }
+  if (outcome.products.shape) {
+    const auto metrics = outcome.products.shape->memoryMetrics();
+    owners.push_back(
+        {"subject_shape", "repository_lower_bound",
+         metrics.reportedRetainedBytes(), metrics.complete,
+         "Placement/index/chunk containers; allocator overhead excluded"});
+  }
+  if (outcome.products.eye_geometry) {
+    const auto metrics = outcome.products.eye_geometry->memoryMetrics();
+    owners.push_back(
+        {"eye_geometry", "repository_lower_bound",
+         metrics.reportedRetainedBytes(), metrics.complete,
+         "Placement/index/chunk containers; allocator overhead excluded"});
+  }
+  if (outcome.products.crop_geometry) {
+    const auto metrics = outcome.products.crop_geometry->memoryMetrics();
+    owners.push_back(
+        {"crop_geometry", "repository_lower_bound",
+         metrics.reportedRetainedBytes(), metrics.complete,
+         "Geometry rows/index containers; allocator overhead excluded"});
+  }
+  owners.push_back({"scheduler", "in_flight", 0, false,
+                    "Queued callable and thread-stack bytes are not reported"});
+  return owners;
+}
+
+void captureMemoryAttribution(const std::string &phase,
+                              const LoadOutcome &outcome, json *evidence) {
+  auto snapshot = crimson::diagnostics::attributeProcessMemory(
+      crimson::diagnostics::sampleProcessMemory(),
+      retainedMemoryOwners(outcome));
+  auto value = memoryAttributionJson(snapshot);
+  value["phase"] = phase;
+  value["configured_limits"] = {
+      {"tensorstore_cache_pool_bytes",
+       outcome.products.archive ? outcome.products.archive->cachePoolBytes()
+                                : 0},
+      {"detection_page_capacity", kCachePages},
+      {"detection_residency_budget_bytes", kResidentBudgetBytes},
+  };
+  if (outcome.detection_buffer) {
+    const auto detection = outcome.detection_buffer->metrics();
+    value["reported_peaks"]["canonical_detection_page_cache_bytes"] =
+        detection.peak_cached_bytes;
+  }
+  if (outcome.products.masks) {
+    const auto masks = outcome.products.masks->metrics();
+    value["reported_peaks"]["subject_mask_mapping_cache_bytes"] =
+        masks.peak_cached_mapping_bytes;
+    value["reported_peaks"]["subject_mask_payload_cache_bytes"] =
+        masks.peak_cached_payload_bytes;
+  }
+  auto repositoryMemory = [](const auto &repository) {
+    const auto metrics = repository->memoryMetrics();
+    return json{{"retained_metadata_bytes", metrics.retained_metadata_bytes},
+                {"retained_index_bytes", metrics.retained_index_bytes},
+                {"retained_payload_bytes", metrics.retained_payload_bytes},
+                {"decoded_cache_bytes", metrics.decoded_cache_bytes},
+                {"reported_retained_bytes", metrics.reportedRetainedBytes()},
+                {"complete", metrics.complete}};
+  };
+  if (outcome.products.keypoints) {
+    value["repository_breakdown"]["keypoints"] =
+        repositoryMemory(outcome.products.keypoints);
+  }
+  if (outcome.products.shape) {
+    value["repository_breakdown"]["subject_shape"] =
+        repositoryMemory(outcome.products.shape);
+  }
+  if (outcome.products.eye_geometry) {
+    value["repository_breakdown"]["eye_geometry"] =
+        repositoryMemory(outcome.products.eye_geometry);
+  }
+  if (outcome.products.crop_geometry) {
+    value["repository_breakdown"]["crop_geometry"] =
+        repositoryMemory(outcome.products.crop_geometry);
+  }
+  (*evidence)["memory_attribution"]["phase_snapshots"].push_back(
+      std::move(value));
+}
 
 void require(bool condition, const std::string &message) {
   if (!condition) {
@@ -173,15 +332,61 @@ json residencyMetricsJson(const CanonicalDetectionResidencyMetrics &metrics) {
 }
 
 uint64_t peakRssBytes() {
-  rusage usage{};
-  if (getrusage(RUSAGE_SELF, &usage) != 0 || usage.ru_maxrss < 0) {
-    return 0;
+  return crimson::diagnostics::sampleProcessMemory().peak_rss_bytes;
+}
+
+json processMemoryJson(
+    const crimson::diagnostics::ProcessMemorySnapshot &snapshot) {
+  return {
+      {"current_rss_bytes", snapshot.current_rss_bytes},
+      {"peak_rss_bytes", snapshot.peak_rss_bytes},
+      {"current_rss_supported", snapshot.current_rss_supported},
+      {"peak_rss_supported", snapshot.peak_rss_supported},
+  };
+}
+
+json memorySamplesJson(
+    const std::vector<crimson::diagnostics::ProcessMemorySample> &samples) {
+  json result = json::array();
+  for (const auto &sample : samples) {
+    result.push_back({
+        {"elapsed_ms", sample.elapsed_ms},
+        {"phase", sample.phase},
+        {"event", sample.event},
+        {"current_rss_bytes", sample.process.current_rss_bytes},
+        {"peak_rss_bytes", sample.process.peak_rss_bytes},
+        {"current_rss_supported", sample.process.current_rss_supported},
+        {"peak_rss_supported", sample.process.peak_rss_supported},
+    });
   }
-#if defined(__APPLE__)
-  return static_cast<uint64_t>(usage.ru_maxrss);
-#else
-  return static_cast<uint64_t>(usage.ru_maxrss) * 1024;
-#endif
+  return result;
+}
+
+json memoryAttributionJson(
+    const crimson::diagnostics::MemoryAttributionSnapshot &snapshot) {
+  json owners = json::array();
+  for (const auto &owner : snapshot.owners) {
+    owners.push_back({
+        {"owner", owner.owner},
+        {"category", owner.category},
+        {"retained_bytes", owner.retained_bytes},
+        {"complete", owner.complete},
+        {"note", owner.note},
+    });
+  }
+  return {
+      {"process", processMemoryJson(snapshot.process)},
+      {"owners", std::move(owners)},
+      {"reported_retained_bytes", snapshot.reported_retained_bytes},
+      {"unattributed_rss_bytes", snapshot.unattributed_rss_bytes},
+      {"reported_over_rss_bytes", snapshot.reported_over_rss_bytes},
+      {"all_owners_complete", snapshot.all_owners_complete},
+      {"interpretation",
+       "reported_retained_bytes is an exact lower bound; unattributed RSS "
+       "includes uninstrumented repositories, TensorStore/cache internals, "
+       "temporary allocations, libraries, thread stacks, and allocator "
+       "retention"},
+  };
 }
 
 void hashBytes(uint64_t *hash, const void *data, size_t size) {
@@ -287,6 +492,7 @@ LoadOutcome loadRequiredProducts(
     const std::filesystem::path &archive_path, const std::string &run_name,
     const std::shared_ptr<crimson::data::DataAccessScheduler> &scheduler,
     Clock::time_point process_started, const std::string &strategy,
+    crimson::diagnostics::ProcessMemorySampler *memory_sampler,
     json *evidence) {
   AppleAnalysisRepositoryLoadRequest request;
   request.archive_path = archive_path.string();
@@ -351,9 +557,20 @@ LoadOutcome loadRequiredProducts(
   auto drain = [&] {
     while (auto ready = loader.takeReady()) {
       const bool had_detection_buffer = outcome.detection_buffer != nullptr;
+      std::vector<std::pair<std::string, bool>> completed_products;
+      completed_products.reserve(ready->timings.size());
+      for (const auto &timing : ready->timings) {
+        completed_products.emplace_back(timing.product, timing.available);
+      }
       adoptProduct(std::move(*ready), process_started, archive_path, scheduler,
                    &outcome.products, &outcome.detection_buffer,
                    &archive_ready_ms, &timings);
+      if (memory_sampler) {
+        for (const auto &[product, available] : completed_products) {
+          memory_sampler->mark("product_ready:" + product + ":" +
+                               (available ? "available" : "unavailable"));
+        }
+      }
       if (!had_detection_buffer && outcome.detection_buffer) {
         first_detection_request_ms = elapsedMilliseconds(process_started);
         const auto scheduler_metrics = scheduler->metrics();
@@ -555,6 +772,7 @@ LoadOutcome loadRequiredProducts(
        physicalMetricsJson(phase_metrics_at_ready - phase_metrics_before)},
       {"peak_rss_bytes", peak_rss_at_ready},
   };
+  captureMemoryAttribution("required_products_ready", outcome, evidence);
   return outcome;
 }
 
@@ -1071,6 +1289,12 @@ int main(int argc, char **argv) {
   const std::filesystem::path output_path = argc == 8 ? argv[7] : argv[6];
   const auto process_started = Clock::now();
   const auto process_physical_before = snapshotPhysicalMetrics();
+  crimson::diagnostics::ProcessMemorySampler memory_sampler(
+      std::chrono::milliseconds(25));
+  if (!memory_sampler.start("process_start")) {
+    std::cerr << "Could not start process-memory sampler\n";
+    return 1;
+  }
 
   json evidence = {
       {"schema_id", "crimson.canonical_detection_full_archive_stage1"},
@@ -1082,8 +1306,16 @@ int main(int argc, char **argv) {
       {"repetition", repetition},
       {"archive", archive_path.string()},
       {"requested_run", run_name},
+      {"crimson_commit", CRIMSON_GIT_COMMIT},
+      {"crimson_worktree_dirty", CRIMSON_WORKTREE_DIRTY != 0},
       {"frame_range", {0, kExpectedFrames}},
       {"pass", false},
+  };
+  evidence["memory_attribution"] = {
+      {"schema_id", "crimson.process_memory_attribution"},
+      {"schema_version", 1},
+      {"sample_interval_ms", 25},
+      {"phase_snapshots", json::array()},
   };
 
   auto scheduler =
@@ -1099,20 +1331,30 @@ int main(int argc, char **argv) {
     require(std::filesystem::exists(archive_path / "zarr.json"),
             "Archive root is unavailable");
 
-    auto outcome = loadRequiredProducts(archive_path, run_name, scheduler,
-                                        process_started, strategy, &evidence);
+    memory_sampler.setPhase("required_product_loading");
+    auto outcome =
+        loadRequiredProducts(archive_path, run_name, scheduler, process_started,
+                             strategy, &memory_sampler, &evidence);
     evidence["archive_context"] = {
         {"cache_pool_bytes", outcome.products.archive->cachePoolBytes()},
     };
+    memory_sampler.setPhase("first_presentations");
     validateAffiliatedVideo(outcome.products, video_path, &evidence);
     validateCanonicalOpen(outcome, run_name, &evidence);
     validateFirstPresentations(&outcome, process_started, &evidence);
+    captureMemoryAttribution("first_presentations", outcome, &evidence);
+    memory_sampler.setPhase("random_settles");
     runSettleFrames(&outcome, &evidence);
+    captureMemoryAttribution("random_settles", outcome, &evidence);
+    memory_sampler.setPhase("seek_burst");
     runSeekBurst(&outcome, scheduler, &evidence);
-    evidence["traversal"] = {
-        {"forward", runTraversal(&outcome, scheduler, false)},
-        {"reverse", runTraversal(&outcome, scheduler, true)},
-    };
+    captureMemoryAttribution("seek_burst", outcome, &evidence);
+    memory_sampler.setPhase("forward_traversal");
+    evidence["traversal"]["forward"] = runTraversal(&outcome, scheduler, false);
+    captureMemoryAttribution("forward_traversal", outcome, &evidence);
+    memory_sampler.setPhase("reverse_traversal");
+    evidence["traversal"]["reverse"] = runTraversal(&outcome, scheduler, true);
+    captureMemoryAttribution("reverse_traversal", outcome, &evidence);
 
     scheduler->waitUntilIdle();
     const auto scheduler_metrics = scheduler->metrics();
@@ -1122,10 +1364,33 @@ int main(int argc, char **argv) {
             "Shared scheduler reported a work exception");
     evidence["scheduler"] = schedulerJson(scheduler_metrics);
 
+    memory_sampler.setPhase("shutdown");
+    captureMemoryAttribution("before_shutdown", outcome, &evidence);
     const auto shutdown_started = Clock::now();
     outcome.detection_buffer->close();
     scheduler->shutdown();
     evidence["shutdown_ms"] = elapsedMilliseconds(shutdown_started);
+    memory_sampler.mark("scheduler_shutdown");
+    outcome.detection_buffer.reset();
+    outcome.products.keypoints.reset();
+    outcome.products.masks.reset();
+    outcome.products.shape.reset();
+    outcome.products.eye_geometry.reset();
+    outcome.products.motion.reset();
+    outcome.products.eye_angles.reset();
+    outcome.products.tail_kinematics.reset();
+    outcome.products.crop_geometry.reset();
+    outcome.products.archive.reset();
+    memory_sampler.mark("repositories_released");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    memory_sampler.mark("release_settled");
+    evidence["memory_attribution"]["after_release"] =
+        processMemoryJson(crimson::diagnostics::sampleProcessMemory());
+    memory_sampler.stop();
+    evidence["memory_attribution"]["timeline"] =
+        memorySamplesJson(memory_sampler.samples());
+    evidence["memory_attribution"]["maximum_observed"] =
+        processMemoryJson(memory_sampler.maximumObserved());
     evidence["peak_rss_bytes"] = peakRssBytes();
     evidence["total_elapsed_ms"] = elapsedMilliseconds(process_started);
     evidence["physical_total"] = physicalMetricsJson(snapshotPhysicalMetrics() -
@@ -1137,7 +1402,14 @@ int main(int argc, char **argv) {
               << " repetition=" << repetition << '\n';
     return 0;
   } catch (const std::exception &exception) {
+    memory_sampler.setPhase("failure");
+    memory_sampler.mark("exception");
+    memory_sampler.stop();
     evidence["error"] = exception.what();
+    evidence["memory_attribution"]["timeline"] =
+        memorySamplesJson(memory_sampler.samples());
+    evidence["memory_attribution"]["maximum_observed"] =
+        processMemoryJson(memory_sampler.maximumObserved());
     evidence["peak_rss_bytes"] = peakRssBytes();
     evidence["total_elapsed_ms"] = elapsedMilliseconds(process_started);
     evidence["physical_total"] = physicalMetricsJson(snapshotPhysicalMetrics() -

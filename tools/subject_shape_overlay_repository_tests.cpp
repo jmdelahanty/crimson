@@ -103,10 +103,10 @@ bool WriteArray(const std::filesystem::path &root, const std::string &path,
          {{"name", "default"}, {"configuration", {{"separator", "/"}}}}},
         {"fill_value", 0},
         {"codecs", json::array({bytes})}}}};
-  auto store = ts::Open<T, Rank>(
-                   spec, ts::OpenMode::open | ts::OpenMode::create,
-                   ts::ReadWriteMode::read_write)
-                   .result();
+  auto store =
+      ts::Open<T, Rank>(spec, ts::OpenMode::open | ts::OpenMode::create,
+                        ts::ReadWriteMode::read_write)
+          .result();
   if (!store.ok()) {
     std::cerr << "Failed to create " << path << ": " << store.status() << '\n';
     return false;
@@ -117,8 +117,8 @@ bool WriteArray(const std::filesystem::path &root, const std::string &path,
 }
 
 std::vector<float> PointRows(float offset) {
-  return {offset + 1, offset + 1, offset + 2, offset + 1,
-          offset + 3, offset + 1};
+  return {offset + 1, offset + 1, offset + 2,
+          offset + 1, offset + 3, offset + 1};
 }
 
 std::vector<float> SequenceRows(float offset) {
@@ -134,45 +134,48 @@ std::vector<float> SequenceRows(float offset) {
 
 bool WriteSubjectShapeRunMetadata(const std::filesystem::path &root,
                                   const std::string &row_axis) {
-  return WriteJson(
-      root / "analysis/subject_shape_runs/shape_fixture/zarr.json",
-      {{"zarr_format", 3}, {"node_type", "group"},
-       {"attributes",
-        {{"source_refined_subject_masks_run", "refined_fixture"},
-         {"schema_id", "analysis.subject_shape_runs"},
-         {"schema_version", 3},
-         {"method", "fixture_method"},
-         {"method_version", 8},
-         {"row_axis", row_axis},
-         {"head_endpoint_semantics", "validated_snout_tip"}}}});
+  return WriteJson(root / "analysis/subject_shape_runs/shape_fixture/zarr.json",
+                   {{"zarr_format", 3},
+                    {"node_type", "group"},
+                    {"attributes",
+                     {{"source_refined_subject_masks_run", "refined_fixture"},
+                      {"schema_id", "analysis.subject_shape_runs"},
+                      {"schema_version", 3},
+                      {"method", "fixture_method"},
+                      {"method_version", 8},
+                      {"row_axis", row_axis},
+                      {"head_endpoint_semantics", "validated_snout_tip"}}}});
 }
 
 bool WriteFixture(const std::filesystem::path &root) {
   CHECK(WriteJson(root / "crop_runs/zarr.json",
-                  {{"zarr_format", 3}, {"node_type", "group"},
+                  {{"zarr_format", 3},
+                   {"node_type", "group"},
                    {"attributes", {{"latest", "crop_fixture"}}}}));
   CHECK(WriteJson(root / "crop_runs/crop_fixture/zarr.json",
-                  {{"zarr_format", 3}, {"node_type", "group"},
+                  {{"zarr_format", 3},
+                   {"node_type", "group"},
                    {"attributes", {{"roi_size", {40, 80}}}}}));
   CHECK((WriteArray<int32_t, 1>(root, "crop_runs/crop_fixture/frame_indices",
                                 "int32", {3}, {1, 2, 2})));
-  CHECK((WriteArray<int32_t, 1>(
-      root, "crop_runs/crop_fixture/detection_indices", "int32", {3},
-      {0, 0, 1})));
-  CHECK((WriteArray<int32_t, 2>(
-      root, "crop_runs/crop_fixture/roi_coordinates_full", "int32", {3, 2},
-      {10, 20, 30, 40, 50, 60})));
+  CHECK(
+      (WriteArray<int32_t, 1>(root, "crop_runs/crop_fixture/detection_indices",
+                              "int32", {3}, {0, 0, 1})));
+  CHECK((WriteArray<int32_t, 2>(root,
+                                "crop_runs/crop_fixture/roi_coordinates_full",
+                                "int32", {3, 2}, {10, 20, 30, 40, 50, 60})));
 
   const std::string refined = "refined_subject_masks_runs/refined_fixture";
   CHECK(WriteJson(root / refined / "zarr.json",
-                  {{"zarr_format", 3}, {"node_type", "group"},
+                  {{"zarr_format", 3},
+                   {"node_type", "group"},
                    {"attributes", {{"source_crop_run", "crop_fixture"}}}}));
-  CHECK((WriteArray<int32_t, 1>(root, refined + "/frame_indices", "int32",
-                                {3}, {2, 1, 2})));
+  CHECK((WriteArray<int32_t, 1>(root, refined + "/frame_indices", "int32", {3},
+                                {2, 1, 2})));
   CHECK((WriteArray<int32_t, 1>(root, refined + "/detection_indices", "int32",
                                 {3}, {1, 0, 0})));
-  CHECK((WriteArray<int64_t, 1>(root, refined + "/source_crop_row_ids",
-                                "int64", {3}, {2, 0, 1})));
+  CHECK((WriteArray<int64_t, 1>(root, refined + "/source_crop_row_ids", "int64",
+                                {3}, {2, 0, 1})));
   CHECK((WriteArray<int64_t, 1>(root, refined + "/source_refined_row_ids",
                                 "int64", {3}, {102, 100, 101})));
   CHECK((WriteArray<uint8_t, 4>(root, refined + "/masks_roi", "uint8",
@@ -180,20 +183,19 @@ bool WriteFixture(const std::filesystem::path &root) {
                                 std::vector<uint8_t>(3 * 1 * 4 * 8, 0))));
 
   constexpr const char *run = "shape_fixture";
-  CHECK(WriteJson(
-      root / "analysis/subject_shape_runs/zarr.json",
-      {{"zarr_format", 3}, {"node_type", "group"},
-       {"attributes", {{"latest_complete", run}}}}));
-  const std::string base =
-      std::string("analysis/subject_shape_runs/") + run;
+  CHECK(WriteJson(root / "analysis/subject_shape_runs/zarr.json",
+                  {{"zarr_format", 3},
+                   {"node_type", "group"},
+                   {"attributes", {{"latest_complete", run}}}}));
+  const std::string base = std::string("analysis/subject_shape_runs/") + run;
   CHECK(WriteSubjectShapeRunMetadata(root, "refined_subject_mask_rows"));
   const std::string rows = base + "/row_index";
   CHECK((WriteArray<int32_t, 1>(root, rows + "/frame_indices", "int32", {3},
                                 {2, 1, 2})));
-  CHECK((WriteArray<int32_t, 1>(root, rows + "/detection_indices", "int32",
-                                {3}, {1, 0, 0})));
-  CHECK((WriteArray<int64_t, 1>(root, rows + "/source_refined_row_ids",
-                                "int64", {3}, {102, 100, 101})));
+  CHECK((WriteArray<int32_t, 1>(root, rows + "/detection_indices", "int32", {3},
+                                {1, 0, 0})));
+  CHECK((WriteArray<int64_t, 1>(root, rows + "/source_refined_row_ids", "int64",
+                                {3}, {102, 100, 101})));
   CHECK((WriteArray<int64_t, 1>(root, rows + "/source_crop_row_ids", "int64",
                                 {3}, {2, 0, 1})));
 
@@ -202,16 +204,15 @@ bool WriteFixture(const std::filesystem::path &root) {
   CHECK((WriteArray<uint8_t, 1>(root, body + "/valid", "uint8", {3}, valid)));
   CHECK((WriteArray<float, 2>(root, body + "/origin_xy", "float32", {3, 2},
                               PointRows(0))));
-  CHECK((WriteArray<float, 2>(
-      root, body + "/forward_axis_xy", "float32", {3, 2},
-      {1, 0, 1, 0, 1, 0})));
-  CHECK((WriteArray<float, 2>(root, body + "/left_axis_xy", "float32",
-                              {3, 2}, {0, 1, 0, 1, 0, 1})));
+  CHECK((WriteArray<float, 2>(root, body + "/forward_axis_xy", "float32",
+                              {3, 2}, {1, 0, 1, 0, 1, 0})));
+  CHECK((WriteArray<float, 2>(root, body + "/left_axis_xy", "float32", {3, 2},
+                              {0, 1, 0, 1, 0, 1})));
 
   const std::string subject = base + "/components/subject_body";
-  for (const auto *name : {"snout_tip_valid", "tail_base_valid",
-                           "centerline_valid", "centerline_reaches_snout",
-                           "bspline_valid", "tail_sample_valid"}) {
+  for (const auto *name :
+       {"snout_tip_valid", "tail_base_valid", "centerline_valid",
+        "centerline_reaches_snout", "bspline_valid", "tail_sample_valid"}) {
     CHECK((WriteArray<uint8_t, 1>(root, subject + "/" + name, "uint8", {3},
                                   valid)));
   }
@@ -219,11 +220,11 @@ bool WriteFixture(const std::filesystem::path &root) {
                               {3, 2}, PointRows(0))));
   CHECK((WriteArray<float, 2>(root, subject + "/tail_base_xy", "float32",
                               {3, 2}, PointRows(1))));
-  CHECK((WriteArray<float, 2>(root, subject + "/tail_tip_xy", "float32",
-                              {3, 2}, PointRows(2))));
-  for (const auto *name : {"centerline_xy", "bspline_sample_xy",
-                           "bspline_control_points_xy", "tail_sample_xy",
-                           "tail_normal_xy"}) {
+  CHECK((WriteArray<float, 2>(root, subject + "/tail_tip_xy", "float32", {3, 2},
+                              PointRows(2))));
+  for (const auto *name :
+       {"centerline_xy", "bspline_sample_xy", "bspline_control_points_xy",
+        "tail_sample_xy", "tail_normal_xy"}) {
     CHECK((WriteArray<float, 3>(root, subject + "/" + name, "float32",
                                 {3, 3, 2}, SequenceRows(0))));
   }
@@ -239,8 +240,8 @@ bool WriteFixture(const std::filesystem::path &root) {
 bool TestRepositoryAndScene(
     const std::shared_ptr<crimson::zarr::ArchiveContext> &archive) {
   std::string error;
-  auto repository = crimson::zarr::OpenSubjectShapeOverlayRepository(
-      archive, {}, &error);
+  auto repository =
+      crimson::zarr::OpenSubjectShapeOverlayRepository(archive, {}, &error);
   CHECK(repository != nullptr);
   const auto descriptor = repository->descriptor();
   CHECK(descriptor.run_name == "shape_fixture");
@@ -261,6 +262,10 @@ bool TestRepositoryAndScene(
   CHECK(frame.detections[0].roi_y == 60.0);
   CHECK(frame.detections[0].geometry.centerline.size() == 3);
   CHECK(frame.detections[1].shape_row == 2);
+  const auto memory = repository->memoryMetrics();
+  CHECK(memory.retained_metadata_bytes >= 3 * sizeof(size_t));
+  CHECK(memory.retained_index_bytes > 0);
+  CHECK(memory.decoded_cache_bytes > 0);
   CHECK(repository->resolveCameraFrame(0, 200, 100).status ==
         crimson::zarr::SubjectShapeOverlayStatus::Missing);
   CHECK(repository->resolveCameraFrame(3, 200, 100).status ==
@@ -291,8 +296,8 @@ bool TestRepositoryAndScene(
 
   --input.identity.overlay_frame;
   CHECK(!crimson::overlay::buildReadOnlyOverlayScene(input).ready());
-  CHECK(!crimson::zarr::appendSubjectShapeOverlaySceneInput(
-      descriptor, frame, 2, &input));
+  CHECK(!crimson::zarr::appendSubjectShapeOverlaySceneInput(descriptor, frame,
+                                                            2, &input));
   return true;
 }
 
@@ -303,8 +308,8 @@ bool TestLineageMismatchRejected(const std::filesystem::path &root) {
   std::string error;
   auto archive = crimson::zarr::ArchiveContext::Open(root, &error);
   CHECK(archive != nullptr);
-  auto repository = crimson::zarr::OpenSubjectShapeOverlayRepository(
-      archive, {}, &error);
+  auto repository =
+      crimson::zarr::OpenSubjectShapeOverlayRepository(archive, {}, &error);
   CHECK(repository == nullptr);
   CHECK(error.find("does not match") != std::string::npos);
   return true;
@@ -315,8 +320,8 @@ bool TestRowAxisMismatchRejected(const std::filesystem::path &root) {
   std::string error;
   auto archive = crimson::zarr::ArchiveContext::Open(root, &error);
   CHECK(archive != nullptr);
-  auto repository = crimson::zarr::OpenSubjectShapeOverlayRepository(
-      archive, {}, &error);
+  auto repository =
+      crimson::zarr::OpenSubjectShapeOverlayRepository(archive, {}, &error);
   CHECK(repository == nullptr);
   CHECK(error.find("row_axis") != std::string::npos);
   CHECK(WriteSubjectShapeRunMetadata(root, "refined_subject_mask_rows"));
@@ -337,8 +342,8 @@ public:
       : state_(std::move(state)) {
     descriptor_.camera_frame_count = 100;
   }
-  const crimson::zarr::SubjectShapeOverlayDescriptor &descriptor()
-      const override {
+  const crimson::zarr::SubjectShapeOverlayDescriptor &
+  descriptor() const override {
     return descriptor_;
   }
   crimson::zarr::SubjectShapeOverlayResolution
@@ -395,8 +400,7 @@ int main() {
     return 1;
   }
   std::string error;
-  auto archive =
-      crimson::zarr::ArchiveContext::Open(temporary.path(), &error);
+  auto archive = crimson::zarr::ArchiveContext::Open(temporary.path(), &error);
   if (!archive) {
     std::cerr << error << '\n';
     return 1;

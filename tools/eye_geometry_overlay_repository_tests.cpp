@@ -228,9 +228,9 @@ bool WriteFixture(const std::filesystem::path &root, bool lineage_mismatch,
       root, run + "/roi_qa", "uint16",
       channel_shape_mismatch ? std::array<ts::Index, 2>{3, 2}
                              : std::array<ts::Index, 2>{3, 3},
-      channel_shape_mismatch ? std::vector<uint16_t>{1, 1, 1, 1, 1, 1}
-                             : std::vector<uint16_t>{1, 1, 1, 1, 1, 1, 1, 1,
-                                                     1})));
+      channel_shape_mismatch
+          ? std::vector<uint16_t>{1, 1, 1, 1, 1, 1}
+          : std::vector<uint16_t>{1, 1, 1, 1, 1, 1, 1, 1, 1})));
   return true;
 }
 
@@ -261,6 +261,10 @@ bool TestFixture(const std::filesystem::path &root) {
   CHECK(std::abs(frame.detections[0].eyes[0].eye_frame_angle_degrees - 10.0) <
         1e-6);
   CHECK(frame.detections[1].eye_row == 2);
+  const auto memory = repository->memoryMetrics();
+  CHECK(memory.retained_metadata_bytes > 0);
+  CHECK(memory.retained_index_bytes > 0);
+  CHECK(memory.decoded_cache_bytes > 0);
   CHECK(repository->resolveCameraFrame(0, 200, 100).status ==
         crimson::zarr::EyeGeometryOverlayStatus::Missing);
   CHECK(repository->resolveCameraFrame(3, 200, 100).status ==
@@ -326,9 +330,9 @@ int main() {
   TemporaryDirectory bad;
   TemporaryDirectory bad_channels;
   if (good.path().empty() || bad.path().empty() ||
-      bad_channels.path().empty() ||
-      !WriteFixture(good.path(), false) || !TestFixture(good.path()) ||
-      !WriteFixture(bad.path(), true) || !TestLineageMismatch(bad.path()) ||
+      bad_channels.path().empty() || !WriteFixture(good.path(), false) ||
+      !TestFixture(good.path()) || !WriteFixture(bad.path(), true) ||
+      !TestLineageMismatch(bad.path()) ||
       !WriteFixture(bad_channels.path(), false, true) ||
       !TestChannelShapeMismatch(bad_channels.path())) {
     return 1;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "zarr/repository_memory.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -107,6 +109,7 @@ public:
   virtual SubjectShapeOverlayResolution
   resolveCameraFrame(int64_t camera_frame, int full_frame_width,
                      int full_frame_height) const = 0;
+  virtual RepositoryMemoryMetrics memoryMetrics() const { return {}; }
 };
 
 std::unique_ptr<SubjectShapeOverlayRepository>

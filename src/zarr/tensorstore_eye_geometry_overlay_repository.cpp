@@ -28,14 +28,14 @@ using json = nlohmann::json;
 
 namespace {
 
-std::optional<json> MakeArraySpec(const ArchiveContext::Impl& archive,
-                                  const std::string& path) {
+std::optional<json> MakeArraySpec(const ArchiveContext::Impl &archive,
+                                  const std::string &path) {
   return internal::MakeReadOnlyArraySpec(archive, path);
 }
 
 template <typename T, size_t Rank>
-std::optional<ts::TensorStore<T, Rank>> OpenArray(
-    const ArchiveContext::Impl& archive, const std::string& path) {
+std::optional<ts::TensorStore<T, Rank>>
+OpenArray(const ArchiveContext::Impl &archive, const std::string &path) {
   const auto spec = MakeArraySpec(archive, path);
   if (!spec) {
     return std::nullopt;
@@ -48,7 +48,7 @@ std::optional<ts::TensorStore<T, Rank>> OpenArray(
 }
 
 template <typename T, ts::DimensionIndex Rank>
-auto SliceFirstDimension(const ts::TensorStore<T, Rank>& store, ts::Index start,
+auto SliceFirstDimension(const ts::TensorStore<T, Rank> &store, ts::Index start,
                          ts::Index stop) {
   ts::Box<Rank> domain(store.domain().box());
   domain.origin()[0] = start;
@@ -56,21 +56,21 @@ auto SliceFirstDimension(const ts::TensorStore<T, Rank>& store, ts::Index start,
   return store | ts::IdentityTransform(domain);
 }
 
-std::string StringValue(const json& attributes, const char* key) {
+std::string StringValue(const json &attributes, const char *key) {
   const auto found = attributes.find(key);
   return found != attributes.end() && found->is_string()
              ? found->get<std::string>()
              : std::string{};
 }
 
-int IntegerValue(const json& attributes, const char* key) {
+int IntegerValue(const json &attributes, const char *key) {
   const auto found = attributes.find(key);
   return found != attributes.end() && found->is_number_integer()
              ? found->get<int>()
              : 0;
 }
 
-std::string MethodVersion(const json& attributes) {
+std::string MethodVersion(const json &attributes) {
   const auto found = attributes.find("method_version");
   if (found == attributes.end()) {
     return {};
@@ -78,20 +78,20 @@ std::string MethodVersion(const json& attributes) {
   return found->is_string() ? found->get<std::string>() : found->dump();
 }
 
-bool ValidRunName(const std::string& name) {
+bool ValidRunName(const std::string &name) {
   return !name.empty() && name != "." && name != ".." &&
          name.find('/') == std::string::npos;
 }
 
-std::string LatestRun(const ArchiveContext::Impl& archive,
-                      const std::string& group) {
+std::string LatestRun(const ArchiveContext::Impl &archive,
+                      const std::string &group) {
   const auto attributes = internal::ReadArchiveAttributes(archive, group);
   if (!attributes) {
     return {};
   }
-  constexpr std::array<const char*, 4> keys = {
+  constexpr std::array<const char *, 4> keys = {
       "latest_complete", "latest_completed", "latest", "latest_success"};
-  for (const char* key : keys) {
+  for (const char *key : keys) {
     const auto value = StringValue(*attributes, key);
     if (!value.empty()) {
       return value;
@@ -101,8 +101,8 @@ std::string LatestRun(const ArchiveContext::Impl& archive,
 }
 
 template <typename Source>
-bool ReadIntegerVector(const ArchiveContext::Impl& archive,
-                       const std::string& path, std::vector<int64_t>* out) {
+bool ReadIntegerVector(const ArchiveContext::Impl &archive,
+                       const std::string &path, std::vector<int64_t> *out) {
   const auto store = OpenArray<Source, 1>(archive, path);
   if (!store) {
     return false;
@@ -112,7 +112,7 @@ bool ReadIntegerVector(const ArchiveContext::Impl& archive,
     return false;
   }
   const size_t count = static_cast<size_t>(read->shape()[0]);
-  const auto* values = static_cast<const Source*>(read->data());
+  const auto *values = static_cast<const Source *>(read->data());
   out->resize(count);
   for (size_t index = 0; index < count; ++index) {
     (*out)[index] = static_cast<int64_t>(values[index]);
@@ -120,8 +120,8 @@ bool ReadIntegerVector(const ArchiveContext::Impl& archive,
   return true;
 }
 
-bool ReadIntegers(const ArchiveContext::Impl& archive, const std::string& path,
-                  std::vector<int64_t>* out) {
+bool ReadIntegers(const ArchiveContext::Impl &archive, const std::string &path,
+                  std::vector<int64_t> *out) {
   return ReadIntegerVector<int64_t>(archive, path, out) ||
          ReadIntegerVector<int32_t>(archive, path, out) ||
          ReadIntegerVector<uint64_t>(archive, path, out) ||
@@ -129,8 +129,8 @@ bool ReadIntegers(const ArchiveContext::Impl& archive, const std::string& path,
 }
 
 template <typename Source>
-bool ReadBoolVector(const ArchiveContext::Impl& archive,
-                    const std::string& path, std::vector<uint8_t>* out) {
+bool ReadBoolVector(const ArchiveContext::Impl &archive,
+                    const std::string &path, std::vector<uint8_t> *out) {
   const auto store = OpenArray<Source, 1>(archive, path);
   if (!store) {
     return false;
@@ -140,7 +140,7 @@ bool ReadBoolVector(const ArchiveContext::Impl& archive,
     return false;
   }
   const size_t count = static_cast<size_t>(read->shape()[0]);
-  const auto* values = static_cast<const Source*>(read->data());
+  const auto *values = static_cast<const Source *>(read->data());
   out->resize(count);
   for (size_t index = 0; index < count; ++index) {
     (*out)[index] = values[index] ? 1 : 0;
@@ -148,16 +148,16 @@ bool ReadBoolVector(const ArchiveContext::Impl& archive,
   return true;
 }
 
-bool ReadBools(const ArchiveContext::Impl& archive, const std::string& path,
-               std::vector<uint8_t>* out) {
+bool ReadBools(const ArchiveContext::Impl &archive, const std::string &path,
+               std::vector<uint8_t> *out) {
   return ReadBoolVector<bool>(archive, path, out) ||
          ReadBoolVector<uint8_t>(archive, path, out) ||
          ReadBoolVector<uint16_t>(archive, path, out);
 }
 
 template <typename Source>
-bool ReadMatrix(const ArchiveContext::Impl& archive, const std::string& path,
-                size_t minimum_columns, std::vector<std::vector<double>>* out) {
+bool ReadMatrix(const ArchiveContext::Impl &archive, const std::string &path,
+                size_t minimum_columns, std::vector<std::vector<double>> *out) {
   const auto store = OpenArray<Source, 2>(archive, path);
   if (!store) {
     return false;
@@ -169,7 +169,7 @@ bool ReadMatrix(const ArchiveContext::Impl& archive, const std::string& path,
   }
   const size_t rows = static_cast<size_t>(read->shape()[0]);
   const size_t columns = static_cast<size_t>(read->shape()[1]);
-  const auto* values = static_cast<const Source*>(read->data());
+  const auto *values = static_cast<const Source *>(read->data());
   out->assign(rows, std::vector<double>(columns));
   for (size_t row = 0; row < rows; ++row) {
     for (size_t column = 0; column < columns; ++column) {
@@ -179,16 +179,16 @@ bool ReadMatrix(const ArchiveContext::Impl& archive, const std::string& path,
   return true;
 }
 
-bool ReadNumericMatrix(const ArchiveContext::Impl& archive,
-                       const std::string& path, size_t minimum_columns,
-                       std::vector<std::vector<double>>* out) {
+bool ReadNumericMatrix(const ArchiveContext::Impl &archive,
+                       const std::string &path, size_t minimum_columns,
+                       std::vector<std::vector<double>> *out) {
   return ReadMatrix<float>(archive, path, minimum_columns, out) ||
          ReadMatrix<double>(archive, path, minimum_columns, out) ||
          ReadMatrix<int32_t>(archive, path, minimum_columns, out);
 }
 
-std::vector<std::string> ReadNames(const ArchiveContext::Impl& archive,
-                                   const std::string& path) {
+std::vector<std::string> ReadNames(const ArchiveContext::Impl &archive,
+                                   const std::string &path) {
   std::vector<std::string> names;
   const auto store = OpenArray<uint8_t, 2>(archive, path);
   if (!store) {
@@ -200,10 +200,10 @@ std::vector<std::string> ReadNames(const ArchiveContext::Impl& archive,
   }
   const size_t rows = static_cast<size_t>(read->shape()[0]);
   const size_t columns = static_cast<size_t>(read->shape()[1]);
-  const auto* values = static_cast<const uint8_t*>(read->data());
+  const auto *values = static_cast<const uint8_t *>(read->data());
   names.reserve(rows);
   for (size_t row = 0; row < rows; ++row) {
-    const char* text = reinterpret_cast<const char*>(values + row * columns);
+    const char *text = reinterpret_cast<const char *>(values + row * columns);
     size_t length = 0;
     while (length < columns && text[length] != '\0') {
       ++length;
@@ -213,9 +213,9 @@ std::vector<std::string> ReadNames(const ArchiveContext::Impl& archive,
   return names;
 }
 
-std::unordered_map<std::string, size_t> AvailableChannels(
-    const ArchiveContext::Impl& archive, const std::string& base,
-    const std::string& availability) {
+std::unordered_map<std::string, size_t>
+AvailableChannels(const ArchiveContext::Impl &archive, const std::string &base,
+                  const std::string &availability) {
   const auto names = ReadNames(archive, base + "/name");
   std::vector<uint8_t> available;
   ReadBools(archive, base + "/" + availability, &available);
@@ -230,7 +230,7 @@ std::unordered_map<std::string, size_t> AvailableChannels(
   return result;
 }
 
-bool ReadRoiSize(const json& attributes, double* width, double* height) {
+bool ReadRoiSize(const json &attributes, double *width, double *height) {
   const auto found = attributes.find("roi_size");
   if (found == attributes.end() || !found->is_array() || found->size() < 2 ||
       !(*found)[0].is_number() || !(*found)[1].is_number()) {
@@ -241,7 +241,7 @@ bool ReadRoiSize(const json& attributes, double* width, double* height) {
   return *width > 0.0 && *height > 0.0;
 }
 
-EyeGeometryAxis AxisFromEllipse(const std::vector<double>& ellipse,
+EyeGeometryAxis AxisFromEllipse(const std::vector<double> &ellipse,
                                 bool major_axis) {
   EyeGeometryAxis axis;
   if (ellipse.size() < 5) {
@@ -274,8 +274,8 @@ struct BoolArray {
   bool available() const { return booleans.has_value() || bytes.has_value(); }
 };
 
-BoolArray OpenBoolArray(const ArchiveContext::Impl& archive,
-                        const std::string& path, size_t rows) {
+BoolArray OpenBoolArray(const ArchiveContext::Impl &archive,
+                        const std::string &path, size_t rows) {
   BoolArray result;
   if (auto values = OpenArray<bool, 1>(archive, path);
       values && values->domain().shape()[0] == static_cast<ts::Index>(rows)) {
@@ -289,8 +289,9 @@ BoolArray OpenBoolArray(const ArchiveContext::Impl& archive,
 }
 
 template <typename Source>
-std::optional<std::vector<uint8_t>> ReadBoolRange(
-    const ts::TensorStore<Source, 1>& store, size_t start, size_t stop) {
+std::optional<std::vector<uint8_t>>
+ReadBoolRange(const ts::TensorStore<Source, 1> &store, size_t start,
+              size_t stop) {
   if (stop <= start) {
     return std::nullopt;
   }
@@ -303,12 +304,12 @@ std::optional<std::vector<uint8_t>> ReadBoolRange(
       read->byte_strides().size() != 1) {
     return std::nullopt;
   }
-  const auto* origin = reinterpret_cast<const uint8_t*>(
+  const auto *origin = reinterpret_cast<const uint8_t *>(
       read->byte_strided_origin_pointer().get());
   std::vector<uint8_t> values(stop - start);
   for (size_t index = 0; index < values.size(); ++index) {
     values[index] =
-        *reinterpret_cast<const Source*>(
+        *reinterpret_cast<const Source *>(
             origin + static_cast<ts::Index>(index) * read->byte_strides()[0])
             ? 1
             : 0;
@@ -316,7 +317,7 @@ std::optional<std::vector<uint8_t>> ReadBoolRange(
   return values;
 }
 
-std::optional<std::vector<uint8_t>> ReadBoolRange(const BoolArray& source,
+std::optional<std::vector<uint8_t>> ReadBoolRange(const BoolArray &source,
                                                   size_t start, size_t stop) {
   if (source.booleans) {
     return ReadBoolRange(*source.booleans, start, stop);
@@ -328,8 +329,9 @@ std::optional<std::vector<uint8_t>> ReadBoolRange(const BoolArray& source,
 }
 
 template <typename Source>
-std::optional<std::vector<std::vector<double>>> ReadMatrixRange(
-    const ts::TensorStore<Source, 2>& store, size_t start, size_t stop) {
+std::optional<std::vector<std::vector<double>>>
+ReadMatrixRange(const ts::TensorStore<Source, 2> &store, size_t start,
+                size_t stop) {
   if (stop <= start) {
     return std::nullopt;
   }
@@ -343,24 +345,25 @@ std::optional<std::vector<std::vector<double>>> ReadMatrixRange(
     return std::nullopt;
   }
   const auto strides = read->byte_strides();
-  const auto* origin = reinterpret_cast<const uint8_t*>(
+  const auto *origin = reinterpret_cast<const uint8_t *>(
       read->byte_strided_origin_pointer().get());
   const size_t columns = static_cast<size_t>(read->shape()[1]);
   std::vector<std::vector<double>> values(stop - start,
                                           std::vector<double>(columns));
   for (size_t row = 0; row < values.size(); ++row) {
     for (size_t column = 0; column < columns; ++column) {
-      const auto* value = origin + static_cast<ts::Index>(row) * strides[0] +
+      const auto *value = origin + static_cast<ts::Index>(row) * strides[0] +
                           static_cast<ts::Index>(column) * strides[1];
       values[row][column] =
-          static_cast<double>(*reinterpret_cast<const Source*>(value));
+          static_cast<double>(*reinterpret_cast<const Source *>(value));
     }
   }
   return values;
 }
 
-std::optional<std::vector<std::vector<EyeGeometryPoint>>> ReadVectorRange(
-    const ts::TensorStore<float, 3>& store, size_t start, size_t stop) {
+std::optional<std::vector<std::vector<EyeGeometryPoint>>>
+ReadVectorRange(const ts::TensorStore<float, 3> &store, size_t start,
+                size_t stop) {
   if (stop <= start) {
     return std::nullopt;
   }
@@ -374,27 +377,27 @@ std::optional<std::vector<std::vector<EyeGeometryPoint>>> ReadVectorRange(
     return std::nullopt;
   }
   const auto strides = read->byte_strides();
-  const auto* origin = reinterpret_cast<const uint8_t*>(
+  const auto *origin = reinterpret_cast<const uint8_t *>(
       read->byte_strided_origin_pointer().get());
   const size_t channels = static_cast<size_t>(read->shape()[1]);
   std::vector<std::vector<EyeGeometryPoint>> values(
       stop - start, std::vector<EyeGeometryPoint>(channels));
   for (size_t row = 0; row < values.size(); ++row) {
     for (size_t channel = 0; channel < channels; ++channel) {
-      const auto* value = origin + static_cast<ts::Index>(row) * strides[0] +
+      const auto *value = origin + static_cast<ts::Index>(row) * strides[0] +
                           static_cast<ts::Index>(channel) * strides[1];
       values[row][channel] = {
-          *reinterpret_cast<const float*>(value),
-          *reinterpret_cast<const float*>(value + strides[2])};
+          *reinterpret_cast<const float *>(value),
+          *reinterpret_cast<const float *>(value + strides[2])};
     }
   }
   return values;
 }
 
-std::optional<size_t> Channel(
-    const std::unordered_map<std::string, size_t>& channels,
-    std::initializer_list<const char*> names) {
-  for (const char* name : names) {
+std::optional<size_t>
+Channel(const std::unordered_map<std::string, size_t> &channels,
+        std::initializer_list<const char *> names) {
+  for (const char *name : names) {
     const auto found = channels.find(name);
     if (found != channels.end()) {
       return found->second;
@@ -444,24 +447,23 @@ struct GeometryChunk {
 };
 
 class LazyRepository final : public EyeGeometryOverlayRepository {
- public:
+public:
   LazyRepository(EyeGeometryOverlayDescriptor descriptor,
                  std::vector<Placement> placements, LazySources sources)
-      : descriptor_(std::move(descriptor)),
-        placements_(std::move(placements)),
+      : descriptor_(std::move(descriptor)), placements_(std::move(placements)),
         sources_(std::move(sources)) {
     for (size_t index = 0; index < placements_.size(); ++index) {
       rows_by_frame_[placements_[index].camera_frame].push_back(index);
     }
   }
 
-  const EyeGeometryOverlayDescriptor& descriptor() const override {
+  const EyeGeometryOverlayDescriptor &descriptor() const override {
     return descriptor_;
   }
 
-  EyeGeometryOverlayResolution resolveCameraFrame(
-      int64_t camera_frame, int full_frame_width,
-      int full_frame_height) const override {
+  EyeGeometryOverlayResolution
+  resolveCameraFrame(int64_t camera_frame, int full_frame_width,
+                     int full_frame_height) const override {
     EyeGeometryOverlayResolution result;
     result.camera_frame = camera_frame;
     if (camera_frame < 0 || (descriptor_.camera_frame_count > 0 &&
@@ -480,7 +482,7 @@ class LazyRepository final : public EyeGeometryOverlayRepository {
       return result;
     }
     for (const size_t placement_index : found->second) {
-      const auto& placement = placements_[placement_index];
+      const auto &placement = placements_[placement_index];
       EyeGeometryOverlayDetection detection;
       if (!readGeometry(placement.row, &detection)) {
         result.status = EyeGeometryOverlayStatus::ReadFailed;
@@ -505,11 +507,24 @@ class LazyRepository final : public EyeGeometryOverlayRepository {
     return result;
   }
 
- private:
-  bool readGeometry(size_t row, EyeGeometryOverlayDetection* geometry) const {
+  RepositoryMemoryMetrics memoryMetrics() const override {
+    RepositoryMemoryMetrics metrics;
+    metrics.retained_metadata_bytes =
+        memory::vectorAllocationBytes(placements_);
+    metrics.retained_index_bytes =
+        memory::vectorMapAllocationLowerBound(rows_by_frame_);
+    std::lock_guard<std::mutex> lock(chunk_mutex_);
+    for (const auto &chunk : chunks_) {
+      metrics.decoded_cache_bytes += memory::vectorAllocationBytes(chunk.rows);
+    }
+    return metrics;
+  }
+
+private:
+  bool readGeometry(size_t row, EyeGeometryOverlayDetection *geometry) const {
     {
       std::lock_guard<std::mutex> lock(chunk_mutex_);
-      for (const auto& chunk : chunks_) {
+      for (const auto &chunk : chunks_) {
         if (row >= chunk.start_row &&
             row - chunk.start_row < chunk.rows.size()) {
           *geometry = chunk.rows[row - chunk.start_row];
@@ -522,7 +537,7 @@ class LazyRepository final : public EyeGeometryOverlayRepository {
       return false;
     }
     std::lock_guard<std::mutex> lock(chunk_mutex_);
-    for (const auto& chunk : chunks_) {
+    for (const auto &chunk : chunks_) {
       if (row >= chunk.start_row && row - chunk.start_row < chunk.rows.size()) {
         *geometry = chunk.rows[row - chunk.start_row];
         return true;
@@ -532,12 +547,12 @@ class LazyRepository final : public EyeGeometryOverlayRepository {
     while (chunks_.size() > 2) {
       chunks_.pop_front();
     }
-    const auto& chunk = chunks_.back();
+    const auto &chunk = chunks_.back();
     *geometry = chunk.rows[row - chunk.start_row];
     return true;
   }
 
-  bool loadGeometryChunk(size_t row, GeometryChunk* chunk) const {
+  bool loadGeometryChunk(size_t row, GeometryChunk *chunk) const {
     constexpr size_t kRowsPerChunk = 256;
     const size_t start = row / kRowsPerChunk * kRowsPerChunk;
     const size_t stop = std::min(descriptor_.row_count, start + kRowsPerChunk);
@@ -601,7 +616,7 @@ class LazyRepository final : public EyeGeometryOverlayRepository {
                    ? (*qa)[index][*channel] != 0.0
                    : fallback;
       };
-      auto scalar = [&](std::optional<size_t> channel, double* value) {
+      auto scalar = [&](std::optional<size_t> channel, double *value) {
         if (!channel || *channel >= (*angles)[index].size() ||
             !std::isfinite((*angles)[index][*channel])) {
           return false;
@@ -609,7 +624,7 @@ class LazyRepository final : public EyeGeometryOverlayRepository {
         *value = (*angles)[index][*channel];
         return true;
       };
-      auto& geometry = chunk->rows[index];
+      auto &geometry = chunk->rows[index];
       geometry.frame_valid = qa_value(sources_.frame_valid, true);
       geometry.body_frame_valid = (*body_valid)[index] != 0;
       geometry.body_origin = {(*body_origin)[index][0],
@@ -621,7 +636,7 @@ class LazyRepository final : public EyeGeometryOverlayRepository {
       const std::array<bool, 2> ellipse_valid = {
           (*left_ellipse_valid)[index] != 0,
           (*right_ellipse_valid)[index] != 0};
-      const std::array<const std::vector<double>*, 2> ellipses = {
+      const std::array<const std::vector<double> *, 2> ellipses = {
           &(*left_ellipse)[index], &(*right_ellipse)[index]};
       const std::array<std::optional<size_t>, 2> valid_channels = {
           sources_.left_valid, sources_.right_valid};
@@ -632,7 +647,7 @@ class LazyRepository final : public EyeGeometryOverlayRepository {
       const std::array<std::optional<size_t>, 2> gaze_channels = {
           sources_.left_gaze, sources_.right_gaze};
       for (size_t eye = 0; eye < 2; ++eye) {
-        auto& target = geometry.eyes[eye];
+        auto &target = geometry.eyes[eye];
         target.valid =
             geometry.frame_valid && qa_value(valid_channels[eye], true);
         if (ellipse_valid[eye]) {
@@ -671,11 +686,12 @@ class LazyRepository final : public EyeGeometryOverlayRepository {
   mutable std::deque<GeometryChunk> chunks_;
 };
 
-}  // namespace
+} // namespace
 
-std::unique_ptr<EyeGeometryOverlayRepository> OpenEyeGeometryOverlayRepository(
-    const std::shared_ptr<ArchiveContext>& archive,
-    const std::string& requested_run, std::string* error_message) {
+std::unique_ptr<EyeGeometryOverlayRepository>
+OpenEyeGeometryOverlayRepository(const std::shared_ptr<ArchiveContext> &archive,
+                                 const std::string &requested_run,
+                                 std::string *error_message) {
   auto fail = [&](std::string message)
       -> std::unique_ptr<EyeGeometryOverlayRepository> {
     if (error_message != nullptr) {
@@ -686,7 +702,7 @@ std::unique_ptr<EyeGeometryOverlayRepository> OpenEyeGeometryOverlayRepository(
   if (!archive || !archive->impl_) {
     return fail("Archive context is unavailable");
   }
-  const auto& impl = *archive->impl_;
+  const auto &impl = *archive->impl_;
   const std::string group = "analysis/eye_angle_runs";
   const std::string run =
       requested_run.empty() ? LatestRun(impl, group) : requested_run;
@@ -754,7 +770,7 @@ std::unique_ptr<EyeGeometryOverlayRepository> OpenEyeGeometryOverlayRepository(
   const auto qa_channels =
       AvailableChannels(impl, base + "/qa_channel_index", "roi_available");
   auto required_matrix =
-      [&](const std::string& path,
+      [&](const std::string &path,
           size_t columns) -> std::optional<ts::TensorStore<float, 2>> {
     auto store = OpenArray<float, 2>(impl, path);
     return store &&
@@ -881,4 +897,4 @@ std::unique_ptr<EyeGeometryOverlayRepository> OpenEyeGeometryOverlayRepository(
       std::move(descriptor), std::move(placements), std::move(sources));
 }
 
-}  // namespace crimson::zarr
+} // namespace crimson::zarr

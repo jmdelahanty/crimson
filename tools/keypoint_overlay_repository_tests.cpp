@@ -24,13 +24,13 @@ namespace {
 namespace ts = tensorstore;
 using json = nlohmann::json;
 
-#define CHECK(condition)                                                      \
-  do {                                                                        \
-    if (!(condition)) {                                                       \
-      std::cerr << "CHECK failed: " #condition << " at " << __FILE__ << ':' \
-                << __LINE__ << '\n';                                         \
-      return false;                                                           \
-    }                                                                         \
+#define CHECK(condition)                                                       \
+  do {                                                                         \
+    if (!(condition)) {                                                        \
+      std::cerr << "CHECK failed: " #condition << " at " << __FILE__ << ':'    \
+                << __LINE__ << '\n';                                           \
+      return false;                                                            \
+    }                                                                          \
   } while (false)
 
 bool Near(double actual, double expected) {
@@ -38,7 +38,7 @@ bool Near(double actual, double expected) {
 }
 
 class TemporaryDirectory {
- public:
+public:
   TemporaryDirectory() {
     const auto seed =
         std::chrono::steady_clock::now().time_since_epoch().count();
@@ -59,13 +59,13 @@ class TemporaryDirectory {
     std::filesystem::remove_all(path_, error);
   }
 
-  const std::filesystem::path& path() const { return path_; }
+  const std::filesystem::path &path() const { return path_; }
 
- private:
+private:
   std::filesystem::path path_;
 };
 
-bool WriteJson(const std::filesystem::path& path, const json& value) {
+bool WriteJson(const std::filesystem::path &path, const json &value) {
   std::filesystem::create_directories(path.parent_path());
   std::ofstream output(path);
   output << value.dump(2) << '\n';
@@ -73,11 +73,10 @@ bool WriteJson(const std::filesystem::path& path, const json& value) {
 }
 
 template <typename T, size_t Rank>
-bool WriteArray(const std::filesystem::path& root,
-                const std::string& path,
-                const std::string& data_type,
-                const std::array<ts::Index, Rank>& shape,
-                const std::vector<T>& values) {
+bool WriteArray(const std::filesystem::path &root, const std::string &path,
+                const std::string &data_type,
+                const std::array<ts::Index, Rank> &shape,
+                const std::vector<T> &values) {
   size_t element_count = 1;
   json shape_json = json::array();
   json chunk_shape = json::array();
@@ -110,13 +109,12 @@ bool WriteArray(const std::filesystem::path& root,
       {"path", path},
       {"metadata", std::move(metadata)},
   };
-  auto store = ts::Open<T, Rank>(
-                   spec, ts::OpenMode::open | ts::OpenMode::create,
-                   ts::ReadWriteMode::read_write)
-                   .result();
+  auto store =
+      ts::Open<T, Rank>(spec, ts::OpenMode::open | ts::OpenMode::create,
+                        ts::ReadWriteMode::read_write)
+          .result();
   if (!store.ok()) {
-    std::cerr << "Failed to create " << path << ": " << store.status()
-              << '\n';
+    std::cerr << "Failed to create " << path << ": " << store.status() << '\n';
     return false;
   }
   auto source = ts::AllocateArray<T>(shape);
@@ -124,8 +122,8 @@ bool WriteArray(const std::filesystem::path& root,
   return ts::Write(source, *store).commit_future.result().ok();
 }
 
-bool BuildFixture(const std::filesystem::path& root) {
-  constexpr const char* crop_run = "crop_fixture";
+bool BuildFixture(const std::filesystem::path &root) {
+  constexpr const char *crop_run = "crop_fixture";
   const std::string crop_base = std::string("crop_runs/") + crop_run;
   CHECK(WriteJson(root / "crop_runs/zarr.json",
                   {{"zarr_format", 3},
@@ -135,29 +133,26 @@ bool BuildFixture(const std::filesystem::path& root) {
                   {{"zarr_format", 3},
                    {"node_type", "group"},
                    {"attributes", {{"roi_size", {20, 40}}}}}));
-  CHECK((WriteArray<int32_t, 1>(root, crop_base + "/frame_indices",
-                                "int32", {3}, {1, 2, 2})));
-  CHECK((WriteArray<int32_t, 1>(root, crop_base + "/detection_indices",
-                                "int32", {3}, {0, 0, 1})));
-  CHECK((WriteArray<int32_t, 2>(root,
-                                crop_base + "/roi_coordinates_full",
-                                "int32", {3, 2},
-                                {10, 20, 30, 40, 50, 60})));
-  CHECK((WriteArray<float, 2>(
-      root, crop_base + "/bbox_norm_coords", "float32", {3, 4},
-      {0.2f, 0.2f, 0.2f, 0.2f, 0.5f, 0.5f, 0.2f, 0.2f,
-       0.75f, 0.75f, 0.2f, 0.2f})));
-  CHECK((WriteArray<uint8_t, 1>(root, crop_base + "/detection_source",
-                                "uint8", {3}, {0, 0, 1})));
+  CHECK((WriteArray<int32_t, 1>(root, crop_base + "/frame_indices", "int32",
+                                {3}, {1, 2, 2})));
+  CHECK((WriteArray<int32_t, 1>(root, crop_base + "/detection_indices", "int32",
+                                {3}, {0, 0, 1})));
+  CHECK((WriteArray<int32_t, 2>(root, crop_base + "/roi_coordinates_full",
+                                "int32", {3, 2}, {10, 20, 30, 40, 50, 60})));
+  CHECK((WriteArray<float, 2>(root, crop_base + "/bbox_norm_coords", "float32",
+                              {3, 4},
+                              {0.2f, 0.2f, 0.2f, 0.2f, 0.5f, 0.5f, 0.2f, 0.2f,
+                               0.75f, 0.75f, 0.2f, 0.2f})));
+  CHECK((WriteArray<uint8_t, 1>(root, crop_base + "/detection_source", "uint8",
+                                {3}, {0, 0, 1})));
 
-  constexpr const char* refined_run = "refined_fixture";
+  constexpr const char *refined_run = "refined_fixture";
   const std::string refined_base =
       std::string("refined_keypoints_runs/") + refined_run;
-  CHECK(WriteJson(
-      root / "refined_keypoints_runs/zarr.json",
-      {{"zarr_format", 3},
-       {"node_type", "group"},
-       {"attributes", {{"latest", refined_run}}}}));
+  CHECK(WriteJson(root / "refined_keypoints_runs/zarr.json",
+                  {{"zarr_format", 3},
+                   {"node_type", "group"},
+                   {"attributes", {{"latest", refined_run}}}}));
   CHECK(WriteJson(
       root / refined_base / "zarr.json",
       {{"zarr_format", 3},
@@ -166,51 +161,45 @@ bool BuildFixture(const std::filesystem::path& root) {
         {{"source_crop_run", crop_run},
          {"keypoint_labels", {"swim_bladder", "eye_left", "eye_right"}},
          {"pose_schema", {{"edges", {{0, 1}, {0, 2}, {1, 2}}}}}}}}));
-  CHECK((WriteArray<int32_t, 1>(root, refined_base + "/frame_indices",
-                                "int32", {3}, {1, 2, 2})));
-  CHECK((WriteArray<int32_t, 1>(root, refined_base + "/frame_counts",
-                                "int32", {3}, {0, 1, 2})));
+  CHECK((WriteArray<int32_t, 1>(root, refined_base + "/frame_indices", "int32",
+                                {3}, {1, 2, 2})));
+  CHECK((WriteArray<int32_t, 1>(root, refined_base + "/frame_counts", "int32",
+                                {3}, {0, 1, 2})));
   CHECK((WriteArray<int32_t, 1>(root, refined_base + "/detection_indices",
                                 "int32", {3}, {0, 1, 0})));
-  CHECK((WriteArray<int64_t, 1>(root,
-                                refined_base + "/source_crop_row_ids",
+  CHECK((WriteArray<int64_t, 1>(root, refined_base + "/source_crop_row_ids",
                                 "int64", {3}, {0, 2, 1})));
-  CHECK((WriteArray<double, 3>(
-      root, refined_base + "/keypoints_img", "float64", {3, 3, 2},
-      {20, 20, 22, 18, 24, 18,
-       70, 60, 72, 58, 74, 58,
-       45, 40, 47, 38, 49, 38})));
-  CHECK((WriteArray<double, 1>(root, refined_base + "/heading", "float64",
-                               {3}, {45.0, 90.0, 0.0})));
-  CHECK((WriteArray<uint8_t, 1>(root,
-                                refined_base + "/detection_success",
+  CHECK((WriteArray<double, 3>(root, refined_base + "/keypoints_img", "float64",
+                               {3, 3, 2},
+                               {20, 20, 22, 18, 24, 18, 70, 60, 72, 58, 74, 58,
+                                45, 40, 47, 38, 49, 38})));
+  CHECK((WriteArray<double, 1>(root, refined_base + "/heading", "float64", {3},
+                               {45.0, 90.0, 0.0})));
+  CHECK((WriteArray<uint8_t, 1>(root, refined_base + "/detection_success",
                                 "uint8", {3}, {0, 1, 1})));
-  CHECK((WriteArray<uint8_t, 1>(root,
-                                refined_base + "/detection_source",
+  CHECK((WriteArray<uint8_t, 1>(root, refined_base + "/detection_source",
                                 "uint8", {3}, {0, 1, 0})));
-  CHECK((WriteArray<uint8_t, 1>(root,
-                                refined_base + "/usable_keypoints",
+  CHECK((WriteArray<uint8_t, 1>(root, refined_base + "/usable_keypoints",
                                 "uint8", {3}, {1, 0, 1})));
-  CHECK((WriteArray<uint8_t, 1>(root,
-                                refined_base + "/flip_corrected",
-                                "uint8", {3}, {0, 1, 0})));
+  CHECK((WriteArray<uint8_t, 1>(root, refined_base + "/flip_corrected", "uint8",
+                                {3}, {0, 1, 0})));
 
-  constexpr const char* raw_run = "raw_fixture";
+  constexpr const char *raw_run = "raw_fixture";
   const std::string raw_base = std::string("keypoints_runs/") + raw_run;
   CHECK(WriteJson(root / "keypoints_runs/zarr.json",
                   {{"zarr_format", 3},
                    {"node_type", "group"},
                    {"attributes", {{"latest_complete", raw_run}}}}));
-  CHECK(WriteJson(root / raw_base / "zarr.json",
-                  {{"zarr_format", 3},
-                   {"node_type", "group"},
-                   {"attributes",
-                    {{"source_crop_run", crop_run},
-                     {"keypoint_labels", {"only"}}}}}));
-  CHECK((WriteArray<int32_t, 1>(root, raw_base + "/frame_indices", "int32",
-                                {3}, {1, 2, 2})));
-  CHECK((WriteArray<int32_t, 1>(root, raw_base + "/detection_indices",
-                                "int32", {3}, {0, 0, 1})));
+  CHECK(WriteJson(
+      root / raw_base / "zarr.json",
+      {{"zarr_format", 3},
+       {"node_type", "group"},
+       {"attributes",
+        {{"source_crop_run", crop_run}, {"keypoint_labels", {"only"}}}}}));
+  CHECK((WriteArray<int32_t, 1>(root, raw_base + "/frame_indices", "int32", {3},
+                                {1, 2, 2})));
+  CHECK((WriteArray<int32_t, 1>(root, raw_base + "/detection_indices", "int32",
+                                {3}, {0, 0, 1})));
   CHECK((WriteArray<float, 3>(root, raw_base + "/keypoints_roi", "float32",
                               {3, 1, 2}, {1, 2, 3, 4, 5, 6})));
   CHECK((WriteArray<float, 1>(root, raw_base + "/heading", "float32", {3},
@@ -242,11 +231,11 @@ bool TestTensorStoreRepository() {
   CHECK(open_metrics.array_reads == 1);
   CHECK(!open_metrics.events.empty());
   CHECK(std::any_of(open_metrics.events.begin(), open_metrics.events.end(),
-                    [](const auto& event) {
+                    [](const auto &event) {
                       return event.phase == "frame_counts_read" &&
                              event.operation == "array_read" && event.success;
                     }));
-  const auto& descriptor = repository->descriptor();
+  const auto &descriptor = repository->descriptor();
   CHECK(descriptor.source_group == "refined_keypoints_runs");
   CHECK(descriptor.run_name == "refined_fixture");
   CHECK(descriptor.source_crop_run == "crop_fixture");
@@ -257,11 +246,14 @@ bool TestTensorStoreRepository() {
   CHECK(descriptor.skeleton_edges.size() == 3);
   CHECK(descriptor.row_count == 3);
   CHECK(descriptor.camera_frame_count == 3);
+  const auto memory = repository->memoryMetrics();
+  CHECK(memory.retained_index_bytes >= 4 * sizeof(uint64_t));
+  CHECK(memory.reportedRetainedBytes() == memory.retained_index_bytes);
 
   const auto frame_two = repository->resolveCameraFrame(2, 100, 80);
   CHECK(frame_two.status == crimson::zarr::KeypointOverlayStatus::Mapped);
   CHECK(frame_two.detections.size() == 2);
-  const auto& first = frame_two.detections[0];
+  const auto &first = frame_two.detections[0];
   CHECK(first.detection_index == 1);
   CHECK(first.source_crop_row_id == 2);
   CHECK(first.detection_interpolated);
@@ -375,7 +367,7 @@ bool TestScheduledBuffer() {
   return true;
 }
 
-}  // namespace
+} // namespace
 
 int main() {
   if (!TestTensorStoreRepository() || !TestNormalizedContract() ||

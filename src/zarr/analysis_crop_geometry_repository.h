@@ -1,6 +1,7 @@
 #pragma once
 
 #include "crop_source_contract.h"
+#include "zarr/repository_memory.h"
 
 #include <array>
 #include <cstddef>
@@ -64,6 +65,7 @@ public:
   virtual AnalysisCropGeometryResolution
   resolveCameraFrame(int64_t camera_frame, int full_frame_width,
                      int full_frame_height) const = 0;
+  virtual RepositoryMemoryMetrics memoryMetrics() const { return {}; }
 };
 
 std::unique_ptr<AnalysisCropGeometryRepository>

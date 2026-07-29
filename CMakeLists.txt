@@ -68,6 +68,7 @@ add_library(crimson_runtime_contracts STATIC
     src/loading_progress.cpp
     src/frame_presentation.cpp
     src/diagnostic_report.cpp
+    src/process_memory.cpp
     src/session_readiness.cpp
     src/session_open_transaction.cpp
     src/recording_open_workflow.cpp
@@ -78,6 +79,9 @@ target_include_directories(crimson_runtime_contracts PUBLIC
 )
 target_link_libraries(crimson_runtime_contracts PUBLIC Threads::Threads)
 target_compile_features(crimson_runtime_contracts PUBLIC cxx_std_17)
+if(WIN32)
+    target_link_libraries(crimson_runtime_contracts PUBLIC Psapi)
+endif()
 
 add_library(crimson_data_access_contracts STATIC
     src/data_access.cpp
@@ -874,6 +878,7 @@ foreach(runtime_test
         loading_progress_tests
         frame_presentation_tests
         diagnostic_report_tests
+        process_memory_tests
         session_readiness_tests
         session_open_transaction_tests
         recording_open_workflow_tests
@@ -2709,6 +2714,28 @@ if(CRIMSON_BUILD_MACOS_APP)
     if(NOT CRIMSON_MACOS_GIT_COMMIT)
         set(CRIMSON_MACOS_GIT_COMMIT "unknown")
     endif()
+    execute_process(
+        COMMAND git rev-parse HEAD
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE CRIMSON_MACOS_GIT_COMMIT_FULL
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    execute_process(
+        COMMAND git status --porcelain
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE CRIMSON_MACOS_GIT_STATUS
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(NOT CRIMSON_MACOS_GIT_COMMIT_FULL)
+        set(CRIMSON_MACOS_GIT_COMMIT_FULL "unknown")
+    endif()
+    if(CRIMSON_MACOS_GIT_STATUS)
+        set(CRIMSON_MACOS_WORKTREE_DIRTY 1)
+    else()
+        set(CRIMSON_MACOS_WORKTREE_DIRTY 0)
+    endif()
 
     set(CRIMSON_MACOS_APP_SOURCES
         src/platform/macos/crimson_macos_main.mm
@@ -2863,6 +2890,11 @@ if(CRIMSON_BUILD_MACOS_APP)
             crimson_apple_analysis_loading
             crimson_overlay_contracts
             nlohmann_json::nlohmann_json
+    )
+    target_compile_definitions(
+        canonical_detection_full_archive_stage1_benchmark PRIVATE
+        CRIMSON_GIT_COMMIT="${CRIMSON_MACOS_GIT_COMMIT_FULL}"
+        CRIMSON_WORKTREE_DIRTY=${CRIMSON_MACOS_WORKTREE_DIRTY}
     )
     set_target_properties(canonical_detection_full_archive_stage1_benchmark
         PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"

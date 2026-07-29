@@ -1,5 +1,7 @@
 #pragma once
 
+#include "zarr/repository_memory.h"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -92,6 +94,7 @@ public:
   virtual EyeGeometryOverlayResolution
   resolveCameraFrame(int64_t camera_frame, int full_frame_width,
                      int full_frame_height) const = 0;
+  virtual RepositoryMemoryMetrics memoryMetrics() const { return {}; }
 };
 
 std::unique_ptr<EyeGeometryOverlayRepository>

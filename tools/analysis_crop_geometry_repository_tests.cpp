@@ -20,17 +20,17 @@ namespace {
 namespace ts = tensorstore;
 using json = nlohmann::json;
 
-#define CHECK(condition)                                                      \
-  do {                                                                        \
-    if (!(condition)) {                                                       \
-      std::cerr << "CHECK failed: " #condition << " at " << __FILE__ << ':' \
-                << __LINE__ << '\n';                                         \
-      return false;                                                           \
-    }                                                                         \
+#define CHECK(condition)                                                       \
+  do {                                                                         \
+    if (!(condition)) {                                                        \
+      std::cerr << "CHECK failed: " #condition << " at " << __FILE__ << ':'    \
+                << __LINE__ << '\n';                                           \
+      return false;                                                            \
+    }                                                                          \
   } while (false)
 
 class TemporaryDirectory {
- public:
+public:
   TemporaryDirectory() {
     const auto seed =
         std::chrono::steady_clock::now().time_since_epoch().count();
@@ -51,13 +51,13 @@ class TemporaryDirectory {
     std::filesystem::remove_all(path_, error);
   }
 
-  const std::filesystem::path& path() const { return path_; }
+  const std::filesystem::path &path() const { return path_; }
 
- private:
+private:
   std::filesystem::path path_;
 };
 
-bool WriteJson(const std::filesystem::path& path, const json& value) {
+bool WriteJson(const std::filesystem::path &path, const json &value) {
   std::filesystem::create_directories(path.parent_path());
   std::ofstream output(path);
   output << value.dump(2) << '\n';
@@ -65,11 +65,10 @@ bool WriteJson(const std::filesystem::path& path, const json& value) {
 }
 
 template <typename T, size_t Rank>
-bool WriteArray(const std::filesystem::path& root,
-                const std::string& path,
-                const std::string& data_type,
-                const std::array<ts::Index, Rank>& shape,
-                const std::vector<T>& values) {
+bool WriteArray(const std::filesystem::path &root, const std::string &path,
+                const std::string &data_type,
+                const std::array<ts::Index, Rank> &shape,
+                const std::vector<T> &values) {
   size_t element_count = 1;
   json shape_json = json::array();
   json chunk_shape = json::array();
@@ -102,13 +101,12 @@ bool WriteArray(const std::filesystem::path& root,
       {"path", path},
       {"metadata", std::move(metadata)},
   };
-  auto store = ts::Open<T, Rank>(
-                   spec, ts::OpenMode::open | ts::OpenMode::create,
-                   ts::ReadWriteMode::read_write)
-                   .result();
+  auto store =
+      ts::Open<T, Rank>(spec, ts::OpenMode::open | ts::OpenMode::create,
+                        ts::ReadWriteMode::read_write)
+          .result();
   if (!store.ok()) {
-    std::cerr << "Failed to create " << path << ": " << store.status()
-              << '\n';
+    std::cerr << "Failed to create " << path << ": " << store.status() << '\n';
     return false;
   }
   auto source = ts::AllocateArray<T>(shape);
@@ -117,10 +115,9 @@ bool WriteArray(const std::filesystem::path& root,
 }
 
 template <typename T, size_t Rank>
-bool CreateArrayMetadata(const std::filesystem::path& root,
-                         const std::string& path,
-                         const std::string& data_type,
-                         const std::array<ts::Index, Rank>& shape) {
+bool CreateArrayMetadata(const std::filesystem::path &root,
+                         const std::string &path, const std::string &data_type,
+                         const std::array<ts::Index, Rank> &shape) {
   json shape_json = json::array();
   json chunk_shape = json::array();
   for (const auto extent : shape) {
@@ -148,15 +145,14 @@ bool CreateArrayMetadata(const std::filesystem::path& root,
       {"path", path},
       {"metadata", std::move(metadata)},
   };
-  return ts::Open<T, Rank>(spec,
-                           ts::OpenMode::open | ts::OpenMode::create,
+  return ts::Open<T, Rank>(spec, ts::OpenMode::open | ts::OpenMode::create,
                            ts::ReadWriteMode::read_write)
       .result()
       .ok();
 }
 
-bool BuildFixture(const std::filesystem::path& root) {
-  constexpr const char* run = "crop_geometry_fixture";
+bool BuildFixture(const std::filesystem::path &root) {
+  constexpr const char *run = "crop_geometry_fixture";
   const std::string base = std::string("crop_runs/") + run;
   CHECK(WriteJson(root / "crop_runs/zarr.json",
                   {{"zarr_format", 3},
@@ -166,74 +162,67 @@ bool BuildFixture(const std::filesystem::path& root) {
                   {{"zarr_format", 3},
                    {"node_type", "group"},
                    {"attributes", {{"roi_size", {48, 64}}}}}));
-  CHECK((WriteArray<int32_t, 1>(root, base + "/frame_indices", "int32",
-                                {4}, {1, 2, 2, 4})));
-  CHECK((WriteArray<int32_t, 2>(root, base + "/roi_coordinates_full",
-                                "int32", {4, 2},
-                                {8, 10, 16, 12, 24, 18, 80, 50})));
+  CHECK((WriteArray<int32_t, 1>(root, base + "/frame_indices", "int32", {4},
+                                {1, 2, 2, 4})));
+  CHECK((WriteArray<int32_t, 2>(root, base + "/roi_coordinates_full", "int32",
+                                {4, 2}, {8, 10, 16, 12, 24, 18, 80, 50})));
   CHECK((WriteArray<float, 2>(
       root, base + "/bbox_norm_coords", "float32", {4, 4},
-      {0.25f, 0.25f, 0.20f, 0.20f, 0.35f, 0.35f, 0.20f, 0.20f,
-       0.45f, 0.45f, 0.20f, 0.20f, 0.85f, 0.75f, 0.10f, 0.10f})));
+      {0.25f, 0.25f, 0.20f, 0.20f, 0.35f, 0.35f, 0.20f, 0.20f, 0.45f, 0.45f,
+       0.20f, 0.20f, 0.85f, 0.75f, 0.10f, 0.10f})));
 
   const std::string legacy_base = "crop_runs/legacy_metadata_fixture";
   CHECK(WriteJson(root / legacy_base / "zarr.json",
                   {{"zarr_format", 3},
                    {"node_type", "group"},
                    {"attributes", json::object()}}));
-  CHECK((WriteArray<int32_t, 1>(root, legacy_base + "/frame_indices",
-                                "int32", {1}, {0})));
-  CHECK((WriteArray<int32_t, 2>(root,
-                                legacy_base + "/roi_coordinates_full",
+  CHECK((WriteArray<int32_t, 1>(root, legacy_base + "/frame_indices", "int32",
+                                {1}, {0})));
+  CHECK((WriteArray<int32_t, 2>(root, legacy_base + "/roi_coordinates_full",
                                 "int32", {1, 2}, {4, 6})));
-  CHECK((CreateArrayMetadata<uint8_t, 3>(
-      root, legacy_base + "/roi_images", "uint8", {1, 32, 40})));
+  CHECK((CreateArrayMetadata<uint8_t, 3>(root, legacy_base + "/roi_images",
+                                         "uint8", {1, 32, 40})));
   return true;
 }
 
-bool BuildLineagePointers(const std::filesystem::path& root,
-                          const std::string& mask_crop_run,
-                          const std::string& keypoint_crop_run) {
+bool BuildLineagePointers(const std::filesystem::path &root,
+                          const std::string &mask_crop_run,
+                          const std::string &keypoint_crop_run) {
   CHECK(WriteJson(root / "crop_runs/zarr.json",
                   {{"zarr_format", 3},
                    {"node_type", "group"},
                    {"attributes", json::object()}}));
-  CHECK(WriteJson(
-      root / "refined_subject_masks_runs/zarr.json",
-      {{"zarr_format", 3},
-       {"node_type", "group"},
-       {"attributes", {{"latest_complete", "mask_fixture"}}}}));
-  CHECK(WriteJson(
-      root / "refined_subject_masks_runs/mask_fixture/zarr.json",
-      {{"zarr_format", 3},
-       {"node_type", "group"},
-       {"attributes", {{"source_crop_run", mask_crop_run}}}}));
-  CHECK(WriteJson(
-      root / "refined_keypoints_runs/zarr.json",
-      {{"zarr_format", 3},
-       {"node_type", "group"},
-       {"attributes", {{"latest_complete", "keypoint_fixture"}}}}));
-  CHECK(WriteJson(
-      root / "refined_keypoints_runs/keypoint_fixture/zarr.json",
-      {{"zarr_format", 3},
-       {"node_type", "group"},
-       {"attributes", {{"source_crop_run", keypoint_crop_run}}}}));
+  CHECK(WriteJson(root / "refined_subject_masks_runs/zarr.json",
+                  {{"zarr_format", 3},
+                   {"node_type", "group"},
+                   {"attributes", {{"latest_complete", "mask_fixture"}}}}));
+  CHECK(WriteJson(root / "refined_subject_masks_runs/mask_fixture/zarr.json",
+                  {{"zarr_format", 3},
+                   {"node_type", "group"},
+                   {"attributes", {{"source_crop_run", mask_crop_run}}}}));
+  CHECK(WriteJson(root / "refined_keypoints_runs/zarr.json",
+                  {{"zarr_format", 3},
+                   {"node_type", "group"},
+                   {"attributes", {{"latest_complete", "keypoint_fixture"}}}}));
+  CHECK(WriteJson(root / "refined_keypoints_runs/keypoint_fixture/zarr.json",
+                  {{"zarr_format", 3},
+                   {"node_type", "group"},
+                   {"attributes", {{"source_crop_run", keypoint_crop_run}}}}));
   return true;
 }
 
 bool RunTest() {
   TemporaryDirectory temporary;
   CHECK(!temporary.path().empty());
-  const auto archive_root =
-      temporary.path() / "recording/zarr/analysis.zarr";
+  const auto archive_root = temporary.path() / "recording/zarr/analysis.zarr";
   std::filesystem::create_directories(archive_root);
   CHECK(BuildFixture(archive_root));
 
   std::string error;
   auto archive = crimson::zarr::ArchiveContext::Open(archive_root, &error);
   CHECK(archive != nullptr);
-  auto repository = crimson::zarr::OpenAnalysisCropGeometryRepository(
-      archive, {}, &error);
+  auto repository =
+      crimson::zarr::OpenAnalysisCropGeometryRepository(archive, {}, &error);
   CHECK(repository != nullptr);
   CHECK(repository->descriptor().run_name == "crop_geometry_fixture");
   CHECK(repository->descriptor().output_width == 64);
@@ -243,10 +232,12 @@ bool RunTest() {
   CHECK(repository->sourceCapabilities().live_geometry);
   CHECK(!repository->sourceCapabilities().acquisition_video);
   CHECK(!repository->sourceCapabilities().persisted_zarr);
+  const auto memory = repository->memoryMetrics();
+  CHECK(memory.retained_payload_bytes > 0);
+  CHECK(memory.retained_index_bytes > 0);
 
   const auto missing = repository->resolveCameraFrame(0, 128, 96);
-  CHECK(missing.status ==
-        crimson::zarr::AnalysisCropGeometryStatus::Missing);
+  CHECK(missing.status == crimson::zarr::AnalysisCropGeometryStatus::Missing);
   CHECK(!missing.geometry);
 
   const auto first = repository->resolveCameraFrame(1, 128, 96);
@@ -275,9 +266,8 @@ bool RunTest() {
   CHECK(repository->resolveCameraFrame(5, 128, 96).status ==
         crimson::zarr::AnalysisCropGeometryStatus::OutOfRange);
 
-  auto explicit_repository =
-      crimson::zarr::OpenAnalysisCropGeometryRepository(
-          archive, "crop_runs/crop_geometry_fixture", &error);
+  auto explicit_repository = crimson::zarr::OpenAnalysisCropGeometryRepository(
+      archive, "crop_runs/crop_geometry_fixture", &error);
   CHECK(explicit_repository != nullptr);
   auto invalid_explicit_repository =
       crimson::zarr::OpenAnalysisCropGeometryRepository(
@@ -302,8 +292,8 @@ bool RunTest() {
       crimson::zarr::ArchiveContext::Open(mask_lineage_root, &error);
   CHECK(mask_lineage_archive != nullptr);
   auto mask_lineage_repository =
-      crimson::zarr::OpenAnalysisCropGeometryRepository(
-          mask_lineage_archive, {}, &error);
+      crimson::zarr::OpenAnalysisCropGeometryRepository(mask_lineage_archive,
+                                                        {}, &error);
   CHECK(mask_lineage_repository != nullptr);
   CHECK(mask_lineage_repository->descriptor().run_name ==
         "crop_geometry_fixture");
@@ -328,6 +318,6 @@ bool RunTest() {
   return true;
 }
 
-}  // namespace
+} // namespace
 
 int main() { return RunTest() ? 0 : 1; }

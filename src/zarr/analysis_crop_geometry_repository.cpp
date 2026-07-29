@@ -94,6 +94,14 @@ public:
     return result;
   }
 
+  RepositoryMemoryMetrics memoryMetrics() const override {
+    RepositoryMemoryMetrics metrics;
+    metrics.retained_payload_bytes = memory::vectorAllocationBytes(rows_);
+    metrics.retained_index_bytes =
+        memory::vectorMapAllocationLowerBound(rows_by_frame_);
+    return metrics;
+  }
+
 private:
   AnalysisCropGeometryDescriptor descriptor_;
   std::vector<AnalysisCropGeometryRow> rows_;
