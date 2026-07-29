@@ -69,6 +69,7 @@ add_library(crimson_runtime_contracts STATIC
     src/frame_presentation.cpp
     src/diagnostic_report.cpp
     src/process_memory.cpp
+    src/endurance_workload.cpp
     src/session_readiness.cpp
     src/session_open_transaction.cpp
     src/recording_open_workflow.cpp
@@ -879,6 +880,7 @@ foreach(runtime_test
         frame_presentation_tests
         diagnostic_report_tests
         process_memory_tests
+        endurance_workload_tests
         session_readiness_tests
         session_open_transaction_tests
         recording_open_workflow_tests

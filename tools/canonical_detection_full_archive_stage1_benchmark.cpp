@@ -1,4 +1,5 @@
 #include "canonical_detection_buffer.h"
+#include "endurance_workload.h"
 #include "platform/macos/apple_analysis_repository_loader.h"
 #include "process_memory.h"
 #include "read_only_overlay_scene.h"
@@ -20,6 +21,7 @@
 #include <fstream>
 #include <future>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -55,6 +57,7 @@ constexpr std::chrono::milliseconds kPageDeadline{100};
 constexpr uint64_t kResidentBudgetBytes = 64ULL * 1024ULL * 1024ULL;
 constexpr uint64_t kResidencyChunkBytes = 512ULL * 1024ULL;
 constexpr int64_t kInterferenceProbeFrame = 271085;
+constexpr uint64_t kMiB = 1024ULL * 1024ULL;
 
 constexpr std::array<int64_t, 8> kSettleFrames = {
     271085, 85499, 397712, 1003450, 939795, 903492, 351953, 1141796};
@@ -106,8 +109,21 @@ struct LoadOutcome {
   CanonicalDetectionResidencyMetrics residency;
 };
 
+struct CommandLine {
+  std::filesystem::path archive_path;
+  std::string run_name;
+  std::filesystem::path video_path;
+  std::string layout;
+  int repetition = 0;
+  std::string strategy = "paged";
+  std::filesystem::path output_path;
+  crimson::diagnostics::EnduranceWorkloadConfig endurance;
+};
+
 json memoryAttributionJson(
     const crimson::diagnostics::MemoryAttributionSnapshot &snapshot);
+json schedulerJson(
+    const crimson::data::DataAccessSchedulerMetrics &scheduler_metrics);
 
 std::vector<crimson::diagnostics::RetainedMemoryOwner>
 retainedMemoryOwners(const LoadOutcome &outcome) {
@@ -386,6 +402,37 @@ json memoryAttributionJson(
        "includes uninstrumented repositories, TensorStore/cache internals, "
        "temporary allocations, libraries, thread stacks, and allocator "
        "retention"},
+  };
+}
+
+json memoryPlateauPolicyJson(
+    const crimson::diagnostics::MemoryPlateauPolicy &policy) {
+  return {
+      {"warmup_samples", policy.warmup_samples},
+      {"minimum_analysis_samples", policy.minimum_analysis_samples},
+      {"endpoint_window_samples", policy.endpoint_window_samples},
+      {"maximum_final_growth_bytes", policy.maximum_final_growth_bytes},
+      {"maximum_peak_growth_bytes", policy.maximum_peak_growth_bytes},
+      {"maximum_slope_bytes_per_minute", policy.maximum_slope_bytes_per_minute},
+  };
+}
+
+json memoryPlateauJson(
+    const crimson::diagnostics::MemoryPlateauResult &result) {
+  return {
+      {"enough_data", result.enough_data},
+      {"pass", result.pass},
+      {"total_samples", result.total_samples},
+      {"analyzed_samples", result.analyzed_samples},
+      {"analysis_first_elapsed_ms", result.analysis_first_elapsed_ms},
+      {"analysis_last_elapsed_ms", result.analysis_last_elapsed_ms},
+      {"initial_window_median_bytes", result.initial_window_median_bytes},
+      {"final_window_median_bytes", result.final_window_median_bytes},
+      {"peak_bytes", result.peak_bytes},
+      {"final_growth_bytes", result.final_growth_bytes},
+      {"peak_growth_bytes", result.peak_growth_bytes},
+      {"slope_bytes_per_minute", result.slope_bytes_per_minute},
+      {"reason", result.reason},
   };
 }
 
@@ -1062,9 +1109,17 @@ void runSeekBurst(
 json runTraversal(
     LoadOutcome *outcome,
     const std::shared_ptr<crimson::data::DataAccessScheduler> &scheduler,
-    bool reverse) {
+    bool reverse, int64_t first_frame = 0,
+    int64_t traversal_frames = static_cast<int64_t>(kTraversalFrames)) {
+  require(first_frame >= 0 && traversal_frames > 0 &&
+              first_frame + traversal_frames <=
+                  static_cast<int64_t>(kExpectedFrames),
+          "Traversal range is outside the camera frame domain");
+  require(first_frame % static_cast<int64_t>(kPageFrames) == 0,
+          "Traversal start is not page-aligned");
+  const int64_t last_frame_exclusive = first_frame + traversal_frames;
   std::vector<int64_t> page_starts;
-  for (int64_t frame = 0; frame < static_cast<int64_t>(kTraversalFrames);
+  for (int64_t frame = first_frame; frame < last_frame_exclusive;
        frame += static_cast<int64_t>(kPageFrames)) {
     page_starts.push_back(frame);
   }
@@ -1073,8 +1128,7 @@ json runTraversal(
   }
 
   std::string error;
-  const int64_t warm_frame =
-      reverse ? static_cast<int64_t>(kTraversalFrames) - 1 : 0;
+  const int64_t warm_frame = reverse ? last_frame_exclusive - 1 : first_frame;
   require(outcome->detection_buffer->requestFrame(warm_frame, true, &error),
           "Traversal warm request failed: " + error);
   require(outcome->detection_buffer->waitForFrame(warm_frame,
@@ -1117,9 +1171,8 @@ json runTraversal(
           outcome->detection_buffer->requestFrame(page_start, false, &error),
           "Traversal page request failed: " + error);
     }
-    const int64_t page_stop =
-        std::min<int64_t>(static_cast<int64_t>(kTraversalFrames),
-                          page_start + static_cast<int64_t>(kPageFrames));
+    const int64_t page_stop = std::min<int64_t>(
+        last_frame_exclusive, page_start + static_cast<int64_t>(kPageFrames));
     if (!reverse) {
       for (int64_t frame = page_start; frame < page_stop; ++frame) {
         const auto resolved = outcome->detection_buffer->frame(frame);
@@ -1145,9 +1198,10 @@ json runTraversal(
   const size_t post_warmup_pages = page_starts.size() - 1;
   return {
       {"direction", reverse ? "reverse" : "forward"},
+      {"frame_range", {first_frame, last_frame_exclusive}},
       {"source_scope", "canonical_detection_only_after_scheduler_idle"},
       {"physical_metric_scope", "process-global TensorStore delta"},
-      {"frames", kTraversalFrames},
+      {"frames", traversal_frames},
       {"pages", page_starts.size()},
       {"source_fps", kPlaybackFps},
       {"page_deadline_ms", kPageDeadline.count()},
@@ -1176,6 +1230,260 @@ json runTraversal(
       {"peak_cached_bytes", buffer_after.peak_cached_bytes},
       {"maximum_resolve_ms", buffer_after.maximum_resolve_ms},
       {"peak_rss_bytes", peakRssBytes()},
+  };
+}
+
+json runEnduranceSeekBurst(
+    LoadOutcome *outcome,
+    const std::shared_ptr<crimson::data::DataAccessScheduler> &scheduler,
+    const std::vector<int64_t> &frames) {
+  require(frames.size() >= 2,
+          "Endurance seek burst requires at least two frames");
+  scheduler->waitUntilIdle();
+  const auto queue_before = scheduler->metrics();
+  const auto metrics_before = snapshotPhysicalMetrics();
+  const auto buffer_before = outcome->detection_buffer->metrics();
+  const auto started = Clock::now();
+  std::string error;
+  for (const int64_t frame : frames) {
+    require(outcome->detection_buffer->requestFrame(frame, true, &error),
+            "Endurance seek request failed: " + error);
+  }
+  require(outcome->detection_buffer->waitForFrame(frames.back(),
+                                                  std::chrono::seconds(60)),
+          "Endurance final seek frame timed out");
+  scheduler->waitUntilIdle();
+
+  size_t stale_publications = 0;
+  for (size_t index = 0; index + 1 < frames.size(); ++index) {
+    if (outcome->detection_buffer->frame(frames[index])) {
+      ++stale_publications;
+    }
+  }
+  require(stale_publications == 0,
+          "An endurance seek published a superseded frame");
+  require(outcome->detection_buffer->frame(frames.back()) != nullptr,
+          "Endurance final seek generation did not publish");
+
+  const auto queue_after = scheduler->metrics();
+  const auto buffer_after = outcome->detection_buffer->metrics();
+  const auto physical = snapshotPhysicalMetrics() - metrics_before;
+  return {
+      {"frames", frames},
+      {"elapsed_ms", elapsedMilliseconds(started)},
+      {"cancelled_requests", queue_after.queue.cancelled_requests -
+                                 queue_before.queue.cancelled_requests},
+      {"discarded_completions", queue_after.queue.discarded_completions -
+                                    queue_before.queue.discarded_completions},
+      {"discarded_pages",
+       buffer_after.discarded_pages - buffer_before.discarded_pages},
+      {"stale_publications", stale_publications},
+      {"physical", physicalMetricsJson(physical)},
+  };
+}
+
+json enduranceProductMetricsJson(const LoadOutcome &outcome) {
+  const auto detections = outcome.detection_buffer->metrics();
+  const auto detection_repository =
+      outcome.detection_buffer->repositoryMetrics();
+  const auto masks = outcome.products.masks->metrics();
+  const auto motion = outcome.products.motion->metrics();
+  const auto eye_angles = outcome.products.eye_angles->metrics();
+  const auto tail = outcome.products.tail_kinematics->metrics();
+  return {
+      {"canonical_detection",
+       {{"requests", detections.requests},
+        {"cache_hits", detections.cache_hits},
+        {"resolved_pages", detections.resolved_pages},
+        {"failed_pages", detections.failed_pages},
+        {"discarded_pages", detections.discarded_pages},
+        {"evicted_pages", detections.evicted_pages},
+        {"cached_bytes", detections.cached_bytes},
+        {"peak_cached_bytes", detections.peak_cached_bytes},
+        {"repository_range_reads", detection_repository.range_reads},
+        {"repository_paged_reads", detection_repository.paged_range_reads},
+        {"repository_resident_reads",
+         detection_repository.resident_range_reads}}},
+      {"subject_masks",
+       {{"mapping_page_reads", masks.mapping_page_reads},
+        {"mapping_page_cache_hits", masks.mapping_page_cache_hits},
+        {"mapping_page_evictions", masks.mapping_page_evictions},
+        {"cached_mapping_bytes", masks.cached_mapping_bytes},
+        {"peak_cached_mapping_bytes", masks.peak_cached_mapping_bytes},
+        {"demand_chunk_loads", masks.demand_chunk_loads},
+        {"prefetched_chunk_loads", masks.prefetched_chunk_loads},
+        {"chunk_cache_hits", masks.chunk_cache_hits},
+        {"chunk_evictions", masks.chunk_evictions},
+        {"cached_payload_bytes", masks.cached_payload_bytes},
+        {"peak_cached_payload_bytes", masks.peak_cached_payload_bytes}}},
+      {"motion",
+       {{"preloaded", motion.default_source_preloaded},
+        {"resident_resolves", motion.preloaded_window_resolves},
+        {"paged_resolves", motion.paged_window_resolves},
+        {"index_reads", motion.frame_index_block_reads},
+        {"index_hits", motion.frame_index_cache_hits},
+        {"index_evictions", motion.frame_index_cache_evictions},
+        {"cached_index_bytes", motion.cached_frame_index_bytes}}},
+      {"eye_angles",
+       {{"preloaded", eye_angles.frame_series_preloaded},
+        {"resident_resolves", eye_angles.preloaded_window_resolves},
+        {"paged_resolves", eye_angles.paged_window_resolves}}},
+      {"tail_kinematics",
+       {{"preloaded", tail.default_source_preloaded},
+        {"resident_resolves", tail.preloaded_window_resolves},
+        {"paged_resolves", tail.paged_window_resolves},
+        {"index_reads", tail.frame_index_block_reads},
+        {"index_hits", tail.frame_index_cache_hits},
+        {"index_evictions", tail.frame_index_cache_evictions},
+        {"cached_index_bytes", tail.cached_frame_index_bytes}}},
+  };
+}
+
+json runEndurance(
+    LoadOutcome *outcome,
+    const std::shared_ptr<crimson::data::DataAccessScheduler> &scheduler,
+    const crimson::diagnostics::EnduranceWorkloadConfig &config,
+    crimson::diagnostics::ProcessMemorySampler *memory_sampler,
+    json *evidence) {
+  std::string config_error;
+  require(crimson::diagnostics::validateEnduranceWorkloadConfig(config,
+                                                                &config_error),
+          config_error);
+  const auto plans = crimson::diagnostics::buildEnduranceWorkload(config);
+  require(plans.size() == config.cycle_count,
+          "Endurance workload planner returned an incomplete plan");
+
+  const auto started = Clock::now();
+  const auto physical_before = snapshotPhysicalMetrics();
+  const auto scheduler_before = scheduler->metrics();
+  const auto detection_open_before = outcome->products.detection_open;
+  std::vector<crimson::diagnostics::MemoryPlateauSample> rss_samples;
+  std::vector<crimson::diagnostics::MemoryPlateauSample> retained_samples;
+  json cycles = json::array();
+  size_t stale_publications = 0;
+  size_t post_warmup_pages = 0;
+  size_t post_warmup_misses = 0;
+
+  for (const auto &plan : plans) {
+    const auto cycle_started = Clock::now();
+    const auto cycle_physical_before = snapshotPhysicalMetrics();
+    memory_sampler->mark("endurance_cycle_begin:" +
+                         std::to_string(plan.cycle_index));
+
+    json probes = json::array();
+    for (const int64_t frame : plan.simultaneous_probe_frames) {
+      probes.push_back(resolveSimultaneousFrame(outcome, frame, true));
+    }
+    auto seek =
+        runEnduranceSeekBurst(outcome, scheduler, plan.rapid_seek_frames);
+    stale_publications += seek["stale_publications"].get<size_t>();
+    auto traversal = runTraversal(
+        outcome, scheduler, plan.reverse, plan.traversal_first_frame,
+        plan.traversal_last_frame_exclusive - plan.traversal_first_frame);
+    post_warmup_pages += traversal["post_warmup_pages"].get<size_t>();
+    post_warmup_misses += traversal["post_warmup_misses"].get<size_t>();
+    scheduler->waitUntilIdle();
+
+    const auto memory = crimson::diagnostics::attributeProcessMemory(
+        crimson::diagnostics::sampleProcessMemory(),
+        retainedMemoryOwners(*outcome));
+    const double endurance_elapsed_ms = elapsedMilliseconds(started);
+    require(memory.process.current_rss_supported,
+            "Current RSS is unavailable during endurance sampling");
+    rss_samples.push_back(
+        {endurance_elapsed_ms, memory.process.current_rss_bytes});
+    retained_samples.push_back(
+        {endurance_elapsed_ms, memory.reported_retained_bytes});
+    captureMemoryAttribution("endurance_cycle_" +
+                                 std::to_string(plan.cycle_index),
+                             *outcome, evidence);
+    memory_sampler->mark("endurance_cycle_end:" +
+                         std::to_string(plan.cycle_index));
+
+    cycles.push_back({
+        {"cycle", plan.cycle_index},
+        {"direction", plan.reverse ? "reverse" : "forward"},
+        {"traversal_range",
+         {plan.traversal_first_frame, plan.traversal_last_frame_exclusive}},
+        {"simultaneous_probes", std::move(probes)},
+        {"rapid_seek", std::move(seek)},
+        {"traversal", std::move(traversal)},
+        {"elapsed_ms", elapsedMilliseconds(cycle_started)},
+        {"endurance_elapsed_ms", endurance_elapsed_ms},
+        {"memory", memoryAttributionJson(memory)},
+        {"physical", physicalMetricsJson(snapshotPhysicalMetrics() -
+                                         cycle_physical_before)},
+        {"product_metrics", enduranceProductMetricsJson(*outcome)},
+    });
+  }
+
+  crimson::diagnostics::MemoryPlateauPolicy rss_policy;
+  rss_policy.maximum_final_growth_bytes = 256 * kMiB;
+  rss_policy.maximum_peak_growth_bytes = 512 * kMiB;
+  rss_policy.maximum_slope_bytes_per_minute = 64.0 * kMiB;
+  crimson::diagnostics::MemoryPlateauPolicy retained_policy = rss_policy;
+  retained_policy.maximum_final_growth_bytes = 64 * kMiB;
+  retained_policy.maximum_peak_growth_bytes = 128 * kMiB;
+  retained_policy.maximum_slope_bytes_per_minute = 32.0 * kMiB;
+  const auto rss_plateau =
+      crimson::diagnostics::analyzeMemoryPlateau(rss_samples, rss_policy);
+  const auto retained_plateau = crimson::diagnostics::analyzeMemoryPlateau(
+      retained_samples, retained_policy);
+  const auto scheduler_after = scheduler->metrics();
+  const auto detection_open_after = outcome->products.detection_open;
+  require(detection_open_after.offset_read_calls ==
+              detection_open_before.offset_read_calls,
+          "Endurance workload reread canonical frame offsets");
+  require(stale_publications == 0,
+          "Endurance workload published stale seek results");
+  require(scheduler_after.queue.failed_completions ==
+              scheduler_before.queue.failed_completions,
+          "Endurance workload added a failed scheduler completion");
+  require(scheduler_after.work_exceptions == scheduler_before.work_exceptions,
+          "Endurance workload added a scheduler work exception");
+  require(rss_plateau.enough_data && rss_plateau.pass,
+          "Endurance RSS did not satisfy the bounded-memory policy: " +
+              rss_plateau.reason);
+  require(retained_plateau.enough_data && retained_plateau.pass,
+          "Endurance retained memory did not satisfy the bounded-memory "
+          "policy: " +
+              retained_plateau.reason);
+
+  return {
+      {"schema_id", "crimson.analysis_endurance"},
+      {"schema_version", 1},
+      {"classification", "full_archive_bounded_memory_checkpoint"},
+      {"config",
+       {{"frame_count", config.frame_count},
+        {"traversal_span_frames", config.traversal_span_frames},
+        {"page_frames", config.page_frames},
+        {"cycle_count", config.cycle_count},
+        {"simultaneous_probes_per_cycle", config.simultaneous_probes_per_cycle},
+        {"seek_requests_per_cycle", config.seek_requests_per_cycle},
+        {"seed", config.seed}}},
+      {"cycles", std::move(cycles)},
+      {"elapsed_ms", elapsedMilliseconds(started)},
+      {"stale_publications", stale_publications},
+      {"post_warmup_pages", post_warmup_pages},
+      {"post_warmup_misses", post_warmup_misses},
+      {"post_warmup_deadline_miss_rate",
+       post_warmup_pages == 0 ? 0.0
+                              : static_cast<double>(post_warmup_misses) /
+                                    static_cast<double>(post_warmup_pages)},
+      {"offset_reads_during_endurance",
+       detection_open_after.offset_read_calls -
+           detection_open_before.offset_read_calls},
+      {"rss_plateau",
+       {{"policy", memoryPlateauPolicyJson(rss_policy)},
+        {"result", memoryPlateauJson(rss_plateau)}}},
+      {"reported_retained_plateau",
+       {{"policy", memoryPlateauPolicyJson(retained_policy)},
+        {"result", memoryPlateauJson(retained_plateau)}}},
+      {"physical",
+       physicalMetricsJson(snapshotPhysicalMetrics() - physical_before)},
+      {"scheduler", schedulerJson(scheduler_after)},
+      {"product_metrics", enduranceProductMetricsJson(*outcome)},
+      {"pass", true},
   };
 }
 
@@ -1271,22 +1579,100 @@ void writeEvidence(const std::filesystem::path &path, const json &evidence) {
   require(output.good(), "Could not write evidence output: " + path.string());
 }
 
+void printUsage(const char *program) {
+  std::cerr << "Usage: " << program
+            << " ARCHIVE.zarr DETECTION_RUN VIDEO LAYOUT REPETITION "
+               "[STRATEGY] OUTPUT.json [--endurance-cycles N] "
+               "[--endurance-traversal-frames N] "
+               "[--endurance-probes-per-cycle N] "
+               "[--endurance-seeks-per-cycle N] [--endurance-seed N]\n";
+}
+
+size_t parseSizeArgument(const std::string &name, const char *value) {
+  const std::string text = value;
+  size_t consumed = 0;
+  const unsigned long long parsed = std::stoull(text, &consumed);
+  require(consumed == text.size(), name + " is not an unsigned integer");
+  require(parsed <= std::numeric_limits<size_t>::max(), name + " is too large");
+  return static_cast<size_t>(parsed);
+}
+
+CommandLine parseCommandLine(int argc, char **argv) {
+  require(argc >= 7, "Missing required benchmark arguments");
+  CommandLine result;
+  result.archive_path = argv[1];
+  result.run_name = argv[2];
+  result.video_path = argv[3];
+  result.layout = argv[4];
+  result.repetition = std::stoi(argv[5]);
+  int index = 6;
+  if (std::string_view(argv[index]) == "paged" ||
+      std::string_view(argv[index]) == "resident") {
+    result.strategy = argv[index++];
+  }
+  require(index < argc, "Missing output JSON path");
+  result.output_path = argv[index++];
+  result.endurance.frame_count = kExpectedFrames;
+  result.endurance.page_frames = kPageFrames;
+  while (index < argc) {
+    const std::string option = argv[index++];
+    require(index < argc, "Missing value for " + option);
+    const char *value = argv[index++];
+    if (option == "--endurance-cycles") {
+      result.endurance.cycle_count = parseSizeArgument(option, value);
+    } else if (option == "--endurance-traversal-frames") {
+      const size_t parsed = parseSizeArgument(option, value);
+      require(parsed <=
+                  static_cast<size_t>(std::numeric_limits<int64_t>::max()),
+              option + " is too large");
+      result.endurance.traversal_span_frames = static_cast<int64_t>(parsed);
+    } else if (option == "--endurance-probes-per-cycle") {
+      result.endurance.simultaneous_probes_per_cycle =
+          parseSizeArgument(option, value);
+    } else if (option == "--endurance-seeks-per-cycle") {
+      result.endurance.seek_requests_per_cycle =
+          parseSizeArgument(option, value);
+    } else if (option == "--endurance-seed") {
+      result.endurance.seed = parseSizeArgument(option, value);
+    } else {
+      throw std::runtime_error("Unknown benchmark option: " + option);
+    }
+  }
+  if (result.endurance.cycle_count > 0) {
+    require(result.endurance.cycle_count >= 6,
+            "Endurance mode requires at least six cycles for its plateau "
+            "verdict");
+    std::string error;
+    require(crimson::diagnostics::validateEnduranceWorkloadConfig(
+                result.endurance, &error),
+            error);
+  }
+  return result;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
-  if (argc != 7 && argc != 8) {
-    std::cerr << "Usage: " << argv[0]
-              << " ARCHIVE.zarr DETECTION_RUN VIDEO LAYOUT REPETITION "
-                 "[STRATEGY] OUTPUT.json\n";
+  if (argc < 7) {
+    printUsage(argv[0]);
     return 2;
   }
-  const std::filesystem::path archive_path = argv[1];
-  const std::string run_name = argv[2];
-  const std::filesystem::path video_path = argv[3];
-  const std::string layout = argv[4];
-  const int repetition = std::stoi(argv[5]);
-  const std::string strategy = argc == 8 ? argv[6] : "paged";
-  const std::filesystem::path output_path = argc == 8 ? argv[7] : argv[6];
+  CommandLine command;
+  try {
+    command = parseCommandLine(argc, argv);
+  } catch (const std::exception &exception) {
+    printUsage(argv[0]);
+    std::cerr << "canonical_detection_full_archive_stage1_benchmark: "
+              << exception.what() << '\n';
+    return 2;
+  }
+  const auto &archive_path = command.archive_path;
+  const auto &run_name = command.run_name;
+  const auto &video_path = command.video_path;
+  const auto &layout = command.layout;
+  const int repetition = command.repetition;
+  const auto &strategy = command.strategy;
+  const auto &output_path = command.output_path;
   const auto process_started = Clock::now();
   const auto process_physical_before = snapshotPhysicalMetrics();
   crimson::diagnostics::ProcessMemorySampler memory_sampler(
@@ -1355,6 +1741,12 @@ int main(int argc, char **argv) {
     memory_sampler.setPhase("reverse_traversal");
     evidence["traversal"]["reverse"] = runTraversal(&outcome, scheduler, true);
     captureMemoryAttribution("reverse_traversal", outcome, &evidence);
+    if (command.endurance.cycle_count > 0) {
+      memory_sampler.setPhase("endurance");
+      evidence["endurance"] = runEndurance(
+          &outcome, scheduler, command.endurance, &memory_sampler, &evidence);
+      captureMemoryAttribution("endurance_complete", outcome, &evidence);
+    }
 
     scheduler->waitUntilIdle();
     const auto scheduler_metrics = scheduler->metrics();
