@@ -894,6 +894,19 @@ queue wait below 0.15 ms, published one exact 28,490,088-byte snapshot, and had
 zero stale publications or traversal misses. Evidence is in
 `docs/diagnostics/canonical_detection_production_residency_activation_2026-07-28.md`.
 
+The first mounted long-running acceptance checkpoint now passes. Twenty
+deterministic cycles exercised simultaneous maintained products, rapid seek
+cancellation, and alternating 3,500-frame traversals distributed across the
+full Sleepyfish frame domain. RSS and reported retained allocation curves both
+plateaued after warmup; mask mapping pages reached their bounded eviction
+regime at about 16.6 MiB, and mask payload chunks evicted continuously without
+unbounded retention. There were zero misses across 980 post-warmup traversal
+pages, zero stale publications, zero offset rereads, and no scheduler failures.
+The portable workload/plateau core also passed in an isolated Linux build, and
+the maintained NVIDIA application linked successfully. Native Windows and
+multi-process release acceptance remain open. The checkpoint is in
+`docs/diagnostics/full_archive_endurance_2026-07-29/`.
+
 Phase 5O.6 is now in progress for Palette refined-detection v1 consumption.
 The backend-neutral repository, fail-closed refined-first selector, stable row
 identity, lazy source-audit boundary, paging/residency integration, shared

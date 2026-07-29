@@ -538,6 +538,18 @@ The first Linux/Windows entry-point adoption slice is complete for refined
 subject masks. Native Windows runtime validation, longer steady-state memory
 acceptance, and the remaining adapter migrations remain open.
 
+The first mounted full-archive endurance checkpoint is now complete. A
+deterministic 20-cycle workload distributed forward/reverse traversal spans,
+random simultaneous product probes, and rapid seeks across the full 1,188,000-
+frame domain. Process RSS and repository-reported retained allocations both
+passed separate post-warmup plateau policies. Subject-mask mapping occupancy
+reached about 16.6 MiB and began evicting; sparse payload chunks continued
+evicting while remaining bounded. All 980 post-warmup traversal pages met their
+deadline, stale publications and offset rereads were zero, and current-frame
+queue wait remained below 0.325 ms. This is one mounted macOS diagnostic rather
+than the multi-process cross-platform release gate. Evidence is in
+`docs/diagnostics/full_archive_endurance_2026-07-29/`.
+
 The coordinate-aware archive boundary is also consumer-validated. A mounted
 selector-ineligible canary passed canonical-detection v3, refined-detection v2,
 and geometry-only crop v2 manifest validation, exact typed TensorStore opens,

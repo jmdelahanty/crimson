@@ -2,7 +2,7 @@
 
 Date: 2026-07-29
 
-Status: implementation complete; mounted full-duration checkpoint pending.
+Status: implementation and first mounted full-duration checkpoint complete.
 
 ## Purpose
 
@@ -47,9 +47,11 @@ The runner accepts:
 --endurance-seed N
 ```
 
-At least six cycles are required. Setting the traversal span to the complete
-camera-frame count enables a literal full-recording traversal in each cycle;
-shorter spans provide a faster whole-domain checkpoint.
+At least ten cycles are required. A six-cycle sensitivity trial showed that
+four post-warmup points made the fitted RSS slope depend too heavily on one
+late allocator/TensorStore fluctuation. Setting the traversal span to the
+complete camera-frame count enables a literal full-recording traversal in each
+cycle; shorter spans provide a faster whole-domain checkpoint.
 
 ## Memory Verdict
 
@@ -94,7 +96,7 @@ residency close smoke; it is not inferred from a settled endurance cycle.
 
 ## Invocation
 
-For the full Sleepyfish access-aware archive, a six-cycle first checkpoint is:
+For the full Sleepyfish access-aware archive, a ten-cycle checkpoint is:
 
 ```bash
 build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark \
@@ -105,7 +107,7 @@ build/macos-arm64-release/canonical_detection_full_archive_stage1_benchmark \
   0 \
   resident \
   endurance.json \
-  --endurance-cycles 6 \
+  --endurance-cycles 10 \
   --endurance-traversal-frames 3500 \
   --endurance-probes-per-cycle 2 \
   --endurance-seeks-per-cycle 8 \

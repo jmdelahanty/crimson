@@ -1644,8 +1644,8 @@ CommandLine parseCommandLine(int argc, char **argv) {
     }
   }
   if (result.endurance.cycle_count > 0) {
-    require(result.endurance.cycle_count >= 6,
-            "Endurance mode requires at least six cycles for its plateau "
+    require(result.endurance.cycle_count >= 10,
+            "Endurance mode requires at least ten cycles for its plateau "
             "verdict");
     std::string error;
     require(crimson::diagnostics::validateEnduranceWorkloadConfig(

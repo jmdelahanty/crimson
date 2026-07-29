@@ -50,6 +50,7 @@ def plot_memory(axis, endurance: dict) -> None:
     axis.set_title("Cycle-end memory plateau")
     axis.set_xlabel("Endurance cycle")
     axis.set_ylabel("Memory (MiB)")
+    axis.set_xticks(x_values[::2])
     axis.grid(axis="y", color="#D1D5DB", linewidth=0.7, alpha=0.7)
     axis.legend(frameon=False)
 
@@ -70,7 +71,15 @@ def plot_cycle_io(axis, endurance: dict) -> None:
     reads_axis.set_ylabel("File reads")
     handles, labels = axis.get_legend_handles_labels()
     more_handles, more_labels = reads_axis.get_legend_handles_labels()
-    axis.legend(handles + more_handles, labels + more_labels, frameon=False)
+    axis.legend(
+        handles + more_handles,
+        labels + more_labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.01),
+        ncol=2,
+        frameon=False,
+    )
+    axis.set_xticks(x_values[::2])
 
 
 def plot_cache_pressure(axis, endurance: dict) -> None:
@@ -94,6 +103,7 @@ def plot_cache_pressure(axis, endurance: dict) -> None:
     axis.set_title("Application-owned cache occupancy")
     axis.set_xlabel("Endurance cycle")
     axis.set_ylabel("Current retained bytes (MiB)")
+    axis.set_xticks(x_values[::2])
     axis.grid(axis="y", color="#D1D5DB", linewidth=0.7, alpha=0.7)
     axis.legend(frameon=False)
 
