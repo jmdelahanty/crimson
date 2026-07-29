@@ -1441,13 +1441,17 @@ json runEndurance(
           "Endurance workload added a failed scheduler completion");
   require(scheduler_after.work_exceptions == scheduler_before.work_exceptions,
           "Endurance workload added a scheduler work exception");
-  require(rss_plateau.enough_data && rss_plateau.pass,
-          "Endurance RSS did not satisfy the bounded-memory policy: " +
-              rss_plateau.reason);
-  require(retained_plateau.enough_data && retained_plateau.pass,
-          "Endurance retained memory did not satisfy the bounded-memory "
-          "policy: " +
-              retained_plateau.reason);
+  const bool rss_pass = rss_plateau.enough_data && rss_plateau.pass;
+  const bool retained_pass =
+      retained_plateau.enough_data && retained_plateau.pass;
+  json failure_reasons = json::array();
+  if (!rss_pass) {
+    failure_reasons.push_back("RSS: " + rss_plateau.reason);
+  }
+  if (!retained_pass) {
+    failure_reasons.push_back("reported retained memory: " +
+                              retained_plateau.reason);
+  }
 
   return {
       {"schema_id", "crimson.analysis_endurance"},
@@ -1483,7 +1487,8 @@ json runEndurance(
        physicalMetricsJson(snapshotPhysicalMetrics() - physical_before)},
       {"scheduler", schedulerJson(scheduler_after)},
       {"product_metrics", enduranceProductMetricsJson(*outcome)},
-      {"pass", true},
+      {"failure_reasons", std::move(failure_reasons)},
+      {"pass", rss_pass && retained_pass},
   };
 }
 
@@ -1746,6 +1751,9 @@ int main(int argc, char **argv) {
       evidence["endurance"] = runEndurance(
           &outcome, scheduler, command.endurance, &memory_sampler, &evidence);
       captureMemoryAttribution("endurance_complete", outcome, &evidence);
+      require(evidence["endurance"]["pass"].get<bool>(),
+              "Endurance memory plateau gate failed: " +
+                  evidence["endurance"]["failure_reasons"].dump());
     }
 
     scheduler->waitUntilIdle();
