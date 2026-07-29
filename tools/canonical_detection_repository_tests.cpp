@@ -907,12 +907,20 @@ bool testRepositoryAndOverlay() {
 
   const auto input = crimson::zarr::makeCanonicalDetectionOverlaySceneInput(
       descriptor, page.frames[1], 0, 1, 0, 100, 80);
+  CHECK(input.presentation_space ==
+        crimson::coordinates::kSourceCameraContinuousPixels);
   const auto scene = crimson::overlay::buildReadOnlyOverlayScene(input);
   CHECK(scene.ready());
   CHECK(scene.count(crimson::overlay::CameraOverlayLayer::BoundingBoxes) == 1);
   CHECK(scene.primitives.front().points.size() == 5);
   CHECK(std::abs(scene.primitives.front().points[0].x - 15.0) < 1e-6);
   CHECK(std::abs(scene.primitives.front().points[0].y - 12.0) < 1e-6);
+  CHECK(std::abs(scene.primitives.front().points[1].x - 25.0) < 1e-6);
+  CHECK(std::abs(scene.primitives.front().points[2].y - 28.0) < 1e-6);
+  CHECK(crimson::overlay::buildReadOnlyOverlayScene(
+            crimson::zarr::makeCanonicalDetectionOverlaySceneInput(
+                descriptor, page.frames[1], 0, 1, 0, 101, 80))
+            .count(crimson::overlay::CameraOverlayLayer::BoundingBoxes) == 0);
   CHECK(crimson::overlay::buildReadOnlyOverlayScene(
             crimson::zarr::makeCanonicalDetectionOverlaySceneInput(
                 descriptor, page.frames[1], 0, 2, 0, 100, 80))

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "coordinate_contract.h"
+
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -40,8 +42,8 @@ struct FrameIdentity {
 FrameIdentityStatus evaluateFrameIdentity(const FrameIdentity& identity);
 bool canComposite(const FrameIdentity& identity);
 
-// All overlay geometry uses top-left source coordinates: +x is right and +y
-// is down. Display coordinates use the same orientation.
+// All overlay geometry uses source_camera_continuous_pixels. Display
+// coordinates use the same top-left, +x-right, +y-down orientation.
 struct SourceViewportTransform {
     Rect visible_source;
     Rect display;

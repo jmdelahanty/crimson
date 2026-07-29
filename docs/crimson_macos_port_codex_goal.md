@@ -913,6 +913,15 @@ Palette profiles itself. Evidence is in
 The implementation boundary is documented in
 `docs/crimson_refined_detection_v1_consumer.md`.
 
+The shared coordinate foundation is now implemented independently of Metal,
+OpenGL/CUDA, TensorStore, and ImGui. Camera overlays explicitly present
+`source_camera_continuous_pixels`; the canonical/refined detection adapter uses
+the shared normalized-center-size to half-open-XYXY transform and validates
+source dimensions. Strict ROI placement requires source dimensions plus exact
+crop manifest and policy digests. Legacy keypoint/crop names remain behind
+compatibility adapters pending persisted provenance and the movement-trail
+policy. The contract is in `docs/crimson_shared_coordinate_contract_v1.md`.
+
 Phase 5 also remains open for production-tail acceptance, movement-trail
 coordinate policy, any required chaser-data densification, and edit/review
 workflows whose shared storage contracts are still changing. Those blockers

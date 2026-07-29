@@ -133,6 +133,8 @@ struct EyeGeometryInput {
 
 struct ReadOnlyOverlayInput {
   FrameIdentity identity;
+  coordinates::CoordinateSpace presentation_space =
+      coordinates::kSourceCameraContinuousPixels;
   double source_width = 0.0;
   double source_height = 0.0;
   std::vector<std::string> keypoint_labels;
@@ -244,6 +246,7 @@ struct ScreenTextAnnotation {
 enum class ReadOnlyOverlayBuildStatus : uint8_t {
   Ready,
   InvalidIdentity,
+  InvalidCoordinateSpace,
   InvalidDimensions,
 };
 
@@ -251,6 +254,8 @@ struct ReadOnlyOverlayScene {
   ReadOnlyOverlayBuildStatus status =
       ReadOnlyOverlayBuildStatus::InvalidIdentity;
   FrameIdentity identity;
+  coordinates::CoordinateSpace presentation_space =
+      coordinates::kSourceCameraContinuousPixels;
   double source_width = 0.0;
   double source_height = 0.0;
   std::vector<RasterMask> raster_masks;

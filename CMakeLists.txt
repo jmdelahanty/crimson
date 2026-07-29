@@ -90,6 +90,14 @@ target_include_directories(crimson_data_access_contracts PUBLIC
 target_link_libraries(crimson_data_access_contracts PUBLIC Threads::Threads)
 target_compile_features(crimson_data_access_contracts PUBLIC cxx_std_17)
 
+add_library(crimson_coordinate_contracts STATIC
+    src/coordinate_contract.cpp
+)
+target_include_directories(crimson_coordinate_contracts PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_features(crimson_coordinate_contracts PUBLIC cxx_std_17)
+
 add_library(crimson_repository_contracts STATIC
     src/analysis_series_timeline.cpp
     src/analysis_series_timeline_buffer.cpp
@@ -132,6 +140,9 @@ target_include_directories(crimson_crop_contracts PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_compile_features(crimson_crop_contracts PUBLIC cxx_std_17)
+target_link_libraries(crimson_crop_contracts PUBLIC
+    crimson_coordinate_contracts
+)
 
 add_library(crimson_overlay_contracts STATIC
     src/overlay_scene_contract.cpp
@@ -148,6 +159,7 @@ target_include_directories(crimson_overlay_contracts PUBLIC
 )
 target_compile_features(crimson_overlay_contracts PUBLIC cxx_std_17)
 target_link_libraries(crimson_overlay_contracts PUBLIC
+    crimson_coordinate_contracts
     crimson_crop_contracts
     crimson_repository_contracts
 )
@@ -819,6 +831,22 @@ add_test(NAME data_access_contract_tests
     COMMAND $<TARGET_FILE:data_access_contract_tests>)
 set_tests_properties(data_access_contract_tests PROPERTIES
     LABELS "cache;headless;portable;scheduler"
+)
+
+add_executable(coordinate_contract_tests
+    tools/coordinate_contract_tests.cpp
+)
+target_link_libraries(coordinate_contract_tests PRIVATE
+    crimson_coordinate_contracts
+)
+target_compile_features(coordinate_contract_tests PRIVATE cxx_std_17)
+set_target_properties(coordinate_contract_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME coordinate_contract_tests
+    COMMAND $<TARGET_FILE:coordinate_contract_tests>)
+set_tests_properties(coordinate_contract_tests PROPERTIES
+    LABELS "coordinates;headless;portable"
 )
 
 add_executable(chaser_distance_polar_contract_tests
@@ -1837,6 +1865,7 @@ file(GLOB CPP_SOURCES CONFIGURE_DEPENDS
     "src/gui/*.cpp"
     "src/zarr/*.cpp")
 list(REMOVE_ITEM CPP_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/coordinate_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/chaser_distance_polar.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/chaser_distance_polar_buffer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/chaser_distance_polar_scene.cpp"

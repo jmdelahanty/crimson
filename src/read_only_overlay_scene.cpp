@@ -992,7 +992,9 @@ bool Color::valid() const {
 
 bool ReadOnlyOverlayScene::ready() const {
   return status == ReadOnlyOverlayBuildStatus::Ready &&
-         canComposite(identity) && source_width > 0.0 && source_height > 0.0;
+         canComposite(identity) &&
+         presentation_space == coordinates::kSourceCameraContinuousPixels &&
+         source_width > 0.0 && source_height > 0.0;
 }
 
 size_t ReadOnlyOverlayScene::count(PrimitiveType type) const {
@@ -1024,10 +1026,15 @@ ReadOnlyOverlayScene
 buildReadOnlyOverlayScene(const ReadOnlyOverlayInput &input) {
   ReadOnlyOverlayScene scene;
   scene.identity = input.identity;
+  scene.presentation_space = input.presentation_space;
   scene.source_width = input.source_width;
   scene.source_height = input.source_height;
   if (!canComposite(input.identity)) {
     scene.status = ReadOnlyOverlayBuildStatus::InvalidIdentity;
+    return scene;
+  }
+  if (input.presentation_space != coordinates::kSourceCameraContinuousPixels) {
+    scene.status = ReadOnlyOverlayBuildStatus::InvalidCoordinateSpace;
     return scene;
   }
   if (!finite(input.source_width) || !finite(input.source_height) ||

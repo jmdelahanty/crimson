@@ -78,6 +78,13 @@ bool testIdentityAndOptions() {
     CHECK(stale.primitives.empty());
 
     input = fixture::makeReadOnlyOverlayInput();
+    input.presentation_space = crimson::coordinates::kRoiContinuousPixels;
+    const auto invalid_space = buildReadOnlyOverlayScene(input);
+    CHECK(invalid_space.status ==
+          ReadOnlyOverlayBuildStatus::InvalidCoordinateSpace);
+    CHECK(!invalid_space.ready());
+
+    input = fixture::makeReadOnlyOverlayInput();
     input.source_width = 0.0;
     const auto invalid_size = buildReadOnlyOverlayScene(input);
     CHECK(invalid_size.status == ReadOnlyOverlayBuildStatus::InvalidDimensions);
@@ -102,25 +109,24 @@ bool testStyleVariants() {
     input.source_height = 100.0;
     input.show_headings = false;
     input.show_keypoints = false;
+    const auto detectionWithBox = [](DetectionBoxInput box) {
+        DetectionOverlayInput detection;
+        detection.box = std::move(box);
+        return detection;
+    };
     input.detections = {
-        {DetectionBoxInput{{10.0, 10.0, 20.0, 20.0},
-                           1,
-                           BoxProvenance::Manual}},
-        {DetectionBoxInput{{40.0, 10.0, 20.0, 20.0},
-                           2,
-                           BoxProvenance::Manual,
-                           true}},
-        {DetectionBoxInput{{70.0, 10.0, 20.0, 20.0},
-                           3,
-                           BoxProvenance::Clean,
-                           false,
-                           true}},
-        {DetectionBoxInput{{100.0, 10.0, 20.0, 20.0},
-                           4,
-                           BoxProvenance::Clean,
-                           false,
-                           false,
-                           true}},
+        detectionWithBox(DetectionBoxInput{
+            {10.0, 10.0, 20.0, 20.0}, 1, BoxProvenance::Manual}),
+        detectionWithBox(DetectionBoxInput{
+            {40.0, 10.0, 20.0, 20.0}, 2, BoxProvenance::Manual, true}),
+        detectionWithBox(DetectionBoxInput{
+            {70.0, 10.0, 20.0, 20.0}, 3, BoxProvenance::Clean, false, true}),
+        detectionWithBox(DetectionBoxInput{{100.0, 10.0, 20.0, 20.0},
+                                           4,
+                                           BoxProvenance::Clean,
+                                           false,
+                                           false,
+                                           true}),
     };
     const auto boxes = buildReadOnlyOverlayScene(input);
     CHECK(boxes.primitives.size() == 4);
