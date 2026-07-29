@@ -26,6 +26,7 @@
 #include <unordered_map>
 #include <nlohmann/json.hpp>
 #include "h5_loader.h"  // For LoggedBoundingBox structure compatibility
+#include "data_access_scheduler.h"
 #include "keypoint_heading_utils.h"
 #include "zarr/palette_clipped_resolver.h"
 
@@ -885,6 +886,8 @@ public:
     
     // Main loading function
     bool loadZarrFile(const std::string& filepath, std::string& error_message);
+    void setDataAccessScheduler(
+        std::shared_ptr<crimson::data::DataAccessScheduler> scheduler);
     std::optional<ZarrCalibrationData> loadCalibrationForCamera(
         const std::string& camera_name_or_id,
         std::string& status_message) const;
@@ -1871,6 +1874,12 @@ private:
     mutable std::deque<size_t> eye_mask_prefetch_queue_;
     mutable std::thread eye_mask_prefetch_worker_;
     mutable bool eye_mask_prefetch_stop_requested_ = false;
+    std::shared_ptr<crimson::data::DataAccessScheduler>
+        data_access_scheduler_;
+    mutable crimson::data::SourceIdentity eye_mask_scheduler_source_;
+    mutable uint64_t eye_mask_scheduler_generation_ = 1;
+    mutable std::optional<size_t> eye_mask_scheduler_last_frame_;
+    mutable int eye_mask_scheduler_direction_ = 0;
     
     // Loading functions
     bool loadStandardFormat(const ts::kvstore::KvStore& store);
@@ -1949,7 +1958,12 @@ private:
                             bool allow_prefetch = true,
                             bool force_reload = false) const;
     void prefetchAdjacentEyeMaskChunks(size_t chunk_id) const;
-    bool requestEyeMaskChunkPrefetch(size_t chunk_id) const;
+    bool requestEyeMaskChunkPrefetch(
+        size_t chunk_id,
+        crimson::data::RequestPriority priority =
+            crimson::data::RequestPriority::Speculative,
+        crimson::data::AccessPattern access_pattern =
+            crimson::data::AccessPattern::Forward) const;
     void stopEyeMaskPrefetchWorker() const;
     void stopRefinedSubjectMaskOptionalOverlayWorker();
     void eyeMaskPrefetchWorkerLoop() const;

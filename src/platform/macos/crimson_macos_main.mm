@@ -13,6 +13,7 @@
 #include "chaser_distance_polar_buffer.h"
 #include "chaser_distance_polar_scene.h"
 #include "crop_presentation_coordinator.h"
+#include "data_access_diagnostics.h"
 #include "data_access_scheduler.h"
 #include "debug_flags.h"
 #include "diagnostic_report.h"
@@ -5739,109 +5740,8 @@ int main(int argc, char **argv) {
       {session_lifecycle.snapshot(), final_analysis_loading_progress,
        camera_presentation_tracker.metrics()});
 
-  const crimson::data::DataAccessQueueMetrics &final_analysis_queue_metrics =
-      final_analysis_data_scheduler_metrics.queue;
-  std::printf(
-      "[AppleDataScheduler] workers=%zu submissions=%llu accepted=%llu "
-      "duplicates=%llu promotions=%llu rejected_invalid=%llu "
-      "rejected_stale=%llu rejected_capacity=%llu cancelled=%llu "
-      "capacity_evictions=%llu completed=%llu discarded=%llu failed=%llu "
-      "work_started=%llu work_completed=%llu work_exceptions=%llu "
-      "reserved_current=%zu peak_pending=%zu peak_active=%zu "
-      "peak_non_current=%zu peak_speculative=%zu\n",
-      final_analysis_data_scheduler_metrics.worker_count,
-      static_cast<unsigned long long>(final_analysis_queue_metrics.submissions),
-      static_cast<unsigned long long>(final_analysis_queue_metrics.accepted),
-      static_cast<unsigned long long>(final_analysis_queue_metrics.duplicates),
-      static_cast<unsigned long long>(final_analysis_queue_metrics.promotions),
-      static_cast<unsigned long long>(
-          final_analysis_queue_metrics.rejected_invalid),
-      static_cast<unsigned long long>(
-          final_analysis_queue_metrics.rejected_stale),
-      static_cast<unsigned long long>(
-          final_analysis_queue_metrics.rejected_capacity),
-      static_cast<unsigned long long>(
-          final_analysis_queue_metrics.cancelled_requests),
-      static_cast<unsigned long long>(
-          final_analysis_queue_metrics.capacity_evictions),
-      static_cast<unsigned long long>(
-          final_analysis_queue_metrics.completed_requests),
-      static_cast<unsigned long long>(
-          final_analysis_queue_metrics.discarded_completions),
-      static_cast<unsigned long long>(
-          final_analysis_queue_metrics.failed_completions),
-      static_cast<unsigned long long>(
-          final_analysis_data_scheduler_metrics.work_started),
-      static_cast<unsigned long long>(
-          final_analysis_data_scheduler_metrics.work_completed),
-      static_cast<unsigned long long>(
-          final_analysis_data_scheduler_metrics.work_exceptions),
-      final_analysis_data_scheduler_metrics.reserved_current_frame_workers,
-      final_analysis_queue_metrics.peak_pending_requests,
-      final_analysis_queue_metrics.peak_active_requests,
-      final_analysis_data_scheduler_metrics.peak_active_non_current_requests,
-      final_analysis_data_scheduler_metrics.peak_active_speculative_requests);
-  for (size_t priority_index = 0;
-       priority_index < crimson::data::kDataRequestPriorityCount;
-       ++priority_index) {
-    const auto priority =
-        static_cast<crimson::data::RequestPriority>(priority_index);
-    const auto &timing = final_analysis_data_scheduler_metrics
-                             .timing_by_priority[priority_index];
-    if (timing.started == 0) {
-      continue;
-    }
-    std::printf(
-        "[AppleDataSchedulerTiming] scope=priority priority=%s "
-        "started=%llu completed=%llu queue_avg_ms=%.1f queue_max_ms=%.1f "
-        "service_avg_ms=%.1f service_max_ms=%.1f queue_over_100ms=%llu "
-        "queue_over_1000ms=%llu queue_over_5000ms=%llu "
-        "service_over_100ms=%llu service_over_1000ms=%llu "
-        "service_over_5000ms=%llu\n",
-        crimson::data::requestPriorityName(priority),
-        static_cast<unsigned long long>(timing.started),
-        static_cast<unsigned long long>(timing.completed),
-        timing.averageQueueWaitMs(), timing.maximum_queue_wait_ms,
-        timing.averageServiceMs(), timing.maximum_service_ms,
-        static_cast<unsigned long long>(timing.queue_wait_over_100_ms),
-        static_cast<unsigned long long>(timing.queue_wait_over_1000_ms),
-        static_cast<unsigned long long>(timing.queue_wait_over_5000_ms),
-        static_cast<unsigned long long>(timing.service_over_100_ms),
-        static_cast<unsigned long long>(timing.service_over_1000_ms),
-        static_cast<unsigned long long>(timing.service_over_5000_ms));
-  }
-  for (const auto &source :
-       final_analysis_data_scheduler_metrics.timing_by_source) {
-    for (size_t priority_index = 0;
-         priority_index < crimson::data::kDataRequestPriorityCount;
-         ++priority_index) {
-      const auto priority =
-          static_cast<crimson::data::RequestPriority>(priority_index);
-      const auto &timing = source.by_priority[priority_index];
-      if (timing.started == 0) {
-        continue;
-      }
-      std::printf(
-          "[AppleDataSchedulerTiming] scope=source product=%s run=%s "
-          "priority=%s started=%llu completed=%llu queue_avg_ms=%.1f "
-          "queue_max_ms=%.1f service_avg_ms=%.1f service_max_ms=%.1f "
-          "queue_over_100ms=%llu queue_over_1000ms=%llu "
-          "queue_over_5000ms=%llu service_over_100ms=%llu "
-          "service_over_1000ms=%llu service_over_5000ms=%llu\n",
-          source.source.product.c_str(), source.source.run.c_str(),
-          crimson::data::requestPriorityName(priority),
-          static_cast<unsigned long long>(timing.started),
-          static_cast<unsigned long long>(timing.completed),
-          timing.averageQueueWaitMs(), timing.maximum_queue_wait_ms,
-          timing.averageServiceMs(), timing.maximum_service_ms,
-          static_cast<unsigned long long>(timing.queue_wait_over_100_ms),
-          static_cast<unsigned long long>(timing.queue_wait_over_1000_ms),
-          static_cast<unsigned long long>(timing.queue_wait_over_5000_ms),
-          static_cast<unsigned long long>(timing.service_over_100_ms),
-          static_cast<unsigned long long>(timing.service_over_1000_ms),
-          static_cast<unsigned long long>(timing.service_over_5000_ms));
-    }
-  }
+  crimson::data::writeDataAccessSchedulerDiagnostics(
+      std::cout, "Apple", final_analysis_data_scheduler_metrics);
 
   if (!canonical_detection_descriptor.run_name.empty()) {
     reportCanonicalDetectionResidency(

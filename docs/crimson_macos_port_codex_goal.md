@@ -776,8 +776,16 @@ initialization callbacks. The portable scheduler now reserves one current-frame
 slot in the four-worker application pool; the matching trace reduced maximum
 queue wait to 0.98 ms with zero traversal deadline misses. Active work remains
 non-preemptive. Byte-weighted in-flight admission, remaining buffer migrations,
-and Linux/Windows adapters remain open. Evidence is in
-`docs/diagnostics/scheduler_current_frame_reservation_2026-07-27.md`.
+and most Linux/Windows adapters remain open. The shared Linux/Windows entry
+point now owns an equivalent `64`-request, four-worker scheduler with one
+reserved current-frame worker. Refined subject-mask current chunks and
+lookahead are the first compatibility workload migrated into it; discontinuous
+seeks advance the source generation, stale queued lookahead is cancelled, and
+standalone loader consumers retain the old fallback worker when no scheduler is
+injected. Apple and NVIDIA shutdown logs use one backend-neutral diagnostic
+formatter. Native Windows execution is not yet validated. Evidence is in
+`docs/diagnostics/scheduler_current_frame_reservation_2026-07-27.md` and
+`docs/diagnostics/phase5o_nvidia_scheduler_adoption_2026-07-29.md`.
 
 Phase 5O.4 is in progress. The native Mac loader shares a 128 MiB preload budget
 across the selected default motion, eye-angle, and tail series. Repositories
@@ -787,8 +795,10 @@ index caches. Motion preload includes its selected position, speed, heading,
 mask, and time fields, while eye-angle preload includes the complete selected
 default representation and its optional frame times. Non-default variants and
 eye-angle representations remain paged. Repository metrics and headless tests
-distinguish resident and paged resolution paths. Maintained Linux/Windows
-adapters and representative PRFS measurements remain open.
+distinguish resident and paged resolution paths. Refined subject masks now use
+the shared scheduler from the maintained Linux/Windows application, while its
+other compatibility adapters and representative PRFS measurements remain
+open.
 
 The shared native `ArchiveContext` now adds one bounded 64 MiB TensorStore cache
 pool per open archive. Every maintained TensorStore repository uses one
@@ -938,6 +948,10 @@ mounted result are in
 `docs/diagnostics/coordinate_catalog_canary_2026-07-29/README.md`. The
 Palette-facing decision is in
 `docs/coordinate_catalog_palette_acceptance_handoff_2026-07-29.md`.
+The accepted crop-v2 canary has not yet been turned into the separate
+backend-neutral 13-array performance harness. Exact typed workload timing,
+retained crop-offset read accounting, physical I/O/RSS telemetry, cancellation,
+and proof that the geometry-only path never opens `roi_images` remain open.
 
 Phase 5 also remains open for production-tail acceptance, movement-trail
 coordinate policy, any required chaser-data densification, and edit/review

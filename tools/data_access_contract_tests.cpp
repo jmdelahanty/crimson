@@ -1,13 +1,16 @@
 #include "data_access.h"
 #include "data_access_cache.h"
+#include "data_access_diagnostics.h"
 #include "data_access_scheduler.h"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <iomanip>
 #include <iostream>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <tuple>
@@ -86,6 +89,38 @@ bool testRequestAndResultContract() {
         "inspection");
   CHECK(std::string(accessPatternName(AccessPattern::ReviewNavigation)) ==
         "review_navigation");
+  return true;
+}
+
+bool testSchedulerDiagnostics() {
+  crimson::data::DataAccessSchedulerMetrics metrics;
+  metrics.worker_count = 4;
+  metrics.reserved_current_frame_workers = 1;
+  metrics.queue.submissions = 2;
+  metrics.queue.accepted = 1;
+  metrics.timing_by_priority[0].started = 1;
+  metrics.timing_by_priority[0].completed = 1;
+  metrics.timing_by_priority[0].total_queue_wait_ms = 2.5;
+  metrics.timing_by_priority[0].total_service_ms = 3.5;
+  crimson::data::DataAccessSourceTimingMetrics source_metrics;
+  source_metrics.source = {"fixture.zarr", "subject_masks", "run-a"};
+  metrics.timing_by_source.push_back(std::move(source_metrics));
+  metrics.timing_by_source[0].by_priority[0] = metrics.timing_by_priority[0];
+
+  std::ostringstream output;
+  output << std::scientific << std::setprecision(7);
+  const auto original_flags = output.flags();
+  const auto original_precision = output.precision();
+  crimson::data::writeDataAccessSchedulerDiagnostics(output, "Test", metrics);
+  CHECK(output.flags() == original_flags);
+  CHECK(output.precision() == original_precision);
+  const std::string text = output.str();
+  CHECK(text.find("[TestDataScheduler] workers=4") != std::string::npos);
+  CHECK(text.find("reserved_current=1") != std::string::npos);
+  CHECK(text.find("scope=priority priority=current_frame") !=
+        std::string::npos);
+  CHECK(text.find("scope=source product=subject_masks run=run-a") !=
+        std::string::npos);
   return true;
 }
 
@@ -655,7 +690,7 @@ bool testByteBudgetedWeightedLru() {
 } // namespace
 
 int main() {
-  if (!testRequestAndResultContract() ||
+  if (!testRequestAndResultContract() || !testSchedulerDiagnostics() ||
       !testPriorityDeduplicationAndGenerationCancellation() ||
       !testBoundedDemandFirstQueue() || !testSharedWorkerScheduler() ||
       !testDemandReservationAndSourceIsolation() ||

@@ -393,6 +393,12 @@ ZarrDetectionLoader::~ZarrDetectionLoader() {
     // TensorStore handles cleanup automatically
 }
 
+void ZarrDetectionLoader::setDataAccessScheduler(
+    std::shared_ptr<crimson::data::DataAccessScheduler> scheduler) {
+    stopEyeMaskPrefetchWorker();
+    data_access_scheduler_ = std::move(scheduler);
+}
+
 std::optional<ZarrCalibrationData> ZarrDetectionLoader::loadCalibrationForCamera(
     const std::string& camera_name_or_id,
     std::string& status_message) const {

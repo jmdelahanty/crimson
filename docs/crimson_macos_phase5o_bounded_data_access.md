@@ -377,9 +377,15 @@ Phase 5O.2.
 Status: in progress. The portable scheduler worker layer is implemented with
 demand-first ordering, generation cancellation, source isolation, bounded
 speculation, shutdown draining, and bounded queue/service timing aggregates.
-Native archive
-initialization, keypoints, subject masks, and the generic motion/tail timeline
-buffer use it, and the Mac application injects one shared four-worker instance.
+Native archive initialization, keypoints, subject masks, and the generic
+motion/tail timeline buffer use it, and the Mac application injects one shared
+four-worker instance. The shared Linux/Windows application entry point now
+owns the same `64`-request, four-worker scheduler with one reserved
+current-frame worker. Its first compatibility migration routes refined
+subject-mask current-chunk and lookahead work through that scheduler without
+changing the legacy TensorStore decode/cache implementation. Standalone loader
+consumers retain the existing single fallback worker when no scheduler is
+injected.
 Deterministic tests verify that three visible sources run while one speculative
 source is active, one source cannot occupy multiple workers, product
 completions publish independently, and keypoint seeks discard stale
@@ -387,7 +393,11 @@ generations. Scheduler tests also verify promotion-aware timing attribution and
 deterministic per-source summaries. A mounted full-archive trace and blocking
 fake-repository test now support one reserved current-frame slot in the
 four-worker application scheduler. Remaining buffers, direction-aware timeline
-prefetch, and decoded-byte-weighted in-flight admission remain open.
+prefetch, decoded-byte-weighted in-flight admission, and native Windows runtime
+validation remain open. Both application shells emit the same backend-neutral
+queue-wait and callback-service diagnostic schema under backend-specific log
+prefixes. The NVIDIA adoption build and authenticated playback evidence are in
+`docs/diagnostics/phase5o_nvidia_scheduler_adoption_2026-07-29.md`.
 
 ### Phase 5O.4: Converge maintained adapters
 
@@ -425,7 +435,9 @@ operations/7,428 bytes. The cache therefore suppresses repeated inner-chunk
 and shard-index reads without penalizing one-shot eager I/O. This isolated
 storage benchmark uses `frame_counts` as a physical-layout proxy for future
 persisted offsets; application-level traversal, random seek, cache pressure,
-and Linux/Windows compatibility adapters remain open.
+and most Linux/Windows compatibility adapters remain open. Refined subject-mask
+demand/lookahead is the first compatibility adapter adopted by the shared
+Linux/Windows application entry point.
 
 The canonical-detection adapter benchmark now supplies the previously missing
 application-level random and full-traversal storage evidence on the Mac mount.
@@ -484,8 +496,9 @@ Current-frame reservation remains active, and rejection, failure, or close
 retains paging without partial publication. The mounted activation gate and
 native close-during-build smoke are recorded in
 `docs/diagnostics/canonical_detection_production_residency_activation_2026-07-28.md`.
-Linux/Windows entry-point adoption, full-duration memory attribution, and the
-remaining adapter migrations remain open.
+The first Linux/Windows entry-point adoption slice is complete for refined
+subject masks. Full-duration memory attribution, native Windows runtime
+validation, and the remaining adapter migrations remain open.
 
 The coordinate-aware archive boundary is also consumer-validated. A mounted
 selector-ineligible canary passed canonical-detection v3, refined-detection v2,
@@ -495,6 +508,10 @@ coordinate samples at clean Crimson implementation commit `ce478c7d`. No
 production state changed. Palette owns any later selector or writer-default
 activation; the result is in
 `docs/diagnostics/coordinate_catalog_canary_2026-07-29/README.md`.
+The coordinate canary is not yet the Phase 5O crop-v2 performance harness: the
+exact 13-array read benchmark, crop-offset lifetime proof, physical I/O/RSS
+measurements, and explicit proof that geometry-only access never opens
+`roi_images` remain a separate integration checkpoint.
 
 ## Gate
 

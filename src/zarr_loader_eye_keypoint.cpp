@@ -5206,6 +5206,10 @@ void ZarrDetectionLoader::prefetchAdjacentEyeMaskChunks(size_t chunk_id) const {
 }
 
 void ZarrDetectionLoader::stopEyeMaskPrefetchWorker() const {
+    if (data_access_scheduler_ && eye_mask_scheduler_source_.valid()) {
+        data_access_scheduler_->cancelSource(eye_mask_scheduler_source_);
+        data_access_scheduler_->waitForSourceIdle(eye_mask_scheduler_source_);
+    }
     bool should_join = false;
     {
         std::lock_guard<std::mutex> prefetch_lock(eye_mask_prefetch_mutex_);
@@ -5228,6 +5232,10 @@ void ZarrDetectionLoader::stopEyeMaskPrefetchWorker() const {
         std::lock_guard<std::mutex> cache_lock(*data_.mask_chunk_cache_mutex);
         data_.mask_chunk_loads_in_flight.clear();
     }
+    eye_mask_scheduler_source_ = {};
+    eye_mask_scheduler_last_frame_.reset();
+    eye_mask_scheduler_direction_ = 0;
+    ++eye_mask_scheduler_generation_;
 }
 
 void ZarrDetectionLoader::eyeMaskPrefetchWorkerLoop() const {
@@ -5269,7 +5277,10 @@ void ZarrDetectionLoader::eyeMaskPrefetchWorkerLoop() const {
     }
 }
 
-bool ZarrDetectionLoader::requestEyeMaskChunkPrefetch(size_t chunk_id) const {
+bool ZarrDetectionLoader::requestEyeMaskChunkPrefetch(
+    size_t chunk_id,
+    crimson::data::RequestPriority priority,
+    crimson::data::AccessPattern access_pattern) const {
     if (!data_.eye_masks_loaded || data_.eye_mask_roi_count == 0) {
         return false;
     }
@@ -5299,6 +5310,56 @@ bool ZarrDetectionLoader::requestEyeMaskChunkPrefetch(size_t chunk_id) const {
             }
             return false;
         }
+    }
+    if (data_access_scheduler_) {
+        crimson::data::SourceIdentity source{
+            root_path_, "subject_masks", data_.eye_masks_run_name};
+        if (!source.valid()) {
+            return false;
+        }
+        eye_mask_scheduler_source_ = source;
+        const int64_t maximum_frame =
+            data_.total_frames > 0
+                ? static_cast<int64_t>(data_.total_frames - 1)
+                : 0;
+        crimson::data::DataRangeRequest request{
+            source,
+            {0, maximum_frame},
+            crimson::data::FieldSelection::Named(
+                {"mask_chunk:" + std::to_string(chunk_id)}),
+            priority,
+            access_pattern,
+            eye_mask_scheduler_generation_};
+        const auto outcome = data_access_scheduler_->submit(
+            std::move(request),
+            [this, chunk_id](
+                const crimson::data::ScheduledDataRequest& scheduled) {
+                if (scheduled.cancellation.cancelled()) {
+                    return crimson::data::DataResultStatus::Stale;
+                }
+                const bool loaded = ensureEyeMaskChunk(
+                    chunk_id, /*allow_prefetch=*/false);
+                if (scheduled.cancellation.cancelled()) {
+                    return crimson::data::DataResultStatus::Discarded;
+                }
+                return loaded ? crimson::data::DataResultStatus::Ready
+                              : crimson::data::DataResultStatus::Failed;
+            });
+        if (trace_prefetch) {
+            std::cout << "[SUBJECT_MASK_PREFETCH] action=scheduler_submit"
+                      << " chunk_id=" << chunk_id
+                      << " priority="
+                      << crimson::data::requestPriorityName(priority)
+                      << " status="
+                      << crimson::data::dataRequestSubmitStatusName(
+                             outcome.status)
+                      << std::endl;
+        }
+        return outcome.accepted();
+    }
+
+    {
+        std::lock_guard<std::mutex> cache_lock(*data_.mask_chunk_cache_mutex);
         if (data_.mask_chunk_loads_in_flight.count(chunk_id) != 0) {
             if (trace_prefetch) {
                 std::cout << "[SUBJECT_MASK_PREFETCH] action=skip"
@@ -5391,6 +5452,40 @@ bool ZarrDetectionLoader::requestEyeMaskCacheForFrame(
             ? max_frame
             : frame_id + lookahead_frames;
 
+    crimson::data::AccessPattern access_pattern =
+        crimson::data::AccessPattern::Paused;
+    if (eye_mask_scheduler_last_frame_.has_value()) {
+        const size_t previous_frame = *eye_mask_scheduler_last_frame_;
+        const size_t discontinuity_limit = lookahead_frames + 1;
+        int direction = 0;
+        size_t distance = 0;
+        if (frame_id > previous_frame) {
+            direction = 1;
+            distance = frame_id - previous_frame;
+            access_pattern = crimson::data::AccessPattern::Forward;
+        } else if (frame_id < previous_frame) {
+            direction = -1;
+            distance = previous_frame - frame_id;
+            access_pattern = crimson::data::AccessPattern::Reverse;
+        }
+        const bool direction_reversed =
+            direction != 0 && eye_mask_scheduler_direction_ != 0 &&
+            direction != eye_mask_scheduler_direction_;
+        if (direction != 0 &&
+            (distance > discontinuity_limit || direction_reversed)) {
+            access_pattern = crimson::data::AccessPattern::RandomSeek;
+            if (data_access_scheduler_ && eye_mask_scheduler_source_.valid()) {
+                ++eye_mask_scheduler_generation_;
+                data_access_scheduler_->advanceGeneration(
+                    eye_mask_scheduler_source_, eye_mask_scheduler_generation_);
+            }
+        }
+        if (direction != 0) {
+            eye_mask_scheduler_direction_ = direction;
+        }
+    }
+    eye_mask_scheduler_last_frame_ = frame_id;
+
     std::set<size_t> chunk_ids;
     std::set<size_t> current_frame_chunk_ids;
     auto add_roi_to = [&](size_t roi_index, std::set<size_t>& ids) {
@@ -5451,7 +5546,10 @@ bool ZarrDetectionLoader::requestEyeMaskCacheForFrame(
             break;
         }
         ++attempted_chunks;
-        if (requestEyeMaskChunkPrefetch(chunk_id)) {
+        const auto priority = current_frame_chunk_ids.count(chunk_id) != 0
+                                  ? crimson::data::RequestPriority::CurrentFrame
+                                  : crimson::data::RequestPriority::Speculative;
+        if (requestEyeMaskChunkPrefetch(chunk_id, priority, access_pattern)) {
             ++queued_chunks;
         }
     }

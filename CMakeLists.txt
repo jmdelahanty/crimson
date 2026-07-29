@@ -82,6 +82,7 @@ target_compile_features(crimson_runtime_contracts PUBLIC cxx_std_17)
 add_library(crimson_data_access_contracts STATIC
     src/data_access.cpp
     src/data_access_cache.cpp
+    src/data_access_diagnostics.cpp
     src/data_access_scheduler.cpp
 )
 target_include_directories(crimson_data_access_contracts PUBLIC
@@ -222,11 +223,16 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         ${CMAKE_CURRENT_SOURCE_DIR}/src
     )
     target_compile_features(crimson_tensorstore_repositories PUBLIC cxx_std_17)
+    set(_crimson_tensorstore_digest_target "")
+    if(TARGET tensorstore_internal_digest_sha256)
+        set(_crimson_tensorstore_digest_target
+            tensorstore_internal_digest_sha256)
+    endif()
     target_link_libraries(crimson_tensorstore_repositories
         PUBLIC
             crimson_crop_contracts
             crimson_repository_contracts
-        PRIVATE ${tensorstore_target} tensorstore_internal_digest_sha256
+        PRIVATE ${tensorstore_target} ${_crimson_tensorstore_digest_target}
                 Threads::Threads
     )
 
@@ -1908,6 +1914,10 @@ file(GLOB CPP_SOURCES CONFIGURE_DEPENDS
     "src/zarr/*.cpp")
 list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/coordinate_contract.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/data_access.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/data_access_cache.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/data_access_diagnostics.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/data_access_scheduler.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/chaser_distance_polar.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/chaser_distance_polar_buffer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/chaser_distance_polar_scene.cpp"
@@ -1932,6 +1942,12 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/overlay_scene_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/read_only_overlay_scene.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/canonical_detection_overlay_scene_adapter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/canonical_json.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/canonical_detection_contract.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/coordinate_catalog_contract.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/crop_geometry_contract.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/detection_repository_selection.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/refined_detection_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/analysis_crop_geometry_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/stimulus_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/acquisition_crop_repository.cpp"
@@ -1940,6 +1956,7 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_analysis_series_timeline_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_chaser_distance_polar_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_canonical_detection_repository.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_refined_detection_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_eye_angle_timeline_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_eye_geometry_overlay_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_analysis_crop_geometry_repository.cpp"
@@ -1950,6 +1967,7 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_stimulus_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_subject_mask_overlay_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_subject_shape_overlay_repository.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/zarr_metadata_equivalence.cpp"
 )
 
 # --- Create the Executable ---
@@ -1985,6 +2003,7 @@ target_link_libraries(redgui PRIVATE
     crimson_runtime_contracts
     crimson_overlay_contracts
     crimson_repository_contracts
+    crimson_tensorstore_repositories
     crimson_workspace_contracts
     # CUDA and NVIDIA Libraries
     ${CUDA_LIBRARIES}

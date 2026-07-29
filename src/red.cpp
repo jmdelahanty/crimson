@@ -3,6 +3,7 @@
 #include "camera.h"
 #include "chained_crop_image_provider.h"
 #include "debug_flags.h"
+#include "data_access_diagnostics.h"
 #include "decode_debug_workflow.h"
 #include "diagnostic_report.h"
 #include "filesystem"
@@ -1646,6 +1647,9 @@ int main(int argc, char **argv) {
 
   // Zarr loading
   ZarrDetectionLoader zarr_loader;
+  auto analysis_data_scheduler =
+      std::make_shared<crimson::data::DataAccessScheduler>(64, 4, 1, 1);
+  zarr_loader.setDataAccessScheduler(analysis_data_scheduler);
   std::unique_ptr<crimson::polar::ChaserDistancePolarRepository>
       chaser_distance_polar_repository;
   std::unique_ptr<crimson::timeline::StimulusContextTimelineRepository>
@@ -7734,6 +7738,11 @@ int main(int argc, char **argv) {
 
   // Cleanup
   session_lifecycle.beginClose();
+  zarr_loader.setDataAccessScheduler(nullptr);
+  analysis_data_scheduler->waitUntilIdle();
+  const auto final_analysis_data_scheduler_metrics =
+      analysis_data_scheduler->metrics();
+  analysis_data_scheduler->shutdown();
   destroyStimulusPlayback(stimulus_player);
   ImGui_ImplOpenGL3_Shutdown();
   ImGui_ImplGlfw_Shutdown();
@@ -7752,6 +7761,8 @@ int main(int argc, char **argv) {
       std::cout, "Nvidia",
       {session_lifecycle.snapshot(), session_loading_progress.snapshot(),
        camera_presentation_tracker.metrics()});
+  crimson::data::writeDataAccessSchedulerDiagnostics(
+      std::cout, "Nvidia", final_analysis_data_scheduler_metrics);
 
   return app_exit_code;
 }
