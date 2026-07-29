@@ -921,6 +921,14 @@ source dimensions. Strict ROI placement requires source dimensions plus exact
 crop manifest and policy digests. Legacy keypoint/crop names remain behind
 compatibility adapters pending persisted provenance and the movement-trail
 policy. The contract is in `docs/crimson_shared_coordinate_contract_v1.md`.
+Palette's persisted coordinate catalogs at commit `154d7888` have also passed
+Crimson's static cross-language digest, vocabulary, binding, tampering, and
+transform review. Refined run-manifest v2 validation is implemented without
+changing refined v1. Palette is unblocked to publish one selector-ineligible
+canonical-v3/refined-v2/crop-v2 canary; canonical v3 and crop v2 production
+adoption remain blocked on exact typed opens and live archive validation. The
+review is in
+`docs/diagnostics/coordinate_catalog_cross_language_review_2026-07-28.md`.
 
 Phase 5 also remains open for production-tail acceptance, movement-trail
 coordinate policy, any required chaser-data densification, and edit/review

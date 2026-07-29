@@ -3,8 +3,9 @@
 Date: 2026-07-28
 
 Status: shared runtime vocabulary and transforms implemented. Canonical and
-refined detection presentation adopted. Persisted crop/keypoint migration is
-deferred until their exact provenance fields are available.
+refined detection presentation adopted. Palette coordinate-catalog envelopes
+accepted for a selector-ineligible canary; production persisted adoption awaits
+the archive-level gate.
 
 ## Purpose
 
@@ -138,3 +139,11 @@ The backend-neutral implementation is in `src/coordinate_contract.h` and
 `src/coordinate_contract.cpp`. `coordinate_contract_tests` covers vocabulary
 validation, width/height normalization, half-open boxes, ROI placement,
 inverse round trips, missing provenance, and out-of-bounds extraction windows.
+
+The backend-neutral Zarr contract layer additionally validates Palette's
+digest-bound coordinate catalogs for canonical detection v3, refined detection
+v2, and geometry-only crop v2. The exact producer-generated fixtures and
+cross-language verdict are recorded in
+`docs/diagnostics/coordinate_catalog_cross_language_review_2026-07-28.md`.
+Refined v2 manifest parsing is implemented; canonical v3 and crop v2 remain
+selector-ineligible canary work and do not alter legacy compatibility paths.

@@ -1,14 +1,10 @@
 #include "zarr/refined_detection_contract.h"
 
-#include <tensorstore/internal/digest/sha256.h>
+#include "zarr/coordinate_catalog_contract.h"
 
 #include <algorithm>
-#include <array>
-#include <cmath>
 #include <cstdint>
-#include <set>
 #include <string_view>
-#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -31,28 +27,6 @@ bool exactKeys(const json &value,
   return std::all_of(
       expected.begin(), expected.end(),
       [&](std::string_view key) { return value.contains(std::string(key)); });
-}
-
-bool isLowerSha256(const std::string &value) {
-  return value.size() == 64 &&
-         std::all_of(value.begin(), value.end(), [](unsigned char character) {
-           return (character >= '0' && character <= '9') ||
-                  (character >= 'a' && character <= 'f');
-         });
-}
-
-bool strictJson(const json &value) {
-  if (value.is_number_float() && !std::isfinite(value.get<double>())) {
-    return false;
-  }
-  if (value.is_array()) {
-    return std::all_of(value.begin(), value.end(), strictJson);
-  }
-  if (value.is_object()) {
-    return std::all_of(value.begin(), value.end(),
-                       [](const auto &item) { return strictJson(item); });
-  }
-  return true;
 }
 
 bool validateReasonRegistry(const json &registry, std::string_view expected_id,
@@ -86,34 +60,18 @@ bool validateReasonRegistry(const json &registry, std::string_view expected_id,
 
 } // namespace
 
-std::string CanonicalJsonSha256(const json &value) {
-  if (!strictJson(value)) {
-    return {};
-  }
-  const std::string payload = value.dump();
-  tensorstore::internal::SHA256Digester digester;
-  digester.Write(payload);
-  const auto digest = digester.Digest();
-  static constexpr char kHex[] = "0123456789abcdef";
-  std::string encoded(digest.size() * 2, '0');
-  for (size_t index = 0; index < digest.size(); ++index) {
-    encoded[index * 2] = kHex[digest[index] >> 4];
-    encoded[index * 2 + 1] = kHex[digest[index] & 0x0f];
-  }
-  return encoded;
-}
-
 bool ValidateRefinedDetectionRunManifest(
     const json &manifest, const std::string &requested_run,
     bool allow_selector_ineligible, RefinedDetectionManifestSummary *summary,
     std::string *error) {
   try {
+    const int manifest_version = manifest.value("schema_version", 0);
     if (!exactKeys(manifest,
                    {"schema_id", "schema_version", "persisted_attribute",
                     "digest_algorithm", "payload_digest", "payload"}) ||
         manifest.value("schema_id", "") !=
             "palette.refined_detection.run_manifest" ||
-        manifest.value("schema_version", 0) != 1 ||
+        (manifest_version != 1 && manifest_version != 2) ||
         manifest.value("persisted_attribute", "") != "run_manifest" ||
         manifest.value("digest_algorithm", "") != "sha256_canonical_json_v1" ||
         !manifest.at("payload").is_object()) {
@@ -121,19 +79,46 @@ bool ValidateRefinedDetectionRunManifest(
       return false;
     }
     const auto &payload = manifest.at("payload");
-    if (!exactKeys(payload, {"run_id", "stage", "publication", "logical_schema",
-                             "storage_plan", "snapshot_lineage",
-                             "source_detection", "reason_registries"}) ||
+    const auto payload_keys_v1 = {std::string_view("run_id"),
+                                  std::string_view("stage"),
+                                  std::string_view("publication"),
+                                  std::string_view("logical_schema"),
+                                  std::string_view("storage_plan"),
+                                  std::string_view("snapshot_lineage"),
+                                  std::string_view("source_detection"),
+                                  std::string_view("reason_registries")};
+    const auto payload_keys_v2 = {std::string_view("run_id"),
+                                  std::string_view("stage"),
+                                  std::string_view("publication"),
+                                  std::string_view("logical_schema"),
+                                  std::string_view("storage_plan"),
+                                  std::string_view("snapshot_lineage"),
+                                  std::string_view("source_detection"),
+                                  std::string_view("reason_registries"),
+                                  std::string_view("coordinate_contract")};
+    if (!(manifest_version == 1 ? exactKeys(payload, payload_keys_v1)
+                                : exactKeys(payload, payload_keys_v2)) ||
         payload.value("run_id", "") != requested_run ||
         payload.value("stage", "") != "refined_detect") {
       assignError(error, "Refined detection manifest run identity is invalid");
       return false;
     }
     const std::string payload_digest = manifest.value("payload_digest", "");
-    if (!isLowerSha256(payload_digest) ||
+    if (!IsLowerSha256(payload_digest) ||
         CanonicalJsonSha256(payload) != payload_digest) {
       assignError(error, "Refined detection run_manifest digest mismatch");
       return false;
+    }
+    bool coordinate_catalog_validated = false;
+    if (manifest_version == 2) {
+      CoordinateCatalogSummary coordinate_summary;
+      if (!ValidateCoordinateCatalogEnvelope(
+              payload.at("coordinate_contract"),
+              CoordinateCatalogStage::RefinedDetection, &coordinate_summary,
+              error)) {
+        return false;
+      }
+      coordinate_catalog_validated = true;
     }
     const auto &publication = payload.at("publication");
     if (publication.value("completion_contract", "") !=
@@ -145,7 +130,7 @@ bool ValidateRefinedDetectionRunManifest(
             "normalized_group_and_array_declarations_excluding_attributes" ||
         publication.value("metadata_declarations_digest_algorithm", "") !=
             "sha256_canonical_json_v1" ||
-        !isLowerSha256(publication.value("metadata_declarations_digest", "")) ||
+        !IsLowerSha256(publication.value("metadata_declarations_digest", "")) ||
         !publication.contains("stage_selector_eligible") ||
         !publication.at("stage_selector_eligible").is_boolean()) {
       assignError(error, "Refined detection publication state is invalid");
@@ -196,9 +181,17 @@ bool ValidateRefinedDetectionRunManifest(
       return false;
     }
     if (summary) {
-      *summary = {requested_run, payload_digest, lineage,
-                  frames,        instances,      source_rows,
-                  width,         height,         selector_eligible};
+      *summary = {requested_run,
+                  payload_digest,
+                  lineage,
+                  frames,
+                  instances,
+                  source_rows,
+                  width,
+                  height,
+                  selector_eligible,
+                  manifest_version,
+                  coordinate_catalog_validated};
     }
     return true;
   } catch (const json::exception &exception) {
@@ -245,7 +238,7 @@ bool ValidateRefinedDetectionAuthority(
       return false;
     }
     const std::string run_digest = payload.value("run_manifest_digest", "");
-    if (!isLowerSha256(run_digest) ||
+    if (!IsLowerSha256(run_digest) ||
         CanonicalJsonSha256(payload) !=
             provenance.value("payload_digest", "")) {
       assignError(error, "Refined detection authority digest mismatch");

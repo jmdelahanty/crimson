@@ -804,6 +804,8 @@ std::unique_ptr<CanonicalDetectionRepository> OpenRefinedDetectionRepository(
   descriptor.stable_identity = true;
   descriptor.source_audit_lazy = true;
   descriptor.authority_approved = options.authority_approved;
+  descriptor.coordinate_catalog_validated =
+      manifest.coordinate_catalog_validated;
 
   const std::string instances = base + "/instances/";
   const auto handles_started = Clock::now();

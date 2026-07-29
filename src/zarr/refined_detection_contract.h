@@ -1,5 +1,7 @@
 #pragma once
 
+#include "zarr/canonical_json.h"
+
 #include <cstddef>
 #include <nlohmann/json_fwd.hpp>
 #include <string>
@@ -16,6 +18,8 @@ struct RefinedDetectionManifestSummary {
   size_t source_width = 0;
   size_t source_height = 0;
   bool selector_eligible = false;
+  int manifest_schema_version = 1;
+  bool coordinate_catalog_validated = false;
 };
 
 struct RefinedDetectionAuthoritySummary {
@@ -23,8 +27,6 @@ struct RefinedDetectionAuthoritySummary {
   std::string run_manifest_digest;
   std::string intended_use;
 };
-
-std::string CanonicalJsonSha256(const nlohmann::json &value);
 
 bool ValidateRefinedDetectionRunManifest(
     const nlohmann::json &manifest, const std::string &requested_run,

@@ -199,6 +199,8 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         src/zarr/tensorstore_analysis_series_timeline_repository.cpp
         src/zarr/tensorstore_chaser_distance_polar_repository.cpp
         src/zarr/detection_repository_selection.cpp
+        src/zarr/canonical_json.cpp
+        src/zarr/coordinate_catalog_contract.cpp
         src/zarr/refined_detection_contract.cpp
         src/zarr/tensorstore_canonical_detection_repository.cpp
         src/zarr/tensorstore_refined_detection_repository.cpp
@@ -259,6 +261,28 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         COMMAND $<TARGET_FILE:canonical_detection_repository_tests>)
     set_tests_properties(canonical_detection_repository_tests PROPERTIES
         LABELS "headless;detection;overlay;repository;tensorstore;zarr"
+        TIMEOUT 30
+    )
+
+    add_executable(coordinate_catalog_contract_tests
+        tools/coordinate_catalog_contract_tests.cpp
+    )
+    target_compile_features(coordinate_catalog_contract_tests PRIVATE cxx_std_17)
+    target_link_libraries(coordinate_catalog_contract_tests PRIVATE
+        crimson_coordinate_contracts
+        crimson_tensorstore_repositories
+        nlohmann_json::nlohmann_json
+    )
+    target_compile_definitions(coordinate_catalog_contract_tests PRIVATE
+        CRIMSON_COORDINATE_FIXTURE_PATH=\"${CMAKE_CURRENT_SOURCE_DIR}/tools/fixtures/palette_coordinate_catalogs_154d7888.json\"
+    )
+    set_target_properties(coordinate_catalog_contract_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME coordinate_catalog_contract_tests
+        COMMAND $<TARGET_FILE:coordinate_catalog_contract_tests>)
+    set_tests_properties(coordinate_catalog_contract_tests PROPERTIES
+        LABELS "coordinates;headless;portable;tensorstore;zarr"
         TIMEOUT 30
     )
 

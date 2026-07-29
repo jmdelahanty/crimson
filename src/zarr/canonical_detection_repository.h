@@ -30,6 +30,7 @@ struct CanonicalDetectionDescriptor {
   bool stable_identity = false;
   bool source_audit_lazy = false;
   bool authority_approved = false;
+  bool coordinate_catalog_validated = false;
 
   bool ready() const {
     return !run_name.empty() && camera_frame_count > 0 &&
