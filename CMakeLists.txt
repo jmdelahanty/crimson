@@ -402,6 +402,29 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
 
+    add_executable(crop_geometry_v2_read_benchmark
+        tools/crop_geometry_v2_read_benchmark.cpp
+    )
+    target_compile_features(crop_geometry_v2_read_benchmark PRIVATE cxx_std_17)
+    target_link_libraries(crop_geometry_v2_read_benchmark PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+        nlohmann_json::nlohmann_json
+        Threads::Threads
+    )
+    target_compile_definitions(crop_geometry_v2_read_benchmark PRIVATE
+        CRIMSON_GIT_COMMIT="${CRIMSON_REFINED_GATE_GIT_COMMIT}"
+        CRIMSON_WORKTREE_DIRTY=${CRIMSON_REFINED_GATE_WORKTREE_DIRTY}
+    )
+    set_target_properties(crop_geometry_v2_read_benchmark PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME crop_geometry_v2_read_benchmark_self_test
+        COMMAND $<TARGET_FILE:crop_geometry_v2_read_benchmark> --self-test)
+    set_tests_properties(crop_geometry_v2_read_benchmark_self_test PROPERTIES
+        LABELS "portable;headless;tensorstore;zarr;crop;benchmark"
+    )
+
     add_executable(canonical_detection_residency_benchmark
         tools/canonical_detection_residency_benchmark.cpp
     )
