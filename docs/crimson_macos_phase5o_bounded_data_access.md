@@ -508,10 +508,16 @@ coordinate samples at clean Crimson implementation commit `ce478c7d`. No
 production state changed. Palette owns any later selector or writer-default
 activation; the result is in
 `docs/diagnostics/coordinate_catalog_canary_2026-07-29/README.md`.
-The coordinate canary is not yet the Phase 5O crop-v2 performance harness: the
-exact 13-array read benchmark, crop-offset lifetime proof, physical I/O/RSS
-measurements, and explicit proof that geometry-only access never opens
-`roi_images` remain a separate integration checkpoint.
+The separate Phase 5O crop-v2 read harness is now implemented and has passed
+against the mounted coordinate canary. It opens all 13 declarations with exact
+types, retains one offset read, exercises concurrent UI fields, random and
+70-frame sequential ranges, cancellation, physical I/O/cache counters, and
+RSS, and proves that geometry-only access never opens `roi_images`. The clean
+result is in
+`docs/diagnostics/crop_geometry_v2_read_benchmark_2026-07-29/`. It is an
+integration checkpoint; Palette's later persistent publisher-produced
+candidate still requires the same unchanged workload before physical-profile
+promotion.
 
 ## Gate
 

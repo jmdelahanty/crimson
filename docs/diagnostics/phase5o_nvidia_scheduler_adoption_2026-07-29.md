@@ -91,4 +91,6 @@ Still open:
 - decoded-byte-weighted in-flight admission;
 - full-duration CPU/GPU memory attribution;
 - native Windows execution; and
-- the separate crop-v2 exact-schema read/performance harness.
+- the later persistent/full-duration crop-v2 physical-profile gate. The
+  backend-neutral exact-schema integration harness is complete at
+  `docs/diagnostics/crop_geometry_v2_read_benchmark_2026-07-29/`.

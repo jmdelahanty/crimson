@@ -948,10 +948,16 @@ mounted result are in
 `docs/diagnostics/coordinate_catalog_canary_2026-07-29/README.md`. The
 Palette-facing decision is in
 `docs/coordinate_catalog_palette_acceptance_handoff_2026-07-29.md`.
-The accepted crop-v2 canary has not yet been turned into the separate
-backend-neutral 13-array performance harness. Exact typed workload timing,
-retained crop-offset read accounting, physical I/O/RSS telemetry, cancellation,
-and proof that the geometry-only path never opens `roi_images` remain open.
+The separate backend-neutral crop-v2 read harness is now complete. It validates
+all 13 exact declarations without dtype probing, retains the offsets after one
+read, exercises concurrent five-field UI reads, random seeks, 70-frame windows,
+and cancellation, records TensorStore file/cache and RSS telemetry, and proves
+that geometry-only access never opens `roi_images`. The mounted coordinate
+canary passed at clean implementation commit `e972cef`; the result is in
+`docs/diagnostics/crop_geometry_v2_read_benchmark_2026-07-29/`. This remains an
+integration checkpoint rather than storage-profile promotion evidence. The
+same frozen workload must be rerun against Palette's later persistent
+publisher-produced candidate.
 
 Phase 5 also remains open for production-tail acceptance, movement-trail
 coordinate policy, any required chaser-data densification, and edit/review
