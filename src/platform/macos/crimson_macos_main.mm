@@ -206,6 +206,7 @@ struct LaunchOptions {
   std::string stimulus_run;
   std::string crop_run;
   std::string swim_bout_run;
+  AppleKeypointV2LoadRequest keypoint_v2;
   size_t video_buffer_capacity = 6;
   size_t stimulus_buffer_capacity = 6;
   AppleUiReferenceConfig ui_reference;
@@ -1002,6 +1003,53 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
       options.allow_selector_ineligible_refined_run = true;
       continue;
     }
+    if (argument == "--benchmark-keypoint-v2-raw") {
+      if (i + 3 >= argc) {
+        std::fprintf(stderr, "--benchmark-keypoint-v2-raw requires ARCHIVE RUN "
+                             "MANIFEST_DIGEST\n");
+        return std::nullopt;
+      }
+      options.keypoint_v2.raw = {argv[i + 1], argv[i + 2], argv[i + 3]};
+      options.keypoint_v2.allow_selector_ineligible = true;
+      i += 3;
+      continue;
+    }
+    if (argument == "--benchmark-keypoint-v2-quality") {
+      if (i + 3 >= argc) {
+        std::fprintf(stderr,
+                     "--benchmark-keypoint-v2-quality requires ARCHIVE RUN "
+                     "MANIFEST_DIGEST\n");
+        return std::nullopt;
+      }
+      options.keypoint_v2.quality = {argv[i + 1], argv[i + 2], argv[i + 3]};
+      options.keypoint_v2.allow_selector_ineligible = true;
+      i += 3;
+      continue;
+    }
+    if (argument == "--benchmark-keypoint-v2-refined") {
+      if (i + 3 >= argc) {
+        std::fprintf(stderr,
+                     "--benchmark-keypoint-v2-refined requires ARCHIVE RUN "
+                     "MANIFEST_DIGEST\n");
+        return std::nullopt;
+      }
+      options.keypoint_v2.refined = {argv[i + 1], argv[i + 2], argv[i + 3]};
+      options.keypoint_v2.allow_selector_ineligible = true;
+      i += 3;
+      continue;
+    }
+    if (argument == "--benchmark-keypoint-v2-body-frame") {
+      if (i + 3 >= argc) {
+        std::fprintf(stderr,
+                     "--benchmark-keypoint-v2-body-frame requires ARCHIVE RUN "
+                     "MANIFEST_DIGEST\n");
+        return std::nullopt;
+      }
+      options.keypoint_v2.body_frame = {argv[i + 1], argv[i + 2], argv[i + 3]};
+      options.keypoint_v2.allow_selector_ineligible = true;
+      i += 3;
+      continue;
+    }
     if (argument == "--swim-bout-run") {
       if (i + 1 >= argc) {
         std::fprintf(stderr, "Missing value for --swim-bout-run\n");
@@ -1266,6 +1314,24 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
   }
   if (!options.refined_detection_run.empty() && options.zarr_path.empty()) {
     std::fprintf(stderr, "A refined-detection run requires --zarr PATH\n");
+    return std::nullopt;
+  }
+  const bool any_keypoint_v2_artifact = !options.keypoint_v2.raw.empty() ||
+                                        !options.keypoint_v2.quality.empty() ||
+                                        !options.keypoint_v2.refined.empty() ||
+                                        !options.keypoint_v2.body_frame.empty();
+  if (any_keypoint_v2_artifact && (!options.keypoint_v2.raw.complete() ||
+                                   !options.keypoint_v2.quality.complete() ||
+                                   !options.keypoint_v2.body_frame.complete() ||
+                                   (!options.keypoint_v2.refined.empty() &&
+                                    !options.keypoint_v2.refined.complete()))) {
+    std::fprintf(stderr,
+                 "Keypoint v2 requires complete raw, quality, and body-frame "
+                 "artifacts; refined must be complete when requested\n");
+    return std::nullopt;
+  }
+  if (any_keypoint_v2_artifact && options.zarr_path.empty()) {
+    std::fprintf(stderr, "Keypoint v2 benchmark options require --zarr PATH\n");
     return std::nullopt;
   }
   if (!options.stimulus_video_path.empty() && options.zarr_path.empty()) {
@@ -1903,6 +1969,11 @@ int main(int argc, char **argv) {
           {"canonical_detection",
            crimson::session::ProductAvailabilityRequirement::Required});
     }
+    if (options->keypoint_v2.enabled()) {
+      analysis_readiness_products.push_back(
+          {"keypoints",
+           crimson::session::ProductAvailabilityRequirement::Required});
+    }
   }
   crimson::session::SessionOpenReadinessBinding
       initial_session_readiness_binding;
@@ -2266,6 +2337,7 @@ int main(int argc, char **argv) {
       load_request.stimulus_video_override = options->stimulus_video_path;
       load_request.crop_run = options->crop_run;
       load_request.swim_bout_run = options->swim_bout_run;
+      load_request.keypoint_v2 = options->keypoint_v2;
       load_request.camera_frame_count =
           static_cast<size_t>(video_playback.info().frame_count);
       load_request.subject_masks_enabled = options->subject_masks_enabled;
@@ -2546,36 +2618,63 @@ int main(int argc, char **argv) {
 
           if (loaded_analysis->hasResultFor("keypoints")) {
             keypoint_error = loaded_analysis->errorFor("keypoints");
-            const auto &open_metrics = loaded_analysis->keypoint_open_metrics;
-            const char *open_mode = open_metrics.lazy_path       ? "lazy"
-                                    : open_metrics.fallback_path ? "fallback"
-                                                                 : "failed";
-            std::printf(
-                "[AppleKeypointOpen] mode=%s total_ms=%.1f selection_ms=%.1f "
-                "run_attributes_ms=%.1f required_handles_ms=%.1f "
-                "frame_counts_read_ms=%.1f prefix_sum_ms=%.1f "
-                "crop_lineage_ms=%.1f optional_handles_ms=%.1f "
-                "fallback_ms=%.1f attributes=%zu array_open_attempts=%zu "
-                "array_open_successes=%zu array_open_failures=%zu "
-                "array_reads=%zu events=%zu\n",
-                open_mode, open_metrics.total_ms, open_metrics.selection_ms,
-                open_metrics.run_attributes_ms,
-                open_metrics.required_handles_ms,
-                open_metrics.frame_counts_read_ms, open_metrics.prefix_sum_ms,
-                open_metrics.crop_lineage_ms, open_metrics.optional_handles_ms,
-                open_metrics.fallback_materialization_ms,
-                open_metrics.attribute_reads, open_metrics.array_open_attempts,
-                open_metrics.array_open_successes,
-                open_metrics.array_open_failures, open_metrics.array_reads,
-                open_metrics.events.size());
-            if (crimson_env_flag_enabled("CRIMSON_STARTUP_TRACE")) {
-              for (const auto &event : open_metrics.events) {
-                std::printf(
-                    "[AppleKeypointOpenTrace] phase=%s operation=%s state=%s "
-                    "elapsed_ms=%.1f candidate=%s path=%s\n",
-                    event.phase.c_str(), event.operation.c_str(),
-                    event.success ? "ready" : "unavailable", event.elapsed_ms,
-                    event.candidate.c_str(), event.path.c_str());
+            if (loaded_analysis->keypoint_v2_selected ||
+                options->keypoint_v2.enabled()) {
+              const auto &metrics = loaded_analysis->keypoint_v2_open_metrics;
+              std::printf(
+                  "[AppleKeypointV2Open] state=%s total_ms=%.1f "
+                  "metadata_ms=%.1f handles_ms=%.1f identity_ms=%.1f "
+                  "root_reads=%zu direct_reads=%zu declarations=%zu "
+                  "exact_opens=%zu fallback_metadata=%zu fallback_dtype=%zu "
+                  "raw_offset_reads=%zu selected_offset_reads=%zu "
+                  "quality_offset_reads=%zu body_offset_reads=%zu "
+                  "quality_payload_reads=%zu retained_offset_bytes=%zu\n",
+                  loaded_analysis->keypoint_v2_selected ? "ready" : "failed",
+                  metrics.total_ms, metrics.metadata_ms,
+                  metrics.exact_handle_open_ms, metrics.identity_validation_ms,
+                  metrics.root_metadata_reads, metrics.direct_metadata_reads,
+                  metrics.consolidated_array_declarations,
+                  metrics.exact_handle_opens, metrics.fallback_metadata_reads,
+                  metrics.fallback_dtype_opens, metrics.raw_offset_read_calls,
+                  metrics.selected_offset_read_calls,
+                  metrics.quality_offset_read_calls,
+                  metrics.body_frame_offset_read_calls,
+                  metrics.quality_payload_reads, metrics.retained_offset_bytes);
+            } else {
+              const auto &open_metrics = loaded_analysis->keypoint_open_metrics;
+              const char *open_mode = open_metrics.lazy_path       ? "lazy"
+                                      : open_metrics.fallback_path ? "fallback"
+                                                                   : "failed";
+              std::printf(
+                  "[AppleKeypointOpen] mode=%s total_ms=%.1f "
+                  "selection_ms=%.1f run_attributes_ms=%.1f "
+                  "required_handles_ms=%.1f frame_counts_read_ms=%.1f "
+                  "prefix_sum_ms=%.1f crop_lineage_ms=%.1f "
+                  "optional_handles_ms=%.1f fallback_ms=%.1f "
+                  "attributes=%zu array_open_attempts=%zu "
+                  "array_open_successes=%zu array_open_failures=%zu "
+                  "array_reads=%zu events=%zu\n",
+                  open_mode, open_metrics.total_ms, open_metrics.selection_ms,
+                  open_metrics.run_attributes_ms,
+                  open_metrics.required_handles_ms,
+                  open_metrics.frame_counts_read_ms, open_metrics.prefix_sum_ms,
+                  open_metrics.crop_lineage_ms,
+                  open_metrics.optional_handles_ms,
+                  open_metrics.fallback_materialization_ms,
+                  open_metrics.attribute_reads,
+                  open_metrics.array_open_attempts,
+                  open_metrics.array_open_successes,
+                  open_metrics.array_open_failures, open_metrics.array_reads,
+                  open_metrics.events.size());
+              if (crimson_env_flag_enabled("CRIMSON_STARTUP_TRACE")) {
+                for (const auto &event : open_metrics.events) {
+                  std::printf("[AppleKeypointOpenTrace] phase=%s operation=%s "
+                              "state=%s elapsed_ms=%.1f candidate=%s path=%s\n",
+                              event.phase.c_str(), event.operation.c_str(),
+                              event.success ? "ready" : "unavailable",
+                              event.elapsed_ms, event.candidate.c_str(),
+                              event.path.c_str());
+                }
               }
             }
             auto keypoint_repository = std::move(loaded_analysis->keypoints);
@@ -2598,6 +2697,9 @@ int main(int argc, char **argv) {
                 keypoint_overlay_buffer.close();
                 if (keypoint_error.empty()) {
                   keypoint_error = "Initial keypoint frame did not settle";
+                }
+                if (options->keypoint_v2.enabled()) {
+                  analysis_loading_start_error = keypoint_error;
                 }
                 std::fprintf(stderr,
                              "[AppleKeypoints] Initialization failed: %s\n",

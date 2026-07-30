@@ -116,14 +116,16 @@ void appendHeadingPrimitive(const ReadOnlyOverlayInput &input,
                             size_t detection_index,
                             std::vector<Primitive> &primitives) {
   if (!detection.heading_valid || detection.detection_interpolated ||
-      !detection.box || !detection.box->rect.valid() ||
       !detection.heading_origin) {
     return;
   }
-  const Rect &box = detection.box->rect;
   Point start = *detection.heading_origin;
-  if (!finite(start)) {
+  if (!finite(start) && detection.box && detection.box->rect.valid()) {
+    const Rect &box = detection.box->rect;
     start = {box.x + box.width * 0.5, box.y + box.height * 0.5};
+  }
+  if (!finite(start)) {
+    return;
   }
 
   Point end;
@@ -131,7 +133,8 @@ void appendHeadingPrimitive(const ReadOnlyOverlayInput &input,
   const size_t swim = findKeypoint(input.keypoint_labels, true, false, false);
   const size_t left = findKeypoint(input.keypoint_labels, false, true, false);
   const size_t right = findKeypoint(input.keypoint_labels, false, false, true);
-  if (swim != std::numeric_limits<size_t>::max() &&
+  if (!detection.heading_from_body_frame &&
+      swim != std::numeric_limits<size_t>::max() &&
       left != std::numeric_limits<size_t>::max() &&
       right != std::numeric_limits<size_t>::max() &&
       swim < detection.keypoints.size() && left < detection.keypoints.size() &&
@@ -145,7 +148,11 @@ void appendHeadingPrimitive(const ReadOnlyOverlayInput &input,
     const double dy = eye_midpoint.y - start.y;
     const double direction_length = std::hypot(dx, dy);
     if (direction_length > 1e-3) {
-      const double box_scale = std::max(box.width, box.height) * 1.25;
+      const double box_scale = detection.box && detection.box->rect.valid()
+                                   ? std::max(detection.box->rect.width,
+                                              detection.box->rect.height) *
+                                         1.25
+                                   : 0.0;
       const double frame_scale = input.source_height * 0.02;
       const double extension = std::max(20.0, direction_length * 0.35);
       const double arrow_length =
@@ -164,9 +171,13 @@ void appendHeadingPrimitive(const ReadOnlyOverlayInput &input,
       return;
     }
     const double radians = *detection.heading_degrees * kPi / 180.0;
+    const double box_scale =
+        detection.box && detection.box->rect.valid()
+            ? std::max(detection.box->rect.width, detection.box->rect.height) *
+                  1.25
+            : 0.0;
     const double arrow_length =
-        std::max(60.0, std::max(std::max(box.width, box.height) * 1.25,
-                                input.source_height * 0.02)) *
+        std::max(60.0, std::max(box_scale, input.source_height * 0.02)) *
         (2.0 / 3.0);
     end = {start.x + std::cos(radians) * arrow_length,
            start.y - std::sin(radians) * arrow_length};
@@ -180,6 +191,7 @@ void appendHeadingPrimitive(const ReadOnlyOverlayInput &input,
   primitive.fill = primitive.stroke;
   primitive.stroke_width_px = 2.0;
   primitive.arrow_head_size_px = 8.0;
+  primitive.instance_key = detection.instance_key;
   primitive.label = "##heading_" + std::to_string(detection_index);
   primitives.push_back(std::move(primitive));
 }
@@ -204,6 +216,7 @@ void appendKeypointPrimitives(const ReadOnlyOverlayInput &input,
     primitive.points = {a, b};
     primitive.stroke = {1.0f, 1.0f, 1.0f, 0.63f};
     primitive.stroke_width_px = 1.0;
+    primitive.instance_key = detection.instance_key;
     primitive.label = "##edge_" + std::to_string(detection_index) + "_" +
                       std::to_string(edge[0]) + "_" + std::to_string(edge[1]);
     primitives.push_back(std::move(primitive));
@@ -255,6 +268,7 @@ void appendKeypointPrimitives(const ReadOnlyOverlayInput &input,
       primitive.outline = {0.95f, 0.3f, 0.3f, primitive.outline.alpha};
     }
     primitive.outline_width_px = 2.0;
+    primitive.instance_key = detection.instance_key;
     primitive.label =
         "##kp_" + std::to_string(detection_index) + "_" + std::to_string(index);
     primitives.push_back(std::move(primitive));

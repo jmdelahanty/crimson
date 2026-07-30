@@ -8,6 +8,7 @@
 #include "zarr/tensorstore_eye_angle_timeline_repository.h"
 #include "zarr/tensorstore_eye_geometry_overlay_repository.h"
 #include "zarr/tensorstore_keypoint_overlay_repository.h"
+#include "zarr/tensorstore_keypoint_v2_repository.h"
 #include "zarr/tensorstore_stimulus_context_timeline_repository.h"
 #include "zarr/tensorstore_stimulus_repository.h"
 #include "zarr/tensorstore_subject_mask_overlay_repository.h"
@@ -19,6 +20,7 @@
 #include <chrono>
 #include <deque>
 #include <exception>
+#include <filesystem>
 #include <functional>
 #include <mutex>
 #include <thread>
@@ -122,6 +124,87 @@ bool openSelectedDetections(const AppleAnalysisRepositoryLoadRequest &request,
   return bundle->canonical_detection != nullptr;
 }
 
+std::shared_ptr<crimson::zarr::ArchiveContext> openKeypointArchive(
+    const AppleKeypointV2ArtifactSelection &selection,
+    const std::shared_ptr<crimson::zarr::ArchiveContext> &primary_archive,
+    const char *label, std::string *error) {
+  if (!selection.complete()) {
+    if (error) {
+      *error = std::string("Incomplete keypoint-v2 ") + label +
+               " selection; archive, run, and manifest digest are required";
+    }
+    return nullptr;
+  }
+  if (primary_archive && primary_archive->rootPath() ==
+                             std::filesystem::path(selection.archive_path)) {
+    return primary_archive;
+  }
+  std::string open_error;
+  auto archive =
+      crimson::zarr::ArchiveContext::Open(selection.archive_path, &open_error);
+  if (!archive && error) {
+    *error = std::string("Could not open keypoint-v2 ") + label +
+             " archive: " + open_error;
+  }
+  return archive;
+}
+
+bool openKeypoints(const AppleKeypointV2LoadRequest &selection,
+                   AppleAnalysisRepositoryBundle *bundle, std::string *error) {
+  if (!selection.enabled()) {
+    bundle->keypoints = crimson::zarr::OpenKeypointOverlayRepository(
+        bundle->archive, {}, error, &bundle->keypoint_open_metrics);
+    return bundle->keypoints != nullptr;
+  }
+  if (!selection.quality.complete() || !selection.body_frame.complete() ||
+      (!selection.refined.empty() && !selection.refined.complete())) {
+    if (error) {
+      *error = "Incomplete keypoint-v2 selection; raw, quality, and body-frame "
+               "artifacts are required and refined must be complete when set";
+    }
+    return false;
+  }
+
+  crimson::zarr::KeypointV2RepositoryOpenRequest request;
+  request.raw_archive =
+      openKeypointArchive(selection.raw, bundle->archive, "raw", error);
+  if (!request.raw_archive) {
+    return false;
+  }
+  request.quality_archive =
+      openKeypointArchive(selection.quality, bundle->archive, "quality", error);
+  if (!request.quality_archive) {
+    return false;
+  }
+  request.body_frame_archive = openKeypointArchive(
+      selection.body_frame, bundle->archive, "body-frame", error);
+  if (!request.body_frame_archive) {
+    return false;
+  }
+  if (!selection.refined.empty()) {
+    request.refined_archive = openKeypointArchive(
+        selection.refined, bundle->archive, "refined", error);
+    if (!request.refined_archive) {
+      return false;
+    }
+  }
+  request.raw_run = selection.raw.run;
+  request.quality_run = selection.quality.run;
+  request.refined_run = selection.refined.run;
+  request.body_frame_run = selection.body_frame.run;
+  request.expected_raw_manifest_digest = selection.raw.manifest_digest;
+  request.expected_quality_manifest_digest = selection.quality.manifest_digest;
+  request.expected_refined_manifest_digest = selection.refined.manifest_digest;
+  request.expected_body_frame_manifest_digest =
+      selection.body_frame.manifest_digest;
+  request.allow_selector_ineligible = selection.allow_selector_ineligible;
+  request.deep_validate_identity = selection.deep_validate_identity;
+  bundle->keypoints = crimson::zarr::OpenKeypointV2Repository(
+      request, error, &bundle->keypoint_v2_open_metrics);
+  bundle->keypoint_v2_selected = bundle->keypoints != nullptr;
+  return bundle->keypoints != nullptr;
+}
+
 AppleAnalysisRepositoryBundle
 openBundle(const AppleAnalysisRepositoryLoadRequest &request,
            const LoadControl &control) {
@@ -174,11 +257,8 @@ openBundle(const AppleAnalysisRepositoryLoadRequest &request,
   }
   if (!loadRepository(&bundle, "keypoints", "Loading keypoints", control,
                       [&](std::string *error) {
-                        bundle.keypoints =
-                            crimson::zarr::OpenKeypointOverlayRepository(
-                                bundle.archive, {}, error,
-                                &bundle.keypoint_open_metrics);
-                        return bundle.keypoints != nullptr;
+                        return openKeypoints(request.keypoint_v2, &bundle,
+                                             error);
                       })) {
     bundle.total_elapsed_ms = elapsedMilliseconds(all_started);
     return bundle;
@@ -520,11 +600,10 @@ bool AppleAnalysisRepositoryLoader::start(
     }
     addProduct(
         "keypoints", "keypoints", "Loading keypoint metadata",
-        [archive](AppleAnalysisRepositoryBundle *event,
-                  std::string *open_error) {
-          event->keypoints = crimson::zarr::OpenKeypointOverlayRepository(
-              archive, {}, open_error, &event->keypoint_open_metrics);
-          return event->keypoints != nullptr;
+        [archive, keypoint_v2 = request.keypoint_v2](
+            AppleAnalysisRepositoryBundle *event, std::string *open_error) {
+          event->archive = archive;
+          return openKeypoints(keypoint_v2, event, open_error);
         });
     if (request.subject_masks_enabled) {
       addProduct("subject_masks", "subject_masks", "Loading mask metadata",

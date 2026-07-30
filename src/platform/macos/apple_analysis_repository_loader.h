@@ -19,6 +19,7 @@
 #include "zarr/subject_mask_overlay_repository.h"
 #include "zarr/subject_shape_overlay_repository.h"
 #include "zarr/tensorstore_keypoint_overlay_repository.h"
+#include "zarr/tensorstore_keypoint_v2_repository.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -26,6 +27,31 @@
 #include <optional>
 #include <string>
 #include <vector>
+
+struct AppleKeypointV2ArtifactSelection {
+  std::string archive_path;
+  std::string run;
+  std::string manifest_digest;
+
+  bool empty() const {
+    return archive_path.empty() && run.empty() && manifest_digest.empty();
+  }
+
+  bool complete() const {
+    return !archive_path.empty() && !run.empty() && !manifest_digest.empty();
+  }
+};
+
+struct AppleKeypointV2LoadRequest {
+  AppleKeypointV2ArtifactSelection raw;
+  AppleKeypointV2ArtifactSelection quality;
+  AppleKeypointV2ArtifactSelection refined;
+  AppleKeypointV2ArtifactSelection body_frame;
+  bool allow_selector_ineligible = false;
+  bool deep_validate_identity = false;
+
+  bool enabled() const { return !raw.empty(); }
+};
 
 struct AppleAnalysisRepositoryLoadRequest {
   std::string archive_path;
@@ -36,6 +62,7 @@ struct AppleAnalysisRepositoryLoadRequest {
   std::string stimulus_video_override;
   std::string crop_run;
   std::string swim_bout_run;
+  AppleKeypointV2LoadRequest keypoint_v2;
   size_t camera_frame_count = 0;
   bool subject_masks_enabled = true;
   bool subject_shapes_enabled = true;
@@ -80,6 +107,8 @@ struct AppleAnalysisRepositoryBundle {
   std::unique_ptr<crimson::zarr::AnalysisCropGeometryRepository> crop_geometry;
   std::unique_ptr<crimson::zarr::AcquisitionCropRepository> acquisition_crop;
   crimson::zarr::KeypointRepositoryOpenMetrics keypoint_open_metrics;
+  crimson::zarr::KeypointV2RepositoryOpenMetrics keypoint_v2_open_metrics;
+  bool keypoint_v2_selected = false;
   crimson::zarr::CanonicalDetectionRepositoryOpenMetrics
       canonical_detection_open_metrics;
   crimson::zarr::DetectionRepositorySelectionMetrics

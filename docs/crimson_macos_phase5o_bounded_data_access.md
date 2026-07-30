@@ -569,6 +569,17 @@ integration checkpoint; Palette's later persistent publisher-produced
 candidate still requires the same unchanged workload before physical-profile
 promotion.
 
+The keypoint-v2 interoperability slice is also complete on macOS. The shared
+repository consumes exact raw-v2, quality-v1, refined-v2, and body-frame-v1
+artifacts without dtype probing, retains frame offsets once, resolves complete
+zero/one/many row ranges, preserves `instance_key`, and keeps quality payloads
+lazy during playback. Raw pages issue 14 compact columns and refined pages issue
+22 compact columns concurrently through TensorStore before one validated result
+is published. Both mounted Palette handoffs, the refined decision cases, the
+Metal playback smoke, and all 65 macOS tests passed. This remains an
+interoperability checkpoint, not production selection or long-recording storage
+promotion. Details are in `docs/crimson_keypoint_v2_consumer.md`.
+
 ## Gate
 
 Phase 5O is complete only when:

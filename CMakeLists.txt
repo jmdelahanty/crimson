@@ -209,6 +209,8 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         src/zarr/canonical_detection_contract.cpp
         src/zarr/coordinate_catalog_contract.cpp
         src/zarr/crop_geometry_contract.cpp
+        src/zarr/keypoint_v2_contract.cpp
+        src/zarr/tensorstore_keypoint_v2_repository.cpp
         src/zarr/refined_detection_contract.cpp
         src/zarr/tensorstore_canonical_detection_repository.cpp
         src/zarr/tensorstore_refined_detection_repository.cpp
@@ -353,6 +355,39 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
     )
     set_target_properties(coordinate_catalog_canary_gate PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
+    add_executable(keypoint_v2_canary_gate
+        tools/keypoint_v2_canary_gate.cpp
+    )
+    target_compile_features(keypoint_v2_canary_gate PRIVATE cxx_std_17)
+    target_link_libraries(keypoint_v2_canary_gate PRIVATE
+        crimson_overlay_contracts
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+        nlohmann_json::nlohmann_json
+    )
+    set_target_properties(keypoint_v2_canary_gate PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
+    add_executable(keypoint_v2_contract_tests
+        tools/keypoint_v2_contract_tests.cpp
+    )
+    target_compile_features(keypoint_v2_contract_tests PRIVATE cxx_std_17)
+    target_link_libraries(keypoint_v2_contract_tests PRIVATE
+        crimson_overlay_contracts
+        crimson_tensorstore_repositories
+        nlohmann_json::nlohmann_json
+    )
+    set_target_properties(keypoint_v2_contract_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME keypoint_v2_contract_tests
+        COMMAND $<TARGET_FILE:keypoint_v2_contract_tests>)
+    set_tests_properties(keypoint_v2_contract_tests PROPERTIES
+        LABELS "headless;keypoint;overlay;portable;tensorstore;zarr"
+        TIMEOUT 30
     )
 
     add_executable(refined_detection_physical_profile_benchmark

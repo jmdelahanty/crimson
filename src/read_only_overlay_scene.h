@@ -51,6 +51,14 @@ struct DetectionOverlayInput {
   bool keypoint_usable = true;
   bool keypoint_detection_interpolated = false;
   bool keypoint_flip_corrected = false;
+  bool source_success = false;
+  bool refined_success = false;
+  bool confidence_valid = false;
+  bool geometry_valid = false;
+  uint8_t review_state_code = 0;
+  uint16_t reason_code = 0;
+  std::vector<uint8_t> keypoint_edit_flags;
+  bool heading_from_body_frame = false;
 };
 
 struct SubjectMaskComponentInput {

@@ -4,14 +4,12 @@
 
 namespace crimson::zarr {
 
-overlay::ReadOnlyOverlayInput makeKeypointOverlaySceneInput(
-    const KeypointOverlayDescriptor& descriptor,
-    const KeypointOverlayResolution& resolution,
-    int surface_view,
-    int64_t surface_frame,
-    int overlay_view,
-    int full_frame_width,
-    int full_frame_height) {
+overlay::ReadOnlyOverlayInput
+makeKeypointOverlaySceneInput(const KeypointOverlayDescriptor &descriptor,
+                              const KeypointOverlayResolution &resolution,
+                              int surface_view, int64_t surface_frame,
+                              int overlay_view, int full_frame_width,
+                              int full_frame_height) {
   overlay::ReadOnlyOverlayInput input;
   input.identity = {surface_view, surface_frame, overlay_view,
                     resolution.camera_frame};
@@ -26,24 +24,24 @@ overlay::ReadOnlyOverlayInput makeKeypointOverlaySceneInput(
   }
 
   input.detections.reserve(resolution.detections.size());
-  for (const auto& metadata : resolution.detections) {
+  for (const auto &metadata : resolution.detections) {
     overlay::DetectionOverlayInput detection;
+    detection.instance_key = metadata.instance_key;
     if (metadata.full_frame_box_xywh) {
-      const auto& box = *metadata.full_frame_box_xywh;
+      const auto &box = *metadata.full_frame_box_xywh;
       detection.box = overlay::DetectionBoxInput{
-          {box[0], box[1], box[2], box[3]}, 0,
-          metadata.detection_interpolated
-              ? overlay::BoxProvenance::Interpolated
-              : overlay::BoxProvenance::Clean};
+          {box[0], box[1], box[2], box[3]},
+          0,
+          metadata.detection_interpolated ? overlay::BoxProvenance::Interpolated
+                                          : overlay::BoxProvenance::Clean};
     }
     detection.keypoints.reserve(metadata.keypoints.size());
     for (const auto point : metadata.keypoints) {
       detection.keypoints.push_back({point.x, point.y});
     }
     if (metadata.heading_origin) {
-      detection.heading_origin =
-          overlay::Point{metadata.heading_origin->x,
-                         metadata.heading_origin->y};
+      detection.heading_origin = overlay::Point{metadata.heading_origin->x,
+                                                metadata.heading_origin->y};
     }
     detection.heading_degrees = metadata.heading_degrees;
     detection.heading_valid = metadata.heading_valid;
@@ -53,9 +51,17 @@ overlay::ReadOnlyOverlayInput makeKeypointOverlaySceneInput(
     detection.keypoint_detection_interpolated =
         metadata.keypoint_detection_interpolated;
     detection.keypoint_flip_corrected = metadata.keypoint_flip_corrected;
+    detection.source_success = metadata.source_success;
+    detection.refined_success = metadata.refined_success;
+    detection.confidence_valid = metadata.confidence_valid;
+    detection.geometry_valid = metadata.geometry_valid;
+    detection.review_state_code = metadata.review_state_code;
+    detection.reason_code = metadata.reason_code;
+    detection.keypoint_edit_flags = metadata.keypoint_edit_flags;
+    detection.heading_from_body_frame = metadata.heading_from_body_frame;
     input.detections.push_back(std::move(detection));
   }
   return input;
 }
 
-}  // namespace crimson::zarr
+} // namespace crimson::zarr

@@ -54,6 +54,7 @@ struct KeypointOverlayRow {
 };
 
 struct KeypointOverlayDetection {
+  uint64_t instance_key = 0;
   int64_t detection_index = -1;
   int64_t source_crop_row_id = -1;
   std::vector<KeypointOverlayPoint> keypoints;
@@ -65,6 +66,14 @@ struct KeypointOverlayDetection {
   bool keypoint_usable = true;
   bool keypoint_detection_interpolated = false;
   bool keypoint_flip_corrected = false;
+  bool source_success = false;
+  bool refined_success = false;
+  bool confidence_valid = false;
+  bool geometry_valid = false;
+  uint8_t review_state_code = 0;
+  uint16_t reason_code = 0;
+  std::vector<uint8_t> keypoint_edit_flags;
+  bool heading_from_body_frame = false;
   std::optional<std::array<double, 4>> full_frame_box_xywh;
 };
 
