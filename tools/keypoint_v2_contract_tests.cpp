@@ -1,10 +1,12 @@
 #include "read_only_overlay_scene.h"
+#include "zarr/canonical_json.h"
 #include "zarr/keypoint_overlay_scene_adapter.h"
 #include "zarr/keypoint_v2_contract.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
@@ -58,6 +60,65 @@ bool TestStableObservationKeys() {
       duplicate, duplicate.size(), &error));
   CHECK(!error.empty());
   CHECK(!crimson::zarr::ValidateKeypointV2InstanceKeys(keys, keys.size() - 1));
+  return true;
+}
+
+nlohmann::json CodeRegistries(nlohmann::json review_states,
+                              nlohmann::json reasons) {
+  nlohmann::json document = {
+      {"schema_id", "palette.refined_keypoint.code_registries"},
+      {"schema_version", 1},
+      {"review_state_map", std::move(review_states)},
+      {"reason_code_map", std::move(reasons)},
+      {"zero_code_semantics",
+       {{"review_state", "unreviewed"}, {"reason", "none"}}},
+  };
+  return {{"digest_algorithm", "sha256_canonical_json_v1"},
+          {"digest", crimson::zarr::CanonicalJsonSha256(document)},
+          {"document", std::move(document)}};
+}
+
+bool TestRefinedCodeRegistries() {
+  std::string error;
+  const auto unreviewed =
+      CodeRegistries({{"0", "unreviewed"}}, {{"0", "none"}});
+  CHECK(crimson::zarr::ValidateRefinedKeypointV2CodeRegistries(unreviewed,
+                                                               &error));
+
+  const auto reviewed = CodeRegistries(
+      {{"0", "unreviewed"}, {"1", "accepted"}, {"2", "rejected"}},
+      {{"0", "none"}, {"1", "manual_correction"}, {"2", "manual_rejection"}});
+  CHECK(
+      crimson::zarr::ValidateRefinedKeypointV2CodeRegistries(reviewed, &error));
+
+  auto invalid = unreviewed;
+  invalid["document"]["review_state_map"] = {{"1", "accepted"}};
+  invalid["digest"] = crimson::zarr::CanonicalJsonSha256(invalid["document"]);
+  CHECK(
+      !crimson::zarr::ValidateRefinedKeypointV2CodeRegistries(invalid, &error));
+
+  invalid = unreviewed;
+  invalid["document"]["reason_code_map"]["01"] = "bad_code";
+  invalid["digest"] = crimson::zarr::CanonicalJsonSha256(invalid["document"]);
+  CHECK(
+      !crimson::zarr::ValidateRefinedKeypointV2CodeRegistries(invalid, &error));
+
+  invalid = unreviewed;
+  invalid["document"]["review_state_map"]["3"] = "accepted";
+  invalid["digest"] = crimson::zarr::CanonicalJsonSha256(invalid["document"]);
+  CHECK(
+      !crimson::zarr::ValidateRefinedKeypointV2CodeRegistries(invalid, &error));
+
+  invalid = reviewed;
+  invalid["document"]["reason_code_map"]["3"] = "manual_correction";
+  invalid["digest"] = crimson::zarr::CanonicalJsonSha256(invalid["document"]);
+  CHECK(
+      !crimson::zarr::ValidateRefinedKeypointV2CodeRegistries(invalid, &error));
+
+  invalid = reviewed;
+  invalid["digest"] = std::string(64, '0');
+  CHECK(
+      !crimson::zarr::ValidateRefinedKeypointV2CodeRegistries(invalid, &error));
   return true;
 }
 
@@ -121,6 +182,7 @@ bool TestPresentationPreservesRefinedState() {
 
 int main() {
   if (!TestMultiObservationFrameIndex() || !TestStableObservationKeys() ||
+      !TestRefinedCodeRegistries() ||
       !TestPresentationPreservesRefinedState()) {
     return 1;
   }

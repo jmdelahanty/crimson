@@ -371,7 +371,113 @@ bool parseSkeleton(const json &binding, size_t expected_keypoints,
   }
 }
 
+bool parseCanonicalCode(std::string_view text, uint64_t maximum,
+                        uint64_t *value) {
+  if (text.empty() || (text.size() > 1 && text.front() == '0')) {
+    return false;
+  }
+  uint64_t parsed = 0;
+  for (const char character : text) {
+    if (character < '0' || character > '9') {
+      return false;
+    }
+    const uint64_t digit = static_cast<uint64_t>(character - '0');
+    if (parsed > (maximum - digit) / 10) {
+      return false;
+    }
+    parsed = parsed * 10 + digit;
+  }
+  if (value) {
+    *value = parsed;
+  }
+  return true;
+}
+
+bool canonicalCodeLabel(std::string_view label) {
+  if (label.empty() || label.front() < 'a' || label.front() > 'z') {
+    return false;
+  }
+  return std::all_of(label.begin() + 1, label.end(), [](const char character) {
+    return (character >= 'a' && character <= 'z') ||
+           (character >= '0' && character <= '9') || character == '_';
+  });
+}
+
+bool validateCodeMap(
+    const json &value, uint64_t maximum, std::string_view zero_label,
+    std::initializer_list<std::pair<uint64_t, std::string_view>> allowed,
+    std::string *error) {
+  if (!value.is_object() || value.empty()) {
+    assignError(error, "Refined keypoint code map is not a nonempty object");
+    return false;
+  }
+  std::unordered_set<std::string> labels;
+  for (auto item = value.begin(); item != value.end(); ++item) {
+    uint64_t code = 0;
+    if (!parseCanonicalCode(item.key(), maximum, &code) ||
+        !item.value().is_string()) {
+      assignError(error, "Refined keypoint code map entry is invalid");
+      return false;
+    }
+    const std::string label = item.value().get<std::string>();
+    if (!canonicalCodeLabel(label) || !labels.insert(label).second) {
+      assignError(error,
+                  "Refined keypoint code labels are invalid or duplicated");
+      return false;
+    }
+    if (allowed.size() != 0) {
+      const auto expected =
+          std::find_if(allowed.begin(), allowed.end(), [&](const auto &entry) {
+            return entry.first == code && entry.second == label;
+          });
+      if (expected == allowed.end()) {
+        assignError(error, "Refined keypoint review-state code is unsupported");
+        return false;
+      }
+    }
+  }
+  if (!value.contains("0") || !value.at("0").is_string() ||
+      value.at("0").get<std::string>() != zero_label) {
+    assignError(error, "Refined keypoint code-zero semantics are invalid");
+    return false;
+  }
+  return true;
+}
+
 } // namespace
+
+bool ValidateRefinedKeypointV2CodeRegistries(const json &registries,
+                                             std::string *error) {
+  try {
+    if (!validateDigestEnvelope(
+            registries, "palette.refined_keypoint.code_registries", error)) {
+      return false;
+    }
+    const auto &document = registries.at("document");
+    if (!exactKeys(document, {"schema_id", "schema_version", "review_state_map",
+                              "reason_code_map", "zero_code_semantics"}) ||
+        document.value("schema_version", 0) != 1 ||
+        !validateCodeMap(document.at("review_state_map"), 255, "unreviewed",
+                         {{0, "unreviewed"}, {1, "accepted"}, {2, "rejected"}},
+                         error) ||
+        !validateCodeMap(document.at("reason_code_map"), 65535, "none", {},
+                         error)) {
+      return false;
+    }
+    const auto &zero = document.at("zero_code_semantics");
+    if (!exactKeys(zero, {"review_state", "reason"}) ||
+        zero.value("review_state", "") != "unreviewed" ||
+        zero.value("reason", "") != "none") {
+      assignError(error, "Refined keypoint code-zero declaration is invalid");
+      return false;
+    }
+    return true;
+  } catch (const json::exception &exception) {
+    assignError(error, "Invalid refined keypoint code registry: " +
+                           std::string(exception.what()));
+    return false;
+  }
+}
 
 bool ValidateRawKeypointV2RunManifest(const json &manifest,
                                       const std::string &requested_run,
@@ -666,18 +772,8 @@ bool ValidateRefinedKeypointV2RunManifest(const json &manifest,
       assignError(error, "Refined keypoint snapshot identity is invalid");
       return false;
     }
-    if (!validateDigestEnvelope(payload->at("code_registries"),
-                                "palette.refined_keypoint.code_registries",
-                                error)) {
-      return false;
-    }
-    const auto &registry = payload->at("code_registries").at("document");
-    if (registry.at("review_state_map") !=
-            json{{"0", "unreviewed"}, {"1", "accepted"}, {"2", "rejected"}} ||
-        registry.at("zero_code_semantics").value("review_state", "") !=
-            "unreviewed" ||
-        registry.at("zero_code_semantics").value("reason", "") != "none") {
-      assignError(error, "Refined keypoint code registry is incompatible");
+    if (!ValidateRefinedKeypointV2CodeRegistries(payload->at("code_registries"),
+                                                 error)) {
       return false;
     }
     if (!validateLogicalContent(payload->at("logical_content"),

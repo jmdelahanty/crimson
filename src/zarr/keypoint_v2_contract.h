@@ -52,6 +52,9 @@ bool ValidateRefinedKeypointV2RunManifest(const nlohmann::json &manifest,
                                           KeypointV2ManifestSummary *summary,
                                           std::string *error = nullptr);
 
+bool ValidateRefinedKeypointV2CodeRegistries(const nlohmann::json &registries,
+                                             std::string *error = nullptr);
+
 bool ValidateKeypointQualityV1RunManifest(const nlohmann::json &manifest,
                                           const std::string &requested_run,
                                           KeypointV2ManifestSummary *summary,
