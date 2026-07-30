@@ -2,7 +2,7 @@
 
 Date: 2026-07-30
 
-Status: PARTIAL ACCEPTANCE; canonical detection compatibility blocked
+Status: ACCEPTED; canonical v3 companion and source-matched GUI smoke passed
 
 ## Fixture
 
@@ -51,9 +51,9 @@ The raw keypoint, lazy quality, refined keypoint, and refined-derived body-frame
 stores passed their separate five-process full-duration gate. See
 `../keypoint_v2_full_duration_experiment_2026-07-30/`.
 
-## Remaining Blocker
+## Canonical V3 Closure
 
-The package-level result is not a complete pass because
+The original package-level result was not a complete pass because
 `canonical_detection.zarr` publishes
 `palette.canonical_detection.run_manifest` version 2. Crimson's strict shared
 coordinate-aware canonical adapter requires version 3. The adapter therefore
@@ -62,10 +62,32 @@ failed closed with:
 `Canonical detection run_manifest envelope is invalid`
 
 Crimson did not reinterpret v2 as v3 or weaken the coordinate contract. Palette
-can close the package gate by publishing a logically identical selector-
-ineligible canonical companion with the required v3 coordinate-catalog
-envelope, or by explicitly defining a separately named v2 compatibility gate.
-The refined, crop, and keypoint acceptance results are unaffected.
+closed that blocker with the logically identical selector-ineligible v3
+companion at:
+
+`/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/crimson_storage_candidates/sleepyfish_cam2010095_full_v8_canonical_v3_20260730_v1/`
+
+The companion handoff SHA-256 is
+`5913c8437522a2cf28ea7a2356e1760b7be9b489ee4ad1b4abc2d326a0718c38`.
+The headless gate accepted all 1,186,376 rows, exact schema opens, one retained
+offset read, coordinate-catalog validation, rapid-seek cancellation, and the
+unchanged refined companion. Its structured result is `canonical_v3_result.json`.
+
+The first source-matched GUI run exposed and then closed a Crimson consumer
+bug: canonical manifest validation incorrectly advertised the complete refined
+identity-column set. The canonical repository deliberately opens only the
+three frozen raw UI columns, so background residency rejected the otherwise
+valid chunk. Commit `8ef7e86` separates manifest/coordinate validation from
+the refined-only identity presentation flag.
+
+The clean revision-bound rerun at Crimson commit
+`49f7907d1389dcf5669048ad4c44093254c44a71` passed against the matching
+4512x4512, 1,188,000-frame video. Canonical residency loaded all 55 chunks,
+atomically published 28,473,024 bytes once in 616.4 ms, and reported no failed
+or stale chunks. The smoke advanced from frame 0 through 300 with 601 detection
+presentations, no failed pages, no skipped source frames, no late
+presentations, and zero maximum lag. Structured GUI evidence is in
+`canonical_v3_gui_smoke.json`.
 
 ## Evidence Limits
 
@@ -88,6 +110,12 @@ successfully built `refined_detection_shadow_gate`,
 TensorStore build. The keypoint, canonical-detection, and crop self-tests all
 passed. The shared dirty Linux checkout was not changed.
 
+After the canonical-v3 residency classification fix, the isolated checkout was
+advanced through an immutable Git bundle to
+`49f7907d1389dcf5669048ad4c44093254c44a71`. Linux rebuilt and passed
+`canonical_detection_repository_tests` again. The shared ws1 checkout remained
+untouched.
+
 Primary evidence SHA-256 values:
 
 - `crop_geometry_aggregate.json`:
@@ -95,4 +123,8 @@ Primary evidence SHA-256 values:
 - `crop_geometry_fresh_process_summary.png`:
   `a284cd0a529c22c79e6cfe37423b57102bd0a7f5033fbd2192954bb17954eaf8`;
 - `refined_detection_result.json`:
-  `efe4800b2f315e899cecd6e7c9fb24c804cefb859a6f587c4e3e1d7699a42668`.
+  `efe4800b2f315e899cecd6e7c9fb24c804cefb859a6f587c4e3e1d7699a42668`;
+- `canonical_v3_result.json`:
+  `d6cf8e9c793d06c15de94cf6156572d57a61991a4b13530e6c8073ea0811c2de`;
+- `canonical_v3_gui_smoke.json`:
+  `1718d534993c40eb92440fccb28485fe32400db225f373ef8bfdea7620c2361f`.

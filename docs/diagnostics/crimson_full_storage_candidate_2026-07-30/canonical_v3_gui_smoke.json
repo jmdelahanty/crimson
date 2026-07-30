@@ -1,0 +1,52 @@
+{
+  "canonical_detection": {
+    "cache_hits": 601,
+    "camera_frames": 1188000,
+    "consolidated_array_declarations": 9,
+    "detections_presented": 601,
+    "exact_handle_opens": 4,
+    "failed_pages": 0,
+    "fallback_dtype_opens": 0,
+    "fallback_metadata_reads": 0,
+    "maximum_resolve_ms": 119.3,
+    "offset_read_calls": 1,
+    "retained_offset_bytes": 9504008,
+    "rows": 1186376,
+    "run": "canonical_sleepyfish_cam2010095_full_v8_coordinate_v3_20260730",
+    "surface": "canonical_raw_v1"
+  },
+  "classification": "source_matched_gui_playback_smoke",
+  "crimson_commit": "49f7907d1389dcf5669048ad4c44093254c44a71",
+  "handoff": {
+    "file_sha256": "5913c8437522a2cf28ea7a2356e1760b7be9b489ee4ad1b4abc2d326a0718c38",
+    "manifest": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/crimson_storage_candidates/sleepyfish_cam2010095_full_v8_canonical_v3_20260730_v1/handoff_manifest.json",
+    "payload_digest": "4ccbe3caa263831ad12aad66a5bf361a37d1395f970a0e48fd264ef6f732dec6"
+  },
+  "pass": true,
+  "residency": {
+    "candidate_bytes": 28473024,
+    "completed_chunks": 55,
+    "elapsed_ms": 616.4,
+    "failed_chunks": 0,
+    "maximum_chunk_ms": 93.0,
+    "planned_chunks": 55,
+    "publications": 1,
+    "retained_bytes": 28473024,
+    "stale_chunks": 0,
+    "state": "ready"
+  },
+  "video": {
+    "decoded_frames": 306,
+    "elapsed_s": 10.256,
+    "end_frame": 300,
+    "late_presentations": 0,
+    "maximum_lag_frames": 0.0,
+    "peak_memory_mib": 223.6,
+    "presented_frame": 300,
+    "skipped_source_frames": 0,
+    "source": "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/cams/Cam2010095_sleepyfish_2026_05_05_17_45_30_cam2010095.mp4",
+    "start_frame": 0,
+    "startup_ms": 946.9,
+    "thermal": "nominal"
+  }
+}
