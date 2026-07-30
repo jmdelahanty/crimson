@@ -108,6 +108,11 @@ the first random pass, so their later traversal transferred no additional file
 bytes. This accepts harness behavior and interoperability, not long-duration
 layout, cache-pressure, or transfer performance.
 
+The benchmark target and reverse-prefetch regression also build and pass in an
+isolated `ws1` Linux/CUDA 12.4 worktree configured for architectures `80;86`.
+This establishes portable compilation and contract behavior only; it is not a
+cross-host performance comparison.
+
 ## Full-Duration Gate
 
 When Palette supplies the immutable full-length raw and refined artifacts:

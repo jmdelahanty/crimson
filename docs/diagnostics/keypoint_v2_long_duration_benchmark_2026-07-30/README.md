@@ -67,3 +67,11 @@ The harness is ready for Palette's full-duration raw/refined handoff. Those
 stores must be run as five balanced fresh-process repetitions. A source-matched
 GUI smoke follows only after the headless full-duration gate. No selector,
 writer, archive, or production storage profile changed at this checkpoint.
+
+An isolated `ws1` Linux build also compiled
+`keypoint_v2_long_duration_benchmark` and
+`keypoint_overlay_repository_tests` from the implementation-equivalent
+CMake/source/tool patch. It used the established CUDA 12.4 stack and explicit
+CUDA architectures `80;86`. The benchmark self-test and reverse-prefetch
+repository test both passed. No shared Linux checkout or dataset changed, and
+no Linux mounted-performance number was collected at this checkpoint.
