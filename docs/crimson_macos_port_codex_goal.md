@@ -1039,6 +1039,37 @@ RSS, and close. Both small mounted raw/refined fixtures pass; Palette's pending
 full-duration artifacts remain necessary for scale and physical-profile
 evidence. See `docs/crimson_keypoint_v2_long_duration_benchmark.md`.
 
+#### Deferred read-only feature queue
+
+The following backend-neutral presentation features are explicitly recorded as
+deferred Phase 5 follow-ups. They may proceed while Palette's subject-mask,
+subject-shape, eye-geometry, and editing/storage contracts continue to settle,
+but none is required to accept those storage surfaces:
+
+- a multi-observation frame selector that exposes every detection/keypoint row
+  in the current frame and routes the ROI inset to the chosen observation;
+- a lazy read-only keypoint-quality inspector for confidence, correction,
+  rejection, and raw-versus-refined state;
+- overlay filters and styling for confidence, class, labels, skeletons, and
+  layer opacity; and
+- workspace-local frame bookmarks, navigation history, and next/previous
+  flagged-observation commands without writing scientific archive state.
+
+The first feature-design candidate is a detection/keypoint quality timeline.
+It should visualize model confidence and refinement outcomes over the camera
+frame domain, share the maintained timeline navigation contract, and seek the
+video when the user selects a point. Raw model confidence, refined score
+validity, accepted/rejected source decisions, manual rows, and reason codes must
+remain distinguishable series or event layers rather than being collapsed into
+one ambiguous value. Confidence is the model's reported certainty, not a
+ground-truth accuracy or performance measurement. Model/refinement provenance
+and threshold metadata must be displayed only when present in the validated run
+contracts. The current detection contracts preserve artifact identity and
+digest-bound reason registries, but do not yet provide a portable friendly model
+identity or the numeric refinement cutoffs; those require a future provenance
+envelope rather than inference from external paths. Implementation is deferred
+until the detection-first semantic and paging contract is frozen.
+
 Phase 5 also remains open for production-tail acceptance, movement-trail
 coordinate policy, any required chaser-data densification, and edit/review
 workflows whose shared storage contracts are still changing. Those blockers
