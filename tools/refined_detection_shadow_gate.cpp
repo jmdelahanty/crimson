@@ -181,12 +181,14 @@ json residencyMetricsJson(const CanonicalDetectionResidencyMetrics &metrics) {
 }
 
 struct Handoff {
+  std::string schema_id;
   std::filesystem::path refined_archive;
   std::filesystem::path canonical_archive;
   std::string refined_run;
   std::string canonical_run;
   std::string refined_manifest_digest;
   std::string canonical_manifest_digest;
+  std::string lineage_profile;
   size_t frame_count = 0;
   size_t instance_count = 0;
   size_t source_detection_count = 0;
@@ -194,11 +196,17 @@ struct Handoff {
 
 Handoff validateHandoff(const json &document,
                         const std::string &expected_payload_digest) {
-  require(document.value("schema_id", "") ==
-                  "palette.refined_detection.crimson_shadow_handoff" &&
+  const std::string schema_id = document.value("schema_id", "");
+  const bool legacy_handoff =
+      schema_id == "palette.refined_detection.crimson_shadow_handoff";
+  const bool storage_candidate_handoff =
+      schema_id == "palette.crimson.storage_candidate_handoff";
+  require((legacy_handoff || storage_candidate_handoff) &&
               document.value("schema_version", 0) == 1,
           "Palette handoff schema is incompatible");
-  require(document.value("payload_digest_algorithm", "") ==
+  const char *digest_algorithm_field =
+      legacy_handoff ? "payload_digest_algorithm" : "digest_algorithm";
+  require(document.value(digest_algorithm_field, "") ==
                   "sha256_canonical_json_v1" &&
               document.value("payload_digest", "") == expected_payload_digest,
           "Palette handoff digest declaration disagrees with the request");
@@ -212,27 +220,50 @@ Handoff validateHandoff(const json &document,
               !payload.value("selector_eligible", true) &&
               !payload.value("registry_registered", true),
           "Palette handoff publication state is invalid");
-  const auto &validation = payload.at("validation");
-  require(
-      validation.value("fresh_process", false) &&
-          validation.value("canonical_refined_source_equality", false) &&
-          validation.value("direct_consolidated_metadata_equivalence", false) &&
-          validation.value("selector_attributes_absent", false) &&
-          validation.at("production_state_changes").empty(),
-      "Palette handoff validation receipt is incomplete");
+  if (legacy_handoff) {
+    const auto &validation = payload.at("validation");
+    require(validation.value("fresh_process", false) &&
+                validation.value("canonical_refined_source_equality", false) &&
+                validation.value("direct_consolidated_metadata_equivalence",
+                                 false) &&
+                validation.value("selector_attributes_absent", false) &&
+                validation.at("production_state_changes").empty(),
+            "Palette handoff validation receipt is incomplete");
+  } else {
+    require(payload.value("classification", "") == "full_duration_fixture" &&
+                payload.value("promotion_semantics", "") ==
+                    "full_duration_candidate_requires_crimson_gate" &&
+                payload.at("production_state_changes").empty(),
+            "Palette storage-candidate state is incompatible");
+  }
 
-  const auto &refined = payload.at("artifacts").at("refined");
-  const auto &canonical = payload.at("artifacts").at("canonical");
+  const auto &artifacts = payload.at("artifacts");
+  const auto &refined =
+      artifacts.at(legacy_handoff ? "refined" : "refined_detection");
+  const auto &canonical =
+      artifacts.at(legacy_handoff ? "canonical" : "canonical_detection");
+  if (storage_candidate_handoff) {
+    require(refined.value("stage", "") == "refined_detection" &&
+                canonical.value("stage", "") == "canonical_detection" &&
+                refined.value("direct_consolidated_manifest_equal", false) &&
+                canonical.value("direct_consolidated_manifest_equal", false),
+            "Palette detection artifacts lack exact metadata evidence");
+  }
   const auto &dimensions = refined.at("dimensions");
   Handoff result;
+  result.schema_id = schema_id;
   result.refined_archive = refined.at("macos_path").get<std::string>();
   result.canonical_archive = canonical.at("macos_path").get<std::string>();
   result.refined_run = refined.at("run_id").get<std::string>();
   result.canonical_run = canonical.at("run_id").get<std::string>();
+  const char *manifest_digest_field =
+      legacy_handoff ? "manifest_digest" : "manifest_payload_digest";
   result.refined_manifest_digest =
-      refined.at("manifest_digest").get<std::string>();
+      refined.at(manifest_digest_field).get<std::string>();
   result.canonical_manifest_digest =
-      canonical.at("manifest_digest").get<std::string>();
+      canonical.at(manifest_digest_field).get<std::string>();
+  result.lineage_profile =
+      dimensions.value("lineage_profile", "full_acquisition");
   result.frame_count = dimensions.at("n_frames").get<size_t>();
   result.instance_count = dimensions.at("n_instances").get<size_t>();
   result.source_detection_count =
@@ -291,11 +322,19 @@ openBenchmarkRefined(
   return repository;
 }
 
-void validateCanonicalCompanion(const Handoff &handoff, json *evidence) {
+bool validateCanonicalCompanion(const Handoff &handoff, json *evidence) {
   std::string error;
   auto archive =
       crimson::zarr::ArchiveContext::Open(handoff.canonical_archive, &error);
-  require(archive != nullptr, "Canonical companion open failed: " + error);
+  if (!archive) {
+    (*evidence)["canonical_companion"] = {
+        {"compatible", false},
+        {"archive", handoff.canonical_archive.string()},
+        {"run", handoff.canonical_run},
+        {"error", "Canonical companion open failed: " + error},
+    };
+    return false;
+  }
   crimson::zarr::DetectionRepositorySelectionRequest request;
   request.canonical_raw_run = handoff.canonical_run;
   request.raw_fallback_policy = crimson::zarr::DetectionRawFallbackPolicy::
@@ -303,8 +342,15 @@ void validateCanonicalCompanion(const Handoff &handoff, json *evidence) {
   crimson::zarr::DetectionRepositorySelectionMetrics metrics;
   auto repository = crimson::zarr::OpenSelectedDetectionRepository(
       archive, request, &error, &metrics);
-  require(repository != nullptr,
-          "Canonical companion selection failed: " + error);
+  if (!repository) {
+    (*evidence)["canonical_companion"] = {
+        {"compatible", false},
+        {"archive", handoff.canonical_archive.string()},
+        {"run", handoff.canonical_run},
+        {"error", "Canonical companion selection failed: " + error},
+    };
+    return false;
+  }
   const auto descriptor = repository->descriptor();
   require(descriptor.camera_frame_count == handoff.frame_count &&
               descriptor.row_count == handoff.source_detection_count &&
@@ -318,6 +364,7 @@ void validateCanonicalCompanion(const Handoff &handoff, json *evidence) {
               last.status == crimson::zarr::CanonicalDetectionPageStatus::Ready,
           "Canonical companion sample reads failed");
   (*evidence)["canonical_companion"] = {
+      {"compatible", true},
       {"archive", handoff.canonical_archive.string()},
       {"run", descriptor.run_name},
       {"frames", descriptor.camera_frame_count},
@@ -331,6 +378,7 @@ void validateCanonicalCompanion(const Handoff &handoff, json *evidence) {
       {"first_frame_rows", first.frames.front().detections.size()},
       {"last_frame_rows", last.frames.front().detections.size()},
   };
+  return true;
 }
 
 void validateRefinedTraversal(
@@ -450,6 +498,8 @@ void validateRefinedTraversal(
         if (detection.source_kind_code == 1) {
           ++raw_rows;
           require(detection.source_detect_row_index >= 0 &&
+                      static_cast<size_t>(detection.source_detect_row_index) <
+                          handoff.source_detection_count &&
                       raw_source_rows.insert(detection.source_detect_row_index)
                           .second,
                   "Raw-backed source row was invalid or reused");
@@ -469,9 +519,9 @@ void validateRefinedTraversal(
               refined_row_ids.size() == handoff.instance_count &&
               overlay_boxes == handoff.instance_count,
           "Full refined traversal did not preserve every instance");
-  require(empty_frames == 361 && multi_instance_frames == 0 &&
-              manual_rows == 0 && raw_rows == handoff.instance_count,
-          "Real-shadow coverage differs from the declared limitation");
+  require(raw_rows + manual_rows == handoff.instance_count &&
+              raw_source_rows.size() == raw_rows,
+          "Refined source-kind accounting is inconsistent");
   (*evidence)["traversal"] = {
       {"elapsed_ms", elapsedMilliseconds(traversal_started)},
       {"frames", handoff.frame_count},
@@ -548,7 +598,7 @@ int main(int argc, char **argv) {
   const std::filesystem::path output_path = argv[3];
   json evidence = {
       {"schema_id", "crimson.refined_detection_shadow_gate"},
-      {"schema_version", 1},
+      {"schema_version", 2},
       {"classification", "headless_real_shadow_integration"},
       {"handoff_manifest", handoff_path.string()},
       {"expected_handoff_payload_digest", expected_digest},
@@ -564,10 +614,12 @@ int main(int argc, char **argv) {
     const auto handoff_document = readJson(handoff_path);
     const auto handoff = validateHandoff(handoff_document, expected_digest);
     evidence["handoff"] = {
+        {"schema_id", handoff.schema_id},
         {"payload_digest", expected_digest},
         {"refined_archive", handoff.refined_archive.string()},
         {"refined_run", handoff.refined_run},
         {"refined_manifest_digest", handoff.refined_manifest_digest},
+        {"lineage_profile", handoff.lineage_profile},
         {"canonical_archive", handoff.canonical_archive.string()},
         {"canonical_run", handoff.canonical_run},
         {"canonical_manifest_digest", handoff.canonical_manifest_digest},
@@ -599,16 +651,19 @@ int main(int argc, char **argv) {
             selection_metrics.refined_open.direct_run_metadata_reads == 1 &&
             selection_metrics.refined_open.direct_group_metadata_reads == 3 &&
             selection_metrics.refined_open.consolidated_array_declarations ==
-                28 &&
+                (handoff.lineage_profile == "clipped_recording_snapshot"
+                     ? 38
+                     : 28) &&
             selection_metrics.refined_open.exact_handle_opens == 11 &&
             selection_metrics.refined_open.source_audit_handle_opens == 0 &&
             selection_metrics.refined_open.offset_read_calls == 1,
         "Refined repository open did not follow the exact lazy-audit contract");
     evidence["refined_open"] = openMetricsJson(selection_metrics.refined_open);
 
-    validateCanonicalCompanion(handoff, &evidence);
     validateRefinedTraversal(std::move(repository), handoff, scheduler,
                              &evidence);
+    const bool canonical_companion_compatible =
+        validateCanonicalCompanion(handoff, &evidence);
     scheduler->waitUntilIdle();
     const auto scheduler_metrics = scheduler->metrics();
     require(scheduler_metrics.queue.failed_completions == 0 &&
@@ -624,6 +679,11 @@ int main(int argc, char **argv) {
         {"work_exceptions", scheduler_metrics.work_exceptions},
         {"peak_active", scheduler_metrics.queue.peak_active_requests},
     };
+    if (!canonical_companion_compatible) {
+      require(
+          false,
+          evidence.at("canonical_companion").at("error").get<std::string>());
+    }
     evidence["pass"] = true;
     writeJson(output_path, evidence);
     scheduler->shutdown();
