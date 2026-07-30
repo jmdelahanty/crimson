@@ -2,8 +2,9 @@
 
 Date: 2026-07-29
 
-Status: selector-ineligible raw/refined interoperability gate passed on macOS;
-production selection and long-recording physical-profile promotion remain open
+Status: selector-ineligible raw/refined interoperability gate passed on macOS
+and isolated Linux; production selection and long-recording physical-profile
+promotion remain open
 
 ## Boundary
 
@@ -98,7 +99,7 @@ portable deterministic `[2, 0, 1, 3]` offset test remains part of the gate.
 
 ## Mounted Result
 
-The final headless mounted run passed both repositories:
+The final macOS headless mounted run passed both repositories:
 
 | Metric | Raw | Refined |
 | --- | ---: | ---: |
@@ -131,6 +132,25 @@ The complete macOS release preset passed 65 of 65 tests. The portable contract
 coverage includes empty and multiple-observation frames, malformed offsets,
 duplicate keys, stable identity on every scene primitive, and body-frame-only
 heading.
+
+An isolated Linux release build at the same Crimson implementation revision
+also built `keypoint_v2_contract_tests`, `keypoint_v2_canary_gate`, and the full
+CUDA/NVIDIA `redgui` target with CUDA architectures `80;86`. The portable
+contract test and the same raw/refined mounted-store gate passed. Linux opened
+the raw repository in 228.1 ms and the refined repository in 291.1 ms; the
+representative frame probes took 29.9 ms and 43.0 ms, respectively. Exact-open,
+offset-retention, quality-laziness, and refined-decision results matched macOS.
+
+Those Linux timings are not a platform-performance comparison. `ws1` read
+`/groups` through the on-site server network, while the Mac read
+`/Volumes/johnsonlab` over Wi-Fi, VPN, and its mounted-filesystem path. Only
+results collected on the same host, storage path, cache state, and network tier
+may be compared as storage-performance evidence.
+
+The Linux build also verified source ownership: keypoint-v2 contract and
+TensorStore implementation files are compiled once by
+`crimson_tensorstore_repositories` and excluded from the NVIDIA executable's
+legacy source glob.
 
 ## Remaining Gates
 

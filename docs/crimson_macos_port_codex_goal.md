@@ -1015,17 +1015,20 @@ macOS suite and isolated Linux CUDA/NVIDIA build passed. Evidence is in
 `docs/diagnostics/direct_crop_geometry_construction_2026-07-29/`.
 
 The selector-ineligible keypoint-v2 consumer checkpoint is now complete on
-macOS. One backend-neutral repository validates Palette's exact raw-v2,
-quality-v1, refined-v2, and body-frame-v1 manifests and declarations, retains
-the selected frame offsets once, preserves observation identity and refined
-decision state, leaves quality payloads lazy, and uses only bound body-frame
-heading. Compact page columns are issued concurrently through TensorStore and
-publish through the existing shared keypoint repository/scene boundary. Both
-mounted handoffs passed, including the three refined correction/rejection/
-recovery cases; the GUI playback smoke and all 65 macOS tests passed. Production
-selection, edit/write behavior, source-matched visual evidence, and a
-long-recording physical-profile gate remain open. The checkpoint is documented
-in `docs/crimson_keypoint_v2_consumer.md`.
+macOS and isolated Linux. One backend-neutral repository validates Palette's
+exact raw-v2, quality-v1, refined-v2, and body-frame-v1 manifests and
+declarations, retains the selected frame offsets once, preserves observation
+identity and refined decision state, leaves quality payloads lazy, and uses only
+bound body-frame heading. Compact page columns are issued concurrently through
+TensorStore and publish through the existing shared keypoint repository/scene
+boundary. Both mounted handoffs passed, including the three refined
+correction/rejection/recovery cases; the GUI playback smoke, all 65 macOS tests,
+the Linux portable and mounted-store gates, and the full CUDA/NVIDIA `redgui`
+build passed. Linux timings use the on-site `/groups` path and are not compared
+with the Mac's Wi-Fi/VPN mount timings. Production selection, edit/write
+behavior, source-matched visual evidence, and a long-recording physical-profile
+gate remain open. The checkpoint is documented in
+`docs/crimson_keypoint_v2_consumer.md`.
 
 Phase 5 also remains open for production-tail acceptance, movement-trail
 coordinate policy, any required chaser-data densification, and edit/review
