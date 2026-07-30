@@ -138,12 +138,16 @@ python3 tools/run_keypoint_v2_long_duration_benchmark.py --self-test
 
 ## Integration Checkpoint
 
-The 23,287-frame Palette raw and refined fixtures both passed repetition zero
-on the mounted macOS path. Exact opens used no dtype or metadata fallback,
+The 23,287-frame Palette raw and refined fixtures passed five fresh processes
+each on the mounted macOS path. Exact opens used no dtype or metadata fallback,
 offset indexes were read once, ordinary quality payload reads remained zero,
-warm random p95 stayed below 0.25 ms, forward and reverse 70-frame page p95
-stayed below 5 ms, deadline misses and stale visible frames were zero, and
-current-frame queue wait stayed below 2 ms.
+warm random p95 medians stayed below 0.19 ms, forward and reverse 70-frame page
+p95 medians stayed below 4.6 ms, deadline misses and stale visible frames were
+zero, and current-frame queue maximum medians stayed below 0.12 ms.
+
+The structured aggregate, per-process results, logs, plot, hashes, and
+interpretation are retained in
+`docs/diagnostics/keypoint_v2_fresh_process_experiment_2026-07-30/`.
 
 Those small archives fit entirely in the configured TensorStore caches after
 the first random pass, so their later traversal transferred no additional file
