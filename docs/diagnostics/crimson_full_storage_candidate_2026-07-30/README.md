@@ -78,6 +78,16 @@ Only one physical layout was supplied for crop and keypoints. These results
 accept consumer behavior but do not compare or promote storage profiles. No
 selector, registry, source archive, or production state was changed.
 
+## Cross-Platform Check
+
+The exact pushed revision `e6eecb054e8fc10468b887bd3728e5ef2fbf234d`
+was transferred as an immutable Git bundle to an isolated ws1 clone. Linux
+successfully built `refined_detection_shadow_gate`,
+`crop_geometry_v2_read_benchmark`, `keypoint_v2_contract_tests`, and
+`canonical_detection_repository_tests` against CUDA 12.4 and the existing
+TensorStore build. The keypoint, canonical-detection, and crop self-tests all
+passed. The shared dirty Linux checkout was not changed.
+
 Primary evidence SHA-256 values:
 
 - `crop_geometry_aggregate.json`:
