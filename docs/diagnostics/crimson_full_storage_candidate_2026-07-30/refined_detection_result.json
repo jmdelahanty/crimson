@@ -1,0 +1,139 @@
+{
+  "archive_context": {
+    "cache_pool_bytes": 67108864,
+    "elapsed_ms": 20.162125
+  },
+  "buffer": {
+    "cache_hits": 656,
+    "demand_pages": 16415,
+    "discarded_pages": 4,
+    "evicted_pages": 16964,
+    "failed_pages": 0,
+    "last_error": "",
+    "lead_pages": 17021,
+    "maximum_resolve_ms": 299.712458,
+    "peak_cached_bytes": 53760,
+    "peak_cached_pages": 8,
+    "peak_pending_pages": 2,
+    "requests": 17071,
+    "resolved_pages": 16975
+  },
+  "canonical_companion": {
+    "archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/crimson_storage_candidates/sleepyfish_cam2010095_full_v8_20260730/canonical_detection.zarr",
+    "compatible": false,
+    "error": "Canonical companion selection failed: Canonical detection run_manifest envelope is invalid",
+    "run": "canonical_sleepyfish_cam2010095_full_v8_20260730"
+  },
+  "classification": "headless_real_shadow_integration",
+  "crimson_base_commit": "12bcf0770f1383e8fd51d790b72b97ddbbc1a40b",
+  "crimson_worktree_dirty": false,
+  "error": "Canonical companion selection failed: Canonical detection run_manifest envelope is invalid",
+  "expected_handoff_payload_digest": "1089386cce3e94ab368203c3e9e70ebb0fee956860405a37f33a7d35dd4c5ec0",
+  "handoff": {
+    "canonical_archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/crimson_storage_candidates/sleepyfish_cam2010095_full_v8_20260730/canonical_detection.zarr",
+    "canonical_manifest_digest": "f28963827ae8b8b71e23d99cda6168f1ab8a9dec777bfb39db36fc1022ba27dc",
+    "canonical_run": "canonical_sleepyfish_cam2010095_full_v8_20260730",
+    "lineage_profile": "clipped_recording_snapshot",
+    "payload_digest": "1089386cce3e94ab368203c3e9e70ebb0fee956860405a37f33a7d35dd4c5ec0",
+    "refined_archive": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/crimson_storage_candidates/sleepyfish_cam2010095_full_v8_20260730/refined_detections.zarr",
+    "refined_manifest_digest": "eae0691d09ea3ac73d8854aa8a58824421fef4b010191fadcad4bf15e7d8ee13",
+    "refined_run": "refined_sleepyfish_cam2010095_full_v8_20260730",
+    "schema_id": "palette.crimson.storage_candidate_handoff"
+  },
+  "handoff_manifest": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/crimson_storage_candidates/sleepyfish_cam2010095_full_v8_20260730/handoff_manifest.json",
+  "immutable_crimson_revision_bound": true,
+  "pass": false,
+  "rapid_seek": {
+    "cancelled_requests": 145,
+    "discarded_completions": 4,
+    "elapsed_ms": 352.524125,
+    "final_frame": 594000,
+    "requests": 97,
+    "stale_publications": 0
+  },
+  "refined_open": {
+    "consolidated_array_declarations": 38,
+    "direct_group_metadata_reads": 3,
+    "direct_run_metadata_reads": 1,
+    "exact_handle_open_ms": 1.725792,
+    "exact_handle_opens": 11,
+    "manifest_validation_ms": 0.928542,
+    "offset_read_calls": 1,
+    "offset_read_ms": 110.677541,
+    "retained_offset_bytes": 9504008,
+    "root_metadata_ms": 5.479583,
+    "root_metadata_reads": 1,
+    "source_audit_handle_opens": 0,
+    "total_ms": 127.71125
+  },
+  "repository": {
+    "failed_reads": 0,
+    "last_error": "",
+    "maximum_range_read_ms": 299.710959,
+    "maximum_residency_chunk_read_ms": 2.3744170000000002,
+    "paged_range_reads": 16978,
+    "peak_concurrent_ui_field_reads": 40,
+    "range_reads": 16979,
+    "residency_chunk_reads": 228,
+    "residency_decoded_bytes": 59619510,
+    "residency_rows_read": 1169010,
+    "resident_publications": 1,
+    "resident_range_reads": 1,
+    "resident_retained_bytes": 59619510,
+    "resolved_frames": 1188450,
+    "resolved_rows": 1169460,
+    "ui_field_reads": 172060
+  },
+  "residency": {
+    "attempts": 1,
+    "completed_chunks": 228,
+    "decoded_hot_bytes": 59619510,
+    "decoded_source_bytes": 59619510,
+    "elapsed_ms": 532.77025,
+    "failed_chunks": 0,
+    "last_error": "",
+    "maximum_chunk_ms": 10.584167,
+    "planned_chunks": 228,
+    "publications": 1,
+    "retained_bytes": 59619510,
+    "stale_chunks": 0,
+    "state": "ready"
+  },
+  "resident_probe": {
+    "additional_resident_range_reads": 1,
+    "additional_ui_field_reads": 0,
+    "frame": 1187999
+  },
+  "scheduler": {
+    "cancelled": 145,
+    "completed": 17207,
+    "discarded": 4,
+    "failed": 0,
+    "peak_active": 4,
+    "submissions": 33664,
+    "work_exceptions": 0,
+    "workers": 4
+  },
+  "schema_id": "crimson.refined_detection_shadow_gate",
+  "schema_version": 2,
+  "selection_fail_closed": {
+    "implicit_error": "No explicit or approved refined detection run is available",
+    "implicit_selection_succeeded": false,
+    "ordinary_explicit_error": "Refined detection run is selector-ineligible",
+    "selector_ineligible_opened_without_opt_in": false
+  },
+  "traversal": {
+    "elapsed_ms": 3747.069125,
+    "empty_frames": 18990,
+    "frames": 1188000,
+    "logical_digest_fnv1a64": "5504b70afb856485",
+    "manual_rows": 0,
+    "multi_instance_frames": 0,
+    "overlay_boxes": 1169010,
+    "raw_rows": 1169010,
+    "rows": 1169010,
+    "unique_instance_keys": 1169010,
+    "unique_raw_source_rows": 1169010,
+    "unique_refined_row_ids": 1169010
+  }
+}

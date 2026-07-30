@@ -1,0 +1,79 @@
+{
+  "schema_id": "crimson.crop_geometry_v2_fresh_process_aggregate",
+  "schema_version": 1,
+  "status": "pass",
+  "classification": "full_duration_consumer_integration_not_profile_promotion",
+  "repetitions": 5,
+  "crimson_commit": "12bcf0770f1383e8fd51d790b72b97ddbbc1a40b",
+  "crimson_worktree_dirty": false,
+  "fixture": {
+    "frames": 1188000,
+    "rows": 1169010,
+    "run": "crop_sleepyfish_cam2010095_full_v8_20260730",
+    "handoff_payload_digest": "1089386cce3e94ab368203c3e9e70ebb0fee956860405a37f33a7d35dd4c5ec0"
+  },
+  "cache_condition": "fresh process; macOS, SMB, VPN, and server caches uncontrolled",
+  "metrics": {
+    "process_to_first_frame_ms": {
+      "values": [1664.583292, 1753.684708, 570.396166, 396.933708, 447.549959],
+      "median": 570.396166,
+      "maximum": 1753.684708
+    },
+    "metadata_ms": {
+      "values": [1309.577875, 1416.329, 469.810125, 295.088459, 310.955708],
+      "median": 469.810125,
+      "maximum": 1416.329
+    },
+    "offset_read_ms": {
+      "values": [140.848583, 137.063417, 24.11125, 27.19225, 39.981042],
+      "median": 39.981042,
+      "maximum": 140.848583
+    },
+    "first_page_ms": {
+      "values": [169.712833, 153.553292, 48.800542, 40.0285, 55.226041],
+      "median": 55.226041,
+      "maximum": 169.712833
+    },
+    "random_first_page_p95_ms": {
+      "values": [40.512166, 38.085625, 1.352, 1.326167, 1.274625],
+      "median": 1.352,
+      "maximum": 40.512166
+    },
+    "random_warm_page_p95_ms": {
+      "values": [0.111042, 0.19875, 0.107708, 0.087875, 0.085167],
+      "median": 0.107708,
+      "maximum": 0.19875
+    },
+    "sequential_70_frame_page_p95_ms": {
+      "values": [0.145375, 0.102708, 0.085209, 0.084708, 0.084709],
+      "median": 0.085209,
+      "maximum": 0.145375
+    },
+    "cancellation_p95_ms": {
+      "values": [0.164916, 0.135667, 0.134459, 0.135584, 0.136291],
+      "median": 0.135667,
+      "maximum": 0.164916
+    },
+    "process_file_bytes": {
+      "values": [76592013, 76592013, 76592013, 76592013, 76592013],
+      "median": 76592013,
+      "maximum": 76592013
+    },
+    "peak_rss_bytes": {
+      "values": [242122752, 278953984, 232161280, 236519424, 234291200],
+      "median": 236519424,
+      "maximum": 278953984
+    }
+  },
+  "invariants": {
+    "all_processes_passed": true,
+    "offset_reads_per_process": 1,
+    "retained_offset_bytes": 9504008,
+    "direct_consolidated_metadata_equivalent": true,
+    "exact_array_declarations": 13,
+    "fallback_open_attempts": 0,
+    "roi_images_open_attempts": 0,
+    "stale_publications": 0,
+    "failed_reads": 0
+  }
+}
