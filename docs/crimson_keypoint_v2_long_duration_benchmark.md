@@ -2,8 +2,9 @@
 
 Date: 2026-07-30
 
-Status: deterministic harness implemented; mounted integration fixtures pass;
-full-duration raw/refined Palette fixtures remain pending
+Status: deterministic harness and fresh-process reducer implemented; mounted
+integration fixtures pass; full-duration raw/refined Palette fixtures remain
+pending
 
 ## Purpose
 
@@ -94,6 +95,47 @@ separate fresh processes. `--deep-validate-identity` is an optional audit; the
 production-shaped benchmark leaves full identity scans disabled because every
 presented page is still identity-validated.
 
+## Fresh-Process Experiment
+
+`tools/run_keypoint_v2_long_duration_benchmark.py` owns process isolation,
+candidate order, result validation, aggregation, and plotting. Its versioned
+experiment manifest declares exact artifact paths, run names, manifest and
+handoff digests, the workload, repetition count, expected Crimson revision,
+and any physical-candidate comparisons. Candidate order rotates cyclically so
+each candidate occupies every ordinal position equally when the repetition
+count is a multiple of the candidate count.
+
+Run the mounted integration exercise with:
+
+```bash
+python3 tools/run_keypoint_v2_long_duration_benchmark.py \
+  --experiment \
+    tools/fixtures/keypoint_v2_integration_experiment_macos_v1.json \
+  --output-dir /tmp/crimson-keypoint-v2-integration
+```
+
+Each trial is a new subprocess. The runner rejects incompatible result schemas,
+failed absolute gates, dirty benchmark builds, unexpected commits, artifact or
+workload digest mismatches, and missing structured output. `--resume` accepts
+only an existing result that passes the same validation; it does not trust a
+trial merely because its JSON file exists.
+
+The reducer writes `aggregate.json` and `summary.svg`. For an explicit
+baseline/contender comparison, it pairs matching repetition numbers and uses
+the median of per-repetition contender/baseline ratios. Logical inequality,
+incomplete trials, or a protected-metric regression fails the selection gate.
+A valid contender replaces the baseline only when at least one declared
+primary metric improves by the frozen material threshold; otherwise the
+baseline is retained. Raw and refined semantic fixtures are not compared as
+physical candidates because their decoded values intentionally differ.
+
+The Python self-test covers cyclic ordering, paired reduction, logical
+fail-closed behavior, and SVG generation:
+
+```bash
+python3 tools/run_keypoint_v2_long_duration_benchmark.py --self-test
+```
+
 ## Integration Checkpoint
 
 The 23,287-frame Palette raw and refined fixtures both passed repetition zero
@@ -127,5 +169,5 @@ When Palette supplies the immutable full-length raw and refined artifacts:
    timing, deadlines, cancellation, cache behavior, and RSS.
 5. Run a source-matched GUI smoke only after the headless gate passes.
 
-One passing process is not a storage-profile promotion verdict. Aggregation and
-candidate selection remain a separate immutable evidence step.
+One passing process is not a storage-profile promotion verdict. The frozen
+fresh-process experiment and its aggregate are the promotion evidence unit.

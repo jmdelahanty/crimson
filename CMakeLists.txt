@@ -49,6 +49,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Threads REQUIRED)
+find_package(Python3 QUIET COMPONENTS Interpreter)
 include(cmake/CrimsonTensorStore.cmake)
 
 add_library(crimson_frame_contracts STATIC
@@ -490,6 +491,16 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         PROPERTIES
         LABELS "portable;headless;tensorstore;zarr;keypoints;benchmark"
     )
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME keypoint_v2_experiment_runner_self_test
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_keypoint_v2_long_duration_benchmark.py
+                --self-test)
+        set_tests_properties(keypoint_v2_experiment_runner_self_test
+            PROPERTIES
+            LABELS "portable;headless;keypoints;benchmark"
+        )
+    endif()
 
     add_executable(canonical_detection_residency_benchmark
         tools/canonical_detection_residency_benchmark.cpp
