@@ -465,6 +465,32 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         LABELS "portable;headless;tensorstore;zarr;crop;benchmark"
     )
 
+    add_executable(keypoint_v2_long_duration_benchmark
+        tools/keypoint_v2_long_duration_benchmark.cpp
+    )
+    target_compile_features(keypoint_v2_long_duration_benchmark
+        PRIVATE cxx_std_17)
+    target_link_libraries(keypoint_v2_long_duration_benchmark PRIVATE
+        crimson_repository_contracts
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+        nlohmann_json::nlohmann_json
+        Threads::Threads
+    )
+    target_compile_definitions(keypoint_v2_long_duration_benchmark PRIVATE
+        CRIMSON_GIT_COMMIT="${CRIMSON_REFINED_GATE_GIT_COMMIT}"
+        CRIMSON_WORKTREE_DIRTY=${CRIMSON_REFINED_GATE_WORKTREE_DIRTY}
+    )
+    set_target_properties(keypoint_v2_long_duration_benchmark PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME keypoint_v2_long_duration_benchmark_self_test
+        COMMAND $<TARGET_FILE:keypoint_v2_long_duration_benchmark> --self-test)
+    set_tests_properties(keypoint_v2_long_duration_benchmark_self_test
+        PROPERTIES
+        LABELS "portable;headless;tensorstore;zarr;keypoints;benchmark"
+    )
+
     add_executable(canonical_detection_residency_benchmark
         tools/canonical_detection_residency_benchmark.cpp
     )

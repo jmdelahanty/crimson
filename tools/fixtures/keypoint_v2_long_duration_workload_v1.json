@@ -1,0 +1,41 @@
+{
+  "schema_id": "crimson.keypoint_v2.long_duration_workload",
+  "schema_version": 1,
+  "repetition_count": 5,
+  "random_frames": {
+    "count": 128,
+    "seed": 20260730
+  },
+  "rapid_seeks": {
+    "count": 32,
+    "seed": 20260731
+  },
+  "traversal": {
+    "frames": 3500,
+    "page_frames": 70,
+    "source_fps": 700.0,
+    "warmup_pages": 1
+  },
+  "scheduler": {
+    "pending_capacity": 64,
+    "workers": 4,
+    "maximum_speculative_workers": 1,
+    "reserved_current_frame_workers": 1
+  },
+  "presentation_cache": {
+    "lookahead_frames": 12,
+    "capacity_frames": 24
+  },
+  "timeouts_ms": {
+    "frame": 30000,
+    "close": 5000
+  },
+  "gates": {
+    "first_presentation_readiness_ms": 30000.0,
+    "warm_random_frame_p95_ms": 150.0,
+    "current_frame_queue_max_ms": 150.0,
+    "post_warmup_page_deadline_miss_ratio": 0.01,
+    "rapid_seek_final_readiness_ms": 5000.0,
+    "peak_rss_bytes": 805306368
+  }
+}

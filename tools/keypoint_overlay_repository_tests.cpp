@@ -367,11 +367,48 @@ bool TestScheduledBuffer() {
   return true;
 }
 
+bool TestScheduledBufferReversePrefetch() {
+  crimson::zarr::KeypointOverlayDescriptor descriptor;
+  descriptor.source_group = "refined_keypoints_runs";
+  descriptor.run_name = "reverse_buffer_fixture";
+  descriptor.coordinate_space = crimson::zarr::KeypointCoordinateSpace::Image;
+  descriptor.keypoint_labels = {"point"};
+  std::vector<crimson::zarr::KeypointOverlayRow> rows;
+  for (int64_t frame = 0; frame <= 6; ++frame) {
+    crimson::zarr::KeypointOverlayRow row;
+    row.camera_frame = frame;
+    row.detection_index = frame;
+    row.keypoints = {{static_cast<double>(frame), 2.0}};
+    rows.push_back(std::move(row));
+  }
+  auto scheduler =
+      std::make_shared<crimson::data::DataAccessScheduler>(16, 2, 1);
+  KeypointOverlayBuffer buffer(scheduler, "reverse_fixture");
+  std::string error;
+  CHECK(buffer.open(crimson::zarr::MakeKeypointOverlayRepository(
+                        std::move(descriptor), std::move(rows)),
+                    2, 5, &error));
+
+  CHECK(buffer.requestFrame(5, 100, 80, true, &error));
+  CHECK(buffer.waitForFrame(5, std::chrono::seconds(2)));
+  CHECK(buffer.requestFrame(4, 100, 80, false, &error));
+  CHECK(buffer.waitForFrame(4, std::chrono::seconds(2)));
+  CHECK(buffer.waitForFrame(3, std::chrono::seconds(2)));
+  CHECK(buffer.waitForFrame(2, std::chrono::seconds(2)));
+  CHECK(buffer.frame(5) != nullptr);
+  CHECK(buffer.frame(2) != nullptr);
+  CHECK(buffer.metrics().discarded_results == 0);
+
+  buffer.close();
+  scheduler->shutdown();
+  return true;
+}
+
 } // namespace
 
 int main() {
   if (!TestTensorStoreRepository() || !TestNormalizedContract() ||
-      !TestScheduledBuffer()) {
+      !TestScheduledBuffer() || !TestScheduledBufferReversePrefetch()) {
     return 1;
   }
   std::cout << "keypoint_overlay_repository_tests: PASS\n";

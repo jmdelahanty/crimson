@@ -1030,6 +1030,15 @@ behavior, source-matched visual evidence, and a long-recording physical-profile
 gate remain open. The checkpoint is documented in
 `docs/crimson_keypoint_v2_consumer.md`.
 
+The deterministic long-duration keypoint-v2 harness is now implemented, and
+the shared presentation cache has direction-aware reverse lookahead. The
+versioned headless workload measures first readiness, random and 70-frame
+forward/reverse access, rapid seeks, stale-result prevention, queue versus
+service time, physical file/cache behavior, retained offsets, lazy quality,
+RSS, and close. Both small mounted raw/refined fixtures pass; Palette's pending
+full-duration artifacts remain necessary for scale and physical-profile
+evidence. See `docs/crimson_keypoint_v2_long_duration_benchmark.md`.
+
 Phase 5 also remains open for production-tail acceptance, movement-trail
 coordinate policy, any required chaser-data densification, and edit/review
 workflows whose shared storage contracts are still changing. Those blockers

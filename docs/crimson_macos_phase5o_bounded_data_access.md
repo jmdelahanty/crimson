@@ -584,6 +584,17 @@ remains an interoperability checkpoint, not production selection or
 long-recording storage promotion. Details are in
 `docs/crimson_keypoint_v2_consumer.md`.
 
+The corresponding long-duration keypoint-v2 acceptance harness is also ready.
+Its versioned workload runs exact open and retained-offset checks, first and
+warm random presentation, directional forward/reverse traversal, 70-frame
+pages at a simulated 700 FPS deadline, rapid seeks, physical file/cache
+telemetry, queue/service attribution, RSS, and close. The shared keypoint
+buffer now performs reverse lookahead toward earlier frames rather than
+treating every reverse step as a discontinuity. Raw and refined mounted
+integration fixtures pass; full-duration Palette artifacts are still required
+for cache-pressure and profile evidence. The contract and rerun procedure are
+in `docs/crimson_keypoint_v2_long_duration_benchmark.md`.
+
 ## Gate
 
 Phase 5O is complete only when:

@@ -165,3 +165,14 @@ This checkpoint does not:
 A larger immutable fixture is needed only for long-duration cache pressure,
 transfer, and physical-layout promotion. It is not needed to repeat the logical
 interoperability decision established here.
+
+The deterministic long-duration harness is now implemented in
+`tools/keypoint_v2_long_duration_benchmark.cpp`, with its frozen workload in
+`tools/fixtures/keypoint_v2_long_duration_workload_v1.json`. It covers cold
+readiness, repeated random probes, directional forward/reverse lookahead,
+70-frame/700-FPS pages, rapid seeks, stale-result prevention, queue versus
+service time, physical file/cache counters, RSS, quality laziness, and bounded
+close. Both existing mounted integration fixtures pass, but they become fully
+cache-resident during the workload and therefore remain integration rather
+than scale evidence. See
+`docs/crimson_keypoint_v2_long_duration_benchmark.md`.
