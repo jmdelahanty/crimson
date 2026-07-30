@@ -3,8 +3,7 @@
 Date: 2026-07-30
 
 Status: deterministic harness and fresh-process reducer implemented; mounted
-integration fixtures pass; full-duration raw/refined Palette fixtures remain
-pending
+integration and full-duration refined-keypoint fixtures pass
 
 ## Purpose
 
@@ -176,3 +175,18 @@ When Palette supplies the immutable full-length raw and refined artifacts:
 
 One passing process is not a storage-profile promotion verdict. The frozen
 fresh-process experiment and its aggregate are the promotion evidence unit.
+
+### Sleepyfish V8 Result
+
+Palette's full-duration selector-ineligible v8 package passed five refined
+keypoint fresh processes on the mounted macOS path. The package has 1,188,000
+camera frames and 1,169,010 keypoint rows. Median readiness was 594 ms, warm
+random-frame p95 was 1.90 ms, forward/reverse 70-frame page p95 was 5.06/4.47
+ms, process transfer was about 608 MiB, and peak RSS was about 254 MiB. All
+deadline, stale-publication, retained-offset, read-failure, and quality-laziness
+gates passed.
+
+The structured result and cache-condition limitations are recorded in
+`docs/diagnostics/keypoint_v2_full_duration_experiment_2026-07-30/`.
+Because only one physical keypoint profile was supplied, this is a consumer
+acceptance result rather than a physical-profile selection verdict.
