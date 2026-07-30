@@ -64,6 +64,21 @@ establish exact-schema interoperability, retained-offset behavior, directional
 prefetch, scheduler responsiveness, cancellation correctness, and quality-data
 laziness across repeated fresh processes.
 
+## Linux Portability Check
+
+An isolated detached worktree on `ws1` at Crimson commit
+`39b61e614efa3a032ef4a1b86991ede3cf92db05` configured with CUDA 12.4,
+TensorRT 10.0.1.6, OpenCV 4.10.0, and CUDA architectures `80;86`. It built the
+benchmark and overlay repository test. The following tests passed `3/3`:
+
+- `keypoint_v2_long_duration_benchmark_self_test`;
+- `keypoint_v2_experiment_runner_self_test`; and
+- `keypoint_overlay_repository_tests`.
+
+The check validates portable compilation, orchestration, and reverse-prefetch
+behavior. It is not a cross-host performance comparison. The shared Linux
+working tree and all datasets remained unchanged.
+
 ## Evidence
 
 - `aggregate.json` SHA-256:
