@@ -891,6 +891,7 @@ bool testRepositoryAndOverlay() {
   CHECK(descriptor.camera_frame_count == 4);
   CHECK(descriptor.source_width == 100);
   CHECK(descriptor.source_height == 80);
+  CHECK(!descriptor.stable_identity);
   CHECK(descriptor.ready());
 
   const auto page = repository->resolveCameraFrameRange(0, 3);

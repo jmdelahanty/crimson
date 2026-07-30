@@ -27,6 +27,7 @@ struct CanonicalDetectionDescriptor {
   size_t retained_offset_bytes = 0;
   size_t offset_read_calls = 0;
   bool consolidated_metadata = false;
+  // True only when the repository presents the complete refined identity set.
   bool stable_identity = false;
   bool source_audit_lazy = false;
   bool authority_approved = false;

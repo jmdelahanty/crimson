@@ -161,7 +161,6 @@ bool validateSchema(const json &root, const std::string &base,
       descriptor->run_manifest_digest = manifest.payload_digest;
       descriptor->coordinate_catalog_validated =
           manifest.coordinate_catalog_validated;
-      descriptor->stable_identity = true;
     }
 
     size_t validated = 0;
