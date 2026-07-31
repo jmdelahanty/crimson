@@ -7,6 +7,7 @@
 
 namespace crimson::timeline {
 class AnalysisSeriesTimelineRepository;
+class DetectionQualityTimelineRepository;
 class EyeAngleTimelineRepository;
 class StimulusContextTimelineRepository;
 class SwimBoutTimelineRepository;
@@ -26,6 +27,8 @@ struct RefinedDetectionRepositoryOpenMetrics;
 struct RefinedDetectionRepositoryOpenOptions;
 struct DetectionRepositorySelectionRequest;
 struct DetectionRepositorySelectionMetrics;
+struct DetectionQualityTimelineOpenRequest;
+struct DetectionQualityTimelineOpenMetrics;
 struct TensorStoreChaserDistancePolarOptions;
 class TensorStoreChaserDistancePolarRepository;
 
@@ -92,6 +95,12 @@ private:
       const std::shared_ptr<ArchiveContext> &archive,
       const DetectionRepositorySelectionRequest &request,
       std::string *error_message, DetectionRepositorySelectionMetrics *metrics);
+  friend std::unique_ptr<crimson::timeline::DetectionQualityTimelineRepository>
+  OpenDetectionQualityTimelineRepository(
+      const std::shared_ptr<ArchiveContext> &archive,
+      const DetectionQualityTimelineOpenRequest &request,
+      std::string *error_message,
+      DetectionQualityTimelineOpenMetrics *open_metrics);
   friend std::unique_ptr<class SubjectMaskOverlayRepository>
   OpenSubjectMaskOverlayRepository(
       const std::shared_ptr<ArchiveContext> &archive,

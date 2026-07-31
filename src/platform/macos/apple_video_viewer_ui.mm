@@ -1870,15 +1870,265 @@ bool drawAppleStimulusEventTimeline(
   return camera_discontinuity;
 }
 
+bool drawAppleDetectionQualityTimeline(
+    AppleDetectionQualityTimelineControls *controls, bool *open,
+    AppleDetectionQualityLoadState load_state,
+    const crimson::timeline::DetectionQualityTimelineDescriptor *descriptor,
+    const std::shared_ptr<
+        const crimson::timeline::DetectionQualityTimelineWindow> &window,
+    const std::string &error, int64_t current_frame,
+    LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
+    bool interactive) {
+  if (controls == nullptr || open == nullptr || !*open) {
+    return false;
+  }
+  ImGui::SetNextWindowSize(ImVec2(780.0f, 620.0f), ImGuiCond_FirstUseEver);
+  if (!ImGui::Begin("Detection Timeline", open)) {
+    ImGui::End();
+    return false;
+  }
+  if (!interactive) {
+    ImGui::BeginDisabled();
+  }
+  if (descriptor != nullptr) {
+    ImGui::Text("%s  |  %s",
+                descriptor->surface_kind ==
+                        crimson::zarr::DetectionSurfaceKind::RefinedSnapshotV1
+                    ? "Refined detections"
+                    : "Canonical detections",
+                descriptor->run_name.c_str());
+    if (!descriptor->model_artifact_sha256.empty()) {
+      ImGui::Text("Model SHA-256: %.12s...",
+                  descriptor->model_artifact_sha256.c_str());
+    }
+    if (!descriptor->producer_id.empty()) {
+      ImGui::Text("Producer: %s %s", descriptor->producer_id.c_str(),
+                  descriptor->producer_version.c_str());
+    }
+  }
+  ImGui::SetNextItemWidth(170.0f);
+  ImGui::SliderFloat("Window (+/- s)", &controls->half_span_seconds, 1.0f,
+                     60.0f, "%.0f");
+  ImGui::SameLine();
+  ImGui::Checkbox("Counts", &controls->show_counts);
+  ImGui::SameLine();
+  ImGui::Checkbox("Reasons", &controls->show_reasons);
+
+  if (load_state == AppleDetectionQualityLoadState::Opening) {
+    ImGui::TextUnformatted("Opening detection audit data...");
+  } else if (load_state == AppleDetectionQualityLoadState::Failed) {
+    ImGui::TextWrapped("Detection timeline unavailable: %s", error.c_str());
+  } else if (load_state != AppleDetectionQualityLoadState::Ready ||
+             descriptor == nullptr) {
+    ImGui::TextUnformatted("Detection timeline is not open.");
+  } else if (!window) {
+    ImGui::TextUnformatted("Loading the visible detection window...");
+  } else if (!window->ready()) {
+    ImGui::TextWrapped(
+        "Detection timeline %s: %s",
+        crimson::timeline::detectionQualityTimelineStatusName(window->status),
+        window->error.c_str());
+  } else {
+    const double fps = clock.framesPerSecond();
+    const double cursor_time = fps > 0.0 ? current_frame / fps : 0.0;
+    if (controls->prepared_window.get() != window.get() ||
+        controls->prepared_fps != fps) {
+      controls->prepared_window = window;
+      controls->prepared_fps = fps;
+      controls->times.clear();
+      controls->score_min.clear();
+      controls->score_median.clear();
+      controls->score_max.clear();
+      controls->accepted_score_median.clear();
+      controls->source_counts.clear();
+      controls->accepted_counts.clear();
+      controls->filtered_counts.clear();
+      controls->duplicate_counts.clear();
+      controls->manual_clear_counts.clear();
+      controls->manual_counts.clear();
+      controls->reason_counts.assign(
+          descriptor->source_reason_codes.size(), {});
+      const size_t frame_count = window->frames.size();
+      controls->times.reserve(frame_count);
+      controls->score_min.reserve(frame_count);
+      controls->score_median.reserve(frame_count);
+      controls->score_max.reserve(frame_count);
+      controls->accepted_score_median.reserve(frame_count);
+      controls->source_counts.reserve(frame_count);
+      controls->accepted_counts.reserve(frame_count);
+      controls->filtered_counts.reserve(frame_count);
+      controls->duplicate_counts.reserve(frame_count);
+      controls->manual_clear_counts.reserve(frame_count);
+      controls->manual_counts.reserve(frame_count);
+      for (auto &counts : controls->reason_counts) {
+        counts.reserve(frame_count);
+      }
+      for (const auto &frame : window->frames) {
+        controls->times.push_back(fps > 0.0 ? frame.camera_frame / fps : 0.0);
+        controls->score_min.push_back(frame.score_min);
+        controls->score_median.push_back(frame.score_median);
+        controls->score_max.push_back(frame.score_max);
+        controls->accepted_score_median.push_back(
+            frame.accepted_score_median);
+        controls->source_counts.push_back(frame.source_count);
+        controls->accepted_counts.push_back(frame.accepted_count);
+        controls->filtered_counts.push_back(frame.filtered_count);
+        controls->duplicate_counts.push_back(frame.duplicate_count);
+        controls->manual_clear_counts.push_back(frame.manual_clear_count);
+        controls->manual_counts.push_back(frame.manual_count);
+        for (size_t reason_index = 0;
+             reason_index < controls->reason_counts.size(); ++reason_index) {
+          controls->reason_counts[reason_index].push_back(
+              reason_index < frame.reason_counts.size()
+                  ? frame.reason_counts[reason_index]
+                  : 0);
+        }
+      }
+    }
+    const auto &times = controls->times;
+
+    auto seekFromPlot = [&]() {
+      if (!interactive || !ImPlot::IsPlotHovered() ||
+          !ImGui::IsMouseClicked(ImGuiMouseButton_Left) || fps <= 0.0) {
+        return false;
+      }
+      const int64_t frame = std::clamp<int64_t>(
+          static_cast<int64_t>(std::llround(ImPlot::GetPlotMousePos().x * fps)),
+          window->first_camera_frame, window->last_camera_frame);
+      return seekViewer(clock, playback, frame);
+    };
+
+    bool camera_discontinuity = false;
+    ImGui::Checkbox("Score range", &controls->show_score_range);
+    ImGui::SameLine();
+    ImGui::Checkbox("Source median", &controls->show_source_median);
+    ImGui::SameLine();
+    ImGui::Checkbox("Accepted median", &controls->show_accepted_median);
+    if (ImPlot::BeginPlot("##detection-confidence", ImVec2(-1.0f, 230.0f),
+                          ImPlotFlags_NoTitle | ImPlotFlags_NoBoxSelect)) {
+      ImPlot::SetupAxes("Time (s)", "Confidence", ImPlotAxisFlags_NoMenus,
+                        ImPlotAxisFlags_NoMenus);
+      ImPlot::SetupAxisLimits(
+          ImAxis_X1, cursor_time - controls->half_span_seconds,
+          cursor_time + controls->half_span_seconds, ImPlotCond_Always);
+      ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, 1.0, ImPlotCond_Always);
+      const int count = static_cast<int>(times.size());
+      if (controls->show_score_range) {
+        ImPlot::PlotShaded("Source range", times.data(),
+                           controls->score_min.data(),
+                           controls->score_max.data(), count);
+      }
+      if (controls->show_source_median) {
+        ImPlot::PlotLine("Source median", times.data(),
+                         controls->score_median.data(), count);
+      }
+      if (controls->show_accepted_median && descriptor->source_audit) {
+        ImPlot::PlotLine("Accepted median", times.data(),
+                         controls->accepted_score_median.data(), count);
+      }
+      ImPlot::PlotInfLines("Current frame", &cursor_time, 1);
+      ImPlot::TagX(cursor_time, ImVec4(0.94f, 0.94f, 0.94f, 0.90f),
+                   "Frame %lld", static_cast<long long>(current_frame));
+      camera_discontinuity = seekFromPlot() || camera_discontinuity;
+      ImPlot::EndPlot();
+    }
+
+    if (controls->show_counts &&
+        ImPlot::BeginPlot("##detection-counts", ImVec2(-1.0f, 180.0f),
+                          ImPlotFlags_NoTitle | ImPlotFlags_NoBoxSelect)) {
+      ImPlot::SetupAxes("Time (s)", "Detections", ImPlotAxisFlags_NoMenus,
+                        ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_NoMenus);
+      ImPlot::SetupAxisLimits(
+          ImAxis_X1, cursor_time - controls->half_span_seconds,
+          cursor_time + controls->half_span_seconds, ImPlotCond_Always);
+      const int count = static_cast<int>(times.size());
+      ImPlot::PlotStairs("Source", times.data(),
+                         controls->source_counts.data(), count);
+      ImPlot::PlotStairs("Accepted", times.data(),
+                         controls->accepted_counts.data(), count);
+      if (descriptor->source_audit) {
+        ImPlot::PlotStairs("Filtered", times.data(),
+                           controls->filtered_counts.data(), count);
+        ImPlot::PlotStairs("Duplicate", times.data(),
+                           controls->duplicate_counts.data(), count);
+        ImPlot::PlotStairs("Manual clear", times.data(),
+                           controls->manual_clear_counts.data(), count);
+        ImPlot::PlotStairs("Manual", times.data(),
+                           controls->manual_counts.data(), count);
+      }
+      ImPlot::PlotInfLines("Current frame", &cursor_time, 1);
+      camera_discontinuity = seekFromPlot() || camera_discontinuity;
+      ImPlot::EndPlot();
+    }
+
+    if (controls->show_reasons && descriptor->source_audit) {
+      if (ImGui::BeginTable("##detection-reason-controls", 3,
+                            ImGuiTableFlags_SizingStretchSame)) {
+        for (const auto &reason : descriptor->source_reason_codes) {
+          bool &visible =
+              controls->reason_visibility
+                  .try_emplace(reason.code, reason.code != 0)
+                  .first->second;
+          ImGui::TableNextColumn();
+          ImGui::PushID(static_cast<int>(reason.code));
+          ImGui::Checkbox(reason.label.c_str(), &visible);
+          ImGui::PopID();
+        }
+        ImGui::EndTable();
+      }
+      if (ImPlot::BeginPlot("##detection-reasons", ImVec2(-1.0f, 180.0f),
+                            ImPlotFlags_NoTitle | ImPlotFlags_NoBoxSelect)) {
+        ImPlot::SetupAxes("Time (s)", "Source rows", ImPlotAxisFlags_NoMenus,
+                          ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_NoMenus);
+        ImPlot::SetupAxisLimits(
+            ImAxis_X1, cursor_time - controls->half_span_seconds,
+            cursor_time + controls->half_span_seconds, ImPlotCond_Always);
+        for (size_t reason_index = 0;
+             reason_index < descriptor->source_reason_codes.size();
+             ++reason_index) {
+          const auto &reason = descriptor->source_reason_codes[reason_index];
+          if (!controls->reason_visibility[reason.code]) {
+            continue;
+          }
+          ImPlot::PlotStairs(reason.label.c_str(), times.data(),
+                             controls->reason_counts[reason_index].data(),
+                             static_cast<int>(times.size()));
+        }
+        ImPlot::PlotInfLines("Current frame", &cursor_time, 1);
+        camera_discontinuity = seekFromPlot() || camera_discontinuity;
+        ImPlot::EndPlot();
+      }
+    }
+    if (!interactive) {
+      ImGui::EndDisabled();
+    }
+    ImGui::End();
+    return camera_discontinuity;
+  }
+  if (!interactive) {
+    ImGui::EndDisabled();
+  }
+  ImGui::End();
+  return false;
+}
+
 void drawAppleFrameInspectWindow(
     crimson::workspace::WorkspaceSelectionState *selections,
     crimson::overlay::ReadOnlyOverlayControlState *controls,
     const crimson::overlay::ReadOnlyOverlayAvailability &availability,
     AppleCropViewerControls *crop_controls, bool stimulus_available,
-    bool polar_available, const AppleVideoViewerStats &stats,
+    bool polar_available,
+    const crimson::zarr::CanonicalDetectionDescriptor *detection_descriptor,
+    const std::shared_ptr<const crimson::zarr::CanonicalDetectionFrame>
+        &detection_frame,
+    AppleDetectionQualityLoadState detection_quality_state,
+    const std::string &detection_quality_error,
+    AppleDetectionInspectState *detection_inspect,
+    bool *detection_quality_timeline, const AppleVideoViewerStats &stats,
     AppleFrameInspectPresentationState *presentation,
     bool *advanced_crop_preview, bool *stimulus_debug, bool interactive) {
   if (selections == nullptr || controls == nullptr || presentation == nullptr ||
+      detection_inspect == nullptr || detection_quality_timeline == nullptr ||
       advanced_crop_preview == nullptr || stimulus_debug == nullptr) {
     return;
   }
@@ -2010,20 +2260,88 @@ void drawAppleFrameInspectWindow(
     selections->frame_inspect_view =
         crimson::workspace::FrameInspectView::Detect;
     ImGui::TextUnformatted("Read-only presentation");
-    ImGui::Text("Keypoints: %s",
-                availability.keypoints ? "available" : "unavailable");
-    ImGui::Text("Subject masks: %s",
-                availability.subject_masks ? "available" : "unavailable");
-    ImGui::Text("Eye geometry: %s",
-                availability.eye_geometry ? "available" : "unavailable");
-    ImGui::Separator();
-    ImGui::BeginDisabled();
-    ImGui::Button(ICON_FK_STEP_BACKWARD " Prev Review Frame");
-    ImGui::SameLine();
-    ImGui::Button("Next Review Frame " ICON_FK_STEP_FORWARD);
-    ImGui::EndDisabled();
-    ImGui::TextDisabled(
-        "No read-only review index is loaded for this archive.");
+    if (detection_descriptor == nullptr || !detection_descriptor->ready()) {
+      ImGui::TextDisabled("No canonical or refined detection run is open.");
+    } else {
+      ImGui::Text("Surface: %s",
+                  detection_descriptor->surface_kind ==
+                          crimson::zarr::DetectionSurfaceKind::RefinedSnapshotV1
+                      ? "Refined snapshot"
+                      : "Canonical raw");
+      ImGui::TextWrapped("Run: %s", detection_descriptor->run_name.c_str());
+      const bool frame_matches =
+          detection_frame != nullptr &&
+          detection_frame->camera_frame == stats.presented_frame;
+      if (!frame_matches) {
+        ImGui::TextDisabled("Loading detections for the presented frame...");
+      } else {
+        ImGui::Text("Frame %lld  |  %zu observations",
+                    static_cast<long long>(detection_frame->camera_frame),
+                    detection_frame->detections.size());
+        if (detection_frame->detections.empty()) {
+          ImGui::TextDisabled("No detections in this frame.");
+        } else if (ImGui::BeginTable("##current-detections", 4,
+                                     ImGuiTableFlags_Borders |
+                                         ImGuiTableFlags_RowBg |
+                                         ImGuiTableFlags_SizingStretchProp)) {
+          ImGui::TableSetupColumn("Observation");
+          ImGui::TableSetupColumn("Confidence");
+          ImGui::TableSetupColumn("Class");
+          ImGui::TableSetupColumn("Source");
+          ImGui::TableHeadersRow();
+          for (size_t index = 0; index < detection_frame->detections.size();
+               ++index) {
+            const auto &detection = detection_frame->detections[index];
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::PushID(static_cast<int>(index));
+            const bool selected = detection.instance_key != 0 &&
+                                  detection_inspect->selected_instance_key ==
+                                      detection.instance_key;
+            const std::string label = "#" + std::to_string(index + 1);
+            if (ImGui::Selectable(label.c_str(), selected) &&
+                detection.instance_key != 0) {
+              detection_inspect->selected_instance_key = detection.instance_key;
+            }
+            ImGui::PopID();
+            ImGui::TableSetColumnIndex(1);
+            if (detection.score_valid) {
+              ImGui::Text("%.3f", detection.score);
+            } else {
+              ImGui::TextDisabled("n/a");
+            }
+            ImGui::TableSetColumnIndex(2);
+            ImGui::Text("%d", detection.class_id);
+            ImGui::TableSetColumnIndex(3);
+            ImGui::TextUnformatted(detection.source_kind_code == 3 ? "Manual"
+                                   : detection.manual_edit ? "Edited raw"
+                                                           : "Raw");
+          }
+          ImGui::EndTable();
+        }
+      }
+      if (ImGui::Button(ICON_FK_LINE_CHART " Detection Timeline")) {
+        *detection_quality_timeline = true;
+      }
+      ImGui::SameLine();
+      switch (detection_quality_state) {
+      case AppleDetectionQualityLoadState::Closed:
+        ImGui::TextDisabled("not loaded");
+        break;
+      case AppleDetectionQualityLoadState::Opening:
+        ImGui::TextDisabled("opening...");
+        break;
+      case AppleDetectionQualityLoadState::Ready:
+        ImGui::TextDisabled("ready");
+        break;
+      case AppleDetectionQualityLoadState::Failed:
+        ImGui::TextDisabled("unavailable");
+        if (!detection_quality_error.empty()) {
+          showItemTooltip(detection_quality_error.c_str());
+        }
+        break;
+      }
+    }
     ImGui::Separator();
     bool bbox_editing_enabled = false;
     ImGui::BeginDisabled();

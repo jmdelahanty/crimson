@@ -109,6 +109,8 @@ add_library(crimson_repository_contracts STATIC
     src/analysis_series_timeline.cpp
     src/analysis_series_timeline_buffer.cpp
     src/canonical_detection_buffer.cpp
+    src/detection_quality_timeline.cpp
+    src/detection_quality_timeline_buffer.cpp
     src/chaser_distance_polar.cpp
     src/chaser_distance_polar_buffer.cpp
     src/chaser_distance_polar_scene.cpp
@@ -214,6 +216,7 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         src/zarr/tensorstore_keypoint_v2_repository.cpp
         src/zarr/refined_detection_contract.cpp
         src/zarr/tensorstore_canonical_detection_repository.cpp
+        src/zarr/tensorstore_detection_quality_timeline_repository.cpp
         src/zarr/tensorstore_refined_detection_repository.cpp
         src/zarr/tensorstore_eye_angle_timeline_repository.cpp
         src/zarr/tensorstore_eye_geometry_overlay_repository.cpp
@@ -277,6 +280,39 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         COMMAND $<TARGET_FILE:canonical_detection_repository_tests>)
     set_tests_properties(canonical_detection_repository_tests PROPERTIES
         LABELS "headless;detection;overlay;repository;tensorstore;zarr"
+        TIMEOUT 30
+    )
+
+    add_executable(detection_quality_timeline_gate
+        tools/detection_quality_timeline_gate.cpp
+    )
+    target_compile_features(detection_quality_timeline_gate PRIVATE cxx_std_17)
+    target_link_libraries(detection_quality_timeline_gate PRIVATE
+        crimson_tensorstore_repositories
+        crimson_repository_contracts
+        ${tensorstore_target}
+        nlohmann_json::nlohmann_json
+        Threads::Threads
+    )
+    set_target_properties(detection_quality_timeline_gate PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
+    add_executable(detection_quality_timeline_tests
+        tools/detection_quality_timeline_tests.cpp
+    )
+    target_compile_features(detection_quality_timeline_tests PRIVATE cxx_std_17)
+    target_link_libraries(detection_quality_timeline_tests PRIVATE
+        crimson_repository_contracts
+        Threads::Threads
+    )
+    set_target_properties(detection_quality_timeline_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME detection_quality_timeline_tests
+        COMMAND $<TARGET_FILE:detection_quality_timeline_tests>)
+    set_tests_properties(detection_quality_timeline_tests PROPERTIES
+        LABELS "headless;detection;timeline;repository"
         TIMEOUT 30
     )
 
@@ -2024,6 +2060,8 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/chaser_distance_polar_buffer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/chaser_distance_polar_scene.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/canonical_detection_buffer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/detection_quality_timeline.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/detection_quality_timeline_buffer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/stimulus_camera_overlay_scene.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/swim_bout_timeline.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/swim_bout_timeline_buffer.cpp"
@@ -2059,6 +2097,7 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_analysis_series_timeline_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_chaser_distance_polar_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_canonical_detection_repository.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_detection_quality_timeline_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_refined_detection_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_eye_angle_timeline_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_eye_geometry_overlay_repository.cpp"

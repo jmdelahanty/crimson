@@ -6,6 +6,7 @@
 #include "apple_video_playback_buffer.h"
 #include "chaser_distance_polar_scene.h"
 #include "crop_presentation_coordinator.h"
+#include "detection_quality_timeline.h"
 #include "eye_angle_timeline.h"
 #include "playback_clock.h"
 #include "platform/macos/apple_workspace_layout.h"
@@ -19,12 +20,14 @@
 #include "swim_bout_timeline.h"
 #include "ui_path_config.h"
 #include "workspace_state.h"
+#include "zarr/canonical_detection_repository.h"
 
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 enum class AppleViewerThermalState {
   Nominal,
@@ -145,6 +148,42 @@ struct AppleAnalysisTimelineControls {
   std::unordered_map<int32_t, bool> stimulus_event_type_filter;
 };
 
+enum class AppleDetectionQualityLoadState {
+  Closed,
+  Opening,
+  Ready,
+  Failed,
+};
+
+struct AppleDetectionInspectState {
+  uint64_t selected_instance_key = 0;
+};
+
+struct AppleDetectionQualityTimelineControls {
+  float half_span_seconds = 10.0f;
+  bool show_score_range = true;
+  bool show_source_median = true;
+  bool show_accepted_median = true;
+  bool show_counts = true;
+  bool show_reasons = true;
+  std::unordered_map<uint16_t, bool> reason_visibility;
+  std::shared_ptr<const crimson::timeline::DetectionQualityTimelineWindow>
+      prepared_window;
+  double prepared_fps = 0.0;
+  std::vector<double> times;
+  std::vector<double> score_min;
+  std::vector<double> score_median;
+  std::vector<double> score_max;
+  std::vector<double> accepted_score_median;
+  std::vector<double> source_counts;
+  std::vector<double> accepted_counts;
+  std::vector<double> filtered_counts;
+  std::vector<double> duplicate_counts;
+  std::vector<double> manual_clear_counts;
+  std::vector<double> manual_counts;
+  std::vector<std::vector<double>> reason_counts;
+};
+
 struct AppleCropViewerControls {
   crimson::crop::CropSourcePreference preference =
       crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
@@ -228,13 +267,29 @@ bool drawAppleStimulusEventTimeline(
     int64_t current_frame, LogicalPlaybackClock &clock,
     AppleVideoPlaybackBuffer &playback, bool interactive);
 
+bool drawAppleDetectionQualityTimeline(
+    AppleDetectionQualityTimelineControls *controls, bool *open,
+    AppleDetectionQualityLoadState load_state,
+    const crimson::timeline::DetectionQualityTimelineDescriptor *descriptor,
+    const std::shared_ptr<
+        const crimson::timeline::DetectionQualityTimelineWindow> &window,
+    const std::string &error, int64_t current_frame,
+    LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
+    bool interactive);
+
 void drawAppleFrameInspectWindow(
     crimson::workspace::WorkspaceSelectionState *selections,
     crimson::overlay::ReadOnlyOverlayControlState *controls,
     const crimson::overlay::ReadOnlyOverlayAvailability &availability,
     AppleCropViewerControls *crop_controls, bool stimulus_available,
     bool polar_available,
-    const AppleVideoViewerStats &stats,
+    const crimson::zarr::CanonicalDetectionDescriptor *detection_descriptor,
+    const std::shared_ptr<const crimson::zarr::CanonicalDetectionFrame>
+        &detection_frame,
+    AppleDetectionQualityLoadState detection_quality_state,
+    const std::string &detection_quality_error,
+    AppleDetectionInspectState *detection_inspect,
+    bool *detection_quality_timeline, const AppleVideoViewerStats &stats,
     AppleFrameInspectPresentationState *presentation,
     bool *advanced_crop_preview, bool *stimulus_debug, bool interactive);
 

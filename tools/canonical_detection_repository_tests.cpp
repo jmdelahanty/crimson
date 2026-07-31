@@ -5,6 +5,7 @@
 #include "zarr/detection_repository_selection.h"
 #include "zarr/refined_detection_contract.h"
 #include "zarr/tensorstore_canonical_detection_repository.h"
+#include "zarr/tensorstore_detection_quality_timeline_repository.h"
 #include "zarr/tensorstore_refined_detection_repository.h"
 #include "zarr/zarr_metadata_equivalence.h"
 
@@ -428,7 +429,13 @@ json refinedRunManifest(const std::string &run, bool selector_eligible) {
       {"bindings", json::array()},
       {"forbidden_legacy_bindings", json::array()},
       {"array_contracts", json::object()},
-      {"code_maps", json::object()},
+      {"code_maps",
+       {{"source_kind_codes", {{"raw_detect", 1}, {"manual", 3}}},
+        {"source_detections/decision_codes",
+         {{"accepted", 0},
+          {"filtered", 1},
+          {"duplicate", 2},
+          {"manual_clear", 3}}}}},
       {"invariants", json::object()},
   };
   json payload = {
@@ -761,6 +768,52 @@ bool testRefinedRepositoryAndSelection() {
         crimson::zarr::DetectionRepositorySelectionKind::
             ApprovedAuthoritativeRefinedV1);
   CHECK(selected->descriptor().authority_approved);
+  return true;
+}
+
+bool testRefinedDetectionQualityTimelineRepository() {
+  TemporaryDirectory temporary;
+  CHECK(!temporary.path().empty());
+  const auto archive_root = temporary.path() / "analysis.zarr";
+  std::filesystem::create_directories(archive_root);
+  CHECK(buildRefinedFixture(archive_root));
+  std::string error;
+  auto archive = crimson::zarr::ArchiveContext::Open(archive_root, &error);
+  CHECK(archive != nullptr);
+
+  crimson::zarr::DetectionQualityTimelineOpenRequest request;
+  request.surface_kind = crimson::zarr::DetectionSurfaceKind::RefinedSnapshotV1;
+  request.run_name = "refined_fixture";
+  crimson::zarr::DetectionQualityTimelineOpenMetrics open_metrics;
+  auto repository = crimson::zarr::OpenDetectionQualityTimelineRepository(
+      archive, request, &error, &open_metrics);
+  CHECK(repository != nullptr);
+  CHECK(error.empty());
+  CHECK(open_metrics.root_metadata_reads == 1);
+  CHECK(open_metrics.direct_group_metadata_reads == 3);
+  CHECK(open_metrics.exact_handle_opens == 6);
+  CHECK(open_metrics.offset_read_calls == 2);
+  CHECK(open_metrics.retained_offset_bytes == 10 * sizeof(int64_t));
+  const auto &descriptor = repository->descriptor();
+  CHECK(descriptor.source_audit);
+  CHECK(descriptor.frame_count == 4);
+  CHECK(descriptor.source_row_count == 3);
+  CHECK(descriptor.instance_row_count == 6);
+  CHECK(descriptor.offset_read_calls == 2);
+
+  const auto window = repository->resolveWindow(0, 3);
+  CHECK(window.ready());
+  CHECK(window.frames.size() == 4);
+  CHECK(window.frames[0].source_count == 1);
+  CHECK(window.frames[0].accepted_count == 1);
+  CHECK(window.frames[0].manual_count == 1);
+  CHECK(window.frames[1].source_count == 0);
+  CHECK(window.frames[1].manual_count == 0);
+  CHECK(window.frames[2].source_count == 1);
+  CHECK(window.frames[3].source_count == 1);
+  CHECK(window.frames[3].manual_count == 2);
+  CHECK(std::abs(window.frames[0].score_median - 0.9) < 1e-6);
+  CHECK(repository->metrics().peak_concurrent_field_reads >= 3);
   return true;
 }
 
@@ -1106,6 +1159,7 @@ bool testDemandOvertakesResidencyAndCancellation() {
 int main() {
   if (!testZarrMetadataEquivalence() || !testRepositoryAndOverlay() ||
       !testRefinedRepositoryAndSelection() ||
+      !testRefinedDetectionQualityTimelineRepository() ||
       !testRefinedFailClosedValidation() || !testPageBuffer() ||
       !testDemandOvertakesResidencyAndCancellation()) {
     return 1;
