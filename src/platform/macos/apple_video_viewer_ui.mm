@@ -2116,6 +2116,8 @@ bool drawAppleKeypointQualityTimeline(
     const crimson::timeline::KeypointQualityTimelineDescriptor *descriptor,
     const std::shared_ptr<
         const crimson::timeline::KeypointQualityTimelineWindow> &window,
+    const std::shared_ptr<
+        const crimson::timeline::KeypointQualityTimelineOverview> &overview,
     const std::string &error, int64_t current_frame,
     LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
     bool interactive) {
@@ -2135,15 +2137,25 @@ bool drawAppleKeypointQualityTimeline(
                 descriptor->run_name.c_str());
     ImGui::Text("Quality: %s", descriptor->quality_run_name.c_str());
   }
-  ImGui::SetNextItemWidth(170.0f);
-  ImGui::SliderFloat("Window (+/- s)", &controls->half_span_seconds, 1.0f,
-                     60.0f, "%.0f");
+  if (ImGui::RadioButton("Local", !controls->full_recording)) {
+    controls->full_recording = false;
+  }
   ImGui::SameLine();
-  ImGui::Checkbox("Counts", &controls->show_counts);
-  ImGui::SameLine();
-  ImGui::Checkbox("Metrics", &controls->show_metrics);
-  ImGui::SameLine();
-  ImGui::Checkbox("Findings", &controls->show_findings);
+  if (ImGui::RadioButton("Full recording", controls->full_recording)) {
+    controls->full_recording = true;
+  }
+  if (!controls->full_recording) {
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(170.0f);
+    ImGui::SliderFloat("Window (+/- s)", &controls->half_span_seconds, 1.0f,
+                       60.0f, "%.0f");
+    ImGui::SameLine();
+    ImGui::Checkbox("Counts", &controls->show_counts);
+    ImGui::SameLine();
+    ImGui::Checkbox("Metrics", &controls->show_metrics);
+    ImGui::SameLine();
+    ImGui::Checkbox("Findings", &controls->show_findings);
+  }
 
   if (load_state == AppleKeypointQualityLoadState::Opening) {
     ImGui::TextUnformatted("Opening keypoint quality data...");
@@ -2152,13 +2164,129 @@ bool drawAppleKeypointQualityTimeline(
   } else if (load_state != AppleKeypointQualityLoadState::Ready ||
              descriptor == nullptr) {
     ImGui::TextUnformatted("Keypoint timeline is not open.");
-  } else if (!window) {
+  } else if (controls->full_recording && !overview) {
+    ImGui::TextUnformatted("Loading full-recording confidence overview...");
+  } else if (controls->full_recording && !overview->ready()) {
+    ImGui::TextWrapped("Keypoint overview unavailable: %s",
+                       overview->error.c_str());
+  } else if (!controls->full_recording && !window) {
     ImGui::TextUnformatted("Loading the visible keypoint window...");
-  } else if (!window->ready()) {
+  } else if (!controls->full_recording && !window->ready()) {
     ImGui::TextWrapped(
         "Keypoint timeline %s: %s",
         crimson::timeline::keypointQualityTimelineStatusName(window->status),
         window->error.c_str());
+  } else if (controls->full_recording) {
+    const double fps = clock.framesPerSecond();
+    const double cursor_time = fps > 0.0 ? current_frame / fps : 0.0;
+    const double recording_end =
+        fps > 0.0 && overview->frame_count > 1
+            ? static_cast<double>(overview->frame_count - 1) / fps
+            : 1.0;
+    if (controls->prepared_overview.get() != overview.get() ||
+        controls->prepared_fps != fps) {
+      controls->prepared_overview = overview;
+      controls->prepared_fps = fps;
+      const auto prepare_trace =
+          [&](const crimson::timeline::KeypointQualityOverviewTrace &source,
+              std::vector<double> *times, std::vector<double> *values) {
+            times->clear();
+            values->clear();
+            times->reserve(source.camera_frames.size());
+            values->reserve(source.values.size());
+            for (size_t index = 0; index < source.camera_frames.size();
+                 ++index) {
+              times->push_back(fps > 0.0 ? source.camera_frames[index] / fps
+                                         : 0.0);
+              values->push_back(source.values[index]);
+            }
+          };
+      prepare_trace(overview->pose_confidence,
+                    &controls->overview_pose_times,
+                    &controls->overview_pose_confidence);
+      controls->overview_keypoint_times.resize(
+          overview->keypoint_confidence.size());
+      controls->overview_keypoint_confidence.resize(
+          overview->keypoint_confidence.size());
+      for (size_t point = 0; point < overview->keypoint_confidence.size();
+           ++point) {
+        prepare_trace(overview->keypoint_confidence[point],
+                      &controls->overview_keypoint_times[point],
+                      &controls->overview_keypoint_confidence[point]);
+      }
+    }
+    if (ImGui::BeginTable("##keypoint-overview-series-controls", 4,
+                          ImGuiTableFlags_SizingStretchSame)) {
+      for (size_t point = 0; point < descriptor->keypoint_count; ++point) {
+        bool &visible = controls->keypoint_visibility.try_emplace(point, true)
+                            .first->second;
+        ImGui::TableNextColumn();
+        ImGui::PushID(static_cast<int>(point));
+        ImGui::Checkbox(descriptor->keypoint_labels[point].c_str(), &visible);
+        ImGui::PopID();
+      }
+      ImGui::EndTable();
+    }
+    const auto seek_from_plot = [&]() {
+      if (!interactive || !ImPlot::IsPlotHovered() ||
+          !ImGui::IsMouseClicked(ImGuiMouseButton_Left) || fps <= 0.0) {
+        return false;
+      }
+      const int64_t frame = std::clamp<int64_t>(
+          static_cast<int64_t>(std::llround(ImPlot::GetPlotMousePos().x * fps)),
+          0, static_cast<int64_t>(overview->frame_count) - 1);
+      return seekViewer(clock, playback, frame);
+    };
+    bool camera_discontinuity = false;
+    if (ImPlot::BeginPlot("##pose-confidence-overview",
+                          ImVec2(-1.0f, 185.0f),
+                          ImPlotFlags_NoTitle | ImPlotFlags_NoBoxSelect)) {
+      ImPlot::SetupAxes("Time (s)", "Pose confidence",
+                        ImPlotAxisFlags_NoMenus,
+                        ImPlotAxisFlags_NoMenus);
+      ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, recording_end,
+                              ImPlotCond_Always);
+      ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, 1.0, ImPlotCond_Always);
+      ImPlot::PlotLine(
+          "Source pose", controls->overview_pose_times.data(),
+          controls->overview_pose_confidence.data(),
+          static_cast<int>(controls->overview_pose_times.size()));
+      ImPlot::PlotInfLines("Current frame", &cursor_time, 1);
+      ImPlot::TagX(cursor_time, ImVec4(0.94f, 0.94f, 0.94f, 0.90f),
+                   "Frame %lld", static_cast<long long>(current_frame));
+      camera_discontinuity = seek_from_plot() || camera_discontinuity;
+      ImPlot::EndPlot();
+    }
+    if (ImPlot::BeginPlot("##keypoint-confidence-overview",
+                          ImVec2(-1.0f, 260.0f),
+                          ImPlotFlags_NoTitle | ImPlotFlags_NoBoxSelect)) {
+      ImPlot::SetupAxes(
+          "Time (s)", "Point confidence", ImPlotAxisFlags_NoMenus,
+          ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_NoMenus);
+      ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, recording_end,
+                              ImPlotCond_Always);
+      ImPlot::SetupAxisFormat(ImAxis_Y1, "%.4f");
+      for (size_t point = 0;
+           point < controls->overview_keypoint_confidence.size(); ++point) {
+        if (!controls->keypoint_visibility[point]) {
+          continue;
+        }
+        ImPlot::PlotLine(
+            descriptor->keypoint_labels[point].c_str(),
+            controls->overview_keypoint_times[point].data(),
+            controls->overview_keypoint_confidence[point].data(),
+            static_cast<int>(controls->overview_keypoint_times[point].size()));
+      }
+      ImPlot::PlotInfLines("Current frame", &cursor_time, 1);
+      ImPlot::TagX(cursor_time, ImVec4(0.94f, 0.94f, 0.94f, 0.90f),
+                   "Frame %lld", static_cast<long long>(current_frame));
+      camera_discontinuity = seek_from_plot() || camera_discontinuity;
+      ImPlot::EndPlot();
+    }
+    if (!interactive)
+      ImGui::EndDisabled();
+    ImGui::End();
+    return camera_discontinuity;
   } else {
     const double fps = clock.framesPerSecond();
     const double cursor_time = fps > 0.0 ? current_frame / fps : 0.0;

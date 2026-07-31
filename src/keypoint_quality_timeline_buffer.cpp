@@ -45,6 +45,7 @@ struct KeypointQualityTimelineBuffer::Impl {
   std::shared_ptr<crimson::data::DataAccessScheduler> scheduler;
   std::string archive_identity;
   crimson::data::SourceIdentity scheduler_source;
+  crimson::data::SourceIdentity overview_scheduler_source;
   bool stopping = false;
   size_t page_span = 4096;
   size_t page_step = 2048;
@@ -57,6 +58,12 @@ struct KeypointQualityTimelineBuffer::Impl {
       PageKeyHash>
       cache;
   std::deque<PageKey> cache_order;
+  uint64_t overview_generation = 1;
+  size_t overview_maximum_points = 0;
+  size_t overview_maximum_decoded_bytes = 0;
+  bool overview_pending = false;
+  std::shared_ptr<const crimson::timeline::KeypointQualityTimelineOverview>
+      overview;
   KeypointQualityTimelineBufferMetrics metrics;
 
   std::optional<PageKey> keyFor(int64_t frame) const {
@@ -119,6 +126,9 @@ bool KeypointQualityTimelineBuffer::open(
   impl_->scheduler_source = {
       impl_->archive_identity.empty() ? "in_memory" : impl_->archive_identity,
       "keypoint_quality_timeline", impl_->descriptor.run_name};
+  impl_->overview_scheduler_source = {
+      impl_->archive_identity.empty() ? "in_memory" : impl_->archive_identity,
+      "keypoint_quality_overview", impl_->descriptor.run_name};
   impl_->repository = std::move(repository);
   impl_->page_span = page_span_frames;
   impl_->page_step = page_step_frames;
@@ -128,6 +138,11 @@ bool KeypointQualityTimelineBuffer::open(
   impl_->last_key.reset();
   impl_->cache.clear();
   impl_->cache_order.clear();
+  impl_->overview_generation = 1;
+  impl_->overview_maximum_points = 0;
+  impl_->overview_maximum_decoded_bytes = 0;
+  impl_->overview_pending = false;
+  impl_->overview.reset();
   impl_->metrics = {};
   if (error) {
     error->clear();
@@ -137,24 +152,31 @@ bool KeypointQualityTimelineBuffer::open(
 
 void KeypointQualityTimelineBuffer::close() {
   crimson::data::SourceIdentity source;
+  crimson::data::SourceIdentity overview_source;
   bool active = false;
   {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->stopping = true;
     active = impl_->repository != nullptr;
     source = impl_->scheduler_source;
+    overview_source = impl_->overview_scheduler_source;
   }
   if (active && impl_->scheduler) {
     impl_->scheduler->cancelSource(source);
+    impl_->scheduler->cancelSource(overview_source);
     impl_->scheduler->waitForSourceIdle(source);
+    impl_->scheduler->waitForSourceIdle(overview_source);
   }
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->repository.reset();
   impl_->descriptor = {};
   impl_->scheduler_source = {};
+  impl_->overview_scheduler_source = {};
   impl_->cache.clear();
   impl_->cache_order.clear();
   impl_->last_key.reset();
+  impl_->overview.reset();
+  impl_->overview_pending = false;
   impl_->stopping = false;
 }
 
@@ -247,9 +269,7 @@ bool KeypointQualityTimelineBuffer::requestFrame(int64_t frame,
   impl_->metrics.peak_pending_windows =
       std::max(impl_->metrics.peak_pending_windows,
                impl_->scheduler->metrics().queue.pending_requests);
-  if (!outcome.accepted() &&
-      outcome.status !=
-          crimson::data::DataRequestSubmitStatus::RejectedCapacity) {
+  if (!outcome.accepted()) {
     assignError(error, "Keypoint-quality scheduler rejected the request");
     return false;
   }
@@ -266,6 +286,109 @@ KeypointQualityTimelineBuffer::window(int64_t frame) const {
     return nullptr;
   const auto found = impl_->cache.find(*key);
   return found == impl_->cache.end() ? nullptr : found->second;
+}
+
+bool KeypointQualityTimelineBuffer::requestOverview(
+    size_t maximum_points_per_trace, size_t maximum_decoded_bytes,
+    std::string *error) {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  if (!impl_->repository || impl_->stopping || maximum_points_per_trace < 2 ||
+      maximum_decoded_bytes < (impl_->descriptor.keypoint_count + 1) *
+                                  (sizeof(float) + sizeof(uint8_t))) {
+    assignError(error, "Keypoint-quality overview request is invalid");
+    return false;
+  }
+  ++impl_->metrics.overview_requests;
+  const bool same_request =
+      impl_->overview_maximum_points == maximum_points_per_trace &&
+      impl_->overview_maximum_decoded_bytes == maximum_decoded_bytes;
+  if (same_request && impl_->overview && impl_->overview->ready()) {
+    ++impl_->metrics.overview_cache_hits;
+    if (error) {
+      error->clear();
+    }
+    return true;
+  }
+  if (same_request && impl_->overview_pending) {
+    if (error) {
+      error->clear();
+    }
+    return true;
+  }
+  ++impl_->overview_generation;
+  impl_->scheduler->cancelSource(impl_->overview_scheduler_source);
+  impl_->overview_maximum_points = maximum_points_per_trace;
+  impl_->overview_maximum_decoded_bytes = maximum_decoded_bytes;
+  impl_->overview_pending = true;
+  impl_->overview.reset();
+  const uint64_t generation = impl_->overview_generation;
+  crimson::data::DataRangeRequest request{
+      impl_->overview_scheduler_source,
+      {0, static_cast<int64_t>(impl_->descriptor.frame_count) - 1},
+      crimson::data::FieldSelection::All(),
+      crimson::data::RequestPriority::VisibleWindow,
+      crimson::data::AccessPattern::Paused,
+      generation};
+  const auto outcome = impl_->scheduler->submit(
+      std::move(request),
+      [this, generation, maximum_points_per_trace, maximum_decoded_bytes](
+          const crimson::data::ScheduledDataRequest &scheduled) {
+        if (scheduled.cancellation.cancelled()) {
+          return crimson::data::DataResultStatus::Stale;
+        }
+        const auto started = std::chrono::steady_clock::now();
+        auto resolved = impl_->repository->resolveOverview(
+            maximum_points_per_trace, maximum_decoded_bytes,
+            [&scheduled] { return scheduled.cancellation.cancelled(); });
+        const double elapsed = std::chrono::duration<double, std::milli>(
+                                   std::chrono::steady_clock::now() - started)
+                                   .count();
+        auto shared = std::make_shared<
+            const crimson::timeline::KeypointQualityTimelineOverview>(
+            std::move(resolved));
+        std::lock_guard<std::mutex> callback_lock(impl_->mutex);
+        impl_->metrics.maximum_overview_resolve_ms =
+            std::max(impl_->metrics.maximum_overview_resolve_ms, elapsed);
+        if (scheduled.cancellation.cancelled() || impl_->stopping ||
+            generation != impl_->overview_generation) {
+          ++impl_->metrics.discarded_overviews;
+          return crimson::data::DataResultStatus::Stale;
+        }
+        impl_->overview_pending = false;
+        impl_->overview = std::move(shared);
+        if (impl_->overview->ready()) {
+          ++impl_->metrics.resolved_overviews;
+          return crimson::data::DataResultStatus::Ready;
+        }
+        ++impl_->metrics.failed_overviews;
+        impl_->metrics.last_error = impl_->overview->error;
+        return crimson::data::DataResultStatus::Failed;
+      });
+  if (outcome.status ==
+      crimson::data::DataRequestSubmitStatus::RejectedCapacity) {
+    impl_->overview_pending = false;
+    if (error) {
+      error->clear();
+    }
+    return true;
+  }
+  if (!outcome.accepted() &&
+      outcome.status !=
+          crimson::data::DataRequestSubmitStatus::RejectedCapacity) {
+    impl_->overview_pending = false;
+    assignError(error, "Keypoint-quality scheduler rejected the overview");
+    return false;
+  }
+  if (error) {
+    error->clear();
+  }
+  return true;
+}
+
+std::shared_ptr<const crimson::timeline::KeypointQualityTimelineOverview>
+KeypointQualityTimelineBuffer::overview() const {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  return impl_->overview;
 }
 
 crimson::timeline::KeypointQualityTimelineDescriptor

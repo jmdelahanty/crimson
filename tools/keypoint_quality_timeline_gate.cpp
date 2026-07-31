@@ -99,6 +99,23 @@ int main(int argc, char **argv) {
             "Timeline frame count changed");
     require(keypoints->accessMetrics().quality_payload_read_calls == 0,
             "Timeline activation contaminated ordinary overlay metrics");
+    const auto overview_started = Clock::now();
+    const auto overview = timeline->resolveOverview(1200, 8 * 1024 * 1024, {});
+    const double overview_ms = std::chrono::duration<double, std::milli>(
+                                   Clock::now() - overview_started)
+                                   .count();
+    require(overview.ready(), "Timeline overview failed: " + overview.error);
+    require(overview.rows_read == timeline->descriptor().row_count,
+            "Timeline overview did not scan every observation");
+    require(overview.pose_confidence.values.size() <= 1200 &&
+                overview.keypoint_confidence.size() ==
+                    timeline->descriptor().keypoint_count,
+            "Timeline overview exceeded its trace budget");
+    for (const auto &trace : overview.keypoint_confidence) {
+      require(trace.values.size() <= 1200 &&
+                  trace.values.size() == trace.camera_frames.size(),
+              "Timeline overview point trace is malformed");
+    }
     const auto metrics = timeline->metrics();
     double pose_min = std::numeric_limits<double>::infinity();
     double pose_max = -std::numeric_limits<double>::infinity();
@@ -128,7 +145,11 @@ int main(int argc, char **argv) {
               << timeline->descriptor().retained_offset_bytes
               << " offset_reads=" << timeline->descriptor().offset_read_calls
               << " timeline_open_ms=" << timeline_open_ms
-              << " window_read_ms=" << read_ms
+              << " window_read_ms=" << read_ms << " overview_ms=" << overview_ms
+              << " overview_rows=" << overview.rows_read
+              << " overview_decoded_bytes=" << overview.decoded_bytes
+              << " overview_pose_points="
+              << overview.pose_confidence.values.size()
               << " field_reads=" << metrics.peak_concurrent_field_reads
               << " pose_range=" << pose_min << ':' << pose_max;
     for (size_t point = 0; point < point_min.size(); ++point) {

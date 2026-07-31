@@ -199,6 +199,7 @@ struct AppleKeypointInspectState {
 
 struct AppleKeypointQualityTimelineControls {
   float half_span_seconds = 10.0f;
+  bool full_recording = false;
   bool show_counts = true;
   bool show_metrics = true;
   bool show_findings = true;
@@ -207,6 +208,8 @@ struct AppleKeypointQualityTimelineControls {
   std::unordered_map<uint16_t, bool> reason_visibility;
   std::shared_ptr<const crimson::timeline::KeypointQualityTimelineWindow>
       prepared_window;
+  std::shared_ptr<const crimson::timeline::KeypointQualityTimelineOverview>
+      prepared_overview;
   double prepared_fps = 0.0;
   std::vector<double> times;
   std::vector<double> pose_confidence;
@@ -224,6 +227,10 @@ struct AppleKeypointQualityTimelineControls {
   std::vector<std::vector<double>> pose_flag_counts;
   std::vector<std::vector<double>> review_counts;
   std::vector<std::vector<double>> reason_counts;
+  std::vector<double> overview_pose_times;
+  std::vector<double> overview_pose_confidence;
+  std::vector<std::vector<double>> overview_keypoint_times;
+  std::vector<std::vector<double>> overview_keypoint_confidence;
 };
 
 struct AppleCropViewerControls {
@@ -325,6 +332,8 @@ bool drawAppleKeypointQualityTimeline(
     const crimson::timeline::KeypointQualityTimelineDescriptor *descriptor,
     const std::shared_ptr<
         const crimson::timeline::KeypointQualityTimelineWindow> &window,
+    const std::shared_ptr<
+        const crimson::timeline::KeypointQualityTimelineOverview> &overview,
     const std::string &error, int64_t current_frame,
     LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
     bool interactive);

@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <mutex>
 #include <thread>
 
@@ -95,6 +96,69 @@ void testMultiRowAndEmptyFrames() {
   CHECK(repository->metrics().range_reads == 1);
 }
 
+void testFullRecordingConfidenceOverview() {
+  std::string error;
+  auto repository = crimson::timeline::MakeKeypointQualityTimelineRepository(
+      makeDescriptor(), columns(), &error);
+  CHECK(repository != nullptr);
+  const auto overview = repository->resolveOverview(4, 1024, {});
+  CHECK(overview.ready());
+  CHECK(overview.frame_count == 4);
+  CHECK(overview.rows_read == 6);
+  CHECK(overview.decoded_bytes == 6 * 3 * (sizeof(float) + sizeof(uint8_t)));
+  CHECK(overview.pose_confidence.camera_frames.size() == 4);
+  CHECK(overview.pose_confidence.camera_frames[0] == 0);
+  CHECK(overview.pose_confidence.camera_frames[1] == 0);
+  CHECK(std::abs(overview.pose_confidence.values[0] - 0.5) < 1e-6);
+  CHECK(std::abs(overview.pose_confidence.values[1] - 0.7) < 1e-6);
+  CHECK(overview.keypoint_confidence.size() == 2);
+  CHECK(overview.keypoint_confidence[0].values.size() == 4);
+  CHECK(std::abs(overview.keypoint_confidence[0].values[0] - 0.2) < 1e-6);
+  CHECK(std::abs(overview.keypoint_confidence[0].values[1] - 0.6) < 1e-6);
+  const auto metrics = repository->metrics();
+  CHECK(metrics.overview_reads == 1);
+  CHECK(metrics.overview_rows_read == 6);
+  size_t cancellation_checks = 0;
+  const auto cancelled = repository->resolveOverview(
+      4, 1024, [&] { return cancellation_checks++ >= 2; });
+  CHECK(!cancelled.ready());
+  CHECK(cancelled.error == "Keypoint-quality overview was cancelled");
+}
+
+void testMaskedMissingConfidences() {
+  std::string error;
+  auto masked = columns();
+  masked.source_success[0] = 0;
+  masked.pose_confidences[0] = std::numeric_limits<float>::quiet_NaN();
+  masked.keypoint_valid[0] = 0;
+  masked.keypoint_confidences[0] = std::numeric_limits<float>::quiet_NaN();
+  auto repository = crimson::timeline::MakeKeypointQualityTimelineRepository(
+      makeDescriptor(), std::move(masked), &error);
+  CHECK(repository != nullptr);
+  const auto window = repository->resolveWindow(0, 0);
+  CHECK(window.ready());
+  CHECK(std::abs(window.frames[0].pose_confidence_median - 0.7) < 1e-6);
+  CHECK(std::abs(window.frames[0].keypoint_confidence_medians[0] - 0.6) < 1e-6);
+  CHECK(repository->resolveOverview(4, 1024, {}).ready());
+
+  auto invalid = columns();
+  invalid.pose_confidences[0] = std::numeric_limits<float>::quiet_NaN();
+  repository = crimson::timeline::MakeKeypointQualityTimelineRepository(
+      makeDescriptor(), std::move(invalid), &error);
+  CHECK(repository->resolveWindow(0, 0).status ==
+        crimson::timeline::KeypointQualityTimelineStatus::ReadFailed);
+  CHECK(!repository->resolveOverview(4, 1024, {}).ready());
+
+  invalid = columns();
+  invalid.source_success[0] = 0;
+  invalid.pose_confidences[0] = std::numeric_limits<float>::infinity();
+  repository = crimson::timeline::MakeKeypointQualityTimelineRepository(
+      makeDescriptor(), std::move(invalid), &error);
+  CHECK(repository->resolveWindow(0, 0).status ==
+        crimson::timeline::KeypointQualityTimelineStatus::ReadFailed);
+  CHECK(!repository->resolveOverview(4, 1024, {}).ready());
+}
+
 void testContractFailures() {
   std::string error;
   auto broken = columns();
@@ -155,6 +219,14 @@ void testPageBuffer() {
   CHECK(buffer.window(0)->ready());
   CHECK(buffer.requestFrame(0, false, &error));
   CHECK(buffer.metrics().cache_hits == 1);
+  CHECK(buffer.requestOverview(4, 1024, &error));
+  for (int attempt = 0; attempt < 100 && !buffer.overview(); ++attempt) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  CHECK(buffer.overview() != nullptr);
+  CHECK(buffer.overview()->ready());
+  CHECK(buffer.requestOverview(4, 1024, &error));
+  CHECK(buffer.metrics().overview_cache_hits == 1);
   CHECK(buffer.requestFrame(3, true, &error));
   buffer.close();
 }
@@ -239,6 +311,8 @@ void testBufferDiscardsSupersededPage() {
 
 int main() {
   testMultiRowAndEmptyFrames();
+  testFullRecordingConfidenceOverview();
+  testMaskedMissingConfidences();
   testContractFailures();
   testPageBuffer();
   testBufferDiscardsSupersededPage();

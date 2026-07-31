@@ -1029,6 +1029,119 @@ public:
     return window;
   }
 
+  timeline::KeypointQualityTimelineOverview
+  resolveOverview(size_t maximum_points_per_trace, size_t maximum_decoded_bytes,
+                  const std::function<bool()> &cancelled) const override {
+    const auto started = Clock::now();
+    timeline::KeypointQualityTimelineOverview overview;
+    const size_t keypoints = descriptor_.keypoint_count;
+    const size_t bytes_per_row =
+        (keypoints + 1) * (sizeof(float) + sizeof(uint8_t));
+    if (maximum_points_per_trace < 2 || maximum_decoded_bytes < bytes_per_row) {
+      overview.error = "Keypoint-quality overview limits are invalid";
+      return overview;
+    }
+    timeline::KeypointQualityOverviewAccumulator accumulator(
+        descriptor_.frame_count, keypoints, maximum_points_per_trace);
+    const size_t maximum_rows =
+        std::max<size_t>(1, maximum_decoded_bytes / bytes_per_row);
+    size_t first_frame = 0;
+    std::string error;
+    while (first_frame < descriptor_.frame_count) {
+      if (cancelled && cancelled()) {
+        overview.error = "Keypoint-quality overview was cancelled";
+        return overview;
+      }
+      const size_t first_row = static_cast<size_t>(offsets_[first_frame]);
+      const size_t target_row =
+          maximum_rows >= descriptor_.row_count - first_row
+              ? descriptor_.row_count
+              : first_row + maximum_rows;
+      const auto upper = std::upper_bound(
+          offsets_.begin() + static_cast<std::ptrdiff_t>(first_frame + 1),
+          offsets_.end(), static_cast<int64_t>(target_row));
+      size_t last_frame =
+          static_cast<size_t>(std::distance(offsets_.begin(), upper) - 1);
+      last_frame = std::min(descriptor_.frame_count,
+                            std::max(first_frame + 1, last_frame));
+      const size_t last_row = static_cast<size_t>(offsets_[last_frame]);
+      const size_t rows = last_row - first_row;
+      std::vector<float> pose_confidences;
+      std::vector<float> keypoint_confidences;
+      std::vector<uint8_t> pose_valid;
+      std::vector<uint8_t> keypoint_valid;
+      if (rows > 0) {
+        auto pose_future =
+            issueRangeRead(raw_.pose_confidence, first_row, last_row);
+        auto keypoint_future =
+            issueRangeRead(raw_.keypoint_confidences, first_row, last_row);
+        auto pose_valid_future =
+            issueRangeRead(raw_.pose_success, first_row, last_row);
+        auto keypoint_valid_future =
+            issueRangeRead(raw_.keypoint_valid, first_row, last_row);
+        if (!collectRangeRead(&pose_future, rows, 1, &pose_confidences,
+                              &error) ||
+            !collectRangeRead(&keypoint_future, rows, keypoints,
+                              &keypoint_confidences, &error) ||
+            !collectBoolRangeRead(&pose_valid_future, rows, 1, &pose_valid,
+                                  &error) ||
+            !collectBoolRangeRead(&keypoint_valid_future, rows, keypoints,
+                                  &keypoint_valid, &error)) {
+          overview.error = std::move(error);
+          break;
+        }
+      }
+      for (size_t frame = first_frame; frame < last_frame; ++frame) {
+        const size_t local_first =
+            static_cast<size_t>(offsets_[frame]) - first_row;
+        const size_t local_last =
+            static_cast<size_t>(offsets_[frame + 1]) - first_row;
+        const float *pose = local_last > local_first
+                                ? pose_confidences.data() + local_first
+                                : nullptr;
+        const uint8_t *pose_mask = local_last > local_first
+                                       ? pose_valid.data() + local_first
+                                       : nullptr;
+        const float *points =
+            local_last > local_first
+                ? keypoint_confidences.data() + local_first * keypoints
+                : nullptr;
+        const uint8_t *point_mask =
+            local_last > local_first
+                ? keypoint_valid.data() + local_first * keypoints
+                : nullptr;
+        if (!accumulator.addFrame(static_cast<int64_t>(frame), pose, pose_mask,
+                                  points, point_mask, local_last - local_first,
+                                  &error)) {
+          overview.error = std::move(error);
+          break;
+        }
+      }
+      if (!overview.error.empty()) {
+        break;
+      }
+      first_frame = last_frame;
+    }
+    if (overview.error.empty()) {
+      overview = accumulator.finish();
+    }
+    const double elapsed = elapsedMilliseconds(started);
+    std::lock_guard<std::mutex> lock(metrics_mutex_);
+    ++metrics_.overview_reads;
+    metrics_.peak_concurrent_field_reads =
+        std::max(metrics_.peak_concurrent_field_reads, size_t{4});
+    metrics_.maximum_overview_read_ms =
+        std::max(metrics_.maximum_overview_read_ms, elapsed);
+    if (overview.ready()) {
+      metrics_.overview_rows_read += overview.rows_read;
+      metrics_.overview_decoded_bytes += overview.decoded_bytes;
+    } else if (!(cancelled && cancelled())) {
+      ++metrics_.failed_overview_reads;
+      metrics_.last_error = overview.error;
+    }
+    return overview;
+  }
+
   timeline::KeypointQualityTimelineRepositoryMetrics metrics() const override {
     std::lock_guard<std::mutex> lock(metrics_mutex_);
     return metrics_;

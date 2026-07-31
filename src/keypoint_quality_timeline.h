@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <string>
@@ -94,13 +95,63 @@ struct KeypointQualityTimelineWindow {
   bool ready() const { return status == KeypointQualityTimelineStatus::Ready; }
 };
 
+struct KeypointQualityOverviewTrace {
+  std::vector<int64_t> camera_frames;
+  std::vector<double> values;
+};
+
+struct KeypointQualityTimelineOverview {
+  KeypointQualityTimelineStatus status =
+      KeypointQualityTimelineStatus::ReadFailed;
+  size_t frame_count = 0;
+  size_t rows_read = 0;
+  uint64_t decoded_bytes = 0;
+  KeypointQualityOverviewTrace pose_confidence;
+  std::vector<KeypointQualityOverviewTrace> keypoint_confidence;
+  std::string error;
+
+  bool ready() const { return status == KeypointQualityTimelineStatus::Ready; }
+};
+
+class KeypointQualityOverviewAccumulator {
+public:
+  KeypointQualityOverviewAccumulator(size_t frame_count, size_t keypoint_count,
+                                     size_t maximum_points_per_trace);
+
+  bool addFrame(int64_t camera_frame, const float *pose_confidences,
+                const uint8_t *pose_valid, const float *keypoint_confidences,
+                const uint8_t *keypoint_valid, size_t observation_count,
+                std::string *error = nullptr);
+  KeypointQualityTimelineOverview finish();
+
+private:
+  struct Extremum {
+    bool has_value = false;
+    double minimum = std::numeric_limits<double>::infinity();
+    double maximum = -std::numeric_limits<double>::infinity();
+    int64_t minimum_frame = -1;
+    int64_t maximum_frame = -1;
+  };
+  size_t frame_count_ = 0;
+  size_t keypoint_count_ = 0;
+  size_t bin_count_ = 0;
+  size_t rows_read_ = 0;
+  std::vector<Extremum> pose_extrema_;
+  std::vector<Extremum> keypoint_extrema_;
+};
+
 struct KeypointQualityTimelineRepositoryMetrics {
   uint64_t range_reads = 0;
   uint64_t rows_read = 0;
   uint64_t decoded_bytes = 0;
   uint64_t failed_reads = 0;
+  uint64_t overview_reads = 0;
+  uint64_t overview_rows_read = 0;
+  uint64_t overview_decoded_bytes = 0;
+  uint64_t failed_overview_reads = 0;
   size_t peak_concurrent_field_reads = 0;
   double maximum_range_read_ms = 0.0;
+  double maximum_overview_read_ms = 0.0;
   std::string last_error;
 };
 
@@ -111,6 +162,9 @@ public:
   virtual KeypointQualityTimelineWindow
   resolveWindow(int64_t first_camera_frame,
                 int64_t last_camera_frame) const = 0;
+  virtual KeypointQualityTimelineOverview
+  resolveOverview(size_t maximum_points_per_trace, size_t maximum_decoded_bytes,
+                  const std::function<bool()> &cancelled = {}) const;
   virtual KeypointQualityTimelineRepositoryMetrics metrics() const {
     return {};
   }

@@ -167,6 +167,62 @@ public:
     return result;
   }
 
+  KeypointQualityTimelineOverview
+  resolveOverview(size_t maximum_points_per_trace, size_t maximum_decoded_bytes,
+                  const std::function<bool()> &cancelled) const override {
+    (void)maximum_decoded_bytes;
+    const auto started = Clock::now();
+    KeypointQualityOverviewAccumulator accumulator(descriptor_.frame_count,
+                                                   descriptor_.keypoint_count,
+                                                   maximum_points_per_trace);
+    std::string error;
+    for (size_t frame = 0; frame < descriptor_.frame_count; ++frame) {
+      if (cancelled && cancelled()) {
+        KeypointQualityTimelineOverview result;
+        result.error = "Keypoint-quality overview was cancelled";
+        return result;
+      }
+      const size_t first =
+          static_cast<size_t>(columns_.frame_row_offsets[frame]);
+      const size_t last =
+          static_cast<size_t>(columns_.frame_row_offsets[frame + 1]);
+      const float *pose =
+          last > first ? columns_.pose_confidences.data() + first : nullptr;
+      const uint8_t *pose_valid =
+          last > first ? columns_.source_success.data() + first : nullptr;
+      const float *points = last > first
+                                ? columns_.keypoint_confidences.data() +
+                                      first * descriptor_.keypoint_count
+                                : nullptr;
+      const uint8_t *point_valid = last > first
+                                       ? columns_.keypoint_valid.data() +
+                                             first * descriptor_.keypoint_count
+                                       : nullptr;
+      if (!accumulator.addFrame(static_cast<int64_t>(frame), pose, pose_valid,
+                                points, point_valid, last - first, &error)) {
+        KeypointQualityTimelineOverview result;
+        result.error = std::move(error);
+        return result;
+      }
+    }
+    auto result = accumulator.finish();
+    const double elapsed =
+        std::chrono::duration<double, std::milli>(Clock::now() - started)
+            .count();
+    std::lock_guard<std::mutex> lock(metrics_mutex_);
+    ++metrics_.overview_reads;
+    metrics_.maximum_overview_read_ms =
+        std::max(metrics_.maximum_overview_read_ms, elapsed);
+    if (result.ready()) {
+      metrics_.overview_rows_read += result.rows_read;
+      metrics_.overview_decoded_bytes += result.decoded_bytes;
+    } else {
+      ++metrics_.failed_overview_reads;
+      metrics_.last_error = result.error;
+    }
+    return result;
+  }
+
   KeypointQualityTimelineRepositoryMetrics metrics() const override {
     std::lock_guard<std::mutex> lock(metrics_mutex_);
     return metrics_;
@@ -180,6 +236,142 @@ private:
 };
 
 } // namespace
+
+KeypointQualityOverviewAccumulator::KeypointQualityOverviewAccumulator(
+    size_t frame_count, size_t keypoint_count, size_t maximum_points_per_trace)
+    : frame_count_(frame_count), keypoint_count_(keypoint_count) {
+  if (frame_count_ == 0 || keypoint_count_ == 0 ||
+      maximum_points_per_trace < 2) {
+    return;
+  }
+  bin_count_ =
+      std::min(frame_count_, std::max<size_t>(1, maximum_points_per_trace / 2));
+  pose_extrema_.resize(bin_count_);
+  keypoint_extrema_.resize(bin_count_ * keypoint_count_);
+}
+
+bool KeypointQualityOverviewAccumulator::addFrame(
+    int64_t camera_frame, const float *pose_confidences,
+    const uint8_t *pose_valid, const float *keypoint_confidences,
+    const uint8_t *keypoint_valid, size_t observation_count,
+    std::string *error) {
+  if (bin_count_ == 0 || camera_frame < 0 ||
+      static_cast<size_t>(camera_frame) >= frame_count_ ||
+      (observation_count > 0 &&
+       (pose_confidences == nullptr || pose_valid == nullptr ||
+        keypoint_confidences == nullptr || keypoint_valid == nullptr))) {
+    assignError(error, "Keypoint-quality overview input is invalid");
+    return false;
+  }
+  const size_t bin_width =
+      frame_count_ / bin_count_ + (frame_count_ % bin_count_ != 0);
+  const size_t bin =
+      std::min(bin_count_ - 1, static_cast<size_t>(camera_frame) / bin_width);
+  const auto update = [&](Extremum *destination, float value) {
+    if (!std::isfinite(value) || value < 0.0f || value > 1.0f) {
+      return false;
+    }
+    if (!destination->has_value || value < destination->minimum) {
+      destination->minimum = value;
+      destination->minimum_frame = camera_frame;
+    }
+    if (!destination->has_value || value > destination->maximum) {
+      destination->maximum = value;
+      destination->maximum_frame = camera_frame;
+    }
+    destination->has_value = true;
+    return true;
+  };
+  for (size_t row = 0; row < observation_count; ++row) {
+    const bool pose_missing =
+        std::isnan(pose_confidences[row]) && !pose_valid[row];
+    if (!pose_missing && !update(&pose_extrema_[bin], pose_confidences[row])) {
+      assignError(error,
+                  "Keypoint-quality overview pose confidence is invalid at "
+                  "frame " +
+                      std::to_string(camera_frame) + " value " +
+                      std::to_string(pose_confidences[row]));
+      return false;
+    }
+    for (size_t point = 0; point < keypoint_count_; ++point) {
+      const size_t index = row * keypoint_count_ + point;
+      const bool point_missing =
+          std::isnan(keypoint_confidences[index]) && !keypoint_valid[index];
+      if (!point_missing &&
+          !update(&keypoint_extrema_[bin * keypoint_count_ + point],
+                  keypoint_confidences[index])) {
+        assignError(error,
+                    "Keypoint-quality overview point confidence is invalid at "
+                    "frame " +
+                        std::to_string(camera_frame) + " point " +
+                        std::to_string(point) + " value " +
+                        std::to_string(keypoint_confidences[index]));
+        return false;
+      }
+    }
+  }
+  rows_read_ += observation_count;
+  if (error) {
+    error->clear();
+  }
+  return true;
+}
+
+KeypointQualityTimelineOverview KeypointQualityOverviewAccumulator::finish() {
+  KeypointQualityTimelineOverview result;
+  if (bin_count_ == 0) {
+    result.error = "Keypoint-quality overview configuration is invalid";
+    return result;
+  }
+  result.frame_count = frame_count_;
+  result.rows_read = rows_read_;
+  result.decoded_bytes =
+      rows_read_ * (keypoint_count_ + 1) * (sizeof(float) + sizeof(uint8_t));
+  result.keypoint_confidence.resize(keypoint_count_);
+  const auto append = [](const Extremum &source,
+                         KeypointQualityOverviewTrace *destination) {
+    if (!source.has_value) {
+      return;
+    }
+    const auto append_value = [&](int64_t frame, double value) {
+      destination->camera_frames.push_back(frame);
+      destination->values.push_back(value);
+    };
+    if (source.minimum_frame < source.maximum_frame) {
+      append_value(source.minimum_frame, source.minimum);
+      append_value(source.maximum_frame, source.maximum);
+    } else if (source.maximum_frame < source.minimum_frame) {
+      append_value(source.maximum_frame, source.maximum);
+      append_value(source.minimum_frame, source.minimum);
+    } else {
+      append_value(source.minimum_frame, source.minimum);
+      if (source.maximum != source.minimum) {
+        append_value(source.maximum_frame, source.maximum);
+      }
+    }
+  };
+  for (size_t bin = 0; bin < bin_count_; ++bin) {
+    append(pose_extrema_[bin], &result.pose_confidence);
+    for (size_t point = 0; point < keypoint_count_; ++point) {
+      append(keypoint_extrema_[bin * keypoint_count_ + point],
+             &result.keypoint_confidence[point]);
+    }
+  }
+  result.status = KeypointQualityTimelineStatus::Ready;
+  return result;
+}
+
+KeypointQualityTimelineOverview
+KeypointQualityTimelineRepository::resolveOverview(
+    size_t maximum_points_per_trace, size_t maximum_decoded_bytes,
+    const std::function<bool()> &cancelled) const {
+  (void)maximum_points_per_trace;
+  (void)maximum_decoded_bytes;
+  (void)cancelled;
+  KeypointQualityTimelineOverview result;
+  result.error = "Keypoint-quality overview is not supported";
+  return result;
+}
 
 KeypointQualityTimelineWindow buildKeypointQualityTimelineWindow(
     const KeypointQualityTimelineDescriptor &descriptor,
@@ -250,12 +442,13 @@ KeypointQualityTimelineWindow buildKeypointQualityTimelineWindow(
     std::vector<std::vector<double>> pose_values(pose_metrics);
     for (size_t row = begin; row < end; ++row) {
       const float pose_confidence = columns.pose_confidences[row];
-      if (!std::isfinite(pose_confidence) || pose_confidence < 0.0f ||
-          pose_confidence > 1.0f) {
+      if (std::isfinite(pose_confidence) && pose_confidence >= 0.0f &&
+          pose_confidence <= 1.0f) {
+        pose_confidences.push_back(pose_confidence);
+      } else if (!std::isnan(pose_confidence) || columns.source_success[row]) {
         window.error = "Keypoint pose confidence violates its contract";
         return window;
       }
-      pose_confidences.push_back(pose_confidence);
       summary.source_success_count += columns.source_success[row] != 0;
       summary.refined_success_count += columns.refined_success[row] != 0;
       summary.usable_count += columns.usable_keypoints[row] != 0;
@@ -292,14 +485,19 @@ KeypointQualityTimelineWindow buildKeypointQualityTimelineWindow(
       for (size_t point = 0; point < keypoints; ++point) {
         const size_t point_index = row * keypoints + point;
         const float confidence = columns.keypoint_confidences[point_index];
-        if (!std::isfinite(confidence) || confidence < 0.0f ||
-            confidence > 1.0f ||
-            (columns.keypoint_quality_flags[point_index] &
+        if ((columns.keypoint_quality_flags[point_index] &
              ~known_keypoint_flags) != 0) {
-          window.error = "Keypoint confidence or quality flag is invalid";
+          window.error = "Keypoint quality flag is invalid";
           return window;
         }
-        keypoint_confidences[point].push_back(confidence);
+        if (std::isfinite(confidence) && confidence >= 0.0f &&
+            confidence <= 1.0f) {
+          keypoint_confidences[point].push_back(confidence);
+        } else if (!std::isnan(confidence) ||
+                   columns.keypoint_valid[point_index]) {
+          window.error = "Keypoint confidence violates its contract";
+          return window;
+        }
         summary.valid_keypoint_counts[point] +=
             columns.keypoint_valid[point_index] != 0;
         summary.proposed_valid_keypoint_counts[point] +=

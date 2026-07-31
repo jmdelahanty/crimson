@@ -4353,6 +4353,9 @@ int main(int argc, char **argv) {
         }
         std::shared_ptr<const crimson::timeline::KeypointQualityTimelineWindow>
             keypoint_quality_timeline_window;
+        std::shared_ptr<
+            const crimson::timeline::KeypointQualityTimelineOverview>
+            keypoint_quality_timeline_overview;
         if (keypoint_quality_requested &&
             keypoint_quality_timeline_state ==
                 AppleKeypointQualityLoadState::Ready &&
@@ -4360,14 +4363,24 @@ int main(int argc, char **argv) {
             viewer_stats.requested_frame <
                 static_cast<int64_t>(
                     keypoint_quality_timeline_descriptor.frame_count)) {
-          if (!keypoint_quality_timeline_buffer.requestFrame(
-                  viewer_stats.requested_frame, pending_camera_discontinuity,
-                  &keypoint_quality_timeline_error)) {
+          const bool requested =
+              keypoint_quality_timeline_controls.full_recording
+                  ? keypoint_quality_timeline_buffer.requestOverview(
+                        1200, 8 * 1024 * 1024,
+                        &keypoint_quality_timeline_error)
+                  : keypoint_quality_timeline_buffer.requestFrame(
+                        viewer_stats.requested_frame,
+                        pending_camera_discontinuity,
+                        &keypoint_quality_timeline_error);
+          if (!requested) {
             keypoint_quality_timeline_state =
                 AppleKeypointQualityLoadState::Failed;
             std::fprintf(stderr,
                          "[AppleKeypointQualityTimeline] Request failed: %s\n",
                          keypoint_quality_timeline_error.c_str());
+          } else if (keypoint_quality_timeline_controls.full_recording) {
+            keypoint_quality_timeline_overview =
+                keypoint_quality_timeline_buffer.overview();
           } else {
             keypoint_quality_timeline_window =
                 keypoint_quality_timeline_buffer.window(
@@ -4583,6 +4596,7 @@ int main(int argc, char **argv) {
                     ? &keypoint_quality_timeline_descriptor
                     : nullptr,
                 keypoint_quality_timeline_window,
+                keypoint_quality_timeline_overview,
                 keypoint_quality_timeline_error,
                 viewer_stats.presented_frame >= 0
                     ? viewer_stats.presented_frame
@@ -6273,7 +6287,11 @@ int main(int argc, char **argv) {
         "[AppleKeypointQualityTimeline] requests=%llu cache_hits=%llu "
         "resolved=%llu failed=%llu discarded=%llu peak_cached=%zu "
         "peak_pending=%zu range_reads=%llu rows=%llu decoded_bytes=%llu "
+        "overview_requests=%llu overview_cache_hits=%llu "
+        "overview_resolved=%llu overview_failed=%llu overview_discarded=%llu "
+        "overview_reads=%llu overview_rows=%llu overview_decoded_bytes=%llu "
         "peak_concurrent_fields=%zu max_resolve_ms=%.1f max_read_ms=%.1f "
+        "max_overview_resolve_ms=%.1f max_overview_read_ms=%.1f "
         "error=%s\n",
         static_cast<unsigned long long>(
             final_keypoint_quality_buffer_metrics.requests),
@@ -6293,9 +6311,27 @@ int main(int argc, char **argv) {
             final_keypoint_quality_repository_metrics.rows_read),
         static_cast<unsigned long long>(
             final_keypoint_quality_repository_metrics.decoded_bytes),
+        static_cast<unsigned long long>(
+            final_keypoint_quality_buffer_metrics.overview_requests),
+        static_cast<unsigned long long>(
+            final_keypoint_quality_buffer_metrics.overview_cache_hits),
+        static_cast<unsigned long long>(
+            final_keypoint_quality_buffer_metrics.resolved_overviews),
+        static_cast<unsigned long long>(
+            final_keypoint_quality_buffer_metrics.failed_overviews),
+        static_cast<unsigned long long>(
+            final_keypoint_quality_buffer_metrics.discarded_overviews),
+        static_cast<unsigned long long>(
+            final_keypoint_quality_repository_metrics.overview_reads),
+        static_cast<unsigned long long>(
+            final_keypoint_quality_repository_metrics.overview_rows_read),
+        static_cast<unsigned long long>(
+            final_keypoint_quality_repository_metrics.overview_decoded_bytes),
         final_keypoint_quality_repository_metrics.peak_concurrent_field_reads,
         final_keypoint_quality_buffer_metrics.maximum_resolve_ms,
         final_keypoint_quality_repository_metrics.maximum_range_read_ms,
+        final_keypoint_quality_buffer_metrics.maximum_overview_resolve_ms,
+        final_keypoint_quality_repository_metrics.maximum_overview_read_ms,
         final_keypoint_quality_buffer_metrics.last_error.c_str());
   }
 

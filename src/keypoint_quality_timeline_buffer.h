@@ -14,9 +14,15 @@ struct KeypointQualityTimelineBufferMetrics {
   uint64_t resolved_windows = 0;
   uint64_t failed_windows = 0;
   uint64_t discarded_results = 0;
+  uint64_t overview_requests = 0;
+  uint64_t overview_cache_hits = 0;
+  uint64_t resolved_overviews = 0;
+  uint64_t failed_overviews = 0;
+  uint64_t discarded_overviews = 0;
   size_t peak_cached_windows = 0;
   size_t peak_pending_windows = 0;
   double maximum_resolve_ms = 0.0;
+  double maximum_overview_resolve_ms = 0.0;
   std::string last_error;
 };
 
@@ -42,6 +48,11 @@ public:
                     std::string *error = nullptr);
   std::shared_ptr<const crimson::timeline::KeypointQualityTimelineWindow>
   window(int64_t frame) const;
+  bool requestOverview(size_t maximum_points_per_trace = 1200,
+                       size_t maximum_decoded_bytes = 8 * 1024 * 1024,
+                       std::string *error = nullptr);
+  std::shared_ptr<const crimson::timeline::KeypointQualityTimelineOverview>
+  overview() const;
   crimson::timeline::KeypointQualityTimelineDescriptor descriptor() const;
   KeypointQualityTimelineBufferMetrics metrics() const;
   crimson::timeline::KeypointQualityTimelineRepositoryMetrics
