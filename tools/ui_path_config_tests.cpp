@@ -77,7 +77,7 @@ void writeConfig(const fs::path& path,
 
 int main() {
     const fs::path test_root =
-        fs::temp_directory_path() /
+        fs::weakly_canonical(fs::temp_directory_path()) /
         ("crimson-ui-path-config-tests-" +
          std::to_string(std::chrono::steady_clock::now()
                             .time_since_epoch()
@@ -165,6 +165,33 @@ int main() {
                 "explicit config did not override user config");
         require(loaded.loaded_from == explicit_path.string(),
                 "loader did not report the explicit config source");
+
+        const fs::path recording_root =
+            test_root / "mounted-share" / "recording-identity";
+        const fs::path archive_path =
+            recording_root / "zarr" / "analysis.zarr";
+        const fs::path relocated_video = recording_root / "cams" / "main.mp4";
+        fs::create_directories(archive_path);
+        fs::create_directories(relocated_video.parent_path());
+        {
+            std::ofstream video(relocated_video);
+            video << "fixture";
+            require(static_cast<bool>(video),
+                    "failed to write relocated video fixture");
+        }
+        const auto resolved_video = ResolveAffiliatedVideoPath(
+            "/groups/lab/recording-identity/cams/main.mp4",
+            archive_path.string());
+        require(resolved_video.has_value(),
+                "relocated absolute affiliated video was not resolved");
+        require(*resolved_video == relocated_video,
+                "relocated affiliated video resolved to the wrong path");
+
+        const auto unrelated_video = ResolveAffiliatedVideoPath(
+            "/groups/lab/different-recording/cams/main.mp4",
+            archive_path.string());
+        require(!unrelated_video.has_value(),
+                "absolute video from a different recording was remapped");
 
         fs::remove_all(test_root);
         std::cout << "ui_path_config_tests: PASS" << std::endl;

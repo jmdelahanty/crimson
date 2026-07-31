@@ -59,6 +59,29 @@ void AppendUniquePath(std::vector<fs::path>& paths, const fs::path& candidate) {
     }
 }
 
+std::optional<fs::path> RelocateStoredPathToRecordingRoot(
+    const fs::path& stored_path,
+    const fs::path& recording_root) {
+    if (!stored_path.is_absolute() || recording_root.empty() ||
+        recording_root.filename().empty()) {
+        return std::nullopt;
+    }
+
+    bool found_recording = false;
+    fs::path suffix;
+    for (const auto& component : stored_path) {
+        if (!found_recording) {
+            found_recording = component == recording_root.filename();
+            continue;
+        }
+        suffix /= component;
+    }
+    if (!found_recording || suffix.empty()) {
+        return std::nullopt;
+    }
+    return recording_root / suffix;
+}
+
 std::optional<fs::path> GetHomeDirectory() {
     if (auto home = GetEnvValue("HOME")) {
         return fs::path(*home);
@@ -621,7 +644,12 @@ std::optional<fs::path> ResolveAffiliatedVideoPath(
             recording_root = archive_parent.parent_path();
         }
 
-        if (!hint.is_absolute()) {
+        if (hint.is_absolute()) {
+            if (auto relocated =
+                    RelocateStoredPathToRecordingRoot(hint, recording_root)) {
+                candidates.push_back(*relocated);
+            }
+        } else {
             candidates.push_back(archive_root / hint);
             candidates.push_back(archive_parent / hint);
             if (!recording_root.empty()) {
