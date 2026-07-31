@@ -5507,11 +5507,14 @@ int main(int argc, char **argv) {
           camera_context_input.chaser_bboxes = &chaser_bboxes;
           camera_context_input.chaser_states = &chaser_states;
           camera_context_input.camera_params = &camera_params[j];
+          const int64_t transport_frame_count =
+              std::max<int64_t>(0, currentPlaybackFrameCount());
           camera_context_input.transport_controls =
               CameraViewTransportControlsContext{
-                  ps.to_display_frame_number,
-                  dc_context->total_num_frame,
-                  dc_context->estimated_num_frames,
+                  ps.play_video ? current_frame_num
+                                : ps.to_display_frame_number,
+                  transport_frame_count,
+                  std::max<int64_t>(0, transport_frame_count - 1),
                   video_fps,
                   ps.play_video,
                   ps.slider_frame_number,
@@ -6531,82 +6534,84 @@ int main(int argc, char **argv) {
           }
           const CameraViewTransportControlsResult &camera_transport_result =
               camera_view_result.transport_result;
-          ps.slider_frame_number = camera_transport_result.slider_frame_number;
+          ps.slider_frame_number = static_cast<int>(std::clamp<int64_t>(
+              camera_transport_result.slider_frame_number, 0,
+              std::numeric_limits<int>::max()));
           ps.slider_just_changed = camera_transport_result.slider_just_changed;
-          if (camera_transport_result.toggle_playback) {
-            const auto intent = crimson::workspace::makePlaybackIntent(
-                crimson::workspace::Command::TogglePlayback,
-                workspaceCapabilities(), current_frame_num,
-                std::max(1, dc_context->total_num_frame));
-            if (intent.has_value()) {
-              applyPlaybackToggleForPerf();
-              writePlaybackTraceEvent("toggle_playback",
-                                      json{{"source", "camera_controls"}});
-            }
+          const auto &transport_intent = camera_transport_result.intent;
+          if (camera_transport_result.action ==
+                  CameraViewTransportAction::TogglePlayback &&
+              transport_intent.has_value()) {
+            applyPlaybackToggleForPerf();
+            writePlaybackTraceEvent("toggle_playback",
+                                    json{{"source", "camera_controls"}});
           }
-          if (camera_transport_result.step_delta != 0) {
-            const int step_base =
-                ps.play_video ? current_frame_num : ps.to_display_frame_number;
-            const auto intent = crimson::workspace::makePlaybackIntent(
-                camera_transport_result.step_delta < 0
-                    ? crimson::workspace::Command::StepBackward
-                    : crimson::workspace::Command::StepForward,
-                workspaceCapabilities(), step_base,
-                std::max(1, dc_context->total_num_frame), std::nullopt,
-                std::abs(camera_transport_result.step_delta));
-            if (intent.has_value()) {
-              writeClippedPlaybackStateEvent(
-                  "step_request",
-                  json{{"source", "camera_controls"},
-                       {"phase", "before"},
-                       {"delta", camera_transport_result.step_delta}},
-                  true);
-              writePlaybackTraceEvent(
-                  "step_request",
-                  json{{"source", "camera_controls"},
-                       {"phase", "before"},
-                       {"delta", camera_transport_result.step_delta}});
-              playback_session_controller.seekToFrame(
-                  static_cast<int>(intent->target_frame), true);
-              writeClippedPlaybackStateEvent(
-                  "step_request",
-                  json{{"source", "camera_controls"},
-                       {"phase", "after"},
-                       {"delta", camera_transport_result.step_delta}},
-                  true);
-              writePlaybackTraceEvent(
-                  "step_request",
-                  json{{"source", "camera_controls"},
-                       {"phase", "after"},
-                       {"delta", camera_transport_result.step_delta}});
-            }
+          const bool transport_step =
+              camera_transport_result.action ==
+                  CameraViewTransportAction::StepBackward ||
+              camera_transport_result.action ==
+                  CameraViewTransportAction::StepForward;
+          if (transport_step && transport_intent.has_value()) {
+            writeClippedPlaybackStateEvent(
+                "step_request",
+                json{{"source", "camera_controls"},
+                     {"phase", "before"},
+                     {"delta", camera_transport_result.step_delta}},
+                true);
+            writePlaybackTraceEvent(
+                "step_request",
+                json{{"source", "camera_controls"},
+                     {"phase", "before"},
+                     {"delta", camera_transport_result.step_delta}});
+            const int target_frame = static_cast<int>(std::clamp<int64_t>(
+                transport_intent->target_frame, 0,
+                std::numeric_limits<int>::max()));
+            playback_session_controller.seekToFrame(target_frame, true);
+            writeClippedPlaybackStateEvent(
+                "step_request",
+                json{{"source", "camera_controls"},
+                     {"phase", "after"},
+                     {"delta", camera_transport_result.step_delta}},
+                true);
+            writePlaybackTraceEvent(
+                "step_request",
+                json{{"source", "camera_controls"},
+                     {"phase", "after"},
+                     {"delta", camera_transport_result.step_delta}});
           }
-          if (camera_transport_result.seek_target_frame.has_value()) {
+          const bool transport_seek =
+              camera_transport_result.action ==
+                  CameraViewTransportAction::Restart ||
+              camera_transport_result.action ==
+                  CameraViewTransportAction::SeekPreview ||
+              camera_transport_result.action ==
+                  CameraViewTransportAction::SeekCommit;
+          if (transport_seek && transport_intent.has_value()) {
+            const int target_frame = static_cast<int>(std::clamp<int64_t>(
+                transport_intent->target_frame, 0,
+                std::numeric_limits<int>::max()));
             writeClippedPlaybackStateEvent(
                 "seek_request",
                 json{{"source", "camera_controls"},
                      {"phase", "before"},
-                     {"target_frame",
-                      *camera_transport_result.seek_target_frame},
+                     {"target_frame", target_frame},
                      {"force_inaccurate",
                       camera_transport_result.force_inaccurate_seek}},
                 true);
             writePlaybackTraceEvent(
                 "seek_request",
                 json{{"source", "camera_controls"},
-                     {"target_frame",
-                      *camera_transport_result.seek_target_frame},
+                     {"target_frame", target_frame},
                      {"force_inaccurate",
                       camera_transport_result.force_inaccurate_seek}});
             playback_session_controller.seekToFrame(
-                *camera_transport_result.seek_target_frame, true,
+                target_frame, true,
                 camera_transport_result.force_inaccurate_seek);
             writeClippedPlaybackStateEvent(
                 "seek_request",
                 json{{"source", "camera_controls"},
                      {"phase", "after"},
-                     {"target_frame",
-                      *camera_transport_result.seek_target_frame},
+                     {"target_frame", target_frame},
                      {"force_inaccurate",
                       camera_transport_result.force_inaccurate_seek}},
                 true);
@@ -6617,11 +6622,12 @@ int main(int argc, char **argv) {
 
       const CameraViewPlaybackShortcutsResult playback_shortcuts =
           handleCameraViewPlaybackShortcuts();
+      const int64_t shortcut_frame_count =
+          std::max<int64_t>(1, currentPlaybackFrameCount());
       if (playback_shortcuts.toggle_playback) {
         const auto intent = crimson::workspace::makePlaybackIntent(
             crimson::workspace::Command::TogglePlayback,
-            workspaceCapabilities(), current_frame_num,
-            std::max(1, dc_context->total_num_frame));
+            workspaceCapabilities(), current_frame_num, shortcut_frame_count);
         if (intent.has_value()) {
           applyPlaybackToggleForPerf();
           writePlaybackTraceEvent("toggle_playback",
@@ -6635,8 +6641,8 @@ int main(int argc, char **argv) {
             playback_shortcuts.step_delta < 0
                 ? crimson::workspace::Command::StepBackward
                 : crimson::workspace::Command::StepForward,
-            workspaceCapabilities(), step_base,
-            std::max(1, dc_context->total_num_frame), std::nullopt,
+            workspaceCapabilities(), step_base, shortcut_frame_count,
+            std::nullopt,
             std::abs(playback_shortcuts.step_delta));
         if (intent.has_value()) {
           writeClippedPlaybackStateEvent(
@@ -6649,8 +6655,9 @@ int main(int argc, char **argv) {
               "step_request", json{{"source", "shortcut"},
                                    {"phase", "before"},
                                    {"delta", playback_shortcuts.step_delta}});
-          playback_session_controller.seekToFrame(
-              static_cast<int>(intent->target_frame), true);
+          const int target_frame = static_cast<int>(std::clamp<int64_t>(
+              intent->target_frame, 0, std::numeric_limits<int>::max()));
+          playback_session_controller.seekToFrame(target_frame, true);
           writeClippedPlaybackStateEvent(
               "step_request",
               json{{"source", "shortcut"},

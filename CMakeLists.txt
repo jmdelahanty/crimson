@@ -2892,6 +2892,7 @@ if(CRIMSON_BUILD_MACOS_APP)
     set(CRIMSON_MACOS_APP_SOURCES
         src/platform/macos/crimson_macos_main.mm
         src/platform/macos/apple_video_viewer_ui.mm
+        src/gui/camera_view_transport_controls.cpp
         src/gui/quality_timeline_session.cpp
         src/gui/quality_timeline_window.cpp
         src/gui/session_loading_modal.cpp
@@ -2952,6 +2953,7 @@ if(CRIMSON_BUILD_MACOS_APP)
 
     add_executable(imgui_semantic_snapshot_tests
         tools/imgui_semantic_snapshot_tests.cpp
+        src/gui/camera_view_transport_controls.cpp
         src/gui/session_loading_modal.cpp
         src/imgui_semantic_snapshot.cpp
         ${CRIMSON_MACOS_IMGUI_DIR}/imgui.cpp
@@ -2965,9 +2967,11 @@ if(CRIMSON_BUILD_MACOS_APP)
     target_include_directories(imgui_semantic_snapshot_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CRIMSON_MACOS_IMGUI_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/IconFontCppHeaders
     )
     target_link_libraries(imgui_semantic_snapshot_tests PRIVATE
         crimson_runtime_contracts
+        crimson_workspace_contracts
         nlohmann_json::nlohmann_json)
     add_test(NAME imgui_semantic_snapshot_tests
         COMMAND imgui_semantic_snapshot_tests)

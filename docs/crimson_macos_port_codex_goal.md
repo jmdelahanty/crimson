@@ -1099,6 +1099,18 @@ Linux/NVIDIA build pass; native Windows validation remains pending. The
 checkpoint is documented in
 `docs/crimson_shared_quality_timeline_checkpoint_2026-07-31.md`.
 
+Camera transport presentation is now shared as well. One backend-neutral ImGui
+component owns the five transport commands, tooltips, 64-bit frame slider,
+time readout, preview-versus-commit action identity, bounded playback intents,
+and portable shortcut capture. The Linux/Windows adapter retains its paused
+decoder-ring behavior, approximate drag seeks, exact committed seeks, clipped
+media routing, and telemetry. The macOS adapter retains clock-only drag
+preview, AVFoundation resident-buffer selection and seek fallback, and the
+buffer-preserving pause policy. Legacy Linux decoder fields are narrowed only
+at that adapter boundary; the shared contract does not impose a 32-bit frame
+limit. Details are in
+`docs/crimson_shared_camera_transport_checkpoint_2026-07-31.md`.
+
 Phase 5 also remains open for production-tail acceptance, movement-trail
 coordinate policy, any required chaser-data densification, and edit/review
 workflows whose shared storage contracts are still changing. Those blockers

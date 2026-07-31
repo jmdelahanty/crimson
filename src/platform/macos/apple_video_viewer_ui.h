@@ -8,6 +8,7 @@
 #include "crop_presentation_coordinator.h"
 #include "detection_quality_timeline.h"
 #include "eye_angle_timeline.h"
+#include "gui/camera_view_transport_controls.h"
 #include "gui/quality_timeline_window.h"
 #include "keypoint_quality_timeline.h"
 #include "platform/macos/apple_workspace_layout.h"
@@ -93,6 +94,8 @@ struct AppleDiagnosticsResult {
 
 struct AppleCameraViewState {
   crimson::workspace::CameraView source_region;
+  int64_t transport_slider_frame = 0;
+  bool transport_slider_active = false;
 };
 
 struct AppleFrameInspectPresentationState {

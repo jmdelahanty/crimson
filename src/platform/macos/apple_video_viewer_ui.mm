@@ -323,22 +323,6 @@ AppleMetalVideoViewport contentViewport(const ImVec2 &position,
   return {fitted.x, fitted.y, fitted.width, fitted.height};
 }
 
-std::string formatTransportTime(double seconds_value) {
-  int seconds = static_cast<int>(std::max(0.0, seconds_value));
-  const int hours = seconds / 3600;
-  seconds -= hours * 3600;
-  const int minutes = seconds / 60;
-  seconds -= minutes * 60;
-  char buffer[32];
-  if (hours > 0) {
-    std::snprintf(buffer, sizeof(buffer), "%d:%02d:%02d", hours, minutes,
-                  seconds);
-  } else {
-    std::snprintf(buffer, sizeof(buffer), "%02d:%02d", minutes, seconds);
-  }
-  return buffer;
-}
-
 std::optional<std::string> chooseNativePath(const std::string &title,
                                             const std::string &start_folder,
                                             bool directory,
@@ -818,103 +802,54 @@ AppleVideoControlResult drawAppleCameraViewWindow(
     }
   }
 
-  auto apply_command = [&](crimson::workspace::Command command,
-                           int64_t magnitude = 1,
-                           std::optional<int64_t> target = std::nullopt) {
+  const auto apply_intent = [&](
+                                const crimson::workspace::PlaybackIntent &intent) {
+    result.camera_discontinuity =
+        applyViewerPlaybackIntent(intent, clock, playback) ||
+        result.camera_discontinuity;
+  };
+  const auto apply_command = [&](crimson::workspace::Command command,
+                                 int64_t magnitude = 1,
+                                 std::optional<int64_t> target = std::nullopt) {
     const auto intent = crimson::workspace::makePlaybackIntent(
         command, viewerPlaybackCapabilities(clock), clock.requestedFrame(),
         clock.frameCount(), target, magnitude);
     if (intent.has_value()) {
-      result.camera_discontinuity =
-          applyViewerPlaybackIntent(*intent, clock, playback) ||
-          result.camera_discontinuity;
+      apply_intent(*intent);
     }
   };
 
-  const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
-  if (ImGui::Button(ICON_FK_FAST_BACKWARD)) {
-    apply_command(crimson::workspace::Command::StepBackward, 10);
+  if (!view_state->transport_slider_active) {
+    view_state->transport_slider_frame = stats.requested_frame;
   }
-  showItemTooltip("Back 10 frames");
-  ImGui::SameLine(0.0f, spacing);
-  if (ImGui::Button(ICON_FK_STEP_BACKWARD)) {
-    apply_command(crimson::workspace::Command::StepBackward);
-  }
-  showItemTooltip("Previous frame");
-  ImGui::SameLine(0.0f, spacing);
-  const ImVec4 play_color = clock.isPlaying() ? ImVec4(0.8f, 0.3f, 0.3f, 1.0f)
-                                              : ImVec4(0.2f, 0.6f, 0.2f, 1.0f);
-  ImGui::PushStyleColor(ImGuiCol_Button, play_color);
-  if (ImGui::Button(clock.isPlaying() ? ICON_FK_PAUSE : ICON_FK_PLAY)) {
-    apply_command(crimson::workspace::Command::TogglePlayback);
-  }
-  ImGui::PopStyleColor();
-  showItemTooltip(clock.isPlaying() ? "Pause" : "Play");
-  ImGui::SameLine(0.0f, spacing);
-  if (ImGui::Button(ICON_FK_STEP_FORWARD)) {
-    apply_command(crimson::workspace::Command::StepForward);
-  }
-  showItemTooltip("Next frame");
-  ImGui::SameLine(0.0f, spacing);
-  if (ImGui::Button(ICON_FK_FAST_FORWARD)) {
-    apply_command(crimson::workspace::Command::StepForward, 10);
-  }
-  showItemTooltip("Forward 10 frames");
-  ImGui::SameLine();
-
-  static int timeline_frame = 0;
-  static bool timeline_active = false;
-  if (!timeline_active) {
-    timeline_frame = static_cast<int>(stats.requested_frame);
-  }
-  const int maximum_frame =
-      static_cast<int>(std::max<int64_t>(0, clock.frameCount() - 1));
-  const std::string current_time = formatTransportTime(
-      clock.framesPerSecond() > 0.0
-          ? static_cast<double>(timeline_frame) / clock.framesPerSecond()
-          : 0.0);
-  const std::string total_time = formatTransportTime(
-      clock.framesPerSecond() > 0.0
-          ? static_cast<double>(maximum_frame) / clock.framesPerSecond()
-          : 0.0);
-  const std::string time_label = current_time + " / " + total_time;
-  const float time_width = ImGui::CalcTextSize(time_label.c_str()).x;
-  ImGui::SetNextItemWidth(std::max(60.0f, ImGui::GetContentRegionAvail().x -
-                                              time_width -
-                                              ImGui::GetStyle().ItemSpacing.x));
-  if (ImGui::SliderInt("##timeline", &timeline_frame, 0, maximum_frame, "")) {
-    timeline_active = true;
-    const auto intent = crimson::workspace::makePlaybackIntent(
-        crimson::workspace::Command::Seek, viewerPlaybackCapabilities(clock),
-        clock.requestedFrame(), clock.frameCount(), timeline_frame);
-    if (intent.has_value()) {
-      clock.pause();
-      clock.seek(intent->target_frame);
+  const int64_t maximum_frame = std::max<int64_t>(0, clock.frameCount() - 1);
+  const CameraViewTransportControlsResult transport =
+      drawCameraViewTransportControls(CameraViewTransportControlsContext{
+          stats.requested_frame,
+          clock.frameCount(),
+          maximum_frame,
+          clock.framesPerSecond(),
+          clock.isPlaying(),
+          view_state->transport_slider_frame,
+          interactive,
+      });
+  view_state->transport_slider_frame = transport.slider_frame_number;
+  view_state->transport_slider_active = transport.slider_active;
+  if (transport.intent.has_value()) {
+    if (transport.action == CameraViewTransportAction::SeekPreview) {
+      clock.apply(crimson::playback::PlaybackTransportCommand::pause());
+      clock.apply(crimson::playback::PlaybackTransportCommand::seek(
+          transport.intent->target_frame));
+    } else {
+      apply_intent(*transport.intent);
     }
   }
-  if (timeline_active && ImGui::IsItemDeactivatedAfterEdit()) {
-    apply_command(crimson::workspace::Command::Seek, 1, timeline_frame);
-    timeline_active = false;
-  }
-  ImGui::SameLine();
-  ImGui::TextUnformatted(time_label.c_str());
   if (!interactive) {
     ImGui::EndDisabled();
   }
   ImGui::End();
 
-  const ImGuiIO &io = ImGui::GetIO();
-  const auto shortcuts = crimson::workspace::resolvePlaybackShortcut(
-      crimson::workspace::PlaybackShortcutInput{
-          interactive,
-          io.WantTextInput,
-          ImGui::IsKeyPressed(ImGuiKey_Space, false),
-          ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false),
-          ImGui::IsKeyPressed(ImGuiKey_RightArrow, false),
-          ImGui::IsKeyPressed(ImGuiKey_Comma, false),
-          ImGui::IsKeyPressed(ImGuiKey_Period, false),
-          io.KeyShift,
-      });
+  const auto shortcuts = handleCameraViewPlaybackShortcuts(interactive);
   if (shortcuts.toggle_playback) {
     apply_command(crimson::workspace::Command::TogglePlayback);
   }

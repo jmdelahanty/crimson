@@ -1,3 +1,4 @@
+#include "gui/camera_view_transport_controls.h"
 #include "gui/session_loading_modal.h"
 #include "imgui.h"
 #include "imgui_semantic_snapshot.h"
@@ -153,10 +154,47 @@ bool testSessionLoadingModalSnapshot() {
   return true;
 }
 
+bool testCameraTransportUses64BitFrameState() {
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO &io = ImGui::GetIO();
+  io.DisplaySize = ImVec2(1000.0f, 240.0f);
+  io.DeltaTime = 1.0f / 60.0f;
+  unsigned char *pixels = nullptr;
+  int width = 0;
+  int height = 0;
+  io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+
+  constexpr int64_t kFrameCount = 5'000'000'001LL;
+  constexpr int64_t kCurrentFrame = 3'500'000'000LL;
+  ImGui::NewFrame();
+  ImGui::SetNextWindowSize(ImVec2(960.0f, 180.0f));
+  ImGui::Begin("Transport fixture");
+  const auto result =
+      drawCameraViewTransportControls(CameraViewTransportControlsContext{
+          kCurrentFrame,
+          kFrameCount,
+          kFrameCount - 1,
+          700.0,
+          false,
+          kCurrentFrame,
+          true,
+      });
+  ImGui::End();
+  ImGui::Render();
+
+  CHECK(result.slider_frame_number == kCurrentFrame);
+  CHECK(result.action == CameraViewTransportAction::None);
+  CHECK(!result.intent.has_value());
+  ImGui::DestroyContext();
+  return true;
+}
+
 } // namespace
 
 int main() {
-  if (!testSemanticSnapshot() || !testSessionLoadingModalSnapshot()) {
+  if (!testSemanticSnapshot() || !testSessionLoadingModalSnapshot() ||
+      !testCameraTransportUses64BitFrameState()) {
     return 1;
   }
   std::cout << "imgui_semantic_snapshot_tests: PASS\n";
