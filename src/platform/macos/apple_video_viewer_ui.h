@@ -95,6 +95,7 @@ struct AppleCameraViewState {
 };
 
 struct AppleFrameInspectPresentationState {
+  crimson::workspace::FrameInspectViewSyncState tab_sync;
   crimson::crop::RoiInsetPresentationState roi_inset;
   bool show_motion_trail = true;
   float motion_trail_seconds = 2.0f;

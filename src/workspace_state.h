@@ -56,6 +56,16 @@ enum class FrameInspectView : uint8_t {
   EyeAngles,
 };
 
+struct FrameInspectViewSyncState {
+  std::optional<FrameInspectView> applied_view;
+
+  bool shouldApply(FrameInspectView requested_view) const {
+    return !applied_view.has_value() || *applied_view != requested_view;
+  }
+
+  void observe(FrameInspectView active_view) { applied_view = active_view; }
+};
+
 enum class PlaybackIntentKind : uint8_t {
   Play,
   Pause,

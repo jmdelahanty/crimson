@@ -2582,16 +2582,22 @@ void drawAppleFrameInspectWindow(
     ImGui::End();
     return;
   }
+  const auto requested_view = selections->frame_inspect_view;
+  const bool apply_requested_view =
+      presentation->tab_sync.shouldApply(requested_view);
   const auto selected_flags = [&](crimson::workspace::FrameInspectView view) {
-    return selections->frame_inspect_view == view
+    return apply_requested_view && requested_view == view
                ? ImGuiTabItemFlags_SetSelected
                : ImGuiTabItemFlags_None;
+  };
+  const auto observe_view = [&](crimson::workspace::FrameInspectView view) {
+    selections->frame_inspect_view = view;
+    presentation->tab_sync.observe(view);
   };
   if (ImGui::BeginTabItem(
           "Detect", nullptr,
           selected_flags(crimson::workspace::FrameInspectView::Detect))) {
-    selections->frame_inspect_view =
-        crimson::workspace::FrameInspectView::Detect;
+    observe_view(crimson::workspace::FrameInspectView::Detect);
     ImGui::TextUnformatted("Read-only presentation");
     if (detection_descriptor == nullptr || !detection_descriptor->ready()) {
       ImGui::TextDisabled("No canonical or refined detection run is open.");
@@ -2686,8 +2692,7 @@ void drawAppleFrameInspectWindow(
   if (ImGui::BeginTabItem(
           "Keypoints", nullptr,
           selected_flags(crimson::workspace::FrameInspectView::Keypoints))) {
-    selections->frame_inspect_view =
-        crimson::workspace::FrameInspectView::Keypoints;
+    observe_view(crimson::workspace::FrameInspectView::Keypoints);
     ImGui::TextUnformatted("Read-only presentation");
     drawAvailableCheckbox("Keypoint markers", &controls->show_keypoints,
                           availability.keypoints);
@@ -2834,8 +2839,7 @@ void drawAppleFrameInspectWindow(
   if (ImGui::BeginTabItem(
           "Subject Masks", nullptr,
           selected_flags(crimson::workspace::FrameInspectView::EyeMasks))) {
-    selections->frame_inspect_view =
-        crimson::workspace::FrameInspectView::EyeMasks;
+    observe_view(crimson::workspace::FrameInspectView::EyeMasks);
     drawAvailableCheckbox("Show masks", &controls->show_subject_masks,
                           availability.subject_masks);
 
@@ -2914,8 +2918,7 @@ void drawAppleFrameInspectWindow(
   if (ImGui::BeginTabItem(
           "Eye Angles", nullptr,
           selected_flags(crimson::workspace::FrameInspectView::EyeAngles))) {
-    selections->frame_inspect_view =
-        crimson::workspace::FrameInspectView::EyeAngles;
+    observe_view(crimson::workspace::FrameInspectView::EyeAngles);
     const bool detailed = controls->mask_mode !=
                           crimson::overlay::ReadOnlyMaskOverlayMode::Realtime;
     drawAvailableCheckbox("Show eye geometry", &controls->show_eye_geometry,

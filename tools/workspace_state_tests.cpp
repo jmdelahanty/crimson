@@ -60,6 +60,21 @@ bool testDefaultWindowVisibility() {
   return true;
 }
 
+bool testFrameInspectViewSynchronization() {
+  using namespace crimson::workspace;
+  FrameInspectViewSyncState sync;
+  CHECK(sync.shouldApply(FrameInspectView::Detect));
+  sync.observe(FrameInspectView::Detect);
+  CHECK(!sync.shouldApply(FrameInspectView::Detect));
+
+  sync.observe(FrameInspectView::Keypoints);
+  CHECK(!sync.shouldApply(FrameInspectView::Keypoints));
+  CHECK(sync.shouldApply(FrameInspectView::EyeMasks));
+  sync.observe(FrameInspectView::EyeMasks);
+  CHECK(!sync.shouldApply(FrameInspectView::EyeMasks));
+  return true;
+}
+
 bool testCommandEnablementAndPlaybackIntent() {
   using namespace crimson::workspace;
   WorkspaceState state;
@@ -233,6 +248,7 @@ bool testStateRestoration() {
 
 int main() {
   if (!testDefaultWindowVisibility() ||
+      !testFrameInspectViewSynchronization() ||
       !testCommandEnablementAndPlaybackIntent() ||
       !testSelectionPropagation() || !testStateRestoration() ||
       !testCameraNavigation() || !testBufferedFrameNavigation()) {
