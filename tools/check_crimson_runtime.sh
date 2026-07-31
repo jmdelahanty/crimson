@@ -299,6 +299,7 @@ bundle_prefixes = (
     "libcudart",
     "libnpp",
     "libcublas",
+    "libcudnn",
     "libcufft",
     "libcurand",
     "libcusolver",
@@ -403,7 +404,7 @@ def group_for(soname):
         return "FFmpeg"
     if soname.startswith(("libnvinfer", "libnvonnxparser")):
         return "TensorRT"
-    if soname.startswith(("libcudart", "libnpp", "libcublas", "libcufft", "libcurand", "libcusolver", "libcusparse", "libnvrtc")):
+    if soname.startswith(("libcudart", "libnpp", "libcublas", "libcudnn", "libcufft", "libcurand", "libcusolver", "libcusparse", "libnvrtc")):
         return "CUDA runtime"
     return ""
 
@@ -418,7 +419,7 @@ def release_allowed(entry):
         return not path or is_under(path, system_roots)
     if classification == "bundle-candidate":
         return is_under(path, allowed_roots)
-    return False
+    return is_under(path, (app_root,))
 
 def expected_prefixes(metadata):
     prefixes = collections.defaultdict(list)
@@ -486,7 +487,10 @@ if external_bundle:
 
 unexpected = [
     e for e in entries
-    if e["classification"] == "unexpected" and e["resolved_path"] and e["resolved_path"] != "not found"
+    if e["classification"] == "unexpected"
+    and not e["allowed_in_release"]
+    and e["resolved_path"]
+    and e["resolved_path"] != "not found"
 ]
 if unexpected:
     status = "FAIL" if mode == "release" else "WARN"

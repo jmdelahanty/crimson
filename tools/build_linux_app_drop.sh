@@ -21,6 +21,7 @@ clean_install=0
 launch=0
 bundle_opencv_ffmpeg=0
 bundle_nvidia_runtime=0
+bundle_runtime_closure=0
 clean_runpath=1
 extra_cmake_args=()
 bundled_runtime_roots=()
@@ -52,6 +53,10 @@ Options:
                             runtime libs into the app drop. Currently bundles
                             TensorRT libnvinfer* and CUDA NPP libs used by
                             redgui; driver libs remain host-resolved.
+  --bundle-runtime-closure  Copy redgui's resolved non-platform transitive
+                            library closure into the app drop. glibc, the C++
+                            ABI baseline, X/OpenGL, and NVIDIA driver libraries
+                            remain host-resolved.
   --skip-runpath-cleanup    Do not patch the installed Linux executable RUNPATH.
   --launch                  Launch the staged app through bin/crimson.
   -h, --help                Show this help.
@@ -363,6 +368,69 @@ bundle_nvidia_runtime_libraries() {
     echo "Driver libraries remain host-resolved: libcuda.so.1, libnvcuvid.so.1, libnvidia-encode.so.1"
 }
 
+runtime_library_is_host_owned() {
+    local soname="$1"
+
+    case "$soname" in
+        ld-linux*.so*|linux-vdso.so*|\
+        libc.so*|libm.so*|libdl.so*|libpthread.so*|librt.so*|libresolv.so*|\
+        libutil.so*|libanl.so*|libnss_*.so*|\
+        libstdc++.so*|libgcc_s.so*|\
+        libcuda.so*|libnvcuvid.so*|libnvidia-*.so*|libnvoptix.so*|\
+        libGL.so*|libGLX.so*|libOpenGL.so*|libGLdispatch.so*|libEGL.so*|\
+        libX11.so*|libXext.so*|libXrender.so*|libXfixes.so*|libXau.so*|\
+        libXdmcp.so*|libxcb.so*|libxcb-*.so*|libdrm.so*)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+bundle_resolved_runtime_closure() {
+    local install_root="$1"
+    local executable="$install_root/bin/redgui"
+    local bundle_dir="$install_root/lib/crimson/private"
+    local closure_manifest="$install_root/share/crimson/runtime_closure.txt"
+    local ldd_output
+    local soname
+    local resolved
+    local copied=0
+    local retained=0
+
+    [ -x "$executable" ] || { echo "installed executable not found: $executable" >&2; exit 1; }
+    mkdir -p -- "$bundle_dir" "$(dirname -- "$closure_manifest")"
+
+    ldd_output="$(env LD_LIBRARY_PATH="$bundle_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+        ldd "$executable" 2>&1 || true)"
+    : > "$closure_manifest"
+
+    while read -r soname _ resolved _; do
+        [ -n "$soname" ] || continue
+        [ "$resolved" != "not" ] || continue
+        [[ "$resolved" = /* ]] || continue
+
+        if runtime_library_is_host_owned "$soname"; then
+            printf 'host\t%s\t%s\n' "$soname" "$resolved" >> "$closure_manifest"
+            retained=$((retained + 1))
+            continue
+        fi
+        if path_contains_or_equals "$install_root" "$resolved"; then
+            printf 'bundled\t%s\t%s\n' "$soname" "$resolved" >> "$closure_manifest"
+            continue
+        fi
+
+        cp -L -- "$resolved" "$bundle_dir/$soname"
+        printf 'copied\t%s\t%s\n' "$soname" "$resolved" >> "$closure_manifest"
+        copied=$((copied + 1))
+    done <<< "$ldd_output"
+
+    LC_ALL=C sort -u -o "$closure_manifest" "$closure_manifest"
+    echo "Bundled resolved runtime closure into:"
+    echo "  $bundle_dir"
+    echo "  copied=$copied host_owned=$retained"
+    echo "  manifest=$closure_manifest"
+}
+
 read_elf_runpath() {
     local executable="$1"
 
@@ -476,6 +544,10 @@ while [ "$#" -gt 0 ]; do
             bundle_nvidia_runtime=1
             shift
             ;;
+        --bundle-runtime-closure)
+            bundle_runtime_closure=1
+            shift
+            ;;
         --skip-runpath-cleanup)
             clean_runpath=0
             shift
@@ -582,6 +654,10 @@ if [ "$skip_install" -eq 0 ]; then
         run_step "Bundle experimental NVIDIA runtime"
         bundle_nvidia_runtime_libraries "$install_prefix_abs" "$build_dir_abs"
     fi
+    if [ "$bundle_runtime_closure" -eq 1 ]; then
+        run_step "Bundle resolved runtime closure"
+        bundle_resolved_runtime_closure "$install_prefix_abs"
+    fi
     write_release_metadata "$install_prefix_abs" "$build_dir_abs"
     write_runtime_roots_config "$install_prefix_abs"
 fi
@@ -603,7 +679,9 @@ if [ "$skip_runtime_check" -eq 0 ]; then
     if [ "$require_gl" -eq 1 ]; then
         check_args+=(--require-gl)
     fi
-    if [ "$bundle_opencv_ffmpeg" -eq 1 ] || [ "$bundle_nvidia_runtime" -eq 1 ]; then
+    if [ "$bundle_opencv_ffmpeg" -eq 1 ] \
+        || [ "$bundle_nvidia_runtime" -eq 1 ] \
+        || [ "$bundle_runtime_closure" -eq 1 ]; then
         run_command env -u CRIMSON_ALLOWED_RUNTIME_ROOTS "${check_args[@]}"
     else
         run_command "${check_args[@]}"

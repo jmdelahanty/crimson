@@ -32,11 +32,13 @@ append_runtime_path() {
         return 0
     fi
 
-    for existing in "${runtime_paths[@]}"; do
-        if [ "$existing" = "$candidate" ]; then
-            return 0
-        fi
-    done
+    if [ "${#runtime_paths[@]}" -gt 0 ]; then
+        for existing in "${runtime_paths[@]}"; do
+            if [ "$existing" = "$candidate" ]; then
+                return 0
+            fi
+        done
+    fi
 
     runtime_paths+=("$candidate")
 }

@@ -744,9 +744,25 @@ Blockers that would stop promotion from experimental to release:
 
 ## Bundle Audit Policy
 
-Do not blindly copy every shared library reported by `ldd`. The checker
-classifies dependencies first, then the app-drop helpers copy only known
-families that Crimson intentionally owns.
+The initial family-only bundle was insufficient on a second Ubuntu workstation:
+OpenCV resolved from the app, but its transitive Ceres and cuDNN dependencies
+did not. cuBLAS and OpenCL then resolved from that workstation's unrelated CUDA
+12.2 installation. A release app drop must therefore inspect the complete
+resolved `ldd` graph, not only the executable's direct dependencies.
+
+`--bundle-runtime-closure` copies the resolved non-platform closure into
+`lib/crimson/private` and records the decision in
+`share/crimson/runtime_closure.txt`. It deliberately retains these host
+boundaries:
+
+- glibc and the Linux dynamic loader;
+- the Ubuntu 22 C++ ABI baseline (`libstdc++` and `libgcc_s`);
+- X11, OpenGL/GLX, and DRM platform libraries; and
+- NVIDIA driver libraries, including `libcuda.so.1` and `libnvcuvid.so.1`.
+
+An unfamiliar library outside the app remains a release failure. An unfamiliar
+library deliberately copied under `lib/crimson/private` is accepted and remains
+visible in the structured dependency manifest.
 
 Goals:
 
@@ -789,10 +805,55 @@ Current status:
    the root is explicitly allowed by policy.
 5. [done] Add guarded packaging copy steps for the known OpenCV/FFmpeg and
    TensorRT/NPP bundle-candidate families.
-6. [done] Re-run `ldd` after copying and verify the final app drop resolves
+6. [done] Add a non-platform transitive-closure bundle for relocatable drops.
+7. [done] Re-run `ldd` after copying and verify the final app drop resolves
    the copied libraries through `$ORIGIN` paths during publish checks.
-7. [todo] Run GUI smoke from the staged or published app drop, not only from
+8. [todo] Run GUI smoke from the staged or published app drop, not only from
    the build tree.
+
+## Reproducible Ubuntu 22 Builder
+
+Linux releases use Ubuntu 22.04/glibc 2.35 as the compatibility baseline even
+when the build host runs a newer distribution. The builder definition is:
+
+```text
+packaging/linux/ubuntu22-cuda12.4-trt10/CrimsonLinuxBuilder.def
+```
+
+It pins the NGC TensorRT 24.05 base, CUDA 12.4, TensorRT 10.0.1.6, CMake
+3.30.5 (including its archive SHA-256), and exact OpenCV/OpenCV-contrib 4.10
+commits. OpenCV is built without fast math for `sm_80` and `sm_86` and includes
+the CUDA, DNN, video, and SFM modules required by Crimson.
+
+Build the SIF once on a host with Apptainer fakeroot support:
+
+```bash
+tools/build_linux_apptainer_builder.sh
+```
+
+Use `--sudo` on an approved dedicated builder when fakeroot is unavailable. A
+validated user-owned sandbox can instead be sealed without privilege:
+
+```bash
+tools/build_linux_apptainer_builder.sh \
+  --from-sandbox /path/to/validated-sandbox
+```
+
+The helper writes `<builder>.sha256`. Normal builds reuse that sealed image and
+verify the sidecar before compiling:
+
+```bash
+CRIMSON_LINUX_BUILDER_SIF=$HOME/crimson-builders/\
+crimson-linux-ubuntu22-cuda12.4-trt10.sif \
+tools/build_linux_release_in_apptainer.sh
+```
+
+The release wrapper never starts the GUI inside the builder. It uses the image
+only for compilation and staging, binds the build host's NVIDIA driver
+libraries for link-time symbol resolution, and does not copy those driver
+libraries into the app. The resulting `Crimson/` directory is a normal Linux
+application directory and must still pass `check_crimson_runtime.sh --mode
+release` plus the GPU/decode/GUI smokes on the destination workstation.
 
 Then validate on at least:
 

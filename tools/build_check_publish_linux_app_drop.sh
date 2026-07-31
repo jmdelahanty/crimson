@@ -15,6 +15,7 @@ skip_build=0
 skip_install=0
 bundle_opencv_ffmpeg=0
 bundle_nvidia_runtime=0
+bundle_runtime_closure=0
 skip_runpath_cleanup=0
 runtime_check_mode="release"
 dependency_manifest=""
@@ -48,6 +49,8 @@ Build options:
   --bundle-opencv-ffmpeg    Bundle OpenCV and FFmpeg into the app drop.
   --bundle-nvidia-runtime   Experimental: bundle observed non-driver NVIDIA
                             runtime libs into the app drop.
+  --bundle-runtime-closure  Bundle the resolved non-platform transitive
+                            shared-library closure into the app drop.
   --skip-runpath-cleanup    Do not patch the installed Linux executable RUNPATH.
 
 Publish/check options:
@@ -165,6 +168,10 @@ while [ "$#" -gt 0 ]; do
             bundle_nvidia_runtime=1
             shift
             ;;
+        --bundle-runtime-closure)
+            bundle_runtime_closure=1
+            shift
+            ;;
         --skip-runpath-cleanup)
             skip_runpath_cleanup=1
             shift
@@ -264,6 +271,7 @@ append_switch build_args --skip-build "$skip_build"
 append_switch build_args --skip-install "$skip_install"
 append_switch build_args --bundle-opencv-ffmpeg "$bundle_opencv_ffmpeg"
 append_switch build_args --bundle-nvidia-runtime "$bundle_nvidia_runtime"
+append_switch build_args --bundle-runtime-closure "$bundle_runtime_closure"
 append_switch build_args --skip-runpath-cleanup "$skip_runpath_cleanup"
 if [ "${#extra_cmake_args[@]}" -gt 0 ]; then
     build_args+=(-- "${extra_cmake_args[@]}")
