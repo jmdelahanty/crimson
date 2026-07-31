@@ -288,3 +288,17 @@ KeypointOverlayBufferMetrics KeypointOverlayBuffer::metrics() const {
   std::lock_guard<std::mutex> lock(impl_->mutex);
   return impl_->metrics;
 }
+
+std::unique_ptr<crimson::timeline::KeypointQualityTimelineRepository>
+KeypointOverlayBuffer::createQualityTimelineRepository(std::string* error) {
+  crimson::zarr::KeypointOverlayRepository* repository = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (!impl_->repository || impl_->stopping) {
+      assignError(error, "Keypoint buffer is not open");
+      return nullptr;
+    }
+    repository = impl_->repository.get();
+  }
+  return repository->createQualityTimelineRepository(error);
+}

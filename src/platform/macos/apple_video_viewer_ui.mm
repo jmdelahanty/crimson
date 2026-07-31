@@ -1946,8 +1946,8 @@ bool drawAppleDetectionQualityTimeline(
       controls->duplicate_counts.clear();
       controls->manual_clear_counts.clear();
       controls->manual_counts.clear();
-      controls->reason_counts.assign(
-          descriptor->source_reason_codes.size(), {});
+      controls->reason_counts.assign(descriptor->source_reason_codes.size(),
+                                     {});
       const size_t frame_count = window->frames.size();
       controls->times.reserve(frame_count);
       controls->score_min.reserve(frame_count);
@@ -1968,8 +1968,7 @@ bool drawAppleDetectionQualityTimeline(
         controls->score_min.push_back(frame.score_min);
         controls->score_median.push_back(frame.score_median);
         controls->score_max.push_back(frame.score_max);
-        controls->accepted_score_median.push_back(
-            frame.accepted_score_median);
+        controls->accepted_score_median.push_back(frame.accepted_score_median);
         controls->source_counts.push_back(frame.source_count);
         controls->accepted_counts.push_back(frame.accepted_count);
         controls->filtered_counts.push_back(frame.filtered_count);
@@ -2042,8 +2041,8 @@ bool drawAppleDetectionQualityTimeline(
           ImAxis_X1, cursor_time - controls->half_span_seconds,
           cursor_time + controls->half_span_seconds, ImPlotCond_Always);
       const int count = static_cast<int>(times.size());
-      ImPlot::PlotStairs("Source", times.data(),
-                         controls->source_counts.data(), count);
+      ImPlot::PlotStairs("Source", times.data(), controls->source_counts.data(),
+                         count);
       ImPlot::PlotStairs("Accepted", times.data(),
                          controls->accepted_counts.data(), count);
       if (descriptor->source_audit) {
@@ -2065,10 +2064,9 @@ bool drawAppleDetectionQualityTimeline(
       if (ImGui::BeginTable("##detection-reason-controls", 3,
                             ImGuiTableFlags_SizingStretchSame)) {
         for (const auto &reason : descriptor->source_reason_codes) {
-          bool &visible =
-              controls->reason_visibility
-                  .try_emplace(reason.code, reason.code != 0)
-                  .first->second;
+          bool &visible = controls->reason_visibility
+                              .try_emplace(reason.code, reason.code != 0)
+                              .first->second;
           ImGui::TableNextColumn();
           ImGui::PushID(static_cast<int>(reason.code));
           ImGui::Checkbox(reason.label.c_str(), &visible);
@@ -2112,6 +2110,333 @@ bool drawAppleDetectionQualityTimeline(
   return false;
 }
 
+bool drawAppleKeypointQualityTimeline(
+    AppleKeypointQualityTimelineControls *controls, bool *open,
+    AppleKeypointQualityLoadState load_state,
+    const crimson::timeline::KeypointQualityTimelineDescriptor *descriptor,
+    const std::shared_ptr<
+        const crimson::timeline::KeypointQualityTimelineWindow> &window,
+    const std::string &error, int64_t current_frame,
+    LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
+    bool interactive) {
+  if (controls == nullptr || open == nullptr || !*open) {
+    return false;
+  }
+  ImGui::SetNextWindowSize(ImVec2(820.0f, 680.0f), ImGuiCond_FirstUseEver);
+  if (!ImGui::Begin("Keypoint Quality Timeline", open)) {
+    ImGui::End();
+    return false;
+  }
+  if (!interactive)
+    ImGui::BeginDisabled();
+  if (descriptor != nullptr) {
+    ImGui::Text("%s  |  %s",
+                descriptor->refined ? "Refined keypoints" : "Raw keypoints",
+                descriptor->run_name.c_str());
+    ImGui::Text("Quality: %s", descriptor->quality_run_name.c_str());
+  }
+  ImGui::SetNextItemWidth(170.0f);
+  ImGui::SliderFloat("Window (+/- s)", &controls->half_span_seconds, 1.0f,
+                     60.0f, "%.0f");
+  ImGui::SameLine();
+  ImGui::Checkbox("Counts", &controls->show_counts);
+  ImGui::SameLine();
+  ImGui::Checkbox("Metrics", &controls->show_metrics);
+  ImGui::SameLine();
+  ImGui::Checkbox("Findings", &controls->show_findings);
+
+  if (load_state == AppleKeypointQualityLoadState::Opening) {
+    ImGui::TextUnformatted("Opening keypoint quality data...");
+  } else if (load_state == AppleKeypointQualityLoadState::Failed) {
+    ImGui::TextWrapped("Keypoint timeline unavailable: %s", error.c_str());
+  } else if (load_state != AppleKeypointQualityLoadState::Ready ||
+             descriptor == nullptr) {
+    ImGui::TextUnformatted("Keypoint timeline is not open.");
+  } else if (!window) {
+    ImGui::TextUnformatted("Loading the visible keypoint window...");
+  } else if (!window->ready()) {
+    ImGui::TextWrapped(
+        "Keypoint timeline %s: %s",
+        crimson::timeline::keypointQualityTimelineStatusName(window->status),
+        window->error.c_str());
+  } else {
+    const double fps = clock.framesPerSecond();
+    const double cursor_time = fps > 0.0 ? current_frame / fps : 0.0;
+    if (controls->prepared_window.get() != window.get() ||
+        controls->prepared_fps != fps) {
+      controls->prepared_window = window;
+      controls->prepared_fps = fps;
+      controls->times.clear();
+      controls->pose_confidence.clear();
+      controls->observation_counts.clear();
+      controls->source_success_counts.clear();
+      controls->refined_success_counts.clear();
+      controls->usable_counts.clear();
+      controls->proposed_usable_counts.clear();
+      controls->edited_keypoint_counts.clear();
+      controls->flip_corrected_counts.clear();
+      controls->keypoint_confidence.assign(descriptor->keypoint_count, {});
+      controls->pose_metrics.assign(descriptor->pose_metrics.size(), {});
+      controls->keypoint_metrics.assign(
+          descriptor->keypoint_count * descriptor->keypoint_metrics.size(), {});
+      controls->keypoint_flag_counts.assign(descriptor->keypoint_flags.size(),
+                                            {});
+      controls->pose_flag_counts.assign(descriptor->pose_flags.size(), {});
+      controls->review_counts.assign(descriptor->review_states.size(), {});
+      controls->reason_counts.assign(descriptor->reason_codes.size(), {});
+      for (const auto &frame : window->frames) {
+        controls->times.push_back(fps > 0.0 ? frame.camera_frame / fps : 0.0);
+        controls->pose_confidence.push_back(frame.pose_confidence_median);
+        controls->observation_counts.push_back(frame.observation_count);
+        controls->source_success_counts.push_back(frame.source_success_count);
+        controls->refined_success_counts.push_back(frame.refined_success_count);
+        controls->usable_counts.push_back(frame.usable_count);
+        controls->proposed_usable_counts.push_back(frame.proposed_usable_count);
+        controls->edited_keypoint_counts.push_back(frame.edited_keypoint_count);
+        controls->flip_corrected_counts.push_back(frame.flip_corrected_count);
+        for (size_t index = 0; index < controls->keypoint_confidence.size();
+             ++index) {
+          controls->keypoint_confidence[index].push_back(
+              index < frame.keypoint_confidence_medians.size()
+                  ? frame.keypoint_confidence_medians[index]
+                  : std::numeric_limits<double>::quiet_NaN());
+        }
+        for (size_t index = 0; index < controls->pose_metrics.size(); ++index) {
+          controls->pose_metrics[index].push_back(
+              index < frame.pose_metric_medians.size()
+                  ? frame.pose_metric_medians[index]
+                  : std::numeric_limits<double>::quiet_NaN());
+        }
+        for (size_t index = 0; index < controls->keypoint_metrics.size();
+             ++index) {
+          controls->keypoint_metrics[index].push_back(
+              index < frame.keypoint_metric_medians.size()
+                  ? frame.keypoint_metric_medians[index]
+                  : std::numeric_limits<double>::quiet_NaN());
+        }
+        for (size_t index = 0; index < controls->keypoint_flag_counts.size();
+             ++index) {
+          controls->keypoint_flag_counts[index].push_back(
+              index < frame.keypoint_flag_counts.size()
+                  ? frame.keypoint_flag_counts[index]
+                  : 0);
+        }
+        for (size_t index = 0; index < controls->pose_flag_counts.size();
+             ++index) {
+          controls->pose_flag_counts[index].push_back(
+              index < frame.pose_flag_counts.size()
+                  ? frame.pose_flag_counts[index]
+                  : 0);
+        }
+        for (size_t index = 0; index < controls->review_counts.size();
+             ++index) {
+          controls->review_counts[index].push_back(
+              index < frame.review_state_counts.size()
+                  ? frame.review_state_counts[index]
+                  : 0);
+        }
+        for (size_t index = 0; index < controls->reason_counts.size();
+             ++index) {
+          controls->reason_counts[index].push_back(
+              index < frame.reason_code_counts.size()
+                  ? frame.reason_code_counts[index]
+                  : 0);
+        }
+      }
+    }
+    const auto seek_from_plot = [&]() {
+      if (!interactive || !ImPlot::IsPlotHovered() ||
+          !ImGui::IsMouseClicked(ImGuiMouseButton_Left) || fps <= 0.0) {
+        return false;
+      }
+      const int64_t frame = std::clamp<int64_t>(
+          static_cast<int64_t>(std::llround(ImPlot::GetPlotMousePos().x * fps)),
+          window->first_camera_frame, window->last_camera_frame);
+      return seekViewer(clock, playback, frame);
+    };
+    bool camera_discontinuity = false;
+    if (ImGui::BeginTable("##keypoint-series-controls", 4,
+                          ImGuiTableFlags_SizingStretchSame)) {
+      for (size_t point = 0; point < descriptor->keypoint_count; ++point) {
+        bool &visible = controls->keypoint_visibility.try_emplace(point, true)
+                            .first->second;
+        ImGui::TableNextColumn();
+        ImGui::PushID(static_cast<int>(point));
+        ImGui::Checkbox(descriptor->keypoint_labels[point].c_str(), &visible);
+        ImGui::PopID();
+      }
+      ImGui::EndTable();
+    }
+    if (ImPlot::BeginPlot("##keypoint-confidence", ImVec2(-1.0f, 230.0f),
+                          ImPlotFlags_NoTitle | ImPlotFlags_NoBoxSelect)) {
+      ImPlot::SetupAxes("Time (s)", "Confidence", ImPlotAxisFlags_NoMenus,
+                        ImPlotAxisFlags_NoMenus);
+      ImPlot::SetupAxisLimits(
+          ImAxis_X1, cursor_time - controls->half_span_seconds,
+          cursor_time + controls->half_span_seconds, ImPlotCond_Always);
+      ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, 1.0, ImPlotCond_Always);
+      const int count = static_cast<int>(controls->times.size());
+      ImPlot::PlotLine("Source pose", controls->times.data(),
+                       controls->pose_confidence.data(), count);
+      for (size_t point = 0; point < descriptor->keypoint_count; ++point) {
+        if (controls->keypoint_visibility[point]) {
+          ImPlot::PlotLine(descriptor->keypoint_labels[point].c_str(),
+                           controls->times.data(),
+                           controls->keypoint_confidence[point].data(), count);
+        }
+      }
+      ImPlot::PlotInfLines("Current frame", &cursor_time, 1);
+      ImPlot::TagX(cursor_time, ImVec4(0.94f, 0.94f, 0.94f, 0.90f),
+                   "Frame %lld", static_cast<long long>(current_frame));
+      camera_discontinuity = seek_from_plot() || camera_discontinuity;
+      ImPlot::EndPlot();
+    }
+    if (controls->show_counts &&
+        ImPlot::BeginPlot("##keypoint-counts", ImVec2(-1.0f, 180.0f),
+                          ImPlotFlags_NoTitle | ImPlotFlags_NoBoxSelect)) {
+      ImPlot::SetupAxes("Time (s)", "Observations", ImPlotAxisFlags_NoMenus,
+                        ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_NoMenus);
+      ImPlot::SetupAxisLimits(
+          ImAxis_X1, cursor_time - controls->half_span_seconds,
+          cursor_time + controls->half_span_seconds, ImPlotCond_Always);
+      const int count = static_cast<int>(controls->times.size());
+      ImPlot::PlotStairs("All", controls->times.data(),
+                         controls->observation_counts.data(), count);
+      ImPlot::PlotStairs("Source success", controls->times.data(),
+                         controls->source_success_counts.data(), count);
+      if (descriptor->refined) {
+        ImPlot::PlotStairs("Refined success", controls->times.data(),
+                           controls->refined_success_counts.data(), count);
+        ImPlot::PlotStairs("Usable", controls->times.data(),
+                           controls->usable_counts.data(), count);
+      }
+      ImPlot::PlotStairs("Quality proposed", controls->times.data(),
+                         controls->proposed_usable_counts.data(), count);
+      ImPlot::PlotInfLines("Current frame", &cursor_time, 1);
+      camera_discontinuity = seek_from_plot() || camera_discontinuity;
+      ImPlot::EndPlot();
+    }
+    if (controls->show_metrics && !descriptor->pose_metrics.empty() &&
+        ImPlot::BeginPlot("##keypoint-quality-metrics", ImVec2(-1.0f, 180.0f),
+                          ImPlotFlags_NoTitle | ImPlotFlags_NoBoxSelect)) {
+      ImPlot::SetupAxes("Time (s)", "Quality metric", ImPlotAxisFlags_NoMenus,
+                        ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_NoMenus);
+      ImPlot::SetupAxisLimits(
+          ImAxis_X1, cursor_time - controls->half_span_seconds,
+          cursor_time + controls->half_span_seconds, ImPlotCond_Always);
+      const int count = static_cast<int>(controls->times.size());
+      for (size_t metric = 0; metric < descriptor->pose_metrics.size();
+           ++metric) {
+        const std::string label =
+            "Pose: " + descriptor->pose_metrics[metric].id;
+        ImPlot::PlotLine(label.c_str(), controls->times.data(),
+                         controls->pose_metrics[metric].data(), count);
+      }
+      for (size_t point = 0; point < descriptor->keypoint_count; ++point) {
+        if (!controls->keypoint_visibility[point])
+          continue;
+        for (size_t metric = 0; metric < descriptor->keypoint_metrics.size();
+             ++metric) {
+          const size_t index =
+              point * descriptor->keypoint_metrics.size() + metric;
+          const std::string label = descriptor->keypoint_labels[point] + ": " +
+                                    descriptor->keypoint_metrics[metric].id;
+          ImPlot::PlotLine(label.c_str(), controls->times.data(),
+                           controls->keypoint_metrics[index].data(), count);
+        }
+      }
+      ImPlot::PlotInfLines("Current frame", &cursor_time, 1);
+      camera_discontinuity = seek_from_plot() || camera_discontinuity;
+      ImPlot::EndPlot();
+    }
+    if (controls->show_findings && descriptor->refined &&
+        ImGui::BeginTable("##keypoint-finding-controls", 3,
+                          ImGuiTableFlags_SizingStretchSame)) {
+      for (const auto &review : descriptor->review_states) {
+        bool &visible = controls->review_visibility
+                            .try_emplace(review.code, review.code != 0)
+                            .first->second;
+        ImGui::TableNextColumn();
+        ImGui::PushID(static_cast<int>(review.code));
+        ImGui::Checkbox(("Review: " + review.label).c_str(), &visible);
+        ImGui::PopID();
+      }
+      for (const auto &reason : descriptor->reason_codes) {
+        bool &visible = controls->reason_visibility
+                            .try_emplace(reason.code, reason.code != 0)
+                            .first->second;
+        ImGui::TableNextColumn();
+        ImGui::PushID(0x10000 + static_cast<int>(reason.code));
+        ImGui::Checkbox(("Reason: " + reason.label).c_str(), &visible);
+        ImGui::PopID();
+      }
+      ImGui::EndTable();
+    }
+    if (controls->show_findings &&
+        (!descriptor->keypoint_flags.empty() ||
+         !descriptor->pose_flags.empty() || descriptor->refined) &&
+        ImPlot::BeginPlot("##keypoint-quality-findings", ImVec2(-1.0f, 180.0f),
+                          ImPlotFlags_NoTitle | ImPlotFlags_NoBoxSelect)) {
+      ImPlot::SetupAxes("Time (s)", "Findings", ImPlotAxisFlags_NoMenus,
+                        ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_NoMenus);
+      ImPlot::SetupAxisLimits(
+          ImAxis_X1, cursor_time - controls->half_span_seconds,
+          cursor_time + controls->half_span_seconds, ImPlotCond_Always);
+      const int count = static_cast<int>(controls->times.size());
+      if (descriptor->refined) {
+        ImPlot::PlotStairs("Edited landmarks", controls->times.data(),
+                           controls->edited_keypoint_counts.data(), count);
+        ImPlot::PlotStairs("Flip corrected", controls->times.data(),
+                           controls->flip_corrected_counts.data(), count);
+      }
+      for (size_t index = 0; index < descriptor->keypoint_flags.size();
+           ++index) {
+        const std::string label =
+            "Landmark: " + descriptor->keypoint_flags[index].label;
+        ImPlot::PlotStairs(label.c_str(), controls->times.data(),
+                           controls->keypoint_flag_counts[index].data(), count);
+      }
+      for (size_t index = 0; index < descriptor->pose_flags.size(); ++index) {
+        const std::string label =
+            "Pose: " + descriptor->pose_flags[index].label;
+        ImPlot::PlotStairs(label.c_str(), controls->times.data(),
+                           controls->pose_flag_counts[index].data(), count);
+      }
+      if (descriptor->refined) {
+        for (size_t index = 0; index < descriptor->review_states.size();
+             ++index) {
+          const auto &review = descriptor->review_states[index];
+          if (!controls->review_visibility[review.code])
+            continue;
+          const std::string label = "Review: " + review.label;
+          ImPlot::PlotStairs(label.c_str(), controls->times.data(),
+                             controls->review_counts[index].data(), count);
+        }
+        for (size_t index = 0; index < descriptor->reason_codes.size();
+             ++index) {
+          const auto &reason = descriptor->reason_codes[index];
+          if (!controls->reason_visibility[reason.code])
+            continue;
+          const std::string label = "Reason: " + reason.label;
+          ImPlot::PlotStairs(label.c_str(), controls->times.data(),
+                             controls->reason_counts[index].data(), count);
+        }
+      }
+      ImPlot::PlotInfLines("Current frame", &cursor_time, 1);
+      camera_discontinuity = seek_from_plot() || camera_discontinuity;
+      ImPlot::EndPlot();
+    }
+    if (!interactive)
+      ImGui::EndDisabled();
+    ImGui::End();
+    return camera_discontinuity;
+  }
+  if (!interactive)
+    ImGui::EndDisabled();
+  ImGui::End();
+  return false;
+}
+
 void drawAppleFrameInspectWindow(
     crimson::workspace::WorkspaceSelectionState *selections,
     crimson::overlay::ReadOnlyOverlayControlState *controls,
@@ -2124,11 +2449,19 @@ void drawAppleFrameInspectWindow(
     AppleDetectionQualityLoadState detection_quality_state,
     const std::string &detection_quality_error,
     AppleDetectionInspectState *detection_inspect,
-    bool *detection_quality_timeline, const AppleVideoViewerStats &stats,
+    bool *detection_quality_timeline,
+    const crimson::zarr::KeypointOverlayDescriptor *keypoint_descriptor,
+    const std::shared_ptr<const crimson::zarr::KeypointOverlayResolution>
+        &keypoint_frame,
+    AppleKeypointQualityLoadState keypoint_quality_state,
+    const std::string &keypoint_quality_error,
+    AppleKeypointInspectState *keypoint_inspect,
+    bool *keypoint_quality_timeline, const AppleVideoViewerStats &stats,
     AppleFrameInspectPresentationState *presentation,
     bool *advanced_crop_preview, bool *stimulus_debug, bool interactive) {
   if (selections == nullptr || controls == nullptr || presentation == nullptr ||
       detection_inspect == nullptr || detection_quality_timeline == nullptr ||
+      keypoint_inspect == nullptr || keypoint_quality_timeline == nullptr ||
       advanced_crop_preview == nullptr || stimulus_debug == nullptr) {
     return;
   }
@@ -2355,11 +2688,142 @@ void drawAppleFrameInspectWindow(
           selected_flags(crimson::workspace::FrameInspectView::Keypoints))) {
     selections->frame_inspect_view =
         crimson::workspace::FrameInspectView::Keypoints;
+    ImGui::TextUnformatted("Read-only presentation");
     drawAvailableCheckbox("Keypoint markers", &controls->show_keypoints,
                           availability.keypoints);
     ImGui::SameLine();
     drawAvailableCheckbox("Heading arrows", &controls->show_headings,
                           availability.headings);
+    if (keypoint_descriptor == nullptr ||
+        keypoint_descriptor->run_name.empty()) {
+      ImGui::TextDisabled("No raw or refined keypoint-v2 run is open.");
+    } else {
+      ImGui::Text("Surface: %s", keypoint_descriptor->refined
+                                     ? "Refined snapshot"
+                                     : "Raw observations");
+      ImGui::TextWrapped("Run: %s", keypoint_descriptor->run_name.c_str());
+      const bool frame_matches =
+          keypoint_frame != nullptr &&
+          keypoint_frame->camera_frame == stats.presented_frame;
+      if (!frame_matches) {
+        ImGui::TextDisabled("Loading keypoints for the presented frame...");
+      } else {
+        ImGui::Text("Frame %lld  |  %zu observations",
+                    static_cast<long long>(keypoint_frame->camera_frame),
+                    keypoint_frame->detections.size());
+        if (keypoint_frame->detections.empty()) {
+          ImGui::TextDisabled("No keypoint observations in this frame.");
+        } else if (ImGui::BeginTable("##current-keypoints", 4,
+                                     ImGuiTableFlags_Borders |
+                                         ImGuiTableFlags_RowBg |
+                                         ImGuiTableFlags_SizingStretchProp)) {
+          ImGui::TableSetupColumn("Observation");
+          ImGui::TableSetupColumn("Pose confidence");
+          ImGui::TableSetupColumn("Valid landmarks");
+          ImGui::TableSetupColumn("State");
+          ImGui::TableHeadersRow();
+          for (size_t index = 0; index < keypoint_frame->detections.size();
+               ++index) {
+            const auto &detection = keypoint_frame->detections[index];
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::PushID(static_cast<int>(index));
+            const bool selected = detection.instance_key != 0 &&
+                                  keypoint_inspect->selected_instance_key ==
+                                      detection.instance_key;
+            const std::string label = "#" + std::to_string(index + 1);
+            if (ImGui::Selectable(label.c_str(), selected) &&
+                detection.instance_key != 0) {
+              keypoint_inspect->selected_instance_key = detection.instance_key;
+            }
+            ImGui::PopID();
+            ImGui::TableSetColumnIndex(1);
+            if (std::isfinite(detection.pose_confidence) &&
+                (!detection.refined_keypoints || detection.confidence_valid)) {
+              ImGui::Text("%.3f", detection.pose_confidence);
+            } else {
+              ImGui::TextDisabled("n/a");
+            }
+            ImGui::TableSetColumnIndex(2);
+            const size_t valid = static_cast<size_t>(
+                std::count(detection.keypoint_valid.begin(),
+                           detection.keypoint_valid.end(), uint8_t{1}));
+            ImGui::Text("%zu / %zu", valid, detection.keypoint_valid.size());
+            ImGui::TableSetColumnIndex(3);
+            ImGui::TextUnformatted(detection.refined_keypoints
+                                       ? detection.keypoint_usable ? "Usable"
+                                                                   : "Rejected"
+                                   : detection.source_success ? "Succeeded"
+                                                              : "Failed");
+          }
+          ImGui::EndTable();
+        }
+        const auto selected = std::find_if(
+            keypoint_frame->detections.begin(),
+            keypoint_frame->detections.end(), [&](const auto &candidate) {
+              return candidate.instance_key != 0 &&
+                     candidate.instance_key ==
+                         keypoint_inspect->selected_instance_key;
+            });
+        if (selected != keypoint_frame->detections.end() &&
+            ImGui::BeginTable("##selected-keypoint-confidence", 4,
+                              ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                  ImGuiTableFlags_SizingStretchProp)) {
+          ImGui::TableSetupColumn("Landmark");
+          ImGui::TableSetupColumn("Confidence");
+          ImGui::TableSetupColumn("Valid");
+          ImGui::TableSetupColumn("Edited");
+          ImGui::TableHeadersRow();
+          for (size_t point = 0;
+               point < keypoint_descriptor->keypoint_labels.size(); ++point) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(
+                keypoint_descriptor->keypoint_labels[point].c_str());
+            ImGui::TableSetColumnIndex(1);
+            if (point < selected->keypoint_confidences.size() &&
+                (!selected->refined_keypoints || selected->confidence_valid)) {
+              ImGui::Text("%.3f", selected->keypoint_confidences[point]);
+            } else {
+              ImGui::TextDisabled("n/a");
+            }
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextUnformatted(point < selected->keypoint_valid.size() &&
+                                           selected->keypoint_valid[point]
+                                       ? "Yes"
+                                       : "No");
+            ImGui::TableSetColumnIndex(3);
+            ImGui::TextUnformatted(
+                point < selected->keypoint_edit_flags.size() &&
+                        selected->keypoint_edit_flags[point]
+                    ? "Yes"
+                    : "No");
+          }
+          ImGui::EndTable();
+        }
+      }
+      if (ImGui::Button(ICON_FK_LINE_CHART " Keypoint Quality Timeline")) {
+        *keypoint_quality_timeline = true;
+      }
+      ImGui::SameLine();
+      switch (keypoint_quality_state) {
+      case AppleKeypointQualityLoadState::Closed:
+        ImGui::TextDisabled("not loaded");
+        break;
+      case AppleKeypointQualityLoadState::Opening:
+        ImGui::TextDisabled("opening...");
+        break;
+      case AppleKeypointQualityLoadState::Ready:
+        ImGui::TextDisabled("ready");
+        break;
+      case AppleKeypointQualityLoadState::Failed:
+        ImGui::TextDisabled("unavailable");
+        if (!keypoint_quality_error.empty()) {
+          showItemTooltip(keypoint_quality_error.c_str());
+        }
+        break;
+      }
+    }
     ImGui::Separator();
     if (ImGui::Button("Reset overlay defaults")) {
       *controls = {};

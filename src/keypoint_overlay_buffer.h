@@ -49,6 +49,8 @@ class KeypointOverlayBuffer {
 
   crimson::zarr::KeypointOverlayDescriptor descriptor() const;
   KeypointOverlayBufferMetrics metrics() const;
+  std::unique_ptr<crimson::timeline::KeypointQualityTimelineRepository>
+  createQualityTimelineRepository(std::string* error = nullptr);
 
  private:
   struct Impl;

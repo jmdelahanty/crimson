@@ -82,6 +82,9 @@ bool WorkspaceState::shouldSubmit(
   case Window::DetectionQualityTimeline:
     return windows_.detection_quality_timeline &&
            capabilities.detection_quality_available;
+  case Window::KeypointQualityTimeline:
+    return windows_.keypoint_quality_timeline &&
+           capabilities.keypoint_quality_available;
   case Window::Help:
     return windows_.help;
   }
@@ -131,6 +134,8 @@ bool WorkspaceState::windowRequested(Window window) const {
     return windows_.help;
   case Window::DetectionQualityTimeline:
     return windows_.detection_quality_timeline;
+  case Window::KeypointQualityTimeline:
+    return windows_.keypoint_quality_timeline;
   case Window::FileBrowser:
   case Window::FrameInspect:
   case Window::Diagnostics:
@@ -157,6 +162,9 @@ void WorkspaceState::setWindowRequested(Window window, bool requested) {
     break;
   case Window::DetectionQualityTimeline:
     windows_.detection_quality_timeline = requested;
+    break;
+  case Window::KeypointQualityTimeline:
+    windows_.keypoint_quality_timeline = requested;
     break;
   case Window::FileBrowser:
   case Window::FrameInspect:

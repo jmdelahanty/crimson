@@ -1,10 +1,12 @@
 #pragma once
 
+#include "keypoint_quality_timeline.h"
 #include "zarr/repository_memory.h"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -58,6 +60,9 @@ struct KeypointOverlayDetection {
   int64_t detection_index = -1;
   int64_t source_crop_row_id = -1;
   std::vector<KeypointOverlayPoint> keypoints;
+  std::vector<double> keypoint_confidences;
+  std::vector<uint8_t> keypoint_valid;
+  double pose_confidence = std::numeric_limits<double>::quiet_NaN();
   std::optional<KeypointOverlayPoint> heading_origin;
   std::optional<double> heading_degrees;
   bool heading_valid = false;
@@ -101,6 +106,13 @@ public:
   resolveCameraFrame(int64_t camera_frame, int full_frame_width,
                      int full_frame_height) const = 0;
   virtual RepositoryMemoryMetrics memoryMetrics() const { return {}; }
+  virtual std::unique_ptr<timeline::KeypointQualityTimelineRepository>
+  createQualityTimelineRepository(std::string *error = nullptr) {
+    if (error) {
+      *error = "Keypoint repository has no v2 quality timeline";
+    }
+    return nullptr;
+  }
 };
 
 std::unique_ptr<KeypointOverlayRepository>

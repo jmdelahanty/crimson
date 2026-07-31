@@ -25,6 +25,7 @@ enum class Window : uint8_t {
   StimulusEventTimeline,
   AnalysisTimeline,
   DetectionQualityTimeline,
+  KeypointQualityTimeline,
   Help,
 };
 
@@ -70,6 +71,7 @@ struct WorkspaceCapabilities {
   bool stimulus_video_loaded = false;
   bool analysis_timeline_available = false;
   bool detection_quality_available = false;
+  bool keypoint_quality_available = false;
   bool write_repository_open = false;
 };
 
@@ -77,6 +79,7 @@ struct WorkspaceWindowState {
   bool advanced_crop_preview = false;
   bool stimulus_debug = false;
   bool detection_quality_timeline = false;
+  bool keypoint_quality_timeline = false;
   bool help = false;
 };
 

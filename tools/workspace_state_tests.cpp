@@ -21,6 +21,7 @@ bool testDefaultWindowVisibility() {
   CHECK(!state.shouldSubmit(Window::FrameInspect, empty));
   CHECK(!state.shouldSubmit(Window::AnalysisTimeline, empty));
   CHECK(!state.shouldSubmit(Window::DetectionQualityTimeline, empty));
+  CHECK(!state.shouldSubmit(Window::KeypointQualityTimeline, empty));
   CHECK(!state.shouldSubmit(Window::Help, empty));
 
   WorkspaceCapabilities loaded;
@@ -31,6 +32,7 @@ bool testDefaultWindowVisibility() {
   loaded.stimulus_video_loaded = true;
   loaded.analysis_timeline_available = true;
   loaded.detection_quality_available = true;
+  loaded.keypoint_quality_available = true;
   CHECK(state.shouldSubmit(Window::FrameInspect, loaded));
   CHECK(state.shouldSubmit(Window::Diagnostics, loaded));
   CHECK(state.shouldSubmit(Window::FramesInBuffer, loaded));
@@ -38,6 +40,7 @@ bool testDefaultWindowVisibility() {
   CHECK(state.shouldSubmit(Window::StimulusEventTimeline, loaded));
   CHECK(state.shouldSubmit(Window::AnalysisTimeline, loaded));
   CHECK(!state.shouldSubmit(Window::DetectionQualityTimeline, loaded));
+  CHECK(!state.shouldSubmit(Window::KeypointQualityTimeline, loaded));
   CHECK(!state.shouldSubmit(Window::AdvancedCropPreview, loaded));
   CHECK(!state.shouldSubmit(Window::Stimulus, loaded));
 
@@ -47,11 +50,13 @@ bool testDefaultWindowVisibility() {
   state.setWindowRequested(Window::Stimulus, true);
   state.setWindowRequested(Window::Help, true);
   state.setWindowRequested(Window::DetectionQualityTimeline, true);
+  state.setWindowRequested(Window::KeypointQualityTimeline, true);
   CHECK(state.shouldSubmit(Window::AdvancedCropPreview, loaded));
   CHECK(state.shouldSubmit(Window::Stimulus, loaded));
   CHECK(state.shouldSubmit(Window::StimulusFramesInBuffer, loaded));
   CHECK(state.shouldSubmit(Window::Help, loaded));
   CHECK(state.shouldSubmit(Window::DetectionQualityTimeline, loaded));
+  CHECK(state.shouldSubmit(Window::KeypointQualityTimeline, loaded));
   return true;
 }
 

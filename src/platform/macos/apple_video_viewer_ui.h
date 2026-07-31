@@ -8,8 +8,9 @@
 #include "crop_presentation_coordinator.h"
 #include "detection_quality_timeline.h"
 #include "eye_angle_timeline.h"
-#include "playback_clock.h"
+#include "keypoint_quality_timeline.h"
 #include "platform/macos/apple_workspace_layout.h"
+#include "playback_clock.h"
 #include "read_only_overlay_controls.h"
 #include "read_only_overlay_scene.h"
 #include "roi_inset_presentation.h"
@@ -21,6 +22,7 @@
 #include "ui_path_config.h"
 #include "workspace_state.h"
 #include "zarr/canonical_detection_repository.h"
+#include "zarr/keypoint_overlay_repository.h"
 
 #include <cstdint>
 #include <limits>
@@ -74,8 +76,7 @@ struct AppleFileBrowserState {
   size_t preferred_root_count = 0;
 };
 
-using AppleSessionRelaunchRequest =
-    crimson::session::SessionReplacementRequest;
+using AppleSessionRelaunchRequest = crimson::session::SessionReplacementRequest;
 
 struct AppleFileBrowserResult {
   AppleSessionRelaunchRequest relaunch;
@@ -184,6 +185,46 @@ struct AppleDetectionQualityTimelineControls {
   std::vector<std::vector<double>> reason_counts;
 };
 
+enum class AppleKeypointQualityLoadState {
+  Closed,
+  Opening,
+  Ready,
+  Failed,
+};
+
+struct AppleKeypointInspectState {
+  uint64_t selected_instance_key = 0;
+};
+
+struct AppleKeypointQualityTimelineControls {
+  float half_span_seconds = 10.0f;
+  bool show_counts = true;
+  bool show_metrics = true;
+  bool show_findings = true;
+  std::unordered_map<size_t, bool> keypoint_visibility;
+  std::unordered_map<uint16_t, bool> review_visibility;
+  std::unordered_map<uint16_t, bool> reason_visibility;
+  std::shared_ptr<const crimson::timeline::KeypointQualityTimelineWindow>
+      prepared_window;
+  double prepared_fps = 0.0;
+  std::vector<double> times;
+  std::vector<double> pose_confidence;
+  std::vector<std::vector<double>> keypoint_confidence;
+  std::vector<double> observation_counts;
+  std::vector<double> source_success_counts;
+  std::vector<double> refined_success_counts;
+  std::vector<double> usable_counts;
+  std::vector<double> proposed_usable_counts;
+  std::vector<double> edited_keypoint_counts;
+  std::vector<double> flip_corrected_counts;
+  std::vector<std::vector<double>> pose_metrics;
+  std::vector<std::vector<double>> keypoint_metrics;
+  std::vector<std::vector<double>> keypoint_flag_counts;
+  std::vector<std::vector<double>> pose_flag_counts;
+  std::vector<std::vector<double>> review_counts;
+  std::vector<std::vector<double>> reason_counts;
+};
+
 struct AppleCropViewerControls {
   crimson::crop::CropSourcePreference preference =
       crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
@@ -228,10 +269,10 @@ bool drawAppleFramesInBufferWindow(
     bool interactive);
 
 AppleVideoControlResult drawAppleCameraViewWindow(
-    const std::string &camera_name,
-    LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
-    const AppleVideoViewerStats &stats, AppleMetalVideoViewport *viewport,
-    AppleCameraViewState *view_state, bool interactive);
+    const std::string &camera_name, LogicalPlaybackClock &clock,
+    AppleVideoPlaybackBuffer &playback, const AppleVideoViewerStats &stats,
+    AppleMetalVideoViewport *viewport, AppleCameraViewState *view_state,
+    bool interactive);
 
 void drawAppleHelpWindow(bool show);
 void drawAppleErrorPopup(bool *show, const std::string &message);
@@ -277,6 +318,16 @@ bool drawAppleDetectionQualityTimeline(
     LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
     bool interactive);
 
+bool drawAppleKeypointQualityTimeline(
+    AppleKeypointQualityTimelineControls *controls, bool *open,
+    AppleKeypointQualityLoadState load_state,
+    const crimson::timeline::KeypointQualityTimelineDescriptor *descriptor,
+    const std::shared_ptr<
+        const crimson::timeline::KeypointQualityTimelineWindow> &window,
+    const std::string &error, int64_t current_frame,
+    LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
+    bool interactive);
+
 void drawAppleFrameInspectWindow(
     crimson::workspace::WorkspaceSelectionState *selections,
     crimson::overlay::ReadOnlyOverlayControlState *controls,
@@ -289,13 +340,20 @@ void drawAppleFrameInspectWindow(
     AppleDetectionQualityLoadState detection_quality_state,
     const std::string &detection_quality_error,
     AppleDetectionInspectState *detection_inspect,
-    bool *detection_quality_timeline, const AppleVideoViewerStats &stats,
+    bool *detection_quality_timeline,
+    const crimson::zarr::KeypointOverlayDescriptor *keypoint_descriptor,
+    const std::shared_ptr<const crimson::zarr::KeypointOverlayResolution>
+        &keypoint_frame,
+    AppleKeypointQualityLoadState keypoint_quality_state,
+    const std::string &keypoint_quality_error,
+    AppleKeypointInspectState *keypoint_inspect,
+    bool *keypoint_quality_timeline, const AppleVideoViewerStats &stats,
     AppleFrameInspectPresentationState *presentation,
     bool *advanced_crop_preview, bool *stimulus_debug, bool interactive);
 
-void drawAppleAdvancedCropPreviewWindow(
-    bool *open, const AppleVideoAssetInfo &crop_info,
-    AppleMetalVideoViewport *viewport);
+void drawAppleAdvancedCropPreviewWindow(bool *open,
+                                        const AppleVideoAssetInfo &crop_info,
+                                        AppleMetalVideoViewport *viewport);
 
 void drawAppleStimulusDebugWindows(
     bool enabled, const AppleVideoAssetInfo &stimulus_info,
@@ -304,13 +362,14 @@ void drawAppleStimulusDebugWindows(
     AppleStimulusDebugState *state, AppleMetalVideoViewport *viewport,
     bool interactive);
 
-AppleCompositeVideoViewports appleWorkspaceVideoViewports(
-    const AppleMetalVideoViewport &camera,
-    const AppleMetalVideoViewport &crop_preview,
-    const AppleMetalVideoViewport &stimulus_debug,
-    const AppleVideoAssetInfo *crop_info,
-    const AppleVideoAssetInfo *stimulus_info, double crop_inset_width = 0.0,
-    double stimulus_inset_width = 0.0);
+AppleCompositeVideoViewports
+appleWorkspaceVideoViewports(const AppleMetalVideoViewport &camera,
+                             const AppleMetalVideoViewport &crop_preview,
+                             const AppleMetalVideoViewport &stimulus_debug,
+                             const AppleVideoAssetInfo *crop_info,
+                             const AppleVideoAssetInfo *stimulus_info,
+                             double crop_inset_width = 0.0,
+                             double stimulus_inset_width = 0.0);
 
 void drawAppleCropPreviewOverlay(
     const AppleMetalVideoViewport &viewport, float framebuffer_scale,
@@ -329,10 +388,10 @@ size_t drawAppleReadOnlyOverlayText(
 
 size_t drawAppleChaserDistancePolarText(
     const crimson::polar::ChaserDistancePolarScene &scene,
-    const AppleMetalVideoViewport &camera_viewport,
-    float framebuffer_scale_x, float framebuffer_scale_y);
+    const AppleMetalVideoViewport &camera_viewport, float framebuffer_scale_x,
+    float framebuffer_scale_y);
 
 size_t drawAppleStimulusCameraOverlayText(
     const crimson::stimulus::StimulusCameraOverlayScene &scene,
-    const AppleMetalVideoViewport &camera_viewport,
-    float framebuffer_scale_x, float framebuffer_scale_y);
+    const AppleMetalVideoViewport &camera_viewport, float framebuffer_scale_x,
+    float framebuffer_scale_y);

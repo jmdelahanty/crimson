@@ -1061,10 +1061,9 @@ deferred Phase 5 follow-ups. They may proceed while Palette's subject-mask,
 subject-shape, eye-geometry, and editing/storage contracts continue to settle,
 but none is required to accept those storage surfaces:
 
-- completion of the multi-observation selector: detection rows are now exposed,
-  while keypoint rows and ROI-inset routing remain deferred;
-- a lazy read-only keypoint-quality inspector for confidence, correction,
-  rejection, and raw-versus-refined state;
+- completion of multi-observation ROI-inset routing: detection and keypoint rows
+  are exposed independently, while cross-surface ROI selection remains
+  deferred;
 - overlay filters and styling for confidence, class, labels, skeletons, and
   layer opacity; and
 - workspace-local frame bookmarks, navigation history, and next/previous
@@ -1076,9 +1075,15 @@ timeline navigation contract, and seeks the video when the user selects a
 point. Raw confidence, accepted/rejected decisions, manual rows, and reason
 codes remain distinct series. Confidence is the model's reported certainty,
 not a ground-truth accuracy or performance measurement. The keypoint-quality
-extension remains deferred. Friendly model identity and numeric refinement
-cutoffs must be displayed only when a future validated provenance envelope
-declares them; they are never inferred from external paths.
+extension is now implemented as a separate lazy, backend-neutral repository,
+page buffer, Frame Inspect surface, and dockable timeline. It preserves raw
+model confidence separately from refined success/edit/review state, reads and
+retains quality frame offsets once on first use, leaves quality payload arrays
+untouched during ordinary playback, and aggregates catalog-declared metrics and
+flags by complete per-frame row ranges. Details are in
+`docs/crimson_keypoint_quality_timeline.md`. Friendly model identity and numeric
+refinement cutoffs must be displayed only when a future validated provenance
+envelope declares them; they are never inferred from external paths.
 
 Phase 5 also remains open for production-tail acceptance, movement-trail
 coordinate policy, any required chaser-data densification, and edit/review

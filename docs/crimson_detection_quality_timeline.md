@@ -2,8 +2,8 @@
 
 Date: 2026-07-30
 
-Status: detection-first read-only checkpoint implemented; editing and keypoint
-quality remain separate follow-ups
+Status: detection-first read-only checkpoint implemented; editing remains a
+separate follow-up and keypoint quality is documented independently
 
 ## User Surface
 
@@ -66,8 +66,9 @@ out-of-range requests, and cancellation of a blocked superseded page.
 
 - Route the selected observation to the ROI inset once the multi-observation
   presentation contract is shared across detection and keypoint surfaces.
-- Add the corresponding lazy keypoint-quality timeline after its quality and
-  refinement semantics are production-selected.
+- Keep the corresponding keypoint-quality surface independent so detection and
+  keypoint observation identities are not conflated. Its implemented contract
+  is documented in `docs/crimson_keypoint_quality_timeline.md`.
 - Display friendly model names and numeric refinement cutoffs only after they
   are part of a validated, digest-bound provenance envelope.
 - Validate equivalent presentation in the maintained Linux UI and on native

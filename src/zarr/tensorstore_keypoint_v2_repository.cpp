@@ -283,6 +283,123 @@ bool normalizeRunGroup(json *metadata) {
   return true;
 }
 
+bool parseTimelineDescriptor(
+    const json &quality_root, const std::string &quality_base,
+    const json &selected_root, const std::string &selected_base,
+    const KeypointV2RepositoryDescriptor &repository_descriptor,
+    const KeypointOverlayDescriptor &overlay_descriptor,
+    timeline::KeypointQualityTimelineDescriptor *output, std::string *error) {
+  if (!output) {
+    assignError(error, "Keypoint-quality timeline descriptor is null");
+    return false;
+  }
+  try {
+    const auto *quality_group = consolidatedEntry(quality_root, quality_base);
+    const auto *selected_group =
+        consolidatedEntry(selected_root, selected_base);
+    if (!quality_group || !selected_group) {
+      assignError(error, "Keypoint-quality timeline manifests are unavailable");
+      return false;
+    }
+    const auto &profile = quality_group->at("attributes")
+                              .at("run_manifest")
+                              .at("payload")
+                              .at("logical_schema")
+                              .at("profile");
+    timeline::KeypointQualityTimelineDescriptor result;
+    result.refined = repository_descriptor.refined;
+    result.source_group = overlay_descriptor.source_group;
+    result.run_name = overlay_descriptor.run_name;
+    result.run_manifest_digest = repository_descriptor.selected.manifest_digest;
+    result.quality_run_name = repository_descriptor.quality.run_id;
+    result.quality_manifest_digest =
+        repository_descriptor.quality.manifest_digest;
+    result.frame_count = repository_descriptor.selected.frame_count;
+    result.row_count = repository_descriptor.selected.row_count;
+    result.keypoint_count = repository_descriptor.selected.keypoint_count;
+    result.keypoint_labels = repository_descriptor.raw.keypoint_labels;
+    const auto parse_metrics = [&](const char *key, auto *destination) -> bool {
+      for (const auto &entry : profile.at(key)) {
+        if (!entry.at("metric_id").is_string() ||
+            !entry.at("units").is_string() ||
+            !entry.at("higher_is_worse").is_boolean()) {
+          return false;
+        }
+        destination->push_back({entry.at("metric_id").get<std::string>(),
+                                entry.at("units").get<std::string>(),
+                                entry.at("higher_is_worse").get<bool>()});
+      }
+      return true;
+    };
+    const auto parse_flags = [&](const char *key, auto *destination) -> bool {
+      for (auto entry = profile.at(key).begin(); entry != profile.at(key).end();
+           ++entry) {
+        size_t consumed = 0;
+        const unsigned long parsed = std::stoul(entry.key(), &consumed, 10);
+        if (consumed != entry.key().size() || parsed == 0 ||
+            parsed > UINT16_MAX || (parsed & (parsed - 1)) != 0 ||
+            !entry.value().is_string()) {
+          return false;
+        }
+        destination->push_back(
+            {static_cast<uint16_t>(parsed), entry.value().get<std::string>()});
+      }
+      std::sort(
+          destination->begin(), destination->end(),
+          [](const auto &lhs, const auto &rhs) { return lhs.mask < rhs.mask; });
+      return true;
+    };
+    if (!parse_metrics("keypoint_metrics", &result.keypoint_metrics) ||
+        !parse_metrics("pose_metrics", &result.pose_metrics) ||
+        !parse_flags("keypoint_flag_map", &result.keypoint_flags) ||
+        !parse_flags("pose_flag_map", &result.pose_flags) ||
+        result.keypoint_metrics.empty() || result.pose_metrics.empty()) {
+      assignError(error, "Keypoint quality metric or flag catalog is invalid");
+      return false;
+    }
+    if (repository_descriptor.refined) {
+      const auto &document = selected_group->at("attributes")
+                                 .at("run_manifest")
+                                 .at("payload")
+                                 .at("code_registries")
+                                 .at("document");
+      const auto parse_codes = [&](const char *key, auto *destination) -> bool {
+        for (auto entry = document.at(key).begin();
+             entry != document.at(key).end(); ++entry) {
+          size_t consumed = 0;
+          const unsigned long parsed = std::stoul(entry.key(), &consumed, 10);
+          if (consumed != entry.key().size() || parsed > UINT16_MAX ||
+              !entry.value().is_string()) {
+            return false;
+          }
+          destination->push_back({static_cast<uint16_t>(parsed),
+                                  entry.value().get<std::string>()});
+        }
+        std::sort(destination->begin(), destination->end(),
+                  [](const auto &lhs, const auto &rhs) {
+                    return lhs.code < rhs.code;
+                  });
+        return !destination->empty() && destination->front().code == 0;
+      };
+      if (!parse_codes("review_state_map", &result.review_states) ||
+          !parse_codes("reason_code_map", &result.reason_codes)) {
+        assignError(error, "Refined keypoint code registry is invalid");
+        return false;
+      }
+    } else {
+      result.review_states.push_back({0, "unreviewed"});
+      result.reason_codes.push_back({0, "none"});
+    }
+    *output = std::move(result);
+    return true;
+  } catch (const json::exception &) {
+    assignError(error, "Keypoint-quality timeline catalog is unavailable");
+  } catch (const std::exception &) {
+    assignError(error, "Keypoint-quality timeline catalog is malformed");
+  }
+  return false;
+}
+
 template <size_t N, typename Validator>
 bool validateStageMetadata(const ArchiveContext::Impl &archive,
                            const std::string &base,
@@ -682,7 +799,9 @@ struct FramePayload {
   std::vector<int64_t> source_crop_rows;
   std::vector<uint8_t> row_signatures;
   std::vector<float> points;
+  std::vector<float> keypoint_confidences;
   std::vector<uint8_t> point_valid;
+  std::vector<float> pose_confidences;
   std::vector<uint8_t> source_success;
   std::vector<uint8_t> refined_success;
   std::vector<uint8_t> edit_flags;
@@ -707,7 +826,9 @@ struct FramePayloadFutures {
   ArrayReadFuture<int64_t, 1> source_crop_rows;
   ArrayReadFuture<uint8_t, 2> row_signatures;
   ArrayReadFuture<float, 3> points;
+  ArrayReadFuture<float, 2> keypoint_confidences;
   ArrayReadFuture<bool, 2> point_valid;
+  ArrayReadFuture<float, 1> pose_confidences;
   ArrayReadFuture<bool, 1> source_success;
   ArrayReadFuture<bool, 1> refined_success;
   ArrayReadFuture<bool, 2> edit_flags;
@@ -726,20 +847,219 @@ struct FramePayloadFutures {
   ArrayReadFuture<float, 1> headings;
 };
 
+struct TimelinePayloadFutures {
+  ArrayReadFuture<uint64_t, 1> selected_keys;
+  ArrayReadFuture<uint64_t, 1> quality_keys;
+  ArrayReadFuture<float, 2> keypoint_confidences;
+  ArrayReadFuture<bool, 2> keypoint_valid;
+  ArrayReadFuture<float, 1> pose_confidences;
+  ArrayReadFuture<bool, 1> source_success;
+  ArrayReadFuture<bool, 1> refined_success;
+  ArrayReadFuture<bool, 2> edit_flags;
+  ArrayReadFuture<bool, 1> flip_corrected;
+  ArrayReadFuture<bool, 1> usable;
+  ArrayReadFuture<uint8_t, 1> review_states;
+  ArrayReadFuture<uint16_t, 1> reason_codes;
+  ArrayReadFuture<float, 3> keypoint_metric_values;
+  ArrayReadFuture<bool, 3> keypoint_metric_valid;
+  ArrayReadFuture<float, 2> pose_metric_values;
+  ArrayReadFuture<bool, 2> pose_metric_valid;
+  ArrayReadFuture<uint16_t, 2> keypoint_quality_flags;
+  ArrayReadFuture<uint16_t, 1> pose_quality_flags;
+  ArrayReadFuture<bool, 2> proposed_keypoint_valid;
+  ArrayReadFuture<bool, 1> proposed_pose_usable;
+};
+
+class TensorStoreKeypointQualityTimelineRepository final
+    : public timeline::KeypointQualityTimelineRepository {
+public:
+  TensorStoreKeypointQualityTimelineRepository(
+      timeline::KeypointQualityTimelineDescriptor descriptor, RawStores raw,
+      QualityStores quality, std::optional<RefinedStores> refined,
+      std::vector<int64_t> offsets)
+      : descriptor_(std::move(descriptor)), raw_(std::move(raw)),
+        quality_(std::move(quality)), refined_(std::move(refined)),
+        offsets_(std::move(offsets)) {}
+
+  const timeline::KeypointQualityTimelineDescriptor &
+  descriptor() const override {
+    return descriptor_;
+  }
+
+  timeline::KeypointQualityTimelineWindow
+  resolveWindow(int64_t first_camera_frame,
+                int64_t last_camera_frame) const override {
+    const auto started = Clock::now();
+    timeline::KeypointQualityTimelineWindow window;
+    if (first_camera_frame < 0 || last_camera_frame < first_camera_frame ||
+        static_cast<size_t>(last_camera_frame) >= descriptor_.frame_count) {
+      window.status = timeline::KeypointQualityTimelineStatus::OutOfRange;
+      return window;
+    }
+    const size_t first_frame = static_cast<size_t>(first_camera_frame);
+    const size_t last_frame = static_cast<size_t>(last_camera_frame);
+    const size_t first = static_cast<size_t>(offsets_[first_frame]);
+    const size_t last = static_cast<size_t>(offsets_[last_frame + 1]);
+    const size_t rows = last - first;
+    const size_t keypoints = descriptor_.keypoint_count;
+    const size_t keypoint_metrics = descriptor_.keypoint_metrics.size();
+    const size_t pose_metrics = descriptor_.pose_metrics.size();
+    timeline::KeypointQualityColumnData columns;
+    TimelinePayloadFutures futures;
+    if (refined_) {
+      futures.selected_keys =
+          issueRangeRead(refined_->instance_key, first, last);
+      futures.refined_success =
+          issueRangeRead(refined_->refined_success, first, last);
+      futures.edit_flags =
+          issueRangeRead(refined_->keypoint_edit_flags, first, last);
+      futures.flip_corrected =
+          issueRangeRead(refined_->flip_corrected, first, last);
+      futures.usable = issueRangeRead(refined_->usable_keypoints, first, last);
+      futures.review_states =
+          issueRangeRead(refined_->review_state_codes, first, last);
+      futures.reason_codes =
+          issueRangeRead(refined_->reason_codes, first, last);
+    } else {
+      futures.selected_keys = issueRangeRead(raw_.instance_key, first, last);
+    }
+    futures.keypoint_confidences =
+        issueRangeRead(raw_.keypoint_confidences, first, last);
+    futures.keypoint_valid = issueRangeRead(raw_.keypoint_valid, first, last);
+    futures.pose_confidences =
+        issueRangeRead(raw_.pose_confidence, first, last);
+    futures.source_success = issueRangeRead(raw_.pose_success, first, last);
+    futures.quality_keys = issueRangeRead(quality_.instance_key, first, last);
+    futures.keypoint_metric_values =
+        issueRangeRead(quality_.keypoint_metric_values, first, last);
+    futures.keypoint_metric_valid =
+        issueRangeRead(quality_.keypoint_metric_valid, first, last);
+    futures.pose_metric_values =
+        issueRangeRead(quality_.pose_metric_values, first, last);
+    futures.pose_metric_valid =
+        issueRangeRead(quality_.pose_metric_valid, first, last);
+    futures.keypoint_quality_flags =
+        issueRangeRead(quality_.keypoint_quality_flags, first, last);
+    futures.pose_quality_flags =
+        issueRangeRead(quality_.pose_quality_flags, first, last);
+    futures.proposed_keypoint_valid =
+        issueRangeRead(quality_.proposed_keypoint_valid, first, last);
+    futures.proposed_pose_usable =
+        issueRangeRead(quality_.proposed_pose_usable, first, last);
+
+    std::string error;
+    bool ready =
+        collectRangeRead(&futures.selected_keys, rows, 1,
+                         &columns.selected_instance_keys, &error) &&
+        collectRangeRead(&futures.quality_keys, rows, 1,
+                         &columns.quality_instance_keys, &error) &&
+        collectRangeRead(&futures.keypoint_confidences, rows, keypoints,
+                         &columns.keypoint_confidences, &error) &&
+        collectBoolRangeRead(&futures.keypoint_valid, rows, keypoints,
+                             &columns.keypoint_valid, &error) &&
+        collectRangeRead(&futures.pose_confidences, rows, 1,
+                         &columns.pose_confidences, &error) &&
+        collectBoolRangeRead(&futures.source_success, rows, 1,
+                             &columns.source_success, &error);
+    if (ready && refined_) {
+      ready = collectBoolRangeRead(&futures.refined_success, rows, 1,
+                                   &columns.refined_success, &error) &&
+              collectBoolRangeRead(&futures.edit_flags, rows, keypoints,
+                                   &columns.keypoint_edit_flags, &error) &&
+              collectBoolRangeRead(&futures.flip_corrected, rows, 1,
+                                   &columns.flip_corrected, &error) &&
+              collectBoolRangeRead(&futures.usable, rows, 1,
+                                   &columns.usable_keypoints, &error) &&
+              collectRangeRead(&futures.review_states, rows, 1,
+                               &columns.review_state_codes, &error) &&
+              collectRangeRead(&futures.reason_codes, rows, 1,
+                               &columns.reason_codes, &error);
+    } else if (ready) {
+      columns.refined_success = columns.source_success;
+      columns.keypoint_edit_flags.assign(rows * keypoints, 0);
+      columns.flip_corrected.assign(rows, 0);
+      columns.usable_keypoints = columns.source_success;
+      columns.review_state_codes.assign(rows, 0);
+      columns.reason_codes.assign(rows, 0);
+    }
+    ready =
+        ready &&
+        collectRangeRead(&futures.keypoint_metric_values, rows,
+                         keypoints * keypoint_metrics,
+                         &columns.keypoint_metric_values, &error) &&
+        collectBoolRangeRead(&futures.keypoint_metric_valid, rows,
+                             keypoints * keypoint_metrics,
+                             &columns.keypoint_metric_valid, &error) &&
+        collectRangeRead(&futures.pose_metric_values, rows, pose_metrics,
+                         &columns.pose_metric_values, &error) &&
+        collectBoolRangeRead(&futures.pose_metric_valid, rows, pose_metrics,
+                             &columns.pose_metric_valid, &error) &&
+        collectRangeRead(&futures.keypoint_quality_flags, rows, keypoints,
+                         &columns.keypoint_quality_flags, &error) &&
+        collectRangeRead(&futures.pose_quality_flags, rows, 1,
+                         &columns.pose_quality_flags, &error) &&
+        collectBoolRangeRead(&futures.proposed_keypoint_valid, rows, keypoints,
+                             &columns.proposed_keypoint_valid, &error) &&
+        collectBoolRangeRead(&futures.proposed_pose_usable, rows, 1,
+                             &columns.proposed_pose_usable, &error);
+    if (!ready) {
+      window.status = timeline::KeypointQualityTimelineStatus::ReadFailed;
+      window.error = std::move(error);
+    } else {
+      window = timeline::buildKeypointQualityTimelineWindow(
+          descriptor_, first_camera_frame, last_camera_frame, offsets_, first,
+          columns);
+    }
+    const double elapsed = elapsedMilliseconds(started);
+    std::lock_guard<std::mutex> lock(metrics_mutex_);
+    ++metrics_.range_reads;
+    metrics_.peak_concurrent_field_reads =
+        std::max(metrics_.peak_concurrent_field_reads,
+                 static_cast<size_t>(refined_ ? 20 : 15));
+    metrics_.maximum_range_read_ms =
+        std::max(metrics_.maximum_range_read_ms, elapsed);
+    if (window.ready()) {
+      metrics_.rows_read += window.rows_read;
+      metrics_.decoded_bytes += window.decoded_bytes;
+    } else if (window.status ==
+               timeline::KeypointQualityTimelineStatus::ReadFailed) {
+      ++metrics_.failed_reads;
+      metrics_.last_error = window.error;
+    }
+    return window;
+  }
+
+  timeline::KeypointQualityTimelineRepositoryMetrics metrics() const override {
+    std::lock_guard<std::mutex> lock(metrics_mutex_);
+    return metrics_;
+  }
+
+private:
+  timeline::KeypointQualityTimelineDescriptor descriptor_;
+  RawStores raw_;
+  QualityStores quality_;
+  std::optional<RefinedStores> refined_;
+  std::vector<int64_t> offsets_;
+  mutable std::mutex metrics_mutex_;
+  mutable timeline::KeypointQualityTimelineRepositoryMetrics metrics_;
+};
+
 class TensorStoreKeypointV2Repository final : public KeypointV2Repository {
 public:
-  TensorStoreKeypointV2Repository(KeypointOverlayDescriptor overlay_descriptor,
-                                  KeypointV2RepositoryDescriptor descriptor,
-                                  RawStores raw, QualityStores quality,
-                                  std::optional<RefinedStores> refined,
-                                  BodyFrameStores body,
-                                  std::vector<int64_t> raw_offsets,
-                                  std::vector<int64_t> selected_offsets,
-                                  std::vector<int64_t> body_offsets)
+  TensorStoreKeypointV2Repository(
+      KeypointOverlayDescriptor overlay_descriptor,
+      KeypointV2RepositoryDescriptor descriptor,
+      timeline::KeypointQualityTimelineDescriptor timeline_descriptor,
+      RawStores raw, QualityStores quality,
+      std::optional<RefinedStores> refined, BodyFrameStores body,
+      std::vector<int64_t> raw_offsets, std::vector<int64_t> selected_offsets,
+      std::vector<int64_t> body_offsets)
       : overlay_descriptor_(std::move(overlay_descriptor)),
-        descriptor_(std::move(descriptor)), raw_(std::move(raw)),
-        quality_(std::move(quality)), refined_(std::move(refined)),
-        body_(std::move(body)), raw_offsets_(std::move(raw_offsets)),
+        descriptor_(std::move(descriptor)),
+        timeline_descriptor_(std::move(timeline_descriptor)),
+        raw_(std::move(raw)), quality_(std::move(quality)),
+        refined_(std::move(refined)), body_(std::move(body)),
+        raw_offsets_(std::move(raw_offsets)),
         selected_offsets_(std::move(selected_offsets)),
         body_offsets_(std::move(body_offsets)) {}
 
@@ -833,8 +1153,14 @@ public:
           payload.edit_flags.begin() +
               static_cast<ptrdiff_t>((local + 1) * keypoints));
       detection.keypoints.reserve(keypoints);
+      detection.keypoint_confidences.reserve(keypoints);
+      detection.keypoint_valid.reserve(keypoints);
+      detection.pose_confidence = payload.pose_confidences[local];
       for (size_t point = 0; point < keypoints; ++point) {
         const size_t index = local * keypoints + point;
+        detection.keypoint_confidences.push_back(
+            payload.keypoint_confidences[index]);
+        detection.keypoint_valid.push_back(payload.point_valid[index]);
         if (!payload.point_valid[index]) {
           detection.keypoints.push_back({nan, nan});
         } else {
@@ -863,7 +1189,6 @@ public:
     if (quality_validated_.load(std::memory_order_acquire)) {
       return true;
     }
-    std::vector<int64_t> offsets;
     std::vector<int64_t> frames;
     std::vector<int64_t> source_rows;
     std::vector<uint64_t> keys;
@@ -871,11 +1196,22 @@ public:
     std::vector<int64_t> raw_frames;
     std::vector<uint64_t> raw_keys;
     std::vector<uint8_t> raw_signatures;
+    if (quality_offsets_.empty()) {
+      if (!readAll(quality_.frame_row_offsets, 1, &quality_offsets_, error) ||
+          !ValidateKeypointV2Offsets(quality_offsets_,
+                                     descriptor_.quality.frame_count,
+                                     descriptor_.quality.row_count, error) ||
+          !equalVectors(quality_offsets_, raw_offsets_, "quality offsets",
+                        error)) {
+        read_failures_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+      }
+      descriptor_.quality_offset_read_calls = 1;
+    }
     quality_payload_read_calls_.fetch_add(5, std::memory_order_relaxed);
     if (!readAll(raw_.frame_indices, 1, &raw_frames, error) ||
         !readAll(raw_.instance_key, 1, &raw_keys, error) ||
         !readAll(raw_.keypoint_row_signature, 32, &raw_signatures, error) ||
-        !readAll(quality_.frame_row_offsets, 1, &offsets, error) ||
         !readAll(quality_.frame_indices, 1, &frames, error) ||
         !readAll(quality_.source_keypoint_row_ids, 1, &source_rows, error) ||
         !readAll(quality_.instance_key, 1, &keys, error) ||
@@ -889,10 +1225,9 @@ public:
                                       descriptor_.raw.row_count, error) ||
         !ValidateKeypointV2InstanceKeys(raw_keys, descriptor_.raw.row_count,
                                         error) ||
-        !ValidateKeypointV2FrameIndex(offsets, frames,
+        !ValidateKeypointV2FrameIndex(quality_offsets_, frames,
                                       descriptor_.quality.frame_count,
                                       descriptor_.quality.row_count, error) ||
-        !equalVectors(offsets, raw_offsets_, "quality offsets", error) ||
         !equalVectors(frames, raw_frames, "quality frames", error) ||
         !equalVectors(keys, raw_keys, "quality instance keys", error) ||
         !equalVectors(signatures, raw_signatures, "quality signatures",
@@ -906,10 +1241,35 @@ public:
         return false;
       }
     }
-    quality_offsets_ = std::move(offsets);
-    descriptor_.quality_offset_read_calls = 1;
     quality_validated_.store(true, std::memory_order_release);
     return true;
+  }
+
+  std::unique_ptr<timeline::KeypointQualityTimelineRepository>
+  createQualityTimelineRepository(std::string *error) override {
+    std::lock_guard<std::mutex> lock(quality_validation_mutex_);
+    if (quality_offsets_.empty()) {
+      if (!readAll(quality_.frame_row_offsets, 1, &quality_offsets_, error) ||
+          !ValidateKeypointV2Offsets(quality_offsets_,
+                                     descriptor_.quality.frame_count,
+                                     descriptor_.quality.row_count, error) ||
+          !equalVectors(quality_offsets_, raw_offsets_, "quality offsets",
+                        error)) {
+        read_failures_.fetch_add(1, std::memory_order_relaxed);
+        return nullptr;
+      }
+      descriptor_.quality_offset_read_calls = 1;
+    }
+    auto timeline_descriptor = timeline_descriptor_;
+    timeline_descriptor.offset_read_calls = 1;
+    timeline_descriptor.retained_offset_bytes =
+        quality_offsets_.size() * sizeof(int64_t);
+    if (error) {
+      error->clear();
+    }
+    return std::make_unique<TensorStoreKeypointQualityTimelineRepository>(
+        std::move(timeline_descriptor), raw_, quality_, refined_,
+        quality_offsets_);
   }
 
 private:
@@ -990,8 +1350,12 @@ private:
       futures.row_signatures =
           issueRangeRead(refined_->keypoint_row_signature, first, last);
       futures.points = issueRangeRead(refined_->keypoints_img, first, last);
+      futures.keypoint_confidences =
+          issueRangeRead(refined_->keypoint_confidences, first, last);
       futures.point_valid =
           issueRangeRead(refined_->keypoint_valid, first, last);
+      futures.pose_confidences =
+          issueRangeRead(refined_->pose_confidence, first, last);
       futures.source_success =
           issueRangeRead(refined_->source_success, first, last);
       futures.refined_success =
@@ -1009,7 +1373,7 @@ private:
           issueRangeRead(refined_->review_state_codes, first, last);
       futures.reason_codes =
           issueRangeRead(refined_->reason_codes, first, last);
-      recordBatch(22);
+      recordBatch(24);
       return collectRangeRead(&futures.keys, rows, 1, &payload->keys, error) &&
              collectRangeRead(&futures.frame_indices, rows, 1,
                               &payload->frame_indices, error) &&
@@ -1019,8 +1383,12 @@ private:
                               &payload->row_signatures, error) &&
              collectRangeRead(&futures.points, rows, keypoints * 2,
                               &payload->points, error) &&
+             collectRangeRead(&futures.keypoint_confidences, rows, keypoints,
+                              &payload->keypoint_confidences, error) &&
              collectBoolRangeRead(&futures.point_valid, rows, keypoints,
                                   &payload->point_valid, error) &&
+             collectRangeRead(&futures.pose_confidences, rows, 1,
+                              &payload->pose_confidences, error) &&
              collectBoolRangeRead(&futures.source_success, rows, 1,
                                   &payload->source_success, error) &&
              collectBoolRangeRead(&futures.refined_success, rows, 1,
@@ -1048,9 +1416,13 @@ private:
     futures.row_signatures =
         issueRangeRead(raw_.keypoint_row_signature, first, last);
     futures.points = issueRangeRead(raw_.keypoints_img, first, last);
+    futures.keypoint_confidences =
+        issueRangeRead(raw_.keypoint_confidences, first, last);
     futures.point_valid = issueRangeRead(raw_.keypoint_valid, first, last);
+    futures.pose_confidences =
+        issueRangeRead(raw_.pose_confidence, first, last);
     futures.source_success = issueRangeRead(raw_.pose_success, first, last);
-    recordBatch(14);
+    recordBatch(16);
     if (!collectRangeRead(&futures.keys, rows, 1, &payload->keys, error) ||
         !collectRangeRead(&futures.frame_indices, rows, 1,
                           &payload->frame_indices, error) ||
@@ -1060,8 +1432,12 @@ private:
                           &payload->row_signatures, error) ||
         !collectRangeRead(&futures.points, rows, keypoints * 2,
                           &payload->points, error) ||
+        !collectRangeRead(&futures.keypoint_confidences, rows, keypoints,
+                          &payload->keypoint_confidences, error) ||
         !collectBoolRangeRead(&futures.point_valid, rows, keypoints,
                               &payload->point_valid, error) ||
+        !collectRangeRead(&futures.pose_confidences, rows, 1,
+                          &payload->pose_confidences, error) ||
         !collectBoolRangeRead(&futures.source_success, rows, 1,
                               &payload->source_success, error) ||
         !collectBody() || !validatePageIdentity()) {
@@ -1080,6 +1456,7 @@ private:
 
   KeypointOverlayDescriptor overlay_descriptor_;
   mutable KeypointV2RepositoryDescriptor descriptor_;
+  timeline::KeypointQualityTimelineDescriptor timeline_descriptor_;
   RawStores raw_;
   QualityStores quality_;
   std::optional<RefinedStores> refined_;
@@ -1171,11 +1548,12 @@ OpenKeypointV2Repository(const KeypointV2RepositoryOpenRequest &request,
     return nullptr;
   }
   json selected_root;
+  std::string selected_base = raw_base;
   if (refined) {
-    const std::string refined_base =
-        "refined_keypoints_runs/" + request.refined_run;
+    selected_base = "refined_keypoints_runs/" + request.refined_run;
     if (!validateStageMetadata(
-            *request.refined_archive->impl_, refined_base, kRefinedDeclarations,
+            *request.refined_archive->impl_, selected_base,
+            kRefinedDeclarations,
             [&](const json &manifest, KeypointV2ManifestSummary *summary,
                 std::string *error) {
               return ValidateRefinedKeypointV2RunManifest(
@@ -1244,10 +1622,8 @@ OpenKeypointV2Repository(const KeypointV2RepositoryOpenRequest &request,
   }
   if (refined) {
     refined_stores.emplace();
-    const std::string refined_base =
-        "refined_keypoints_runs/" + request.refined_run;
     if (!openRefinedStores(*request.refined_archive->impl_, selected_root,
-                           refined_base, &*refined_stores, &metrics,
+                           selected_base, &*refined_stores, &metrics,
                            error_message)) {
       return nullptr;
     }
@@ -1413,10 +1789,16 @@ OpenKeypointV2Repository(const KeypointV2RepositoryOpenRequest &request,
   overlay.skeleton_edges = descriptor.raw.skeleton_edges;
   overlay.row_count = descriptor.selected.row_count;
   overlay.camera_frame_count = descriptor.selected.frame_count;
+  timeline::KeypointQualityTimelineDescriptor timeline_descriptor;
+  if (!parseTimelineDescriptor(quality_root, quality_base, selected_root,
+                               selected_base, descriptor, overlay,
+                               &timeline_descriptor, error_message)) {
+    return nullptr;
+  }
   return std::make_unique<TensorStoreKeypointV2Repository>(
-      std::move(overlay), std::move(descriptor), std::move(raw_stores),
-      std::move(quality_stores), std::move(refined_stores),
-      std::move(body_stores), std::move(raw_offsets),
+      std::move(overlay), std::move(descriptor), std::move(timeline_descriptor),
+      std::move(raw_stores), std::move(quality_stores),
+      std::move(refined_stores), std::move(body_stores), std::move(raw_offsets),
       std::move(selected_offsets), std::move(body_offsets));
 }
 
