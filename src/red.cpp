@@ -2687,6 +2687,98 @@ int main(int argc, char **argv) {
     playback_trace_log_writer.write(sample, event_name != "frame");
   };
 
+  auto playbackSeekEventDetails = [](
+                                      const crimson::playback::
+                                          PlaybackSeekTelemetryEvent &event,
+                                      const char *stage) {
+    const auto &transaction = event.transaction;
+    const auto &plan = event.plan;
+    const auto &result = event.result;
+    return json{
+        {"stage", stage},
+        {"generation", transaction.generation},
+        {"phase",
+         std::string(crimson::playback::playbackSeekPhaseName(
+             transaction.request.phase))},
+        {"origin",
+         std::string(crimson::playback::playbackSeekOriginName(
+             transaction.request.origin))},
+        {"target_frame", transaction.request.target_frame},
+        {"frame_count", transaction.request.frame_count},
+        {"plan_valid", plan.valid},
+        {"accuracy",
+         std::string(
+             crimson::playback::playbackSeekAccuracyName(plan.accuracy))},
+        {"execution_mode",
+         std::string(crimson::playback::playbackSeekExecutionModeName(
+             plan.mode))},
+        {"prefer_resident_frame", plan.prefer_resident_frame},
+        {"status",
+         std::string(stage) == "requested"
+             ? std::string("requested")
+             : std::string(
+                   crimson::playback::playbackSeekExecutionStatusName(
+                       result.status))},
+        {"execution_path",
+         std::string(crimson::playback::playbackSeekExecutionPathName(
+             result.path))},
+        {"resolved_frame", result.resolved_frame},
+        {"queue_ms", result.queue_ms},
+        {"service_ms", result.service_ms},
+        {"error", result.error},
+    };
+  };
+
+  auto executePlaybackSeek =
+      [&](const crimson::playback::PlaybackSeekRequest &request) {
+        auto &coordinator = playback_transport.seekCoordinator();
+        const auto transaction = coordinator.begin(request);
+        const auto plan = crimson::playback::planPlaybackSeek(
+            transaction,
+            crimson::playback::PlaybackSeekAdapterCapabilities{
+                false,
+                true,
+                true,
+                true,
+            });
+        crimson::playback::PlaybackSeekTelemetryEvent requested_event{
+            transaction, plan, {}};
+        requested_event.result.resolved_frame = request.target_frame;
+        const json requested_details =
+            playbackSeekEventDetails(requested_event, "requested");
+        writeClippedPlaybackStateEvent("transport_seek", requested_details,
+                                       true);
+        writePlaybackTraceEvent("transport_seek", requested_details);
+
+        crimson::playback::PlaybackSeekExecutionResult execution;
+        execution.resolved_frame = request.target_frame;
+        if (!plan.valid) {
+          execution.status =
+              crimson::playback::PlaybackSeekExecutionStatus::Rejected;
+          execution.error = std::string(
+              crimson::playback::playbackSeekRejectionName(plan.rejection));
+        } else {
+          if (plan.pause_playback && ps.play_video) {
+            applyPlaybackToggleForPerf();
+          }
+          const int target_frame = static_cast<int>(std::clamp<int64_t>(
+              request.target_frame, 0, std::numeric_limits<int>::max()));
+          execution = playback_session_controller.seekToFrame(
+              target_frame, plan.prefer_resident_frame,
+              plan.accuracy ==
+                  crimson::playback::PlaybackSeekAccuracy::ApproximateAllowed);
+        }
+
+        const auto event =
+            coordinator.record(transaction, plan, std::move(execution));
+        const json outcome_details =
+            playbackSeekEventDetails(event, "outcome");
+        writeClippedPlaybackStateEvent("transport_seek", outcome_details,
+                                       true);
+        writePlaybackTraceEvent("transport_seek", outcome_details);
+        return event;
+      };
+
   auto writeFrameSyncTraceEvent =
       [&](const json &details, int presenter_view_idx,
           int presenter_target_frame, int presenter_preferred_paused_slot,
@@ -3486,7 +3578,19 @@ int main(int argc, char **argv) {
     ImGui::NewFrame();
     const auto ui_build_start = std::chrono::steady_clock::now();
 
-    playback_session_controller.pollSeekState();
+    const auto seek_completion = playback_session_controller.pollSeekState();
+    if (seek_completion.has_value() &&
+        playback_transport.seekCoordinator().activeGeneration() != 0) {
+      const auto completed_event =
+          playback_transport.seekCoordinator().recordActive(
+              *seek_completion);
+      if (completed_event.has_value()) {
+        const json details =
+            playbackSeekEventDetails(*completed_event, "completion");
+        writeClippedPlaybackStateEvent("transport_seek", details, true);
+        writePlaybackTraceEvent("transport_seek", details);
+      }
+    }
 
     // --- Update playback time ---
     auto now = std::chrono::steady_clock::now();
@@ -6546,75 +6650,8 @@ int main(int argc, char **argv) {
             writePlaybackTraceEvent("toggle_playback",
                                     json{{"source", "camera_controls"}});
           }
-          const bool transport_step =
-              camera_transport_result.action ==
-                  CameraViewTransportAction::StepBackward ||
-              camera_transport_result.action ==
-                  CameraViewTransportAction::StepForward;
-          if (transport_step && transport_intent.has_value()) {
-            writeClippedPlaybackStateEvent(
-                "step_request",
-                json{{"source", "camera_controls"},
-                     {"phase", "before"},
-                     {"delta", camera_transport_result.step_delta}},
-                true);
-            writePlaybackTraceEvent(
-                "step_request",
-                json{{"source", "camera_controls"},
-                     {"phase", "before"},
-                     {"delta", camera_transport_result.step_delta}});
-            const int target_frame = static_cast<int>(std::clamp<int64_t>(
-                transport_intent->target_frame, 0,
-                std::numeric_limits<int>::max()));
-            playback_session_controller.seekToFrame(target_frame, true);
-            writeClippedPlaybackStateEvent(
-                "step_request",
-                json{{"source", "camera_controls"},
-                     {"phase", "after"},
-                     {"delta", camera_transport_result.step_delta}},
-                true);
-            writePlaybackTraceEvent(
-                "step_request",
-                json{{"source", "camera_controls"},
-                     {"phase", "after"},
-                     {"delta", camera_transport_result.step_delta}});
-          }
-          const bool transport_seek =
-              camera_transport_result.action ==
-                  CameraViewTransportAction::Restart ||
-              camera_transport_result.action ==
-                  CameraViewTransportAction::SeekPreview ||
-              camera_transport_result.action ==
-                  CameraViewTransportAction::SeekCommit;
-          if (transport_seek && transport_intent.has_value()) {
-            const int target_frame = static_cast<int>(std::clamp<int64_t>(
-                transport_intent->target_frame, 0,
-                std::numeric_limits<int>::max()));
-            writeClippedPlaybackStateEvent(
-                "seek_request",
-                json{{"source", "camera_controls"},
-                     {"phase", "before"},
-                     {"target_frame", target_frame},
-                     {"force_inaccurate",
-                      camera_transport_result.force_inaccurate_seek}},
-                true);
-            writePlaybackTraceEvent(
-                "seek_request",
-                json{{"source", "camera_controls"},
-                     {"target_frame", target_frame},
-                     {"force_inaccurate",
-                      camera_transport_result.force_inaccurate_seek}});
-            playback_session_controller.seekToFrame(
-                target_frame, true,
-                camera_transport_result.force_inaccurate_seek);
-            writeClippedPlaybackStateEvent(
-                "seek_request",
-                json{{"source", "camera_controls"},
-                     {"phase", "after"},
-                     {"target_frame", target_frame},
-                     {"force_inaccurate",
-                      camera_transport_result.force_inaccurate_seek}},
-                true);
+          if (camera_transport_result.seek_request.has_value()) {
+            executePlaybackSeek(*camera_transport_result.seek_request);
           }
         }
         ImGui::End();
@@ -6645,29 +6682,13 @@ int main(int argc, char **argv) {
             std::nullopt,
             std::abs(playback_shortcuts.step_delta));
         if (intent.has_value()) {
-          writeClippedPlaybackStateEvent(
-              "step_request",
-              json{{"source", "shortcut"},
-                   {"phase", "before"},
-                   {"delta", playback_shortcuts.step_delta}},
-              true);
-          writePlaybackTraceEvent(
-              "step_request", json{{"source", "shortcut"},
-                                   {"phase", "before"},
-                                   {"delta", playback_shortcuts.step_delta}});
-          const int target_frame = static_cast<int>(std::clamp<int64_t>(
-              intent->target_frame, 0, std::numeric_limits<int>::max()));
-          playback_session_controller.seekToFrame(target_frame, true);
-          writeClippedPlaybackStateEvent(
-              "step_request",
-              json{{"source", "shortcut"},
-                   {"phase", "after"},
-                   {"delta", playback_shortcuts.step_delta}},
-              true);
-          writePlaybackTraceEvent(
-              "step_request", json{{"source", "shortcut"},
-                                   {"phase", "after"},
-                                   {"delta", playback_shortcuts.step_delta}});
+          const auto request = crimson::playback::makePlaybackSeekRequest(
+              crimson::playback::PlaybackSeekPhase::Discrete,
+              crimson::playback::PlaybackSeekOrigin::KeyboardShortcut,
+              intent->target_frame, shortcut_frame_count);
+          if (request.has_value()) {
+            executePlaybackSeek(*request);
+          }
         }
       }
 
@@ -7867,6 +7888,7 @@ int main(int argc, char **argv) {
 
   // Cleanup
   session_lifecycle.beginClose();
+  playback_transport.seekCoordinator().cancelActive();
   quality_timeline_session.close();
   zarr_loader.setDataAccessScheduler(nullptr);
   analysis_data_scheduler->waitUntilIdle();
@@ -7893,6 +7915,8 @@ int main(int argc, char **argv) {
        camera_presentation_tracker.metrics()});
   crimson::data::writeDataAccessSchedulerDiagnostics(
       std::cout, "Nvidia", final_analysis_data_scheduler_metrics);
+  crimson::playback::writePlaybackSeekDiagnostics(
+      std::cout, "Nvidia", playback_transport.seekCoordinator().metrics());
 
   return app_exit_code;
 }

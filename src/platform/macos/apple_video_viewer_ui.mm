@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <array>
 #include <cfloat>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -89,22 +90,93 @@ ImU32 stimulusOverlayColor(
              static_cast<float>(std::clamp(color.alpha, 0.0, 1.0))));
 }
 
+crimson::playback::PlaybackSeekTelemetryEvent executeViewerSeek(
+    LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
+    const crimson::playback::PlaybackSeekRequest &request) {
+  auto &coordinator = clock.seekCoordinator();
+  const auto transaction = coordinator.begin(request);
+  const auto plan = crimson::playback::planPlaybackSeek(
+      transaction,
+      crimson::playback::PlaybackSeekAdapterCapabilities{
+          true,
+          false,
+          true,
+          true,
+      });
+  crimson::playback::PlaybackSeekExecutionResult result;
+  result.resolved_frame = request.target_frame;
+  if (!plan.valid) {
+    result.status = crimson::playback::PlaybackSeekExecutionStatus::Rejected;
+    result.error = std::string(
+        crimson::playback::playbackSeekRejectionName(plan.rejection));
+    return coordinator.record(transaction, plan, std::move(result));
+  }
+
+  if (plan.pause_playback) {
+    clock.apply(crimson::playback::PlaybackTransportCommand::pause());
+  }
+  const auto transition = clock.apply(
+      crimson::playback::PlaybackTransportCommand::seek(request.target_frame));
+  if (!transition.accepted) {
+    result.status = crimson::playback::PlaybackSeekExecutionStatus::Rejected;
+    result.error = "logical playback cursor rejected the seek";
+    return coordinator.record(transaction, plan, std::move(result));
+  }
+  result.resolved_frame = transition.target_frame;
+
+  if (plan.mode ==
+      crimson::playback::PlaybackSeekExecutionMode::LogicalCursorOnly) {
+    result.status = crimson::playback::PlaybackSeekExecutionStatus::Completed;
+    result.path =
+        crimson::playback::PlaybackSeekExecutionPath::LogicalCursor;
+    return coordinator.record(transaction, plan, std::move(result));
+  }
+
+  const auto service_start = std::chrono::steady_clock::now();
+  if (plan.prefer_resident_frame &&
+      playback.selectBufferedFrame(transition.target_frame)) {
+    result.status = crimson::playback::PlaybackSeekExecutionStatus::Completed;
+    result.path =
+        crimson::playback::PlaybackSeekExecutionPath::ResidentBuffer;
+  } else {
+    std::string error;
+    if (playback.requestSeek(transition.target_frame, &error)) {
+      result.status = crimson::playback::PlaybackSeekExecutionStatus::Submitted;
+      result.path =
+          crimson::playback::PlaybackSeekExecutionPath::BackendDecoder;
+    } else {
+      result.status = crimson::playback::PlaybackSeekExecutionStatus::Failed;
+      result.error = error;
+      std::fprintf(stderr, "[AppleVideo] Seek request failed: %s\n",
+                   error.c_str());
+    }
+  }
+  result.service_ms =
+      std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - service_start)
+          .count();
+  return coordinator.record(transaction, plan, std::move(result));
+}
+
+bool viewerSeekCausesDiscontinuity(
+    const crimson::playback::PlaybackSeekTelemetryEvent &event) {
+  return event.result.status !=
+             crimson::playback::PlaybackSeekExecutionStatus::Rejected &&
+         event.result.status !=
+             crimson::playback::PlaybackSeekExecutionStatus::Failed &&
+         event.result.path !=
+             crimson::playback::PlaybackSeekExecutionPath::LogicalCursor;
+}
+
 bool seekViewer(LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
                 int64_t frame_number) {
-  clock.apply(crimson::playback::PlaybackTransportCommand::pause());
-  const auto transition = clock.apply(
-      crimson::playback::PlaybackTransportCommand::seek(frame_number));
-  if (!transition.accepted) {
-    return false;
-  }
-  std::string error;
-  if (!playback.selectBufferedFrame(transition.target_frame) &&
-      !playback.requestSeek(transition.target_frame, &error)) {
-    std::fprintf(stderr, "[AppleVideo] Seek request failed: %s\n",
-                 error.c_str());
-    return false;
-  }
-  return true;
+  const auto request = crimson::playback::makePlaybackSeekRequest(
+      crimson::playback::PlaybackSeekPhase::Discrete,
+      crimson::playback::PlaybackSeekOrigin::Timeline, frame_number,
+      clock.frameCount());
+  return request.has_value() &&
+         viewerSeekCausesDiscontinuity(
+             executeViewerSeek(clock, playback, *request));
 }
 
 crimson::workspace::WorkspaceCapabilities
@@ -815,7 +887,20 @@ AppleVideoControlResult drawAppleCameraViewWindow(
         command, viewerPlaybackCapabilities(clock), clock.requestedFrame(),
         clock.frameCount(), target, magnitude);
     if (intent.has_value()) {
-      apply_intent(*intent);
+      if (intent->kind == crimson::workspace::PlaybackIntentKind::Seek) {
+        const auto request = crimson::playback::makePlaybackSeekRequest(
+            crimson::playback::PlaybackSeekPhase::Discrete,
+            crimson::playback::PlaybackSeekOrigin::KeyboardShortcut,
+            intent->target_frame, clock.frameCount());
+        if (request.has_value()) {
+          result.camera_discontinuity =
+              viewerSeekCausesDiscontinuity(
+                  executeViewerSeek(clock, playback, *request)) ||
+              result.camera_discontinuity;
+        }
+      } else {
+        apply_intent(*intent);
+      }
     }
   };
 
@@ -835,14 +920,13 @@ AppleVideoControlResult drawAppleCameraViewWindow(
       });
   view_state->transport_slider_frame = transport.slider_frame_number;
   view_state->transport_slider_active = transport.slider_active;
-  if (transport.intent.has_value()) {
-    if (transport.action == CameraViewTransportAction::SeekPreview) {
-      clock.apply(crimson::playback::PlaybackTransportCommand::pause());
-      clock.apply(crimson::playback::PlaybackTransportCommand::seek(
-          transport.intent->target_frame));
-    } else {
-      apply_intent(*transport.intent);
-    }
+  if (transport.seek_request.has_value()) {
+    result.camera_discontinuity =
+        viewerSeekCausesDiscontinuity(
+            executeViewerSeek(clock, playback, *transport.seek_request)) ||
+        result.camera_discontinuity;
+  } else if (transport.intent.has_value()) {
+    apply_intent(*transport.intent);
   }
   if (!interactive) {
     ImGui::EndDisabled();

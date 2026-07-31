@@ -57,13 +57,23 @@ CameraViewTransportControlsResult drawCameraViewTransportControls(
     const auto submit_action =
         [&](CameraViewTransportAction action,
             crimson::workspace::Command command, int64_t magnitude = 1,
-            std::optional<int64_t> target = std::nullopt) {
+            std::optional<int64_t> target = std::nullopt,
+            std::optional<crimson::playback::PlaybackSeekPhase> seek_phase =
+                std::nullopt) {
             const auto intent = crimson::workspace::makePlaybackIntent(
                 command, capabilities, context.current_display_frame,
                 frame_count, target, magnitude);
             if (intent.has_value()) {
                 result.action = action;
                 result.intent = intent;
+                if (seek_phase.has_value() &&
+                    intent->kind == crimson::workspace::PlaybackIntentKind::Seek) {
+                    result.seek_request =
+                        crimson::playback::makePlaybackSeekRequest(
+                            *seek_phase,
+                            crimson::playback::PlaybackSeekOrigin::CameraControls,
+                            intent->target_frame, frame_count);
+                }
             }
         };
 
@@ -75,14 +85,18 @@ CameraViewTransportControlsResult drawCameraViewTransportControls(
     if (ImGui::Button(ICON_FK_FAST_BACKWARD)) {
         result.step_delta = -10;
         submit_action(CameraViewTransportAction::StepBackward,
-                      crimson::workspace::Command::StepBackward, 10);
+                      crimson::workspace::Command::StepBackward, 10,
+                      std::nullopt,
+                      crimson::playback::PlaybackSeekPhase::Discrete);
     }
     show_item_tooltip("Back 10 frames");
     ImGui::SameLine(0.0f, spacing);
     if (ImGui::Button(ICON_FK_STEP_BACKWARD)) {
         result.step_delta = -1;
         submit_action(CameraViewTransportAction::StepBackward,
-                      crimson::workspace::Command::StepBackward);
+                      crimson::workspace::Command::StepBackward, 1,
+                      std::nullopt,
+                      crimson::playback::PlaybackSeekPhase::Discrete);
     }
     show_item_tooltip("Previous frame");
     ImGui::SameLine(0.0f, spacing);
@@ -96,8 +110,8 @@ CameraViewTransportControlsResult drawCameraViewTransportControls(
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, repeat_active);
         if (ImGui::Button(ICON_FK_REPEAT)) {
             submit_action(CameraViewTransportAction::Restart,
-                          crimson::workspace::Command::Seek, 1, 0);
-            result.force_inaccurate_seek = false;
+                          crimson::workspace::Command::Seek, 1, 0,
+                          crimson::playback::PlaybackSeekPhase::Discrete);
         }
         ImGui::PopStyleColor(3);
         show_item_tooltip("Restart from first frame");
@@ -129,14 +143,18 @@ CameraViewTransportControlsResult drawCameraViewTransportControls(
     if (ImGui::Button(ICON_FK_STEP_FORWARD)) {
         result.step_delta = 1;
         submit_action(CameraViewTransportAction::StepForward,
-                      crimson::workspace::Command::StepForward);
+                      crimson::workspace::Command::StepForward, 1,
+                      std::nullopt,
+                      crimson::playback::PlaybackSeekPhase::Discrete);
     }
     show_item_tooltip("Next frame");
     ImGui::SameLine(0.0f, spacing);
     if (ImGui::Button(ICON_FK_FAST_FORWARD)) {
         result.step_delta = 10;
         submit_action(CameraViewTransportAction::StepForward,
-                      crimson::workspace::Command::StepForward, 10);
+                      crimson::workspace::Command::StepForward, 10,
+                      std::nullopt,
+                      crimson::playback::PlaybackSeekPhase::Discrete);
     }
     show_item_tooltip("Forward 10 frames");
     ImGui::SameLine();
@@ -165,14 +183,14 @@ CameraViewTransportControlsResult drawCameraViewTransportControls(
     if (result.slider_just_changed && result.slider_active) {
         submit_action(CameraViewTransportAction::SeekPreview,
                       crimson::workspace::Command::Seek, 1,
-                      result.slider_frame_number);
-        result.force_inaccurate_seek = true;
+                      result.slider_frame_number,
+                      crimson::playback::PlaybackSeekPhase::Preview);
     }
     if (result.slider_released) {
         submit_action(CameraViewTransportAction::SeekCommit,
                       crimson::workspace::Command::Seek, 1,
-                      result.slider_frame_number);
-        result.force_inaccurate_seek = false;
+                      result.slider_frame_number,
+                      crimson::playback::PlaybackSeekPhase::Commit);
     }
 
     if (!controls_enabled) {

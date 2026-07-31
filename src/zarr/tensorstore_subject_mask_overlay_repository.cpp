@@ -31,6 +31,9 @@
 
 #include "data_access_cache.h"
 #include "zarr/archive_context_internal.h"
+#include "zarr/canonical_json.h"
+#include "zarr/subject_mask_v1_contract.h"
+#include "zarr/zarr_metadata_equivalence.h"
 
 namespace crimson::zarr {
 namespace ts = tensorstore;
@@ -488,6 +491,7 @@ std::string RleComponentName(size_t index, const std::string& label,
 struct RowMetadata {
   size_t mask_row = 0;
   int64_t camera_frame = -1;
+  uint64_t instance_key = 0;
   int64_t detection_index = -1;
   int64_t source_crop_row_id = -1;
   double roi_x = 0.0;
@@ -765,6 +769,7 @@ class TensorStoreSubjectMaskOverlayRepository final
  public:
   TensorStoreSubjectMaskOverlayRepository(
       SubjectMaskOverlayDescriptor descriptor, std::vector<RowMetadata> rows,
+      std::vector<int64_t> frame_row_offsets,
       std::unique_ptr<LazyMappingSource> lazy_mapping,
       std::vector<uint8_t> available_channels,
       ts::TensorStore<uint8_t, 4> dense, ts::TensorStore<uint8_t, 4> bitpacked,
@@ -773,6 +778,7 @@ class TensorStoreSubjectMaskOverlayRepository final
       std::chrono::steady_clock::time_point open_started)
       : descriptor_(std::move(descriptor)),
         rows_(std::move(rows)),
+        frame_row_offsets_(std::move(frame_row_offsets)),
         lazy_mapping_(std::move(lazy_mapping)),
         available_channels_(std::move(available_channels)),
         dense_(std::move(dense)),
@@ -782,17 +788,18 @@ class TensorStoreSubjectMaskOverlayRepository final
         metrics_(std::move(opening_metrics)) {
     if (lazy_mapping_) {
       metrics_.lazy_mapping = true;
-    } else {
+    } else if (frame_row_offsets_.empty()) {
       const auto index_started = std::chrono::steady_clock::now();
       for (size_t index = 0; index < rows_.size(); ++index) {
         rows_by_frame_[rows_[index].camera_frame].push_back(index);
       }
       metrics_.metadata_index_ms += ElapsedMilliseconds(index_started);
-      metrics_.metadata_retained_bytes += VectorCapacityBytes(rows_);
     }
+    metrics_.metadata_retained_bytes += VectorCapacityBytes(rows_);
+    metrics_.metadata_retained_bytes += VectorCapacityBytes(frame_row_offsets_);
     metrics_.metadata_retained_bytes +=
         VectorCapacityBytes(available_channels_);
-    if (!lazy_mapping_) {
+    if (!lazy_mapping_ && frame_row_offsets_.empty()) {
       for (const auto& entry : rows_by_frame_) {
         AddBytes(&metrics_.metadata_retained_bytes, 1, sizeof(entry));
         metrics_.metadata_retained_bytes += VectorCapacityBytes(entry.second);
@@ -865,6 +872,12 @@ class TensorStoreSubjectMaskOverlayRepository final
         result.error = std::move(mapping_error);
         return result;
       }
+    } else if (!frame_row_offsets_.empty()) {
+      const size_t frame = static_cast<size_t>(camera_frame);
+      const size_t first = static_cast<size_t>(frame_row_offsets_[frame]);
+      const size_t last = static_cast<size_t>(frame_row_offsets_[frame + 1]);
+      metadata_rows.insert(metadata_rows.end(), rows_.begin() + first,
+                           rows_.begin() + last);
     } else {
       const auto found = rows_by_frame_.find(camera_frame);
       if (found != rows_by_frame_.end()) {
@@ -899,6 +912,7 @@ class TensorStoreSubjectMaskOverlayRepository final
       queueAdjacentChunks(chunk_id);
 
       SubjectMaskOverlayDetection detection;
+      detection.instance_key = metadata.instance_key;
       detection.detection_index = metadata.detection_index;
       detection.source_crop_row_id = metadata.source_crop_row_id;
       detection.roi_x = metadata.roi_x;
@@ -1338,7 +1352,7 @@ class TensorStoreSubjectMaskOverlayRepository final
           continue;
         }
         rows->push_back(
-            {row, camera_frame,
+            {row, camera_frame, 0,
              subject_detection >= 0 ? subject_detection : crop_detection,
              source_crop_row, x, y, lazy_mapping_->roi_width,
              lazy_mapping_->roi_height});
@@ -1929,6 +1943,7 @@ class TensorStoreSubjectMaskOverlayRepository final
 
   SubjectMaskOverlayDescriptor descriptor_;
   std::vector<RowMetadata> rows_;
+  std::vector<int64_t> frame_row_offsets_;
   std::unordered_map<int64_t, std::vector<size_t>> rows_by_frame_;
   std::unique_ptr<LazyMappingSource> lazy_mapping_;
   std::vector<uint8_t> available_channels_;
@@ -2000,11 +2015,435 @@ ContourSource OpenContour(const ArchiveContext::Impl& archive,
   return source;
 }
 
+const json* ConsolidatedEntry(const json& root, const std::string& path) {
+  try {
+    const auto& metadata = root.at("consolidated_metadata").at("metadata");
+    const auto found = metadata.find(path);
+    return found == metadata.end() ? nullptr : &*found;
+  } catch (const json::exception&) {
+    return nullptr;
+  }
+}
+
+bool NormalizeStrictGroup(json* metadata, bool redact_run_manifest) {
+  if (!metadata || !metadata->is_object() ||
+      metadata->value("node_type", "") != "group") {
+    return false;
+  }
+  const auto consolidation = metadata->find("consolidated_metadata");
+  if (consolidation != metadata->end()) {
+    const bool empty =
+        consolidation->is_null() ||
+        (consolidation->is_object() && consolidation->size() == 3 &&
+         consolidation->value("kind", "") == "inline" &&
+         consolidation->value("must_understand", true) == false &&
+         consolidation->contains("metadata") &&
+         consolidation->at("metadata").is_object() &&
+         consolidation->at("metadata").empty());
+    if (!empty) {
+      return false;
+    }
+    metadata->erase(consolidation);
+  }
+  if (redact_run_manifest) {
+    auto attributes = metadata->find("attributes");
+    if (attributes == metadata->end() || !attributes->is_object()) {
+      return false;
+    }
+    attributes->erase("run_manifest");
+  }
+  return true;
+}
+
+template <typename T, ts::DimensionIndex Rank>
+bool OpenExactArray(const ArchiveContext::Impl& archive, const json& root,
+                    const std::string& path,
+                    ts::TensorStore<T, Rank>* output,
+                    std::string* error_message) {
+  auto spec = internal::MakeReadOnlyArraySpec(archive, path);
+  const auto* metadata = ConsolidatedEntry(root, path);
+  if (!spec || !metadata) {
+    internal::SetArchiveError(error_message,
+                              "Missing strict subject-mask array: " + path);
+    return false;
+  }
+  (*spec)["metadata"] = *metadata;
+  auto opened =
+      ts::Open<T, Rank>(*spec,
+                        ts::OpenMode::open | ts::OpenMode::assume_metadata,
+                        ts::ReadWriteMode::read, archive.context)
+          .result();
+  if (!opened.ok()) {
+    internal::SetArchiveError(error_message,
+                              path + ": " + opened.status().ToString());
+    return false;
+  }
+  *output = std::move(*opened);
+  return true;
+}
+
+template <typename T>
+bool ReadExactVector(const ts::TensorStore<T, 1>& store,
+                     std::vector<T>* output, std::string* error_message,
+                     const std::string& path) {
+  auto read = ts::Read(store).result();
+  if (!read.ok() || read->rank() != 1 || read->byte_strides().size() != 1) {
+    internal::SetArchiveError(
+        error_message,
+        read.ok() ? "Strict subject-mask vector shape mismatch: " + path
+                  : path + ": " + read.status().ToString());
+    return false;
+  }
+  const size_t count = static_cast<size_t>(read->shape()[0]);
+  output->resize(count);
+  const auto* origin = reinterpret_cast<const uint8_t*>(
+      read->byte_strided_origin_pointer().get());
+  for (size_t index = 0; index < count; ++index) {
+    (*output)[index] = *reinterpret_cast<const T*>(
+        origin + static_cast<ts::Index>(index) * read->byte_strides()[0]);
+  }
+  return true;
+}
+
+bool ReadExactBoolVector(const ts::TensorStore<bool, 1>& store,
+                         std::vector<uint8_t>* output,
+                         std::string* error_message,
+                         const std::string& path) {
+  auto read = ts::Read(store).result();
+  if (!read.ok() || read->rank() != 1 || read->byte_strides().size() != 1) {
+    internal::SetArchiveError(
+        error_message,
+        read.ok() ? "Strict subject-mask bool vector shape mismatch: " + path
+                  : path + ": " + read.status().ToString());
+    return false;
+  }
+  const size_t count = static_cast<size_t>(read->shape()[0]);
+  output->resize(count);
+  const auto* origin = reinterpret_cast<const uint8_t*>(
+      read->byte_strided_origin_pointer().get());
+  for (size_t index = 0; index < count; ++index) {
+    (*output)[index] =
+        *reinterpret_cast<const bool*>(
+            origin + static_cast<ts::Index>(index) * read->byte_strides()[0])
+            ? 1
+            : 0;
+  }
+  return true;
+}
+
+bool ReadExactFloatMatrix(const ts::TensorStore<float, 2>& store,
+                          size_t columns, std::vector<float>* output,
+                          std::string* error_message,
+                          const std::string& path) {
+  auto read = ts::Read(store).result();
+  if (!read.ok() || read->rank() != 2 || read->byte_strides().size() != 2 ||
+      static_cast<size_t>(read->shape()[1]) != columns) {
+    internal::SetArchiveError(
+        error_message,
+        read.ok() ? "Strict subject-mask matrix shape mismatch: " + path
+                  : path + ": " + read.status().ToString());
+    return false;
+  }
+  const size_t rows = static_cast<size_t>(read->shape()[0]);
+  output->resize(rows * columns);
+  const auto* origin = reinterpret_cast<const uint8_t*>(
+      read->byte_strided_origin_pointer().get());
+  for (size_t row = 0; row < rows; ++row) {
+    for (size_t column = 0; column < columns; ++column) {
+      (*output)[row * columns + column] = *reinterpret_cast<const float*>(
+          origin + static_cast<ts::Index>(row) * read->byte_strides()[0] +
+          static_cast<ts::Index>(column) * read->byte_strides()[1]);
+    }
+  }
+  return true;
+}
+
+bool ValidateStrictMetadata(const ArchiveContext::Impl &archive,
+                            const std::string &run_base,
+                            const SubjectMaskV1ManifestSummary &summary,
+                            json *root_output, std::string *error_message) {
+  try {
+    const auto root = internal::ReadArchiveJson(archive, "zarr.json");
+    if (!root || root->value("zarr_format", 0) != 3 ||
+        root->value("node_type", "") != "group" ||
+        !root->contains("consolidated_metadata") ||
+        root->at("consolidated_metadata").value("kind", "") != "inline" ||
+        root->at("consolidated_metadata").value("must_understand", true)) {
+      internal::SetArchiveError(
+          error_message,
+          "Subject-mask v1 archive lacks exact inline Zarr v3 metadata");
+      return false;
+    }
+
+    const auto direct_group =
+        internal::ReadArchiveJson(archive, run_base + "/zarr.json");
+    const auto *consolidated_group = ConsolidatedEntry(*root, run_base);
+    if (!direct_group || !consolidated_group ||
+        !internal::EquivalentDirectAndConsolidatedZarrNode(
+            *direct_group, *consolidated_group)) {
+      internal::SetArchiveError(
+          error_message,
+          "Subject-mask v1 run group direct/consolidated metadata differs");
+      return false;
+    }
+
+    json declarations = json::object();
+    json normalized_group = *direct_group;
+    if (!NormalizeStrictGroup(&normalized_group, true)) {
+      internal::SetArchiveError(error_message,
+                                "Subject-mask v1 run group is not canonical");
+      return false;
+    }
+    declarations[""] = std::move(normalized_group);
+    std::unordered_set<std::string> expected_paths = {run_base,
+                                                      run_base + "/metrics"};
+
+    const std::string metrics_path = run_base + "/metrics";
+    const auto direct_metrics =
+        internal::ReadArchiveJson(archive, metrics_path + "/zarr.json");
+    const auto *consolidated_metrics = ConsolidatedEntry(*root, metrics_path);
+    if (!direct_metrics || !consolidated_metrics ||
+        !internal::EquivalentDirectAndConsolidatedZarrNode(
+            *direct_metrics, *consolidated_metrics)) {
+      internal::SetArchiveError(
+          error_message,
+          "Subject-mask v1 metrics group direct/consolidated metadata differs");
+      return false;
+    }
+
+    for (const auto &declaration : kSubjectMaskV1ArrayDeclarations) {
+      const std::string relative(declaration.path);
+      const std::string path = run_base + "/" + relative;
+      expected_paths.insert(path);
+      const auto direct =
+          internal::ReadArchiveJson(archive, path + "/zarr.json");
+      const auto *consolidated = ConsolidatedEntry(*root, path);
+      if (!direct || !consolidated ||
+          !internal::EquivalentDirectAndConsolidatedZarrNode(*direct,
+                                                             *consolidated) ||
+          consolidated->value("zarr_format", 0) != 3 ||
+          consolidated->value("node_type", "") != "array" ||
+          consolidated->contains("consolidated_metadata") ||
+          consolidated->value("data_type", "") != declaration.dtype ||
+          !consolidated->contains("shape") ||
+          consolidated->at("shape").get<std::vector<size_t>>() !=
+              ExpectedSubjectMaskV1Shape(declaration, summary)) {
+        internal::SetArchiveError(
+            error_message, "Invalid subject-mask v1 declaration: " + path);
+        return false;
+      }
+      declarations[relative] = *direct;
+    }
+
+    const auto &all = root->at("consolidated_metadata").at("metadata");
+    const std::string prefix = run_base + "/";
+    for (auto item = all.begin(); item != all.end(); ++item) {
+      if ((item.key() == run_base || item.key().rfind(prefix, 0) == 0) &&
+          expected_paths.find(item.key()) == expected_paths.end()) {
+        internal::SetArchiveError(
+            error_message, "Unexpected subject-mask v1 node: " + item.key());
+        return false;
+      }
+    }
+    if (CanonicalJsonSha256(declarations) != summary.metadata_digest) {
+      internal::SetArchiveError(
+          error_message,
+          "Subject-mask v1 metadata declaration digest mismatch");
+      return false;
+    }
+    *root_output = std::move(*root);
+    return true;
+  } catch (const json::exception &) {
+    internal::SetArchiveError(
+        error_message,
+        "Subject-mask v1 direct/consolidated metadata is malformed");
+    return false;
+  }
+}
+
+std::unique_ptr<SubjectMaskOverlayRepository>
+OpenStrictSubjectMaskV1(const ArchiveContext::Impl &archive,
+                        const std::string &run_name,
+                        const std::string &run_base, const json &run_attributes,
+                        const SubjectMaskOverlayOpenOptions &options,
+                        std::chrono::steady_clock::time_point open_started,
+                        std::string *error_message) {
+  const auto manifest = run_attributes.find("run_manifest");
+  SubjectMaskV1ManifestSummary summary;
+  if (manifest == run_attributes.end() ||
+      !ValidateSubjectMaskV1Manifest(*manifest, run_name, &summary,
+                                     error_message)) {
+    return nullptr;
+  }
+  if (!options.expected_manifest_payload_digest.empty() &&
+      options.expected_manifest_payload_digest != summary.payload_digest) {
+    internal::SetArchiveError(
+        error_message,
+        "Subject-mask v1 manifest payload digest does not match request");
+    return nullptr;
+  }
+  if (!summary.selector_eligible && !options.allow_selector_ineligible) {
+    internal::SetArchiveError(
+        error_message,
+        "Subject-mask v1 run is selector-ineligible; use an explicit "
+        "benchmark request");
+    return nullptr;
+  }
+
+  SubjectMaskOverlayRepositoryMetrics opening_metrics;
+  const auto catalog_started = std::chrono::steady_clock::now();
+  json root;
+  if (!ValidateStrictMetadata(archive, run_base, summary, &root,
+                              error_message)) {
+    return nullptr;
+  }
+  opening_metrics.catalog_ms = ElapsedMilliseconds(catalog_started);
+
+  ts::TensorStore<int64_t, 1> source_crop_rows_store;
+  ts::TensorStore<uint64_t, 1> instance_keys_store;
+  ts::TensorStore<int64_t, 1> source_frames_store;
+  ts::TensorStore<int64_t, 1> offsets_store;
+  ts::TensorStore<float, 2> placements_store;
+  ts::TensorStore<uint8_t, 4> masks_store;
+  ts::TensorStore<bool, 1> available_store;
+  ts::TensorStore<bool, 2> mask_present_store;
+  ts::TensorStore<float, 2> area_store;
+  ts::TensorStore<float, 3> centroid_store;
+  ts::TensorStore<bool, 2> centroid_valid_store;
+  ts::TensorStore<float, 3> bbox_store;
+  ts::TensorStore<bool, 2> bbox_valid_store;
+  const auto open = [&](const std::string& relative, auto* output) {
+    return OpenExactArray(archive, root, run_base + "/" + relative, output,
+                          error_message);
+  };
+  const auto storage_started = std::chrono::steady_clock::now();
+  if (!open("source_crop_row_ids", &source_crop_rows_store) ||
+      !open("instance_key", &instance_keys_store) ||
+      !open("source_acquisition_frame_index", &source_frames_store) ||
+      !open("frame_row_offsets", &offsets_store) ||
+      !open("source_crop_xywh", &placements_store) ||
+      !open("masks_roi", &masks_store) ||
+      !open("available_channels", &available_store) ||
+      !open("metrics/mask_present", &mask_present_store) ||
+      !open("metrics/area_px", &area_store) ||
+      !open("metrics/centroid_xy", &centroid_store) ||
+      !open("metrics/centroid_valid", &centroid_valid_store) ||
+      !open("metrics/bbox_xyxy", &bbox_store) ||
+      !open("metrics/bbox_valid", &bbox_valid_store)) {
+    return nullptr;
+  }
+  opening_metrics.storage_open_ms = ElapsedMilliseconds(storage_started);
+
+  const auto mapping_started = std::chrono::steady_clock::now();
+  std::vector<int64_t> offsets;
+  std::vector<int64_t> frames;
+  std::vector<int64_t> source_crop_rows;
+  std::vector<uint64_t> instance_keys;
+  std::vector<float> placements;
+  std::vector<uint8_t> available;
+  if (!ReadExactVector(offsets_store, &offsets, error_message,
+                       run_base + "/frame_row_offsets") ||
+      !ReadExactVector(source_frames_store, &frames, error_message,
+                       run_base + "/source_acquisition_frame_index") ||
+      !ReadExactVector(source_crop_rows_store, &source_crop_rows, error_message,
+                       run_base + "/source_crop_row_ids") ||
+      !ReadExactVector(instance_keys_store, &instance_keys, error_message,
+                       run_base + "/instance_key") ||
+      !ReadExactFloatMatrix(placements_store, 4, &placements, error_message,
+                            run_base + "/source_crop_xywh") ||
+      !ReadExactBoolVector(available_store, &available, error_message,
+                           run_base + "/available_channels")) {
+    return nullptr;
+  }
+  opening_metrics.mapping_read_ms = ElapsedMilliseconds(mapping_started);
+  opening_metrics.frame_offset_reads = 1;
+  opening_metrics.frame_index_initialize_ms = opening_metrics.mapping_read_ms;
+  opening_metrics.frame_index_rows_read = offsets.size();
+  opening_metrics.frame_index_source_bytes =
+      offsets.size() * sizeof(int64_t);
+  opening_metrics.frame_index_retained_bytes =
+      offsets.capacity() * sizeof(int64_t);
+
+  if (offsets.size() != summary.frame_count + 1 ||
+      frames.size() != summary.row_count ||
+      source_crop_rows.size() != summary.row_count ||
+      instance_keys.size() != summary.row_count ||
+      placements.size() != summary.row_count * 4 ||
+      available.size() != summary.channel_count || offsets.front() != 0 ||
+      offsets.back() != static_cast<int64_t>(summary.row_count)) {
+    internal::SetArchiveError(error_message,
+                              "Subject-mask v1 retained mapping shape mismatch");
+    return nullptr;
+  }
+  if (!ValidateSubjectMaskV1FrameIndex(offsets, frames, summary.frame_count,
+                                       summary.row_count, error_message) ||
+      !ValidateSubjectMaskV1InstanceKeys(instance_keys, summary.row_count,
+                                         error_message)) {
+    return nullptr;
+  }
+  std::vector<RowMetadata> rows;
+  rows.reserve(summary.row_count);
+  for (size_t row = 0; row < summary.row_count; ++row) {
+    const float x = placements[row * 4];
+    const float y = placements[row * 4 + 1];
+    const float width = placements[row * 4 + 2];
+    const float height = placements[row * 4 + 3];
+    if (source_crop_rows[row] < 0 ||
+        !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(width) ||
+        !std::isfinite(height) || width <= 0.0f || height <= 0.0f) {
+      internal::SetArchiveError(
+          error_message,
+          "Subject-mask v1 contains invalid identity or placement data");
+      return nullptr;
+    }
+    rows.push_back({row, frames[row], instance_keys[row], -1,
+                    source_crop_rows[row], x, y, width, height});
+  }
+
+  SubjectMaskOverlayDescriptor descriptor;
+  descriptor.source_group = "refined_subject_masks_runs";
+  descriptor.run_name = run_name;
+  descriptor.source_crop_run = StringValue(run_attributes, "source_crop_run");
+  descriptor.label_schema_id = "palette.subject_mask.component_registry";
+  descriptor.storage = SubjectMaskStorage::Dense;
+  descriptor.component_labels = summary.component_labels;
+  descriptor.row_count = summary.row_count;
+  descriptor.camera_frame_count = summary.frame_count;
+  descriptor.mask_width = summary.mask_width;
+  descriptor.mask_height = summary.mask_height;
+  descriptor.strict_v1 = true;
+  descriptor.run_manifest_payload_digest = summary.payload_digest;
+  if (descriptor.mask_width >
+      std::numeric_limits<uint32_t>::max() / descriptor.mask_height) {
+    internal::SetArchiveError(
+        error_message,
+        "Subject-mask v1 dimensions exceed sparse index representation");
+    return nullptr;
+  }
+
+  opening_metrics.subject_mapping_bytes =
+      frames.capacity() * sizeof(int64_t) +
+      source_crop_rows.capacity() * sizeof(int64_t) +
+      instance_keys.capacity() * sizeof(uint64_t) +
+      placements.capacity() * sizeof(float);
+  opening_metrics.metadata_decoded_bytes =
+      opening_metrics.subject_mapping_bytes +
+      offsets.capacity() * sizeof(int64_t) + available.capacity();
+  opening_metrics.metadata_index_ms = 0.0;
+
+  return std::make_unique<TensorStoreSubjectMaskOverlayRepository>(
+      std::move(descriptor), std::move(rows), std::move(offsets), nullptr,
+      std::move(available), std::move(masks_store),
+      ts::TensorStore<uint8_t, 4>{}, std::vector<RleSource>{},
+      std::vector<ContourSource>{}, std::move(opening_metrics), open_started);
+}
+
 }  // namespace
 
 std::unique_ptr<SubjectMaskOverlayRepository> OpenSubjectMaskOverlayRepository(
     const std::shared_ptr<ArchiveContext>& archive,
-    const std::string& requested_run, std::string* error_message) {
+    const SubjectMaskOverlayOpenOptions& options,
+    std::string* error_message) {
   const auto open_started = std::chrono::steady_clock::now();
   SubjectMaskOverlayRepositoryMetrics opening_metrics;
   if (!archive || !archive->impl_) {
@@ -2013,7 +2452,7 @@ std::unique_ptr<SubjectMaskOverlayRepository> OpenSubjectMaskOverlayRepository(
   }
   const auto& impl = *archive->impl_;
   constexpr const char* group = "refined_subject_masks_runs";
-  std::string run_name = requested_run;
+  std::string run_name = options.requested_run;
   if (run_name.rfind(std::string(group) + "/", 0) == 0) {
     run_name.erase(0, std::string(group).size() + 1);
   }
@@ -2030,6 +2469,21 @@ std::unique_ptr<SubjectMaskOverlayRepository> OpenSubjectMaskOverlayRepository(
   if (!run_attributes) {
     internal::SetArchiveError(error_message,
                               "Subject-mask run attributes are unreadable");
+    return nullptr;
+  }
+  const auto manifest = run_attributes->find("run_manifest");
+  const bool strict_v1 =
+      manifest != run_attributes->end() && manifest->is_object() &&
+      manifest->value("schema_id", "") ==
+          "palette.subject_mask_core.run_manifest";
+  if (strict_v1) {
+    return OpenStrictSubjectMaskV1(impl, run_name, run_base, *run_attributes,
+                                   options, open_started, error_message);
+  }
+  if (options.require_strict_v1) {
+    internal::SetArchiveError(
+        error_message,
+        "Requested subject-mask run is not strict subject-mask v1");
     return nullptr;
   }
 
@@ -2352,7 +2806,7 @@ std::unique_ptr<SubjectMaskOverlayRepository> OpenSubjectMaskOverlayRepository(
           !std::isfinite(crop_offsets[crop_row][1])) {
         continue;
       }
-      rows.push_back({index, frames[index],
+      rows.push_back({index, frames[index], 0,
                       detections[index] >= 0 ? detections[index]
                                              : crop_detections[crop_row],
                       static_cast<int64_t>(crop_row), crop_offsets[crop_row][0],
@@ -2403,10 +2857,19 @@ std::unique_ptr<SubjectMaskOverlayRepository> OpenSubjectMaskOverlayRepository(
   }
 
   return std::make_unique<TensorStoreSubjectMaskOverlayRepository>(
-      std::move(descriptor), std::move(rows), std::move(lazy_mapping),
+      std::move(descriptor), std::move(rows), std::vector<int64_t>{},
+      std::move(lazy_mapping),
       std::move(available), std::move(dense), std::move(bitpacked),
       std::move(rle), std::move(contours), std::move(opening_metrics),
       open_started);
+}
+
+std::unique_ptr<SubjectMaskOverlayRepository> OpenSubjectMaskOverlayRepository(
+    const std::shared_ptr<ArchiveContext>& archive,
+    const std::string& requested_run, std::string* error_message) {
+  SubjectMaskOverlayOpenOptions options;
+  options.requested_run = requested_run;
+  return OpenSubjectMaskOverlayRepository(archive, options, error_message);
 }
 
 }  // namespace crimson::zarr

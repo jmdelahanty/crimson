@@ -1,5 +1,7 @@
 #pragma once
 
+#include "playback_seek.h"
+
 #include <chrono>
 #include <cstdint>
 
@@ -95,6 +97,10 @@ public:
   double requestedFramePosition(TimePoint now = Clock::now()) const;
   int64_t requestedFrame(TimePoint now = Clock::now()) const;
   PlaybackTransportSnapshot snapshot(TimePoint now = Clock::now()) const;
+  PlaybackSeekCoordinator &seekCoordinator() { return seek_coordinator_; }
+  const PlaybackSeekCoordinator &seekCoordinator() const {
+    return seek_coordinator_;
+  }
 
 private:
   int64_t clampFrame(int64_t frame_number) const;
@@ -106,6 +112,7 @@ private:
   TimePoint anchor_time_{};
   bool controls_enabled_ = false;
   bool playing_ = false;
+  PlaybackSeekCoordinator seek_coordinator_;
 };
 
 } // namespace crimson::playback

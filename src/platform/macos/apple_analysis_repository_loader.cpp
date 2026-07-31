@@ -268,7 +268,13 @@ openBundle(const AppleAnalysisRepositoryLoadRequest &request,
                       control, [&](std::string *error) {
                         bundle.subject_masks =
                             crimson::zarr::OpenSubjectMaskOverlayRepository(
-                                bundle.archive, {}, error);
+                                bundle.archive,
+                                crimson::zarr::SubjectMaskOverlayOpenOptions{
+                                    request.subject_mask_run,
+                                    request.subject_mask_manifest_payload_digest,
+                                    request.allow_selector_ineligible_subject_mask_run,
+                                    request.require_subject_mask_v1},
+                                error);
                         return bundle.subject_masks != nullptr;
                       })) {
     bundle.total_elapsed_ms = elapsedMilliseconds(all_started);
@@ -607,11 +613,21 @@ bool AppleAnalysisRepositoryLoader::start(
         });
     if (request.subject_masks_enabled) {
       addProduct("subject_masks", "subject_masks", "Loading mask metadata",
-                 [archive](AppleAnalysisRepositoryBundle *event,
+                 [archive, subject_mask_run = request.subject_mask_run,
+                  manifest_digest =
+                      request.subject_mask_manifest_payload_digest,
+                  allow_selector_ineligible =
+                      request.allow_selector_ineligible_subject_mask_run,
+                  require_strict_v1 = request.require_subject_mask_v1](
+                     AppleAnalysisRepositoryBundle *event,
                            std::string *open_error) {
                    event->subject_masks =
                        crimson::zarr::OpenSubjectMaskOverlayRepository(
-                           archive, {}, open_error);
+                           archive,
+                           crimson::zarr::SubjectMaskOverlayOpenOptions{
+                               subject_mask_run, manifest_digest,
+                               allow_selector_ineligible, require_strict_v1},
+                           open_error);
                    return event->subject_masks != nullptr;
                  });
     }

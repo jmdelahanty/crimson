@@ -1,5 +1,6 @@
 #pragma once
 
+#include "playback_seek.h"
 #include "workspace_state.h"
 
 #include <cstdint>
@@ -33,7 +34,7 @@ struct CameraViewTransportControlsResult {
     bool slider_just_changed = false;
     bool slider_active = false;
     bool slider_released = false;
-    bool force_inaccurate_seek = false;
+    std::optional<crimson::playback::PlaybackSeekRequest> seek_request;
 };
 
 using CameraViewPlaybackShortcutsResult =

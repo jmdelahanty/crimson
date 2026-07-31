@@ -34,6 +34,7 @@ void PlaybackTransportController::configure(double frames_per_second,
                                             int64_t frame_count, TimePoint now,
                                             int64_t initial_frame,
                                             bool controls_enabled) {
+  seek_coordinator_.reset();
   frames_per_second_ =
       std::isfinite(frames_per_second) && frames_per_second > 0.0
           ? frames_per_second

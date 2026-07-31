@@ -31,6 +31,8 @@ struct SubjectMaskOverlayDescriptor {
   size_t mask_width = 0;
   size_t mask_height = 0;
   size_t storage_chunk_rows = 0;
+  bool strict_v1 = false;
+  std::string run_manifest_payload_digest;
 };
 
 struct SubjectMaskOverlayRepositoryMetrics {
@@ -65,6 +67,7 @@ struct SubjectMaskOverlayRepositoryMetrics {
   uint64_t cached_mapping_bytes = 0;
   uint64_t peak_cached_mapping_bytes = 0;
   uint64_t mapping_initialize_failures = 0;
+  uint64_t frame_offset_reads = 0;
   uint64_t demand_chunk_loads = 0;
   uint64_t prefetched_chunk_loads = 0;
   uint64_t chunk_cache_hits = 0;
@@ -99,6 +102,7 @@ struct SubjectMaskOverlayComponent {
 
 struct SubjectMaskOverlayRow {
   int64_t camera_frame = -1;
+  uint64_t instance_key = 0;
   int64_t detection_index = -1;
   int64_t source_crop_row_id = -1;
   double roi_x = 0.0;
@@ -109,6 +113,7 @@ struct SubjectMaskOverlayRow {
 };
 
 struct SubjectMaskOverlayDetection {
+  uint64_t instance_key = 0;
   int64_t detection_index = -1;
   int64_t source_crop_row_id = -1;
   double roi_x = 0.0;

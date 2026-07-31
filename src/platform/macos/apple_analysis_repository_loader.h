@@ -63,6 +63,10 @@ struct AppleAnalysisRepositoryLoadRequest {
   std::string crop_run;
   std::string swim_bout_run;
   AppleKeypointV2LoadRequest keypoint_v2;
+  std::string subject_mask_run;
+  std::string subject_mask_manifest_payload_digest;
+  bool allow_selector_ineligible_subject_mask_run = false;
+  bool require_subject_mask_v1 = false;
   size_t camera_frame_count = 0;
   bool subject_masks_enabled = true;
   bool subject_shapes_enabled = true;

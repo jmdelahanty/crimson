@@ -1039,6 +1039,18 @@ RSS, and close. Both small mounted raw/refined fixtures pass; Palette's pending
 full-duration artifacts remain necessary for scale and physical-profile
 evidence. See `docs/crimson_keypoint_v2_long_duration_benchmark.md`.
 
+The selector-ineligible subject-mask dense-core v1 consumer checkpoint is now
+implemented behind a strict explicit-run option. The backend-neutral reader
+validates the exact manifest and all 13 direct/consolidated declarations,
+retains the authoritative frame offsets after one read, preserves every row
+and `instance_key`, and leaves derived metric payloads lazy during playback.
+The mounted headless and Metal visual gates passed against Palette's 23,287-
+frame fixture, including exact sparse mask presentation and zero stale output.
+The NRS source video's `hev1` tag required a stream-copy `hvc1` compatibility
+remux for this Mac's AVFoundation decoder; no pixels were re-encoded. This is a
+correctness/demo result, not physical-profile promotion or production
+selection. See `docs/crimson_subject_mask_v1_consumer.md`.
+
 The detection-first quality timeline checkpoint is now implemented. The
 existing Detect inspector identifies the selected canonical/refined surface
 and exposes every observation in the presented frame. Its separate dockable
@@ -1110,6 +1122,17 @@ buffer-preserving pause policy. Legacy Linux decoder fields are narrowed only
 at that adapter boundary; the shared contract does not impose a 32-bit frame
 limit. Details are in
 `docs/crimson_shared_camera_transport_checkpoint_2026-07-31.md`.
+
+Seek execution policy is now shared independently of that presentation. The
+portable transaction contract owns preview, commit, and discrete phases;
+approximate-allowed versus exact accuracy; generation supersession; stale and
+cancel handling; execution-path identity; and a common telemetry vocabulary.
+macOS retains logical-only drag preview, resident AVFoundation-buffer selection,
+and decoder fallback. Linux/NVIDIA retains approximate decoder preview, paused
+ring selection, exact decoder submission, clipped-media routing, and stimulus
+synchronization. Backend-native resources do not cross the contract. Details
+are in
+`docs/crimson_shared_seek_transaction_checkpoint_2026-07-31.md`.
 
 Phase 5 also remains open for production-tail acceptance, movement-trail
 coordinate policy, any required chaser-data densification, and edit/review

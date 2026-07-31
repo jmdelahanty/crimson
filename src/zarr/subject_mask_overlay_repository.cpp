@@ -54,6 +54,7 @@ public:
         continue;
       }
       SubjectMaskOverlayDetection detection;
+      detection.instance_key = row.instance_key;
       detection.detection_index = row.detection_index;
       detection.source_crop_row_id = row.source_crop_row_id;
       detection.roi_x = row.roi_x;

@@ -176,14 +176,19 @@ int PlaybackSessionController::findDisplaySlotForFrame(
                                        preferred_slot);
 }
 
-void PlaybackSessionController::seekToFrame(
+crimson::playback::PlaybackSeekExecutionResult
+PlaybackSessionController::seekToFrame(
     int target_frame, bool prefer_buffer_when_paused, bool force_inaccurate,
     bool skip_stimulus_hard_seek) const {
+  const auto service_start = std::chrono::steady_clock::now();
+  crimson::playback::PlaybackSeekExecutionResult result;
+  result.status = crimson::playback::PlaybackSeekExecutionStatus::Failed;
   if (context_.scene == nullptr || context_.decoder_context == nullptr ||
       context_.playback_state == nullptr || context_.seek_progress == nullptr ||
       context_.stimulus_player == nullptr || context_.zarr_loader == nullptr ||
       context_.video_fps == nullptr || context_.playback_transport == nullptr) {
-    return;
+    result.error = "playback session is incomplete";
+    return result;
   }
   const bool clipped_collection = context_.zarr_loader->hasClippedCollection();
   const int64_t max_frame_value =
@@ -200,19 +205,22 @@ void PlaybackSessionController::seekToFrame(
   if (clipped_collection) {
     if (context_.ensure_clipped_media_for_parent_frame &&
         !context_.ensure_clipped_media_for_parent_frame(clamped_frame)) {
-      return;
+      result.error = "clipped media is unavailable for the requested frame";
+      return result;
     }
     const auto *row = context_.zarr_loader->resolveClippedFrame(clamped_frame);
     if (row == nullptr) {
       std::cout << "[Seek] no clipped mapping for parent frame "
                 << clamped_frame << std::endl;
-      return;
+      result.error = "clipped frame mapping is unavailable";
+      return result;
     }
     decoder_seek_frame = row->clip_local_frame_index;
   }
 
   if (context_.scene->num_cams <= 0) {
-    return;
+    result.error = "no camera decoder is available";
+    return result;
   }
 
   const bool seek_accurate =
@@ -233,7 +241,14 @@ void PlaybackSessionController::seekToFrame(
                 << " state=" << seekStateName(context_.seek_progress->state)
                 << std::endl;
     }
-    return;
+    result.status = crimson::playback::PlaybackSeekExecutionStatus::Deduplicated;
+    result.path = crimson::playback::PlaybackSeekExecutionPath::BackendDecoder;
+    result.resolved_frame = clamped_frame;
+    result.service_ms =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - service_start)
+            .count();
+    return result;
   }
 
   context_.playback_transport->seek(clamped_frame);
@@ -277,7 +292,14 @@ void PlaybackSessionController::seekToFrame(
         }
       }
     }
-    return;
+    result.status = crimson::playback::PlaybackSeekExecutionStatus::Completed;
+    result.path = crimson::playback::PlaybackSeekExecutionPath::ResidentBuffer;
+    result.resolved_frame = clamped_frame;
+    result.service_ms =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - service_start)
+            .count();
+    return result;
   }
 
   if (!context_.playback_state->play_video) {
@@ -332,6 +354,14 @@ void PlaybackSessionController::seekToFrame(
               << " accurate=" << (seek_accurate ? "true" : "false")
               << std::endl;
   }
+  result.status = crimson::playback::PlaybackSeekExecutionStatus::Submitted;
+  result.path = crimson::playback::PlaybackSeekExecutionPath::BackendDecoder;
+  result.resolved_frame = clamped_frame;
+  result.service_ms =
+      std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - service_start)
+          .count();
+  return result;
 }
 
 void PlaybackSessionController::syncPlaybackStartToCurrentFrame() const {
@@ -572,12 +602,15 @@ void PlaybackSessionController::applyPlaybackToggle() const {
   }
 }
 
-void PlaybackSessionController::pollSeekState() const {
+std::optional<crimson::playback::PlaybackSeekExecutionResult>
+PlaybackSessionController::pollSeekState() const {
   if (context_.seek_progress == nullptr || context_.playback_state == nullptr ||
       context_.scene == nullptr || context_.stimulus_player == nullptr ||
       context_.zarr_loader == nullptr) {
-    return;
+    return std::nullopt;
   }
+
+  std::optional<crimson::playback::PlaybackSeekExecutionResult> completion;
 
   if (context_.seek_progress->state == SeekState::WaitingCameras) {
     const int settled =
@@ -733,10 +766,21 @@ void PlaybackSessionController::pollSeekState() const {
 
   if (context_.seek_progress->state == SeekState::Ready ||
       context_.seek_progress->state == SeekState::TimedOut) {
+    crimson::playback::PlaybackSeekExecutionResult result;
+    result.resolved_frame = context_.seek_progress->target_camera_frame;
+    result.path = crimson::playback::PlaybackSeekExecutionPath::BackendDecoder;
+    if (context_.seek_progress->state == SeekState::Ready) {
+      result.status = crimson::playback::PlaybackSeekExecutionStatus::Completed;
+    } else {
+      result.status = crimson::playback::PlaybackSeekExecutionStatus::Failed;
+      result.error = "decoder seek timed out";
+    }
+    completion = std::move(result);
     if (!context_.playback_state->play_video &&
         !context_.playback_state->pause_seeked) {
       stepPausedFrameFromBuffer(context_.seek_progress->target_camera_frame);
     }
     context_.seek_progress->state = SeekState::Idle;
   }
+  return completion;
 }

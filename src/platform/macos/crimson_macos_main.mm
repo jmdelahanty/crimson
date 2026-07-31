@@ -182,6 +182,7 @@ struct LaunchOptions {
   bool crop_smoke = false;
   bool multistream_smoke = false;
   bool subject_masks_enabled = true;
+  bool show_subject_masks = false;
   bool subject_shapes_enabled = true;
   bool eye_geometry_enabled = true;
   bool motion_timeline_enabled = true;
@@ -211,6 +212,10 @@ struct LaunchOptions {
   std::string crop_run;
   std::string swim_bout_run;
   AppleKeypointV2LoadRequest keypoint_v2;
+  std::string subject_mask_run;
+  std::string subject_mask_manifest_payload_digest;
+  bool allow_selector_ineligible_subject_mask_run = false;
+  bool require_subject_mask_v1 = false;
   size_t video_buffer_capacity = 6;
   size_t stimulus_buffer_capacity = 6;
   AppleUiReferenceConfig ui_reference;
@@ -836,6 +841,11 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
       options.subject_masks_enabled = false;
       continue;
     }
+    if (argument == "--show-subject-masks") {
+      options.show_subject_masks = true;
+      options.subject_masks_enabled = true;
+      continue;
+    }
     if (argument == "--no-subject-shapes") {
       options.subject_shapes_enabled = false;
       continue;
@@ -1016,6 +1026,21 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
       options.keypoint_v2.raw = {argv[i + 1], argv[i + 2], argv[i + 3]};
       options.keypoint_v2.allow_selector_ineligible = true;
       i += 3;
+      continue;
+    }
+    if (argument == "--benchmark-subject-mask-v1") {
+      if (i + 2 >= argc) {
+        std::fprintf(
+            stderr,
+            "--benchmark-subject-mask-v1 requires RUN MANIFEST_PAYLOAD_DIGEST\n");
+        return std::nullopt;
+      }
+      options.subject_mask_run = argv[i + 1];
+      options.subject_mask_manifest_payload_digest = argv[i + 2];
+      options.allow_selector_ineligible_subject_mask_run = true;
+      options.require_subject_mask_v1 = true;
+      options.subject_masks_enabled = true;
+      i += 2;
       continue;
     }
     if (argument == "--benchmark-keypoint-v2-quality") {
@@ -1923,6 +1948,9 @@ int main(int argc, char **argv) {
   std::string error_popup_message;
   std::mt19937_64 diagnostic_random{0x4352494d534f4eULL};
   auto &overlay_controls = workspace_state.overlayControls();
+  if (options->show_subject_masks) {
+    overlay_controls.show_subject_masks = true;
+  }
   if (options->ui_reference.enabled) {
     const bool masks_visible =
         options->ui_reference.state == AppleUiReferenceState::Overlays ||
@@ -2380,6 +2408,12 @@ int main(int argc, char **argv) {
       load_request.crop_run = options->crop_run;
       load_request.swim_bout_run = options->swim_bout_run;
       load_request.keypoint_v2 = options->keypoint_v2;
+      load_request.subject_mask_run = options->subject_mask_run;
+      load_request.subject_mask_manifest_payload_digest =
+          options->subject_mask_manifest_payload_digest;
+      load_request.allow_selector_ineligible_subject_mask_run =
+          options->allow_selector_ineligible_subject_mask_run;
+      load_request.require_subject_mask_v1 = options->require_subject_mask_v1;
       load_request.camera_frame_count =
           static_cast<size_t>(video_playback.info().frame_count);
       load_request.subject_masks_enabled = options->subject_masks_enabled;
@@ -2863,10 +2897,13 @@ int main(int argc, char **argv) {
                             crimson::zarr::SubjectMaskStorage::Bitpacked
                         ? "bitpacked"
                         : "rle";
+                const auto subject_mask_repository_metrics =
+                    subject_mask_overlay_buffer.repositoryMetrics();
                 std::printf(
                     "[AppleSubjectMasks] group=%s run=%s crop_run=%s "
                     "storage=%s rows=%zu camera_frames=%zu components=%zu "
-                    "mask=%zux%zu chunk_rows=%zu lookahead=12 cache=24\n",
+                    "mask=%zux%zu chunk_rows=%zu strict_v1=%d "
+                    "offset_reads=%llu lookahead=12 cache=24\n",
                     subject_mask_descriptor.source_group.c_str(),
                     subject_mask_descriptor.run_name.c_str(),
                     subject_mask_descriptor.source_crop_run.c_str(), storage,
@@ -2875,7 +2912,10 @@ int main(int argc, char **argv) {
                     subject_mask_descriptor.component_labels.size(),
                     subject_mask_descriptor.mask_width,
                     subject_mask_descriptor.mask_height,
-                    subject_mask_descriptor.storage_chunk_rows);
+                    subject_mask_descriptor.storage_chunk_rows,
+                    subject_mask_descriptor.strict_v1 ? 1 : 0,
+                    static_cast<unsigned long long>(
+                        subject_mask_repository_metrics.frame_offset_reads));
               } else {
                 subject_mask_overlay_failed = true;
                 subject_mask_overlay_buffer.close();
@@ -4006,12 +4046,14 @@ int main(int argc, char **argv) {
         const bool was_playing = video_clock.isPlaying();
         const auto transport_tick = video_clock.update(now);
         viewer_stats.requested_frame = transport_tick.requested_frame;
+        bool transport_stop_target_committed = false;
         if (options->multistream_smoke && video_clock.isPlaying() &&
             multistream_smoke.stage == MultistreamSmokeStage::PlayToPause &&
             viewer_stats.requested_frame >= multistream_smoke.pause_frame) {
           video_clock.pause(now);
           video_clock.seek(multistream_smoke.pause_frame, now);
           viewer_stats.requested_frame = multistream_smoke.pause_frame;
+          transport_stop_target_committed = true;
           multistream_smoke.stage = MultistreamSmokeStage::WaitForPausedExact;
           pending_camera_discontinuity = true;
           viewer_presentation_discontinuity = true;
@@ -4023,6 +4065,7 @@ int main(int argc, char **argv) {
           video_clock.pause(now);
           video_clock.seek(multistream_smoke.end_frame, now);
           viewer_stats.requested_frame = multistream_smoke.end_frame;
+          transport_stop_target_committed = true;
           multistream_smoke.stage = MultistreamSmokeStage::WaitForEndExact;
           pending_camera_discontinuity = true;
           viewer_presentation_discontinuity = true;
@@ -4032,10 +4075,12 @@ int main(int argc, char **argv) {
           video_clock.pause(now);
           video_clock.seek(options->video_smoke_end, now);
           viewer_stats.requested_frame = options->video_smoke_end;
+          transport_stop_target_committed = true;
           pending_camera_discontinuity = true;
           viewer_presentation_discontinuity = true;
         } else if (!options->video_smoke && transport_tick.reached_end) {
           viewer_stats.requested_frame = video_playback.info().frame_count - 1;
+          transport_stop_target_committed = true;
           pending_camera_discontinuity = true;
           viewer_presentation_discontinuity = true;
         }
@@ -4636,7 +4681,8 @@ int main(int argc, char **argv) {
             keypoint_quality_timeline_discontinuity;
         viewer_stats.requested_frame = video_clock.requestedFrame();
         const bool is_playing = video_clock.isPlaying();
-        if (was_playing && !is_playing) {
+        if (was_playing && !is_playing &&
+            !transport_stop_target_committed) {
           const int64_t pause_frame =
               viewer_stats.presented_frame >= 0
                   ? viewer_stats.presented_frame
@@ -4932,6 +4978,19 @@ int main(int argc, char **argv) {
               viewer_presentation_discontinuity;
           viewer_stats.presented_frame =
               current_video_frame->metadata.frame_number;
+          const auto active_seek =
+              video_clock.seekCoordinator().activeTransaction();
+          if (active_seek.has_value() &&
+              active_seek->request.target_frame ==
+                  viewer_stats.presented_frame) {
+            crimson::playback::PlaybackSeekExecutionResult completion;
+            completion.status =
+                crimson::playback::PlaybackSeekExecutionStatus::Completed;
+            completion.path =
+                crimson::playback::PlaybackSeekExecutionPath::BackendDecoder;
+            completion.resolved_frame = viewer_stats.presented_frame;
+            video_clock.seekCoordinator().recordActive(std::move(completion));
+          }
           const int64_t previous_presented_frame =
               viewer_stats.last_presented_frame;
           if (viewer_stats.presented_frame != previous_presented_frame) {
@@ -6090,6 +6149,7 @@ int main(int argc, char **argv) {
   }
 
   session_lifecycle.beginClose();
+  video_clock.seekCoordinator().cancelActive();
 
   const AppleVideoPlaybackBufferMetrics final_video_metrics =
       video_enabled ? video_playback.metrics()
@@ -6222,6 +6282,8 @@ int main(int argc, char **argv) {
 
   crimson::data::writeDataAccessSchedulerDiagnostics(
       std::cout, "Apple", final_analysis_data_scheduler_metrics);
+  crimson::playback::writePlaybackSeekDiagnostics(
+      std::cout, "Apple", video_clock.seekCoordinator().metrics());
 
   if (!canonical_detection_descriptor.run_name.empty()) {
     reportCanonicalDetectionResidency(

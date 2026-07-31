@@ -57,6 +57,7 @@ add_library(crimson_frame_contracts STATIC
     src/frame_selection.cpp
     src/frame_slot.cpp
     src/playback_clock.cpp
+    src/playback_seek.cpp
 )
 target_include_directories(crimson_frame_contracts PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -217,6 +218,7 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         src/zarr/keypoint_v2_contract.cpp
         src/zarr/tensorstore_keypoint_v2_repository.cpp
         src/zarr/refined_detection_contract.cpp
+        src/zarr/subject_mask_v1_contract.cpp
         src/zarr/tensorstore_canonical_detection_repository.cpp
         src/zarr/tensorstore_detection_quality_timeline_repository.cpp
         src/zarr/tensorstore_refined_detection_repository.cpp
@@ -799,6 +801,25 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         COMMAND $<TARGET_FILE:subject_mask_overlay_repository_tests>)
     set_tests_properties(subject_mask_overlay_repository_tests PROPERTIES
         LABELS "headless;masks;overlay;portable;repository;tensorstore;zarr"
+        TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_executable(subject_mask_v1_contract_tests
+        tools/subject_mask_v1_contract_tests.cpp
+    )
+    target_compile_features(subject_mask_v1_contract_tests PRIVATE cxx_std_17)
+    target_link_libraries(subject_mask_v1_contract_tests PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+    )
+    set_target_properties(subject_mask_v1_contract_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME subject_mask_v1_contract_tests
+        COMMAND $<TARGET_FILE:subject_mask_v1_contract_tests>)
+    set_tests_properties(subject_mask_v1_contract_tests PROPERTIES
+        LABELS "contract;headless;masks;portable;zarr"
         TIMEOUT 60
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
@@ -2126,6 +2147,7 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/keypoint_v2_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/detection_repository_selection.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/refined_detection_contract.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/subject_mask_v1_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/analysis_crop_geometry_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/stimulus_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/acquisition_crop_repository.cpp"
@@ -2970,6 +2992,7 @@ if(CRIMSON_BUILD_MACOS_APP)
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/IconFontCppHeaders
     )
     target_link_libraries(imgui_semantic_snapshot_tests PRIVATE
+        crimson_frame_contracts
         crimson_runtime_contracts
         crimson_workspace_contracts
         nlohmann_json::nlohmann_json)

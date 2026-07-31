@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
+#include <sstream>
 
 namespace {
 
@@ -18,6 +19,118 @@ namespace {
 using crimson::playback::PlaybackTransportCommand;
 using crimson::playback::PlaybackTransportController;
 using crimson::playback::PlaybackTransportRejection;
+
+bool testSeekPlanningAcrossAdapters() {
+  using namespace crimson::playback;
+  const auto preview_request =
+      makePlaybackSeekRequest(PlaybackSeekPhase::Preview,
+                              PlaybackSeekOrigin::CameraControls, 450, 1000);
+  CHECK(preview_request.has_value());
+
+  PlaybackSeekCoordinator coordinator;
+  const auto preview = coordinator.begin(*preview_request);
+  const auto apple_plan = planPlaybackSeek(
+      preview, PlaybackSeekAdapterCapabilities{true, false, true, true});
+  CHECK(apple_plan.valid);
+  CHECK(apple_plan.mode == PlaybackSeekExecutionMode::LogicalCursorOnly);
+  CHECK(apple_plan.accuracy == PlaybackSeekAccuracy::ApproximateAllowed);
+  CHECK(!apple_plan.prefer_resident_frame);
+
+  const auto nvidia_plan = planPlaybackSeek(
+      preview, PlaybackSeekAdapterCapabilities{false, true, true, true});
+  CHECK(nvidia_plan.valid);
+  CHECK(nvidia_plan.mode == PlaybackSeekExecutionMode::BackendSeek);
+  CHECK(nvidia_plan.accuracy == PlaybackSeekAccuracy::ApproximateAllowed);
+
+  const auto commit_request =
+      makePlaybackSeekRequest(PlaybackSeekPhase::Commit,
+                              PlaybackSeekOrigin::CameraControls, 1200, 1000);
+  CHECK(commit_request.has_value());
+  CHECK(commit_request->target_frame == 999);
+  const auto commit = coordinator.begin(*commit_request);
+  const auto commit_plan = planPlaybackSeek(
+      commit, PlaybackSeekAdapterCapabilities{true, false, true, true});
+  CHECK(commit_plan.valid);
+  CHECK(commit_plan.mode == PlaybackSeekExecutionMode::BackendSeek);
+  CHECK(commit_plan.accuracy == PlaybackSeekAccuracy::Exact);
+  CHECK(commit_plan.prefer_resident_frame);
+
+  const auto unsupported = planPlaybackSeek(
+      commit, PlaybackSeekAdapterCapabilities{true, false, false, true});
+  CHECK(!unsupported.valid);
+  CHECK(unsupported.rejection == PlaybackSeekRejection::UnsupportedAccuracy);
+  CHECK(!makePlaybackSeekRequest(PlaybackSeekPhase::Discrete,
+                                 PlaybackSeekOrigin::Programmatic, 0, 0)
+             .has_value());
+  return true;
+}
+
+bool testSeekGenerationAndTelemetry() {
+  using namespace crimson::playback;
+  PlaybackSeekCoordinator coordinator;
+  const auto first_request = *makePlaybackSeekRequest(
+      PlaybackSeekPhase::Preview, PlaybackSeekOrigin::CameraControls, 10, 100);
+  const auto first = coordinator.begin(first_request);
+  const auto first_plan = planPlaybackSeek(
+      first, PlaybackSeekAdapterCapabilities{false, true, true, true});
+  PlaybackSeekExecutionResult submitted;
+  submitted.status = PlaybackSeekExecutionStatus::Submitted;
+  submitted.path = PlaybackSeekExecutionPath::BackendDecoder;
+  submitted.resolved_frame = 10;
+  auto event = coordinator.record(first, first_plan, submitted);
+  CHECK(event.result.status == PlaybackSeekExecutionStatus::Submitted);
+  CHECK(coordinator.isCurrent(first.generation));
+
+  const auto second_request = *makePlaybackSeekRequest(
+      PlaybackSeekPhase::Commit, PlaybackSeekOrigin::CameraControls, 20, 100);
+  const auto second = coordinator.begin(second_request);
+  CHECK(second.generation > first.generation);
+  PlaybackSeekExecutionResult late_completion;
+  late_completion.status = PlaybackSeekExecutionStatus::Completed;
+  late_completion.path = PlaybackSeekExecutionPath::BackendDecoder;
+  late_completion.resolved_frame = 10;
+  event = coordinator.record(first, first_plan, late_completion);
+  CHECK(event.result.status == PlaybackSeekExecutionStatus::DiscardedStale);
+  CHECK(coordinator.isCurrent(second.generation));
+
+  const auto second_plan = planPlaybackSeek(
+      second, PlaybackSeekAdapterCapabilities{true, false, true, true});
+  PlaybackSeekExecutionResult resident;
+  resident.status = PlaybackSeekExecutionStatus::Completed;
+  resident.path = PlaybackSeekExecutionPath::ResidentBuffer;
+  resident.resolved_frame = 20;
+  event = coordinator.record(second, second_plan, resident);
+  CHECK(event.result.status == PlaybackSeekExecutionStatus::Completed);
+  CHECK(coordinator.activeGeneration() == 0);
+
+  const auto metrics = coordinator.metrics();
+  CHECK(metrics.requests == 2);
+  CHECK(metrics.previews == 1);
+  CHECK(metrics.commits == 1);
+  CHECK(metrics.superseded == 1);
+  CHECK(metrics.backend_submissions == 1);
+  CHECK(metrics.resident_buffer_completions == 1);
+  CHECK(metrics.discarded_stale == 1);
+
+  std::ostringstream diagnostics;
+  writePlaybackSeekDiagnostics(diagnostics, "Test", metrics);
+  CHECK(diagnostics.str().find("[TestTransportSeek] requests=2") !=
+        std::string::npos);
+  CHECK(playbackSeekExecutionStatusName(
+            PlaybackSeekExecutionStatus::DiscardedStale) == "discarded_stale");
+
+  const auto third = coordinator.begin(first_request);
+  const auto third_plan = planPlaybackSeek(
+      third, PlaybackSeekAdapterCapabilities{false, true, true, true});
+  event = coordinator.record(third, third_plan, submitted);
+  CHECK(event.result.status == PlaybackSeekExecutionStatus::Submitted);
+  const auto cancelled = coordinator.cancelActive();
+  CHECK(cancelled.has_value());
+  CHECK(cancelled->result.status == PlaybackSeekExecutionStatus::Cancelled);
+  CHECK(coordinator.activeGeneration() == 0);
+  CHECK(coordinator.metrics().cancelled == 1);
+  return true;
+}
 
 bool testCommandsAndClamping() {
   using namespace std::chrono_literals;
@@ -145,7 +258,8 @@ int main() {
       !testReadinessGatePausesAndRejectsCommands() ||
       !testRateContinuityAndEndOfStream() ||
       !testTimelineUpdatePreservesPositionAndState() ||
-      !testInvalidConfigurationAndRate()) {
+      !testInvalidConfigurationAndRate() || !testSeekPlanningAcrossAdapters() ||
+      !testSeekGenerationAndTelemetry()) {
     return EXIT_FAILURE;
   }
   std::cout << "playback_transport_tests: PASS\n";

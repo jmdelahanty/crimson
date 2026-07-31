@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -47,13 +48,15 @@ public:
   int countBufferedStimulusFrames() const;
   int findNearestPausedBufferSlot(int visible_idx, int target_frame) const;
   bool stepPausedFrameFromBuffer(int target_frame) const;
-  void seekToFrame(int target_frame, bool prefer_buffer_when_paused,
-                   bool force_inaccurate = false,
-                   bool skip_stimulus_hard_seek = false) const;
+  crimson::playback::PlaybackSeekExecutionResult
+  seekToFrame(int target_frame, bool prefer_buffer_when_paused,
+              bool force_inaccurate = false,
+              bool skip_stimulus_hard_seek = false) const;
   void syncPlaybackStartToCurrentFrame() const;
   void stepFrames(int delta_frames) const;
   void applyPlaybackToggle() const;
-  void pollSeekState() const;
+  std::optional<crimson::playback::PlaybackSeekExecutionResult>
+  pollSeekState() const;
 
 private:
   int findDisplaySlotForFrame(int cam_idx, int target_frame,

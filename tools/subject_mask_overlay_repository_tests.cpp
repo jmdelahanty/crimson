@@ -385,7 +385,8 @@ bool TestDenseRepositoryAndScene(
     const std::shared_ptr<crimson::zarr::ArchiveContext> &archive) {
   std::string error;
   auto repository =
-      crimson::zarr::OpenSubjectMaskOverlayRepository(archive, {}, &error);
+      crimson::zarr::OpenSubjectMaskOverlayRepository(
+          archive, std::string{}, &error);
   CHECK(repository != nullptr);
   const auto descriptor = repository->descriptor();
   CHECK(descriptor.run_name == "dense_fixture");
