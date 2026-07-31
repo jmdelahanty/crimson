@@ -1,5 +1,25 @@
 # Video Repair Scripts
 
+## macOS Keypoint Quality Timeline
+
+Launch the full-duration keypoint-v2 fixture paused at frame 1000:
+
+```bash
+scripts/launch_macos_keypoint_quality_timeline.sh
+```
+
+Pass another starting frame as the first argument. Validate the build and
+mounted inputs without opening Crimson with `--check`:
+
+```bash
+scripts/launch_macos_keypoint_quality_timeline.sh 250000
+scripts/launch_macos_keypoint_quality_timeline.sh --check
+```
+
+The launcher keeps Crimson attached to the terminal so repository and timeline
+diagnostics remain visible. Use the Keypoints tab in Frame Inspect, then select
+`Keypoint Quality Timeline`.
+
 ## macOS Playback Smoke
 
 Build the native app, then run the representative AVFoundation-to-Metal viewer
