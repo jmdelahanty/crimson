@@ -68,6 +68,8 @@ struct SubjectMaskOverlayRepositoryMetrics {
   uint64_t peak_cached_mapping_bytes = 0;
   uint64_t mapping_initialize_failures = 0;
   uint64_t frame_offset_reads = 0;
+  uint64_t derived_metric_payload_reads = 0;
+  uint64_t roi_image_open_attempts = 0;
   uint64_t demand_chunk_loads = 0;
   uint64_t prefetched_chunk_loads = 0;
   uint64_t chunk_cache_hits = 0;

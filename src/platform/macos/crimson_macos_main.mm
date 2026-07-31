@@ -36,6 +36,7 @@
 #include "stimulus_context_timeline.h"
 #include "stimulus_presentation_coordinator.h"
 #include "subject_mask_overlay_buffer.h"
+#include "subject_mask_presentation_coordinator.h"
 #include "subject_shape_overlay_buffer.h"
 #include "swim_bout_timeline_buffer.h"
 #include "ui_path_config.h"
@@ -2150,6 +2151,8 @@ int main(int argc, char **argv) {
   std::string chaser_distance_polar_error;
   SubjectMaskOverlayBuffer subject_mask_overlay_buffer(
       analysis_data_scheduler, analysis_archive_identity);
+  crimson::overlay::SubjectMaskPresentationCoordinator
+      subject_mask_frame_presentation;
   crimson::zarr::SubjectMaskOverlayDescriptor subject_mask_descriptor;
   bool subject_mask_overlay_available = false;
   bool subject_mask_overlay_failed = false;
@@ -2229,7 +2232,6 @@ int main(int argc, char **argv) {
   uint64_t subject_mask_overlay_presentations = 0;
   uint64_t subject_mask_overlay_detections = 0;
   uint64_t subject_mask_overlay_components = 0;
-  int64_t last_subject_mask_camera_request = -1;
   uint64_t subject_shape_overlay_presentations = 0;
   uint64_t subject_shape_overlay_detections = 0;
   int64_t last_subject_shape_camera_request = -1;
@@ -2862,6 +2864,7 @@ int main(int argc, char **argv) {
                       open_metrics.crop_mapping_bytes));
               std::fflush(stdout);
               subject_mask_descriptor = subject_mask_repository->descriptor();
+              subject_mask_frame_presentation.reset();
               bool subject_mask_initialization_ready =
                   subject_mask_overlay_buffer.open(
                       std::move(subject_mask_repository), 12, 24,
@@ -5320,48 +5323,29 @@ int main(int argc, char **argv) {
           bool subject_mask_overlay_ready = false;
           size_t presented_subject_mask_detections = 0;
           size_t presented_subject_mask_components = 0;
-          if (analysis_presentation_demand_enabled &&
-              subject_mask_overlay_available &&
-              overlay_controls.show_subject_masks) {
-            const bool subject_mask_discontinuity =
-                presentation_was_discontinuous &&
-                last_subject_mask_camera_request >= 0;
-            if (!subject_mask_overlay_buffer.requestFrame(
-                    metadata.frame_number, video_playback.info().width,
-                    video_playback.info().height, subject_mask_discontinuity,
-                    &subject_mask_error)) {
-              std::fprintf(stderr, "[AppleSubjectMasks] Request failed: %s\n",
-                           subject_mask_error.c_str());
-              subject_mask_overlay_failed = true;
-              subject_mask_overlay_available = false;
-            } else {
-              last_subject_mask_camera_request = metadata.frame_number;
-              const auto resolution =
-                  subject_mask_overlay_buffer.frame(metadata.frame_number);
-              if (resolution &&
-                  resolution->status ==
-                      crimson::zarr::SubjectMaskOverlayStatus::Mapped &&
-                  resolution->camera_frame == metadata.frame_number) {
-                logSubjectMaskFirstReady();
-                subject_mask_overlay_ready =
-                    crimson::zarr::appendSubjectMaskOverlaySceneInput(
-                        subject_mask_descriptor, *resolution,
-                        metadata.frame_number, &overlay_input);
-                if (subject_mask_overlay_ready) {
-                  presented_subject_mask_detections =
-                      resolution->detections.size();
-                  for (const auto &detection : resolution->detections) {
-                    presented_subject_mask_components += static_cast<size_t>(
-                        std::count_if(detection.components.begin(),
-                                      detection.components.end(),
-                                      [](const auto &component) {
-                                        return component.present ||
-                                               !component.contour.empty();
-                                      }));
-                  }
-                }
-              }
-            }
+          const auto subject_mask_presentation =
+              subject_mask_frame_presentation.update(
+                  {metadata.frame_number, video_playback.info().width,
+                   video_playback.info().height,
+                   analysis_presentation_demand_enabled,
+                   overlay_controls.show_subject_masks,
+                   subject_mask_overlay_available,
+                   presentation_was_discontinuous},
+                  subject_mask_overlay_buffer, subject_mask_descriptor,
+                  overlay_input, &subject_mask_error);
+          if (subject_mask_presentation.action ==
+              crimson::overlay::ReadOnlyOverlayFrameAction::RequestRejected) {
+            std::fprintf(stderr, "[AppleSubjectMasks] Request failed: %s\n",
+                         subject_mask_error.c_str());
+            subject_mask_overlay_failed = true;
+            subject_mask_overlay_available = false;
+          } else if (subject_mask_presentation.overlay_ready) {
+            logSubjectMaskFirstReady();
+            subject_mask_overlay_ready = true;
+            presented_subject_mask_detections =
+                subject_mask_presentation.detection_count;
+            presented_subject_mask_components =
+                subject_mask_presentation.component_count;
           }
 
           bool subject_shape_overlay_ready = false;
@@ -6215,6 +6199,9 @@ int main(int argc, char **argv) {
   const crimson::zarr::SubjectMaskOverlayRepositoryMetrics
       final_subject_mask_repository_metrics =
           subject_mask_overlay_buffer.repositoryMetrics();
+  const crimson::overlay::ReadOnlyOverlayFrameMetrics
+      final_subject_mask_presentation_metrics =
+          subject_mask_frame_presentation.metrics();
   subject_shape_overlay_buffer.close();
   const SubjectShapeOverlayBufferMetrics final_subject_shape_metrics =
       subject_shape_overlay_buffer.metrics();
@@ -6447,6 +6434,9 @@ int main(int argc, char **argv) {
   }
 
   if (!subject_mask_descriptor.run_name.empty()) {
+    crimson::overlay::writeReadOnlyOverlayFrameDiagnostics(
+        std::cout, "Apple", "subject_masks",
+        final_subject_mask_presentation_metrics);
     std::printf(
         "[AppleSubjectMasks] presentations=%llu detections=%llu "
         "components=%llu requests=%llu cache_hits=%llu resolved=%llu "

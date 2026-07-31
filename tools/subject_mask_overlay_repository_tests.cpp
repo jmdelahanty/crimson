@@ -104,6 +104,32 @@ private:
   crimson::zarr::SubjectMaskOverlayDescriptor descriptor_;
 };
 
+class RecordingSubjectMaskRepository final
+    : public crimson::zarr::SubjectMaskOverlayRepository {
+public:
+  RecordingSubjectMaskRepository() {
+    descriptor_.source_group = "refined_subject_masks_runs";
+    descriptor_.run_name = "reverse_buffer_fixture";
+    descriptor_.camera_frame_count = 10;
+  }
+
+  const crimson::zarr::SubjectMaskOverlayDescriptor &descriptor()
+      const override {
+    return descriptor_;
+  }
+
+  crimson::zarr::SubjectMaskOverlayResolution
+  resolveCameraFrame(int64_t camera_frame, int, int) const override {
+    crimson::zarr::SubjectMaskOverlayResolution result;
+    result.camera_frame = camera_frame;
+    result.status = crimson::zarr::SubjectMaskOverlayStatus::Missing;
+    return result;
+  }
+
+private:
+  crimson::zarr::SubjectMaskOverlayDescriptor descriptor_;
+};
+
 bool WriteJson(const std::filesystem::path &path, const json &value) {
   std::filesystem::create_directories(path.parent_path());
   std::ofstream output(path);
@@ -699,6 +725,31 @@ bool TestBoundedBufferAndDiscontinuity() {
   return true;
 }
 
+bool TestReverseLookaheadDoesNotResetGeneration() {
+  auto scheduler =
+      std::make_shared<crimson::data::DataAccessScheduler>(16, 2, 1);
+  SubjectMaskOverlayBuffer buffer(scheduler, "reverse_fixture");
+  std::string error;
+  CHECK(buffer.open(std::make_unique<RecordingSubjectMaskRepository>(), 2, 5,
+                    &error));
+  CHECK(buffer.requestFrame(5, 100, 80, true, &error));
+  CHECK(buffer.waitForFrame(5, std::chrono::seconds(2)));
+  CHECK(buffer.waitForFrame(6, std::chrono::seconds(2)));
+  CHECK(buffer.waitForFrame(7, std::chrono::seconds(2)));
+  const uint64_t cancellations_before =
+      scheduler->metrics().queue.cancelled_requests;
+  CHECK(buffer.requestFrame(4, 100, 80, false, &error));
+  CHECK(buffer.waitForFrame(4, std::chrono::seconds(2)));
+  CHECK(buffer.waitForFrame(3, std::chrono::seconds(2)));
+  CHECK(buffer.waitForFrame(2, std::chrono::seconds(2)));
+  CHECK(buffer.frame(2) != nullptr);
+  CHECK(scheduler->metrics().queue.cancelled_requests == cancellations_before);
+  CHECK(buffer.metrics().discarded_results == 0);
+  buffer.close();
+  scheduler->shutdown();
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -721,7 +772,8 @@ int main() {
       !TestChunkCacheAndPrefetch(archive) ||
       !TestInvalidFrameCountsFailOnce(archive) ||
       !TestNeutralRepositoryContract() ||
-      !TestBoundedBufferAndDiscontinuity()) {
+      !TestBoundedBufferAndDiscontinuity() ||
+      !TestReverseLookaheadDoesNotResetGeneration()) {
     std::cerr << error << '\n';
     return 1;
   }

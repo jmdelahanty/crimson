@@ -1051,6 +1051,31 @@ remux for this Mac's AVFoundation decoder; no pixels were re-encoded. This is a
 correctness/demo result, not physical-profile promotion or production
 selection. See `docs/crimson_subject_mask_v1_consumer.md`.
 
+The deterministic subject-mask v1 long-duration harness is now implemented.
+It exercises the strict repository through the shared scheduler and
+presentation cache, measures queue wait separately from storage service,
+separates physical file transfer from logical dense decode and sparse retained
+bytes, and covers random access, 70-frame forward/reverse traversal, rapid-seek
+cancellation, stale-publication prevention, RSS, close, retained offsets, lazy
+derived metrics, and the absence of `roi_images`. Direction-aware reverse
+lookahead is shared and no longer resets the generation for each normal reverse
+step. Palette's 23,287-frame integration fixture passed five fresh mounted Mac
+processes with zero deadline misses and zero stale visible frames. This accepts
+the harness, not long-duration storage-profile performance; see
+`docs/crimson_subject_mask_v1_long_duration_benchmark.md`.
+
+Read-only overlay frame request/presentation policy is now backend-neutral.
+One tokenized coordinator distinguishes inactive, unavailable, pending,
+missing, failed, exact, rejected, and stale results, forwards discontinuities
+only after an accepted request, and emits shared diagnostics. A typed subject-
+mask adapter owns the shared buffer-to-scene glue, so the Mac render loop no
+longer maps repository statuses or tracks its own last mask request. The first
+adoption reduces `crimson_macos_main.mm` by ten lines, preserves both strict-v1
+and legacy repositories, passes the mounted Metal mask smoke, and builds/tests
+with the isolated Linux/NVIDIA target. Keypoints are the next stable typed
+adoption; Linux legacy mask loading remains a separate adapter step. See
+`docs/crimson_shared_overlay_frame_coordinator_checkpoint_2026-07-31.md`.
+
 The detection-first quality timeline checkpoint is now implemented. The
 existing Detect inspector identifies the selected canonical/refined surface
 and exposes every observation in the presented frame. Its separate dockable

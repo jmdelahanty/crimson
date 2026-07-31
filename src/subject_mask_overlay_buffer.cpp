@@ -213,20 +213,24 @@ bool SubjectMaskOverlayBuffer::requestFrame(int64_t camera_frame,
   }
   ++impl_->metrics.requests;
   crimson::data::AccessPattern access_pattern =
-      crimson::data::AccessPattern::Paused;
-  if (discontinuity) {
-    access_pattern = crimson::data::AccessPattern::RandomSeek;
-  } else if (impl_->last_request >= 0) {
+      discontinuity ? crimson::data::AccessPattern::RandomSeek
+                    : crimson::data::AccessPattern::Paused;
+  if (!discontinuity && impl_->last_request >= 0) {
     access_pattern = camera_frame >= impl_->last_request
                          ? crimson::data::AccessPattern::Forward
                          : crimson::data::AccessPattern::Reverse;
   }
+  int64_t request_distance = 0;
+  if (impl_->last_request >= 0) {
+    request_distance = camera_frame >= impl_->last_request
+                           ? camera_frame - impl_->last_request
+                           : impl_->last_request - camera_frame;
+  }
+  const int64_t bounded_lookahead = static_cast<int64_t>(
+      std::min(impl_->lookahead,
+               static_cast<size_t>(std::numeric_limits<int64_t>::max() - 2)));
   const bool jumped =
-      impl_->last_request >= 0 &&
-      (camera_frame < impl_->last_request ||
-       (camera_frame >= impl_->last_request &&
-        camera_frame - impl_->last_request >
-            static_cast<int64_t>(impl_->lookahead) + 2));
+      impl_->last_request >= 0 && request_distance > bounded_lookahead + 2;
   if (discontinuity || jumped) {
     ++impl_->generation;
     impl_->scheduler->cancelSource(impl_->scheduler_source);
@@ -234,29 +238,35 @@ bool SubjectMaskOverlayBuffer::requestFrame(int64_t camera_frame,
   }
   impl_->last_request = camera_frame;
 
-  const int64_t frame_count = impl_->descriptor.camera_frame_count >
-                                      static_cast<size_t>(
-                                          std::numeric_limits<int64_t>::max())
-                                  ? std::numeric_limits<int64_t>::max()
-                                  : static_cast<int64_t>(
-                                        impl_->descriptor.camera_frame_count);
-  const int64_t maximum_lookahead =
-      std::numeric_limits<int64_t>::max() - camera_frame;
-  int64_t final_frame =
-      camera_frame + std::min<int64_t>(static_cast<int64_t>(impl_->lookahead),
-                                       maximum_lookahead);
-  if (frame_count > 0) {
-    final_frame = camera_frame < frame_count
-                      ? std::min<int64_t>(frame_count - 1, final_frame)
-                      : camera_frame;
+  const int64_t frame_count =
+      impl_->descriptor.camera_frame_count >
+              static_cast<size_t>(std::numeric_limits<int64_t>::max())
+          ? std::numeric_limits<int64_t>::max()
+          : static_cast<int64_t>(impl_->descriptor.camera_frame_count);
+  const int64_t direction =
+      access_pattern == crimson::data::AccessPattern::Reverse ? -1 : 1;
+  const int64_t lookahead =
+      direction < 0
+          ? bounded_lookahead
+          : std::min(bounded_lookahead,
+                     std::numeric_limits<int64_t>::max() - camera_frame);
+  int64_t final_frame = camera_frame;
+  if (direction < 0) {
+    final_frame = std::max<int64_t>(0, camera_frame - lookahead);
+  } else if (frame_count == 0 || camera_frame < frame_count) {
+    final_frame = camera_frame + lookahead;
+    if (frame_count > 0) {
+      final_frame = std::min(final_frame, frame_count - 1);
+    }
   }
-  impl_->scheduler->retainSourceRange(
-      impl_->scheduler_source, impl_->generation,
-      {camera_frame, final_frame});
+  impl_->scheduler->retainSourceRange(impl_->scheduler_source,
+                                      impl_->generation,
+                                      {std::min(camera_frame, final_frame),
+                                       std::max(camera_frame, final_frame)});
   if (impl_->cache.find(camera_frame) != impl_->cache.end()) {
     ++impl_->metrics.cache_hits;
   }
-  for (int64_t frame = camera_frame;; ++frame) {
+  for (int64_t frame = camera_frame;; frame += direction) {
     if (impl_->cache.find(frame) != impl_->cache.end()) {
       if (frame == final_frame) {
         break;
@@ -268,9 +278,8 @@ bool SubjectMaskOverlayBuffer::requestFrame(int64_t camera_frame,
         impl_->scheduler_source,
         {frame, frame},
         crimson::data::FieldSelection::All(),
-        frame == camera_frame
-            ? crimson::data::RequestPriority::CurrentFrame
-            : crimson::data::RequestPriority::Speculative,
+        frame == camera_frame ? crimson::data::RequestPriority::CurrentFrame
+                              : crimson::data::RequestPriority::Speculative,
         access_pattern,
         request_generation};
     const auto outcome = impl_->scheduler->submit(

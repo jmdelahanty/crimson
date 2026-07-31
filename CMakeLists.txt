@@ -159,7 +159,9 @@ target_link_libraries(crimson_crop_contracts PUBLIC
 add_library(crimson_overlay_contracts STATIC
     src/overlay_scene_contract.cpp
     src/read_only_overlay_controls.cpp
+    src/read_only_overlay_frame_coordinator.cpp
     src/read_only_overlay_scene.cpp
+    src/subject_mask_presentation_coordinator.cpp
     src/zarr/canonical_detection_overlay_scene_adapter.cpp
     src/zarr/keypoint_overlay_scene_adapter.cpp
     src/zarr/eye_geometry_overlay_scene_adapter.cpp
@@ -563,6 +565,33 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
     set_tests_properties(keypoint_v2_long_duration_benchmark_self_test
         PROPERTIES
         LABELS "portable;headless;tensorstore;zarr;keypoints;benchmark"
+    )
+
+    add_executable(subject_mask_v1_long_duration_benchmark
+        tools/subject_mask_v1_long_duration_benchmark.cpp
+    )
+    target_compile_features(subject_mask_v1_long_duration_benchmark
+        PRIVATE cxx_std_17)
+    target_link_libraries(subject_mask_v1_long_duration_benchmark PRIVATE
+        crimson_repository_contracts
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+        nlohmann_json::nlohmann_json
+        Threads::Threads
+    )
+    target_compile_definitions(subject_mask_v1_long_duration_benchmark PRIVATE
+        CRIMSON_GIT_COMMIT="${CRIMSON_REFINED_GATE_GIT_COMMIT}"
+        CRIMSON_WORKTREE_DIRTY=${CRIMSON_REFINED_GATE_WORKTREE_DIRTY}
+    )
+    set_target_properties(subject_mask_v1_long_duration_benchmark PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME subject_mask_v1_long_duration_benchmark_self_test
+        COMMAND $<TARGET_FILE:subject_mask_v1_long_duration_benchmark>
+            --self-test)
+    set_tests_properties(subject_mask_v1_long_duration_benchmark_self_test
+        PROPERTIES
+        LABELS "portable;headless;tensorstore;zarr;masks;benchmark"
     )
     if(Python3_Interpreter_FOUND)
         add_test(NAME keypoint_v2_experiment_runner_self_test
@@ -1274,6 +1303,40 @@ add_test(NAME read_only_overlay_controls_tests
     COMMAND $<TARGET_FILE:read_only_overlay_controls_tests>)
 set_tests_properties(read_only_overlay_controls_tests PROPERTIES
     LABELS "controls;headless;overlay;portable"
+)
+
+add_executable(read_only_overlay_frame_coordinator_tests
+    tools/read_only_overlay_frame_coordinator_tests.cpp
+)
+target_link_libraries(read_only_overlay_frame_coordinator_tests PRIVATE
+    crimson_overlay_contracts
+)
+target_compile_features(read_only_overlay_frame_coordinator_tests
+    PRIVATE cxx_std_17)
+set_target_properties(read_only_overlay_frame_coordinator_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME read_only_overlay_frame_coordinator_tests
+    COMMAND $<TARGET_FILE:read_only_overlay_frame_coordinator_tests>)
+set_tests_properties(read_only_overlay_frame_coordinator_tests PROPERTIES
+    LABELS "headless;overlay;portable;presentation"
+)
+
+add_executable(subject_mask_presentation_coordinator_tests
+    tools/subject_mask_presentation_coordinator_tests.cpp
+)
+target_link_libraries(subject_mask_presentation_coordinator_tests PRIVATE
+    crimson_overlay_contracts
+)
+target_compile_features(subject_mask_presentation_coordinator_tests
+    PRIVATE cxx_std_17)
+set_target_properties(subject_mask_presentation_coordinator_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME subject_mask_presentation_coordinator_tests
+    COMMAND $<TARGET_FILE:subject_mask_presentation_coordinator_tests>)
+set_tests_properties(subject_mask_presentation_coordinator_tests PROPERTIES
+    LABELS "headless;masks;overlay;portable;presentation"
 )
 
 add_executable(eye_angle_timeline_tests
