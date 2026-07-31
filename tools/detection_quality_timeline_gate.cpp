@@ -57,6 +57,22 @@ int main(int argc, char **argv) {
     std::fprintf(stderr, "Timeline window failed: %s\n", window.error.c_str());
     return 1;
   }
+  const auto overview_started = std::chrono::steady_clock::now();
+  const auto overview = repository->resolveOverview(1200, 8 * 1024 * 1024, {});
+  const double overview_ms =
+      std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - overview_started)
+          .count();
+  if (!overview.ready() ||
+      overview.source_rows_read != descriptor.source_row_count ||
+      overview.instance_rows_read !=
+          (descriptor.source_audit ? descriptor.instance_row_count : 0) ||
+      overview.source_confidence.values.size() > 1200 ||
+      overview.source_count.values.size() > 1200) {
+    std::fprintf(stderr, "Timeline overview failed: %s\n",
+                 overview.error.c_str());
+    return 1;
+  }
   const auto repository_metrics = repository->metrics();
   const double elapsed_ms = std::chrono::duration<double, std::milli>(
                                 std::chrono::steady_clock::now() - started)
@@ -66,13 +82,20 @@ int main(int argc, char **argv) {
       "source_rows=%zu instance_rows=%zu offset_reads=%zu "
       "retained_offset_bytes=%zu open_ms=%.1f offset_ms=%.1f "
       "window_frames=%zu window_source_rows=%zu window_instance_rows=%zu "
-      "decoded_bytes=%llu peak_concurrent_fields=%zu total_ms=%.1f\n",
+      "decoded_bytes=%llu overview_ms=%.1f overview_source_rows=%zu "
+      "overview_instance_rows=%zu overview_decoded_bytes=%llu "
+      "overview_confidence_points=%zu overview_count_points=%zu "
+      "peak_concurrent_fields=%zu total_ms=%.1f\n",
       surface.c_str(), descriptor.run_name.c_str(), descriptor.frame_count,
       descriptor.source_row_count, descriptor.instance_row_count,
       open_metrics.offset_read_calls, open_metrics.retained_offset_bytes,
       open_metrics.total_ms, open_metrics.offset_read_ms, window.frames.size(),
       window.source_rows_read, window.instance_rows_read,
       static_cast<unsigned long long>(repository_metrics.decoded_bytes),
+      overview_ms, overview.source_rows_read, overview.instance_rows_read,
+      static_cast<unsigned long long>(overview.decoded_bytes),
+      overview.source_confidence.values.size(),
+      overview.source_count.values.size(),
       repository_metrics.peak_concurrent_field_reads, elapsed_ms);
   return 0;
 }

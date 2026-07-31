@@ -161,8 +161,14 @@ struct AppleDetectionInspectState {
   uint64_t selected_instance_key = 0;
 };
 
+struct AppleDetectionOverviewSeries {
+  std::vector<double> times;
+  std::vector<double> values;
+};
+
 struct AppleDetectionQualityTimelineControls {
   float half_span_seconds = 10.0f;
+  bool full_recording = false;
   bool show_score_range = true;
   bool show_source_median = true;
   bool show_accepted_median = true;
@@ -171,6 +177,8 @@ struct AppleDetectionQualityTimelineControls {
   std::unordered_map<uint16_t, bool> reason_visibility;
   std::shared_ptr<const crimson::timeline::DetectionQualityTimelineWindow>
       prepared_window;
+  std::shared_ptr<const crimson::timeline::DetectionQualityTimelineOverview>
+      prepared_overview;
   double prepared_fps = 0.0;
   std::vector<double> times;
   std::vector<double> score_min;
@@ -184,6 +192,14 @@ struct AppleDetectionQualityTimelineControls {
   std::vector<double> manual_clear_counts;
   std::vector<double> manual_counts;
   std::vector<std::vector<double>> reason_counts;
+  AppleDetectionOverviewSeries overview_source_confidence;
+  AppleDetectionOverviewSeries overview_accepted_confidence;
+  AppleDetectionOverviewSeries overview_source_count;
+  AppleDetectionOverviewSeries overview_accepted_count;
+  AppleDetectionOverviewSeries overview_filtered_count;
+  AppleDetectionOverviewSeries overview_duplicate_count;
+  AppleDetectionOverviewSeries overview_manual_clear_count;
+  AppleDetectionOverviewSeries overview_manual_count;
 };
 
 enum class AppleKeypointQualityLoadState {
@@ -322,6 +338,8 @@ bool drawAppleDetectionQualityTimeline(
     const crimson::timeline::DetectionQualityTimelineDescriptor *descriptor,
     const std::shared_ptr<
         const crimson::timeline::DetectionQualityTimelineWindow> &window,
+    const std::shared_ptr<
+        const crimson::timeline::DetectionQualityTimelineOverview> &overview,
     const std::string &error, int64_t current_frame,
     LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
     bool interactive);

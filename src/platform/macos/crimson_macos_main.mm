@@ -4260,6 +4260,9 @@ int main(int argc, char **argv) {
         }
         std::shared_ptr<const crimson::timeline::DetectionQualityTimelineWindow>
             detection_quality_timeline_window;
+        std::shared_ptr<
+            const crimson::timeline::DetectionQualityTimelineOverview>
+            detection_quality_timeline_overview;
         if (detection_quality_requested &&
             detection_quality_timeline_state ==
                 AppleDetectionQualityLoadState::Ready &&
@@ -4267,14 +4270,24 @@ int main(int argc, char **argv) {
             viewer_stats.requested_frame <
                 static_cast<int64_t>(
                     detection_quality_timeline_descriptor.frame_count)) {
-          if (!detection_quality_timeline_buffer.requestFrame(
-                  viewer_stats.requested_frame, pending_camera_discontinuity,
-                  &detection_quality_timeline_error)) {
+          const bool requested =
+              detection_quality_timeline_controls.full_recording
+                  ? detection_quality_timeline_buffer.requestOverview(
+                        1200, 8 * 1024 * 1024,
+                        &detection_quality_timeline_error)
+                  : detection_quality_timeline_buffer.requestFrame(
+                        viewer_stats.requested_frame,
+                        pending_camera_discontinuity,
+                        &detection_quality_timeline_error);
+          if (!requested) {
             detection_quality_timeline_state =
                 AppleDetectionQualityLoadState::Failed;
             std::fprintf(stderr,
                          "[AppleDetectionQualityTimeline] Request failed: %s\n",
                          detection_quality_timeline_error.c_str());
+          } else if (detection_quality_timeline_controls.full_recording) {
+            detection_quality_timeline_overview =
+                detection_quality_timeline_buffer.overview();
           } else {
             detection_quality_timeline_window =
                 detection_quality_timeline_buffer.window(
@@ -4576,6 +4589,7 @@ int main(int argc, char **argv) {
                     ? &detection_quality_timeline_descriptor
                     : nullptr,
                 detection_quality_timeline_window,
+                detection_quality_timeline_overview,
                 detection_quality_timeline_error,
                 viewer_stats.presented_frame >= 0
                     ? viewer_stats.presented_frame
@@ -6255,7 +6269,12 @@ int main(int argc, char **argv) {
         "resolved=%llu failed=%llu discarded=%llu peak_cached=%zu "
         "peak_pending=%zu range_reads=%llu source_rows=%llu "
         "instance_rows=%llu decoded_bytes=%llu peak_concurrent_fields=%zu "
-        "max_resolve_ms=%.1f max_read_ms=%.1f error=%s\n",
+        "overview_requests=%llu overview_cache_hits=%llu "
+        "overview_resolved=%llu overview_failed=%llu overview_discarded=%llu "
+        "overview_reads=%llu overview_source_rows=%llu "
+        "overview_instance_rows=%llu overview_decoded_bytes=%llu "
+        "max_resolve_ms=%.1f max_read_ms=%.1f "
+        "max_overview_resolve_ms=%.1f max_overview_read_ms=%.1f error=%s\n",
         static_cast<unsigned long long>(
             final_detection_quality_buffer_metrics.requests),
         static_cast<unsigned long long>(
@@ -6277,8 +6296,30 @@ int main(int argc, char **argv) {
         static_cast<unsigned long long>(
             final_detection_quality_repository_metrics.decoded_bytes),
         final_detection_quality_repository_metrics.peak_concurrent_field_reads,
+        static_cast<unsigned long long>(
+            final_detection_quality_buffer_metrics.overview_requests),
+        static_cast<unsigned long long>(
+            final_detection_quality_buffer_metrics.overview_cache_hits),
+        static_cast<unsigned long long>(
+            final_detection_quality_buffer_metrics.resolved_overviews),
+        static_cast<unsigned long long>(
+            final_detection_quality_buffer_metrics.failed_overviews),
+        static_cast<unsigned long long>(
+            final_detection_quality_buffer_metrics.discarded_overviews),
+        static_cast<unsigned long long>(
+            final_detection_quality_repository_metrics.overview_reads),
+        static_cast<unsigned long long>(
+            final_detection_quality_repository_metrics
+                .overview_source_rows_read),
+        static_cast<unsigned long long>(
+            final_detection_quality_repository_metrics
+                .overview_instance_rows_read),
+        static_cast<unsigned long long>(
+            final_detection_quality_repository_metrics.overview_decoded_bytes),
         final_detection_quality_buffer_metrics.maximum_resolve_ms,
         final_detection_quality_repository_metrics.maximum_range_read_ms,
+        final_detection_quality_buffer_metrics.maximum_overview_resolve_ms,
+        final_detection_quality_repository_metrics.maximum_overview_read_ms,
         final_detection_quality_buffer_metrics.last_error.c_str());
   }
 

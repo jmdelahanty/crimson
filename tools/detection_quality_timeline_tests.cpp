@@ -5,8 +5,10 @@
 #include <cmath>
 #include <condition_variable>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -73,6 +75,46 @@ void testMultiObservationAndEmptyFrames() {
   CHECK(window.frames[3].duplicate_count == 1);
   CHECK(window.frames[3].manual_count == 1);
   CHECK(window.frames[3].reason_counts[2] == 1);
+}
+
+void testFullRecordingOverview() {
+  std::string error;
+  auto repository = crimson::timeline::MakeDetectionQualityTimelineRepository(
+      makeDescriptor(), columns(), &error);
+  CHECK(repository != nullptr);
+  const auto overview = repository->resolveOverview(4, 1024, {});
+  CHECK(overview.ready());
+  CHECK(overview.frame_count == 4);
+  CHECK(overview.source_rows_read == 6);
+  CHECK(overview.instance_rows_read == 4);
+  CHECK(overview.decoded_bytes ==
+        6 * (sizeof(float) + sizeof(uint8_t)) + 4 * sizeof(uint8_t));
+  CHECK(overview.source_confidence.values.size() == 4);
+  CHECK(std::abs(overview.source_confidence.values[0] - 0.2) < 1e-6);
+  CHECK(std::abs(overview.source_confidence.values[1] - 0.9) < 1e-6);
+  CHECK(std::abs(overview.source_confidence.values[2] - 0.8) < 1e-6);
+  CHECK(std::abs(overview.source_confidence.values[3] - 0.5) < 1e-6);
+  CHECK(overview.accepted_confidence.values.size() == 3);
+  CHECK(overview.source_count.values.size() == 4);
+  CHECK(overview.source_count.values[0] == 2.0);
+  CHECK(overview.source_count.values[1] == 0.0);
+  CHECK(overview.source_count.values[2] == 1.0);
+  CHECK(overview.source_count.values[3] == 3.0);
+  CHECK(overview.manual_count.values.back() == 1.0);
+  CHECK(repository->metrics().overview_reads == 1);
+  CHECK(repository->metrics().overview_source_rows_read == 6);
+
+  const auto cancelled =
+      repository->resolveOverview(4, 1024, [] { return true; });
+  CHECK(!cancelled.ready());
+  CHECK(cancelled.error == "Detection-quality overview was cancelled");
+
+  auto invalid_columns = columns();
+  invalid_columns.source_scores[0] = std::numeric_limits<float>::infinity();
+  repository = crimson::timeline::MakeDetectionQualityTimelineRepository(
+      makeDescriptor(), std::move(invalid_columns), &error);
+  CHECK(repository != nullptr);
+  CHECK(!repository->resolveOverview(4, 1024, {}).ready());
 }
 
 void testRangeAndSemanticFailures() {
@@ -190,13 +232,34 @@ void testBufferDiscardsSupersededPage() {
   CHECK(buffer.metrics().cache_hits == 1);
 }
 
+void testOverviewBuffer() {
+  auto scheduler = std::make_shared<crimson::data::DataAccessScheduler>(16, 2);
+  DetectionQualityTimelineBuffer buffer(scheduler, "test-archive");
+  std::string error;
+  CHECK(buffer.open(crimson::timeline::MakeDetectionQualityTimelineRepository(
+                        makeDescriptor(), columns(), &error),
+                    3, 2, 2, &error));
+  CHECK(buffer.requestOverview(4, 1024, &error));
+  for (int attempt = 0; attempt < 100 && !buffer.overview(); ++attempt) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  CHECK(buffer.overview() != nullptr);
+  CHECK(buffer.overview()->ready());
+  CHECK(buffer.requestOverview(4, 1024, &error));
+  CHECK(buffer.metrics().overview_cache_hits == 1);
+  CHECK(buffer.requestFrame(0, false, &error));
+  buffer.close();
+}
+
 } // namespace
 
 int main() {
   testMultiObservationAndEmptyFrames();
+  testFullRecordingOverview();
   testRangeAndSemanticFailures();
   testMalformedOffsetsFailOpen();
   testBufferDiscardsSupersededPage();
+  testOverviewBuffer();
   if (failures != 0) {
     std::cerr << failures << " detection-quality checks failed\n";
     return 1;

@@ -1876,6 +1876,8 @@ bool drawAppleDetectionQualityTimeline(
     const crimson::timeline::DetectionQualityTimelineDescriptor *descriptor,
     const std::shared_ptr<
         const crimson::timeline::DetectionQualityTimelineWindow> &window,
+    const std::shared_ptr<
+        const crimson::timeline::DetectionQualityTimelineOverview> &overview,
     const std::string &error, int64_t current_frame,
     LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
     bool interactive) {
@@ -1906,13 +1908,23 @@ bool drawAppleDetectionQualityTimeline(
                   descriptor->producer_version.c_str());
     }
   }
-  ImGui::SetNextItemWidth(170.0f);
-  ImGui::SliderFloat("Window (+/- s)", &controls->half_span_seconds, 1.0f,
-                     60.0f, "%.0f");
+  if (ImGui::RadioButton("Local", !controls->full_recording)) {
+    controls->full_recording = false;
+  }
   ImGui::SameLine();
-  ImGui::Checkbox("Counts", &controls->show_counts);
-  ImGui::SameLine();
-  ImGui::Checkbox("Reasons", &controls->show_reasons);
+  if (ImGui::RadioButton("Full recording", controls->full_recording)) {
+    controls->full_recording = true;
+  }
+  if (!controls->full_recording) {
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(170.0f);
+    ImGui::SliderFloat("Window (+/- s)", &controls->half_span_seconds, 1.0f,
+                       60.0f, "%.0f");
+    ImGui::SameLine();
+    ImGui::Checkbox("Counts", &controls->show_counts);
+    ImGui::SameLine();
+    ImGui::Checkbox("Reasons", &controls->show_reasons);
+  }
 
   if (load_state == AppleDetectionQualityLoadState::Opening) {
     ImGui::TextUnformatted("Opening detection audit data...");
@@ -1921,13 +1933,133 @@ bool drawAppleDetectionQualityTimeline(
   } else if (load_state != AppleDetectionQualityLoadState::Ready ||
              descriptor == nullptr) {
     ImGui::TextUnformatted("Detection timeline is not open.");
-  } else if (!window) {
+  } else if (controls->full_recording && !overview) {
+    ImGui::TextUnformatted("Loading full-recording detection overview...");
+  } else if (controls->full_recording && !overview->ready()) {
+    ImGui::TextWrapped("Detection overview unavailable: %s",
+                       overview->error.c_str());
+  } else if (!controls->full_recording && !window) {
     ImGui::TextUnformatted("Loading the visible detection window...");
-  } else if (!window->ready()) {
+  } else if (!controls->full_recording && !window->ready()) {
     ImGui::TextWrapped(
         "Detection timeline %s: %s",
         crimson::timeline::detectionQualityTimelineStatusName(window->status),
         window->error.c_str());
+  } else if (controls->full_recording) {
+    const double fps = clock.framesPerSecond();
+    const double cursor_time = fps > 0.0 ? current_frame / fps : 0.0;
+    const double recording_end =
+        fps > 0.0 && overview->frame_count > 1
+            ? static_cast<double>(overview->frame_count - 1) / fps
+            : 1.0;
+    if (controls->prepared_overview.get() != overview.get() ||
+        controls->prepared_fps != fps) {
+      controls->prepared_overview = overview;
+      controls->prepared_fps = fps;
+      const auto prepare_trace =
+          [&](const crimson::timeline::DetectionQualityOverviewTrace &source,
+              AppleDetectionOverviewSeries *destination) {
+            destination->times.clear();
+            destination->values.clear();
+            destination->times.reserve(source.camera_frames.size());
+            destination->values.reserve(source.values.size());
+            for (size_t index = 0; index < source.camera_frames.size();
+                 ++index) {
+              destination->times.push_back(
+                  fps > 0.0 ? source.camera_frames[index] / fps : 0.0);
+              destination->values.push_back(source.values[index]);
+            }
+          };
+      prepare_trace(overview->source_confidence,
+                    &controls->overview_source_confidence);
+      prepare_trace(overview->accepted_confidence,
+                    &controls->overview_accepted_confidence);
+      prepare_trace(overview->source_count, &controls->overview_source_count);
+      prepare_trace(overview->accepted_count,
+                    &controls->overview_accepted_count);
+      prepare_trace(overview->filtered_count,
+                    &controls->overview_filtered_count);
+      prepare_trace(overview->duplicate_count,
+                    &controls->overview_duplicate_count);
+      prepare_trace(overview->manual_clear_count,
+                    &controls->overview_manual_clear_count);
+      prepare_trace(overview->manual_count, &controls->overview_manual_count);
+    }
+    const auto seek_from_plot = [&]() {
+      if (!interactive || !ImPlot::IsPlotHovered() ||
+          !ImGui::IsMouseClicked(ImGuiMouseButton_Left) || fps <= 0.0) {
+        return false;
+      }
+      const int64_t frame = std::clamp<int64_t>(
+          static_cast<int64_t>(std::llround(ImPlot::GetPlotMousePos().x * fps)),
+          0, static_cast<int64_t>(overview->frame_count) - 1);
+      return seekViewer(clock, playback, frame);
+    };
+    bool camera_discontinuity = false;
+    ImGui::Checkbox("Source min/max", &controls->show_source_median);
+    if (descriptor->source_audit) {
+      ImGui::SameLine();
+      ImGui::Checkbox("Accepted min/max", &controls->show_accepted_median);
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("Counts", &controls->show_counts);
+    if (ImPlot::BeginPlot("##detection-confidence-overview",
+                          ImVec2(-1.0f, 250.0f),
+                          ImPlotFlags_NoTitle | ImPlotFlags_NoBoxSelect)) {
+      ImPlot::SetupAxes("Time (s)", "Confidence", ImPlotAxisFlags_NoMenus,
+                        ImPlotAxisFlags_NoMenus);
+      ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, recording_end, ImPlotCond_Always);
+      ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, 1.0, ImPlotCond_Always);
+      if (controls->show_source_median) {
+        ImPlot::PlotLine(
+            "Source min/max",
+            controls->overview_source_confidence.times.data(),
+            controls->overview_source_confidence.values.data(),
+            static_cast<int>(
+                controls->overview_source_confidence.times.size()));
+      }
+      if (controls->show_accepted_median && descriptor->source_audit) {
+        ImPlot::PlotLine(
+            "Accepted min/max",
+            controls->overview_accepted_confidence.times.data(),
+            controls->overview_accepted_confidence.values.data(),
+            static_cast<int>(
+                controls->overview_accepted_confidence.times.size()));
+      }
+      ImPlot::PlotInfLines("Current frame", &cursor_time, 1);
+      ImPlot::TagX(cursor_time, ImVec4(0.94f, 0.94f, 0.94f, 0.90f),
+                   "Frame %lld", static_cast<long long>(current_frame));
+      camera_discontinuity = seek_from_plot() || camera_discontinuity;
+      ImPlot::EndPlot();
+    }
+    if (controls->show_counts &&
+        ImPlot::BeginPlot("##detection-counts-overview", ImVec2(-1.0f, 240.0f),
+                          ImPlotFlags_NoTitle | ImPlotFlags_NoBoxSelect)) {
+      ImPlot::SetupAxes("Time (s)", "Detections", ImPlotAxisFlags_NoMenus,
+                        ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_NoMenus);
+      ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, recording_end, ImPlotCond_Always);
+      const auto plot = [](const char *label,
+                           const AppleDetectionOverviewSeries &series) {
+        ImPlot::PlotLine(label, series.times.data(), series.values.data(),
+                         static_cast<int>(series.times.size()));
+      };
+      plot("Source", controls->overview_source_count);
+      if (descriptor->source_audit) {
+        plot("Accepted", controls->overview_accepted_count);
+        plot("Filtered", controls->overview_filtered_count);
+        plot("Duplicate", controls->overview_duplicate_count);
+        plot("Manual clear", controls->overview_manual_clear_count);
+        plot("Manual", controls->overview_manual_count);
+      }
+      ImPlot::PlotInfLines("Current frame", &cursor_time, 1);
+      camera_discontinuity = seek_from_plot() || camera_discontinuity;
+      ImPlot::EndPlot();
+    }
+    if (!interactive) {
+      ImGui::EndDisabled();
+    }
+    ImGui::End();
+    return camera_discontinuity;
   } else {
     const double fps = clock.framesPerSecond();
     const double cursor_time = fps > 0.0 ? current_frame / fps : 0.0;

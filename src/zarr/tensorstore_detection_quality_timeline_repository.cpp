@@ -331,6 +331,153 @@ public:
     return window;
   }
 
+  timeline::DetectionQualityTimelineOverview
+  resolveOverview(size_t maximum_points_per_trace, size_t maximum_decoded_bytes,
+                  const std::function<bool()> &cancelled) const override {
+    const auto started = Clock::now();
+    timeline::DetectionQualityTimelineOverview overview;
+    const size_t source_bytes_per_row =
+        sizeof(float) + (descriptor_.source_audit ? sizeof(uint8_t) : 0);
+    const size_t instance_bytes_per_row =
+        descriptor_.source_audit ? sizeof(uint8_t) : 0;
+    if (maximum_points_per_trace < 2 ||
+        maximum_decoded_bytes < source_bytes_per_row) {
+      overview.error = "Detection-quality overview limits are invalid";
+      return overview;
+    }
+    timeline::DetectionQualityOverviewAccumulator accumulator(
+        descriptor_.frame_count, maximum_points_per_trace,
+        descriptor_.source_audit);
+    size_t first_frame = 0;
+    std::string error;
+    while (first_frame < descriptor_.frame_count) {
+      if (cancelled && cancelled()) {
+        overview.error = "Detection-quality overview was cancelled";
+        return overview;
+      }
+      const size_t source_first =
+          static_cast<size_t>(source_offsets_[first_frame]);
+      const size_t instance_first =
+          static_cast<size_t>(instance_offsets_[first_frame]);
+      const auto decodedThrough = [&](size_t frame) {
+        return (static_cast<size_t>(source_offsets_[frame]) - source_first) *
+                   source_bytes_per_row +
+               (static_cast<size_t>(instance_offsets_[frame]) -
+                instance_first) *
+                   instance_bytes_per_row;
+      };
+      size_t low = first_frame + 1;
+      size_t high = descriptor_.frame_count;
+      size_t last_frame = low;
+      while (low <= high) {
+        const size_t middle = low + (high - low) / 2;
+        if (decodedThrough(middle) <= maximum_decoded_bytes ||
+            middle == first_frame + 1) {
+          last_frame = middle;
+          low = middle + 1;
+        } else {
+          high = middle - 1;
+        }
+      }
+      const size_t source_last =
+          static_cast<size_t>(source_offsets_[last_frame]);
+      const size_t instance_last =
+          static_cast<size_t>(instance_offsets_[last_frame]);
+      std::vector<float> scores;
+      std::vector<uint8_t> decisions;
+      std::vector<uint8_t> kinds;
+      struct ReadResult {
+        bool ready = false;
+        std::string error;
+      };
+      auto score_future = std::async(std::launch::async, [&] {
+        ReadResult result;
+        result.ready = readRows(source_scores_, source_first, source_last,
+                                &scores, &result.error);
+        return result;
+      });
+      std::optional<std::future<ReadResult>> decision_future;
+      std::optional<std::future<ReadResult>> kind_future;
+      if (descriptor_.source_audit) {
+        decision_future.emplace(std::async(std::launch::async, [&] {
+          ReadResult result;
+          result.ready = readRows(*source_decisions_, source_first, source_last,
+                                  &decisions, &result.error);
+          return result;
+        }));
+        kind_future.emplace(std::async(std::launch::async, [&] {
+          ReadResult result;
+          result.ready = readRows(*instance_kinds_, instance_first,
+                                  instance_last, &kinds, &result.error);
+          return result;
+        }));
+      }
+      const auto score_result = score_future.get();
+      const auto decision_result =
+          decision_future ? decision_future->get() : ReadResult{true, {}};
+      const auto kind_result =
+          kind_future ? kind_future->get() : ReadResult{true, {}};
+      if (!score_result.ready || !decision_result.ready || !kind_result.ready) {
+        overview.error = !score_result.ready      ? score_result.error
+                         : !decision_result.ready ? decision_result.error
+                                                  : kind_result.error;
+        break;
+      }
+      for (size_t frame = first_frame; frame < last_frame; ++frame) {
+        const size_t source_begin =
+            static_cast<size_t>(source_offsets_[frame]) - source_first;
+        const size_t source_end =
+            static_cast<size_t>(source_offsets_[frame + 1]) - source_first;
+        const size_t instance_begin =
+            static_cast<size_t>(instance_offsets_[frame]) - instance_first;
+        const size_t instance_end =
+            static_cast<size_t>(instance_offsets_[frame + 1]) - instance_first;
+        const float *frame_scores =
+            source_end > source_begin ? scores.data() + source_begin : nullptr;
+        const uint8_t *frame_decisions =
+            descriptor_.source_audit && source_end > source_begin
+                ? decisions.data() + source_begin
+                : nullptr;
+        const uint8_t *frame_kinds =
+            descriptor_.source_audit && instance_end > instance_begin
+                ? kinds.data() + instance_begin
+                : nullptr;
+        if (!accumulator.addFrame(
+                static_cast<int64_t>(frame), frame_scores, frame_decisions,
+                source_end - source_begin, frame_kinds,
+                descriptor_.source_audit ? instance_end - instance_begin : 0,
+                &error)) {
+          overview.error = std::move(error);
+          break;
+        }
+      }
+      if (!overview.error.empty()) {
+        break;
+      }
+      first_frame = last_frame;
+    }
+    if (overview.error.empty()) {
+      overview = accumulator.finish();
+    }
+    const double elapsed = elapsedMilliseconds(started);
+    std::lock_guard<std::mutex> lock(metrics_mutex_);
+    ++metrics_.overview_reads;
+    metrics_.peak_concurrent_field_reads =
+        std::max(metrics_.peak_concurrent_field_reads,
+                 descriptor_.source_audit ? size_t{3} : size_t{1});
+    metrics_.maximum_overview_read_ms =
+        std::max(metrics_.maximum_overview_read_ms, elapsed);
+    if (overview.ready()) {
+      metrics_.overview_source_rows_read += overview.source_rows_read;
+      metrics_.overview_instance_rows_read += overview.instance_rows_read;
+      metrics_.overview_decoded_bytes += overview.decoded_bytes;
+    } else if (!(cancelled && cancelled())) {
+      ++metrics_.failed_overview_reads;
+      metrics_.last_error = overview.error;
+    }
+    return overview;
+  }
+
   timeline::DetectionQualityTimelineRepositoryMetrics metrics() const override {
     std::lock_guard<std::mutex> lock(metrics_mutex_);
     return metrics_;
