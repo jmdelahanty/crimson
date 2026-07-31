@@ -1136,6 +1136,15 @@ Linux/NVIDIA build pass; native Windows validation remains pending. The
 checkpoint is documented in
 `docs/crimson_shared_quality_timeline_checkpoint_2026-07-31.md`.
 
+The macOS composition root has now adopted the shared session itself and
+deleted its two inline asynchronous timeline state machines. Optional
+repository factories let macOS reuse its already-open analysis archive and
+keypoint repository, while Linux/Windows retains the exact-schema path-based
+adapter. Durable shared metrics preserve open, physical-read, page-cache, and
+overview evidence across timeline close. The adoption removes 196 net lines
+from `crimson_macos_main.mm` and is documented in
+`docs/crimson_shared_quality_timeline_session_adoption_2026-07-31.md`.
+
 Camera transport presentation is now shared as well. One backend-neutral ImGui
 component owns the five transport commands, tooltips, 64-bit frame slider,
 time readout, preview-versus-commit action identity, bounded playback intents,

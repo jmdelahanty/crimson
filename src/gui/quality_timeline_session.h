@@ -4,9 +4,9 @@
 #include "detection_quality_timeline_buffer.h"
 #include "gui/quality_timeline_window.h"
 #include "keypoint_quality_timeline_buffer.h"
-#include "zarr/tensorstore_detection_quality_timeline_repository.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -39,6 +39,36 @@ struct QualityTimelineSessionRequest {
   bool operator==(const QualityTimelineSessionRequest &other) const;
 };
 
+using DetectionQualityTimelineRepositoryFactory =
+    std::function<std::unique_ptr<timeline::DetectionQualityTimelineRepository>(
+        std::string *)>;
+using KeypointQualityTimelineRepositoryFactory =
+    std::function<std::unique_ptr<timeline::KeypointQualityTimelineRepository>(
+        std::string *)>;
+
+struct QualityTimelineRepositoryFactories {
+  DetectionQualityTimelineRepositoryFactory detection;
+  KeypointQualityTimelineRepositoryFactory keypoints;
+};
+
+struct QualityTimelineOpenMetrics {
+  double total_ms = 0.0;
+  size_t offset_read_calls = 0;
+  size_t retained_offset_bytes = 0;
+};
+
+struct QualityTimelineSessionMetrics {
+  timeline::DetectionQualityTimelineDescriptor detection_descriptor;
+  QualityTimelineOpenMetrics detection_open;
+  timeline::DetectionQualityTimelineRepositoryMetrics detection_repository;
+  DetectionQualityTimelineBufferMetrics detection_buffer;
+
+  timeline::KeypointQualityTimelineDescriptor keypoint_descriptor;
+  QualityTimelineOpenMetrics keypoint_open;
+  timeline::KeypointQualityTimelineRepositoryMetrics keypoint_repository;
+  KeypointQualityTimelineBufferMetrics keypoint_buffer;
+};
+
 class QualityTimelineSession {
 public:
   explicit QualityTimelineSession(
@@ -48,7 +78,8 @@ public:
   QualityTimelineSession(const QualityTimelineSession &) = delete;
   QualityTimelineSession &operator=(const QualityTimelineSession &) = delete;
 
-  void configure(QualityTimelineSessionRequest request);
+  void configure(QualityTimelineSessionRequest request,
+                 QualityTimelineRepositoryFactories factories = {});
   void update(int64_t current_frame, bool discontinuity,
               bool detection_requested,
               const DetectionQualityTimelineControls &detection_controls,
@@ -74,6 +105,7 @@ public:
   keypointWindow() const;
   std::shared_ptr<const timeline::KeypointQualityTimelineOverview>
   keypointOverview() const;
+  QualityTimelineSessionMetrics metrics() const;
 
 private:
   struct Impl;

@@ -1,6 +1,7 @@
 #include "gui/quality_timeline_session.h"
 
 #include "zarr/archive_context.h"
+#include "zarr/tensorstore_detection_quality_timeline_repository.h"
 #include "zarr/tensorstore_keypoint_v2_repository.h"
 
 #include <chrono>
@@ -15,15 +16,40 @@ using namespace std::chrono_literals;
 
 struct DetectionOpenResult {
   std::unique_ptr<timeline::DetectionQualityTimelineRepository> repository;
-  zarr::DetectionQualityTimelineOpenMetrics metrics;
+  QualityTimelineOpenMetrics metrics;
   std::string error;
 };
 
 struct KeypointOpenResult {
   std::unique_ptr<timeline::KeypointQualityTimelineRepository> repository;
-  zarr::KeypointV2RepositoryOpenMetrics metrics;
+  QualityTimelineOpenMetrics metrics;
   std::string error;
 };
+
+QualityTimelineOpenMetrics
+portableOpenMetrics(const zarr::DetectionQualityTimelineOpenMetrics &metrics) {
+  return {metrics.total_ms, metrics.offset_read_calls,
+          metrics.retained_offset_bytes};
+}
+
+QualityTimelineOpenMetrics
+portableOpenMetrics(const zarr::KeypointV2RepositoryOpenMetrics &metrics) {
+  return {metrics.total_ms,
+          metrics.raw_offset_read_calls + metrics.selected_offset_read_calls +
+              metrics.quality_offset_read_calls +
+              metrics.body_frame_offset_read_calls,
+          metrics.retained_offset_bytes};
+}
+
+template <typename Factory>
+auto openFromFactory(const Factory &factory, std::string *error) {
+  const auto started = std::chrono::steady_clock::now();
+  auto repository = factory(error);
+  const double elapsed_ms = std::chrono::duration<double, std::milli>(
+                                std::chrono::steady_clock::now() - started)
+                                .count();
+  return std::pair{std::move(repository), elapsed_ms};
+}
 
 std::shared_ptr<zarr::ArchiveContext>
 openArtifactArchive(const QualityTimelineArtifactSelection &selection,
@@ -40,6 +66,7 @@ openArtifactArchive(const QualityTimelineArtifactSelection &selection,
 KeypointOpenResult
 openKeypointTimeline(const QualityTimelineSessionRequest &selection) {
   KeypointOpenResult result;
+  zarr::KeypointV2RepositoryOpenMetrics native_metrics;
   zarr::KeypointV2RepositoryOpenRequest request;
   request.raw_archive = openArtifactArchive(selection.raw_keypoints,
                                             "raw-keypoint", &result.error);
@@ -81,7 +108,8 @@ openKeypointTimeline(const QualityTimelineSessionRequest &selection) {
   request.deep_validate_identity = selection.deep_validate_keypoint_identity;
 
   auto keypoints =
-      zarr::OpenKeypointV2Repository(request, &result.error, &result.metrics);
+      zarr::OpenKeypointV2Repository(request, &result.error, &native_metrics);
+  result.metrics = portableOpenMetrics(native_metrics);
   if (!keypoints) {
     return result;
   }
@@ -147,6 +175,7 @@ struct QualityTimelineSession::Impl {
       return;
     }
     auto opened = detection_future.get();
+    session_metrics.detection_open = opened.metrics;
     detection_error = std::move(opened.error);
     if (!requested || !detectionConfigured()) {
       detection_state = QualityTimelineLoadState::Closed;
@@ -156,6 +185,7 @@ struct QualityTimelineSession::Impl {
         detection_buffer.open(std::move(opened.repository), 8192, 4096, 3,
                               &detection_error)) {
       detection_descriptor = detection_buffer.descriptor();
+      session_metrics.detection_descriptor = detection_descriptor;
       detection_state = QualityTimelineLoadState::Ready;
       std::cout << "[QualityTimeline] detection state=ready run="
                 << detection_descriptor.run_name
@@ -179,6 +209,7 @@ struct QualityTimelineSession::Impl {
       return;
     }
     auto opened = keypoint_future.get();
+    session_metrics.keypoint_open = opened.metrics;
     keypoint_error = std::move(opened.error);
     if (!requested || !keypointConfigured()) {
       keypoint_state = QualityTimelineLoadState::Closed;
@@ -188,6 +219,7 @@ struct QualityTimelineSession::Impl {
         keypoint_buffer.open(std::move(opened.repository), 4096, 2048, 3,
                              &keypoint_error)) {
       keypoint_descriptor = keypoint_buffer.descriptor();
+      session_metrics.keypoint_descriptor = keypoint_descriptor;
       keypoint_state = QualityTimelineLoadState::Ready;
       std::cout << "[QualityTimeline] keypoints state=ready run="
                 << keypoint_descriptor.run_name
@@ -214,6 +246,7 @@ struct QualityTimelineSession::Impl {
     if (!requested) {
       if (detection_state == QualityTimelineLoadState::Ready ||
           detection_state == QualityTimelineLoadState::Failed) {
+        captureDetectionMetrics();
         detection_buffer.close();
         detection_error.clear();
         detection_state = QualityTimelineLoadState::Closed;
@@ -228,16 +261,33 @@ struct QualityTimelineSession::Impl {
       open_request.allow_selector_ineligible_refined_run =
           request.allow_selector_ineligible_refined_run;
       const std::string archive_path = request.detection_archive_path;
+      const auto factory = factories.detection;
       detection_state = QualityTimelineLoadState::Opening;
       detection_future = std::async(
           std::launch::async,
-          [archive_path, open_request = std::move(open_request)]() mutable {
+          [archive_path, open_request = std::move(open_request),
+           factory]() mutable {
             DetectionOpenResult result;
+            if (factory) {
+              auto [repository, elapsed_ms] =
+                  openFromFactory(factory, &result.error);
+              result.repository = std::move(repository);
+              result.metrics.total_ms = elapsed_ms;
+              if (result.repository) {
+                const auto &descriptor = result.repository->descriptor();
+                result.metrics.offset_read_calls = descriptor.offset_read_calls;
+                result.metrics.retained_offset_bytes =
+                    descriptor.retained_offset_bytes;
+              }
+              return result;
+            }
             auto archive =
                 zarr::ArchiveContext::Open(archive_path, &result.error);
             if (archive) {
+              zarr::DetectionQualityTimelineOpenMetrics native_metrics;
               result.repository = zarr::OpenDetectionQualityTimelineRepository(
-                  archive, open_request, &result.error, &result.metrics);
+                  archive, open_request, &result.error, &native_metrics);
+              result.metrics = portableOpenMetrics(native_metrics);
             }
             return result;
           });
@@ -274,6 +324,7 @@ struct QualityTimelineSession::Impl {
     if (!requested) {
       if (keypoint_state == QualityTimelineLoadState::Ready ||
           keypoint_state == QualityTimelineLoadState::Failed) {
+        captureKeypointMetrics();
         keypoint_buffer.close();
         keypoint_error.clear();
         keypoint_state = QualityTimelineLoadState::Closed;
@@ -283,8 +334,23 @@ struct QualityTimelineSession::Impl {
     if (keypoint_state == QualityTimelineLoadState::Closed &&
         keypointConfigured()) {
       const auto selection = request;
+      const auto factory = factories.keypoints;
       keypoint_state = QualityTimelineLoadState::Opening;
-      keypoint_future = std::async(std::launch::async, [selection]() {
+      keypoint_future = std::async(std::launch::async, [selection, factory]() {
+        if (factory) {
+          KeypointOpenResult result;
+          auto [repository, elapsed_ms] =
+              openFromFactory(factory, &result.error);
+          result.repository = std::move(repository);
+          result.metrics.total_ms = elapsed_ms;
+          if (result.repository) {
+            const auto &descriptor = result.repository->descriptor();
+            result.metrics.offset_read_calls = descriptor.offset_read_calls;
+            result.metrics.retained_offset_bytes =
+                descriptor.retained_offset_bytes;
+          }
+          return result;
+        }
         return openKeypointTimeline(selection);
       });
       return;
@@ -312,16 +378,48 @@ struct QualityTimelineSession::Impl {
     }
   }
 
+  void captureDetectionMetrics() {
+    if (detection_buffer.isOpen()) {
+      session_metrics.detection_repository =
+          detection_buffer.repositoryMetrics();
+    }
+    session_metrics.detection_buffer = detection_buffer.metrics();
+  }
+
+  void captureKeypointMetrics() {
+    if (keypoint_buffer.isOpen()) {
+      session_metrics.keypoint_repository = keypoint_buffer.repositoryMetrics();
+    }
+    session_metrics.keypoint_buffer = keypoint_buffer.metrics();
+  }
+
+  QualityTimelineSessionMetrics metrics() const {
+    auto snapshot = session_metrics;
+    if (detection_buffer.isOpen()) {
+      snapshot.detection_repository = detection_buffer.repositoryMetrics();
+      snapshot.detection_buffer = detection_buffer.metrics();
+    }
+    if (keypoint_buffer.isOpen()) {
+      snapshot.keypoint_repository = keypoint_buffer.repositoryMetrics();
+      snapshot.keypoint_buffer = keypoint_buffer.metrics();
+    }
+    return snapshot;
+  }
+
   void close() {
+    captureDetectionMetrics();
+    captureKeypointMetrics();
     detection_buffer.close();
     keypoint_buffer.close();
     if (detection_future.valid()) {
       detection_future.wait();
-      (void)detection_future.get();
+      auto opened = detection_future.get();
+      session_metrics.detection_open = opened.metrics;
     }
     if (keypoint_future.valid()) {
       keypoint_future.wait();
-      (void)keypoint_future.get();
+      auto opened = keypoint_future.get();
+      session_metrics.keypoint_open = opened.metrics;
     }
     detection_state = QualityTimelineLoadState::Closed;
     keypoint_state = QualityTimelineLoadState::Closed;
@@ -337,6 +435,8 @@ struct QualityTimelineSession::Impl {
 
   std::shared_ptr<data::DataAccessScheduler> scheduler;
   QualityTimelineSessionRequest request;
+  QualityTimelineRepositoryFactories factories;
+  QualityTimelineSessionMetrics session_metrics;
   DetectionQualityTimelineBuffer detection_buffer;
   KeypointQualityTimelineBuffer keypoint_buffer;
   QualityTimelineLoadState detection_state = QualityTimelineLoadState::Closed;
@@ -363,12 +463,17 @@ QualityTimelineSession::QualityTimelineSession(
 
 QualityTimelineSession::~QualityTimelineSession() { impl_->close(); }
 
-void QualityTimelineSession::configure(QualityTimelineSessionRequest request) {
+void QualityTimelineSession::configure(
+    QualityTimelineSessionRequest request,
+    QualityTimelineRepositoryFactories factories) {
   if (request == impl_->request) {
+    impl_->factories = std::move(factories);
     return;
   }
   impl_->close();
+  impl_->session_metrics = {};
   impl_->request = std::move(request);
+  impl_->factories = std::move(factories);
 }
 
 void QualityTimelineSession::update(
@@ -440,6 +545,10 @@ QualityTimelineSession::keypointWindow() const {
 std::shared_ptr<const timeline::KeypointQualityTimelineOverview>
 QualityTimelineSession::keypointOverview() const {
   return impl_->keypoint_overview;
+}
+
+QualityTimelineSessionMetrics QualityTimelineSession::metrics() const {
+  return impl_->metrics();
 }
 
 } // namespace crimson::gui

@@ -16,11 +16,11 @@
 #include "data_access_diagnostics.h"
 #include "data_access_scheduler.h"
 #include "debug_flags.h"
-#include "detection_quality_timeline_buffer.h"
 #include "diagnostic_report.h"
 #include "eye_angle_timeline_buffer.h"
 #include "eye_geometry_overlay_buffer.h"
 #include "frame_presentation.h"
+#include "gui/quality_timeline_session.h"
 #include "gui/session_loading_modal.h"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -28,7 +28,6 @@
 #include "imgui_semantic_snapshot.h"
 #include "implot.h"
 #include "keypoint_overlay_buffer.h"
-#include "keypoint_quality_timeline_buffer.h"
 #include "playback_clock.h"
 #include "recording_open_workflow.h"
 #include "session_readiness.h"
@@ -1031,9 +1030,8 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
     }
     if (argument == "--benchmark-subject-mask-v1") {
       if (i + 2 >= argc) {
-        std::fprintf(
-            stderr,
-            "--benchmark-subject-mask-v1 requires RUN MANIFEST_PAYLOAD_DIGEST\n");
+        std::fprintf(stderr, "--benchmark-subject-mask-v1 requires RUN "
+                             "MANIFEST_PAYLOAD_DIGEST\n");
         return std::nullopt;
       }
       options.subject_mask_run = argv[i + 1];
@@ -2105,22 +2103,6 @@ int main(int argc, char **argv) {
   std::string canonical_detection_error;
   std::shared_ptr<const crimson::zarr::CanonicalDetectionFrame>
       presented_canonical_detection_frame;
-  DetectionQualityTimelineBuffer detection_quality_timeline_buffer(
-      analysis_data_scheduler, analysis_archive_identity);
-  crimson::timeline::DetectionQualityTimelineDescriptor
-      detection_quality_timeline_descriptor;
-  crimson::zarr::DetectionQualityTimelineOpenMetrics
-      detection_quality_timeline_open_metrics;
-  AppleDetectionQualityLoadState detection_quality_timeline_state =
-      AppleDetectionQualityLoadState::Closed;
-  std::string detection_quality_timeline_error;
-  struct DetectionQualityOpenResult {
-    std::unique_ptr<crimson::timeline::DetectionQualityTimelineRepository>
-        repository;
-    crimson::zarr::DetectionQualityTimelineOpenMetrics metrics;
-    std::string error;
-  };
-  std::future<DetectionQualityOpenResult> detection_quality_open_future;
   KeypointOverlayBuffer keypoint_overlay_buffer(analysis_data_scheduler,
                                                 analysis_archive_identity);
   crimson::zarr::KeypointOverlayDescriptor keypoint_descriptor;
@@ -2130,19 +2112,8 @@ int main(int argc, char **argv) {
   bool keypoint_overlay_failed = false;
   int64_t last_keypoint_camera_request = -1;
   std::string keypoint_error;
-  KeypointQualityTimelineBuffer keypoint_quality_timeline_buffer(
-      analysis_data_scheduler, analysis_archive_identity);
-  crimson::timeline::KeypointQualityTimelineDescriptor
-      keypoint_quality_timeline_descriptor;
-  AppleKeypointQualityLoadState keypoint_quality_timeline_state =
-      AppleKeypointQualityLoadState::Closed;
-  std::string keypoint_quality_timeline_error;
-  struct KeypointQualityOpenResult {
-    std::unique_ptr<crimson::timeline::KeypointQualityTimelineRepository>
-        repository;
-    std::string error;
-  };
-  std::future<KeypointQualityOpenResult> keypoint_quality_open_future;
+  crimson::gui::QualityTimelineSession quality_timeline_session(
+      analysis_data_scheduler);
   crimson::polar::ChaserDistancePolarBuffer chaser_distance_polar_buffer;
   crimson::polar::ChaserDistancePolarDescriptor
       chaser_distance_polar_descriptor;
@@ -4225,229 +4196,70 @@ int main(int argc, char **argv) {
             stimulus_context_timeline_available;
         bool detection_quality_requested = workspace_state.windowRequested(
             crimson::workspace::Window::DetectionQualityTimeline);
-        if (detection_quality_timeline_state ==
-                AppleDetectionQualityLoadState::Opening &&
-            detection_quality_open_future.valid() &&
-            detection_quality_open_future.wait_for(
-                std::chrono::milliseconds(0)) == std::future_status::ready) {
-          auto opened = detection_quality_open_future.get();
-          detection_quality_timeline_open_metrics = opened.metrics;
-          detection_quality_timeline_error = std::move(opened.error);
-          if (!detection_quality_requested) {
-            detection_quality_timeline_state =
-                AppleDetectionQualityLoadState::Closed;
-          } else if (opened.repository &&
-                     detection_quality_timeline_buffer.open(
-                         std::move(opened.repository), 8192, 4096, 3,
-                         &detection_quality_timeline_error)) {
-            detection_quality_timeline_descriptor =
-                detection_quality_timeline_buffer.descriptor();
-            detection_quality_timeline_state =
-                AppleDetectionQualityLoadState::Ready;
-            std::printf(
-                "[AppleDetectionQualityTimeline] state=ready surface=%s "
-                "run=%s frames=%zu source_rows=%zu instance_rows=%zu "
-                "source_audit=%d offset_reads=%zu retained_offset_bytes=%zu "
-                "open_ms=%.1f offset_ms=%.1f\n",
-                detection_quality_timeline_descriptor.surface_kind ==
-                        crimson::zarr::DetectionSurfaceKind::RefinedSnapshotV1
-                    ? "refined"
-                    : "canonical",
-                detection_quality_timeline_descriptor.run_name.c_str(),
-                detection_quality_timeline_descriptor.frame_count,
-                detection_quality_timeline_descriptor.source_row_count,
-                detection_quality_timeline_descriptor.instance_row_count,
-                detection_quality_timeline_descriptor.source_audit ? 1 : 0,
-                detection_quality_timeline_open_metrics.offset_read_calls,
-                detection_quality_timeline_open_metrics.retained_offset_bytes,
-                detection_quality_timeline_open_metrics.total_ms,
-                detection_quality_timeline_open_metrics.offset_read_ms);
-          } else {
-            detection_quality_timeline_state =
-                AppleDetectionQualityLoadState::Failed;
-            if (detection_quality_timeline_error.empty()) {
-              detection_quality_timeline_error =
-                  "Could not open the detection timeline buffer";
-            }
-            std::fprintf(stderr,
-                         "[AppleDetectionQualityTimeline] Unavailable: %s\n",
-                         detection_quality_timeline_error.c_str());
-          }
-        }
-        if (!detection_quality_requested &&
-            (detection_quality_timeline_state ==
-                 AppleDetectionQualityLoadState::Ready ||
-             detection_quality_timeline_state ==
-                 AppleDetectionQualityLoadState::Failed)) {
-          detection_quality_timeline_buffer.close();
-          detection_quality_timeline_error.clear();
-          detection_quality_timeline_state =
-              AppleDetectionQualityLoadState::Closed;
-        }
-        if (detection_quality_requested &&
-            detection_quality_timeline_state ==
-                AppleDetectionQualityLoadState::Closed &&
-            analysis_archive && canonical_detection_available) {
-          crimson::zarr::DetectionQualityTimelineOpenRequest request;
-          request.surface_kind = canonical_detection_descriptor.surface_kind;
-          request.run_name = canonical_detection_descriptor.run_name;
-          request.allow_selector_ineligible_refined_run =
-              options->allow_selector_ineligible_refined_run;
-          auto archive = analysis_archive;
-          detection_quality_timeline_state =
-              AppleDetectionQualityLoadState::Opening;
-          detection_quality_open_future =
-              std::async(std::launch::async, [archive = std::move(archive),
-                                              request = std::move(request)]() {
-                DetectionQualityOpenResult result;
-                result.repository =
-                    crimson::zarr::OpenDetectionQualityTimelineRepository(
-                        archive, request, &result.error, &result.metrics);
-                return result;
-              });
-        }
-        std::shared_ptr<const crimson::timeline::DetectionQualityTimelineWindow>
-            detection_quality_timeline_window;
-        std::shared_ptr<
-            const crimson::timeline::DetectionQualityTimelineOverview>
-            detection_quality_timeline_overview;
-        if (detection_quality_requested &&
-            detection_quality_timeline_state ==
-                AppleDetectionQualityLoadState::Ready &&
-            viewer_stats.requested_frame >= 0 &&
-            viewer_stats.requested_frame <
-                static_cast<int64_t>(
-                    detection_quality_timeline_descriptor.frame_count)) {
-          const bool requested =
-              detection_quality_timeline_controls.full_recording
-                  ? detection_quality_timeline_buffer.requestOverview(
-                        1200, 8 * 1024 * 1024,
-                        &detection_quality_timeline_error)
-                  : detection_quality_timeline_buffer.requestFrame(
-                        viewer_stats.requested_frame,
-                        pending_camera_discontinuity,
-                        &detection_quality_timeline_error);
-          if (!requested) {
-            detection_quality_timeline_state =
-                AppleDetectionQualityLoadState::Failed;
-            std::fprintf(stderr,
-                         "[AppleDetectionQualityTimeline] Request failed: %s\n",
-                         detection_quality_timeline_error.c_str());
-          } else if (detection_quality_timeline_controls.full_recording) {
-            detection_quality_timeline_overview =
-                detection_quality_timeline_buffer.overview();
-          } else {
-            detection_quality_timeline_window =
-                detection_quality_timeline_buffer.window(
-                    viewer_stats.requested_frame);
-          }
-        }
         bool keypoint_quality_requested = workspace_state.windowRequested(
             crimson::workspace::Window::KeypointQualityTimeline);
-        if (keypoint_quality_timeline_state ==
-                AppleKeypointQualityLoadState::Opening &&
-            keypoint_quality_open_future.valid() &&
-            keypoint_quality_open_future.wait_for(
-                std::chrono::milliseconds(0)) == std::future_status::ready) {
-          auto opened = keypoint_quality_open_future.get();
-          keypoint_quality_timeline_error = std::move(opened.error);
-          if (!keypoint_quality_requested) {
-            keypoint_quality_timeline_state =
-                AppleKeypointQualityLoadState::Closed;
-          } else if (opened.repository &&
-                     keypoint_quality_timeline_buffer.open(
-                         std::move(opened.repository), 4096, 2048, 3,
-                         &keypoint_quality_timeline_error)) {
-            keypoint_quality_timeline_descriptor =
-                keypoint_quality_timeline_buffer.descriptor();
-            keypoint_quality_timeline_state =
-                AppleKeypointQualityLoadState::Ready;
-            std::printf(
-                "[AppleKeypointQualityTimeline] state=ready surface=%s "
-                "run=%s quality_run=%s frames=%zu rows=%zu keypoints=%zu "
-                "offset_reads=%zu retained_offset_bytes=%zu\n",
-                keypoint_quality_timeline_descriptor.refined ? "refined"
-                                                             : "raw",
-                keypoint_quality_timeline_descriptor.run_name.c_str(),
-                keypoint_quality_timeline_descriptor.quality_run_name.c_str(),
-                keypoint_quality_timeline_descriptor.frame_count,
-                keypoint_quality_timeline_descriptor.row_count,
-                keypoint_quality_timeline_descriptor.keypoint_count,
-                keypoint_quality_timeline_descriptor.offset_read_calls,
-                keypoint_quality_timeline_descriptor.retained_offset_bytes);
-          } else {
-            keypoint_quality_timeline_state =
-                AppleKeypointQualityLoadState::Failed;
-            if (keypoint_quality_timeline_error.empty()) {
-              keypoint_quality_timeline_error =
-                  "Could not open the keypoint quality timeline buffer";
-            }
-            std::fprintf(stderr,
-                         "[AppleKeypointQualityTimeline] Unavailable: %s\n",
-                         keypoint_quality_timeline_error.c_str());
-          }
+        crimson::gui::QualityTimelineSessionRequest quality_request;
+        crimson::gui::QualityTimelineRepositoryFactories quality_factories;
+        if (analysis_archive && canonical_detection_available) {
+          quality_request.detection_archive_path = options->zarr_path;
+          quality_request.detection_surface =
+              canonical_detection_descriptor.surface_kind;
+          quality_request.detection_run_name =
+              canonical_detection_descriptor.run_name;
+          quality_request.allow_selector_ineligible_refined_run =
+              options->allow_selector_ineligible_refined_run;
+          const auto archive = analysis_archive;
+          const crimson::zarr::DetectionQualityTimelineOpenRequest open_request{
+              canonical_detection_descriptor.surface_kind,
+              canonical_detection_descriptor.run_name,
+              options->allow_selector_ineligible_refined_run};
+          quality_factories.detection = [archive,
+                                         open_request](std::string *error) {
+            return crimson::zarr::OpenDetectionQualityTimelineRepository(
+                archive, open_request, error);
+          };
         }
-        if (!keypoint_quality_requested &&
-            (keypoint_quality_timeline_state ==
-                 AppleKeypointQualityLoadState::Ready ||
-             keypoint_quality_timeline_state ==
-                 AppleKeypointQualityLoadState::Failed)) {
-          keypoint_quality_timeline_buffer.close();
-          keypoint_quality_timeline_error.clear();
-          keypoint_quality_timeline_state =
-              AppleKeypointQualityLoadState::Closed;
+        const auto quality_selection = [](const auto &selection) {
+          return crimson::gui::QualityTimelineArtifactSelection{
+              selection.archive_path, selection.run, selection.manifest_digest};
+        };
+        if (options->keypoint_v2.enabled()) {
+          quality_request.raw_keypoints =
+              quality_selection(options->keypoint_v2.raw);
+          quality_request.keypoint_quality =
+              quality_selection(options->keypoint_v2.quality);
+          quality_request.refined_keypoints =
+              quality_selection(options->keypoint_v2.refined);
+          quality_request.body_frame =
+              quality_selection(options->keypoint_v2.body_frame);
+          quality_request.allow_selector_ineligible_keypoints =
+              options->keypoint_v2.allow_selector_ineligible;
+          quality_request.deep_validate_keypoint_identity =
+              options->keypoint_v2.deep_validate_identity;
         }
-        if (keypoint_quality_requested &&
-            keypoint_quality_timeline_state ==
-                AppleKeypointQualityLoadState::Closed &&
-            keypoint_overlay_available && options->keypoint_v2.enabled()) {
-          keypoint_quality_timeline_state =
-              AppleKeypointQualityLoadState::Opening;
-          keypoint_quality_open_future =
-              std::async(std::launch::async, [&keypoint_overlay_buffer]() {
-                KeypointQualityOpenResult result;
-                result.repository =
-                    keypoint_overlay_buffer.createQualityTimelineRepository(
-                        &result.error);
-                return result;
-              });
+        if (keypoint_overlay_available) {
+          quality_factories.keypoints =
+              [&keypoint_overlay_buffer](std::string *error) {
+                return keypoint_overlay_buffer.createQualityTimelineRepository(
+                    error);
+              };
         }
-        std::shared_ptr<const crimson::timeline::KeypointQualityTimelineWindow>
-            keypoint_quality_timeline_window;
-        std::shared_ptr<
-            const crimson::timeline::KeypointQualityTimelineOverview>
-            keypoint_quality_timeline_overview;
-        if (keypoint_quality_requested &&
-            keypoint_quality_timeline_state ==
-                AppleKeypointQualityLoadState::Ready &&
-            viewer_stats.requested_frame >= 0 &&
-            viewer_stats.requested_frame <
-                static_cast<int64_t>(
-                    keypoint_quality_timeline_descriptor.frame_count)) {
-          const bool requested =
-              keypoint_quality_timeline_controls.full_recording
-                  ? keypoint_quality_timeline_buffer.requestOverview(
-                        1200, 8 * 1024 * 1024,
-                        &keypoint_quality_timeline_error)
-                  : keypoint_quality_timeline_buffer.requestFrame(
-                        viewer_stats.requested_frame,
-                        pending_camera_discontinuity,
-                        &keypoint_quality_timeline_error);
-          if (!requested) {
-            keypoint_quality_timeline_state =
-                AppleKeypointQualityLoadState::Failed;
-            std::fprintf(stderr,
-                         "[AppleKeypointQualityTimeline] Request failed: %s\n",
-                         keypoint_quality_timeline_error.c_str());
-          } else if (keypoint_quality_timeline_controls.full_recording) {
-            keypoint_quality_timeline_overview =
-                keypoint_quality_timeline_buffer.overview();
-          } else {
-            keypoint_quality_timeline_window =
-                keypoint_quality_timeline_buffer.window(
-                    viewer_stats.requested_frame);
-          }
-        }
+        quality_timeline_session.configure(std::move(quality_request),
+                                           std::move(quality_factories));
+        quality_timeline_session.update(
+            viewer_stats.requested_frame, pending_camera_discontinuity,
+            detection_quality_requested && canonical_detection_available,
+            detection_quality_timeline_controls,
+            keypoint_quality_requested && keypoint_overlay_available,
+            keypoint_quality_timeline_controls);
+        const auto detection_quality_timeline_window =
+            quality_timeline_session.detectionWindow();
+        const auto detection_quality_timeline_overview =
+            quality_timeline_session.detectionOverview();
+        const auto keypoint_quality_timeline_window =
+            quality_timeline_session.keypointWindow();
+        const auto keypoint_quality_timeline_overview =
+            quality_timeline_session.keypointOverview();
         crimson::workspace::WorkspaceCapabilities workspace_capabilities;
         workspace_capabilities.video_loaded = true;
         workspace_capabilities.playback_ready = video_playback.isOpen();
@@ -4480,11 +4292,13 @@ int main(int argc, char **argv) {
             canonical_detection_available ? &canonical_detection_descriptor
                                           : nullptr,
             presented_canonical_detection_frame,
-            detection_quality_timeline_state, detection_quality_timeline_error,
-            &detection_inspect_state, &detection_quality_requested,
+            quality_timeline_session.detectionState(),
+            quality_timeline_session.detectionError(), &detection_inspect_state,
+            &detection_quality_requested,
             keypoint_overlay_available ? &keypoint_descriptor : nullptr,
-            presented_keypoint_resolution, keypoint_quality_timeline_state,
-            keypoint_quality_timeline_error, &keypoint_inspect_state,
+            presented_keypoint_resolution,
+            quality_timeline_session.keypointState(),
+            quality_timeline_session.keypointError(), &keypoint_inspect_state,
             &keypoint_quality_requested, viewer_stats,
             &frame_inspect_presentation, &crop_preview_requested,
             &stimulus_debug_requested, ui_interactive);
@@ -4631,14 +4445,12 @@ int main(int argc, char **argv) {
                 workspace_capabilities) &&
             drawAppleDetectionQualityTimeline(
                 &detection_quality_timeline_controls,
-                &detection_quality_requested, detection_quality_timeline_state,
-                detection_quality_timeline_state ==
-                        AppleDetectionQualityLoadState::Ready
-                    ? &detection_quality_timeline_descriptor
-                    : nullptr,
+                &detection_quality_requested,
+                quality_timeline_session.detectionState(),
+                quality_timeline_session.detectionDescriptor(),
                 detection_quality_timeline_window,
                 detection_quality_timeline_overview,
-                detection_quality_timeline_error,
+                quality_timeline_session.detectionError(),
                 viewer_stats.presented_frame >= 0
                     ? viewer_stats.presented_frame
                     : viewer_stats.requested_frame,
@@ -4652,14 +4464,12 @@ int main(int argc, char **argv) {
                 workspace_capabilities) &&
             drawAppleKeypointQualityTimeline(
                 &keypoint_quality_timeline_controls,
-                &keypoint_quality_requested, keypoint_quality_timeline_state,
-                keypoint_quality_timeline_state ==
-                        AppleKeypointQualityLoadState::Ready
-                    ? &keypoint_quality_timeline_descriptor
-                    : nullptr,
+                &keypoint_quality_requested,
+                quality_timeline_session.keypointState(),
+                quality_timeline_session.keypointDescriptor(),
                 keypoint_quality_timeline_window,
                 keypoint_quality_timeline_overview,
-                keypoint_quality_timeline_error,
+                quality_timeline_session.keypointError(),
                 viewer_stats.presented_frame >= 0
                     ? viewer_stats.presented_frame
                     : viewer_stats.requested_frame,
@@ -4684,12 +4494,10 @@ int main(int argc, char **argv) {
             keypoint_quality_timeline_discontinuity;
         viewer_stats.requested_frame = video_clock.requestedFrame();
         const bool is_playing = video_clock.isPlaying();
-        if (was_playing && !is_playing &&
-            !transport_stop_target_committed) {
-          const int64_t pause_frame =
-              viewer_stats.presented_frame >= 0
-                  ? viewer_stats.presented_frame
-                  : viewer_stats.requested_frame;
+        if (was_playing && !is_playing && !transport_stop_target_committed) {
+          const int64_t pause_frame = viewer_stats.presented_frame >= 0
+                                          ? viewer_stats.presented_frame
+                                          : viewer_stats.requested_frame;
           video_clock.seek(pause_frame, now);
           viewer_stats.requested_frame = pause_frame;
           if (!video_playback.selectBufferedFrame(pause_frame)) {
@@ -4698,8 +4506,7 @@ int main(int argc, char **argv) {
             std::string pause_error;
             if (!video_playback.requestSeek(pause_frame, &pause_error)) {
               std::fprintf(
-                  stderr,
-                  "[AppleVideo] Pause exact-frame request failed: %s\n",
+                  stderr, "[AppleVideo] Pause exact-frame request failed: %s\n",
                   pause_error.c_str());
             }
           }
@@ -4983,9 +4790,8 @@ int main(int argc, char **argv) {
               current_video_frame->metadata.frame_number;
           const auto active_seek =
               video_clock.seekCoordinator().activeTransaction();
-          if (active_seek.has_value() &&
-              active_seek->request.target_frame ==
-                  viewer_stats.presented_frame) {
+          if (active_seek.has_value() && active_seek->request.target_frame ==
+                                             viewer_stats.presented_frame) {
             crimson::playback::PlaybackSeekExecutionResult completion;
             completion.status =
                 crimson::playback::PlaybackSeekExecutionStatus::Completed;
@@ -6164,23 +5970,21 @@ int main(int argc, char **argv) {
   current_stimulus_frame.reset();
   current_crop_frame.reset();
   analysis_loader.close();
-  if (detection_quality_open_future.valid()) {
-    auto unopened = detection_quality_open_future.get();
-    detection_quality_timeline_open_metrics = unopened.metrics;
-  }
-  const auto final_detection_quality_repository_metrics =
-      detection_quality_timeline_buffer.repositoryMetrics();
-  detection_quality_timeline_buffer.close();
-  const auto final_detection_quality_buffer_metrics =
-      detection_quality_timeline_buffer.metrics();
-  if (keypoint_quality_open_future.valid()) {
-    (void)keypoint_quality_open_future.get();
-  }
-  const auto final_keypoint_quality_repository_metrics =
-      keypoint_quality_timeline_buffer.repositoryMetrics();
-  keypoint_quality_timeline_buffer.close();
-  const auto final_keypoint_quality_buffer_metrics =
-      keypoint_quality_timeline_buffer.metrics();
+  quality_timeline_session.close();
+  const auto final_quality_timeline_metrics =
+      quality_timeline_session.metrics();
+  const auto &detection_quality_timeline_descriptor =
+      final_quality_timeline_metrics.detection_descriptor;
+  const auto &final_detection_quality_repository_metrics =
+      final_quality_timeline_metrics.detection_repository;
+  const auto &final_detection_quality_buffer_metrics =
+      final_quality_timeline_metrics.detection_buffer;
+  const auto &keypoint_quality_timeline_descriptor =
+      final_quality_timeline_metrics.keypoint_descriptor;
+  const auto &final_keypoint_quality_repository_metrics =
+      final_quality_timeline_metrics.keypoint_repository;
+  const auto &final_keypoint_quality_buffer_metrics =
+      final_quality_timeline_metrics.keypoint_buffer;
   const auto final_canonical_detection_repository_metrics =
       canonical_detection_buffer.repositoryMetrics();
   canonical_detection_buffer.close();

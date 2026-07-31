@@ -340,6 +340,27 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         TIMEOUT 30
     )
 
+    add_executable(quality_timeline_session_tests
+        tools/quality_timeline_session_tests.cpp
+        src/gui/quality_timeline_session.cpp
+    )
+    target_compile_features(quality_timeline_session_tests PRIVATE cxx_std_17)
+    target_link_libraries(quality_timeline_session_tests PRIVATE
+        crimson_tensorstore_repositories
+        crimson_repository_contracts
+        ${tensorstore_target}
+        Threads::Threads
+    )
+    set_target_properties(quality_timeline_session_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME quality_timeline_session_tests
+        COMMAND $<TARGET_FILE:quality_timeline_session_tests>)
+    set_tests_properties(quality_timeline_session_tests PROPERTIES
+        LABELS "headless;portable;quality;session;timeline"
+        TIMEOUT 30
+    )
+
     add_executable(coordinate_catalog_contract_tests
         tools/coordinate_catalog_contract_tests.cpp
     )
