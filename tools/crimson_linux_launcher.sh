@@ -29,12 +29,12 @@ append_runtime_path() {
     if [ -d "$candidate" ]; then
         candidate="$(cd -- "$candidate" && pwd)"
     else
-        return
+        return 0
     fi
 
     for existing in "${runtime_paths[@]}"; do
         if [ "$existing" = "$candidate" ]; then
-            return
+            return 0
         fi
     done
 

@@ -1054,6 +1054,15 @@ set_target_properties(frame_slot_tests PROPERTIES
 )
 enable_testing()
 
+if(UNIX AND NOT APPLE)
+    add_test(NAME crimson_linux_launcher_tests
+        COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tools/crimson_linux_launcher_tests.sh)
+    set_tests_properties(crimson_linux_launcher_tests PROPERTIES
+        LABELS "headless;linux;packaging;portable"
+        TIMEOUT 30
+    )
+endif()
+
 add_custom_target(crimson_zarr_loader_dependency_check ALL
     COMMAND ${CMAKE_COMMAND}
         -DCRIMSON_SOURCE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}
