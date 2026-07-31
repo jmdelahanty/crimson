@@ -283,6 +283,28 @@ makePlaybackIntent(Command command, const WorkspaceCapabilities &capabilities,
   return std::nullopt;
 }
 
+PlaybackShortcutResult
+resolvePlaybackShortcut(const PlaybackShortcutInput &input) {
+  PlaybackShortcutResult result;
+  if (!input.enabled || input.wants_text_input) {
+    return result;
+  }
+
+  result.toggle_playback = input.space_pressed;
+  const bool step_backward = input.left_arrow_pressed || input.comma_pressed;
+  const bool step_forward = input.right_arrow_pressed || input.period_pressed;
+  if (step_backward == step_forward) {
+    return result;
+  }
+
+  if (step_backward) {
+    result.step_delta = input.left_arrow_pressed && input.shift_down ? -10 : -1;
+  } else {
+    result.step_delta = input.right_arrow_pressed && input.shift_down ? 10 : 1;
+  }
+  return result;
+}
+
 CameraView autofitCameraView() { return {}; }
 
 bool isValidCameraView(const CameraView &view) {

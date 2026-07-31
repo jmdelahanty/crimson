@@ -1085,6 +1085,20 @@ flags by complete per-frame row ranges. Details are in
 refinement cutoffs must be displayed only when a future validated provenance
 envelope declares them; they are never inferred from external paths.
 
+The quality-timeline presentation and session lifecycle are now shared by the
+macOS and Linux/Windows application paths. The shared boundary owns lazy
+repository opening, page/overview buffers, loading and failure presentation,
+plot controls, and click-to-seek requests; platform adapters retain decoder and
+renderer ownership. Comma/period frame stepping was also moved off the paused
+decoder-ring listing and onto the portable exact-frame playback command, so a
+missing or undisplayed ring entry can no longer silently disable navigation.
+The Mac pause transition now anchors to the presented frame and preserves its
+AVFoundation decode buffer, matching Linux buffer-hit behavior instead of
+clearing and refilling the buffer on every pause. macOS and the isolated
+Linux/NVIDIA build pass; native Windows validation remains pending. The
+checkpoint is documented in
+`docs/crimson_shared_quality_timeline_checkpoint_2026-07-31.md`.
+
 Phase 5 also remains open for production-tail acceptance, movement-trail
 coordinate policy, any required chaser-data densification, and edit/review
 workflows whose shared storage contracts are still changing. Those blockers

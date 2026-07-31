@@ -21,7 +21,6 @@ const char* playbackPreviewScaleLabel(int mode) {
         return "1x";
     }
 }
-
 const char* playbackRendererModeLabel(int mode) {
     switch (mode) {
     case 1:
@@ -375,6 +374,23 @@ FileBrowserWindowResult drawFileBrowserWindow(const FileBrowserWindowContext& co
                 }
                 ImGui::EndMenu();
             }
+        }
+        if (ImGui::BeginMenu("View")) {
+            bool detection_requested = context.detection_quality_requested;
+            if (ImGui::MenuItem("Detection Timeline",
+                                nullptr,
+                                &detection_requested,
+                                context.detection_quality_available)) {
+                result.detection_quality_requested = detection_requested;
+            }
+            bool keypoint_requested = context.keypoint_quality_requested;
+            if (ImGui::MenuItem("Keypoint Quality Timeline",
+                                nullptr,
+                                &keypoint_requested,
+                                context.keypoint_quality_available)) {
+                result.keypoint_quality_requested = keypoint_requested;
+            }
+            ImGui::EndMenu();
         }
         ImGui::EndMenuBar();
     }

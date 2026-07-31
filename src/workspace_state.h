@@ -128,6 +128,22 @@ struct PlaybackIntent {
   int64_t target_frame = -1;
 };
 
+struct PlaybackShortcutInput {
+  bool enabled = true;
+  bool wants_text_input = false;
+  bool space_pressed = false;
+  bool left_arrow_pressed = false;
+  bool right_arrow_pressed = false;
+  bool comma_pressed = false;
+  bool period_pressed = false;
+  bool shift_down = false;
+};
+
+struct PlaybackShortcutResult {
+  bool toggle_playback = false;
+  int step_delta = 0;
+};
+
 struct CameraView {
   double x = 0.0;
   double y = 0.0;
@@ -182,6 +198,9 @@ makePlaybackIntent(Command command, const WorkspaceCapabilities &capabilities,
                    int64_t current_frame, int64_t frame_count,
                    std::optional<int64_t> seek_target = std::nullopt,
                    int64_t step_magnitude = 1);
+
+PlaybackShortcutResult
+resolvePlaybackShortcut(const PlaybackShortcutInput &input);
 
 CameraView autofitCameraView();
 CameraView panCameraView(const CameraView &view, double delta_x,

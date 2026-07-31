@@ -2,8 +2,8 @@
 #include "Logger.h"
 #include "camera.h"
 #include "chained_crop_image_provider.h"
-#include "debug_flags.h"
 #include "data_access_diagnostics.h"
+#include "debug_flags.h"
 #include "decode_debug_workflow.h"
 #include "diagnostic_report.h"
 #include "filesystem"
@@ -27,6 +27,8 @@
 #include "gui/keypoints_window.h"
 #include "gui/labeling_tool_window.h"
 #include "gui/labeling_tool_workflow.h"
+#include "gui/quality_timeline_session.h"
+#include "gui/quality_timeline_window.h"
 #include "gui/refined_keypoint_review_window.h"
 #include "gui/refined_keypoint_write_workflow.h"
 #include "gui/stimulus_event_timeline_window.h"
@@ -1288,6 +1290,14 @@ int main(int argc, char **argv) {
   std::string cli_tail_kinematics_run;
   std::string cli_eye_angle_run;
   std::string cli_stimulus_run;
+  std::string cli_detection_run;
+  std::string cli_refined_detection_run;
+  bool cli_allow_selector_ineligible_refined_detection = false;
+  crimson::gui::QualityTimelineArtifactSelection cli_keypoint_v2_raw;
+  crimson::gui::QualityTimelineArtifactSelection cli_keypoint_v2_quality;
+  crimson::gui::QualityTimelineArtifactSelection cli_keypoint_v2_refined;
+  crimson::gui::QualityTimelineArtifactSelection cli_keypoint_v2_body_frame;
+  bool cli_allow_selector_ineligible_keypoints = false;
   std::filesystem::path cli_perf_log_path;
   std::filesystem::path cli_mask_perf_log_path;
   std::filesystem::path cli_playback_trace_log_path;
@@ -1376,6 +1386,49 @@ int main(int argc, char **argv) {
         return 1;
       }
       cli_stimulus_run = argv[++i];
+      continue;
+    }
+    if (arg == "--detection-run") {
+      if (i + 1 >= argc || argv[i + 1][0] == '\0') {
+        std::cerr << "Missing value for --detection-run" << std::endl;
+        return 1;
+      }
+      cli_detection_run = argv[++i];
+      continue;
+    }
+    if (arg == "--refined-detection-run" ||
+        arg == "--benchmark-refined-detection-run") {
+      if (i + 1 >= argc || argv[i + 1][0] == '\0') {
+        std::cerr << "Missing value for " << arg << std::endl;
+        return 1;
+      }
+      cli_refined_detection_run = argv[++i];
+      cli_allow_selector_ineligible_refined_detection =
+          arg == "--benchmark-refined-detection-run";
+      continue;
+    }
+    if (arg == "--benchmark-keypoint-v2-raw" ||
+        arg == "--benchmark-keypoint-v2-quality" ||
+        arg == "--benchmark-keypoint-v2-refined" ||
+        arg == "--benchmark-keypoint-v2-body-frame") {
+      if (i + 3 >= argc) {
+        std::cerr << arg << " requires ARCHIVE RUN MANIFEST_DIGEST"
+                  << std::endl;
+        return 1;
+      }
+      crimson::gui::QualityTimelineArtifactSelection selection{
+          argv[i + 1], argv[i + 2], argv[i + 3]};
+      if (arg == "--benchmark-keypoint-v2-raw") {
+        cli_keypoint_v2_raw = std::move(selection);
+      } else if (arg == "--benchmark-keypoint-v2-quality") {
+        cli_keypoint_v2_quality = std::move(selection);
+      } else if (arg == "--benchmark-keypoint-v2-refined") {
+        cli_keypoint_v2_refined = std::move(selection);
+      } else {
+        cli_keypoint_v2_body_frame = std::move(selection);
+      }
+      cli_allow_selector_ineligible_keypoints = true;
+      i += 3;
       continue;
     }
     if (arg == "--perf-log") {
@@ -1593,6 +1646,26 @@ int main(int argc, char **argv) {
               << std::endl;
     return 1;
   }
+  if (!cli_detection_run.empty() && !cli_refined_detection_run.empty()) {
+    std::cerr << "--detection-run and --refined-detection-run are mutually "
+                 "exclusive"
+              << std::endl;
+    return 1;
+  }
+  const bool keypoint_v2_requested =
+      !cli_keypoint_v2_raw.empty() || !cli_keypoint_v2_quality.empty() ||
+      !cli_keypoint_v2_refined.empty() || !cli_keypoint_v2_body_frame.empty();
+  if (keypoint_v2_requested &&
+      (!cli_keypoint_v2_raw.complete() || !cli_keypoint_v2_quality.complete() ||
+       !cli_keypoint_v2_body_frame.complete() ||
+       (!cli_keypoint_v2_refined.empty() &&
+        !cli_keypoint_v2_refined.complete()))) {
+    std::cerr << "Keypoint-v2 quality timelines require complete raw, quality, "
+                 "and body-frame selections; refined must be complete when "
+                 "provided"
+              << std::endl;
+    return 1;
+  }
   if (ui_reference.enabled &&
       (!ui_reference.state_set || !ui_reference.frame_set ||
        !ui_reference.ready_file_set)) {
@@ -1650,6 +1723,12 @@ int main(int argc, char **argv) {
   auto analysis_data_scheduler =
       std::make_shared<crimson::data::DataAccessScheduler>(64, 4, 1, 1);
   zarr_loader.setDataAccessScheduler(analysis_data_scheduler);
+  crimson::gui::QualityTimelineSession quality_timeline_session(
+      analysis_data_scheduler);
+  crimson::gui::DetectionQualityTimelineControls
+      detection_quality_timeline_controls;
+  crimson::gui::KeypointQualityTimelineControls
+      keypoint_quality_timeline_controls;
   std::unique_ptr<crimson::polar::ChaserDistancePolarRepository>
       chaser_distance_polar_repository;
   std::unique_ptr<crimson::timeline::StimulusContextTimelineRepository>
@@ -3151,7 +3230,39 @@ int main(int argc, char **argv) {
          zarr_loader.hasEyeAngleAnalysisData() ||
          zarr_loader.hasTailKinematicsData() ||
          zarr_loader.hasStimulusSteps() || zarr_loader.hasStimulusEvents());
+    capabilities.detection_quality_available =
+        quality_timeline_session.detectionConfigured();
+    capabilities.keypoint_quality_available =
+        quality_timeline_session.keypointConfigured();
     return capabilities;
+  };
+
+  auto configureQualityTimelineSession = [&]() {
+    crimson::gui::QualityTimelineSessionRequest request;
+    request.detection_archive_path = zarr_loader.getArchivePath();
+    if (request.detection_archive_path.empty()) {
+      request.detection_archive_path = cli_zarr_override_path;
+    }
+    if (!cli_refined_detection_run.empty()) {
+      request.detection_surface =
+          crimson::zarr::DetectionSurfaceKind::RefinedSnapshotV1;
+      request.detection_run_name = cli_refined_detection_run;
+      request.allow_selector_ineligible_refined_run =
+          cli_allow_selector_ineligible_refined_detection;
+    } else {
+      request.detection_surface =
+          crimson::zarr::DetectionSurfaceKind::CanonicalRawV1;
+      request.detection_run_name = !cli_detection_run.empty()
+                                       ? cli_detection_run
+                                       : zarr_loader.getDetectRunName();
+    }
+    request.raw_keypoints = cli_keypoint_v2_raw;
+    request.keypoint_quality = cli_keypoint_v2_quality;
+    request.refined_keypoints = cli_keypoint_v2_refined;
+    request.body_frame = cli_keypoint_v2_body_frame;
+    request.allow_selector_ineligible_keypoints =
+        cli_allow_selector_ineligible_keypoints;
+    quality_timeline_session.configure(std::move(request));
   };
 
   while (!glfwWindowShouldClose(window->render_target)) {
@@ -3163,6 +3274,7 @@ int main(int argc, char **argv) {
       continue;
     }
     const auto frame_loop_start = std::chrono::steady_clock::now();
+    configureQualityTimelineSession();
     pollPendingKeypointWrite(
         pending_keypoint_write, zarr_loader,
         crop_preview_window_state.editor_state,
@@ -3566,6 +3678,12 @@ int main(int argc, char **argv) {
         stimulus_player.use_cpu_buffer,
         stimulus_player.use_software_decode,
         dc_context->seek_interval,
+        quality_timeline_session.detectionConfigured(),
+        workspace_state.windowRequested(
+            crimson::workspace::Window::DetectionQualityTimeline),
+        quality_timeline_session.keypointConfigured(),
+        workspace_state.windowRequested(
+            crimson::workspace::Window::KeypointQualityTimeline),
     };
     FileBrowserWindowResult file_browser_result =
         drawFileBrowserWindow(file_browser_context, file_browser_window_state);
@@ -3574,6 +3692,16 @@ int main(int argc, char **argv) {
       start_folder_name = ui_path_config.default_start_path;
       std::cout << "[UIPathConfig] Applied default start path: "
                 << start_folder_name << std::endl;
+    }
+    if (file_browser_result.detection_quality_requested.has_value()) {
+      workspace_state.setWindowRequested(
+          crimson::workspace::Window::DetectionQualityTimeline,
+          *file_browser_result.detection_quality_requested);
+    }
+    if (file_browser_result.keypoint_quality_requested.has_value()) {
+      workspace_state.setWindowRequested(
+          crimson::workspace::Window::KeypointQualityTimeline,
+          *file_browser_result.keypoint_quality_requested);
     }
     if (file_browser_result.skeleton_selection.has_value()) {
       const auto &selection = *file_browser_result.skeleton_selection;
@@ -4696,63 +4824,6 @@ int main(int argc, char **argv) {
           }
         }
 
-        if (ImGui::IsKeyPressed(ImGuiKey_Comma, true)) {
-          if (selected_item > 0 &&
-              selected_item <=
-                  static_cast<int>(paused_buffer_items.size()) - 1) {
-            const int previous_frame = ps.to_display_frame_number;
-            --selected_item;
-            ps.to_display_frame_number =
-                paused_buffer_items[selected_item].frame;
-            ps.slider_frame_number = ps.to_display_frame_number;
-            ps.pause_seeked = true;
-            ps.buffer_browsed_since_pause =
-                (ps.paused_frame_on_toggle >= 0 &&
-                 ps.to_display_frame_number != ps.paused_frame_on_toggle);
-            writePlaybackTraceEvent(
-                "buffer_key_step",
-                json{{"key", "comma"},
-                     {"direction", -1},
-                     {"previous_frame", previous_frame},
-                     {"target_frame", ps.to_display_frame_number}});
-            writeClippedPlaybackStateEvent(
-                "paused_buffer_key_step",
-                json{{"key", "comma"},
-                     {"direction", -1},
-                     {"previous_frame", previous_frame},
-                     {"target_frame", ps.to_display_frame_number}},
-                true);
-          }
-        };
-
-        if (ImGui::IsKeyPressed(ImGuiKey_Period, true)) {
-          if (selected_item >= 0 &&
-              selected_item <
-                  static_cast<int>(paused_buffer_items.size()) - 1) {
-            const int previous_frame = ps.to_display_frame_number;
-            ++selected_item;
-            ps.to_display_frame_number =
-                paused_buffer_items[selected_item].frame;
-            ps.slider_frame_number = ps.to_display_frame_number;
-            ps.pause_seeked = true;
-            ps.buffer_browsed_since_pause =
-                (ps.paused_frame_on_toggle >= 0 &&
-                 ps.to_display_frame_number != ps.paused_frame_on_toggle);
-            writePlaybackTraceEvent(
-                "buffer_key_step",
-                json{{"key", "period"},
-                     {"direction", 1},
-                     {"previous_frame", previous_frame},
-                     {"target_frame", ps.to_display_frame_number}});
-            writeClippedPlaybackStateEvent(
-                "paused_buffer_key_step",
-                json{{"key", "period"},
-                     {"direction", 1},
-                     {"previous_frame", previous_frame},
-                     {"target_frame", ps.to_display_frame_number}},
-                true);
-          }
-        };
       }
       ImGui::End();
       frame_buffer_window_ui_ms +=
@@ -6934,6 +7005,57 @@ int main(int argc, char **argv) {
           frame_movement_timeline_ui_ms;
     }
 
+    bool detection_quality_requested = workspace_state.windowRequested(
+        crimson::workspace::Window::DetectionQualityTimeline);
+    bool keypoint_quality_requested = workspace_state.windowRequested(
+        crimson::workspace::Window::KeypointQualityTimeline);
+    quality_timeline_session.update(
+        current_frame_num, ps.just_seeked, detection_quality_requested,
+        detection_quality_timeline_controls, keypoint_quality_requested,
+        keypoint_quality_timeline_controls);
+    if (workspace_state.shouldSubmit(
+            crimson::workspace::Window::DetectionQualityTimeline,
+            workspaceCapabilities())) {
+      crimson::gui::drawDetectionQualityTimelineWindow(
+          &detection_quality_timeline_controls, &detection_quality_requested,
+          quality_timeline_session.detectionState(),
+          quality_timeline_session.detectionDescriptor(),
+          quality_timeline_session.detectionWindow(),
+          quality_timeline_session.detectionOverview(),
+          quality_timeline_session.detectionError(), current_frame_num,
+          video_fps,
+          [&](int64_t frame) {
+            playback_session_controller.seekToFrame(static_cast<int>(frame),
+                                                    true);
+            return true;
+          },
+          true);
+      workspace_state.setWindowRequested(
+          crimson::workspace::Window::DetectionQualityTimeline,
+          detection_quality_requested);
+    }
+    if (workspace_state.shouldSubmit(
+            crimson::workspace::Window::KeypointQualityTimeline,
+            workspaceCapabilities())) {
+      crimson::gui::drawKeypointQualityTimelineWindow(
+          &keypoint_quality_timeline_controls, &keypoint_quality_requested,
+          quality_timeline_session.keypointState(),
+          quality_timeline_session.keypointDescriptor(),
+          quality_timeline_session.keypointWindow(),
+          quality_timeline_session.keypointOverview(),
+          quality_timeline_session.keypointError(), current_frame_num,
+          video_fps,
+          [&](int64_t frame) {
+            playback_session_controller.seekToFrame(static_cast<int>(frame),
+                                                    true);
+            return true;
+          },
+          true);
+      workspace_state.setWindowRequested(
+          crimson::workspace::Window::KeypointQualityTimeline,
+          keypoint_quality_requested);
+    }
+
     shared_timeline_scroll_state.prev_enabled =
         shared_timeline_scroll_state.enabled;
 
@@ -7738,6 +7860,7 @@ int main(int argc, char **argv) {
 
   // Cleanup
   session_lifecycle.beginClose();
+  quality_timeline_session.close();
   zarr_loader.setDataAccessScheduler(nullptr);
   analysis_data_scheduler->waitUntilIdle();
   const auto final_analysis_data_scheduler_metrics =

@@ -20,9 +20,8 @@ void drawHelpMenuWindow(bool show_help_window) {
         ImGui::Text("<Right Arrow>   : Seek forward");
         ImGui::Text("<Shift+Right>   : Seek forward (x10)");
 
-        ImGui::SeparatorText("When paused");
-        ImGui::Text("<,>: previous image in buffer");
-        ImGui::Text("<.>: next image in buffer");
+        ImGui::Text("<,>: seek one frame backward");
+        ImGui::Text("<.>: seek one frame forward");
 
         ImGui::SeparatorText("While hovering image");
         ImGui::Text("<c>: create keypoints on frame");

@@ -118,15 +118,16 @@ CameraViewTransportControlsResult drawCameraViewTransportControls(
 }
 
 CameraViewPlaybackShortcutsResult handleCameraViewPlaybackShortcuts() {
-    CameraViewPlaybackShortcutsResult result;
-    if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
-        result.toggle_playback = true;
-    }
-    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false)) {
-        result.step_delta = ImGui::GetIO().KeyShift ? -10 : -1;
-    }
-    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)) {
-        result.step_delta = ImGui::GetIO().KeyShift ? 10 : 1;
-    }
-    return result;
+    const ImGuiIO& io = ImGui::GetIO();
+    return crimson::workspace::resolvePlaybackShortcut(
+        crimson::workspace::PlaybackShortcutInput{
+            true,
+            io.WantTextInput,
+            ImGui::IsKeyPressed(ImGuiKey_Space, false),
+            ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false),
+            ImGui::IsKeyPressed(ImGuiKey_RightArrow, false),
+            ImGui::IsKeyPressed(ImGuiKey_Comma, false),
+            ImGui::IsKeyPressed(ImGuiKey_Period, false),
+            io.KeyShift,
+        });
 }

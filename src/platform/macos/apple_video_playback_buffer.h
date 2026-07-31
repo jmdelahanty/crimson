@@ -13,6 +13,7 @@
 struct AppleVideoPlaybackBufferMetrics {
     uint64_t decoded_frames = 0;
     uint64_t evicted_frames = 0;
+    uint64_t buffered_target_hits = 0;
     uint64_t catchup_discarded_frames = 0;
     uint64_t catchup_seeks = 0;
     int64_t last_decoded_frame = -1;
@@ -43,6 +44,7 @@ class AppleVideoPlaybackBuffer {
     void setTargetFrame(int64_t frame_number);
     void setPlaybackState(int64_t frame_number, bool playing,
                           double frames_per_second);
+    bool selectBufferedFrame(int64_t frame_number);
     bool requestSeek(int64_t frame_number, std::string* error = nullptr);
 
     std::optional<AppleDecodedVideoFrame>

@@ -129,6 +129,53 @@ bool testCommandEnablementAndPlaybackIntent() {
   return true;
 }
 
+bool testPlaybackShortcutResolution() {
+  using namespace crimson::workspace;
+  PlaybackShortcutInput input;
+
+  input.comma_pressed = true;
+  CHECK(resolvePlaybackShortcut(input).step_delta == -1);
+
+  input = {};
+  input.period_pressed = true;
+  CHECK(resolvePlaybackShortcut(input).step_delta == 1);
+
+  input = {};
+  input.left_arrow_pressed = true;
+  input.shift_down = true;
+  CHECK(resolvePlaybackShortcut(input).step_delta == -10);
+
+  input = {};
+  input.right_arrow_pressed = true;
+  input.shift_down = true;
+  CHECK(resolvePlaybackShortcut(input).step_delta == 10);
+
+  input = {};
+  input.comma_pressed = true;
+  input.shift_down = true;
+  CHECK(resolvePlaybackShortcut(input).step_delta == -1);
+
+  input = {};
+  input.space_pressed = true;
+  CHECK(resolvePlaybackShortcut(input).toggle_playback);
+
+  input.wants_text_input = true;
+  const auto text_input_result = resolvePlaybackShortcut(input);
+  CHECK(!text_input_result.toggle_playback);
+  CHECK(text_input_result.step_delta == 0);
+
+  input = {};
+  input.comma_pressed = true;
+  input.period_pressed = true;
+  CHECK(resolvePlaybackShortcut(input).step_delta == 0);
+
+  input = {};
+  input.enabled = false;
+  input.period_pressed = true;
+  CHECK(resolvePlaybackShortcut(input).step_delta == 0);
+  return true;
+}
+
 bool testCameraNavigation() {
   using namespace crimson::workspace;
   CameraView view = autofitCameraView();
@@ -250,8 +297,9 @@ int main() {
   if (!testDefaultWindowVisibility() ||
       !testFrameInspectViewSynchronization() ||
       !testCommandEnablementAndPlaybackIntent() ||
-      !testSelectionPropagation() || !testStateRestoration() ||
-      !testCameraNavigation() || !testBufferedFrameNavigation()) {
+      !testPlaybackShortcutResolution() || !testSelectionPropagation() ||
+      !testStateRestoration() || !testCameraNavigation() ||
+      !testBufferedFrameNavigation()) {
     return 1;
   }
   std::cout << "workspace_state_tests: PASS\n";

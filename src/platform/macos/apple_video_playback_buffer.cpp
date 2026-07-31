@@ -286,6 +286,22 @@ void AppleVideoPlaybackBuffer::setPlaybackState(int64_t frame_number,
     impl_->changed.notify_all();
 }
 
+bool AppleVideoPlaybackBuffer::selectBufferedFrame(int64_t frame_number) {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (!impl_->open || frame_number < 0 ||
+        frame_number >= impl_->asset_info.frame_count ||
+        !impl_->hasFrameLocked(frame_number)) {
+        return false;
+    }
+    impl_->target_frame = frame_number;
+    impl_->target_anchor_time = Clock::now();
+    impl_->playback_running = false;
+    impl_->current_metrics.last_error.clear();
+    ++impl_->current_metrics.buffered_target_hits;
+    impl_->changed.notify_all();
+    return true;
+}
+
 bool AppleVideoPlaybackBuffer::requestSeek(int64_t frame_number,
                                            std::string* error) {
     std::lock_guard<std::mutex> lock(impl_->mutex);
@@ -332,7 +348,7 @@ AppleVideoPlaybackBuffer::frameForTarget(int64_t frame_number,
                            ? FrameSelectionFallback::ExactOnly
                            : FrameSelectionFallback::LatestAtOrBeforeThenNearest;
     const FrameSelectionResult selected =
-        selectBufferedFrame(candidates, request);
+        ::selectBufferedFrame(candidates, request);
     if (selected.slot_index < 0 ||
         selected.slot_index >= static_cast<int>(impl_->frames.size())) {
         return std::nullopt;

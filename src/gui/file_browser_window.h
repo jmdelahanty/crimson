@@ -69,6 +69,10 @@ struct FileBrowserWindowContext {
     bool loaded_stimulus_use_cpu_buffer = false;
     bool loaded_stimulus_use_software_decode = false;
     int& seek_interval;
+    bool detection_quality_available = false;
+    bool detection_quality_requested = false;
+    bool keypoint_quality_available = false;
+    bool keypoint_quality_requested = false;
 };
 
 struct FileBrowserWindowResult {
@@ -77,6 +81,8 @@ struct FileBrowserWindowResult {
         FileBrowserDetectionAction::None;
     std::optional<int> accurate_seek_target_frame;
     std::optional<UiPathConfig> updated_path_config;
+    std::optional<bool> detection_quality_requested;
+    std::optional<bool> keypoint_quality_requested;
 };
 
 FileBrowserWindowResult drawFileBrowserWindow(const FileBrowserWindowContext& context,

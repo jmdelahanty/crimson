@@ -216,6 +216,20 @@ void testBoundedPlaybackBuffer(const std::string& path) {
     CHECK(first.has_value());
     CHECK(first->metadata.frame_number == 0);
 
+    CHECK(playback.waitForFrame(1, std::chrono::seconds(5)));
+    const AppleVideoPlaybackBufferMetrics before_buffered_select =
+        playback.metrics();
+    CHECK(playback.selectBufferedFrame(1));
+    const AppleVideoPlaybackBufferMetrics after_buffered_select =
+        playback.metrics();
+    CHECK(after_buffered_select.buffered_frames ==
+          before_buffered_select.buffered_frames);
+    CHECK(after_buffered_select.evicted_frames ==
+          before_buffered_select.evicted_frames);
+    CHECK(after_buffered_select.buffered_target_hits ==
+          before_buffered_select.buffered_target_hits + 1);
+    CHECK(playback.frameForTarget(1, true).has_value());
+
     playback.setPlaybackState(0, true, 10.0);
     std::this_thread::sleep_for(std::chrono::milliseconds(700));
     const AppleVideoPlaybackBufferMetrics stalled_metrics = playback.metrics();

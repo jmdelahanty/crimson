@@ -1,5 +1,7 @@
 #pragma once
 
+#include "workspace_state.h"
+
 #include <optional>
 
 struct CameraViewTransportControlsContext {
@@ -20,10 +22,8 @@ struct CameraViewTransportControlsResult {
     bool force_inaccurate_seek = false;
 };
 
-struct CameraViewPlaybackShortcutsResult {
-    bool toggle_playback = false;
-    int step_delta = 0;
-};
+using CameraViewPlaybackShortcutsResult =
+    crimson::workspace::PlaybackShortcutResult;
 
 CameraViewTransportControlsResult drawCameraViewTransportControls(
     const CameraViewTransportControlsContext& context);

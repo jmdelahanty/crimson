@@ -2892,6 +2892,8 @@ if(CRIMSON_BUILD_MACOS_APP)
     set(CRIMSON_MACOS_APP_SOURCES
         src/platform/macos/crimson_macos_main.mm
         src/platform/macos/apple_video_viewer_ui.mm
+        src/gui/quality_timeline_session.cpp
+        src/gui/quality_timeline_window.cpp
         src/gui/session_loading_modal.cpp
         src/imgui_semantic_snapshot.cpp
         src/ui_path_config.cpp

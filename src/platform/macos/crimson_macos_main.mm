@@ -4637,14 +4637,22 @@ int main(int argc, char **argv) {
         viewer_stats.requested_frame = video_clock.requestedFrame();
         const bool is_playing = video_clock.isPlaying();
         if (was_playing && !is_playing) {
-          pending_camera_discontinuity = true;
-          viewer_presentation_discontinuity = true;
-          std::string pause_error;
-          if (!video_playback.requestSeek(viewer_stats.requested_frame,
-                                          &pause_error)) {
-            std::fprintf(stderr,
-                         "[AppleVideo] Pause exact-frame request failed: %s\n",
-                         pause_error.c_str());
+          const int64_t pause_frame =
+              viewer_stats.presented_frame >= 0
+                  ? viewer_stats.presented_frame
+                  : viewer_stats.requested_frame;
+          video_clock.seek(pause_frame, now);
+          viewer_stats.requested_frame = pause_frame;
+          if (!video_playback.selectBufferedFrame(pause_frame)) {
+            pending_camera_discontinuity = true;
+            viewer_presentation_discontinuity = true;
+            std::string pause_error;
+            if (!video_playback.requestSeek(pause_frame, &pause_error)) {
+              std::fprintf(
+                  stderr,
+                  "[AppleVideo] Pause exact-frame request failed: %s\n",
+                  pause_error.c_str());
+            }
           }
         }
         pending_crop_discontinuity =
