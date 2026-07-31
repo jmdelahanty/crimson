@@ -88,6 +88,7 @@ fi
 exec "$app" \
     --video "$video" \
     --zarr "$analysis" \
+    --detection-run canonical_sleepyfish_cam2010095_full_v8_coordinate_v3_20260730 \
     --start-paused "$start_frame" \
     --benchmark-keypoint-v2-raw \
         "$fixture_root/raw_keypoints.zarr" \
