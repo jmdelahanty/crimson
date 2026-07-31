@@ -1,12 +1,15 @@
 #include "zarr/archive_context.h"
 #include "zarr/tensorstore_keypoint_v2_repository.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -97,6 +100,26 @@ int main(int argc, char **argv) {
     require(keypoints->accessMetrics().quality_payload_read_calls == 0,
             "Timeline activation contaminated ordinary overlay metrics");
     const auto metrics = timeline->metrics();
+    double pose_min = std::numeric_limits<double>::infinity();
+    double pose_max = -std::numeric_limits<double>::infinity();
+    std::vector<double> point_min(timeline->descriptor().keypoint_count,
+                                  std::numeric_limits<double>::infinity());
+    std::vector<double> point_max(timeline->descriptor().keypoint_count,
+                                  -std::numeric_limits<double>::infinity());
+    for (const auto &frame : window.frames) {
+      if (std::isfinite(frame.pose_confidence_median)) {
+        pose_min = std::min(pose_min, frame.pose_confidence_median);
+        pose_max = std::max(pose_max, frame.pose_confidence_median);
+      }
+      for (size_t point = 0; point < frame.keypoint_confidence_medians.size();
+           ++point) {
+        const double confidence = frame.keypoint_confidence_medians[point];
+        if (std::isfinite(confidence)) {
+          point_min[point] = std::min(point_min[point], confidence);
+          point_max[point] = std::max(point_max[point], confidence);
+        }
+      }
+    }
     std::cout << "keypoint_quality_timeline_gate: PASS"
               << " frames=" << window.frames.size()
               << " rows=" << window.rows_read
@@ -106,7 +129,13 @@ int main(int argc, char **argv) {
               << " offset_reads=" << timeline->descriptor().offset_read_calls
               << " timeline_open_ms=" << timeline_open_ms
               << " window_read_ms=" << read_ms
-              << " field_reads=" << metrics.peak_concurrent_field_reads << '\n';
+              << " field_reads=" << metrics.peak_concurrent_field_reads
+              << " pose_range=" << pose_min << ':' << pose_max;
+    for (size_t point = 0; point < point_min.size(); ++point) {
+      std::cout << " keypoint_" << point << "_range=" << point_min[point] << ':'
+                << point_max[point];
+    }
+    std::cout << '\n';
     return 0;
   } catch (const std::exception &exception) {
     std::cerr << "keypoint_quality_timeline_gate: FAIL " << exception.what()

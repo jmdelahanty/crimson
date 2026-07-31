@@ -2267,9 +2267,10 @@ bool drawAppleKeypointQualityTimeline(
       }
       ImGui::EndTable();
     }
-    if (ImPlot::BeginPlot("##keypoint-confidence", ImVec2(-1.0f, 230.0f),
+    if (ImPlot::BeginPlot("##pose-confidence", ImVec2(-1.0f, 145.0f),
                           ImPlotFlags_NoTitle | ImPlotFlags_NoBoxSelect)) {
-      ImPlot::SetupAxes("Time (s)", "Confidence", ImPlotAxisFlags_NoMenus,
+      ImPlot::SetupAxes("Time (s)", "Pose confidence",
+                        ImPlotAxisFlags_NoMenus,
                         ImPlotAxisFlags_NoMenus);
       ImPlot::SetupAxisLimits(
           ImAxis_X1, cursor_time - controls->half_span_seconds,
@@ -2278,6 +2279,22 @@ bool drawAppleKeypointQualityTimeline(
       const int count = static_cast<int>(controls->times.size());
       ImPlot::PlotLine("Source pose", controls->times.data(),
                        controls->pose_confidence.data(), count);
+      ImPlot::PlotInfLines("Current frame", &cursor_time, 1);
+      ImPlot::TagX(cursor_time, ImVec4(0.94f, 0.94f, 0.94f, 0.90f),
+                   "Frame %lld", static_cast<long long>(current_frame));
+      camera_discontinuity = seek_from_plot() || camera_discontinuity;
+      ImPlot::EndPlot();
+    }
+    if (ImPlot::BeginPlot("##keypoint-confidence", ImVec2(-1.0f, 230.0f),
+                          ImPlotFlags_NoTitle | ImPlotFlags_NoBoxSelect)) {
+      ImPlot::SetupAxes(
+          "Time (s)", "Point confidence", ImPlotAxisFlags_NoMenus,
+          ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_NoMenus);
+      ImPlot::SetupAxisLimits(
+          ImAxis_X1, cursor_time - controls->half_span_seconds,
+          cursor_time + controls->half_span_seconds, ImPlotCond_Always);
+      ImPlot::SetupAxisFormat(ImAxis_Y1, "%.4f");
+      const int count = static_cast<int>(controls->times.size());
       for (size_t point = 0; point < descriptor->keypoint_count; ++point) {
         if (controls->keypoint_visibility[point]) {
           ImPlot::PlotLine(descriptor->keypoint_labels[point].c_str(),
