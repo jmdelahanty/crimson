@@ -83,6 +83,7 @@ struct SubjectMaskV1ManifestSummary {
   std::string payload_digest;
   std::string manifest_digest;
   std::string metadata_digest;
+  std::string metadata_digest_scope;
   bool selector_eligible = false;
   size_t frame_count = 0;
   size_t row_count = 0;

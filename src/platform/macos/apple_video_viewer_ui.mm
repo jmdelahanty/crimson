@@ -90,19 +90,19 @@ ImU32 stimulusOverlayColor(
              static_cast<float>(std::clamp(color.alpha, 0.0, 1.0))));
 }
 
-crimson::playback::PlaybackSeekTelemetryEvent executeViewerSeek(
-    LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
-    const crimson::playback::PlaybackSeekRequest &request) {
+crimson::playback::PlaybackSeekTelemetryEvent
+executeViewerSeek(LogicalPlaybackClock &clock,
+                  AppleVideoPlaybackBuffer &playback,
+                  const crimson::playback::PlaybackSeekRequest &request) {
   auto &coordinator = clock.seekCoordinator();
   const auto transaction = coordinator.begin(request);
   const auto plan = crimson::playback::planPlaybackSeek(
-      transaction,
-      crimson::playback::PlaybackSeekAdapterCapabilities{
-          true,
-          false,
-          true,
-          true,
-      });
+      transaction, crimson::playback::PlaybackSeekAdapterCapabilities{
+                       true,
+                       false,
+                       true,
+                       true,
+                   });
   crimson::playback::PlaybackSeekExecutionResult result;
   result.resolved_frame = request.target_frame;
   if (!plan.valid) {
@@ -127,8 +127,7 @@ crimson::playback::PlaybackSeekTelemetryEvent executeViewerSeek(
   if (plan.mode ==
       crimson::playback::PlaybackSeekExecutionMode::LogicalCursorOnly) {
     result.status = crimson::playback::PlaybackSeekExecutionStatus::Completed;
-    result.path =
-        crimson::playback::PlaybackSeekExecutionPath::LogicalCursor;
+    result.path = crimson::playback::PlaybackSeekExecutionPath::LogicalCursor;
     return coordinator.record(transaction, plan, std::move(result));
   }
 
@@ -136,8 +135,7 @@ crimson::playback::PlaybackSeekTelemetryEvent executeViewerSeek(
   if (plan.prefer_resident_frame &&
       playback.selectBufferedFrame(transition.target_frame)) {
     result.status = crimson::playback::PlaybackSeekExecutionStatus::Completed;
-    result.path =
-        crimson::playback::PlaybackSeekExecutionPath::ResidentBuffer;
+    result.path = crimson::playback::PlaybackSeekExecutionPath::ResidentBuffer;
   } else {
     std::string error;
     if (playback.requestSeek(transition.target_frame, &error)) {
@@ -151,10 +149,9 @@ crimson::playback::PlaybackSeekTelemetryEvent executeViewerSeek(
                    error.c_str());
     }
   }
-  result.service_ms =
-      std::chrono::duration<double, std::milli>(
-          std::chrono::steady_clock::now() - service_start)
-          .count();
+  result.service_ms = std::chrono::duration<double, std::milli>(
+                          std::chrono::steady_clock::now() - service_start)
+                          .count();
   return coordinator.record(transaction, plan, std::move(result));
 }
 
@@ -174,9 +171,8 @@ bool seekViewer(LogicalPlaybackClock &clock, AppleVideoPlaybackBuffer &playback,
       crimson::playback::PlaybackSeekPhase::Discrete,
       crimson::playback::PlaybackSeekOrigin::Timeline, frame_number,
       clock.frameCount());
-  return request.has_value() &&
-         viewerSeekCausesDiscontinuity(
-             executeViewerSeek(clock, playback, *request));
+  return request.has_value() && viewerSeekCausesDiscontinuity(executeViewerSeek(
+                                    clock, playback, *request));
 }
 
 crimson::workspace::WorkspaceCapabilities
@@ -562,8 +558,9 @@ const char *appleViewerThermalStateName(AppleViewerThermalState state) {
 
 AppleFileBrowserResult drawAppleFileBrowserWindow(
     AppleFileBrowserState *state, const std::string &video_path,
-    const std::string &zarr_path, const std::string &stimulus_video_path,
-    double average_frame_ms, LogicalPlaybackClock *clock, bool interactive) {
+    const std::string &recording_clip_index_path, const std::string &zarr_path,
+    const std::string &stimulus_video_path, double average_frame_ms,
+    LogicalPlaybackClock *clock, bool interactive) {
   AppleFileBrowserResult result;
   if (state == nullptr) {
     result.error = "File Browser state is unavailable";
@@ -589,7 +586,23 @@ AppleFileBrowserResult drawAppleFileBrowserWindow(
                              effective_zarr_path,
                              {},
                              state->video_buffer_capacity,
-                             state->stimulus_buffer_capacity};
+                             state->stimulus_buffer_capacity,
+                             {}};
+        }
+      }
+      if (ImGui::MenuItem("Open Recording Clip Index...", nullptr, false,
+                          interactive)) {
+        const auto path = chooseNativePath("Choose Recording Clip Index",
+                                           state->start_folder, false,
+                                           @[ @"json" ]);
+        if (path) {
+          result.relaunch.requested = true;
+          result.relaunch.zarr_path = effective_zarr_path;
+          result.relaunch.video_buffer_capacity =
+              state->video_buffer_capacity;
+          result.relaunch.stimulus_buffer_capacity =
+              state->stimulus_buffer_capacity;
+          result.relaunch.recording_clip_index_path = *path;
         }
       }
       if (ImGui::MenuItem("Load Zarr Archive...", nullptr, false,
@@ -600,19 +613,23 @@ AppleFileBrowserResult drawAppleFileBrowserWindow(
           result.zarr_open_request = *path;
         }
       }
-      if (ImGui::MenuItem("Load Stimulus Video...", nullptr, false,
-                          interactive && !video_path.empty() &&
-                              !effective_zarr_path.empty())) {
+      if (ImGui::MenuItem(
+              "Load Stimulus Video...", nullptr, false,
+              interactive &&
+                  (!video_path.empty() || !recording_clip_index_path.empty()) &&
+                  !effective_zarr_path.empty())) {
         const auto path =
             chooseNativePath("Choose Stimulus Video", state->start_folder,
                              false, @[ @"mp4", @"mov", @"m4v" ]);
         if (path) {
-          result.relaunch = {true,
-                             video_path,
-                             effective_zarr_path,
-                             *path,
-                             state->video_buffer_capacity,
-                             state->stimulus_buffer_capacity};
+          result.relaunch.requested = true;
+          result.relaunch.video_path = video_path;
+          result.relaunch.zarr_path = effective_zarr_path;
+          result.relaunch.stimulus_video_path = *path;
+          result.relaunch.video_buffer_capacity = state->video_buffer_capacity;
+          result.relaunch.stimulus_buffer_capacity =
+              state->stimulus_buffer_capacity;
+          result.relaunch.recording_clip_index_path = recording_clip_index_path;
         }
       }
       ImGui::Separator();
@@ -681,10 +698,13 @@ AppleFileBrowserResult drawAppleFileBrowserWindow(
       std::clamp(state->stimulus_buffer_capacity, 2, 64);
   ImGui::TextDisabled("Stimulus Buffer Type: VideoToolbox CVPixelBuffer");
   ImGui::TextDisabled("Stimulus Decode Backend: AVFoundation / VideoToolbox");
-  if (video_path.empty()) {
+  if (video_path.empty() && recording_clip_index_path.empty()) {
     ImGui::TextDisabled("No recording loaded");
-  } else {
+  } else if (!video_path.empty()) {
     ImGui::TextWrapped("Video: %s", video_path.c_str());
+  } else {
+    ImGui::TextWrapped("Recording clip index: %s",
+                       recording_clip_index_path.c_str());
   }
   if (!effective_zarr_path.empty()) {
     ImGui::TextWrapped("Zarr: %s", effective_zarr_path.c_str());
@@ -874,12 +894,12 @@ AppleVideoControlResult drawAppleCameraViewWindow(
     }
   }
 
-  const auto apply_intent = [&](
-                                const crimson::workspace::PlaybackIntent &intent) {
-    result.camera_discontinuity =
-        applyViewerPlaybackIntent(intent, clock, playback) ||
-        result.camera_discontinuity;
-  };
+  const auto apply_intent =
+      [&](const crimson::workspace::PlaybackIntent &intent) {
+        result.camera_discontinuity =
+            applyViewerPlaybackIntent(intent, clock, playback) ||
+            result.camera_discontinuity;
+      };
   const auto apply_command = [&](crimson::workspace::Command command,
                                  int64_t magnitude = 1,
                                  std::optional<int64_t> target = std::nullopt) {

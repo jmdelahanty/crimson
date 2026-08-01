@@ -23,6 +23,7 @@ struct SessionDescriptor {
   std::string video_path;
   std::string zarr_path;
   std::string stimulus_video_path;
+  std::string recording_clip_index_path;
 
   bool empty() const;
   bool operator==(const SessionDescriptor &other) const;
@@ -35,6 +36,7 @@ struct SessionReplacementRequest {
   std::string stimulus_video_path;
   int video_buffer_capacity = 6;
   int stimulus_buffer_capacity = 6;
+  std::string recording_clip_index_path;
 
   SessionDescriptor descriptor() const;
 };

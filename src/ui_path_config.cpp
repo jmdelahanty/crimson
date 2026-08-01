@@ -1,5 +1,7 @@
 #include "ui_path_config.h"
 
+#include "recording_path_resolution.h"
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -57,29 +59,6 @@ void AppendUniquePath(std::vector<fs::path>& paths, const fs::path& candidate) {
     if (std::find(paths.begin(), paths.end(), *normalized) == paths.end()) {
         paths.push_back(*normalized);
     }
-}
-
-std::optional<fs::path> RelocateStoredPathToRecordingRoot(
-    const fs::path& stored_path,
-    const fs::path& recording_root) {
-    if (!stored_path.is_absolute() || recording_root.empty() ||
-        recording_root.filename().empty()) {
-        return std::nullopt;
-    }
-
-    bool found_recording = false;
-    fs::path suffix;
-    for (const auto& component : stored_path) {
-        if (!found_recording) {
-            found_recording = component == recording_root.filename();
-            continue;
-        }
-        suffix /= component;
-    }
-    if (!found_recording || suffix.empty()) {
-        return std::nullopt;
-    }
-    return recording_root / suffix;
 }
 
 std::optional<fs::path> GetHomeDirectory() {
@@ -639,15 +618,15 @@ std::optional<fs::path> ResolveAffiliatedVideoPath(
     if (!archive_path.empty()) {
         fs::path archive_root(archive_path);
         fs::path archive_parent = archive_root.parent_path();
-        fs::path recording_root = archive_parent;
-        if (!archive_parent.empty() && archive_parent.filename() == "zarr") {
-            recording_root = archive_parent.parent_path();
-        }
+        fs::path recording_root =
+            crimson::media::InferRecordingRootFromArchive(archive_root);
 
         if (hint.is_absolute()) {
-            if (auto relocated =
-                    RelocateStoredPathToRecordingRoot(hint, recording_root)) {
-                candidates.push_back(*relocated);
+            const auto resolution =
+                crimson::media::ResolveStoredRecordingPath(recording_root, hint);
+            if (resolution.kind == crimson::media::RecordingPathResolutionKind::
+                                       RelocatedAbsolute) {
+                candidates.push_back(resolution.resolved_path);
             }
         } else {
             candidates.push_back(archive_root / hint);

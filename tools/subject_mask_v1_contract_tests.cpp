@@ -135,6 +135,25 @@ bool TestManifest() {
   CHECK(summary.row_count == 6);
   CHECK(summary.component_labels.size() == 4);
   CHECK(!summary.selector_eligible);
+  CHECK(summary.metadata_digest_scope ==
+        "exact_run_group_and_array_declarations_redacting_only_run_manifest");
+
+  auto maintained = manifest;
+  maintained["payload"]["publication"]["metadata_digest_scope"] =
+      "exact_run_group_and_array_declarations_redacting_manifest_lifecycle_"
+      "and_transport_publication_attrs";
+  maintained["payload_digest"] =
+      crimson::zarr::CanonicalJsonSha256(maintained["payload"]);
+  CHECK(crimson::zarr::ValidateSubjectMaskV1Manifest(
+      maintained, "mask_v1", &summary, &error));
+
+  auto unknown_scope = maintained;
+  unknown_scope["payload"]["publication"]["metadata_digest_scope"] =
+      "arbitrary_scope";
+  unknown_scope["payload_digest"] =
+      crimson::zarr::CanonicalJsonSha256(unknown_scope["payload"]);
+  CHECK(!crimson::zarr::ValidateSubjectMaskV1Manifest(
+      unknown_scope, "mask_v1", &summary, &error));
 
   auto invalid = manifest;
   invalid["payload"]["logical_content"]["document"]["arrays"]["masks_roi"]

@@ -2,6 +2,20 @@
 
 Date anchored: 2026-04-03.
 
+## Recording Clip Index Media
+
+- [x] Extract strict backend-neutral `recording_clip_index.json` parsing and
+      parent-to-local frame mapping.
+- [x] Preserve the clip-index source through the shared session-open and
+      replacement transaction.
+- [x] Add macOS AVFoundation clip switching on a global recording frame axis.
+- [x] Add recording-identity-based archive discovery and mounted boundary
+      smoke coverage.
+- [ ] Adopt the shared mapping contract in the Linux/Windows FFmpeg/NVIDIA
+      decoder adapter.
+- [ ] Replace the compatibility envelope when Palette publishes a versioned,
+      digest-bound recording clip index contract.
+
 ## 2026-07-23 Runtime Contract Checkpoint
 
 The first backend-neutral runtime slices are now shared by the macOS and
@@ -47,6 +61,15 @@ This checkpoint does not create the proposed catch-all `AppState`. Decoder,
 repository, thread, window, and GPU-resource ownership remains in the existing
 platform/application layers. Coordinate-sensitive ROI work remains deferred
 until the acquisition-to-presentation contracts stabilize.
+
+## 2026-07-31 Shared Affiliated-Media Checkpoint
+
+Recording-root inference, persisted-path relocation, and strict affiliated-
+video discovery are now backend-neutral. macOS and Linux standard archives use
+the same `ArchiveContext` repository, including fail-closed authoritative
+metadata handling; the Linux legacy source hint is used only when shared
+metadata is absent. Clipped collection switching remains a compatibility
+adapter. See `docs/crimson_shared_affiliated_media_checkpoint_2026-07-31.md`.
 
 ## Why This Exists
 
@@ -520,9 +543,13 @@ Acceptance:
 
 ### Phase 4a: Introduce Public Repository Facades
 
-- [ ] Introduce a small shared archive context layer.
+- [x] Introduce a small shared archive context layer.
   - Hold TensorStore context, kvstore, root path, and common metadata helpers.
   - This replaces the need for every domain service to rediscover the archive.
+  - `ArchiveContext` now owns the bounded TensorStore context/kvstore, root and
+    recording-root paths, common array specs, and affiliated-media discovery.
+    macOS retains it for strict repositories; Linux standard media discovery
+    now uses it, while full Linux session ownership remains a later extraction.
 - [ ] Split the public loader API by domain, even if implementation initially
       delegates to the current code:
   - `DetectionRepository`

@@ -2025,7 +2025,8 @@ const json* ConsolidatedEntry(const json& root, const std::string& path) {
   }
 }
 
-bool NormalizeStrictGroup(json* metadata, bool redact_run_manifest) {
+bool NormalizeStrictGroup(json* metadata, const std::string& digest_scope,
+                          bool redact_run_manifest) {
   if (!metadata || !metadata->is_object() ||
       metadata->value("node_type", "") != "group") {
     return false;
@@ -2051,6 +2052,24 @@ bool NormalizeStrictGroup(json* metadata, bool redact_run_manifest) {
       return false;
     }
     attributes->erase("run_manifest");
+    if (digest_scope ==
+        "exact_run_group_and_array_declarations_redacting_manifest_lifecycle_"
+        "and_transport_publication_attrs") {
+      constexpr std::array<std::string_view, 9> kRedactedAttributes = {
+          "status",
+          "palette_run_completion_status",
+          "palette_run_completed_at_utc",
+          "atomic_publication_owner_uuid",
+          "atomic_publication_tombstone",
+          "cluster_output_staging",
+          "publication_status",
+          "subject_mask_bundle_selector_eligible",
+          "run_manifest",
+      };
+      for (const auto name : kRedactedAttributes) {
+        attributes->erase(std::string(name));
+      }
+    }
   }
   return true;
 }
@@ -2189,7 +2208,8 @@ bool ValidateStrictMetadata(const ArchiveContext::Impl &archive,
 
     json declarations = json::object();
     json normalized_group = *direct_group;
-    if (!NormalizeStrictGroup(&normalized_group, true)) {
+    if (!NormalizeStrictGroup(&normalized_group,
+                              summary.metadata_digest_scope, true)) {
       internal::SetArchiveError(error_message,
                                 "Subject-mask v1 run group is not canonical");
       return false;

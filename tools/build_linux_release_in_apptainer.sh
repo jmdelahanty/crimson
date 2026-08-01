@@ -163,7 +163,7 @@ if [ "$skip_configure" -eq 0 ]; then
         -B "$build_dir" \
         -D "CMAKE_CUDA_ARCHITECTURES=$cuda_architectures" \
         -D CRIMSON_PREBUILT_TENSORSTORE_BUILD_DIR=/nonexistent \
-        -D CUDA_CUDA_LIBRARY=/opt/crimson/host-driver/libcuda.so.1 \
+        -D CUDA_DRIVER=/opt/crimson/host-driver/libcuda.so.1 \
         -D NVCUVID_LIBRARY=/opt/crimson/host-driver/libnvcuvid.so.1 \
         -D NVML_LIBRARY=/opt/crimson/host-driver/libnvidia-ml.so.1
 fi

@@ -26,16 +26,18 @@ const char *sessionPhaseName(SessionPhase phase) {
 
 bool SessionDescriptor::empty() const {
   return video_path.empty() && zarr_path.empty() &&
-         stimulus_video_path.empty();
+         stimulus_video_path.empty() && recording_clip_index_path.empty();
 }
 
 bool SessionDescriptor::operator==(const SessionDescriptor &other) const {
   return video_path == other.video_path && zarr_path == other.zarr_path &&
-         stimulus_video_path == other.stimulus_video_path;
+         stimulus_video_path == other.stimulus_video_path &&
+         recording_clip_index_path == other.recording_clip_index_path;
 }
 
 SessionDescriptor SessionReplacementRequest::descriptor() const {
-  return {video_path, zarr_path, stimulus_video_path};
+  return {video_path, zarr_path, stimulus_video_path,
+          recording_clip_index_path};
 }
 
 bool SessionSnapshot::ready() const { return phase == SessionPhase::Ready; }

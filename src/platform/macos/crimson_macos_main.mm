@@ -203,6 +203,7 @@ struct LaunchOptions {
   int video_smoke_end = 0;
   std::optional<int> start_paused_frame;
   std::string video_path;
+  std::string recording_clip_index_path;
   std::string zarr_path;
   std::string stimulus_video_path;
   std::string detection_run;
@@ -769,13 +770,22 @@ bool dumpAppleDecodeBuffer(const AppleVideoPlaybackBuffer &playback,
 bool launchReplacementSession(const AppleSessionRelaunchRequest &request,
                               const char *executable_path, std::string *error) {
   if (!request.requested || executable_path == nullptr ||
-      request.video_path.empty()) {
+      (request.video_path.empty() &&
+       request.recording_clip_index_path.empty())) {
     return false;
   }
   NSMutableArray<NSString *> *arguments = [NSMutableArray array];
-  [arguments addObject:@"--video"];
-  [arguments
-      addObject:[NSString stringWithUTF8String:request.video_path.c_str()]];
+  if (!request.video_path.empty()) {
+    [arguments addObject:@"--video"];
+    [arguments
+        addObject:[NSString stringWithUTF8String:request.video_path.c_str()]];
+  } else {
+    [arguments addObject:@"--recording-clip-index"];
+    [arguments
+        addObject:[NSString
+                      stringWithUTF8String:request.recording_clip_index_path
+                                               .c_str()]];
+  }
   if (!request.zarr_path.empty()) {
     [arguments addObject:@"--zarr"];
     [arguments
@@ -914,6 +924,14 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
         return std::nullopt;
       }
       options.video_path = argv[++i];
+      continue;
+    }
+    if (argument == "--recording-clip-index") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "Missing value for --recording-clip-index\n");
+        return std::nullopt;
+      }
+      options.recording_clip_index_path = argv[++i];
       continue;
     }
     if (argument == "--zarr") {
@@ -1276,16 +1294,17 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
     }
     const bool empty_state =
         options.ui_reference.state == AppleUiReferenceState::Empty;
-    if (empty_state &&
-        (!options.video_path.empty() || !options.zarr_path.empty())) {
+    const bool has_recording_media = !options.video_path.empty() ||
+                                     !options.recording_clip_index_path.empty();
+    if (empty_state && (has_recording_media || !options.zarr_path.empty())) {
       std::fprintf(stderr,
                    "The empty UI reference state cannot load video or Zarr\n");
       return std::nullopt;
     }
-    if (!empty_state &&
-        (options.video_path.empty() || options.zarr_path.empty())) {
+    if (!empty_state && (!has_recording_media || options.zarr_path.empty())) {
       std::fprintf(stderr,
-                   "Loaded UI reference states require --video and --zarr\n");
+                   "Loaded UI reference states require recording media and "
+                   "--zarr\n");
       return std::nullopt;
     }
     if (!empty_state) {
@@ -1315,16 +1334,26 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
                  "--smoke and --validate-metal cannot be used together\n");
     return std::nullopt;
   }
-  if (options.video_smoke && options.video_path.empty()) {
-    std::fprintf(stderr, "--video-smoke requires --video PATH\n");
+  if (!options.video_path.empty() &&
+      !options.recording_clip_index_path.empty()) {
+    std::fprintf(stderr,
+                 "--video and --recording-clip-index are mutually exclusive\n");
     return std::nullopt;
   }
-  if (!options.zarr_path.empty() && options.video_path.empty()) {
-    std::fprintf(stderr, "--zarr requires --video PATH\n");
+  const bool has_recording_media =
+      !options.video_path.empty() || !options.recording_clip_index_path.empty();
+  if (options.video_smoke && !has_recording_media) {
+    std::fprintf(stderr,
+                 "--video-smoke requires --video or --recording-clip-index\n");
     return std::nullopt;
   }
-  if (options.start_paused_frame.has_value() && options.video_path.empty()) {
-    std::fprintf(stderr, "--start-paused requires --video PATH\n");
+  if (!options.zarr_path.empty() && !has_recording_media) {
+    std::fprintf(stderr, "--zarr requires --video or --recording-clip-index\n");
+    return std::nullopt;
+  }
+  if (options.start_paused_frame.has_value() && !has_recording_media) {
+    std::fprintf(stderr,
+                 "--start-paused requires --video or --recording-clip-index\n");
     return std::nullopt;
   }
   if (options.start_paused_frame.has_value() && options.video_smoke) {
@@ -1940,7 +1969,8 @@ int main(int argc, char **argv) {
   crimson::session::RecordingOpenWorkflowController recording_open_workflow(
       session_lifecycle, session_open_progress);
   const crimson::session::SessionDescriptor initial_session{
-      options->video_path, options->zarr_path, options->stimulus_video_path};
+      options->video_path, options->zarr_path, options->stimulus_video_path,
+      options->recording_clip_index_path};
   std::string decode_debug_status;
   const std::filesystem::path decode_dump_root = decodeDumpRoot();
   bool show_error_popup = false;
@@ -1988,9 +2018,11 @@ int main(int argc, char **argv) {
                                          : AppleAnalysisTimelineTab::Motion;
   std::optional<AppleDecodedVideoFrame> current_video_frame;
   std::optional<AppleDecodedVideoFrame> pending_video_frame;
-  const bool video_enabled = !options->video_path.empty();
-  const std::string camera_window_name =
-      recordingWindowName(options->video_path);
+  const bool video_enabled = !options->video_path.empty() ||
+                             !options->recording_clip_index_path.empty();
+  const std::string camera_window_name = recordingWindowName(
+      options->video_path.empty() ? options->recording_clip_index_path
+                                  : options->video_path);
   const bool analysis_requested = video_enabled && !options->zarr_path.empty();
   std::vector<crimson::session::SessionReadinessProductRule>
       analysis_readiness_products;
@@ -2270,14 +2302,22 @@ int main(int argc, char **argv) {
   auto video_smoke_started = std::chrono::steady_clock::now();
   if (video_enabled) {
     std::string video_error;
-    if (!video_renderer.initialize(
+    const bool renderers_ready =
+        video_renderer.initialize(
             reinterpret_cast<uintptr_t>((__bridge void *)device),
-            static_cast<uint64_t>(layer.pixelFormat), &video_error) ||
-        !overlay_renderer.initialize(
+            static_cast<uint64_t>(layer.pixelFormat), &video_error) &&
+        overlay_renderer.initialize(
             reinterpret_cast<uintptr_t>((__bridge void *)device),
-            static_cast<uint64_t>(layer.pixelFormat), &video_error) ||
-        !video_playback.open(options->video_path, "camera-main",
-                             options->video_buffer_capacity, &video_error)) {
+            static_cast<uint64_t>(layer.pixelFormat), &video_error);
+    const bool playback_opened =
+        renderers_ready &&
+        (options->recording_clip_index_path.empty()
+             ? video_playback.open(options->video_path, "camera-main",
+                                   options->video_buffer_capacity, &video_error)
+             : video_playback.openClipIndex(
+                   options->recording_clip_index_path, "camera-main",
+                   options->video_buffer_capacity, &video_error));
+    if (!renderers_ready || !playback_opened) {
       std::fprintf(stderr, "[AppleVideo] Initialization failed: %s\n",
                    video_error.c_str());
       fail_initial_media_open(video_error.empty()
@@ -3887,7 +3927,8 @@ int main(int argc, char **argv) {
         average_frame_ms /= average_sample_count;
       }
       const auto file_browser_result = drawAppleFileBrowserWindow(
-          &file_browser_state, options->video_path, options->zarr_path,
+          &file_browser_state, options->video_path,
+          options->recording_clip_index_path, options->zarr_path,
           options->stimulus_video_path, average_frame_ms,
           video_enabled ? &video_clock : nullptr, session_ui_interactive);
       if (!file_browser_result.error.empty()) {
@@ -3899,51 +3940,95 @@ int main(int argc, char **argv) {
         try {
           auto selected_archive = crimson::zarr::ArchiveContext::Open(
               *file_browser_result.zarr_open_request, &discovery_error);
-          auto affiliated_video = selected_archive
-                                      ? crimson::zarr::DiscoverAffiliatedVideo(
-                                            selected_archive, &discovery_error)
-                                      : std::nullopt;
-          if (!affiliated_video.has_value()) {
+          if (!selected_archive) {
             error_popup_message =
                 discovery_error.empty()
-                    ? "The selected Zarr archive does not identify an "
-                      "affiliated acquisition video."
+                    ? "The selected Zarr archive could not be opened."
                     : discovery_error;
             show_error_popup = true;
           } else {
-            AppleVideoFrameProvider video_preflight;
-            const std::string resolved_video_path =
-                affiliated_video->resolved_path.string();
-            if (!video_preflight.open(resolved_video_path, "camera-main",
-                                      &discovery_error)) {
+            std::string video_discovery_error;
+            const auto affiliated_video =
+                crimson::zarr::DiscoverAffiliatedVideo(selected_archive,
+                                                       &video_discovery_error);
+            std::string clip_discovery_error;
+            std::optional<
+                crimson::zarr::AffiliatedRecordingClipIndexDescriptor>
+                affiliated_clips;
+            if (!affiliated_video) {
+              affiliated_clips =
+                  crimson::zarr::DiscoverAffiliatedRecordingClipIndex(
+                      selected_archive, &clip_discovery_error);
+            }
+            if (!affiliated_video && !affiliated_clips) {
               error_popup_message =
-                  discovery_error.empty()
-                      ? "The affiliated acquisition video could not be opened."
-                      : discovery_error;
+                  !clip_discovery_error.empty() ? clip_discovery_error
+                  : !video_discovery_error.empty()
+                      ? video_discovery_error
+                      : "The selected Zarr archive does not identify "
+                        "affiliated recording media.";
               show_error_popup = true;
             } else {
-              video_preflight.close();
-              const AppleSessionRelaunchRequest replacement = {
-                  true,
-                  resolved_video_path,
-                  *file_browser_result.zarr_open_request,
-                  {},
-                  file_browser_state.video_buffer_capacity,
-                  file_browser_state.stimulus_buffer_capacity};
-              std::string replacement_error;
-              if (!session_lifecycle.requestReplacement(replacement,
-                                                        &replacement_error)) {
-                error_popup_message = replacement_error;
-                show_error_popup = true;
-                continue;
+              AppleSessionRelaunchRequest replacement;
+              replacement.requested = true;
+              replacement.zarr_path = *file_browser_result.zarr_open_request;
+              replacement.video_buffer_capacity =
+                  file_browser_state.video_buffer_capacity;
+              replacement.stimulus_buffer_capacity =
+                  file_browser_state.stimulus_buffer_capacity;
+              bool media_ready = false;
+              if (affiliated_video) {
+                replacement.video_path =
+                    affiliated_video->resolved_path.string();
+                AppleVideoFrameProvider preflight;
+                media_ready = preflight.open(replacement.video_path,
+                                             "camera-main", &discovery_error);
+                preflight.close();
+              } else {
+                replacement.recording_clip_index_path =
+                    affiliated_clips->index_path.string();
+                AppleVideoPlaybackBuffer preflight;
+                media_ready = preflight.openClipIndex(
+                    replacement.recording_clip_index_path, "camera-main",
+                    file_browser_state.video_buffer_capacity, &discovery_error);
+                preflight.close();
               }
-              std::printf("[MacSession] Discovered affiliated video source=%s "
-                          "stored=%s resolved=%s\n",
-                          crimson::zarr::AffiliatedVideoSourceName(
-                              affiliated_video->source),
-                          affiliated_video->stored_path.string().c_str(),
-                          resolved_video_path.c_str());
-              glfwSetWindowShouldClose(window, GLFW_TRUE);
+              if (!media_ready) {
+                error_popup_message =
+                    discovery_error.empty()
+                        ? "The affiliated recording media could not be opened."
+                        : discovery_error;
+                show_error_popup = true;
+              } else {
+                std::string replacement_error;
+                if (!session_lifecycle.requestReplacement(replacement,
+                                                          &replacement_error)) {
+                  error_popup_message = replacement_error;
+                  show_error_popup = true;
+                  continue;
+                }
+                if (affiliated_video) {
+                  std::printf(
+                      "[MacSession] Discovered affiliated video source=%s "
+                      "resolution=%s stored=%s resolved=%s\n",
+                      crimson::zarr::AffiliatedVideoSourceName(
+                          affiliated_video->source),
+                      crimson::zarr::AffiliatedVideoResolutionName(
+                          affiliated_video->resolution),
+                      affiliated_video->stored_path.string().c_str(),
+                      replacement.video_path.c_str());
+                } else {
+                  std::printf(
+                      "[MacSession] Discovered recording clip index "
+                      "recording=%s camera=%s frames=%lld fps=%.6f path=%s\n",
+                      affiliated_clips->recording_id.c_str(),
+                      affiliated_clips->camera_serial.c_str(),
+                      static_cast<long long>(affiliated_clips->frame_count),
+                      affiliated_clips->frames_per_second,
+                      replacement.recording_clip_index_path.c_str());
+                }
+                glfwSetWindowShouldClose(window, GLFW_TRUE);
+              }
             }
           }
         } catch (const std::exception &exception) {
@@ -6060,8 +6145,10 @@ int main(int argc, char **argv) {
                    relaunch_error.c_str());
       render_failed = true;
     } else {
-      std::printf("[MacSession] Relaunched video=%s zarr=%s stimulus=%s\n",
+      std::printf("[MacSession] Relaunched video=%s clip_index=%s zarr=%s "
+                  "stimulus=%s\n",
                   session_relaunch->video_path.c_str(),
+                  session_relaunch->recording_clip_index_path.c_str(),
                   session_relaunch->zarr_path.c_str(),
                   session_relaunch->stimulus_video_path.c_str());
     }
@@ -6706,7 +6793,8 @@ int main(int argc, char **argv) {
           stderr,
           "[AppleVideoSmoke] FAIL start=%d end=%d requested=%lld "
           "presented=%lld decoded=%llu "
-          "buffered_peak=%zu max_lag_frames=%.1f lag_limit_frames=%.1f "
+          "buffered_peak=%zu clip_switches=%llu active_clip=%lld "
+          "max_lag_frames=%.1f lag_limit_frames=%.1f "
           "elapsed_s=%.3f "
           "memory_mib=%.1f peak_memory_mib=%.1f thermal=%s "
           "subject_mask_presentations=%llu subject_mask_resolved=%llu "
@@ -6715,9 +6803,12 @@ int main(int argc, char **argv) {
           static_cast<long long>(viewer_stats.requested_frame),
           static_cast<long long>(viewer_stats.presented_frame),
           static_cast<unsigned long long>(final_video_metrics.decoded_frames),
-          final_video_metrics.peak_buffered_frames, viewer_stats.max_lag_frames,
-          maximum_accepted_lag_frames, elapsed_seconds,
-          viewer_stats.process_memory_mib, viewer_stats.peak_process_memory_mib,
+          final_video_metrics.peak_buffered_frames,
+          static_cast<unsigned long long>(final_video_metrics.clip_switches),
+          static_cast<long long>(final_video_metrics.active_clip_index),
+          viewer_stats.max_lag_frames, maximum_accepted_lag_frames,
+          elapsed_seconds, viewer_stats.process_memory_mib,
+          viewer_stats.peak_process_memory_mib,
           appleViewerThermalStateName(viewer_stats.thermal_state),
           static_cast<unsigned long long>(subject_mask_overlay_presentations),
           static_cast<unsigned long long>(
@@ -6731,6 +6822,7 @@ int main(int argc, char **argv) {
         "[AppleVideoSmoke] PASS start=%d end=%d requested=%lld "
         "presented=%lld decoded=%llu "
         "peak_buffer=%zu repeats=%llu "
+        "clip_switches=%llu active_clip=%lld "
         "skipped_source_frames=%llu late_presentations=%llu "
         "max_lag_frames=%.1f "
         "catchup_discarded_frames=%llu catchup_seeks=%llu "
@@ -6746,6 +6838,8 @@ int main(int argc, char **argv) {
         static_cast<unsigned long long>(final_video_metrics.decoded_frames),
         final_video_metrics.peak_buffered_frames,
         static_cast<unsigned long long>(viewer_stats.repeated_presentations),
+        static_cast<unsigned long long>(final_video_metrics.clip_switches),
+        static_cast<long long>(final_video_metrics.active_clip_index),
         static_cast<unsigned long long>(viewer_stats.skipped_source_frames),
         static_cast<unsigned long long>(viewer_stats.late_presentations),
         viewer_stats.max_lag_frames,

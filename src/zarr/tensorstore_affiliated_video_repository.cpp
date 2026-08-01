@@ -5,6 +5,8 @@
 #include <utility>
 #include <vector>
 
+#include "recording_clip_index.h"
+#include "recording_path_resolution.h"
 #include "zarr/affiliated_video_repository.h"
 #include "zarr/archive_context.h"
 #include "zarr/archive_context_internal.h"
@@ -19,29 +21,29 @@ constexpr std::string_view kInventoryPath =
 constexpr std::string_view kFullStreamPath =
     "analysis/acquisition_video_streams/streams/full";
 
-bool ContainsParentTraversal(const std::filesystem::path& path) {
+bool ContainsParentTraversal(const std::filesystem::path &path) {
   return std::any_of(path.begin(), path.end(),
-                     [](const auto& component) { return component == ".."; });
+                     [](const auto &component) { return component == ".."; });
 }
 
-std::optional<std::string> StringValue(const json& object, const char* key) {
+std::optional<std::string> StringValue(const json &object, const char *key) {
   if (!object.is_object()) {
     return std::nullopt;
   }
   const auto found = object.find(key);
   if (found == object.end() || !found->is_string() ||
-      found->get_ref<const std::string&>().empty()) {
+      found->get_ref<const std::string &>().empty()) {
     return std::nullopt;
   }
   return found->get<std::string>();
 }
 
-bool StringEquals(const json& object, const char* key, const char* expected) {
+bool StringEquals(const json &object, const char *key, const char *expected) {
   const auto value = StringValue(object, key);
   return value && *value == expected;
 }
 
-bool IntegerEquals(const json& object, const char* key, int64_t expected) {
+bool IntegerEquals(const json &object, const char *key, int64_t expected) {
   if (!object.is_object()) {
     return false;
   }
@@ -50,28 +52,51 @@ bool IntegerEquals(const json& object, const char* key, int64_t expected) {
          found->get<int64_t>() == expected;
 }
 
-std::optional<AffiliatedVideoDescriptor> Fail(std::string* error_message,
+std::optional<AffiliatedVideoDescriptor> Fail(std::string *error_message,
                                               std::string message) {
   internal::SetArchiveError(error_message, std::move(message));
   return std::nullopt;
 }
 
-void AddCandidate(const std::filesystem::path& candidate,
-                  std::vector<std::filesystem::path>* candidates) {
+struct ResolutionCandidate {
+  std::filesystem::path path;
+  AffiliatedVideoResolution resolution;
+};
+
+void AddCandidate(const std::filesystem::path &candidate,
+                  AffiliatedVideoResolution resolution,
+                  std::vector<ResolutionCandidate> *candidates) {
   if (candidate.empty()) {
     return;
   }
   const auto normalized = candidate.lexically_normal();
-  if (std::find(candidates->begin(), candidates->end(), normalized) ==
-      candidates->end()) {
-    candidates->push_back(normalized);
+  const auto existing =
+      std::find_if(candidates->begin(), candidates->end(),
+                   [&](const auto &entry) { return entry.path == normalized; });
+  if (existing == candidates->end()) {
+    candidates->push_back({normalized, resolution});
   }
 }
 
-bool ResolveExistingFile(const ArchiveContext& archive,
-                         AffiliatedVideoDescriptor* descriptor,
+AffiliatedVideoResolution ClassifyRecordingResolution(
+    crimson::media::RecordingPathResolutionKind resolution) {
+  switch (resolution) {
+  case crimson::media::RecordingPathResolutionKind::RecordingRelative:
+    return AffiliatedVideoResolution::RecordingRelative;
+  case crimson::media::RecordingPathResolutionKind::RelocatedAbsolute:
+    return AffiliatedVideoResolution::RelocatedAbsolute;
+  case crimson::media::RecordingPathResolutionKind::StoredAbsolute:
+  case crimson::media::RecordingPathResolutionKind::UnresolvedAbsolute:
+  case crimson::media::RecordingPathResolutionKind::Empty:
+    return AffiliatedVideoResolution::StoredAbsolute;
+  }
+  return AffiliatedVideoResolution::StoredAbsolute;
+}
+
+bool ResolveExistingFile(const ArchiveContext &archive,
+                         AffiliatedVideoDescriptor *descriptor,
                          bool allow_legacy_candidates,
-                         std::string* error_message) {
+                         std::string *error_message) {
   if (descriptor->stored_path.empty()) {
     internal::SetArchiveError(error_message,
                               "Affiliated video metadata has an empty path");
@@ -84,23 +109,31 @@ bool ResolveExistingFile(const ArchiveContext& archive,
     return false;
   }
 
-  std::vector<std::filesystem::path> candidates;
-  AddCandidate(archive.resolveStoredPath(descriptor->stored_path), &candidates);
+  descriptor->recording_root = archive.recordingRootPath();
+  std::vector<ResolutionCandidate> candidates;
+  const auto recording_resolution = crimson::media::ResolveStoredRecordingPath(
+      archive.recordingRootPath(), descriptor->stored_path);
+  AddCandidate(recording_resolution.resolved_path,
+               ClassifyRecordingResolution(recording_resolution.kind),
+               &candidates);
   if (descriptor->stored_path.is_absolute()) {
-    AddCandidate(descriptor->stored_path, &candidates);
+    AddCandidate(descriptor->stored_path,
+                 AffiliatedVideoResolution::StoredAbsolute, &candidates);
   } else if (allow_legacy_candidates) {
-    AddCandidate(archive.rootPath() / descriptor->stored_path, &candidates);
+    AddCandidate(archive.rootPath() / descriptor->stored_path,
+                 AffiliatedVideoResolution::LegacyArchiveRelative, &candidates);
     AddCandidate(archive.rootPath().parent_path() / descriptor->stored_path,
+                 AffiliatedVideoResolution::LegacyArchiveParentRelative,
                  &candidates);
     AddCandidate(archive.recordingRootPath() / "cams" /
                      descriptor->stored_path.filename(),
-                 &candidates);
+                 AffiliatedVideoResolution::LegacyCameraBasename, &candidates);
   }
 
-  std::vector<std::filesystem::path> matches;
-  for (const auto& candidate : candidates) {
+  std::vector<ResolutionCandidate> matches;
+  for (const auto &candidate : candidates) {
     std::error_code status_error;
-    if (std::filesystem::is_regular_file(candidate, status_error)) {
+    if (std::filesystem::is_regular_file(candidate.path, status_error)) {
       matches.push_back(candidate);
     }
   }
@@ -117,15 +150,16 @@ bool ResolveExistingFile(const ArchiveContext& archive,
                            descriptor->stored_path.string());
     return false;
   }
-  descriptor->resolved_path = std::move(matches.front());
+  descriptor->resolved_path = std::move(matches.front().path);
+  descriptor->resolution = matches.front().resolution;
   return true;
 }
 
-std::optional<std::string> FirstAlias(const json& attributes,
-                                      std::string* metadata_key) {
-  constexpr const char* kKeys[] = {"source_path", "source_video_path",
+std::optional<std::string> FirstAlias(const json &attributes,
+                                      std::string *metadata_key) {
+  constexpr const char *kKeys[] = {"source_path", "source_video_path",
                                    "source_video", "path"};
-  for (const char* key : kKeys) {
+  for (const char *key : kKeys) {
     if (auto value = StringValue(attributes, key)) {
       if (metadata_key) {
         *metadata_key = key;
@@ -136,9 +170,9 @@ std::optional<std::string> FirstAlias(const json& attributes,
   return std::nullopt;
 }
 
-std::optional<AffiliatedVideoDescriptor> ResolveLegacyMetadata(
-    const ArchiveContext& archive, const json* root, const json* raw_video,
-    std::string* error_message) {
+std::optional<AffiliatedVideoDescriptor>
+ResolveLegacyMetadata(const ArchiveContext &archive, const json *root,
+                      const json *raw_video, std::string *error_message) {
   AffiliatedVideoDescriptor descriptor;
 
   if (raw_video) {
@@ -166,7 +200,7 @@ std::optional<AffiliatedVideoDescriptor> ResolveLegacyMetadata(
   if (!root) {
     return std::nullopt;
   }
-  const json* source_metadata = nullptr;
+  const json *source_metadata = nullptr;
   const auto metadata_found = root->find("source_video_metadata");
   if (metadata_found != root->end()) {
     if (!metadata_found->is_object()) {
@@ -230,13 +264,13 @@ std::optional<AffiliatedVideoDescriptor> ResolveLegacyMetadata(
   return std::nullopt;
 }
 
-}  // namespace
+} // namespace
 
 class TensorStoreAffiliatedVideoRepository {
- public:
-  static std::optional<AffiliatedVideoDescriptor> Discover(
-      const std::shared_ptr<ArchiveContext>& archive,
-      std::string* error_message) {
+public:
+  static std::optional<AffiliatedVideoDescriptor>
+  Discover(const std::shared_ptr<ArchiveContext> &archive,
+           std::string *error_message) {
     if (error_message) {
       error_message->clear();
     }
@@ -249,7 +283,7 @@ class TensorStoreAffiliatedVideoRepository {
     const auto full = internal::ReadArchiveAttributes(
         *archive->impl_, std::string(kFullStreamPath));
     bool full_declared = false;
-    const json* duplicated_full = nullptr;
+    const json *duplicated_full = nullptr;
     if (inventory) {
       const auto streams = inventory->find("streams");
       if (streams != inventory->end() && streams->is_object()) {
@@ -304,7 +338,7 @@ class TensorStoreAffiliatedVideoRepository {
           return Fail(error_message,
                       "Acquisition full stream has no contract or files");
         }
-        const json& contract = *contract_found;
+        const json &contract = *contract_found;
         if (!StringEquals(*full, "stream_key", "full") ||
             !StringEquals(contract, "role",
                           "ingest_authoritative_full_frame") ||
@@ -344,26 +378,143 @@ class TensorStoreAffiliatedVideoRepository {
                                  raw_video ? &*raw_video : nullptr,
                                  error_message);
   }
+
+  static std::optional<AffiliatedRecordingClipIndexDescriptor>
+  DiscoverClipIndex(const std::shared_ptr<ArchiveContext> &archive,
+                    std::string *error_message) {
+    if (error_message) {
+      error_message->clear();
+    }
+    if (!archive || !archive->impl_) {
+      return FailClipIndex(error_message, "Archive context is not open");
+    }
+
+    const auto root = internal::ReadArchiveAttributes(*archive->impl_, "");
+    const auto recording_id =
+        root ? StringValue(*root, "recording_id") : std::nullopt;
+    const std::string inferred_recording_id =
+        archive->recordingRootPath().filename().string();
+    const std::optional<std::string> expected_recording_id =
+        recording_id ? recording_id
+                     : inferred_recording_id.empty()
+                           ? std::nullopt
+                           : std::optional<std::string>{inferred_recording_id};
+    std::vector<std::filesystem::path> candidates;
+    const auto add_candidate = [&](std::filesystem::path candidate) {
+      candidate = candidate.lexically_normal();
+      if (std::find(candidates.begin(), candidates.end(), candidate) ==
+          candidates.end()) {
+        candidates.push_back(std::move(candidate));
+      }
+    };
+    add_candidate(archive->recordingRootPath() / "recording_clip_index.json");
+    if (recording_id) {
+      for (auto ancestor = archive->rootPath().parent_path(); !ancestor.empty();
+           ancestor = ancestor.parent_path()) {
+        if (ancestor.filename() == "recordings") {
+          add_candidate(ancestor / *recording_id / "recording_clip_index.json");
+        }
+        if (ancestor.filename() == ".palette_benchmarks") {
+          add_candidate(ancestor.parent_path() / *recording_id /
+                        "recording_clip_index.json");
+        }
+        const auto parent = ancestor.parent_path();
+        if (parent == ancestor) {
+          break;
+        }
+      }
+    }
+
+    std::vector<AffiliatedRecordingClipIndexDescriptor> matches;
+    for (const auto &candidate : candidates) {
+      std::error_code status_error;
+      if (!std::filesystem::is_regular_file(candidate, status_error)) {
+        continue;
+      }
+      std::string validation_error;
+      const auto index = crimson::media::RecordingClipIndex::Open(
+          candidate, &validation_error);
+      if (!index) {
+        return FailClipIndex(
+            error_message,
+            validation_error.empty()
+                ? "Affiliated recording clip index is invalid: " +
+                      candidate.string()
+                : validation_error);
+      }
+      if (expected_recording_id &&
+          index->recordingId() != *expected_recording_id) {
+        return FailClipIndex(
+            error_message,
+            "Affiliated recording clip index identity disagrees with archive");
+      }
+      matches.push_back({index->indexPath(), index->recordingRoot(),
+                         index->recordingId(), index->cameraSerial(),
+                         index->totalFrameCount(), index->framesPerSecond()});
+    }
+    if (matches.empty()) {
+      return std::nullopt;
+    }
+    if (matches.size() != 1) {
+      return FailClipIndex(error_message,
+                           "Affiliated recording clip index is ambiguous");
+    }
+    return std::move(matches.front());
+  }
+
+private:
+  static std::optional<AffiliatedRecordingClipIndexDescriptor>
+  FailClipIndex(std::string *error_message, std::string message) {
+    internal::SetArchiveError(error_message, std::move(message));
+    return std::nullopt;
+  }
 };
 
-const char* AffiliatedVideoSourceName(AffiliatedVideoSource source) {
+const char *AffiliatedVideoSourceName(AffiliatedVideoSource source) {
   switch (source) {
-    case AffiliatedVideoSource::AcquisitionFullStream:
-      return "acquisition_full_stream";
-    case AffiliatedVideoSource::SourceVideoLocator:
-      return "source_video_locator";
-    case AffiliatedVideoSource::RawVideoAttributes:
-      return "raw_video_attributes";
-    case AffiliatedVideoSource::RootAttributes:
-      return "root_attributes";
+  case AffiliatedVideoSource::AcquisitionFullStream:
+    return "acquisition_full_stream";
+  case AffiliatedVideoSource::SourceVideoLocator:
+    return "source_video_locator";
+  case AffiliatedVideoSource::RawVideoAttributes:
+    return "raw_video_attributes";
+  case AffiliatedVideoSource::RootAttributes:
+    return "root_attributes";
   }
   return "unknown";
 }
 
-std::optional<AffiliatedVideoDescriptor> DiscoverAffiliatedVideo(
-    const std::shared_ptr<ArchiveContext>& archive,
-    std::string* error_message) {
+const char *
+AffiliatedVideoResolutionName(AffiliatedVideoResolution resolution) {
+  switch (resolution) {
+  case AffiliatedVideoResolution::StoredAbsolute:
+    return "stored_absolute";
+  case AffiliatedVideoResolution::RecordingRelative:
+    return "recording_relative";
+  case AffiliatedVideoResolution::RelocatedAbsolute:
+    return "relocated_absolute";
+  case AffiliatedVideoResolution::LegacyArchiveRelative:
+    return "legacy_archive_relative";
+  case AffiliatedVideoResolution::LegacyArchiveParentRelative:
+    return "legacy_archive_parent_relative";
+  case AffiliatedVideoResolution::LegacyCameraBasename:
+    return "legacy_camera_basename";
+  }
+  return "unknown";
+}
+
+std::optional<AffiliatedVideoDescriptor>
+DiscoverAffiliatedVideo(const std::shared_ptr<ArchiveContext> &archive,
+                        std::string *error_message) {
   return TensorStoreAffiliatedVideoRepository::Discover(archive, error_message);
 }
 
-}  // namespace crimson::zarr
+std::optional<AffiliatedRecordingClipIndexDescriptor>
+DiscoverAffiliatedRecordingClipIndex(
+    const std::shared_ptr<ArchiveContext> &archive,
+    std::string *error_message) {
+  return TensorStoreAffiliatedVideoRepository::DiscoverClipIndex(archive,
+                                                                 error_message);
+}
+
+} // namespace crimson::zarr

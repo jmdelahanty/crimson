@@ -8,7 +8,7 @@ namespace {
 #define CHECK(condition)                                                       \
   do {                                                                         \
     if (!(condition)) {                                                        \
-      std::cerr << "CHECK failed at line " << __LINE__ << ": " #condition   \
+      std::cerr << "CHECK failed at line " << __LINE__ << ": " #condition      \
                 << '\n';                                                       \
       return false;                                                            \
     }                                                                          \
@@ -17,8 +17,8 @@ namespace {
 bool testOpenAndClose() {
   crimson::session::SessionLifecycle lifecycle;
   CHECK(lifecycle.snapshot().phase == crimson::session::SessionPhase::Empty);
-  const auto generation = lifecycle.beginOpen(
-      {"camera.mp4", "analysis.zarr", "stimulus.mp4"});
+  const auto generation =
+      lifecycle.beginOpen({"camera.mp4", "analysis.zarr", "stimulus.mp4"});
   CHECK(generation == 1);
   CHECK(lifecycle.snapshot().phase == crimson::session::SessionPhase::Opening);
   CHECK(lifecycle.completeOpen(generation));
@@ -65,6 +65,14 @@ bool testRelaunchRequestSurvivesClose() {
   CHECK(retained.has_value());
   CHECK(retained->video_path == "second.mp4");
   CHECK(retained->video_buffer_capacity == 8);
+
+  crimson::session::SessionReplacementRequest clipped;
+  clipped.requested = true;
+  clipped.zarr_path = "clips.zarr";
+  clipped.recording_clip_index_path = "recording_clip_index.json";
+  CHECK(lifecycle.requestReplacement(clipped));
+  CHECK(lifecycle.snapshot().pending.recording_clip_index_path ==
+        "recording_clip_index.json");
 
   std::string error;
   CHECK(!lifecycle.requestReplacement({}, &error));

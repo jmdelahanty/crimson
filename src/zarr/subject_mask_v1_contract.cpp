@@ -16,6 +16,12 @@ namespace {
 
 using json = nlohmann::json;
 
+constexpr std::string_view kOriginalMetadataDigestScope =
+    "exact_run_group_and_array_declarations_redacting_only_run_manifest";
+constexpr std::string_view kMaintainedMetadataDigestScope =
+    "exact_run_group_and_array_declarations_redacting_manifest_lifecycle_"
+    "and_transport_publication_attrs";
+
 struct BindingDeclaration {
   const char *path;
   const char *contract_id;
@@ -327,6 +333,8 @@ bool ValidateSubjectMaskV1Manifest(const json &manifest,
     parsed.run_id = payload.at("run_id").get<std::string>();
 
     const auto &publication = payload.at("publication");
+    const std::string metadata_digest_scope =
+        publication.value("metadata_digest_scope", "");
     if (!exactKeys(publication, {"completion_contract", "completion_status",
                                  "stage_selector_eligible", "metadata_state",
                                  "metadata_digest_scope", "metadata_digest"}) ||
@@ -336,9 +344,8 @@ bool ValidateSubjectMaskV1Manifest(const json &manifest,
         !publication.at("stage_selector_eligible").is_boolean() ||
         publication.value("metadata_state", "") !=
             "direct_and_consolidated_validated" ||
-        publication.value("metadata_digest_scope", "") !=
-            "exact_run_group_and_array_declarations_redacting_only_run_"
-            "manifest" ||
+        (metadata_digest_scope != kOriginalMetadataDigestScope &&
+         metadata_digest_scope != kMaintainedMetadataDigestScope) ||
         !IsLowerSha256(publication.value("metadata_digest", ""))) {
       assignError(error, "Subject-mask v1 publication declaration is invalid");
       return false;
@@ -347,6 +354,7 @@ bool ValidateSubjectMaskV1Manifest(const json &manifest,
         publication.at("stage_selector_eligible").get<bool>();
     parsed.metadata_digest =
         publication.at("metadata_digest").get<std::string>();
+    parsed.metadata_digest_scope = metadata_digest_scope;
 
     if (!validateLogicalSchema(payload.at("logical_schema"), &parsed) ||
         !validateLogicalContent(payload.at("logical_content"), parsed) ||

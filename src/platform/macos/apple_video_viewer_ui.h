@@ -195,8 +195,9 @@ const char *appleViewerThermalStateName(AppleViewerThermalState state);
 
 AppleFileBrowserResult drawAppleFileBrowserWindow(
     AppleFileBrowserState *state, const std::string &video_path,
-    const std::string &zarr_path, const std::string &stimulus_video_path,
-    double average_frame_ms, LogicalPlaybackClock *clock, bool interactive);
+    const std::string &recording_clip_index_path, const std::string &zarr_path,
+    const std::string &stimulus_video_path, double average_frame_ms,
+    LogicalPlaybackClock *clock, bool interactive);
 
 AppleDiagnosticsResult drawAppleDiagnosticsWindow(
     const AppleVideoViewerStats &stats,

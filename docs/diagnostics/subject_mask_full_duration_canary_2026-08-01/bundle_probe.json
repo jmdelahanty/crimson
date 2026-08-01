@@ -1,0 +1,31 @@
+{
+  "activation_deferred": true,
+  "bundle_id": "subject_mask_bundle_sleepyfish_subject_mask_full_duration_20260731_73f7bb5e",
+  "error": "",
+  "frame_count": 1188000,
+  "manifest_payload_digest": "cfcfd2297985bd097546d8642f02cea5d5556df0487dad0ad1d9a9bafea3ed0b",
+  "mask_shape": [512, 512],
+  "members": {
+    "quality": "subject_mask_quality_sleepyfish_subject_mask_full_duration_20260731_73f7bb5e",
+    "raw": "subject_masks_sleepyfish_subject_mask_full_duration_20260731_73f7bb5e",
+    "refined": "refined_subject_masks_sleepyfish_subject_mask_full_duration_20260731_73f7bb5e"
+  },
+  "quality_payload_opened": false,
+  "raw_channel_count": 3,
+  "raw_component_labels": ["subject_body", "eyes_union", "swim_bladder"],
+  "recording_identity": "sleepyfish_2026_05_05_17_45_30_cam2010095",
+  "refined_channel_count": 4,
+  "refined_component_labels": [
+    "subject_body",
+    "eye_left",
+    "eye_right",
+    "swim_bladder"
+  ],
+  "row_count": 1169010,
+  "schema_id": "crimson.subject_mask.bundle_v2_probe",
+  "schema_version": 1,
+  "selector_eligible": false,
+  "status": "pass",
+  "store": "/Volumes/johnsonlab/jeremy/recordings/.palette_benchmarks/subject_mask_storage/full_duration/sleepyfish_cam2010095_20260731_73f7bb5e/analysis.zarr",
+  "validated_array_declarations": 39
+}

@@ -1168,6 +1168,18 @@ synchronization. Backend-native resources do not cross the contract. Details
 are in
 `docs/crimson_shared_seek_transaction_checkpoint_2026-07-31.md`.
 
+Affiliated-media discovery and recording path resolution are now shared as
+well. One portable C++17 contract infers the recording root and classifies
+recording-relative, existing absolute, relocated absolute, and unresolved
+absolute paths without guessing across recording identities. `ArchiveContext`
+and the legacy UI compatibility resolver use that same policy. macOS and Linux
+standard archive opens now call the same strict affiliated-video repository;
+invalid authoritative metadata fails closed, while the Linux legacy loader
+hint remains available only when shared metadata is absent. Decoder ownership,
+macOS relaunch, Linux decoder threads, and clipped run switching remain in
+their platform adapters. The checkpoint is documented in
+`docs/crimson_shared_affiliated_media_checkpoint_2026-07-31.md`.
+
 Phase 5 also remains open for production-tail acceptance, movement-trail
 coordinate policy, any required chaser-data densification, and edit/review
 workflows whose shared storage contracts are still changing. Those blockers

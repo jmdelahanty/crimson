@@ -1,6 +1,8 @@
 #include "media_session_loader.h"
 #include "global.h"
 #include "render.h"
+#include "zarr/affiliated_video_repository.h"
+#include "zarr/archive_context.h"
 
 #include <algorithm>
 #include <chrono>
@@ -554,21 +556,52 @@ void MediaSessionLoader::tryAutoLoadAffiliatedVideoFromZarr(
     return;
   }
 
-  const std::string source_hint = context_.zarr_loader->getSourceVideoPath();
-  if (source_hint.empty()) {
-    std::cout << "[Zarr] Archive did not provide source video metadata; "
-                 "skipping affiliated video auto-load"
-              << std::endl;
+  const std::string archive_path = context_.zarr_loader->getArchivePath();
+  std::string discovery_error;
+  const auto archive =
+      crimson::zarr::ArchiveContext::Open(archive_path, &discovery_error);
+  if (!archive) {
+    std::cout << "[Zarr] Could not open shared archive context for affiliated "
+                 "video discovery: "
+              << discovery_error << std::endl;
     return;
   }
 
-  auto resolved_video_opt = ResolveAffiliatedVideoPath(
-      source_hint, context_.zarr_loader->getArchivePath());
-  if (!resolved_video_opt.has_value()) {
-    std::cout << "[Zarr] Could not resolve affiliated source video path from "
-                 "metadata: "
-              << source_hint << std::endl;
+  const auto affiliated_video =
+      crimson::zarr::DiscoverAffiliatedVideo(archive, &discovery_error);
+  std::optional<std::filesystem::path> resolved_video_opt;
+  if (affiliated_video) {
+    resolved_video_opt = affiliated_video->resolved_path;
+    std::cout << "[Zarr] Discovered affiliated video source="
+              << crimson::zarr::AffiliatedVideoSourceName(
+                     affiliated_video->source)
+              << " resolution="
+              << crimson::zarr::AffiliatedVideoResolutionName(
+                     affiliated_video->resolution)
+              << " stored=" << affiliated_video->stored_path
+              << " resolved=" << affiliated_video->resolved_path << std::endl;
+  } else if (!discovery_error.empty()) {
+    std::cout << "[Zarr] Affiliated video discovery failed: " << discovery_error
+              << std::endl;
     return;
+  } else {
+    const std::string source_hint = context_.zarr_loader->getSourceVideoPath();
+    if (source_hint.empty()) {
+      std::cout << "[Zarr] Archive did not provide source video metadata; "
+                   "skipping affiliated video auto-load"
+                << std::endl;
+      return;
+    }
+    resolved_video_opt = ResolveAffiliatedVideoPath(source_hint, archive_path);
+    if (!resolved_video_opt) {
+      std::cout << "[Zarr] Legacy affiliated-video hint could not be resolved: "
+                << source_hint << std::endl;
+      return;
+    }
+    std::cout << "[Zarr] Shared affiliated-video metadata absent; using "
+                 "legacy loader hint compatibility stored="
+              << source_hint << " resolved=" << *resolved_video_opt
+              << std::endl;
   }
 
   if (!loadSingleVideoMedia(

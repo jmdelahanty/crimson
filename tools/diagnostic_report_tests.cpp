@@ -9,16 +9,18 @@ namespace {
 #define CHECK(condition)                                                       \
   do {                                                                         \
     if (!(condition)) {                                                        \
-      std::cerr << "CHECK failed at line " << __LINE__ << ": " #condition   \
+      std::cerr << "CHECK failed at line " << __LINE__ << ": " #condition      \
                 << '\n';                                                       \
       return false;                                                            \
     }                                                                          \
   } while (false)
 
 bool testStableFormatting() {
-  crimson::diagnostics::DiagnosticRecord record{
-      "Test", {{"plain", "value"}, {"quoted", "two words"},
-               {"line", "one\ntwo"}, {"path", "a\\\"b"}}};
+  crimson::diagnostics::DiagnosticRecord record{"Test",
+                                                {{"plain", "value"},
+                                                 {"quoted", "two words"},
+                                                 {"line", "one\ntwo"},
+                                                 {"path", "a\\\"b"}}};
   CHECK(crimson::diagnostics::formatDiagnosticRecord(record) ==
         "[Test] plain=value quoted=\"two words\" line=\"one two\" "
         "path=\"a\\\\\\\"b\"");
@@ -32,10 +34,18 @@ bool testTypedRecords() {
   crimson::session::SessionLifecycle lifecycle;
   const auto generation = lifecycle.beginOpen({"camera.mp4", "data.zarr", {}});
   CHECK(lifecycle.completeOpen(generation));
-  const auto session = crimson::diagnostics::sessionRecord(
-      "Session", lifecycle.snapshot());
+  const auto session =
+      crimson::diagnostics::sessionRecord("Session", lifecycle.snapshot());
   CHECK(crimson::diagnostics::formatDiagnosticRecord(session).find(
             "state=ready") != std::string::npos);
+
+  const auto clipped_generation =
+      lifecycle.beginOpen({{}, "clips.zarr", {}, "recording_clip_index.json"});
+  CHECK(lifecycle.completeOpen(clipped_generation));
+  const auto clipped =
+      crimson::diagnostics::sessionRecord("Session", lifecycle.snapshot());
+  CHECK(crimson::diagnostics::formatDiagnosticRecord(clipped).find(
+            "clip_index=recording_clip_index.json") != std::string::npos);
 
   crimson::playback::FramePresentationTracker tracker;
   tracker.record(5, 5, false);

@@ -86,6 +86,52 @@ if(WIN32)
     target_link_libraries(crimson_runtime_contracts PUBLIC Psapi)
 endif()
 
+add_library(crimson_recording_contracts STATIC
+    src/recording_clip_index.cpp
+    src/recording_path_resolution.cpp
+)
+target_include_directories(crimson_recording_contracts PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_features(crimson_recording_contracts PUBLIC cxx_std_17)
+target_link_libraries(crimson_recording_contracts PUBLIC
+    nlohmann_json::nlohmann_json
+)
+
+add_executable(recording_path_resolution_tests
+    tools/recording_path_resolution_tests.cpp
+)
+target_link_libraries(recording_path_resolution_tests PRIVATE
+    crimson_recording_contracts
+)
+target_compile_features(recording_path_resolution_tests PRIVATE cxx_std_17)
+set_target_properties(recording_path_resolution_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME recording_path_resolution_tests
+    COMMAND $<TARGET_FILE:recording_path_resolution_tests>
+)
+set_tests_properties(recording_path_resolution_tests PROPERTIES
+    LABELS "headless;media;portable;runtime"
+)
+
+add_executable(recording_clip_index_tests
+    tools/recording_clip_index_tests.cpp
+)
+target_link_libraries(recording_clip_index_tests PRIVATE
+    crimson_recording_contracts
+)
+target_compile_features(recording_clip_index_tests PRIVATE cxx_std_17)
+set_target_properties(recording_clip_index_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME recording_clip_index_tests
+    COMMAND $<TARGET_FILE:recording_clip_index_tests>
+)
+set_tests_properties(recording_clip_index_tests PROPERTIES
+    LABELS "clips;headless;media;portable;runtime"
+)
+
 add_library(crimson_data_access_contracts STATIC
     src/data_access.cpp
     src/data_access_cache.cpp
@@ -220,6 +266,7 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         src/zarr/keypoint_v2_contract.cpp
         src/zarr/tensorstore_keypoint_v2_repository.cpp
         src/zarr/refined_detection_contract.cpp
+        src/zarr/subject_mask_bundle_v2_contract.cpp
         src/zarr/subject_mask_v1_contract.cpp
         src/zarr/tensorstore_canonical_detection_repository.cpp
         src/zarr/tensorstore_detection_quality_timeline_repository.cpp
@@ -248,6 +295,7 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
     target_link_libraries(crimson_tensorstore_repositories
         PUBLIC
             crimson_crop_contracts
+            crimson_recording_contracts
             crimson_repository_contracts
         PRIVATE ${tensorstore_target} ${_crimson_tensorstore_digest_target}
                 Threads::Threads
@@ -613,6 +661,32 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
     set_tests_properties(subject_mask_v1_long_duration_benchmark_self_test
         PROPERTIES
         LABELS "portable;headless;tensorstore;zarr;masks;benchmark"
+    )
+
+    add_executable(subject_mask_bundle_v2_probe
+        tools/subject_mask_bundle_v2_probe.cpp
+    )
+    target_compile_features(subject_mask_bundle_v2_probe PRIVATE cxx_std_17)
+    target_link_libraries(subject_mask_bundle_v2_probe PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+        nlohmann_json::nlohmann_json
+    )
+    set_target_properties(subject_mask_bundle_v2_probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
+    add_executable(subject_mask_crop_join_probe
+        tools/subject_mask_crop_join_probe.cpp
+    )
+    target_compile_features(subject_mask_crop_join_probe PRIVATE cxx_std_17)
+    target_link_libraries(subject_mask_crop_join_probe PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+        nlohmann_json::nlohmann_json
+    )
+    set_target_properties(subject_mask_crop_join_probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
     if(Python3_Interpreter_FOUND)
         add_test(NAME keypoint_v2_experiment_runner_self_test
@@ -2174,6 +2248,7 @@ target_include_directories(ui_path_config_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_link_libraries(ui_path_config_tests PRIVATE
+    crimson_recording_contracts
     nlohmann_json::nlohmann_json
 )
 target_compile_features(ui_path_config_tests PRIVATE cxx_std_17)
@@ -2240,6 +2315,7 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/keypoint_v2_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/detection_repository_selection.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/refined_detection_contract.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/subject_mask_bundle_v2_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/subject_mask_v1_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/analysis_crop_geometry_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/stimulus_repository.cpp"
@@ -2893,6 +2969,7 @@ if(CRIMSON_BUILD_MACOS_APP)
     )
     target_link_libraries(crimson_apple_video PUBLIC
         crimson_frame_contracts
+        crimson_recording_contracts
         ${AVFOUNDATION_FRAMEWORK}
         ${COREMEDIA_FRAMEWORK}
         ${COREVIDEO_FRAMEWORK}
@@ -3225,6 +3302,7 @@ if(CRIMSON_BUILD_MACOS_APP)
     )
     target_link_libraries(apple_video_provider_tests PRIVATE
         crimson_apple_video
+        nlohmann_json::nlohmann_json
     )
     set_target_properties(apple_video_provider_tests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"

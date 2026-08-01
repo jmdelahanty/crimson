@@ -4,6 +4,7 @@
 
 #include <utility>
 
+#include "recording_path_resolution.h"
 #include "zarr/archive_context_internal.h"
 
 namespace crimson::zarr {
@@ -18,15 +19,6 @@ std::string NormalizeFileRoot(std::filesystem::path path) {
     normalized.push_back('/');
   }
   return normalized;
-}
-
-std::filesystem::path InferRecordingRoot(
-    const std::filesystem::path& archive_root) {
-  std::filesystem::path recording_root = archive_root.parent_path();
-  if (recording_root.filename() == "zarr") {
-    recording_root = recording_root.parent_path();
-  }
-  return recording_root;
 }
 
 }  // namespace
@@ -137,7 +129,8 @@ std::shared_ptr<ArchiveContext> ArchiveContext::Open(
 
   auto impl = std::make_shared<Impl>();
   impl->root_path = absolute_root;
-  impl->recording_root_path = InferRecordingRoot(impl->root_path);
+  impl->recording_root_path =
+      crimson::media::InferRecordingRootFromArchive(impl->root_path);
   auto context = internal::MakeArchiveTensorStoreContext();
   if (!context.ok()) {
     internal::SetArchiveError(
@@ -172,33 +165,9 @@ size_t ArchiveContext::cachePoolBytes() const {
 
 std::filesystem::path ArchiveContext::resolveStoredPath(
     const std::filesystem::path& stored_path) const {
-  if (stored_path.empty()) {
-    return {};
-  }
-  if (stored_path.is_relative()) {
-    return (impl_->recording_root_path / stored_path).lexically_normal();
-  }
-  std::error_code exists_error;
-  if (std::filesystem::exists(stored_path, exists_error)) {
-    return stored_path;
-  }
-  if (impl_->recording_root_path.empty()) {
-    return stored_path;
-  }
-
-  bool found_recording = false;
-  std::filesystem::path suffix;
-  for (const auto& component : stored_path) {
-    if (!found_recording) {
-      found_recording = component == impl_->recording_root_path.filename();
-      continue;
-    }
-    suffix /= component;
-  }
-  if (!found_recording || suffix.empty()) {
-    return stored_path;
-  }
-  return (impl_->recording_root_path / suffix).lexically_normal();
+  return crimson::media::ResolveStoredRecordingPath(
+             impl_->recording_root_path, stored_path)
+      .resolved_path;
 }
 
 }  // namespace crimson::zarr
