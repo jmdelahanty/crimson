@@ -217,6 +217,10 @@ struct LaunchOptions {
   std::string subject_mask_manifest_payload_digest;
   bool allow_selector_ineligible_subject_mask_run = false;
   bool require_subject_mask_v1 = false;
+  std::string subject_mask_presentation_cache_path;
+  std::string subject_mask_presentation_cache_run;
+  std::string subject_mask_presentation_cache_manifest_payload_digest;
+  bool subject_mask_contour_only = false;
   size_t video_buffer_capacity = 6;
   size_t stimulus_buffer_capacity = 6;
   AppleUiReferenceConfig ui_reference;
@@ -1060,6 +1064,22 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
       i += 2;
       continue;
     }
+    if (argument == "--benchmark-subject-mask-presentation-cache-v1") {
+      if (i + 3 >= argc) {
+        std::fprintf(stderr,
+                     "--benchmark-subject-mask-presentation-cache-v1 requires "
+                     "ARCHIVE RUN MANIFEST_PAYLOAD_DIGEST\n");
+        return std::nullopt;
+      }
+      options.subject_mask_presentation_cache_path = argv[i + 1];
+      options.subject_mask_presentation_cache_run = argv[i + 2];
+      options.subject_mask_presentation_cache_manifest_payload_digest =
+          argv[i + 3];
+      options.subject_mask_contour_only = true;
+      options.subject_masks_enabled = true;
+      i += 3;
+      continue;
+    }
     if (argument == "--benchmark-keypoint-v2-quality") {
       if (i + 3 >= argc) {
         std::fprintf(stderr,
@@ -1389,6 +1409,15 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
   }
   if (any_keypoint_v2_artifact && options.zarr_path.empty()) {
     std::fprintf(stderr, "Keypoint v2 benchmark options require --zarr PATH\n");
+    return std::nullopt;
+  }
+  if (!options.subject_mask_presentation_cache_path.empty() &&
+      (!options.require_subject_mask_v1 || options.subject_mask_run.empty() ||
+       options.subject_mask_manifest_payload_digest.empty() ||
+       !options.allow_selector_ineligible_subject_mask_run)) {
+    std::fprintf(stderr,
+                 "A subject-mask presentation cache requires an explicit "
+                 "--benchmark-subject-mask-v1 source run and digest\n");
     return std::nullopt;
   }
   if (!options.stimulus_video_path.empty() && options.zarr_path.empty()) {
@@ -2427,6 +2456,14 @@ int main(int argc, char **argv) {
       load_request.allow_selector_ineligible_subject_mask_run =
           options->allow_selector_ineligible_subject_mask_run;
       load_request.require_subject_mask_v1 = options->require_subject_mask_v1;
+      load_request.subject_mask_presentation_cache_path =
+          options->subject_mask_presentation_cache_path;
+      load_request.subject_mask_presentation_cache_run =
+          options->subject_mask_presentation_cache_run;
+      load_request.subject_mask_presentation_cache_manifest_payload_digest =
+          options->subject_mask_presentation_cache_manifest_payload_digest;
+      load_request.subject_mask_contour_only =
+          options->subject_mask_contour_only;
       load_request.camera_frame_count =
           static_cast<size_t>(video_playback.info().frame_count);
       load_request.subject_masks_enabled = options->subject_masks_enabled;
@@ -2917,7 +2954,8 @@ int main(int argc, char **argv) {
                     "[AppleSubjectMasks] group=%s run=%s crop_run=%s "
                     "storage=%s rows=%zu camera_frames=%zu components=%zu "
                     "mask=%zux%zu chunk_rows=%zu strict_v1=%d "
-                    "offset_reads=%llu lookahead=12 cache=24\n",
+                    "contour_only=%d contour_cache_run=%s offset_reads=%llu "
+                    "lookahead=12 cache=24\n",
                     subject_mask_descriptor.source_group.c_str(),
                     subject_mask_descriptor.run_name.c_str(),
                     subject_mask_descriptor.source_crop_run.c_str(), storage,
@@ -2928,6 +2966,8 @@ int main(int argc, char **argv) {
                     subject_mask_descriptor.mask_height,
                     subject_mask_descriptor.storage_chunk_rows,
                     subject_mask_descriptor.strict_v1 ? 1 : 0,
+                    subject_mask_descriptor.contour_only ? 1 : 0,
+                    subject_mask_descriptor.presentation_cache_run.c_str(),
                     static_cast<unsigned long long>(
                         subject_mask_repository_metrics.frame_offset_reads));
               } else {
@@ -6335,7 +6375,9 @@ int main(int argc, char **argv) {
         "peak_pending=%zu max_resolve_ms=%.1f demand_chunks=%llu "
         "prefetched_chunks=%llu chunk_cache_hits=%llu prefetch_requests=%llu "
         "chunk_evictions=%llu chunk_failures=%llu peak_chunks=%zu "
-        "max_chunk_ms=%.1f error=%s\n",
+        "max_chunk_ms=%.1f dense_reads=%llu contour_reads=%llu "
+        "contour_source_bytes=%llu source_point_count_opens=%llu "
+        "source_point_count_reads=%llu error=%s\n",
         static_cast<unsigned long long>(subject_mask_overlay_presentations),
         static_cast<unsigned long long>(subject_mask_overlay_detections),
         static_cast<unsigned long long>(subject_mask_overlay_components),
@@ -6366,6 +6408,16 @@ int main(int argc, char **argv) {
             final_subject_mask_repository_metrics.chunk_load_failures),
         final_subject_mask_repository_metrics.peak_cached_chunks,
         final_subject_mask_repository_metrics.maximum_chunk_load_ms,
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.dense_mask_payload_reads),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.contour_payload_reads),
+        static_cast<unsigned long long>(
+            final_subject_mask_repository_metrics.contour_source_bytes_read),
+        static_cast<unsigned long long>(final_subject_mask_repository_metrics
+                                            .source_point_count_open_attempts),
+        static_cast<unsigned long long>(final_subject_mask_repository_metrics
+                                            .source_point_count_payload_reads),
         final_subject_mask_metrics.last_error.c_str());
     std::printf(
         "[AppleDataAccess] source=subject_masks phase=summary "

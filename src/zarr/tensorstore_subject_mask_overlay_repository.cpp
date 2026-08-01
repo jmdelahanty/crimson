@@ -32,6 +32,7 @@
 #include "data_access_cache.h"
 #include "zarr/archive_context_internal.h"
 #include "zarr/canonical_json.h"
+#include "zarr/subject_mask_sampled_contour_v1_contract.h"
 #include "zarr/subject_mask_v1_contract.h"
 #include "zarr/zarr_metadata_equivalence.h"
 
@@ -108,8 +109,8 @@ std::optional<json> MakeArraySpec(const ArchiveContext::Impl& archive,
 }
 
 template <typename T, size_t Rank>
-std::optional<ts::TensorStore<T, Rank>> OpenArray(
-    const ArchiveContext::Impl& archive, const std::string& path) {
+std::optional<ts::TensorStore<T, Rank>>
+OpenArray(const ArchiveContext::Impl &archive, const std::string &path) {
   const auto spec = MakeArraySpec(archive, path);
   if (!spec) {
     return std::nullopt;
@@ -123,8 +124,8 @@ std::optional<ts::TensorStore<T, Rank>> OpenArray(
   return *store;
 }
 
-std::optional<IntegerStore> OpenIntegerStore(
-    const ArchiveContext::Impl& archive, const std::string& path) {
+std::optional<IntegerStore>
+OpenIntegerStore(const ArchiveContext::Impl &archive, const std::string &path) {
   if (auto store = OpenArray<int64_t, 1>(archive, path)) {
     return IntegerStore{std::move(*store)};
   }
@@ -152,9 +153,9 @@ std::optional<IntegerStore> OpenIntegerStore(
   return std::nullopt;
 }
 
-std::optional<NumericMatrixStore> OpenNumericMatrixStore(
-    const ArchiveContext::Impl& archive, const std::string& path,
-    size_t minimum_columns) {
+std::optional<NumericMatrixStore>
+OpenNumericMatrixStore(const ArchiveContext::Impl &archive,
+                       const std::string &path, size_t minimum_columns) {
   if (auto store = OpenArray<double, 2>(archive, path);
       store &&
       store->domain().shape()[1] >= static_cast<ts::Index>(minimum_columns)) {
@@ -291,8 +292,7 @@ bool ReadNumericMatrixRange(const NumericMatrixStore& store, size_t first,
       store);
 }
 
-template <typename T>
-size_t ReadChunkRows(const ts::TensorStore<T, 4>& store) {
+template <typename T> size_t ReadChunkRows(const ts::TensorStore<T, 4> &store) {
   const auto layout = store.chunk_layout();
   if (!layout.ok()) {
     return 0;
@@ -581,8 +581,7 @@ struct LazyMappingSource {
         crop_offsets(std::move(crop_offsets_value)),
         subject_page_rows(std::max<size_t>(1, subject_page_rows_value)),
         crop_page_rows(std::max<size_t>(1, crop_page_rows_value)),
-        roi_width(roi_width_value),
-        roi_height(roi_height_value),
+        roi_width(roi_width_value), roi_height(roi_height_value),
         subject_pages({8ULL * 1024ULL * 1024ULL, 0, 128}),
         crop_pages({16ULL * 1024ULL * 1024ULL, 0, 32}) {}
 
@@ -646,8 +645,8 @@ bool ReadSampledContour(const ContourSource& source, size_t row,
     if (!valid.ok() || valid->rank() != 1 || valid->shape()[0] != 1) {
       return false;
     }
-    contour_valid =
-        *static_cast<const uint8_t*>(valid->byte_strided_origin_pointer()) != 0;
+    contour_valid = *static_cast<const uint8_t *>(
+                        valid->byte_strided_origin_pointer()) != 0;
   } else {
     auto valid_slice = SliceFirstDimension(source.sampled_valid_bool,
                                            static_cast<ts::Index>(row),
@@ -743,6 +742,9 @@ struct CachedMaskChunk {
   size_t first_row = 0;
   std::vector<CachedMaskRow> rows;
   uint64_t source_bytes_read = 0;
+  uint64_t contour_source_bytes_read = 0;
+  uint64_t dense_mask_payload_reads = 0;
+  uint64_t contour_payload_reads = 0;
   uint64_t retained_bytes = 0;
   double read_ms = 0.0;
   double convert_ms = 0.0;
@@ -774,17 +776,16 @@ class TensorStoreSubjectMaskOverlayRepository final
       std::vector<uint8_t> available_channels,
       ts::TensorStore<uint8_t, 4> dense, ts::TensorStore<uint8_t, 4> bitpacked,
       std::vector<RleSource> rle, std::vector<ContourSource> contours,
+      bool read_mask_pixels,
       SubjectMaskOverlayRepositoryMetrics opening_metrics,
       std::chrono::steady_clock::time_point open_started)
-      : descriptor_(std::move(descriptor)),
-        rows_(std::move(rows)),
+      : descriptor_(std::move(descriptor)), rows_(std::move(rows)),
         frame_row_offsets_(std::move(frame_row_offsets)),
         lazy_mapping_(std::move(lazy_mapping)),
         available_channels_(std::move(available_channels)),
-        dense_(std::move(dense)),
-        bitpacked_(std::move(bitpacked)),
-        rle_(std::move(rle)),
-        contours_(std::move(contours)),
+        dense_(std::move(dense)), bitpacked_(std::move(bitpacked)),
+        rle_(std::move(rle)), contours_(std::move(contours)),
+        read_mask_pixels_(read_mask_pixels),
         metrics_(std::move(opening_metrics)) {
     if (lazy_mapping_) {
       metrics_.lazy_mapping = true;
@@ -815,7 +816,24 @@ class TensorStoreSubjectMaskOverlayRepository final
       metrics_.metadata_retained_bytes +=
           VectorCapacityBytes(source.ragged_len);
     }
-    if (descriptor_.storage == SubjectMaskStorage::Dense) {
+    if (!read_mask_pixels_) {
+      chunk_rows_ = 0;
+      for (const auto &source : contours_) {
+        if (source.kind != ContourKind::Sampled) {
+          continue;
+        }
+        const auto layout = source.sampled_points.chunk_layout();
+        if (!layout.ok()) {
+          continue;
+        }
+        const auto shape = layout->read_chunk_shape();
+        if (!shape.empty() && shape[0] > 0) {
+          const size_t rows = static_cast<size_t>(shape[0]);
+          chunk_rows_ = chunk_rows_ == 0 ? rows : std::min(chunk_rows_, rows);
+        }
+      }
+      cache_capacity_ = 8;
+    } else if (descriptor_.storage == SubjectMaskStorage::Dense) {
       chunk_rows_ = ReadChunkRows(dense_);
       cache_capacity_ = 3;
     } else if (descriptor_.storage == SubjectMaskStorage::Bitpacked) {
@@ -1163,8 +1181,8 @@ class TensorStoreSubjectMaskOverlayRepository final
         std::max(metrics_.maximum_mapping_page_read_ms, elapsed_ms);
   }
 
-  std::shared_ptr<const SubjectMappingPage> subjectMappingPageLocked(
-      size_t row, std::string* error) const {
+  std::shared_ptr<const SubjectMappingPage>
+  subjectMappingPageLocked(size_t row, std::string *error) const {
     const size_t page_id = row / lazy_mapping_->subject_page_rows;
     if (auto cached = lazy_mapping_->subject_pages.findAndTouch(page_id)) {
       std::lock_guard<std::mutex> metrics_lock(cache_mutex_);
@@ -1222,8 +1240,8 @@ class TensorStoreSubjectMaskOverlayRepository final
     return page;
   }
 
-  std::shared_ptr<const CropMappingPage> cropMappingPageLocked(
-      size_t row, std::string* error) const {
+  std::shared_ptr<const CropMappingPage>
+  cropMappingPageLocked(size_t row, std::string *error) const {
     const size_t page_id = row / lazy_mapping_->crop_page_rows;
     if (auto cached = lazy_mapping_->crop_pages.findAndTouch(page_id)) {
       std::lock_guard<std::mutex> metrics_lock(cache_mutex_);
@@ -1370,11 +1388,12 @@ class TensorStoreSubjectMaskOverlayRepository final
     return false;
   }
 
-  std::shared_ptr<const CachedMaskChunk> cachedChunkLocked(
-      size_t chunk_id, bool count_hit) const {
-    const auto found = std::find_if(
-        cache_.begin(), cache_.end(),
-        [&](const auto& entry) { return entry->chunk_id == chunk_id; });
+  std::shared_ptr<const CachedMaskChunk>
+  cachedChunkLocked(size_t chunk_id, bool count_hit) const {
+    const auto found =
+        std::find_if(cache_.begin(), cache_.end(), [&](const auto &entry) {
+          return entry->chunk_id == chunk_id;
+        });
     if (found == cache_.end()) {
       return nullptr;
     }
@@ -1389,9 +1408,8 @@ class TensorStoreSubjectMaskOverlayRepository final
     return result;
   }
 
-  std::shared_ptr<const CachedMaskChunk> ensureChunk(size_t chunk_id,
-                                                     bool prefetched,
-                                                     std::string* error) const {
+  std::shared_ptr<const CachedMaskChunk>
+  ensureChunk(size_t chunk_id, bool prefetched, std::string *error) const {
     {
       std::unique_lock<std::mutex> lock(cache_mutex_);
       while (true) {
@@ -1433,6 +1451,9 @@ class TensorStoreSubjectMaskOverlayRepository final
           ++metrics_.demand_chunk_loads;
         }
         metrics_.chunk_source_bytes_read += loaded->source_bytes_read;
+        metrics_.contour_source_bytes_read += loaded->contour_source_bytes_read;
+        metrics_.dense_mask_payload_reads += loaded->dense_mask_payload_reads;
+        metrics_.contour_payload_reads += loaded->contour_payload_reads;
         metrics_.chunk_retained_bytes_produced += loaded->retained_bytes;
         metrics_.chunk_read_ms += loaded->read_ms;
         metrics_.chunk_convert_ms += loaded->convert_ms;
@@ -1481,9 +1502,10 @@ class TensorStoreSubjectMaskOverlayRepository final
       row.components.resize(descriptor_.component_labels.size());
     }
 
-    bool loaded = false;
+    bool loaded = !read_mask_pixels_;
     const auto mask_started = std::chrono::steady_clock::now();
-    switch (descriptor_.storage) {
+    if (read_mask_pixels_) {
+      switch (descriptor_.storage) {
       case SubjectMaskStorage::Dense:
         loaded = loadDenseChunk(first, last, chunk.get(), error);
         break;
@@ -1493,6 +1515,7 @@ class TensorStoreSubjectMaskOverlayRepository final
       case SubjectMaskStorage::Rle:
         loaded = loadRleChunk(first, last, chunk.get(), error);
         break;
+      }
     }
     if (!loaded) {
       return nullptr;
@@ -1500,8 +1523,14 @@ class TensorStoreSubjectMaskOverlayRepository final
     chunk->convert_ms =
         std::max(0.0, ElapsedMilliseconds(mask_started) - chunk->read_ms);
     const auto contour_started = std::chrono::steady_clock::now();
-    loadContourChunk(first, last, chunk.get());
+    const bool contours_loaded = loadContourChunk(first, last, chunk.get());
     chunk->contour_load_ms = ElapsedMilliseconds(contour_started);
+    if (!contours_loaded && !read_mask_pixels_) {
+      if (error) {
+        *error = "Required sampled-contour cache payload read failed";
+      }
+      return nullptr;
+    }
     chunk->retained_bytes = CachedChunkRetainedBytes(*chunk);
     return chunk;
   }
@@ -1513,6 +1542,7 @@ class TensorStoreSubjectMaskOverlayRepository final
         ts::Read(SliceFirstDimension(dense_, static_cast<ts::Index>(first),
                                      static_cast<ts::Index>(last)))
             .result();
+    ++chunk->dense_mask_payload_reads;
     chunk->read_ms += ElapsedMilliseconds(read_started);
     if (!read.ok() || read->rank() != 4 ||
         static_cast<size_t>(read->shape()[0]) != last - first ||
@@ -1708,36 +1738,43 @@ class TensorStoreSubjectMaskOverlayRepository final
     return true;
   }
 
-  void loadContourChunk(size_t first, size_t last,
+  bool loadContourChunk(size_t first, size_t last,
                         CachedMaskChunk* chunk) const {
+    bool loaded = true;
     for (size_t channel = 0; channel < descriptor_.component_labels.size() &&
                              channel < contours_.size();
          ++channel) {
       const auto& source = contours_[channel];
       if (source.kind == ContourKind::Sampled) {
-        loadSampledContourChunk(source, first, last, channel, chunk);
+        loaded =
+            loadSampledContourChunk(source, first, last, channel, chunk) &&
+            loaded;
       } else if (source.kind == ContourKind::Ragged) {
         loadRaggedContourChunk(source, first, last, channel, chunk);
       }
     }
+    return loaded;
   }
 
-  void loadSampledContourChunk(const ContourSource& source, size_t first,
+  bool loadSampledContourChunk(const ContourSource& source, size_t first,
                                size_t last, size_t channel,
                                CachedMaskChunk* chunk) const {
     auto points = ts::Read(SliceFirstDimension(source.sampled_points,
                                                static_cast<ts::Index>(first),
                                                static_cast<ts::Index>(last)))
                       .result();
+    ++chunk->contour_payload_reads;
     if (!points.ok() || points->rank() != 3 ||
         static_cast<size_t>(points->shape()[0]) != last - first ||
         points->shape()[1] < 2 || points->shape()[2] < 2) {
-      return;
+      return false;
     }
-    chunk->source_bytes_read += ArrayPayloadBytes(*points, sizeof(float));
+    const uint64_t point_bytes = ArrayPayloadBytes(*points, sizeof(float));
+    chunk->source_bytes_read += point_bytes;
+    chunk->contour_source_bytes_read += point_bytes;
     const auto point_strides = points->byte_strides();
     if (point_strides.size() != 3) {
-      return;
+      return false;
     }
     const auto* point_origin = reinterpret_cast<const uint8_t*>(
         points->byte_strided_origin_pointer().get());
@@ -1748,11 +1785,14 @@ class TensorStoreSubjectMaskOverlayRepository final
                                                  static_cast<ts::Index>(first),
                                                  static_cast<ts::Index>(last)))
                         .result();
+      ++chunk->contour_payload_reads;
       if (!values.ok() || values->rank() != 1 ||
           static_cast<size_t>(values->shape()[0]) != valid.size()) {
-        return;
+        return false;
       }
-      chunk->source_bytes_read += ArrayPayloadBytes(*values, sizeof(uint8_t));
+      const uint64_t valid_bytes = ArrayPayloadBytes(*values, sizeof(uint8_t));
+      chunk->source_bytes_read += valid_bytes;
+      chunk->contour_source_bytes_read += valid_bytes;
       const auto strides = values->byte_strides();
       const auto* origin = reinterpret_cast<const uint8_t*>(
           values->byte_strided_origin_pointer().get());
@@ -1764,11 +1804,14 @@ class TensorStoreSubjectMaskOverlayRepository final
                                                  static_cast<ts::Index>(first),
                                                  static_cast<ts::Index>(last)))
                         .result();
+      ++chunk->contour_payload_reads;
       if (!values.ok() || values->rank() != 1 ||
           static_cast<size_t>(values->shape()[0]) != valid.size()) {
-        return;
+        return false;
       }
-      chunk->source_bytes_read += ArrayPayloadBytes(*values, sizeof(bool));
+      const uint64_t valid_bytes = ArrayPayloadBytes(*values, sizeof(bool));
+      chunk->source_bytes_read += valid_bytes;
+      chunk->contour_source_bytes_read += valid_bytes;
       const auto strides = values->byte_strides();
       const auto* origin = reinterpret_cast<const uint8_t*>(
           values->byte_strided_origin_pointer().get());
@@ -1799,6 +1842,7 @@ class TensorStoreSubjectMaskOverlayRepository final
         }
       }
     }
+    return true;
   }
 
   void loadRaggedContourChunk(const ContourSource& source, size_t first,
@@ -1951,6 +1995,7 @@ class TensorStoreSubjectMaskOverlayRepository final
   ts::TensorStore<uint8_t, 4> bitpacked_;
   std::vector<RleSource> rle_;
   std::vector<ContourSource> contours_;
+  bool read_mask_pixels_ = true;
   size_t chunk_rows_ = 1;
   size_t chunk_count_ = 0;
   size_t cache_capacity_ = 3;
@@ -2101,10 +2146,247 @@ bool OpenExactArray(const ArchiveContext::Impl& archive, const json& root,
   return true;
 }
 
+bool NormalizeSampledContourCacheGroup(json *metadata, bool run_group) {
+  if (!NormalizeStrictGroup(metadata, {}, false)) {
+    return false;
+  }
+  if (!run_group) {
+    return true;
+  }
+  auto attributes = metadata->find("attributes");
+  if (attributes == metadata->end() || !attributes->is_object()) {
+    return false;
+  }
+  constexpr std::array<std::string_view, 11> kRedacted = {
+      "run_manifest",
+      "status",
+      "palette_run_completion_status",
+      "palette_run_completed_at_utc",
+      "palette_run_failed_at_utc",
+      "palette_run_error",
+      "atomic_publication_owner_uuid",
+      "atomic_publication_tombstone",
+      "cluster_output_staging",
+      "publication_status",
+      "subject_mask_bundle_selector_eligible"};
+  for (const auto key : kRedacted) {
+    attributes->erase(std::string(key));
+  }
+  return true;
+}
+
+bool ValidateSampledContourArrayPhysicalMetadata(
+    const json &metadata,
+    const SubjectMaskSampledContourV1ArrayDeclaration &declaration) {
+  if (metadata.value("zarr_format", 0) != 3 ||
+      metadata.value("node_type", "") != "array" ||
+      metadata.contains("consolidated_metadata") ||
+      metadata.value("data_type", "") != declaration.dtype ||
+      !metadata.contains("shape") ||
+      metadata.at("shape").get<std::vector<size_t>>() != declaration.shape ||
+      !metadata.contains("codecs") || !metadata.at("codecs").is_array() ||
+      metadata.at("codecs").size() != 1 ||
+      metadata.at("codecs")[0].value("name", "") != "sharding_indexed") {
+    return false;
+  }
+  const auto &sharding = metadata.at("codecs")[0].at("configuration");
+  const size_t element_bytes = declaration.dtype == "int32" ? 4 : 1;
+  const size_t row_bytes = declaration.field == "points_xy"
+                               ? declaration.sample_count * 2 * sizeof(float)
+                               : element_bytes;
+  const size_t inner_rows = 131072 / row_bytes;
+  const size_t maximum_outer_rows = 8388608 / row_bytes;
+  const size_t logical_rows = declaration.shape.front();
+  const size_t inner_chunks = (logical_rows + inner_rows - 1) / inner_rows;
+  const size_t chunks_per_shard = std::min(
+      inner_chunks, std::max<size_t>(1, maximum_outer_rows / inner_rows));
+  const size_t outer_rows = inner_rows * chunks_per_shard;
+  std::vector<size_t> expected_inner = declaration.shape;
+  std::vector<size_t> expected_outer = declaration.shape;
+  expected_inner[0] = inner_rows;
+  expected_outer[0] = outer_rows;
+  if (!metadata.contains("chunk_grid") ||
+      metadata.at("chunk_grid").value("name", "") != "regular" ||
+      metadata.at("chunk_grid")
+              .at("configuration")
+              .at("chunk_shape")
+              .get<std::vector<size_t>>() != expected_outer ||
+      sharding.at("chunk_shape").get<std::vector<size_t>>() != expected_inner ||
+      sharding.value("index_location", "") != "end" ||
+      !sharding.contains("codecs") || sharding.at("codecs").size() != 2 ||
+      sharding.at("codecs")[0].value("name", "") != "bytes" ||
+      sharding.at("codecs")[1].value("name", "") != "zstd" ||
+      sharding.at("codecs")[1].at("configuration").value("level", -1) != 0 ||
+      sharding.at("codecs")[1].at("configuration").value("checksum", true) ||
+      !sharding.contains("index_codecs") ||
+      sharding.at("index_codecs").size() != 2 ||
+      sharding.at("index_codecs")[0].value("name", "") != "bytes" ||
+      sharding.at("index_codecs")[0].at("configuration").value("endian", "") !=
+          "little" ||
+      sharding.at("index_codecs")[1].value("name", "") != "crc32c") {
+    return false;
+  }
+  const auto &attributes = metadata.at("attributes");
+  return attributes.value("benchmark_only", false) &&
+         !attributes.value("selector_eligible", true) &&
+         attributes.value("artifact_class", "") ==
+             "subject_mask_derived_presentation_cache" &&
+         attributes.value("authority", "") == "derived_from_dense_masks_roi" &&
+         !attributes.value("authoritative_pixels", true) &&
+         attributes.value("cache_kind", "") == "sampled_contours" &&
+         attributes.value("component", "") == declaration.component &&
+         attributes.value("field", "") == declaration.field &&
+         attributes.value("storage_profile_id", "") ==
+             "subject_mask_presentation_candidate_v1" &&
+         attributes.value("codec_profile_id", "") == "zstd_fast_v1" &&
+         attributes.value("write_mode", "") == "immutable";
+}
+
+bool ValidateSampledContourCacheMetadata(
+    const ArchiveContext::Impl &archive, const std::string &run_base,
+    const SubjectMaskSampledContourV1Summary &summary, json *root_output,
+    std::string *error_message) {
+  try {
+    auto root = internal::ReadArchiveJson(archive, "zarr.json");
+    if (!root || root->value("zarr_format", 0) != 3 ||
+        root->value("node_type", "") != "group" ||
+        !root->contains("consolidated_metadata") ||
+        root->at("consolidated_metadata").value("kind", "") != "inline" ||
+        root->at("consolidated_metadata").value("must_understand", true)) {
+      internal::SetArchiveError(
+          error_message,
+          "Sampled-contour cache lacks exact inline Zarr v3 metadata");
+      return false;
+    }
+    json declarations = json::object();
+    std::unordered_set<std::string> expected_paths;
+    std::vector<std::string> groups = {"", "components"};
+    for (size_t index = 0; index < summary.component_labels.size(); ++index) {
+      const std::string component =
+          "components/" + summary.component_labels[index];
+      groups.push_back(component);
+      groups.push_back(component + "/sampled_contours");
+    }
+    for (const auto &relative : groups) {
+      const std::string path =
+          relative.empty() ? run_base : run_base + "/" + relative;
+      expected_paths.insert(path);
+      const auto direct =
+          internal::ReadArchiveJson(archive, path + "/zarr.json");
+      const auto *consolidated = ConsolidatedEntry(*root, path);
+      if (!direct || !consolidated ||
+          !internal::EquivalentDirectAndConsolidatedZarrNode(*direct,
+                                                             *consolidated)) {
+        internal::SetArchiveError(
+            error_message, "Sampled-contour group metadata differs: " + path);
+        return false;
+      }
+      if (relative.find("/sampled_contours") != std::string::npos) {
+        const auto &attributes = direct->at("attributes");
+        const std::string component =
+            relative.substr(std::string("components/").size(),
+                            relative.rfind("/sampled_contours") -
+                                std::string("components/").size());
+        const auto label = std::find(summary.component_labels.begin(),
+                                     summary.component_labels.end(), component);
+        const size_t index = static_cast<size_t>(
+            std::distance(summary.component_labels.begin(), label));
+        if (label == summary.component_labels.end() ||
+            attributes.value("schema_id", "") !=
+                "sampled_component_contours_v1" ||
+            attributes.value("coordinate_space", "") != "roi_pixels" ||
+            attributes.value("point_order", "") != "xy" ||
+            attributes.value("source_component", "") != component ||
+            attributes.value("source_mask_run", "") != summary.source_run_id ||
+            attributes.value("sample_count", size_t{0}) !=
+                summary.component_sample_counts[index] ||
+            attributes.value("surface_role", "") !=
+                "canonical_derived_display_cache" ||
+            attributes.value("authoritative_pixels", true)) {
+          internal::SetArchiveError(
+              error_message,
+              "Sampled-contour component group semantics differ: " + path);
+          return false;
+        }
+      }
+      json normalized = *direct;
+      if (!NormalizeSampledContourCacheGroup(&normalized, relative.empty())) {
+        internal::SetArchiveError(error_message,
+                                  "Sampled-contour group is not canonical");
+        return false;
+      }
+      declarations[relative] = std::move(normalized);
+    }
+    for (const auto &declaration : summary.arrays) {
+      const std::string path = run_base + "/" + declaration.path;
+      expected_paths.insert(path);
+      const auto direct =
+          internal::ReadArchiveJson(archive, path + "/zarr.json");
+      const auto *consolidated = ConsolidatedEntry(*root, path);
+      if (!direct || !consolidated ||
+          !internal::EquivalentDirectAndConsolidatedZarrNode(*direct,
+                                                             *consolidated) ||
+          !ValidateSampledContourArrayPhysicalMetadata(*direct, declaration)) {
+        internal::SetArchiveError(
+            error_message, "Invalid sampled-contour array metadata: " + path);
+        return false;
+      }
+      declarations[declaration.path] = *direct;
+    }
+    const auto &all = root->at("consolidated_metadata").at("metadata");
+    const std::string prefix = run_base + "/";
+    for (auto item = all.begin(); item != all.end(); ++item) {
+      if ((item.key() == run_base || item.key().rfind(prefix, 0) == 0) &&
+          expected_paths.find(item.key()) == expected_paths.end()) {
+        internal::SetArchiveError(error_message,
+                                  "Unexpected sampled-contour cache node: " +
+                                      item.key());
+        return false;
+      }
+    }
+    if (CanonicalJsonSha256(declarations) != summary.metadata_digest) {
+      internal::SetArchiveError(
+          error_message,
+          "Sampled-contour metadata declaration digest mismatch");
+      return false;
+    }
+    *root_output = std::move(*root);
+    return true;
+  } catch (const json::exception &) {
+    internal::SetArchiveError(
+        error_message,
+        "Sampled-contour direct/consolidated metadata is malformed");
+    return false;
+  }
+}
+
+bool OpenExactSampledContourCache(
+    const ArchiveContext::Impl &archive, const std::string &run_base,
+    const json &root, const SubjectMaskSampledContourV1Summary &summary,
+    std::vector<ContourSource> *contours, std::string *error_message) {
+  contours->clear();
+  contours->reserve(summary.component_labels.size());
+  for (size_t index = 0; index < summary.component_labels.size(); ++index) {
+    const std::string base = run_base + "/components/" +
+                             summary.component_labels[index] +
+                             "/sampled_contours";
+    ContourSource source;
+    source.kind = ContourKind::Sampled;
+    if (!OpenExactArray(archive, root, base + "/valid",
+                        &source.sampled_valid_bool, error_message) ||
+        !OpenExactArray(archive, root, base + "/points_xy",
+                        &source.sampled_points, error_message)) {
+      return false;
+    }
+    source.sampled_point_count = summary.component_sample_counts[index];
+    contours->push_back(std::move(source));
+  }
+  return true;
+}
+
 template <typename T>
-bool ReadExactVector(const ts::TensorStore<T, 1>& store,
-                     std::vector<T>* output, std::string* error_message,
-                     const std::string& path) {
+bool ReadExactVector(const ts::TensorStore<T, 1> &store, std::vector<T> *output,
+                     std::string *error_message, const std::string &path) {
   auto read = ts::Read(store).result();
   if (!read.ok() || read->rank() != 1 || read->byte_strides().size() != 1) {
     internal::SetArchiveError(
@@ -2142,8 +2424,8 @@ bool ReadExactBoolVector(const ts::TensorStore<bool, 1>& store,
       read->byte_strided_origin_pointer().get());
   for (size_t index = 0; index < count; ++index) {
     (*output)[index] =
-        *reinterpret_cast<const bool*>(
-            origin + static_cast<ts::Index>(index) * read->byte_strides()[0])
+        *reinterpret_cast<const bool *>(origin + static_cast<ts::Index>(index) *
+                                                     read->byte_strides()[0])
             ? 1
             : 0;
   }
@@ -2208,8 +2490,8 @@ bool ValidateStrictMetadata(const ArchiveContext::Impl &archive,
 
     json declarations = json::object();
     json normalized_group = *direct_group;
-    if (!NormalizeStrictGroup(&normalized_group,
-                              summary.metadata_digest_scope, true)) {
+    if (!NormalizeStrictGroup(&normalized_group, summary.metadata_digest_scope,
+                              true)) {
       internal::SetArchiveError(error_message,
                                 "Subject-mask v1 run group is not canonical");
       return false;
@@ -2286,6 +2568,7 @@ OpenStrictSubjectMaskV1(const ArchiveContext::Impl &archive,
                         const std::string &run_name,
                         const std::string &run_base, const json &run_attributes,
                         const SubjectMaskOverlayOpenOptions &options,
+                        const ArchiveContext::Impl *presentation_cache_archive,
                         std::chrono::steady_clock::time_point open_started,
                         std::string *error_message) {
   const auto manifest = run_attributes.find("run_manifest");
@@ -2318,6 +2601,63 @@ OpenStrictSubjectMaskV1(const ArchiveContext::Impl &archive,
     return nullptr;
   }
   opening_metrics.catalog_ms = ElapsedMilliseconds(catalog_started);
+
+  std::vector<ContourSource> presentation_contours;
+  SubjectMaskSampledContourV1Summary cache_summary;
+  if (options.presentation_cache_archive) {
+    if (!options.allow_selector_ineligible ||
+        options.presentation_cache_run.empty() ||
+        options.expected_presentation_cache_manifest_payload_digest.empty() ||
+        presentation_cache_archive == nullptr) {
+      internal::SetArchiveError(
+          error_message,
+          "Sampled-contour cache requires an explicit selector-ineligible "
+          "run and manifest digest");
+      return nullptr;
+    }
+    std::string cache_run = options.presentation_cache_run;
+    constexpr std::string_view cache_group = "subject_mask_cache_runs";
+    if (cache_run.rfind(std::string(cache_group) + "/", 0) == 0) {
+      cache_run.erase(0, cache_group.size() + 1);
+    }
+    if (!ValidRunName(cache_run)) {
+      internal::SetArchiveError(error_message,
+                                "Sampled-contour cache run id is invalid");
+      return nullptr;
+    }
+    const std::string cache_base = std::string(cache_group) + "/" + cache_run;
+    const auto &cache_archive = *presentation_cache_archive;
+    const auto cache_attributes =
+        internal::ReadArchiveAttributes(cache_archive, cache_base);
+    if (!cache_attributes || !cache_attributes->contains("run_manifest") ||
+        !ValidateSubjectMaskSampledContourV1Manifest(
+            cache_attributes->at("run_manifest"), cache_run, *manifest, summary,
+            &cache_summary, error_message) ||
+        cache_summary.payload_digest !=
+            options.expected_presentation_cache_manifest_payload_digest) {
+      if (error_message && error_message->empty()) {
+        *error_message =
+            "Sampled-contour cache manifest digest does not match request";
+      }
+      return nullptr;
+    }
+    json cache_root;
+    if (!ValidateSampledContourCacheMetadata(cache_archive, cache_base,
+                                             cache_summary, &cache_root,
+                                             error_message) ||
+        !OpenExactSampledContourCache(cache_archive, cache_base, cache_root,
+                                      cache_summary, &presentation_contours,
+                                      error_message)) {
+      return nullptr;
+    }
+  } else if (!options.presentation_cache_run.empty() ||
+             !options.expected_presentation_cache_manifest_payload_digest
+                  .empty() ||
+             options.contour_only) {
+    internal::SetArchiveError(error_message,
+                              "Sampled-contour cache request is incomplete");
+    return nullptr;
+  }
 
   ts::TensorStore<int64_t, 1> source_crop_rows_store;
   ts::TensorStore<uint64_t, 1> instance_keys_store;
@@ -2379,8 +2719,7 @@ OpenStrictSubjectMaskV1(const ArchiveContext::Impl &archive,
   opening_metrics.frame_offset_reads = 1;
   opening_metrics.frame_index_initialize_ms = opening_metrics.mapping_read_ms;
   opening_metrics.frame_index_rows_read = offsets.size();
-  opening_metrics.frame_index_source_bytes =
-      offsets.size() * sizeof(int64_t);
+  opening_metrics.frame_index_source_bytes = offsets.size() * sizeof(int64_t);
   opening_metrics.frame_index_retained_bytes =
       offsets.capacity() * sizeof(int64_t);
 
@@ -2391,8 +2730,8 @@ OpenStrictSubjectMaskV1(const ArchiveContext::Impl &archive,
       placements.size() != summary.row_count * 4 ||
       available.size() != summary.channel_count || offsets.front() != 0 ||
       offsets.back() != static_cast<int64_t>(summary.row_count)) {
-    internal::SetArchiveError(error_message,
-                              "Subject-mask v1 retained mapping shape mismatch");
+    internal::SetArchiveError(
+        error_message, "Subject-mask v1 retained mapping shape mismatch");
     return nullptr;
   }
   if (!ValidateSubjectMaskV1FrameIndex(offsets, frames, summary.frame_count,
@@ -2408,9 +2747,9 @@ OpenStrictSubjectMaskV1(const ArchiveContext::Impl &archive,
     const float y = placements[row * 4 + 1];
     const float width = placements[row * 4 + 2];
     const float height = placements[row * 4 + 3];
-    if (source_crop_rows[row] < 0 ||
-        !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(width) ||
-        !std::isfinite(height) || width <= 0.0f || height <= 0.0f) {
+    if (source_crop_rows[row] < 0 || !std::isfinite(x) || !std::isfinite(y) ||
+        !std::isfinite(width) || !std::isfinite(height) || width <= 0.0f ||
+        height <= 0.0f) {
       internal::SetArchiveError(
           error_message,
           "Subject-mask v1 contains invalid identity or placement data");
@@ -2433,6 +2772,14 @@ OpenStrictSubjectMaskV1(const ArchiveContext::Impl &archive,
   descriptor.mask_height = summary.mask_height;
   descriptor.strict_v1 = true;
   descriptor.run_manifest_payload_digest = summary.payload_digest;
+  descriptor.contour_only = options.contour_only;
+  if (options.presentation_cache_archive) {
+    descriptor.presentation_cache_archive =
+        options.presentation_cache_archive->rootPath().string();
+    descriptor.presentation_cache_run = cache_summary.run_id;
+    descriptor.presentation_cache_manifest_payload_digest =
+        cache_summary.payload_digest;
+  }
   if (descriptor.mask_width >
       std::numeric_limits<uint32_t>::max() / descriptor.mask_height) {
     internal::SetArchiveError(
@@ -2455,7 +2802,8 @@ OpenStrictSubjectMaskV1(const ArchiveContext::Impl &archive,
       std::move(descriptor), std::move(rows), std::move(offsets), nullptr,
       std::move(available), std::move(masks_store),
       ts::TensorStore<uint8_t, 4>{}, std::vector<RleSource>{},
-      std::vector<ContourSource>{}, std::move(opening_metrics), open_started);
+      std::move(presentation_contours), !options.contour_only,
+      std::move(opening_metrics), open_started);
 }
 
 }  // namespace
@@ -2497,8 +2845,13 @@ std::unique_ptr<SubjectMaskOverlayRepository> OpenSubjectMaskOverlayRepository(
       manifest->value("schema_id", "") ==
           "palette.subject_mask_core.run_manifest";
   if (strict_v1) {
+    const ArchiveContext::Impl *presentation_cache_archive =
+        options.presentation_cache_archive
+            ? options.presentation_cache_archive->impl_.get()
+            : nullptr;
     return OpenStrictSubjectMaskV1(impl, run_name, run_base, *run_attributes,
-                                   options, open_started, error_message);
+                                   options, presentation_cache_archive,
+                                   open_started, error_message);
   }
   if (options.require_strict_v1) {
     internal::SetArchiveError(
@@ -2878,15 +3231,15 @@ std::unique_ptr<SubjectMaskOverlayRepository> OpenSubjectMaskOverlayRepository(
 
   return std::make_unique<TensorStoreSubjectMaskOverlayRepository>(
       std::move(descriptor), std::move(rows), std::vector<int64_t>{},
-      std::move(lazy_mapping),
-      std::move(available), std::move(dense), std::move(bitpacked),
-      std::move(rle), std::move(contours), std::move(opening_metrics),
-      open_started);
+      std::move(lazy_mapping), std::move(available), std::move(dense),
+      std::move(bitpacked), std::move(rle), std::move(contours), true,
+      std::move(opening_metrics), open_started);
 }
 
-std::unique_ptr<SubjectMaskOverlayRepository> OpenSubjectMaskOverlayRepository(
-    const std::shared_ptr<ArchiveContext>& archive,
-    const std::string& requested_run, std::string* error_message) {
+std::unique_ptr<SubjectMaskOverlayRepository>
+OpenSubjectMaskOverlayRepository(const std::shared_ptr<ArchiveContext> &archive,
+                                 const std::string &requested_run,
+                                 std::string *error_message) {
   SubjectMaskOverlayOpenOptions options;
   options.requested_run = requested_run;
   return OpenSubjectMaskOverlayRepository(archive, options, error_message);

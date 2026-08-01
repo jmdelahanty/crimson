@@ -33,6 +33,10 @@ struct SubjectMaskOverlayDescriptor {
   size_t storage_chunk_rows = 0;
   bool strict_v1 = false;
   std::string run_manifest_payload_digest;
+  bool contour_only = false;
+  std::string presentation_cache_archive;
+  std::string presentation_cache_run;
+  std::string presentation_cache_manifest_payload_digest;
 };
 
 struct SubjectMaskOverlayRepositoryMetrics {
@@ -70,6 +74,11 @@ struct SubjectMaskOverlayRepositoryMetrics {
   uint64_t frame_offset_reads = 0;
   uint64_t derived_metric_payload_reads = 0;
   uint64_t roi_image_open_attempts = 0;
+  uint64_t dense_mask_payload_reads = 0;
+  uint64_t contour_payload_reads = 0;
+  uint64_t contour_source_bytes_read = 0;
+  uint64_t source_point_count_open_attempts = 0;
+  uint64_t source_point_count_payload_reads = 0;
   uint64_t demand_chunk_loads = 0;
   uint64_t prefetched_chunk_loads = 0;
   uint64_t chunk_cache_hits = 0;

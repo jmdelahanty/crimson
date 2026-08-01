@@ -7,9 +7,12 @@
 #include <string>
 
 int main(int argc, char **argv) {
-  if (argc < 3 || argc > 5 || (argc == 5 && argv[3][0] == '\0')) {
+  if ((argc < 3 || argc > 5) && argc != 8) {
     std::cerr << "Usage: " << argv[0]
-              << " ARCHIVE.zarr CAMERA_FRAME [RUN [MANIFEST_PAYLOAD_DIGEST]]\n";
+              << " ARCHIVE.zarr CAMERA_FRAME [RUN [MANIFEST_PAYLOAD_DIGEST]]\n"
+              << "       " << argv[0]
+              << " ARCHIVE.zarr CAMERA_FRAME RUN MANIFEST_PAYLOAD_DIGEST "
+                 "CACHE.zarr CACHE_RUN CACHE_MANIFEST_PAYLOAD_DIGEST\n";
     return 2;
   }
   int64_t frame = -1;
@@ -32,12 +35,23 @@ int main(int argc, char **argv) {
   }
   const auto repository_open_start = std::chrono::steady_clock::now();
   std::unique_ptr<crimson::zarr::SubjectMaskOverlayRepository> repository;
-  if (argc == 5) {
+  if (argc == 5 || argc == 8) {
     crimson::zarr::SubjectMaskOverlayOpenOptions options;
     options.requested_run = argv[3];
     options.expected_manifest_payload_digest = argv[4];
     options.allow_selector_ineligible = true;
     options.require_strict_v1 = true;
+    if (argc == 8) {
+      options.presentation_cache_archive =
+          crimson::zarr::ArchiveContext::Open(argv[5], &error);
+      if (!options.presentation_cache_archive) {
+        std::cerr << error << '\n';
+        return 1;
+      }
+      options.presentation_cache_run = argv[6];
+      options.expected_presentation_cache_manifest_payload_digest = argv[7];
+      options.contour_only = true;
+    }
     repository = crimson::zarr::OpenSubjectMaskOverlayRepository(
         archive, options, &error);
   } else {
@@ -95,6 +109,8 @@ int main(int argc, char **argv) {
       << " chunk_rows=" << descriptor.storage_chunk_rows
       << " strict_v1=" << (descriptor.strict_v1 ? 1 : 0)
       << " frame_offset_reads=" << metrics.frame_offset_reads
+      << " contour_only=" << (descriptor.contour_only ? 1 : 0)
+      << " presentation_cache_run=" << descriptor.presentation_cache_run
       << " lazy_mapping=" << (metrics.lazy_mapping ? 1 : 0)
       << " cache_pool_bytes=" << archive->cachePoolBytes()
       << " archive_open_ms=" << archive_open_ms
@@ -142,6 +158,13 @@ int main(int argc, char **argv) {
       << " cached_chunks=" << metrics.cached_chunks
       << " peak_chunks=" << metrics.peak_cached_chunks
       << " source_bytes=" << metrics.chunk_source_bytes_read
+      << " contour_source_bytes=" << metrics.contour_source_bytes_read
+      << " dense_mask_payload_reads=" << metrics.dense_mask_payload_reads
+      << " contour_payload_reads=" << metrics.contour_payload_reads
+      << " source_point_count_open_attempts="
+      << metrics.source_point_count_open_attempts
+      << " source_point_count_payload_reads="
+      << metrics.source_point_count_payload_reads
       << " retained_chunk_bytes=" << metrics.chunk_retained_bytes_produced
       << " cached_chunk_bytes=" << metrics.cached_payload_bytes
       << " peak_chunk_bytes=" << metrics.peak_cached_payload_bytes

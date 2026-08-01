@@ -70,6 +70,34 @@ bool loadRepository(AppleAnalysisRepositoryBundle *bundle,
   return true;
 }
 
+bool openSubjectMasks(
+    const AppleAnalysisRepositoryLoadRequest &request,
+    const std::shared_ptr<crimson::zarr::ArchiveContext> &archive,
+    std::unique_ptr<crimson::zarr::SubjectMaskOverlayRepository> *repository,
+    std::string *error) {
+  crimson::zarr::SubjectMaskOverlayOpenOptions options;
+  options.requested_run = request.subject_mask_run;
+  options.expected_manifest_payload_digest =
+      request.subject_mask_manifest_payload_digest;
+  options.allow_selector_ineligible =
+      request.allow_selector_ineligible_subject_mask_run;
+  options.require_strict_v1 = request.require_subject_mask_v1;
+  options.presentation_cache_run = request.subject_mask_presentation_cache_run;
+  options.expected_presentation_cache_manifest_payload_digest =
+      request.subject_mask_presentation_cache_manifest_payload_digest;
+  options.contour_only = request.subject_mask_contour_only;
+  if (!request.subject_mask_presentation_cache_path.empty()) {
+    options.presentation_cache_archive = crimson::zarr::ArchiveContext::Open(
+        request.subject_mask_presentation_cache_path, error);
+    if (!options.presentation_cache_archive) {
+      return false;
+    }
+  }
+  *repository =
+      crimson::zarr::OpenSubjectMaskOverlayRepository(archive, options, error);
+  return *repository != nullptr;
+}
+
 size_t productCount(const AppleAnalysisRepositoryLoadRequest &request) {
   size_t result = 6;
   result +=
@@ -266,16 +294,8 @@ openBundle(const AppleAnalysisRepositoryLoadRequest &request,
   if (request.subject_masks_enabled &&
       !loadRepository(&bundle, "subject_masks", "Loading mask metadata",
                       control, [&](std::string *error) {
-                        bundle.subject_masks =
-                            crimson::zarr::OpenSubjectMaskOverlayRepository(
-                                bundle.archive,
-                                crimson::zarr::SubjectMaskOverlayOpenOptions{
-                                    request.subject_mask_run,
-                                    request.subject_mask_manifest_payload_digest,
-                                    request.allow_selector_ineligible_subject_mask_run,
-                                    request.require_subject_mask_v1},
-                                error);
-                        return bundle.subject_masks != nullptr;
+                        return openSubjectMasks(request, bundle.archive,
+                                                &bundle.subject_masks, error);
                       })) {
     bundle.total_elapsed_ms = elapsedMilliseconds(all_started);
     return bundle;
@@ -613,22 +633,11 @@ bool AppleAnalysisRepositoryLoader::start(
         });
     if (request.subject_masks_enabled) {
       addProduct("subject_masks", "subject_masks", "Loading mask metadata",
-                 [archive, subject_mask_run = request.subject_mask_run,
-                  manifest_digest =
-                      request.subject_mask_manifest_payload_digest,
-                  allow_selector_ineligible =
-                      request.allow_selector_ineligible_subject_mask_run,
-                  require_strict_v1 = request.require_subject_mask_v1](
-                     AppleAnalysisRepositoryBundle *event,
-                           std::string *open_error) {
-                   event->subject_masks =
-                       crimson::zarr::OpenSubjectMaskOverlayRepository(
-                           archive,
-                           crimson::zarr::SubjectMaskOverlayOpenOptions{
-                               subject_mask_run, manifest_digest,
-                               allow_selector_ineligible, require_strict_v1},
-                           open_error);
-                   return event->subject_masks != nullptr;
+                 [archive, subject_mask_request =
+                               request](AppleAnalysisRepositoryBundle *event,
+                                        std::string *open_error) {
+                   return openSubjectMasks(subject_mask_request, archive,
+                                           &event->subject_masks, open_error);
                  });
     }
     if (request.subject_shapes_enabled) {

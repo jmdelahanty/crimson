@@ -51,6 +51,9 @@ struct Options {
   std::filesystem::path store;
   std::string run;
   std::string manifest_payload_digest;
+  std::filesystem::path presentation_cache_store;
+  std::string presentation_cache_run;
+  std::string presentation_cache_manifest_payload_digest;
   std::filesystem::path workload_path;
   std::filesystem::path output_path;
   size_t repetition = 0;
@@ -99,6 +102,7 @@ struct FrameMeasurement {
   double elapsed_ms = 0.0;
   size_t observations = 0;
   uint64_t foreground_pixels = 0;
+  uint64_t contour_points = 0;
 };
 
 class Digest {
@@ -321,6 +325,12 @@ std::optional<Options> parseOptions(int argc, char **argv, std::string *error) {
       options.run = value;
     } else if (argument == "--manifest-payload-digest") {
       options.manifest_payload_digest = value;
+    } else if (argument == "--presentation-cache-store") {
+      options.presentation_cache_store = value;
+    } else if (argument == "--presentation-cache-run") {
+      options.presentation_cache_run = value;
+    } else if (argument == "--presentation-cache-manifest-payload-digest") {
+      options.presentation_cache_manifest_payload_digest = value;
     } else if (argument == "--workload") {
       options.workload_path = value;
     } else if (argument == "--output") {
@@ -348,6 +358,16 @@ std::optional<Options> parseOptions(int argc, char **argv, std::string *error) {
       options.frame_width <= 0 || options.frame_height <= 0) {
     *error = "Explicit store, run, digest, frame size, workload, and output "
              "are required";
+    return std::nullopt;
+  }
+  const size_t presentation_cache_fields =
+      static_cast<size_t>(!options.presentation_cache_store.empty()) +
+      static_cast<size_t>(!options.presentation_cache_run.empty()) +
+      static_cast<size_t>(
+          !options.presentation_cache_manifest_payload_digest.empty());
+  if (presentation_cache_fields != 0 && presentation_cache_fields != 3) {
+    *error = "Presentation-cache store, run, and manifest digest must be "
+             "specified together";
     return std::nullopt;
   }
   return options;
@@ -498,6 +518,13 @@ json repositoryMetricsJson(
       {"metadata_retained_bytes", value.metadata_retained_bytes},
       {"derived_metric_payload_reads", value.derived_metric_payload_reads},
       {"roi_image_open_attempts", value.roi_image_open_attempts},
+      {"dense_mask_payload_reads", value.dense_mask_payload_reads},
+      {"contour_payload_reads", value.contour_payload_reads},
+      {"contour_source_bytes", value.contour_source_bytes_read},
+      {"source_point_count_open_attempts",
+       value.source_point_count_open_attempts},
+      {"source_point_count_payload_reads",
+       value.source_point_count_payload_reads},
       {"demand_chunk_loads", value.demand_chunk_loads},
       {"prefetched_chunk_loads", value.prefetched_chunk_loads},
       {"chunk_cache_hits", value.chunk_cache_hits},
@@ -518,7 +545,8 @@ json repositoryMetricsJson(
 }
 
 void digestResolution(const crimson::zarr::SubjectMaskOverlayResolution &value,
-                      Digest *digest, uint64_t *foreground_pixels) {
+                      Digest *digest, uint64_t *foreground_pixels,
+                      uint64_t *contour_points) {
   digest->scalar(value.camera_frame);
   digest->scalar(static_cast<uint8_t>(value.status));
   digest->scalar(value.detections.size());
@@ -543,6 +571,12 @@ void digestResolution(const crimson::zarr::SubjectMaskOverlayResolution &value,
         *foreground_pixels += static_cast<uint64_t>(
             std::count_if(component.mask->begin(), component.mask->end(),
                           [](uint8_t pixel) { return pixel != 0; }));
+      }
+      digest->scalar(component.contour.size());
+      *contour_points += component.contour.size();
+      for (const auto &point : component.contour) {
+        digest->scalar(point.x);
+        digest->scalar(point.y);
       }
     }
   }
@@ -573,12 +607,15 @@ FrameMeasurement readFrame(SubjectMaskOverlayBuffer *buffer, int64_t frame,
             "Subject-mask frame contains invalid crop placement");
   }
   uint64_t foreground_pixels = 0;
-  digestResolution(*value, digest, &foreground_pixels);
-  return {elapsedMs(started), value->detections.size(), foreground_pixels};
+  uint64_t contour_points = 0;
+  digestResolution(*value, digest, &foreground_pixels, &contour_points);
+  return {elapsedMs(started), value->detections.size(), foreground_pixels,
+          contour_points};
 }
 
 json latencySummary(const std::vector<double> &latencies, size_t observations,
-                    uint64_t foreground_pixels, const std::string &digest,
+                    uint64_t foreground_pixels, uint64_t contour_points,
+                    const std::string &digest,
                     const TensorStoreMetrics &physical) {
   double total = 0.0;
   for (double value : latencies) {
@@ -587,6 +624,7 @@ json latencySummary(const std::vector<double> &latencies, size_t observations,
   return {{"requests", latencies.size()},
           {"observations", observations},
           {"foreground_pixels", foreground_pixels},
+          {"contour_points", contour_points},
           {"elapsed_ms", total},
           {"average_ms", latencies.empty() ? 0.0 : total / latencies.size()},
           {"p50_ms", percentile(latencies, 0.50)},
@@ -606,6 +644,7 @@ json runRandomPass(SubjectMaskOverlayBuffer *buffer,
   std::vector<double> latencies;
   size_t observations = 0;
   uint64_t foreground_pixels = 0;
+  uint64_t contour_points = 0;
   Digest digest;
   for (int64_t frame : frames) {
     const auto measured =
@@ -613,9 +652,11 @@ json runRandomPass(SubjectMaskOverlayBuffer *buffer,
     latencies.push_back(measured.elapsed_ms);
     observations += measured.observations;
     foreground_pixels += measured.foreground_pixels;
+    contour_points += measured.contour_points;
   }
   return latencySummary(latencies, observations, foreground_pixels,
-                        digest.finish(), snapshotMetrics() - physical_before);
+                        contour_points, digest.finish(),
+                        snapshotMetrics() - physical_before);
 }
 
 json runTraversal(SubjectMaskOverlayBuffer *buffer,
@@ -627,6 +668,7 @@ json runTraversal(SubjectMaskOverlayBuffer *buffer,
   std::vector<double> page_latencies;
   size_t observations = 0;
   uint64_t foreground_pixels = 0;
+  uint64_t contour_points = 0;
   Digest digest;
   auto page_started = Clock::now();
   for (size_t index = 0; index < frames.size(); ++index) {
@@ -635,6 +677,7 @@ json runTraversal(SubjectMaskOverlayBuffer *buffer,
     frame_latencies.push_back(measured.elapsed_ms);
     observations += measured.observations;
     foreground_pixels += measured.foreground_pixels;
+    contour_points += measured.contour_points;
     if ((index + 1) % page_frames == 0 || index + 1 == frames.size()) {
       page_latencies.push_back(elapsedMs(page_started));
       page_started = Clock::now();
@@ -651,9 +694,9 @@ json runTraversal(SubjectMaskOverlayBuffer *buffer,
       ++missed_pages;
     }
   }
-  json result =
-      latencySummary(frame_latencies, observations, foreground_pixels,
-                     digest.finish(), snapshotMetrics() - physical_before);
+  json result = latencySummary(frame_latencies, observations, foreground_pixels,
+                               contour_points, digest.finish(),
+                               snapshotMetrics() - physical_before);
   result["page_frames"] = page_frames;
   result["page_count"] = page_latencies.size();
   result["warmup_pages"] = warmup_pages;
@@ -732,12 +775,32 @@ json execute(const Options &options, const Workload &workload) {
           "Could not open archive " + options.store.string() + ": " + error);
   const double archive_open_ms = elapsedMs(archive_started);
 
+  std::shared_ptr<crimson::zarr::ArchiveContext> presentation_cache_archive;
+  double presentation_cache_archive_open_ms = 0.0;
+  if (!options.presentation_cache_store.empty()) {
+    const auto cache_started = Clock::now();
+    presentation_cache_archive = crimson::zarr::ArchiveContext::Open(
+        options.presentation_cache_store, &error);
+    require(presentation_cache_archive != nullptr,
+            "Could not open presentation-cache archive " +
+                options.presentation_cache_store.string() + ": " + error);
+    presentation_cache_archive_open_ms = elapsedMs(cache_started);
+  }
+
   const auto repository_started = Clock::now();
+  crimson::zarr::SubjectMaskOverlayOpenOptions repository_options;
+  repository_options.requested_run = options.run;
+  repository_options.expected_manifest_payload_digest =
+      options.manifest_payload_digest;
+  repository_options.allow_selector_ineligible = true;
+  repository_options.require_strict_v1 = true;
+  repository_options.presentation_cache_archive = presentation_cache_archive;
+  repository_options.presentation_cache_run = options.presentation_cache_run;
+  repository_options.expected_presentation_cache_manifest_payload_digest =
+      options.presentation_cache_manifest_payload_digest;
+  repository_options.contour_only = presentation_cache_archive != nullptr;
   auto repository = crimson::zarr::OpenSubjectMaskOverlayRepository(
-      archive,
-      crimson::zarr::SubjectMaskOverlayOpenOptions{
-          options.run, options.manifest_payload_digest, true, true},
-      &error);
+      archive, repository_options, &error);
   require(repository != nullptr,
           "Subject-mask repository open failed: " + error);
   const double repository_open_ms = elapsedMs(repository_started);
@@ -751,7 +814,9 @@ json execute(const Options &options, const Workload &workload) {
               open_metrics.frame_offset_reads == 1 &&
               open_metrics.fallback_frame_index_builds == 0 &&
               open_metrics.derived_metric_payload_reads == 0 &&
-              open_metrics.roi_image_open_attempts == 0,
+              open_metrics.roi_image_open_attempts == 0 &&
+              descriptor.contour_only ==
+                  (presentation_cache_archive != nullptr),
           "Subject-mask exact-schema readiness contract was not established");
 
   auto scheduler = std::make_shared<crimson::data::DataAccessScheduler>(
@@ -786,6 +851,7 @@ json execute(const Options &options, const Workload &workload) {
       {"elapsed_ms", first.elapsed_ms},
       {"observations", first.observations},
       {"foreground_pixels", first.foreground_pixels},
+      {"contour_points", first.contour_points},
       {"logical_digest", first_digest.finish()},
       {"physical", physicalJson(snapshotMetrics() - first_physical_before)}};
   const double readiness_ms = elapsedMs(process_started);
@@ -844,6 +910,15 @@ json execute(const Options &options, const Workload &workload) {
        "derived_metric_payload_reads");
   gate(repository_metrics.roi_image_open_attempts == 0,
        "roi_image_open_attempts");
+  if (descriptor.contour_only) {
+    gate(repository_metrics.dense_mask_payload_reads == 0,
+         "dense_mask_payload_reads");
+    gate(repository_metrics.contour_payload_reads > 0, "contour_payload_reads");
+    gate(repository_metrics.source_point_count_open_attempts == 0,
+         "source_point_count_open_attempts");
+    gate(repository_metrics.source_point_count_payload_reads == 0,
+         "source_point_count_payload_reads");
+  }
   gate(repository_metrics.chunk_load_failures == 0 &&
            buffer_metrics.failed_frames == 0,
        "read_failures");
@@ -861,6 +936,12 @@ json execute(const Options &options, const Workload &workload) {
           {"store", options.store.string()},
           {"selected_run", descriptor.run_name},
           {"manifest_payload_digest", descriptor.run_manifest_payload_digest},
+          {"presentation_mode",
+           descriptor.contour_only ? "sampled_contours" : "dense_masks"},
+          {"presentation_cache_store", descriptor.presentation_cache_archive},
+          {"presentation_cache_run", descriptor.presentation_cache_run},
+          {"presentation_cache_manifest_payload_digest",
+           descriptor.presentation_cache_manifest_payload_digest},
           {"frame_size", {options.frame_width, options.frame_height}},
           {"frame_count", descriptor.camera_frame_count},
           {"row_count", descriptor.row_count},
@@ -869,6 +950,8 @@ json execute(const Options &options, const Workload &workload) {
           {"storage_chunk_rows", descriptor.storage_chunk_rows},
           {"cache_pool_bytes", archive->cachePoolBytes()},
           {"archive_open_ms", archive_open_ms},
+          {"presentation_cache_archive_open_ms",
+           presentation_cache_archive_open_ms},
           {"repository_open_ms", repository_open_ms},
           {"first_presentation_readiness_ms", readiness_ms},
           {"first_presentation", first_json},
@@ -920,7 +1003,9 @@ void usage(const char *program) {
   std::cerr << "Usage: " << program
             << " --store PATH --run RUN --manifest-payload-digest SHA256 "
                "--frame-size WIDTHxHEIGHT --workload JSON --repetition N "
-               "--output JSON\n"
+               "--output JSON [--presentation-cache-store PATH "
+               "--presentation-cache-run RUN "
+               "--presentation-cache-manifest-payload-digest SHA256]\n"
             << "       " << program << " --self-test\n";
 }
 
