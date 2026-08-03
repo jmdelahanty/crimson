@@ -1,8 +1,10 @@
 #include "gui/frame_debug_status_panel.h"
 
+#include "gui/frame_debug_detection_adapter.h"
 #include "gui/frame_debug_eye_angle_tab.h"
 #include "gui/frame_debug_subject_mask_tab.h"
 #include "gui/frame_debug_tail_kinematics_tab.h"
+#include "gui/frame_inspect_detection_module.h"
 
 #include "imgui.h"
 
@@ -234,94 +236,21 @@ void drawDatasetSelectionSection(const FrameDebugWindowContext& context,
     }
 }
 
-void drawDetectionSummarySection(const FrameDebugWindowContext& context) {
-    if (!context.zarr_loader.hasDetectionData()) {
-        ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.25f, 1.0f),
-                           "[Zarr] Detection runs: unavailable (metadata/stimulus-only mode)");
-        return;
-    }
-
-    if (!context.zarr_boxes.empty()) {
-        if (context.frame_is_interpolated &&
-            context.dataset_has_synthetic_boxes) {
-            ImGui::TextColored(
-                ImVec4(1.0f, 0.7f, 0.0f, 1.0f),
-                "[Zarr] Detections: Found %zu (INTERPOLATED)",
-                context.zarr_boxes.size());
-        } else if (context.frame_is_interpolated &&
-                   !context.dataset_has_synthetic_boxes) {
-            ImGui::TextColored(
-                ImVec4(0.5f, 1.0f, 0.5f, 1.0f),
-                "[Zarr] Detections: Found %zu (original, interp available)",
-                context.zarr_boxes.size());
-        } else {
-            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f),
-                               "[Zarr] Detections: Found %zu",
-                               context.zarr_boxes.size());
-        }
-
-        if (context.detection_details != nullptr &&
-            context.zarr_loader.hasScores() &&
-            !context.detection_details->scores.empty()) {
-            float max_score = *std::max_element(
-                context.detection_details->scores.begin(),
-                context.detection_details->scores.end());
-            ImGui::Text("Max confidence: %.2f", max_score);
-        }
-
-        if (context.zarr_loader.hasClassIDs()) {
-            ImGui::Text("Has class IDs: Yes");
-        }
-
-        if (context.zarr_loader.hasHeadingData()) {
-            if (!context.dataset_has_synthetic_boxes &&
-                context.detection_details != nullptr &&
-                !context.detection_details->heading_valid.empty()) {
-                size_t valid_headings =
-                    std::count(context.detection_details->heading_valid.begin(),
-                               context.detection_details->heading_valid.end(),
-                               1);
-                ImGui::Text("Heading vectors: %zu valid", valid_headings);
-            } else {
-                ImGui::Text(
-                    "Heading vectors available (use original detections)");
-            }
-        }
-
-        if (context.zarr_loader.hasInterpolation()) {
-            ImGui::Text("Interpolation available: Yes");
-            ImGui::Text("Current frame interpolated: %s",
-                        context.frame_is_interpolated ? "Yes" : "No");
-            ImGui::Text("Using interpolation: %s",
-                        context.dataset_has_synthetic_boxes ? "Yes" : "No");
-            ImGui::Text("Method: %s",
-                        context.zarr_loader.getInterpolationMethod().c_str());
-        }
-    } else {
-        if (context.zarr_loader.hasInterpolation() &&
-            context.frame_is_interpolated) {
-            ImGui::TextColored(
-                ImVec4(1.0f, 0.5f, 0.0f, 1.0f),
-                "[Zarr] Detections: None (frame is interpolated)");
-        } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f),
-                               "[Zarr] Detections: None");
-        }
-    }
-}
-
 void drawDetectionTab(
     const FrameDebugWindowContext& context,
     FrameDebugWindowResult& result,
     const ZarrDetectionLoader::ReviewArtifactSummary* artifact) {
     drawDatasetSelectionSection(context, result);
+    crimson::gui::DetectionInspectModuleState presentation_state;
+    const auto presentation =
+        makeFrameDebugDetectionInspectPresentation(context);
+    crimson::gui::drawFrameInspectDetectionModule(presentation,
+                                                   presentation_state);
     if (artifact != nullptr || context.zarr_loader.hasDetectionData()) {
         ImGui::Separator();
         ImGui::Text("Detection Review:");
         drawReviewArtifactBlock(artifact);
     }
-    ImGui::Separator();
-    drawDetectionSummarySection(context);
 }
 
 void drawKeypointTab(

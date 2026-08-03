@@ -9,6 +9,7 @@
 #include "detection_quality_timeline.h"
 #include "eye_angle_timeline.h"
 #include "gui/camera_view_transport_controls.h"
+#include "gui/frame_inspect_detection_module.h"
 #include "gui/quality_timeline_window.h"
 #include "keypoint_quality_timeline.h"
 #include "platform/macos/apple_workspace_layout.h"
@@ -158,9 +159,8 @@ using AppleDetectionQualityLoadState = crimson::gui::QualityTimelineLoadState;
 using AppleDetectionQualityTimelineControls =
     crimson::gui::DetectionQualityTimelineControls;
 
-struct AppleDetectionInspectState {
-  uint64_t selected_instance_key = 0;
-};
+using AppleDetectionInspectState =
+    crimson::gui::DetectionInspectModuleState;
 
 using AppleKeypointQualityLoadState = crimson::gui::QualityTimelineLoadState;
 using AppleKeypointQualityTimelineControls =

@@ -1,6 +1,8 @@
 #include "apple_video_viewer_ui.h"
 
 #include "IconsForkAwesome.h"
+#include "gui/canonical_detection_inspect_adapter.h"
+#include "gui/frame_inspect_detection_module.h"
 #include "gui/frame_inspect_window.h"
 #include "imgui.h"
 #include "implot.h"
@@ -2075,96 +2077,36 @@ void drawAppleFrameInspectWindow(
 
   composition.modules.push_back(
       {crimson::workspace::FrameInspectView::Detect, "Detect", true, [&]() {
-         ImGui::TextUnformatted("Read-only presentation");
-         if (detection_descriptor == nullptr ||
-             !detection_descriptor->ready()) {
-           ImGui::TextDisabled(
-               "No canonical or refined detection run is open.");
-         } else {
-           ImGui::Text(
-               "Surface: %s",
-               detection_descriptor->surface_kind ==
-                       crimson::zarr::DetectionSurfaceKind::RefinedSnapshotV1
-                   ? "Refined snapshot"
-                   : "Canonical raw");
-           ImGui::TextWrapped("Run: %s",
-                              detection_descriptor->run_name.c_str());
-           const bool frame_matches =
-               detection_frame != nullptr &&
-               detection_frame->camera_frame == stats.presented_frame;
-           if (!frame_matches) {
-             ImGui::TextDisabled(
-                 "Loading detections for the presented frame...");
-           } else {
-             ImGui::Text("Frame %lld  |  %zu observations",
-                         static_cast<long long>(detection_frame->camera_frame),
-                         detection_frame->detections.size());
-             if (detection_frame->detections.empty()) {
-               ImGui::TextDisabled("No detections in this frame.");
-             } else if (ImGui::BeginTable(
-                            "##current-detections", 4,
-                            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                                ImGuiTableFlags_SizingStretchProp)) {
-               ImGui::TableSetupColumn("Observation");
-               ImGui::TableSetupColumn("Confidence");
-               ImGui::TableSetupColumn("Class");
-               ImGui::TableSetupColumn("Source");
-               ImGui::TableHeadersRow();
-               for (size_t index = 0;
-                    index < detection_frame->detections.size(); ++index) {
-                 const auto &detection = detection_frame->detections[index];
-                 ImGui::TableNextRow();
-                 ImGui::TableSetColumnIndex(0);
-                 ImGui::PushID(static_cast<int>(index));
-                 const bool selected =
-                     detection.instance_key != 0 &&
-                     detection_inspect->selected_instance_key ==
-                         detection.instance_key;
-                 const std::string label = "#" + std::to_string(index + 1);
-                 if (ImGui::Selectable(label.c_str(), selected) &&
-                     detection.instance_key != 0) {
-                   detection_inspect->selected_instance_key =
-                       detection.instance_key;
-                 }
-                 ImGui::PopID();
-                 ImGui::TableSetColumnIndex(1);
-                 if (detection.score_valid) {
-                   ImGui::Text("%.3f", detection.score);
-                 } else {
-                   ImGui::TextDisabled("n/a");
-                 }
-                 ImGui::TableSetColumnIndex(2);
-                 ImGui::Text("%d", detection.class_id);
-                 ImGui::TableSetColumnIndex(3);
-                 ImGui::TextUnformatted(detection.source_kind_code == 3
-                                            ? "Manual"
-                                        : detection.manual_edit ? "Edited raw"
-                                                                : "Raw");
-               }
-               ImGui::EndTable();
-             }
-           }
-           if (ImGui::Button(ICON_FK_LINE_CHART " Detection Timeline")) {
-             *detection_quality_timeline = true;
-           }
-           ImGui::SameLine();
-           switch (detection_quality_state) {
-           case AppleDetectionQualityLoadState::Closed:
-             ImGui::TextDisabled("not loaded");
-             break;
-           case AppleDetectionQualityLoadState::Opening:
-             ImGui::TextDisabled("opening...");
-             break;
-           case AppleDetectionQualityLoadState::Ready:
-             ImGui::TextDisabled("ready");
-             break;
-           case AppleDetectionQualityLoadState::Failed:
-             ImGui::TextDisabled("unavailable");
-             if (!detection_quality_error.empty()) {
-               showItemTooltip(detection_quality_error.c_str());
-             }
-             break;
-           }
+         auto detection_presentation =
+             crimson::gui::makeCanonicalDetectionInspectPresentation(
+                 detection_descriptor, detection_frame.get(),
+                 stats.presented_frame);
+         detection_presentation.timeline_visible =
+             detection_presentation.available;
+         detection_presentation.timeline_error = detection_quality_error;
+         switch (detection_quality_state) {
+         case AppleDetectionQualityLoadState::Closed:
+           detection_presentation.timeline_state =
+               crimson::gui::DetectionInspectTimelineState::Closed;
+           break;
+         case AppleDetectionQualityLoadState::Opening:
+           detection_presentation.timeline_state =
+               crimson::gui::DetectionInspectTimelineState::Opening;
+           break;
+         case AppleDetectionQualityLoadState::Ready:
+           detection_presentation.timeline_state =
+               crimson::gui::DetectionInspectTimelineState::Ready;
+           break;
+         case AppleDetectionQualityLoadState::Failed:
+           detection_presentation.timeline_state =
+               crimson::gui::DetectionInspectTimelineState::Failed;
+           break;
+         }
+         const auto detection_result =
+             crimson::gui::drawFrameInspectDetectionModule(
+                 detection_presentation, *detection_inspect);
+         if (detection_result.request_open_timeline) {
+           *detection_quality_timeline = true;
          }
          ImGui::Separator();
          bool bbox_editing_enabled = false;

@@ -88,6 +88,14 @@ workspace restore and programmatic navigation no longer require a Linux-only
 tab enum or conversion shim. Semantic ImGui coverage verifies that requested
 tabs remain stable and hidden modules are not rendered.
 
+The first feature module now uses that composition boundary. Detect has one
+backend-neutral presentation model and ImGui renderer for surface/run identity,
+frame readiness, complete observation rows, stable instance selection,
+confidence, class, source provenance, and quality-timeline status. The strict
+canonical/refined repository adapter and the Linux legacy-loader adapter are
+separate. Linux review, diagnostics, and bounding-box editing remain extension
+panels below the shared presentation rather than dependencies of it.
+
 ## Why This Exists
 
 `crimson` has already done useful mechanical splits, but the core architecture

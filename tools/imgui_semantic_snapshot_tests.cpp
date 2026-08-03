@@ -1,4 +1,6 @@
 #include "gui/camera_view_transport_controls.h"
+#include "gui/canonical_detection_inspect_adapter.h"
+#include "gui/frame_inspect_detection_module.h"
 #include "gui/frame_inspect_window.h"
 #include "gui/session_loading_modal.h"
 #include "imgui.h"
@@ -266,12 +268,136 @@ bool testFrameInspectWindowComposition() {
   return true;
 }
 
+bool testCanonicalDetectionInspectAdapter() {
+  crimson::zarr::CanonicalDetectionDescriptor descriptor;
+  descriptor.surface_kind =
+      crimson::zarr::DetectionSurfaceKind::RefinedSnapshotV1;
+  descriptor.run_name = "refined_fixture";
+  descriptor.camera_frame_count = 20;
+  descriptor.offset_read_calls = 1;
+
+  crimson::zarr::CanonicalDetectionFrame frame;
+  frame.camera_frame = 7;
+  crimson::zarr::CanonicalDetection raw;
+  raw.row_index = 10;
+  raw.instance_key = 101;
+  raw.source_kind_code = 1;
+  raw.score_valid = true;
+  raw.score = 0.95f;
+  raw.class_id = 2;
+  crimson::zarr::CanonicalDetection edited = raw;
+  edited.row_index = 11;
+  edited.instance_key = 102;
+  edited.score_valid = false;
+  edited.manual_edit = true;
+  edited.score = 0.0f;
+  edited.class_id = 3;
+  crimson::zarr::CanonicalDetection manual = raw;
+  manual.row_index = 12;
+  manual.instance_key = 103;
+  manual.source_kind_code = 3;
+  manual.score_valid = false;
+  manual.score = 0.0f;
+  manual.class_id = 4;
+  frame.detections = {raw, edited, manual};
+
+  const auto presentation =
+      crimson::gui::makeCanonicalDetectionInspectPresentation(
+          &descriptor, &frame, frame.camera_frame);
+  CHECK(presentation.available);
+  CHECK(presentation.frame_ready);
+  CHECK(presentation.surface_label == "Refined snapshot");
+  CHECK(presentation.run_name == "refined_fixture");
+  CHECK(presentation.observations.size() == 3);
+  CHECK(presentation.observations[0].selectable);
+  CHECK(presentation.observations[0].confidence_valid);
+  CHECK(presentation.observations[0].source_label == "Raw");
+  CHECK(!presentation.observations[1].confidence_valid);
+  CHECK(presentation.observations[1].source_label == "Edited raw");
+  CHECK(presentation.observations[2].source_label == "Manual");
+
+  const auto loading = crimson::gui::makeCanonicalDetectionInspectPresentation(
+      &descriptor, &frame, frame.camera_frame + 1);
+  CHECK(loading.available);
+  CHECK(!loading.frame_ready);
+  CHECK(loading.observations.empty());
+  return true;
+}
+
+bool testDetectionInspectModuleSnapshot() {
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO &io = ImGui::GetIO();
+  io.DisplaySize = ImVec2(800.0f, 600.0f);
+  io.DeltaTime = 1.0f / 60.0f;
+  unsigned char *pixels = nullptr;
+  int width = 0;
+  int height = 0;
+  io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+
+  crimson::gui::DetectionInspectPresentation presentation;
+  presentation.available = true;
+  presentation.surface_label = "Refined snapshot";
+  presentation.run_name = "refined_fixture";
+  presentation.frame_ready = true;
+  presentation.camera_frame = 7;
+  presentation.timeline_visible = true;
+  presentation.timeline_state =
+      crimson::gui::DetectionInspectTimelineState::Ready;
+  crimson::gui::DetectionInspectObservation observation;
+  observation.instance_key = 101;
+  observation.selectable = true;
+  observation.confidence = 0.95f;
+  observation.confidence_valid = true;
+  observation.class_id = 2;
+  observation.class_id_valid = true;
+  observation.source_label = "Raw";
+  presentation.observations = {observation};
+  crimson::gui::DetectionInspectModuleState state;
+  state.selected_instance_key = 101;
+
+  ImGui::NewFrame();
+  ImGui::Begin("Detection module fixture");
+  crimson::gui::drawFrameInspectDetectionModule(presentation, state);
+  ImGui::End();
+  ImGui::Render();
+
+  crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(), true);
+  crimson::ui::beginSemanticFrame(ImGui::GetCurrentContext());
+  ImGui::NewFrame();
+  ImGui::Begin("Detection module fixture");
+  const auto result =
+      crimson::gui::drawFrameInspectDetectionModule(presentation, state);
+  ImGui::End();
+  ImGui::Render();
+  const auto snapshot =
+      crimson::ui::finishSemanticFrame(ImGui::GetCurrentContext());
+
+  bool found_observation = false;
+  bool found_timeline = false;
+  for (const auto &item : snapshot.items) {
+    found_observation |= item.visible_label == "#1";
+    found_timeline |=
+        item.visible_label.find("Detection Timeline") != std::string::npos;
+  }
+  CHECK(found_observation);
+  CHECK(found_timeline);
+  CHECK(!result.request_open_timeline);
+  CHECK(state.selected_instance_key == 101);
+
+  crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(), false);
+  ImGui::DestroyContext();
+  return true;
+}
+
 } // namespace
 
 int main() {
   if (!testSemanticSnapshot() || !testSessionLoadingModalSnapshot() ||
       !testCameraTransportUses64BitFrameState() ||
-      !testFrameInspectWindowComposition()) {
+      !testFrameInspectWindowComposition() ||
+      !testCanonicalDetectionInspectAdapter() ||
+      !testDetectionInspectModuleSnapshot()) {
     return 1;
   }
   std::cout << "imgui_semantic_snapshot_tests: PASS\n";
