@@ -92,6 +92,23 @@ struct DataAccessQueue::Impl {
     metrics.pending_requests = pending.size();
     return cancelled;
   }
+
+  size_t preemptLowerPriorityActiveLocked(const DataRangeRequest &request) {
+    if (request.priority != RequestPriority::CurrentFrame) {
+      return 0;
+    }
+    size_t cancelled = 0;
+    for (const auto &item : active) {
+      if (item.second.request.source == request.source &&
+          item.second.request.priority != RequestPriority::CurrentFrame &&
+          !equivalentDataWork(item.second.request, request) &&
+          cancel(item.second)) {
+        ++cancelled;
+      }
+    }
+    metrics.cancelled_requests += cancelled;
+    return cancelled;
+  }
 };
 
 DataAccessQueue::DataAccessQueue(size_t capacity)
@@ -139,6 +156,8 @@ DataRequestSubmitOutcome DataAccessQueue::submit(DataRangeRequest request) {
       ++impl_->metrics.duplicates;
       outcome.status = DataRequestSubmitStatus::Duplicate;
     }
+    outcome.cancelled_requests +=
+        impl_->preemptLowerPriorityActiveLocked(request);
     return outcome;
   }
   const auto active_duplicate = std::find_if(
@@ -173,6 +192,8 @@ DataRequestSubmitOutcome DataAccessQueue::submit(DataRangeRequest request) {
     outcome.capacity_evictions = 1;
   }
 
+  outcome.cancelled_requests +=
+      impl_->preemptLowerPriorityActiveLocked(scheduled.request);
   outcome.status = DataRequestSubmitStatus::Accepted;
   outcome.sequence = scheduled.sequence;
   impl_->pending.push_back(std::move(scheduled));

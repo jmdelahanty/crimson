@@ -541,6 +541,72 @@ bool testCurrentFrameWorkerReservation() {
   return true;
 }
 
+bool testCurrentFramePreemptsLowerPrioritySameSource() {
+  using namespace crimson::data;
+  DataAccessScheduler scheduler(8, 2, 1, 1);
+  std::mutex mutex;
+  std::condition_variable condition;
+  bool speculative_started = false;
+  bool speculative_cancelled = false;
+  bool release_speculative = false;
+  bool current_started = false;
+
+  auto speculative = request(0, 127, RequestPriority::Speculative);
+  speculative.source = source("preempted");
+  CHECK(scheduler
+            .submit(std::move(speculative),
+                    [&](const ScheduledDataRequest &scheduled) {
+                      {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        speculative_started = true;
+                        condition.notify_all();
+                      }
+                      while (!scheduled.cancellation.cancelled()) {
+                        std::this_thread::sleep_for(
+                            std::chrono::milliseconds(1));
+                      }
+                      std::unique_lock<std::mutex> lock(mutex);
+                      speculative_cancelled = true;
+                      condition.notify_all();
+                      condition.wait(lock, [&] { return release_speculative; });
+                      return DataResultStatus::Stale;
+                    })
+            .accepted());
+  {
+    std::unique_lock<std::mutex> lock(mutex);
+    CHECK(condition.wait_for(lock, std::chrono::seconds(2),
+                             [&] { return speculative_started; }));
+  }
+
+  auto current = request(256, 383, RequestPriority::CurrentFrame);
+  current.source = source("preempted");
+  const auto outcome = scheduler.submit(
+      std::move(current), [&](const ScheduledDataRequest &) {
+        std::lock_guard<std::mutex> lock(mutex);
+        current_started = true;
+        condition.notify_all();
+        return DataResultStatus::Ready;
+      });
+  CHECK(outcome.accepted());
+  CHECK(outcome.cancelled_requests == 1);
+  {
+    std::unique_lock<std::mutex> lock(mutex);
+    CHECK(condition.wait_for(lock, std::chrono::seconds(2), [&] {
+      return speculative_cancelled && current_started;
+    }));
+    release_speculative = true;
+    condition.notify_all();
+  }
+
+  scheduler.waitUntilIdle();
+  const auto metrics = scheduler.metrics();
+  CHECK(metrics.queue.cancelled_requests == 1);
+  CHECK(metrics.queue.discarded_completions == 1);
+  CHECK(metrics.queue.peak_active_requests == 2);
+  scheduler.shutdown();
+  return true;
+}
+
 bool testSchedulerTimingTelemetry() {
   using namespace crimson::data;
   DataAccessScheduler scheduler(8, 1);
@@ -694,7 +760,9 @@ int main() {
       !testPriorityDeduplicationAndGenerationCancellation() ||
       !testBoundedDemandFirstQueue() || !testSharedWorkerScheduler() ||
       !testDemandReservationAndSourceIsolation() ||
-      !testCurrentFrameWorkerReservation() || !testSchedulerTimingTelemetry() ||
+      !testCurrentFrameWorkerReservation() ||
+      !testCurrentFramePreemptsLowerPrioritySameSource() ||
+      !testSchedulerTimingTelemetry() ||
       !testByteBudgetedWeightedLru()) {
     return 1;
   }
