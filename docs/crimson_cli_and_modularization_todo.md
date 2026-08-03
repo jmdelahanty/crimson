@@ -2,6 +2,11 @@
 
 Date anchored: 2026-02-09.
 
+Lifecycle: **archive-ready; superseded**. The unchecked boxes below are a
+historical plan, not the current repository state. The recording CLI and most
+mechanical splits landed; remaining architecture work is tracked in
+`crimson_app_architecture_refactor_todo.md`.
+
 ---
 
 ## Part A: CLI `--recording` Support

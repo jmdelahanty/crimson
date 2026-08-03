@@ -5,6 +5,9 @@ Date: 2026-07-16
 Status: complete for the Mac composition checkpoint. Windows build and runtime
 validation are deferred and are not inferred from the Mac or Linux results.
 
+Lifecycle: **archive-ready completed checkpoint**. Windows validation is
+tracked independently rather than as unfinished Phase 5L.2 work.
+
 ## Outcome
 
 The native Mac application now presents the maintained Crimson workspace as

@@ -2,6 +2,10 @@
 
 Date: 2026-07-16
 
+Lifecycle: **archive-ready historical baseline**. Phase 5L acceptance is
+complete for macOS and Linux/NVIDIA; Windows runtime evidence is tracked by the
+dedicated Windows validation documents.
+
 This inventory is the source and runtime baseline for Phase 5L workspace
 parity. It describes the maintained Linux/Windows `redgui` application, not
 the current Mac shell. `W` means stable playback or read-only behavior, `D`

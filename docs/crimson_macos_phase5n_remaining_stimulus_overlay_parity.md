@@ -6,6 +6,9 @@ Status: complete. The remaining camera-view stimulus event and moving-grating
 direction overlays now use one read-only, exact-frame contract on maintained
 OpenGL and native Mac Metal renderers.
 
+Lifecycle: **archive-ready completed checkpoint**. Preserve its acceptance
+evidence under `docs/reference/phase5n/` when the document is moved.
+
 ## Production Source and Alignment
 
 Both paths selected the current complete GoodCopBadCop stimulus source:

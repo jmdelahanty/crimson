@@ -2,6 +2,9 @@
 
 Date: 2026-07-16
 
+Lifecycle: **archive-ready completed checkpoint**. The portable workspace state
+is implemented and now maintained by source contracts and tests.
+
 Phase 5L.1 introduces the backend-neutral state needed to keep the maintained
 workspace rules consistent without moving playback, repositories, decode
 buffers, textures, or native windows out of their existing owners.

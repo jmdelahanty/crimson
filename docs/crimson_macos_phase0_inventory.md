@@ -2,6 +2,9 @@
 
 Date: 2026-07-12
 
+Lifecycle: **archive-ready historical baseline**. Keep this path until the
+README and port-roadmap links are migrated; it is not an active parity plan.
+
 This document records the baseline used for the first native Apple Silicon
 build slice. It is an inventory and validation contract, not a claim that the
 macOS application has production feature parity.

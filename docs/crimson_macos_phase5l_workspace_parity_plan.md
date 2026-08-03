@@ -2,6 +2,10 @@
 
 Date: 2026-07-16
 
+Lifecycle: **archive-ready completed plan**. Its macOS and Linux/NVIDIA
+checkpoints are closed; deferred Windows runtime validation now has a separate
+guide and validation record.
+
 Phase 5L moves workspace parity ahead of edit/write workflows. The current
 native Mac shell proves the Metal playback and read-only data paths, but its
 window composition, navigation, visual density, and control placement differ

@@ -92,8 +92,8 @@ directory prevents another configuration from replacing the executable used by
 CTest. The CTest suite contains a headless offscreen Metal/ImGui pixel test and
 a finite real-window GLFW/Cocoa presentation smoke. See
 [`docs/crimson_macos_phase0_inventory.md`](docs/crimson_macos_phase0_inventory.md)
-for the baseline, parity inventory, measured results, and NVIDIA validation
-commands.
+for the historical pre-port baseline, measured results, and NVIDIA validation
+commands. It is retained as evidence rather than an active parity plan.
 
 The backend-neutral frame metadata, surface lifetime, presentation handles, and
 portable selection tests introduced in Phase 2 are documented in

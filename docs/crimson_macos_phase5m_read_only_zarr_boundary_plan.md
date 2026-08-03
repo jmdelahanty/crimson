@@ -5,6 +5,9 @@ Date: 2026-07-17
 Status: complete on 2026-07-18. Phase 5M.0 through Phase 5M.4 and the full
 acceptance gate are complete.
 
+Lifecycle: **archive-ready completed plan**. The implementation contracts,
+tests, and `docs/reference/phase5m/` are the retained authorities.
+
 ## Purpose
 
 Phase 5M begins an incremental decomposition of `ZarrDetectionLoader` at a

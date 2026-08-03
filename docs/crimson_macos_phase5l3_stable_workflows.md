@@ -5,6 +5,9 @@ Date: 2026-07-17
 Status: complete on macOS and the isolated Linux/NVIDIA build. Windows build
 and runtime validation remain explicitly deferred.
 
+Lifecycle: **archive-ready completed checkpoint**. Windows validation is
+tracked independently rather than as unfinished Phase 5L.3 work.
+
 ## Outcome
 
 Phase 5L.3 wires the maintained stable playback and read-only workspace

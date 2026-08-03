@@ -2,6 +2,10 @@
 
 Date: 2026-07-17
 
+Lifecycle: **archive-ready completed checkpoint**. The accepted evidence stays
+under `docs/reference/phase5l/`; Windows runtime evidence remains a separate
+validation task.
+
 Phase 5L.4 closes the visual acceptance checkpoint for the maintained
 read-only workspace on macOS and Linux/NVIDIA. Windows runtime evidence remains
 explicitly deferred by the user; no Linux result is represented as Windows
