@@ -1,6 +1,6 @@
 # Subject-Mask Sampled-Contour V1 Consumer
 
-Date: 2026-08-01
+Date: 2026-08-03
 
 Status: selector-ineligible full-duration integration accepted; production
 selection and storage-profile promotion remain unchanged.
@@ -74,6 +74,12 @@ telemetry, TensorStore cache telemetry, and peak RSS. Set
 `CRIMSON_SUBJECT_MASK_CONTOUR_REPETITIONS=1` for a quick mounted checkpoint;
 the default follows the frozen five-repetition workload.
 
+The chunk loader issues every component's exact `points_xy` and `valid` read
+as a TensorStore future, forces all reads before waiting, and then decodes the
+completed arrays into the same immutable presentation chunk. Current-frame
+demand also cancels and overtakes lower-priority same-source scheduler work;
+current/current source isolation remains intact.
+
 Telemetry explicitly reports:
 
 - source offset reads and retained bytes;
@@ -83,21 +89,27 @@ Telemetry explicitly reports:
 - demand, prefetch, cache-hit, eviction, cancellation, and stale-result counts;
 - file reads, transferred bytes, latency percentiles, deadline misses, and RSS.
 
-## 2026-08-01 Mounted Checkpoint
+## 2026-08-03 Full-Duration Mounted Checkpoint
 
-One fresh-process Mac/VPN trial passed before the implementation checkpoint:
+Five fresh-process Mac/VPN trials passed from clean commit
+`f0d8bb23c8e5dad8eb6c6e626d8241f9bb485652`:
 
-- first presentation readiness: 2175.95 ms;
-- warm random-frame p95: 176.25 ms;
-- forward/reverse 70-frame page p95: 108.17 / 56.47 ms;
+- median first presentation readiness: 2931.79 ms;
+- median warm random-frame p95: 185.02 ms;
+- median forward/reverse 70-frame page p95: 154.98 / 214.77 ms;
+- maximum current-frame queue wait: 98.86 ms;
 - post-warmup deadline misses: 0;
-- rapid-seek final readiness: 153.16 ms;
+- median rapid-seek final readiness: 271.93 ms;
 - stale visible frames: 0;
-- peak RSS: 346,390,528 bytes;
-- process file bytes: 80,269,151;
+- median peak RSS: 338,034,688 bytes;
+- median process file bytes: 86,240,221;
 - source offset reads: 1;
 - dense-mask reads: 0;
 - `source_point_count` opens/reads: 0 / 0.
+
+The final aggregate SHA-256 is
+`1f943c287be74d9a460c4f8152daf8450f7b0fcc88fc4c330b0f11ac6c486229`.
+All five trials passed every frozen gate.
 
 The Metal view was visually accepted against the matching 22-clip recording
 index. This checkpoint establishes interoperability and consumer behavior; it
