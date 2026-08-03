@@ -622,6 +622,6 @@ Phase 5O is complete only when:
 - `docs/crimson_threading_architecture_notes.md`
 - `docs/crimson_subject_mask_sparse_index_storage_concept.md`
 - `docs/crimson_macos_phase5i_motion_tail_timelines.md`
-- `docs/crimson_macos_phase5m_read_only_zarr_boundary_plan.md`
+- `docs/archive/macos-port/phase5m/crimson_macos_phase5m_read_only_zarr_boundary_plan.md`
 - `docs/crimson_macos_phase5o0_data_access_characterization.md`
 - `docs/crimson_macos_phase5o1_portable_data_access_contract.md`

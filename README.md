@@ -91,7 +91,7 @@ The app bundle is written to
 directory prevents another configuration from replacing the executable used by
 CTest. The CTest suite contains a headless offscreen Metal/ImGui pixel test and
 a finite real-window GLFW/Cocoa presentation smoke. See
-[`docs/crimson_macos_phase0_inventory.md`](docs/crimson_macos_phase0_inventory.md)
+[`docs/archive/macos-port/phase0/crimson_macos_phase0_inventory.md`](docs/archive/macos-port/phase0/crimson_macos_phase0_inventory.md)
 for the historical pre-port baseline, measured results, and NVIDIA validation
 commands. It is retained as evidence rather than an active parity plan.
 

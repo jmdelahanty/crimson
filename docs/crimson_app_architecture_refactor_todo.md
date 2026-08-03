@@ -117,8 +117,8 @@ still has three god-object pressure points:
 - `src/zarr_loader.h` plus `src/zarr_loader*.cpp` still expose a single large
   "load everything" API surface even after file splitting.
 
-This doc supersedes the archive-ready
-`docs/crimson_cli_and_modularization_todo.md`. That historical plan
+This doc supersedes the archived
+`docs/archive/legacy-plans/crimson_cli_and_modularization_todo.md`. That historical plan
 intentionally left "AppState extraction from main()" out of scope; this doc
 tracks the larger architectural pass and is the active source of remaining
 work.

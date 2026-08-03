@@ -404,10 +404,10 @@ labels, defaults, ordering, and content bounds, region-based screenshot
 comparisons with documented masks/tolerances, stable workflow tests, Mac and
 NVIDIA builds, and interactive production smokes. It also requires evidence
 that no write repository was opened and no archive mutation occurred. The full
-plan is in `docs/crimson_macos_phase5l_workspace_parity_plan.md`.
+plan is in `docs/archive/macos-port/phase5l/crimson_macos_phase5l_workspace_parity_plan.md`.
 
 Phase 5L.0 source and Linux runtime evidence is recorded in
-`docs/crimson_macos_phase5l_workspace_inventory.md` and
+`docs/archive/macos-port/phase5l/crimson_macos_phase5l_workspace_inventory.md` and
 `docs/reference/phase5l/manifest.json`. The maintained Linux build now has a
 read-only exact-frame/panel/front-buffer hook and deterministic references for
 workspace, overlays, live crop, stimulus debug, and alternate eye analysis.
@@ -418,7 +418,7 @@ an explicit open gate because no real Windows host was available; Linux
 captures are not accepted as a substitute.
 
 Phase 5L.1 portable workspace state is complete and documented in
-`docs/crimson_macos_phase5l_portable_workspace_state.md`. The shared C++17
+`docs/archive/macos-port/phase5l/crimson_macos_phase5l_portable_workspace_state.md`. The shared C++17
 contract now owns capability-derived window submission, stable command
 enablement, source/representation/event selections, versioned restoration, and
 playback intent while existing clocks, repositories, decoder rings, and GPU
@@ -429,7 +429,7 @@ build/runtime validation is deliberately deferred until the new Windows laptop
 is used.
 
 Phase 5L.2 Mac workspace composition is complete and documented in
-`docs/crimson_macos_phase5l2_workspace_composition.md`. The Mac shell now
+`docs/archive/macos-port/phase5l/crimson_macos_phase5l2_workspace_composition.md`. The Mac shell now
 matches the maintained independent-window topology, Classic theme,
 Roboto/Fork Awesome typography, first-use role geometry, primary camera
 transport, paused buffer inspection, crop/stimulus presentation, read-only
@@ -440,7 +440,7 @@ smokes; the cumulative isolated NVIDIA build passed 24/24 tests and the
 authenticated 0:300 playback smoke. Windows remains explicitly deferred.
 
 Phase 5L.3 stable window and workflow coverage is complete and documented in
-`docs/crimson_macos_phase5l3_stable_workflows.md`. The Mac shell now wires the
+`docs/archive/macos-port/phase5l/crimson_macos_phase5l3_stable_workflows.md`. The Mac shell now wires the
 stable file/session, transport, camera, buffer inspection, Frame Inspect,
 crop/stimulus, timeline, diagnostics, help, error, and lifecycle workflows.
 Controls without stable read-only adapters and every mutation command remain
@@ -451,7 +451,7 @@ Windows remains explicitly deferred. Phase 5L.4 visual and cross-platform
 acceptance followed and is recorded below.
 
 Phase 5L.4 visual and cross-platform acceptance is complete and
-documented in `docs/crimson_macos_phase5l4_visual_acceptance.md`. Equivalent
+documented in `docs/archive/macos-port/phase5l/crimson_macos_phase5l4_visual_acceptance.md`. Equivalent
 Mac and isolated NVIDIA captures now share exact frames, logical dimensions,
 window roles, semantic labels, control order, and stable read-only markers.
 The deterministic comparator passes 46/46 structural and clean-camera raster
@@ -508,10 +508,10 @@ Gate:
 - no archive mutation, write schema, or unrelated loader migration occurs.
 
 The detailed plan is in
-`docs/crimson_macos_phase5m_read_only_zarr_boundary_plan.md`.
+`docs/archive/macos-port/phase5m/crimson_macos_phase5m_read_only_zarr_boundary_plan.md`.
 
 Phase 5M.0 responsibility and behavior inventory is complete and documented
-in `docs/crimson_macos_phase5m0_zarr_loader_inventory.md`. The actual legacy
+in `docs/archive/macos-port/phase5m/crimson_macos_phase5m0_zarr_loader_inventory.md`. The actual legacy
 loader now has synthetic characterization coverage for selection, schema,
 lookup, invalid samples, colors, and radial scaling; its 28-file direct-include
 baseline is enforced without admitting new Mac consumers. A production
@@ -523,7 +523,7 @@ NVIDIA build passed 28/28 tests and its authenticated 0:300 production smoke.
 That completed the Phase 5M.0 checkpoint.
 
 Phase 5M.1 portable polar contracts are complete and documented in
-`docs/crimson_macos_phase5m1_portable_polar_contract.md`. Backend-neutral
+`docs/archive/macos-port/phase5m/crimson_macos_phase5m1_portable_polar_contract.md`. Backend-neutral
 descriptor, exact-frame sample, point, provenance, availability, convention,
 color, and radial-scale types now sit behind an abstract read-only repository
 interface. Focused tests cover the production descriptor and frame values, all
@@ -538,7 +538,7 @@ helpers disable their fast-math options. Phase 5M.2 storage adapters are the
 next checkpoint; the full Phase 5M gate remains open.
 
 Phase 5M.2 polar storage adapters are complete and documented in
-`docs/crimson_macos_phase5m2_polar_storage_adapters.md`. The native path uses a
+`docs/archive/macos-port/phase5m/crimson_macos_phase5m2_polar_storage_adapters.md`. The native path uses a
 read-only TensorStore repository with bounded radial scanning, exact one-row
 matrix reads, and a bounded asynchronous lookahead/cache. The maintained path
 adapts `ZarrDetectionLoader` to the same portable descriptor and frame sample
@@ -558,7 +558,7 @@ shared scene and platform presentation is the next checkpoint; the full Phase
 5M gate remains open.
 
 Phase 5M.3 shared scene and platform presentation is complete and documented
-in `docs/crimson_macos_phase5m3_shared_polar_scene.md`. One backend-neutral
+in `docs/archive/macos-port/phase5m/crimson_macos_phase5m3_shared_polar_scene.md`. One backend-neutral
 scene now owns the inset's ordered background, rings, orientation, points,
 colors, labels, readout, opacity, sizing, and clipping semantics. The maintained
 camera view resolves portable samples through the legacy repository and draws
@@ -578,7 +578,7 @@ Phase 5M.4 checkpoint; the full Phase 5M gate remains open.
 
 Phase 5M.4 cross-platform acceptance and the full Phase 5M gate are complete
 and documented in
-`docs/crimson_macos_phase5m4_cross_platform_acceptance.md`. The maintained
+`docs/archive/macos-port/phase5m/crimson_macos_phase5m4_cross_platform_acceptance.md`. The maintained
 legacy adapter and read-only TensorStore adapter agree on synthetic fixtures
 and on current production run `chaser_distance_v1_20260718`, component
 `egocentric_bearing_v1_20260718`, at frames 0, 56, 1024, 7024, and 140034.
@@ -625,7 +625,7 @@ suite passed 34/34 tests, and both 1024:1324 production smokes reached exact
 frame 1324. Generated compile graphs contain no fast-math flags. All 6,950
 files under the production stimulus-run and event-enum subtrees retained
 identical paths, sizes, mtimes, and SHA-256 hashes. Full evidence is in
-`docs/crimson_macos_phase5n_remaining_stimulus_overlay_parity.md`.
+`docs/archive/macos-port/phase5n/crimson_macos_phase5n_remaining_stimulus_overlay_parity.md`.
 
 #### Phase 5O — Shared Bounded Data Access and Scheduling
 

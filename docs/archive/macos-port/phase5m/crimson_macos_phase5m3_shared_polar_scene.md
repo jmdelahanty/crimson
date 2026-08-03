@@ -7,7 +7,7 @@ behind one backend-neutral scene contract and connects both maintained ImGui
 and native Mac Metal presentation. Cross-platform production visual acceptance
 remains Phase 5M.4 work.
 
-Lifecycle: **archive-ready completed checkpoint**. Phase 5M.4 closed the stated
+Lifecycle: **archived completed checkpoint**. Phase 5M.4 closed the stated
 cross-platform acceptance work.
 
 ## Shared Scene Boundary

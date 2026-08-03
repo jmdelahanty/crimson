@@ -7,7 +7,7 @@ describes the maintained read-only behavior after removing global C++
 `-Ofast`/`-ffast-math` flags. No polar repository or portable polar type is
 introduced here.
 
-Lifecycle: **archive-ready historical baseline**. The completed Phase 5M
+Lifecycle: **archived historical baseline**. The completed Phase 5M
 contract and acceptance record supersede it as active guidance.
 
 ## Boundary

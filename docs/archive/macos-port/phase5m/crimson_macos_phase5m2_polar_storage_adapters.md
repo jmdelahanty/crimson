@@ -6,7 +6,7 @@ Status: complete. This checkpoint implements and compares the two read-only
 storage paths behind the Phase 5M.1 portable polar contract. Shared scene and
 renderer integration remain Phase 5M.3 work.
 
-Lifecycle: **archive-ready completed checkpoint**. Phase 5M.3 and Phase 5M.4
+Lifecycle: **archived completed checkpoint**. Phase 5M.3 and Phase 5M.4
 closed the remaining integration and acceptance work.
 
 ## Implemented Boundary

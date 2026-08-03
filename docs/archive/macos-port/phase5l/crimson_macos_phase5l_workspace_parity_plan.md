@@ -2,7 +2,7 @@
 
 Date: 2026-07-16
 
-Lifecycle: **archive-ready completed plan**. Its macOS and Linux/NVIDIA
+Lifecycle: **archived completed plan**. Its macOS and Linux/NVIDIA
 checkpoints are closed; deferred Windows runtime validation now has a separate
 guide and validation record.
 
@@ -86,7 +86,7 @@ Status on 2026-07-16:
 
 - complete: source-linked topology, command, default, ownership, persistence,
   and read/write classification in
-  `docs/crimson_macos_phase5l_workspace_inventory.md`;
+  `docs/archive/macos-port/phase5l/crimson_macos_phase5l_workspace_inventory.md`;
 - complete: maintained Linux empty, menu, loaded/default, 1280x800 clipping,
   arranged-role, exact workspace, overlay, crop, stimulus-debug, and alternate
   eye-analysis captures with executable and PNG hashes in
@@ -133,7 +133,7 @@ resources in their platform owners. Mac passed 34/34 headless tests, the
 native Mac Metal playback smoke passed frames 0 through 300, the isolated
 NVIDIA build passed 24/24 tests, and the authenticated NVIDIA playback smoke
 passed frames 0 through 300. The contract and evidence are documented in
-`docs/crimson_macos_phase5l_portable_workspace_state.md`. Windows runtime
+`docs/archive/macos-port/phase5l/crimson_macos_phase5l_portable_workspace_state.md`. Windows runtime
 validation remains deferred; no Windows result is inferred from Mac or Linux.
 
 ### 5L.2 Mac Workspace Composition
@@ -156,7 +156,7 @@ Application Support, and pre-parity camera geometry is isolated by a versioned
 window identity. Mac passed 35/35 headless tests and both acquisition and live
 geometry multistream smokes. The cumulative isolated NVIDIA build passed 24/24
 tests and its authenticated 0:300 playback smoke. Details are in
-`docs/crimson_macos_phase5l2_workspace_composition.md`. Windows validation is
+`docs/archive/macos-port/phase5l/crimson_macos_phase5l2_workspace_composition.md`. Windows validation is
 deferred and is not inferred from those results; 5L.3 followed.
 
 ### 5L.3 Stable Window and Workflow Coverage
@@ -180,7 +180,7 @@ overlays, lifecycle, restoration, and the read-only invariant. Mac passed
 36/36 headless tests plus acquisition and live-geometry multistream smokes with
 zero presentation skew. The cumulative isolated NVIDIA build passed 25/25
 tests and its authenticated 0:300 playback smoke. Details and explicit adapter
-boundaries are in `docs/crimson_macos_phase5l3_stable_workflows.md`. Windows
+boundaries are in `docs/archive/macos-port/phase5l/crimson_macos_phase5l3_stable_workflows.md`. Windows
 validation remains deferred; 5L.4 visual and cross-platform acceptance is
 next.
 
@@ -212,7 +212,7 @@ tests, both 1024:7024 production multistream modes, and the final six-state
 capture refresh. The isolated NVIDIA build passed 26/26 tests and its
 authenticated 0:300 production smoke. Windows runtime validation remains an
 explicit user-approved deferral. The contract, masks, and evidence are
-documented in `docs/crimson_macos_phase5l4_visual_acceptance.md`.
+documented in `docs/archive/macos-port/phase5l/crimson_macos_phase5l4_visual_acceptance.md`.
 
 ## Acceptance Gate
 
@@ -237,5 +237,5 @@ the shared storage and mutation contracts stabilize. Production-tail
 acceptance and stimulus-overlay gaps may proceed independently when suitable
 data and maintained reference behavior are available. The next implementation
 checkpoint is the incremental read-only loader decomposition and chaser-polar
-pilot in `docs/crimson_macos_phase5m_read_only_zarr_boundary_plan.md`; remaining
+pilot in `docs/archive/macos-port/phase5m/crimson_macos_phase5m_read_only_zarr_boundary_plan.md`; remaining
 stimulus camera overlays move to Phase 5N.

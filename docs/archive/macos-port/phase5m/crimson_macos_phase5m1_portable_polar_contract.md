@@ -6,7 +6,7 @@ Status: complete. This checkpoint defines and tests the backend-neutral
 chaser-distance polar boundary. Storage adapters and renderer integration remain
 Phase 5M.2 and Phase 5M.3 work.
 
-Lifecycle: **archive-ready completed checkpoint**. The contract is maintained
+Lifecycle: **archived completed checkpoint**. The contract is maintained
 by source and tests; later Phase 5M checkpoints closed the stated follow-on work.
 
 ## Boundary

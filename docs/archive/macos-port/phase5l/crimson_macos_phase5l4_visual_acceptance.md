@@ -2,7 +2,7 @@
 
 Date: 2026-07-17
 
-Lifecycle: **archive-ready completed checkpoint**. The accepted evidence stays
+Lifecycle: **archived completed checkpoint**. The accepted evidence stays
 under `docs/reference/phase5l/`; Windows runtime evidence remains a separate
 validation task.
 

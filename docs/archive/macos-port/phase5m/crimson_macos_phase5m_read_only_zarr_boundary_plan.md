@@ -5,7 +5,7 @@ Date: 2026-07-17
 Status: complete on 2026-07-18. Phase 5M.0 through Phase 5M.4 and the full
 acceptance gate are complete.
 
-Lifecycle: **archive-ready completed plan**. The implementation contracts,
+Lifecycle: **archived completed plan**. The implementation contracts,
 tests, and `docs/reference/phase5m/` are the retained authorities.
 
 ## Purpose
@@ -46,7 +46,7 @@ types. Platform and storage adapters may depend on their owning implementations.
 Status: complete on 2026-07-17. The inventory, migration ledger,
 characterization results, dependency baseline, production samples, and
 fast-math correction are recorded in
-`docs/crimson_macos_phase5m0_zarr_loader_inventory.md`.
+`docs/archive/macos-port/phase5m/crimson_macos_phase5m0_zarr_loader_inventory.md`.
 
 - Map the polar loader's run/component selection, schema paths, attribute
   interpretation, eager storage, frame lookup, color selection, radial scale,
@@ -62,7 +62,7 @@ fast-math correction are recorded in
 Status: complete on 2026-07-17. The backend-neutral types, repository
 interface, exact-frame and availability rules, convention validation, color
 provenance, radial-scale policy, and focused tests are documented in
-`docs/crimson_macos_phase5m1_portable_polar_contract.md`. Mac passed 40/40
+`docs/archive/macos-port/phase5m/crimson_macos_phase5m1_portable_polar_contract.md`. Mac passed 40/40
 tests; the isolated Linux/NVIDIA build passed 29/29 tests and its authenticated
 GoodCopBadCop 0:300 production smoke.
 
@@ -83,7 +83,7 @@ GoodCopBadCop 0:300 production smoke.
 Status: complete on 2026-07-17. The read-only TensorStore repository, bounded
 asynchronous buffer, maintained compatibility adapter, shared-fixture
 agreement, production comparison, and non-mutation evidence are documented in
-`docs/crimson_macos_phase5m2_polar_storage_adapters.md`.
+`docs/archive/macos-port/phase5m/crimson_macos_phase5m2_polar_storage_adapters.md`.
 
 - Implement a read-only TensorStore repository with bounded asynchronous frame
   access for the native Mac path.
@@ -100,7 +100,7 @@ Status: complete on 2026-07-18. The backend-neutral scene builder, maintained
 ImGui adapter, native Mac TensorStore/buffer/Metal adapter, exact-frame runtime
 metrics, deterministic scene and Metal coverage, and checkpoint verification
 are documented in
-`docs/crimson_macos_phase5m3_shared_polar_scene.md`.
+`docs/archive/macos-port/phase5m/crimson_macos_phase5m3_shared_polar_scene.md`.
 
 - Build one backend-neutral polar inset scene from the portable frame sample
   and controls.
@@ -116,7 +116,7 @@ Status: complete on 2026-07-18. Adapter agreement, controlled same-frame
 OpenGL/Metal captures, declared visual tolerances, final Mac and NVIDIA tests
 and production smokes, fast-math audit, and the 10,736-file nonmutation proof
 are documented in
-`docs/crimson_macos_phase5m4_cross_platform_acceptance.md`.
+`docs/archive/macos-port/phase5m/crimson_macos_phase5m4_cross_platform_acceptance.md`.
 
 - Compare adapter descriptors and exact-frame samples on synthetic fixtures and
   the production GoodCopBadCop archive.

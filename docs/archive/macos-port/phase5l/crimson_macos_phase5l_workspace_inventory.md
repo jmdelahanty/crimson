@@ -2,7 +2,7 @@
 
 Date: 2026-07-16
 
-Lifecycle: **archive-ready historical baseline**. Phase 5L acceptance is
+Lifecycle: **archived historical baseline**. Phase 5L acceptance is
 complete for macOS and Linux/NVIDIA; Windows runtime evidence is tracked by the
 dedicated Windows validation documents.
 

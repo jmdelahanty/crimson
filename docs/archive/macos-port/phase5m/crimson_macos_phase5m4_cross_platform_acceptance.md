@@ -5,7 +5,7 @@ Date: 2026-07-18
 Status: complete. Phase 5M.4 and the full Phase 5M read-only polar extraction
 gate are accepted.
 
-Lifecycle: **archive-ready acceptance record**. Preserve its evidence under
+Lifecycle: **archived acceptance record**. Preserve its evidence under
 `docs/reference/phase5m/` when the document is moved.
 
 ## Accepted Production Source

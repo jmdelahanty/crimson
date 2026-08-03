@@ -2,11 +2,10 @@
 
 Date: 2026-08-03
 
-This directory tracks documents that are safe to remove from the active
-planning surface. Archive-ready does not mean disposable: implementation
-records, acceptance evidence, and frozen contracts remain useful historical
-evidence. Files stay at their current paths until inbound links are migrated in
-one deliberate cleanup change.
+This directory holds documents removed from the active planning surface.
+Archived does not mean disposable: implementation records, acceptance evidence,
+and frozen contracts remain useful historical evidence. Inbound links point to
+the archived location when the historical record is still relevant.
 
 ## Lifecycle Labels
 
@@ -14,20 +13,22 @@ one deliberate cleanup change.
 - `deferred`: valid work intentionally postponed; do not archive as complete.
 - `archive-ready`: closed or superseded planning material with an identified
   replacement or completed acceptance record.
+- `archived`: moved out of the active documentation root after inbound links
+  were reconciled.
 - `historical-reference`: evidence that should remain discoverable even after
   it moves out of the active documentation root.
 - `reconcile`: an older TODO whose runtime outcome is not sufficiently proven
   to call complete or obsolete.
 
-## Archive-Ready Now
+## Archived Bundles
 
 | Bundle | Documents | Reason | Retained authority |
 | --- | --- | --- | --- |
-| Original CLI/modularization plan | `crimson_cli_and_modularization_todo.md` | The CLI recording path and most mechanical splits exist; its unchecked boxes no longer describe repository state. | `crimson_app_architecture_refactor_todo.md` and current source/tests |
-| macOS Phase 0 | `crimson_macos_phase0_inventory.md` | Frozen pre-port baseline; all later implementation decisions are recorded in completed phase checkpoints. | `crimson_macos_port_codex_goal.md` and phase acceptance records |
-| Phase 5L workspace parity | `crimson_macos_phase5l_workspace_inventory.md`, `crimson_macos_phase5l_workspace_parity_plan.md`, `crimson_macos_phase5l_portable_workspace_state.md`, `crimson_macos_phase5l2_workspace_composition.md`, `crimson_macos_phase5l3_stable_workflows.md`, `crimson_macos_phase5l4_visual_acceptance.md` | The macOS and Linux/NVIDIA workspace gate is closed. Windows runtime evidence was deliberately separated rather than left as Phase 5L work. | `crimson_windows_first_validation_guide.md`, `crimson_windows_trt10_cuda12.4_validation_record.md`, and `docs/reference/phase5l/` |
-| Phase 5M polar extraction | `crimson_macos_phase5m_read_only_zarr_boundary_plan.md` and `crimson_macos_phase5m0_zarr_loader_inventory.md` through `crimson_macos_phase5m4_cross_platform_acceptance.md` | The pilot contract, both adapters, shared scene, and acceptance gate are complete. | Source contracts/tests and `docs/reference/phase5m/` |
-| Phase 5N stimulus overlay parity | `crimson_macos_phase5n_remaining_stimulus_overlay_parity.md` | The remaining read-only stimulus overlays passed the maintained macOS and Linux/NVIDIA gate. | Source contracts/tests and `docs/reference/phase5n/` |
+| Original CLI/modularization plan | `docs/archive/legacy-plans/crimson_cli_and_modularization_todo.md` | The CLI recording path and most mechanical splits exist; its unchecked boxes no longer describe repository state. | `docs/crimson_app_architecture_refactor_todo.md` and current source/tests |
+| macOS Phase 0 | `docs/archive/macos-port/phase0/crimson_macos_phase0_inventory.md` | Frozen pre-port baseline; all later implementation decisions are recorded in completed phase checkpoints. | `docs/crimson_macos_port_codex_goal.md` and phase acceptance records |
+| Phase 5L workspace parity | `docs/archive/macos-port/phase5l/` | The macOS and Linux/NVIDIA workspace gate is closed. Windows runtime evidence was deliberately separated rather than left as Phase 5L work. | `crimson_windows_first_validation_guide.md`, `crimson_windows_trt10_cuda12.4_validation_record.md`, and `docs/reference/phase5l/` |
+| Phase 5M polar extraction | `docs/archive/macos-port/phase5m/` | The pilot contract, both adapters, shared scene, and acceptance gate are complete. | Source contracts/tests and `docs/reference/phase5m/` |
+| Phase 5N stimulus overlay parity | `docs/archive/macos-port/phase5n/` | The remaining read-only stimulus overlays passed the maintained macOS and Linux/NVIDIA gate. | Source contracts/tests and `docs/reference/phase5n/` |
 
 ## Keep Active
 
@@ -42,7 +43,7 @@ documentation root:
 - detection, keypoint, crop, subject-mask, and coordinate consumer contracts
 - editing plans while Palette's storage/edit lifecycle remains unsettled
 
-## Reconcile Before Archiving
+## Reconciliation Queue
 
 These older documents are candidates for cleanup, but their remaining claims
 need a focused code/runtime audit first:

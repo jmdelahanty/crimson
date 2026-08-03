@@ -171,7 +171,7 @@ scripts/capture_redgui_workspace_reference.sh \
 ```
 
 Pass `-` as the Zarr argument for an empty-workspace capture. See
-`docs/crimson_macos_phase5l_workspace_inventory.md` for classification and
+`docs/archive/macos-port/phase5l/crimson_macos_phase5l_workspace_inventory.md` for classification and
 `docs/reference/phase5l/manifest.json` for the audited capture set.
 
 For an exact app-side state, set the state, frame, and an optional layout
