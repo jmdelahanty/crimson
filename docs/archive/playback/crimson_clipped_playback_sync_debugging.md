@@ -2,6 +2,9 @@
 
 Date anchored: May 2026 clipped Palette smoke debugging.
 
+Lifecycle: **archived debugging record**. Its remaining shared playback-policy
+work is tracked in `docs/crimson_playback_remaining_work.md`.
+
 This note records the clipped-video bounding-box synchronization investigation:
 what failed, what logs ruled out Palette data issues, what logs exposed the
 Crimson playback bug, what changed in Crimson, and what should happen next.
@@ -9,9 +12,9 @@ Crimson playback bug, what changed in Crimson, and what should happen next.
 Related docs:
 
 - `docs/palette_clipped_detection_surface_recommendations.md`
-- `docs/crimson_gui_smoke_testing_todo.md`
-- `docs/crimson_buffered_resume_implementation_notes.md`
-- `docs/crimson_contiguous_playback_window_design.md`
+- `docs/archive/testing/crimson_gui_smoke_testing_todo.md`
+- `docs/archive/playback/crimson_buffered_resume_implementation_notes.md`
+- `docs/archive/playback/crimson_contiguous_playback_window_design.md`
 
 ## Dataset And Symptom
 
@@ -546,7 +549,7 @@ Recommended next slice:
    frame-keyed helper behind tests.
 
 6. Then implement the larger active/staging playback window design from
-   `docs/crimson_contiguous_playback_window_design.md`.
+   `docs/archive/playback/crimson_contiguous_playback_window_design.md`.
 
 The long-term target is one playback surface for clipped and non-clipped media:
 

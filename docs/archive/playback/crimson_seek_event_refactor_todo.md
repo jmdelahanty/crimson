@@ -2,9 +2,13 @@
 
 Date anchored: 2026-02-11.
 
+Lifecycle: **archived; superseded in part** by
+`docs/crimson_shared_seek_transaction_checkpoint_2026-07-31.md`. Remaining
+stimulus settlement is tracked in `docs/crimson_playback_remaining_work.md`.
+
 Related follow-on design note:
 
-- `docs/crimson_buffered_frame_resume_design.md`
+- `docs/archive/playback/crimson_buffered_frame_resume_design.md`
 
 ## Observed Problem
 

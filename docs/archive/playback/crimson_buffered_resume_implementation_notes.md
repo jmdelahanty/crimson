@@ -2,13 +2,16 @@
 
 Date anchored: 2026-04-07.
 
+Lifecycle: **archived historical investigation**. Current work is tracked in
+`docs/crimson_playback_remaining_work.md`.
+
 Working document for cross-agent coordination.
 
 Related docs:
 
-- `docs/crimson_buffered_frame_resume_design.md`
-- `docs/crimson_contiguous_playback_window_design.md`
-- `docs/crimson_live_playback_bidirectional_buffer_todo.md`
+- `docs/archive/playback/crimson_buffered_frame_resume_design.md`
+- `docs/archive/playback/crimson_contiguous_playback_window_design.md`
+- `docs/archive/playback/crimson_live_playback_bidirectional_buffer_todo.md`
 
 ## Status Update
 

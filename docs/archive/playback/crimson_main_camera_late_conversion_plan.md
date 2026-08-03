@@ -2,6 +2,10 @@
 
 Date anchored: 2026-04-04.
 
+Lifecycle: **archived completed architecture plan**. Compact NV12 buffering and
+late display conversion landed; remaining renderer work is tracked in
+`docs/crimson_main_camera_playback_renderer_plan.md`.
+
 ## Why This Exists
 
 Playback profiling on the Windows RTX A1000 laptop has now ruled out several
@@ -26,12 +30,12 @@ early and keeps that representation around for playback/display.
 
 This doc is the follow-on design note after:
 
-- [docs/crimson_playback_preview_scale_plan.md](./crimson_playback_preview_scale_plan.md)
+- [docs/archive/playback/crimson_playback_preview_scale_plan.md](./crimson_playback_preview_scale_plan.md)
 
 And it now feeds into the next render-focused plan:
 
-- [docs/crimson_main_camera_zoom_aware_render_plan.md](./crimson_main_camera_zoom_aware_render_plan.md)
-- [docs/crimson_main_camera_playback_renderer_plan.md](./crimson_main_camera_playback_renderer_plan.md)
+- [docs/archive/playback/crimson_main_camera_zoom_aware_render_plan.md](./crimson_main_camera_zoom_aware_render_plan.md)
+- [docs/crimson_main_camera_playback_renderer_plan.md](../../crimson_main_camera_playback_renderer_plan.md)
 
 ## Key Evidence
 
@@ -145,10 +149,10 @@ In short:
 
 Key files:
 
-- [src/decoder.cpp](../src/decoder.cpp)
-- [src/render.h](../src/render.h)
-- [src/red.cpp](../src/red.cpp)
-- [src/gx_helper.h](../src/gx_helper.h)
+- [src/decoder.cpp](../../../src/decoder.cpp)
+- [src/render.h](../../../src/render.h)
+- [src/red.cpp](../../../src/red.cpp)
+- [src/gx_helper.h](../../../src/gx_helper.h)
 
 Current high-level behavior:
 
@@ -399,4 +403,4 @@ The first architectural pass is successful if:
 3. validate on the Windows laptop with the existing perf log
 4. after confirming render is still the bottleneck, move to the zoom-aware
    playback render plan in
-   [docs/crimson_main_camera_zoom_aware_render_plan.md](./crimson_main_camera_zoom_aware_render_plan.md)
+   [docs/archive/playback/crimson_main_camera_zoom_aware_render_plan.md](./crimson_main_camera_zoom_aware_render_plan.md)

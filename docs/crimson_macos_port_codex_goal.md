@@ -60,6 +60,7 @@ Read these before changing architecture:
 
 - `docs/crimson_ubuntu_macos_platform_strategy.md`
 - `docs/stimulus_alignment_overview.md`
+- `docs/crimson_playback_remaining_work.md`
 - `docs/crimson_main_camera_playback_renderer_plan.md`
 - `docs/crimson_video_color_range_and_luma_display.md`
 - `docs/crimson_threading_architecture_notes.md`

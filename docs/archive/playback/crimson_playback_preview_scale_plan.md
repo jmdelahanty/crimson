@@ -1,5 +1,8 @@
 # Crimson Playback Preview Scale Plan
 
+Lifecycle: **archived superseded experiment**. The current deferred renderer
+work is `docs/crimson_main_camera_playback_renderer_plan.md`.
+
 ## Why This Exists
 
 Playback profiling on the Windows RTX A1000 laptop showed that the main camera
@@ -36,9 +39,9 @@ Crimson currently does this:
 
 Relevant code paths:
 
-- native-size texture allocation in [src/render.h](../src/render.h)
-- frame upload into the PBO/texture in [src/red.cpp](../src/red.cpp)
-- image draw via `ImPlot::PlotImage` in [src/red.cpp](../src/red.cpp)
+- native-size texture allocation in [src/render.h](../../../src/render.h)
+- frame upload into the PBO/texture in [src/red.cpp](../../../src/red.cpp)
+- image draw via `ImPlot::PlotImage` in [src/red.cpp](../../../src/red.cpp)
 
 So even on a `1920x1200` laptop screen, the GPU can hold a `4512x4512` RGBA
 texture in VRAM and sample it down to the smaller visible camera window.
@@ -58,17 +61,17 @@ This is a **display-only** optimization.
 For the larger follow-on architecture that stores compact main-camera frames and
 converts only the displayed frame, see:
 
-- [docs/crimson_main_camera_late_conversion_plan.md](./crimson_main_camera_late_conversion_plan.md)
+- [docs/archive/playback/crimson_main_camera_late_conversion_plan.md](./crimson_main_camera_late_conversion_plan.md)
 
 For the newer follow-on plan that keeps zoom during playback while making the
 render path depend on the visible view / ROI, see:
 
-- [docs/crimson_main_camera_zoom_aware_render_plan.md](./crimson_main_camera_zoom_aware_render_plan.md)
+- [docs/archive/playback/crimson_main_camera_zoom_aware_render_plan.md](./crimson_main_camera_zoom_aware_render_plan.md)
 
 For the newer revision after zoomed-playback telemetry showed that ROI alone
 did not materially reduce draw cost, see:
 
-- [docs/crimson_main_camera_playback_renderer_plan.md](./crimson_main_camera_playback_renderer_plan.md)
+- [docs/crimson_main_camera_playback_renderer_plan.md](../../crimson_main_camera_playback_renderer_plan.md)
 
 It does **not**:
 

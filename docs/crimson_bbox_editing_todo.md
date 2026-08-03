@@ -2,6 +2,10 @@
 
 Date anchored: 2026-02-09.
 
+Lifecycle: **deferred active editing work**. Continue only against the current
+Palette refined-detection identity and edit-lifecycle contracts; the legacy
+manual-subgroup prescription below is historical.
+
 ## Goal
 
 Allow users to select and drag existing detection bounding boxes in Crimson, then persist approved edits to a manual refined-detect subgroup later.

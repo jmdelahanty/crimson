@@ -2,6 +2,9 @@
 
 Date anchored: 2026-04-07.
 
+Lifecycle: **archived design input**. Implemented behavior and remaining window
+policy are reconciled in `docs/crimson_playback_remaining_work.md`.
+
 ## Status Update
 
 As of 2026-05-22, the first-pass buffered resume behavior exists, but the
@@ -32,8 +35,8 @@ Remaining design work:
 
 Related docs:
 
-- `docs/crimson_contiguous_playback_window_design.md`
-- `docs/crimson_live_playback_bidirectional_buffer_todo.md`
+- `docs/archive/playback/crimson_contiguous_playback_window_design.md`
+- `docs/archive/playback/crimson_live_playback_bidirectional_buffer_todo.md`
 
 ## Problem Summary
 

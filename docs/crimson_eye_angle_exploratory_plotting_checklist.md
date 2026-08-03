@@ -2,6 +2,9 @@
 
 Date anchored: 2026-05-01.
 
+Lifecycle: **deferred active feature checklist**. Its coordinate and storage
+assumptions must be reconciled with current Palette contracts before new work.
+
 ## Purpose
 
 Track the remaining work needed to turn Crimson's initial Palette eye-angle

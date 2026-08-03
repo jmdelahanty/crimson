@@ -2,6 +2,9 @@
 
 Date anchored: 2026-02-10.
 
+Lifecycle: **archived design input**. Current active/staging-window work is
+tracked in `docs/crimson_playback_remaining_work.md`.
+
 ## Status Update
 
 As of 2026-05-22, clipped collection playback has a narrow frame-keyed
@@ -13,8 +16,8 @@ frame index.
 
 Related docs:
 
-- `docs/crimson_contiguous_playback_window_design.md`
-- `docs/crimson_buffered_frame_resume_design.md`
+- `docs/archive/playback/crimson_contiguous_playback_window_design.md`
+- `docs/archive/playback/crimson_buffered_frame_resume_design.md`
 
 ## Problem Summary
 

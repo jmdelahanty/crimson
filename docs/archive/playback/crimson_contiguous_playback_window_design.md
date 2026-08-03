@@ -2,6 +2,9 @@
 
 Date anchored: 2026-04-07.
 
+Lifecycle: **archived design input**. The reconciled implementation gap is in
+`docs/crimson_playback_remaining_work.md`.
+
 ## Status Update
 
 As of 2026-05-22, parts of this design have landed as incremental safeguards,

@@ -2,6 +2,9 @@
 
 Date anchored: 2026-02-09.
 
+Lifecycle: **archived investigation record**. Its unclosed NVIDIA runtime gate
+is tracked in `docs/crimson_playback_remaining_work.md`.
+
 ## Problem Summary
 
 After seeks (especially review-frame jumps), visible frame artifacts persist temporarily:

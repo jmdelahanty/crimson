@@ -2,6 +2,10 @@
 
 Date anchored: 2026-04-04.
 
+Lifecycle: **deferred active performance plan**. This remains the current
+weak-GPU renderer experiment; it is not required for functional playback on
+accepted workstation-class systems.
+
 ## Why This Exists
 
 The zoom/view-state telemetry clarified an important point on the Windows RTX

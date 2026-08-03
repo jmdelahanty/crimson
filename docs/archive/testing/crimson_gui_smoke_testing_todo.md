@@ -1,5 +1,8 @@
 # Crimson GUI Smoke Testing TODO
 
+Lifecycle: **archived; superseded by maintained harnesses** in `scripts/`,
+`scripts/README.md`, `AGENTS.md`, and semantic/headless test targets.
+
 ## Goal
 
 Add lightweight, repeatable GUI smoke checks for `redgui` so a Codex agent or
@@ -152,7 +155,7 @@ append, sort/reorder, offset build, and cache/apply time.
 For the clipped playback/bbox synchronization investigation, the trace fields,
 diagnostic commands, root cause, and follow-up playback unification plan are
 documented in
-`docs/crimson_clipped_playback_sync_debugging.md`.
+`docs/archive/playback/crimson_clipped_playback_sync_debugging.md`.
 
 Useful overrides:
 

@@ -2,6 +2,8 @@
 
 Date anchored: 2026-05-03.
 
+Lifecycle: **deferred active performance work**.
+
 ## Purpose
 
 Capture the current `120 FPS` render-cap investigation so it does not block
@@ -118,4 +120,3 @@ Do not use this task to:
 - remove contour rendering
 - move timeline/event plotting
 - add new UI controls unrelated to frame pacing
-

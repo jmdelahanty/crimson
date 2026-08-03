@@ -29,6 +29,9 @@ the archived location when the historical record is still relevant.
 | Phase 5L workspace parity | `docs/archive/macos-port/phase5l/` | The macOS and Linux/NVIDIA workspace gate is closed. Windows runtime evidence was deliberately separated rather than left as Phase 5L work. | `crimson_windows_first_validation_guide.md`, `crimson_windows_trt10_cuda12.4_validation_record.md`, and `docs/reference/phase5l/` |
 | Phase 5M polar extraction | `docs/archive/macos-port/phase5m/` | The pilot contract, both adapters, shared scene, and acceptance gate are complete. | Source contracts/tests and `docs/reference/phase5m/` |
 | Phase 5N stimulus overlay parity | `docs/archive/macos-port/phase5n/` | The remaining read-only stimulus overlays passed the maintained macOS and Linux/NVIDIA gate. | Source contracts/tests and `docs/reference/phase5n/` |
+| Playback seek/buffer investigations | `docs/archive/playback/` | Shared transport, seek intent, and frame selection landed; the old plans mixed completed work with missing active/staging-window policy and an unclosed NVIDIA runtime gate. | `docs/crimson_playback_remaining_work.md`, `docs/crimson_shared_seek_transaction_checkpoint_2026-07-31.md`, and current source/tests |
+| Main-camera render experiments | `docs/archive/playback/crimson_playback_preview_scale_plan.md`, `crimson_main_camera_late_conversion_plan.md`, and `crimson_main_camera_zoom_aware_render_plan.md` | Preview and late-conversion experiments are complete; zoom telemetry superseded ROI-only work. | `docs/crimson_main_camera_playback_renderer_plan.md` |
+| Original GUI smoke TODO | `docs/archive/testing/crimson_gui_smoke_testing_todo.md` | Maintained Linux and macOS GUI harnesses plus semantic/headless coverage now exist. | `AGENTS.md`, `scripts/README.md`, `scripts/gui_smoke_playback.sh`, and the macOS smoke scripts |
 
 ## Keep Active
 
@@ -37,30 +40,34 @@ documentation root:
 
 - `crimson_macos_port_codex_goal.md`
 - `crimson_app_architecture_refactor_todo.md`
+- `crimson_playback_remaining_work.md`
 - `crimson_macos_phase5o_bounded_data_access.md`
 - `crimson_packaging_and_distribution_plan.md`
 - the Windows validation and installation documents
 - detection, keypoint, crop, subject-mask, and coordinate consumer contracts
 - editing plans while Palette's storage/edit lifecycle remains unsettled
 
-## Reconciliation Queue
+## Active And Deferred TODO Register
 
-These older documents are candidates for cleanup, but their remaining claims
-need a focused code/runtime audit first:
+The 2026-08-03 reconciliation leaves these actionable planning surfaces:
 
-- `crimson_seek_event_refactor_todo.md`: superseded in part by the shared seek
-  transaction, but stimulus synchronization remains platform-owned.
-- `crimson_decode_seek_artifact_todo.md`: several fixes landed, but the original
-  artifact reproduction has not been formally closed.
-- `crimson_live_playback_bidirectional_buffer_todo.md`,
-  `crimson_contiguous_playback_window_design.md`, and
-  `crimson_buffered_frame_resume_design.md`: recent pause/step behavior improved,
-  but Linux and macOS still use different decoder-buffer implementations.
-- `crimson_gui_smoke_testing_todo.md`: smoke tooling exists, but the document
-  should be reconciled against the current macOS, Linux, and semantic harnesses.
-- the main-camera late-conversion, zoom-aware, and playback-renderer plans:
-  they contain useful low-end NVIDIA evidence and may still represent deferred
-  performance work.
+- `docs/crimson_app_architecture_refactor_todo.md`: active shared-module and
+  composition-root work.
+- `docs/crimson_playback_remaining_work.md`: active playback-window, stimulus
+  settlement, and NVIDIA artifact-acceptance work.
+- `docs/crimson_macos_phase5o_bounded_data_access.md`: active bounded-access and
+  scheduling roadmap.
+- `docs/crimson_bbox_editing_todo.md`: deferred until Palette's refined edit
+  lifecycle is stable; legacy manual-subgroup instructions are not authority.
+- `docs/crimson_eye_angle_exploratory_plotting_checklist.md`: deferred feature
+  work requiring current coordinate/storage-contract reconciliation.
+- `docs/crimson_frame_pacing_performance_todo.md`: deferred measurement-led
+  frame-pacing work.
+- `docs/crimson_main_camera_playback_renderer_plan.md`: deferred weak-GPU
+  performance experiment.
+
+Windows runtime checklists remain open validation records rather than stale
+implementation TODOs.
 
 ## Cleanup Procedure
 

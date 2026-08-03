@@ -2,6 +2,8 @@
 
 Date anchored: 2026-04-03.
 
+Lifecycle: **active architecture roadmap**.
+
 ## Recording Clip Index Media
 
 - [x] Extract strict backend-neutral `recording_clip_index.json` parsing and

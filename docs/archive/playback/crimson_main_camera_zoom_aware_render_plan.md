@@ -2,6 +2,9 @@
 
 Date anchored: 2026-04-04.
 
+Lifecycle: **archived superseded experiment**. Telemetry redirected the active
+work to `docs/crimson_main_camera_playback_renderer_plan.md`.
+
 ## Status Update
 
 This doc remains useful background, but the latest zoomed-playback telemetry
@@ -18,7 +21,7 @@ That means ROI-aware rendering is no longer the highest-priority next
 experiment by itself. The next plan has shifted to a cheaper playback-specific
 camera renderer:
 
-- [docs/crimson_main_camera_playback_renderer_plan.md](./crimson_main_camera_playback_renderer_plan.md)
+- [docs/crimson_main_camera_playback_renderer_plan.md](../../crimson_main_camera_playback_renderer_plan.md)
 
 ## Why This Exists
 
@@ -78,11 +81,11 @@ In the current code:
 Relevant code paths:
 
 - preview activation and target shape selection in
-  [src/red.cpp](../src/red.cpp)
-- mip-based preview sampling setup in [src/red.cpp](../src/red.cpp)
-- displayed-frame `NV12 -> RGBA` conversion in [src/red.cpp](../src/red.cpp)
+  [src/red.cpp](../../../src/red.cpp)
+- mip-based preview sampling setup in [src/red.cpp](../../../src/red.cpp)
+- displayed-frame `NV12 -> RGBA` conversion in [src/red.cpp](../../../src/red.cpp)
 - final OpenGL draw timing around `ImGui_ImplOpenGL3_RenderDrawData(...)` in
-  [src/red.cpp](../src/red.cpp)
+  [src/red.cpp](../../../src/red.cpp)
 
 This means:
 
@@ -306,8 +309,8 @@ This phase is successful if, on the Windows RTX A1000 laptop:
 
 This is the follow-on plan after:
 
-- [docs/crimson_playback_preview_scale_plan.md](./crimson_playback_preview_scale_plan.md)
-- [docs/crimson_main_camera_late_conversion_plan.md](./crimson_main_camera_late_conversion_plan.md)
+- [docs/archive/playback/crimson_playback_preview_scale_plan.md](./crimson_playback_preview_scale_plan.md)
+- [docs/archive/playback/crimson_main_camera_late_conversion_plan.md](./crimson_main_camera_late_conversion_plan.md)
 
 The sequence is now:
 
