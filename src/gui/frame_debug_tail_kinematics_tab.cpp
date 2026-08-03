@@ -106,7 +106,8 @@ void drawTailKinematicsTab(const FrameDebugWindowContext& context,
         if (ImGui::Button("Show In Subject Shape")) {
             result.request_seek_tail_kinematics_row = true;
             result.requested_tail_kinematics_row = row;
-            state.active_tab = FrameInspectTab::EyeMasks;
+            state.active_view =
+                crimson::workspace::FrameInspectView::EyeMasks;
         }
     }
 

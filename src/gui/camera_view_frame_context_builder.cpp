@@ -40,7 +40,8 @@ bool subjectMaskCanvasPickEnabled(const CameraViewFrameContextInput& input) {
         input.frame_debug_state->subject_mask_edit_session.active();
     return !brush_editing &&
            input.frame_debug_state->subject_mask_canvas_pick_enabled &&
-           input.frame_debug_state->active_tab == FrameInspectTab::EyeMasks &&
+           input.frame_debug_state->active_view ==
+               crimson::workspace::FrameInspectView::EyeMasks &&
            input.zarr_loader->eyeMasksUseRefinedSubjectMasks();
 }
 
@@ -53,7 +54,8 @@ bool subjectMaskBrushInputEnabled(const CameraViewFrameContextInput& input) {
     return !input.play_video &&
            input.frame_debug_state->subject_mask_brush.enabled &&
            input.frame_debug_state->subject_mask_edit_session.active() &&
-           input.frame_debug_state->active_tab == FrameInspectTab::EyeMasks &&
+           input.frame_debug_state->active_view ==
+               crimson::workspace::FrameInspectView::EyeMasks &&
            input.zarr_loader->eyeMasksUseRefinedSubjectMasks();
 }
 

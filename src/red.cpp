@@ -147,24 +147,6 @@ static StimulusPlayback stimulus_player;
 
 namespace {
 
-crimson::workspace::FrameInspectView
-portableFrameInspectView(FrameInspectTab tab) {
-  using crimson::workspace::FrameInspectView;
-  switch (tab) {
-  case FrameInspectTab::Detect:
-    return FrameInspectView::Detect;
-  case FrameInspectTab::Keypoints:
-    return FrameInspectView::Keypoints;
-  case FrameInspectTab::EyeMasks:
-    return FrameInspectView::EyeMasks;
-  case FrameInspectTab::TailKinematics:
-    return FrameInspectView::TailKinematics;
-  case FrameInspectTab::EyeAngles:
-    return FrameInspectView::EyeAngles;
-  }
-  return FrameInspectView::Detect;
-}
-
 using json = nlohmann::json;
 
 struct PlaybackTraceLogWriter {
@@ -2945,13 +2927,15 @@ int main(int argc, char **argv) {
           rejectUiReferenceStart();
           break;
         }
-        frame_debug_window_state.active_tab = FrameInspectTab::Keypoints;
+        frame_debug_window_state.active_view =
+            crimson::workspace::FrameInspectView::Keypoints;
         frame_debug_window_state.keypoint_review_panel
             .show_advanced_crop_preview = true;
         g_zarr_bbox_edit_state.selected_frame = ui_reference.target_frame;
         g_zarr_bbox_edit_state.selected_box = 0;
       } else if (ui_reference.state == UiReferenceState::Overlays) {
-        frame_debug_window_state.active_tab = FrameInspectTab::EyeMasks;
+        frame_debug_window_state.active_view =
+            crimson::workspace::FrameInspectView::EyeMasks;
         show_eye_masks = true;
       } else if (ui_reference.state == UiReferenceState::StimulusOverlay) {
         if (stimulus_context_timeline == nullptr) {
@@ -2996,7 +2980,8 @@ int main(int argc, char **argv) {
           rejectUiReferenceStart();
           break;
         }
-        frame_debug_window_state.active_tab = FrameInspectTab::EyeMasks;
+        frame_debug_window_state.active_view =
+            crimson::workspace::FrameInspectView::EyeMasks;
         show_eye_masks = true;
       } else if (ui_reference.state == UiReferenceState::AnalysisTailStimulus) {
         if (!zarr_loader.hasTailKinematicsData() ||
@@ -3008,7 +2993,8 @@ int main(int argc, char **argv) {
           rejectUiReferenceStart();
           break;
         }
-        frame_debug_window_state.active_tab = FrameInspectTab::TailKinematics;
+        frame_debug_window_state.active_view =
+            crimson::workspace::FrameInspectView::TailKinematics;
       }
 
       std::error_code marker_ec;
@@ -3940,11 +3926,13 @@ int main(int argc, char **argv) {
               tail_kinematics_overlay_options.show_overlay) ||
              (show_eye_masks && show_eye_angle_arcs &&
               zarr_loader.hasEyeAngleData()) ||
-             frame_debug_window_state.active_tab == FrameInspectTab::EyeMasks);
+             frame_debug_window_state.active_view ==
+                 crimson::workspace::FrameInspectView::EyeMasks);
         const bool include_eye_masks_in_details =
             zarr_loader.hasEyeMasks() &&
             (show_eye_masks || subject_shape_needs_contours ||
-             frame_debug_window_state.active_tab == FrameInspectTab::EyeMasks);
+             frame_debug_window_state.active_view ==
+                 crimson::workspace::FrameInspectView::EyeMasks);
         const bool need_details =
             zarr_loader.hasScores() || zarr_loader.hasHeadingData() ||
             zarr_loader.hasKeypointData() || include_eye_masks_in_details ||
@@ -4023,6 +4011,12 @@ int main(int argc, char **argv) {
           chaser_distance_polar_inset_options,
           show_stimulus_debug_windows,
       };
+      const auto requested_frame_inspect_view =
+          workspace_state.selections().frame_inspect_view;
+      if (frame_debug_window_state.view_sync.shouldApply(
+              requested_frame_inspect_view)) {
+        frame_debug_window_state.active_view = requested_frame_inspect_view;
+      }
       const FrameDebugWindowResult frame_debug_result =
           drawFrameDebugWindow(frame_debug_context, frame_debug_window_state);
       const DiagnosticsWindowResult diagnostics_result =
@@ -4056,7 +4050,7 @@ int main(int argc, char **argv) {
       workspace_state.setWindowRequested(crimson::workspace::Window::Stimulus,
                                          show_stimulus_debug_windows);
       workspace_state.selections().frame_inspect_view =
-          portableFrameInspectView(frame_debug_window_state.active_tab);
+          frame_debug_window_state.active_view;
       auto &portable_overlays = workspace_state.overlayControls();
       portable_overlays.show_keypoints = show_keypoint_markers;
       portable_overlays.show_headings = show_heading_arrows;
@@ -4072,7 +4066,8 @@ int main(int argc, char **argv) {
       active_full_frame_keypoint_selection =
           frame_debug_result.selected_keypoint_selection;
       keypoint_tab_full_frame_edit_enabled =
-          frame_debug_window_state.active_tab == FrameInspectTab::Keypoints &&
+          frame_debug_window_state.active_view ==
+              crimson::workspace::FrameInspectView::Keypoints &&
           frame_debug_window_state.keypoint_review_panel.full_frame_edit
               .enabled &&
           active_full_frame_keypoint_selection.has_value();

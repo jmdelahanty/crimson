@@ -2332,6 +2332,7 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/detection_repository_selection.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/refined_detection_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/subject_mask_bundle_v2_contract.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/subject_mask_sampled_contour_v1_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/subject_mask_v1_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/analysis_crop_geometry_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/stimulus_repository.cpp"
@@ -3101,6 +3102,7 @@ if(CRIMSON_BUILD_MACOS_APP)
         src/platform/macos/crimson_macos_main.mm
         src/platform/macos/apple_video_viewer_ui.mm
         src/gui/camera_view_transport_controls.cpp
+        src/gui/frame_inspect_window.cpp
         src/gui/quality_timeline_session.cpp
         src/gui/quality_timeline_window.cpp
         src/gui/session_loading_modal.cpp
@@ -3162,6 +3164,7 @@ if(CRIMSON_BUILD_MACOS_APP)
     add_executable(imgui_semantic_snapshot_tests
         tools/imgui_semantic_snapshot_tests.cpp
         src/gui/camera_view_transport_controls.cpp
+        src/gui/frame_inspect_window.cpp
         src/gui/session_loading_modal.cpp
         src/imgui_semantic_snapshot.cpp
         ${CRIMSON_MACOS_IMGUI_DIR}/imgui.cpp

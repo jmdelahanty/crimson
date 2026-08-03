@@ -71,6 +71,23 @@ metadata handling; the Linux legacy source hint is used only when shared
 metadata is absent. Clipped collection switching remains a compatibility
 adapter. See `docs/crimson_shared_affiliated_media_checkpoint_2026-07-31.md`.
 
+## 2026-08-03 Composable Frame Inspect Checkpoint
+
+The macOS and Linux/Windows shells now compose Frame Inspect through one
+backend-neutral ImGui window module. The shared module owns window and tab-bar
+lifecycle, visible-module ordering, disabled interaction state, stable
+programmatic tab selection, and header/footer placement. Platform composition
+roots register Detect, Keypoints, Subject Masks, Tail Kinematics, and Eye
+Angles as callbacks.
+
+This is intentionally a presentation boundary rather than a merge of platform
+repositories or editing policies. macOS callbacks retain the strict read-only
+repository surfaces, while Linux/Windows callbacks retain their legacy review
+and editing panels. Both use the same `FrameInspectView` selection state, so
+workspace restore and programmatic navigation no longer require a Linux-only
+tab enum or conversion shim. Semantic ImGui coverage verifies that requested
+tabs remain stable and hidden modules are not rendered.
+
 ## Why This Exists
 
 `crimson` has already done useful mechanical splits, but the core architecture

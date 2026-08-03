@@ -369,66 +369,101 @@ void drawKeypointTab(
 
 }  // namespace
 
-void drawFrameDebugStatusPanel(const FrameDebugWindowContext& context,
-                               FrameDebugWindowState& state,
-                               FrameDebugWindowResult& result) {
-    const auto review_artifacts = context.zarr_loader.getAvailableReviewArtifacts();
-    const auto* detection_artifact = findReviewArtifact(
-        review_artifacts, ZarrDetectionLoader::ReviewArtifactKind::Detection);
-    const auto* keypoint_artifact = findReviewArtifact(
-        review_artifacts, ZarrDetectionLoader::ReviewArtifactKind::Keypoint);
-    const auto* eye_mask_artifact = findReviewArtifact(
-        review_artifacts, ZarrDetectionLoader::ReviewArtifactKind::EyeMask);
+FrameDebugModuleCatalog buildFrameDebugModuleCatalog(
+    const FrameDebugWindowContext& context) {
+    return {context.zarr_loader.getAvailableReviewArtifacts()};
+}
 
+void drawFrameDebugStatusHeader(const FrameDebugWindowContext& context,
+                                FrameDebugWindowState& state) {
     drawFrameOverviewSection(context);
     if (context.zarr_loaded) {
         drawActiveRoiInsetControls(state);
     }
-    if (!ImGui::BeginTabBar("##frame_inspect_data_tabs")) {
-        return;
-    }
+}
 
-    if (context.zarr_loader.hasDetectionData() || detection_artifact != nullptr) {
-        if (ImGui::BeginTabItem("Detect")) {
-            state.active_tab = FrameInspectTab::Detect;
+bool frameDebugModuleAvailable(
+    const FrameDebugWindowContext& context,
+    const FrameDebugModuleCatalog& catalog,
+    crimson::workspace::FrameInspectView view) {
+    const auto* detection_artifact = findReviewArtifact(
+        catalog.review_artifacts,
+        ZarrDetectionLoader::ReviewArtifactKind::Detection);
+    const auto* keypoint_artifact = findReviewArtifact(
+        catalog.review_artifacts,
+        ZarrDetectionLoader::ReviewArtifactKind::Keypoint);
+    const auto* eye_mask_artifact = findReviewArtifact(
+        catalog.review_artifacts,
+        ZarrDetectionLoader::ReviewArtifactKind::EyeMask);
+
+    switch (view) {
+        case crimson::workspace::FrameInspectView::Detect:
+            return context.zarr_loader.hasDetectionData() ||
+                   detection_artifact != nullptr;
+        case crimson::workspace::FrameInspectView::Keypoints:
+            return context.zarr_loader.hasKeypointData() ||
+                   keypoint_artifact != nullptr;
+        case crimson::workspace::FrameInspectView::EyeMasks:
+            return context.zarr_loader.hasEyeMasks() ||
+                   context.zarr_loader.hasSubjectShapeData() ||
+                   eye_mask_artifact != nullptr;
+        case crimson::workspace::FrameInspectView::TailKinematics:
+            return context.zarr_loader.hasTailKinematicsData();
+        case crimson::workspace::FrameInspectView::EyeAngles:
+            return context.zarr_loader.hasEyeAngleAnalysisData();
+    }
+    return false;
+}
+
+const char* frameDebugModuleLabel(
+    const FrameDebugWindowContext& context,
+    crimson::workspace::FrameInspectView view) {
+    switch (view) {
+        case crimson::workspace::FrameInspectView::Detect:
+            return "Detect";
+        case crimson::workspace::FrameInspectView::Keypoints:
+            return "Keypoints";
+        case crimson::workspace::FrameInspectView::EyeMasks:
+            return frameDebugSubjectMaskTabTitle(context);
+        case crimson::workspace::FrameInspectView::TailKinematics:
+            return "Tail Kinematics";
+        case crimson::workspace::FrameInspectView::EyeAngles:
+            return "Eye Angles";
+    }
+    return "Inspect";
+}
+
+void drawFrameDebugStatusModule(
+    const FrameDebugWindowContext& context,
+    const FrameDebugModuleCatalog& catalog,
+    FrameDebugWindowState& state,
+    FrameDebugWindowResult& result,
+    crimson::workspace::FrameInspectView view) {
+    const auto* detection_artifact = findReviewArtifact(
+        catalog.review_artifacts,
+        ZarrDetectionLoader::ReviewArtifactKind::Detection);
+    const auto* keypoint_artifact = findReviewArtifact(
+        catalog.review_artifacts,
+        ZarrDetectionLoader::ReviewArtifactKind::Keypoint);
+    const auto* eye_mask_artifact = findReviewArtifact(
+        catalog.review_artifacts,
+        ZarrDetectionLoader::ReviewArtifactKind::EyeMask);
+
+    switch (view) {
+        case crimson::workspace::FrameInspectView::Detect:
             drawDetectionTab(context, result, detection_artifact);
-            ImGui::EndTabItem();
-        }
-    }
-
-    if (context.zarr_loader.hasKeypointData() || keypoint_artifact != nullptr) {
-        if (ImGui::BeginTabItem("Keypoints")) {
-            state.active_tab = FrameInspectTab::Keypoints;
+            break;
+        case crimson::workspace::FrameInspectView::Keypoints:
             drawKeypointTab(context, keypoint_artifact);
-            ImGui::EndTabItem();
-        }
-    }
-
-    if (context.zarr_loader.hasEyeMasks() ||
-        context.zarr_loader.hasSubjectShapeData() ||
-        eye_mask_artifact != nullptr) {
-        if (ImGui::BeginTabItem(frameDebugSubjectMaskTabTitle(context))) {
-            state.active_tab = FrameInspectTab::EyeMasks;
+            break;
+        case crimson::workspace::FrameInspectView::EyeMasks:
             drawSubjectMaskTab(context, state, result, eye_mask_artifact);
-            ImGui::EndTabItem();
-        }
-    }
-
-    if (context.zarr_loader.hasTailKinematicsData()) {
-        if (ImGui::BeginTabItem("Tail Kinematics")) {
-            state.active_tab = FrameInspectTab::TailKinematics;
+            break;
+        case crimson::workspace::FrameInspectView::TailKinematics:
             drawTailKinematicsTab(context, state, result);
-            ImGui::EndTabItem();
-        }
-    }
-
-    if (context.zarr_loader.hasEyeAngleAnalysisData()) {
-        if (ImGui::BeginTabItem("Eye Angles")) {
-            state.active_tab = FrameInspectTab::EyeAngles;
+            break;
+        case crimson::workspace::FrameInspectView::EyeAngles:
             drawEyeAngleTab(context, state, result);
-            ImGui::EndTabItem();
-        }
+            break;
     }
-
-    ImGui::EndTabBar();
 }

@@ -6,19 +6,12 @@
 #include "gui/review_metadata_editor.h"
 #include "review_frame_state.h"
 #include "subject_mask_edit_session.h"
+#include "workspace_state.h"
 #include "zarr_bbox_edit.h"
 
 #include <array>
 #include <string>
 #include <vector>
-
-enum class FrameInspectTab {
-    Detect = 0,
-    Keypoints,
-    EyeMasks,
-    TailKinematics,
-    EyeAngles,
-};
 
 struct FrameDebugWindowState {
     ReviewMetadataEditorState manual_write_review;
@@ -42,7 +35,9 @@ struct FrameDebugWindowState {
     std::string eye_angle_qc_status;
     int eye_angle_selected_row = -1;
     int eye_angle_representation_index = -1;
-    FrameInspectTab active_tab = FrameInspectTab::Detect;
+    crimson::workspace::FrameInspectView active_view =
+        crimson::workspace::FrameInspectView::Detect;
+    crimson::workspace::FrameInspectViewSyncState view_sync;
 };
 
 struct FrameDebugWindowContext {

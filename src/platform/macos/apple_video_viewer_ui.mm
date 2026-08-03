@@ -1,6 +1,7 @@
 #include "apple_video_viewer_ui.h"
 
 #include "IconsForkAwesome.h"
+#include "gui/frame_inspect_window.h"
 #include "imgui.h"
 #include "implot.h"
 #include "platform/macos/apple_workspace_layout.h"
@@ -1966,517 +1967,518 @@ void drawAppleFrameInspectWindow(
     return;
   }
 
-  setFirstUseGeometry(currentWorkspaceLayout().frame_inspect);
-  if (!ImGui::Begin("Frame Inspect")) {
-    ImGui::End();
-    return;
-  }
-  if (!interactive) {
-    ImGui::BeginDisabled();
-  }
-
   constexpr crimson::crop::RoiInsetPresentationCapabilities
       kAppleRoiInsetCapabilities{};
   presentation->roi_inset = crimson::crop::resolveRoiInsetPresentation(
       presentation->roi_inset, kAppleRoiInsetCapabilities);
   auto &roi_inset = presentation->roi_inset;
 
-  ImGui::Text("Requested frame: %lld",
-              static_cast<long long>(stats.requested_frame));
-  ImGui::SameLine();
-  ImGui::Text("Presented: %lld", static_cast<long long>(stats.presented_frame));
-  ImGui::SeparatorText("ROI Inset");
-  if (crop_controls == nullptr) {
-    ImGui::BeginDisabled();
-  }
-  ImGui::Checkbox("Show ROI inset", &roi_inset.visible);
-  ImGui::SameLine();
-  ImGui::Checkbox("Label", &roi_inset.show_label);
-  ImGui::SetNextItemWidth(130.0f);
-  ImGui::SliderFloat("Inset width", &roi_inset.width_px,
-                     crimson::crop::kMinimumRoiInsetWidthPx,
-                     crimson::crop::kMaximumRoiInsetWidthPx, "%.0f px");
-  bool normalize_heading =
-      roi_inset.orientation ==
-      crimson::crop::RoiInsetOrientation::HeadingNormalized;
-  const bool heading_normalization_supported =
-      crimson::crop::supportsRoiInsetOrientation(
-          kAppleRoiInsetCapabilities,
-          crimson::crop::RoiInsetOrientation::HeadingNormalized);
-  ImGui::BeginDisabled(!heading_normalization_supported);
-  if (ImGui::Checkbox("Normalize heading", &normalize_heading)) {
-    roi_inset.orientation =
-        normalize_heading
-            ? crimson::crop::RoiInsetOrientation::HeadingNormalized
-            : crimson::crop::RoiInsetOrientation::Acquisition;
-  }
-  ImGui::EndDisabled();
-  if (!heading_normalization_supported) {
-    showItemTooltip(
-        "Heading normalization awaits the shared coordinate contract");
-  }
-  ImGui::Checkbox("Advanced Crop Preview", advanced_crop_preview);
-  if (crop_controls == nullptr) {
-    ImGui::EndDisabled();
-  }
-  ImGui::SeparatorText("Stimulus");
-  if (!stimulus_available) {
-    ImGui::BeginDisabled();
-  }
-  ImGui::Checkbox("Show stimulus inset", &presentation->show_stimulus_inset);
-  ImGui::SameLine();
-  ImGui::Checkbox("Stimulus debug windows", stimulus_debug);
-  ImGui::BeginDisabled(!presentation->show_stimulus_inset);
-  ImGui::SetNextItemWidth(140.0f);
-  ImGui::SliderInt("Stimulus inset width", &presentation->stimulus_inset_width,
-                   120, 360, "%d px");
-  ImGui::SetNextItemWidth(140.0f);
-  ImGui::SliderFloat("Stimulus inset opacity",
-                     &presentation->stimulus_inset_opacity, 0.20f, 1.0f,
-                     "%.2f");
-  ImGui::Checkbox("Stimulus frame label",
-                  &presentation->show_stimulus_frame_label);
-  ImGui::EndDisabled();
-  if (!stimulus_available) {
-    ImGui::EndDisabled();
-  }
-  if (crop_controls != nullptr) {
-    ImGui::TextUnformatted("Crop source:");
+  crimson::gui::FrameInspectWindowComposition composition;
+  composition.draw_header = [&]() {
+    ImGui::Text("Requested frame: %lld",
+                static_cast<long long>(stats.requested_frame));
     ImGui::SameLine();
-    const bool acquisition_selected =
-        crop_controls->preference ==
-        crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
-    if (!crop_controls->acquisition_available) {
+    ImGui::Text("Presented: %lld",
+                static_cast<long long>(stats.presented_frame));
+    ImGui::SeparatorText("ROI Inset");
+    if (crop_controls == nullptr) {
       ImGui::BeginDisabled();
     }
-    if (ImGui::RadioButton("Acquisition video", acquisition_selected) &&
-        interactive) {
-      crop_controls->preference =
+    ImGui::Checkbox("Show ROI inset", &roi_inset.visible);
+    ImGui::SameLine();
+    ImGui::Checkbox("Label", &roi_inset.show_label);
+    ImGui::SetNextItemWidth(130.0f);
+    ImGui::SliderFloat("Inset width", &roi_inset.width_px,
+                       crimson::crop::kMinimumRoiInsetWidthPx,
+                       crimson::crop::kMaximumRoiInsetWidthPx, "%.0f px");
+    bool normalize_heading =
+        roi_inset.orientation ==
+        crimson::crop::RoiInsetOrientation::HeadingNormalized;
+    const bool heading_normalization_supported =
+        crimson::crop::supportsRoiInsetOrientation(
+            kAppleRoiInsetCapabilities,
+            crimson::crop::RoiInsetOrientation::HeadingNormalized);
+    ImGui::BeginDisabled(!heading_normalization_supported);
+    if (ImGui::Checkbox("Normalize heading", &normalize_heading)) {
+      roi_inset.orientation =
+          normalize_heading
+              ? crimson::crop::RoiInsetOrientation::HeadingNormalized
+              : crimson::crop::RoiInsetOrientation::Acquisition;
+    }
+    ImGui::EndDisabled();
+    if (!heading_normalization_supported) {
+      showItemTooltip(
+          "Heading normalization awaits the shared coordinate contract");
+    }
+    ImGui::Checkbox("Advanced Crop Preview", advanced_crop_preview);
+    if (crop_controls == nullptr) {
+      ImGui::EndDisabled();
+    }
+    ImGui::SeparatorText("Stimulus");
+    if (!stimulus_available) {
+      ImGui::BeginDisabled();
+    }
+    ImGui::Checkbox("Show stimulus inset", &presentation->show_stimulus_inset);
+    ImGui::SameLine();
+    ImGui::Checkbox("Stimulus debug windows", stimulus_debug);
+    ImGui::BeginDisabled(!presentation->show_stimulus_inset);
+    ImGui::SetNextItemWidth(140.0f);
+    ImGui::SliderInt("Stimulus inset width",
+                     &presentation->stimulus_inset_width, 120, 360, "%d px");
+    ImGui::SetNextItemWidth(140.0f);
+    ImGui::SliderFloat("Stimulus inset opacity",
+                       &presentation->stimulus_inset_opacity, 0.20f, 1.0f,
+                       "%.2f");
+    ImGui::Checkbox("Stimulus frame label",
+                    &presentation->show_stimulus_frame_label);
+    ImGui::EndDisabled();
+    if (!stimulus_available) {
+      ImGui::EndDisabled();
+    }
+    if (crop_controls != nullptr) {
+      ImGui::TextUnformatted("Crop source:");
+      ImGui::SameLine();
+      const bool acquisition_selected =
+          crop_controls->preference ==
           crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
-    }
-    if (!crop_controls->acquisition_available) {
-      ImGui::EndDisabled();
-    }
-    ImGui::SameLine();
-    const bool geometry_selected =
-        crop_controls->preference ==
-        crimson::crop::CropSourcePreference::PreferLiveGeometry;
-    if (!crop_controls->live_geometry_available) {
-      ImGui::BeginDisabled();
-    }
-    if (ImGui::RadioButton("Live geometry", geometry_selected) && interactive) {
-      crop_controls->preference =
+      if (!crop_controls->acquisition_available) {
+        ImGui::BeginDisabled();
+      }
+      if (ImGui::RadioButton("Acquisition video", acquisition_selected) &&
+          interactive) {
+        crop_controls->preference =
+            crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
+      }
+      if (!crop_controls->acquisition_available) {
+        ImGui::EndDisabled();
+      }
+      ImGui::SameLine();
+      const bool geometry_selected =
+          crop_controls->preference ==
           crimson::crop::CropSourcePreference::PreferLiveGeometry;
-    }
-    if (!crop_controls->live_geometry_available) {
-      ImGui::EndDisabled();
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("%s", cropStatusName(crop_controls->selection_status));
-  }
-
-  if (!ImGui::BeginTabBar("##frame-inspect-tabs")) {
-    if (!interactive) {
-      ImGui::EndDisabled();
-    }
-    ImGui::End();
-    return;
-  }
-  const auto requested_view = selections->frame_inspect_view;
-  const bool apply_requested_view =
-      presentation->tab_sync.shouldApply(requested_view);
-  const auto selected_flags = [&](crimson::workspace::FrameInspectView view) {
-    return apply_requested_view && requested_view == view
-               ? ImGuiTabItemFlags_SetSelected
-               : ImGuiTabItemFlags_None;
-  };
-  const auto observe_view = [&](crimson::workspace::FrameInspectView view) {
-    selections->frame_inspect_view = view;
-    presentation->tab_sync.observe(view);
-  };
-  if (ImGui::BeginTabItem(
-          "Detect", nullptr,
-          selected_flags(crimson::workspace::FrameInspectView::Detect))) {
-    observe_view(crimson::workspace::FrameInspectView::Detect);
-    ImGui::TextUnformatted("Read-only presentation");
-    if (detection_descriptor == nullptr || !detection_descriptor->ready()) {
-      ImGui::TextDisabled("No canonical or refined detection run is open.");
-    } else {
-      ImGui::Text("Surface: %s",
-                  detection_descriptor->surface_kind ==
-                          crimson::zarr::DetectionSurfaceKind::RefinedSnapshotV1
-                      ? "Refined snapshot"
-                      : "Canonical raw");
-      ImGui::TextWrapped("Run: %s", detection_descriptor->run_name.c_str());
-      const bool frame_matches =
-          detection_frame != nullptr &&
-          detection_frame->camera_frame == stats.presented_frame;
-      if (!frame_matches) {
-        ImGui::TextDisabled("Loading detections for the presented frame...");
-      } else {
-        ImGui::Text("Frame %lld  |  %zu observations",
-                    static_cast<long long>(detection_frame->camera_frame),
-                    detection_frame->detections.size());
-        if (detection_frame->detections.empty()) {
-          ImGui::TextDisabled("No detections in this frame.");
-        } else if (ImGui::BeginTable("##current-detections", 4,
-                                     ImGuiTableFlags_Borders |
-                                         ImGuiTableFlags_RowBg |
-                                         ImGuiTableFlags_SizingStretchProp)) {
-          ImGui::TableSetupColumn("Observation");
-          ImGui::TableSetupColumn("Confidence");
-          ImGui::TableSetupColumn("Class");
-          ImGui::TableSetupColumn("Source");
-          ImGui::TableHeadersRow();
-          for (size_t index = 0; index < detection_frame->detections.size();
-               ++index) {
-            const auto &detection = detection_frame->detections[index];
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::PushID(static_cast<int>(index));
-            const bool selected = detection.instance_key != 0 &&
-                                  detection_inspect->selected_instance_key ==
-                                      detection.instance_key;
-            const std::string label = "#" + std::to_string(index + 1);
-            if (ImGui::Selectable(label.c_str(), selected) &&
-                detection.instance_key != 0) {
-              detection_inspect->selected_instance_key = detection.instance_key;
-            }
-            ImGui::PopID();
-            ImGui::TableSetColumnIndex(1);
-            if (detection.score_valid) {
-              ImGui::Text("%.3f", detection.score);
-            } else {
-              ImGui::TextDisabled("n/a");
-            }
-            ImGui::TableSetColumnIndex(2);
-            ImGui::Text("%d", detection.class_id);
-            ImGui::TableSetColumnIndex(3);
-            ImGui::TextUnformatted(detection.source_kind_code == 3 ? "Manual"
-                                   : detection.manual_edit ? "Edited raw"
-                                                           : "Raw");
-          }
-          ImGui::EndTable();
-        }
+      if (!crop_controls->live_geometry_available) {
+        ImGui::BeginDisabled();
       }
-      if (ImGui::Button(ICON_FK_LINE_CHART " Detection Timeline")) {
-        *detection_quality_timeline = true;
+      if (ImGui::RadioButton("Live geometry", geometry_selected) &&
+          interactive) {
+        crop_controls->preference =
+            crimson::crop::CropSourcePreference::PreferLiveGeometry;
+      }
+      if (!crop_controls->live_geometry_available) {
+        ImGui::EndDisabled();
       }
       ImGui::SameLine();
-      switch (detection_quality_state) {
-      case AppleDetectionQualityLoadState::Closed:
-        ImGui::TextDisabled("not loaded");
-        break;
-      case AppleDetectionQualityLoadState::Opening:
-        ImGui::TextDisabled("opening...");
-        break;
-      case AppleDetectionQualityLoadState::Ready:
-        ImGui::TextDisabled("ready");
-        break;
-      case AppleDetectionQualityLoadState::Failed:
-        ImGui::TextDisabled("unavailable");
-        if (!detection_quality_error.empty()) {
-          showItemTooltip(detection_quality_error.c_str());
-        }
-        break;
-      }
+      ImGui::TextDisabled("%s",
+                          cropStatusName(crop_controls->selection_status));
     }
-    ImGui::Separator();
-    bool bbox_editing_enabled = false;
+  };
+
+  composition.modules.push_back(
+      {crimson::workspace::FrameInspectView::Detect, "Detect", true, [&]() {
+         ImGui::TextUnformatted("Read-only presentation");
+         if (detection_descriptor == nullptr ||
+             !detection_descriptor->ready()) {
+           ImGui::TextDisabled(
+               "No canonical or refined detection run is open.");
+         } else {
+           ImGui::Text(
+               "Surface: %s",
+               detection_descriptor->surface_kind ==
+                       crimson::zarr::DetectionSurfaceKind::RefinedSnapshotV1
+                   ? "Refined snapshot"
+                   : "Canonical raw");
+           ImGui::TextWrapped("Run: %s",
+                              detection_descriptor->run_name.c_str());
+           const bool frame_matches =
+               detection_frame != nullptr &&
+               detection_frame->camera_frame == stats.presented_frame;
+           if (!frame_matches) {
+             ImGui::TextDisabled(
+                 "Loading detections for the presented frame...");
+           } else {
+             ImGui::Text("Frame %lld  |  %zu observations",
+                         static_cast<long long>(detection_frame->camera_frame),
+                         detection_frame->detections.size());
+             if (detection_frame->detections.empty()) {
+               ImGui::TextDisabled("No detections in this frame.");
+             } else if (ImGui::BeginTable(
+                            "##current-detections", 4,
+                            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                ImGuiTableFlags_SizingStretchProp)) {
+               ImGui::TableSetupColumn("Observation");
+               ImGui::TableSetupColumn("Confidence");
+               ImGui::TableSetupColumn("Class");
+               ImGui::TableSetupColumn("Source");
+               ImGui::TableHeadersRow();
+               for (size_t index = 0;
+                    index < detection_frame->detections.size(); ++index) {
+                 const auto &detection = detection_frame->detections[index];
+                 ImGui::TableNextRow();
+                 ImGui::TableSetColumnIndex(0);
+                 ImGui::PushID(static_cast<int>(index));
+                 const bool selected =
+                     detection.instance_key != 0 &&
+                     detection_inspect->selected_instance_key ==
+                         detection.instance_key;
+                 const std::string label = "#" + std::to_string(index + 1);
+                 if (ImGui::Selectable(label.c_str(), selected) &&
+                     detection.instance_key != 0) {
+                   detection_inspect->selected_instance_key =
+                       detection.instance_key;
+                 }
+                 ImGui::PopID();
+                 ImGui::TableSetColumnIndex(1);
+                 if (detection.score_valid) {
+                   ImGui::Text("%.3f", detection.score);
+                 } else {
+                   ImGui::TextDisabled("n/a");
+                 }
+                 ImGui::TableSetColumnIndex(2);
+                 ImGui::Text("%d", detection.class_id);
+                 ImGui::TableSetColumnIndex(3);
+                 ImGui::TextUnformatted(detection.source_kind_code == 3
+                                            ? "Manual"
+                                        : detection.manual_edit ? "Edited raw"
+                                                                : "Raw");
+               }
+               ImGui::EndTable();
+             }
+           }
+           if (ImGui::Button(ICON_FK_LINE_CHART " Detection Timeline")) {
+             *detection_quality_timeline = true;
+           }
+           ImGui::SameLine();
+           switch (detection_quality_state) {
+           case AppleDetectionQualityLoadState::Closed:
+             ImGui::TextDisabled("not loaded");
+             break;
+           case AppleDetectionQualityLoadState::Opening:
+             ImGui::TextDisabled("opening...");
+             break;
+           case AppleDetectionQualityLoadState::Ready:
+             ImGui::TextDisabled("ready");
+             break;
+           case AppleDetectionQualityLoadState::Failed:
+             ImGui::TextDisabled("unavailable");
+             if (!detection_quality_error.empty()) {
+               showItemTooltip(detection_quality_error.c_str());
+             }
+             break;
+           }
+         }
+         ImGui::Separator();
+         bool bbox_editing_enabled = false;
+         ImGui::BeginDisabled();
+         ImGui::Checkbox("Enable bbox draw editing", &bbox_editing_enabled);
+         ImGui::Button("Run Detection");
+         ImGui::EndDisabled();
+       }});
+  composition.modules.push_back(
+      {crimson::workspace::FrameInspectView::Keypoints, "Keypoints", true,
+       [&]() {
+         ImGui::TextUnformatted("Read-only presentation");
+         drawAvailableCheckbox("Keypoint markers", &controls->show_keypoints,
+                               availability.keypoints);
+         ImGui::SameLine();
+         drawAvailableCheckbox("Heading arrows", &controls->show_headings,
+                               availability.headings);
+         if (keypoint_descriptor == nullptr ||
+             keypoint_descriptor->run_name.empty()) {
+           ImGui::TextDisabled("No raw or refined keypoint-v2 run is open.");
+         } else {
+           ImGui::Text("Surface: %s", keypoint_descriptor->refined
+                                          ? "Refined snapshot"
+                                          : "Raw observations");
+           ImGui::TextWrapped("Run: %s", keypoint_descriptor->run_name.c_str());
+           const bool frame_matches =
+               keypoint_frame != nullptr &&
+               keypoint_frame->camera_frame == stats.presented_frame;
+           if (!frame_matches) {
+             ImGui::TextDisabled(
+                 "Loading keypoints for the presented frame...");
+           } else {
+             ImGui::Text("Frame %lld  |  %zu observations",
+                         static_cast<long long>(keypoint_frame->camera_frame),
+                         keypoint_frame->detections.size());
+             if (keypoint_frame->detections.empty()) {
+               ImGui::TextDisabled("No keypoint observations in this frame.");
+             } else if (ImGui::BeginTable(
+                            "##current-keypoints", 4,
+                            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                ImGuiTableFlags_SizingStretchProp)) {
+               ImGui::TableSetupColumn("Observation");
+               ImGui::TableSetupColumn("Pose confidence");
+               ImGui::TableSetupColumn("Valid landmarks");
+               ImGui::TableSetupColumn("State");
+               ImGui::TableHeadersRow();
+               for (size_t index = 0; index < keypoint_frame->detections.size();
+                    ++index) {
+                 const auto &detection = keypoint_frame->detections[index];
+                 ImGui::TableNextRow();
+                 ImGui::TableSetColumnIndex(0);
+                 ImGui::PushID(static_cast<int>(index));
+                 const bool selected =
+                     detection.instance_key != 0 &&
+                     keypoint_inspect->selected_instance_key ==
+                         detection.instance_key;
+                 const std::string label = "#" + std::to_string(index + 1);
+                 if (ImGui::Selectable(label.c_str(), selected) &&
+                     detection.instance_key != 0) {
+                   keypoint_inspect->selected_instance_key =
+                       detection.instance_key;
+                 }
+                 ImGui::PopID();
+                 ImGui::TableSetColumnIndex(1);
+                 if (std::isfinite(detection.pose_confidence) &&
+                     (!detection.refined_keypoints ||
+                      detection.confidence_valid)) {
+                   ImGui::Text("%.3f", detection.pose_confidence);
+                 } else {
+                   ImGui::TextDisabled("n/a");
+                 }
+                 ImGui::TableSetColumnIndex(2);
+                 const size_t valid = static_cast<size_t>(
+                     std::count(detection.keypoint_valid.begin(),
+                                detection.keypoint_valid.end(), uint8_t{1}));
+                 ImGui::Text("%zu / %zu", valid,
+                             detection.keypoint_valid.size());
+                 ImGui::TableSetColumnIndex(3);
+                 ImGui::TextUnformatted(
+                     detection.refined_keypoints
+                         ? detection.keypoint_usable ? "Usable" : "Rejected"
+                     : detection.source_success ? "Succeeded"
+                                                : "Failed");
+               }
+               ImGui::EndTable();
+             }
+             const auto selected = std::find_if(
+                 keypoint_frame->detections.begin(),
+                 keypoint_frame->detections.end(), [&](const auto &candidate) {
+                   return candidate.instance_key != 0 &&
+                          candidate.instance_key ==
+                              keypoint_inspect->selected_instance_key;
+                 });
+             if (selected != keypoint_frame->detections.end() &&
+                 ImGui::BeginTable("##selected-keypoint-confidence", 4,
+                                   ImGuiTableFlags_Borders |
+                                       ImGuiTableFlags_RowBg |
+                                       ImGuiTableFlags_SizingStretchProp)) {
+               ImGui::TableSetupColumn("Landmark");
+               ImGui::TableSetupColumn("Confidence");
+               ImGui::TableSetupColumn("Valid");
+               ImGui::TableSetupColumn("Edited");
+               ImGui::TableHeadersRow();
+               for (size_t point = 0;
+                    point < keypoint_descriptor->keypoint_labels.size();
+                    ++point) {
+                 ImGui::TableNextRow();
+                 ImGui::TableSetColumnIndex(0);
+                 ImGui::TextUnformatted(
+                     keypoint_descriptor->keypoint_labels[point].c_str());
+                 ImGui::TableSetColumnIndex(1);
+                 if (point < selected->keypoint_confidences.size() &&
+                     (!selected->refined_keypoints ||
+                      selected->confidence_valid)) {
+                   ImGui::Text("%.3f", selected->keypoint_confidences[point]);
+                 } else {
+                   ImGui::TextDisabled("n/a");
+                 }
+                 ImGui::TableSetColumnIndex(2);
+                 ImGui::TextUnformatted(
+                     point < selected->keypoint_valid.size() &&
+                             selected->keypoint_valid[point]
+                         ? "Yes"
+                         : "No");
+                 ImGui::TableSetColumnIndex(3);
+                 ImGui::TextUnformatted(
+                     point < selected->keypoint_edit_flags.size() &&
+                             selected->keypoint_edit_flags[point]
+                         ? "Yes"
+                         : "No");
+               }
+               ImGui::EndTable();
+             }
+           }
+           if (ImGui::Button(ICON_FK_LINE_CHART " Keypoint Quality Timeline")) {
+             *keypoint_quality_timeline = true;
+           }
+           ImGui::SameLine();
+           switch (keypoint_quality_state) {
+           case AppleKeypointQualityLoadState::Closed:
+             ImGui::TextDisabled("not loaded");
+             break;
+           case AppleKeypointQualityLoadState::Opening:
+             ImGui::TextDisabled("opening...");
+             break;
+           case AppleKeypointQualityLoadState::Ready:
+             ImGui::TextDisabled("ready");
+             break;
+           case AppleKeypointQualityLoadState::Failed:
+             ImGui::TextDisabled("unavailable");
+             if (!keypoint_quality_error.empty()) {
+               showItemTooltip(keypoint_quality_error.c_str());
+             }
+             break;
+           }
+         }
+         ImGui::Separator();
+         if (ImGui::Button("Reset overlay defaults")) {
+           *controls = {};
+         }
+       }});
+
+  composition.modules.push_back(
+      {crimson::workspace::FrameInspectView::EyeMasks, "Subject Masks", true,
+       [&]() {
+         drawAvailableCheckbox("Show masks", &controls->show_subject_masks,
+                               availability.subject_masks);
+
+         const bool mode_available =
+             availability.subject_masks || availability.eye_geometry;
+         if (!mode_available) {
+           ImGui::BeginDisabled();
+         }
+         int mode = static_cast<int>(controls->mask_mode);
+         const char *mode_labels[] = {"Realtime", "Review", "Debug"};
+         ImGui::SetNextItemWidth(150.0f);
+         if (ImGui::Combo("Mode", &mode, mode_labels, 3)) {
+           controls->mask_mode =
+               static_cast<crimson::overlay::ReadOnlyMaskOverlayMode>(mode);
+         }
+         showItemTooltip(
+             "Realtime draws fills only; Review and Debug add contours "
+             "and eye geometry");
+         if (!mode_available) {
+           ImGui::EndDisabled();
+         }
+
+         const bool mask_components_enabled =
+             availability.subject_masks && controls->show_subject_masks;
+         drawAvailableCheckbox("Subject body",
+                               &controls->show_subject_body_mask,
+                               mask_components_enabled);
+         ImGui::SameLine();
+         drawAvailableCheckbox("Swim bladder",
+                               &controls->show_swim_bladder_mask,
+                               mask_components_enabled);
+         const bool eye_components_available =
+             availability.subject_masks || availability.eye_geometry;
+         drawAvailableCheckbox("Left eye", &controls->show_eye_left_mask,
+                               eye_components_available);
+         ImGui::SameLine();
+         drawAvailableCheckbox("Right eye", &controls->show_eye_right_mask,
+                               eye_components_available);
+         ImGui::SeparatorText("Subject shape");
+         drawAvailableCheckbox("Show subject shape",
+                               &controls->show_subject_shape,
+                               availability.subject_shape);
+         const bool shape_enabled =
+             availability.subject_shape && controls->show_subject_shape;
+         drawAvailableCheckbox("Snout tip",
+                               &controls->show_subject_shape_snout_tip,
+                               shape_enabled);
+         ImGui::SameLine();
+         drawAvailableCheckbox("Tail base",
+                               &controls->show_subject_shape_tail_base,
+                               shape_enabled);
+         ImGui::SameLine();
+         drawAvailableCheckbox(
+             "Tail tip", &controls->show_subject_shape_tail_tip, shape_enabled);
+         drawAvailableCheckbox("Caudal anchor",
+                               &controls->show_subject_shape_caudal_anchor,
+                               shape_enabled);
+         drawAvailableCheckbox("Centerline",
+                               &controls->show_subject_shape_centerline,
+                               shape_enabled);
+         drawAvailableCheckbox("Dense B-spline",
+                               &controls->show_subject_shape_bspline,
+                               shape_enabled);
+         drawAvailableCheckbox("Body frame axes",
+                               &controls->show_subject_shape_body_axes,
+                               shape_enabled);
+         drawAvailableCheckbox(
+             "Spline debug points",
+             &controls->show_subject_shape_bspline_debug_points, shape_enabled);
+         ImGui::SameLine();
+         drawAvailableCheckbox(
+             "Control points",
+             &controls->show_subject_shape_bspline_control_points,
+             shape_enabled);
+         drawAvailableCheckbox("Tail samples",
+                               &controls->show_subject_shape_tail_samples,
+                               shape_enabled);
+         ImGui::SameLine();
+         drawAvailableCheckbox("Tail normals",
+                               &controls->show_subject_shape_tail_normals,
+                               shape_enabled);
+       }});
+
+  composition.modules.push_back(
+      {crimson::workspace::FrameInspectView::EyeAngles, "Eye Angles", true,
+       [&]() {
+         const bool detailed =
+             controls->mask_mode !=
+             crimson::overlay::ReadOnlyMaskOverlayMode::Realtime;
+         drawAvailableCheckbox("Show eye geometry",
+                               &controls->show_eye_geometry,
+                               availability.eye_geometry && detailed);
+         const bool eye_details_enabled = availability.eye_geometry &&
+                                          detailed &&
+                                          controls->show_eye_geometry;
+         drawAvailableCheckbox("Visual cones",
+                               &controls->show_eye_direction_beams,
+                               eye_details_enabled);
+         ImGui::SameLine();
+         drawAvailableCheckbox("Gaze rays", &controls->show_eye_gaze_rays,
+                               eye_details_enabled);
+         drawAvailableCheckbox("Angle arcs", &controls->show_eye_angle_arcs,
+                               eye_details_enabled);
+         ImGui::SameLine();
+         drawAvailableCheckbox("Angle labels", &controls->show_eye_angle_labels,
+                               eye_details_enabled);
+       }});
+
+  composition.draw_footer = [&]() {
+    ImGui::SeparatorText("Motion and Insets");
     ImGui::BeginDisabled();
-    ImGui::Checkbox("Enable bbox draw editing", &bbox_editing_enabled);
-    ImGui::Button("Run Detection");
+    ImGui::Checkbox("Motion trail", &presentation->show_motion_trail);
+    ImGui::SetNextItemWidth(140.0f);
+    ImGui::SliderFloat("Trail duration", &presentation->motion_trail_seconds,
+                       0.25f, 10.0f, "%.2f s");
+    ImGui::Checkbox("Valid samples only", &presentation->motion_valid_only);
     ImGui::EndDisabled();
-    ImGui::EndTabItem();
-  }
-  if (ImGui::BeginTabItem(
-          "Keypoints", nullptr,
-          selected_flags(crimson::workspace::FrameInspectView::Keypoints))) {
-    observe_view(crimson::workspace::FrameInspectView::Keypoints);
-    ImGui::TextUnformatted("Read-only presentation");
-    drawAvailableCheckbox("Keypoint markers", &controls->show_keypoints,
-                          availability.keypoints);
-    ImGui::SameLine();
-    drawAvailableCheckbox("Heading arrows", &controls->show_headings,
-                          availability.headings);
-    if (keypoint_descriptor == nullptr ||
-        keypoint_descriptor->run_name.empty()) {
-      ImGui::TextDisabled("No raw or refined keypoint-v2 run is open.");
-    } else {
-      ImGui::Text("Surface: %s", keypoint_descriptor->refined
-                                     ? "Refined snapshot"
-                                     : "Raw observations");
-      ImGui::TextWrapped("Run: %s", keypoint_descriptor->run_name.c_str());
-      const bool frame_matches =
-          keypoint_frame != nullptr &&
-          keypoint_frame->camera_frame == stats.presented_frame;
-      if (!frame_matches) {
-        ImGui::TextDisabled("Loading keypoints for the presented frame...");
-      } else {
-        ImGui::Text("Frame %lld  |  %zu observations",
-                    static_cast<long long>(keypoint_frame->camera_frame),
-                    keypoint_frame->detections.size());
-        if (keypoint_frame->detections.empty()) {
-          ImGui::TextDisabled("No keypoint observations in this frame.");
-        } else if (ImGui::BeginTable("##current-keypoints", 4,
-                                     ImGuiTableFlags_Borders |
-                                         ImGuiTableFlags_RowBg |
-                                         ImGuiTableFlags_SizingStretchProp)) {
-          ImGui::TableSetupColumn("Observation");
-          ImGui::TableSetupColumn("Pose confidence");
-          ImGui::TableSetupColumn("Valid landmarks");
-          ImGui::TableSetupColumn("State");
-          ImGui::TableHeadersRow();
-          for (size_t index = 0; index < keypoint_frame->detections.size();
-               ++index) {
-            const auto &detection = keypoint_frame->detections[index];
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::PushID(static_cast<int>(index));
-            const bool selected = detection.instance_key != 0 &&
-                                  keypoint_inspect->selected_instance_key ==
-                                      detection.instance_key;
-            const std::string label = "#" + std::to_string(index + 1);
-            if (ImGui::Selectable(label.c_str(), selected) &&
-                detection.instance_key != 0) {
-              keypoint_inspect->selected_instance_key = detection.instance_key;
-            }
-            ImGui::PopID();
-            ImGui::TableSetColumnIndex(1);
-            if (std::isfinite(detection.pose_confidence) &&
-                (!detection.refined_keypoints || detection.confidence_valid)) {
-              ImGui::Text("%.3f", detection.pose_confidence);
-            } else {
-              ImGui::TextDisabled("n/a");
-            }
-            ImGui::TableSetColumnIndex(2);
-            const size_t valid = static_cast<size_t>(
-                std::count(detection.keypoint_valid.begin(),
-                           detection.keypoint_valid.end(), uint8_t{1}));
-            ImGui::Text("%zu / %zu", valid, detection.keypoint_valid.size());
-            ImGui::TableSetColumnIndex(3);
-            ImGui::TextUnformatted(detection.refined_keypoints
-                                       ? detection.keypoint_usable ? "Usable"
-                                                                   : "Rejected"
-                                   : detection.source_success ? "Succeeded"
-                                                              : "Failed");
-          }
-          ImGui::EndTable();
-        }
-        const auto selected = std::find_if(
-            keypoint_frame->detections.begin(),
-            keypoint_frame->detections.end(), [&](const auto &candidate) {
-              return candidate.instance_key != 0 &&
-                     candidate.instance_key ==
-                         keypoint_inspect->selected_instance_key;
-            });
-        if (selected != keypoint_frame->detections.end() &&
-            ImGui::BeginTable("##selected-keypoint-confidence", 4,
-                              ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                                  ImGuiTableFlags_SizingStretchProp)) {
-          ImGui::TableSetupColumn("Landmark");
-          ImGui::TableSetupColumn("Confidence");
-          ImGui::TableSetupColumn("Valid");
-          ImGui::TableSetupColumn("Edited");
-          ImGui::TableHeadersRow();
-          for (size_t point = 0;
-               point < keypoint_descriptor->keypoint_labels.size(); ++point) {
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted(
-                keypoint_descriptor->keypoint_labels[point].c_str());
-            ImGui::TableSetColumnIndex(1);
-            if (point < selected->keypoint_confidences.size() &&
-                (!selected->refined_keypoints || selected->confidence_valid)) {
-              ImGui::Text("%.3f", selected->keypoint_confidences[point]);
-            } else {
-              ImGui::TextDisabled("n/a");
-            }
-            ImGui::TableSetColumnIndex(2);
-            ImGui::TextUnformatted(point < selected->keypoint_valid.size() &&
-                                           selected->keypoint_valid[point]
-                                       ? "Yes"
-                                       : "No");
-            ImGui::TableSetColumnIndex(3);
-            ImGui::TextUnformatted(
-                point < selected->keypoint_edit_flags.size() &&
-                        selected->keypoint_edit_flags[point]
-                    ? "Yes"
-                    : "No");
-          }
-          ImGui::EndTable();
-        }
-      }
-      if (ImGui::Button(ICON_FK_LINE_CHART " Keypoint Quality Timeline")) {
-        *keypoint_quality_timeline = true;
-      }
-      ImGui::SameLine();
-      switch (keypoint_quality_state) {
-      case AppleKeypointQualityLoadState::Closed:
-        ImGui::TextDisabled("not loaded");
-        break;
-      case AppleKeypointQualityLoadState::Opening:
-        ImGui::TextDisabled("opening...");
-        break;
-      case AppleKeypointQualityLoadState::Ready:
-        ImGui::TextDisabled("ready");
-        break;
-      case AppleKeypointQualityLoadState::Failed:
-        ImGui::TextDisabled("unavailable");
-        if (!keypoint_quality_error.empty()) {
-          showItemTooltip(keypoint_quality_error.c_str());
-        }
-        break;
-      }
-    }
-    ImGui::Separator();
-    if (ImGui::Button("Reset overlay defaults")) {
-      *controls = {};
-    }
-    ImGui::EndTabItem();
-  }
+    ImGui::TextDisabled(
+        "Motion-trail input is unavailable in the current read-only adapter.");
 
-  if (ImGui::BeginTabItem(
-          "Subject Masks", nullptr,
-          selected_flags(crimson::workspace::FrameInspectView::EyeMasks))) {
-    observe_view(crimson::workspace::FrameInspectView::EyeMasks);
-    drawAvailableCheckbox("Show masks", &controls->show_subject_masks,
-                          availability.subject_masks);
-
-    const bool mode_available =
-        availability.subject_masks || availability.eye_geometry;
-    if (!mode_available) {
+    if (!polar_available) {
       ImGui::BeginDisabled();
     }
-    int mode = static_cast<int>(controls->mask_mode);
-    const char *mode_labels[] = {"Realtime", "Review", "Debug"};
-    ImGui::SetNextItemWidth(150.0f);
-    if (ImGui::Combo("Mode", &mode, mode_labels, 3)) {
-      controls->mask_mode =
-          static_cast<crimson::overlay::ReadOnlyMaskOverlayMode>(mode);
-    }
-    showItemTooltip("Realtime draws fills only; Review and Debug add contours "
-                    "and eye geometry");
-    if (!mode_available) {
+    ImGui::Checkbox("Polar inset", &presentation->polar_inset.show_inset);
+    ImGui::BeginDisabled(!presentation->polar_inset.show_inset);
+    ImGui::SetNextItemWidth(140.0f);
+    ImGui::SliderFloat("Polar inset width", &presentation->polar_inset.width_px,
+                       140.0f, 360.0f, "%.0f px");
+    presentation->polar_inset.width_px =
+        std::clamp(presentation->polar_inset.width_px, 140.0f, 360.0f);
+    ImGui::SetNextItemWidth(140.0f);
+    ImGui::SliderFloat("Polar inset opacity",
+                       &presentation->polar_inset.opacity, 0.20f, 1.0f, "%.2f");
+    presentation->polar_inset.opacity =
+        std::clamp(presentation->polar_inset.opacity, 0.20f, 1.0f);
+    ImGui::Checkbox("Polar labels", &presentation->polar_inset.show_labels);
+    ImGui::SameLine();
+    ImGui::Checkbox("Polar readout", &presentation->polar_inset.show_readout);
+    ImGui::EndDisabled();
+    if (!polar_available) {
       ImGui::EndDisabled();
     }
+  };
 
-    const bool mask_components_enabled =
-        availability.subject_masks && controls->show_subject_masks;
-    drawAvailableCheckbox("Subject body", &controls->show_subject_body_mask,
-                          mask_components_enabled);
-    ImGui::SameLine();
-    drawAvailableCheckbox("Swim bladder", &controls->show_swim_bladder_mask,
-                          mask_components_enabled);
-    const bool eye_components_available =
-        availability.subject_masks || availability.eye_geometry;
-    drawAvailableCheckbox("Left eye", &controls->show_eye_left_mask,
-                          eye_components_available);
-    ImGui::SameLine();
-    drawAvailableCheckbox("Right eye", &controls->show_eye_right_mask,
-                          eye_components_available);
-    ImGui::SeparatorText("Subject shape");
-    drawAvailableCheckbox("Show subject shape", &controls->show_subject_shape,
-                          availability.subject_shape);
-    const bool shape_enabled =
-        availability.subject_shape && controls->show_subject_shape;
-    drawAvailableCheckbox("Snout tip", &controls->show_subject_shape_snout_tip,
-                          shape_enabled);
-    ImGui::SameLine();
-    drawAvailableCheckbox("Tail base", &controls->show_subject_shape_tail_base,
-                          shape_enabled);
-    ImGui::SameLine();
-    drawAvailableCheckbox("Tail tip", &controls->show_subject_shape_tail_tip,
-                          shape_enabled);
-    drawAvailableCheckbox("Caudal anchor",
-                          &controls->show_subject_shape_caudal_anchor,
-                          shape_enabled);
-    drawAvailableCheckbox(
-        "Centerline", &controls->show_subject_shape_centerline, shape_enabled);
-    drawAvailableCheckbox("Dense B-spline",
-                          &controls->show_subject_shape_bspline, shape_enabled);
-    drawAvailableCheckbox("Body frame axes",
-                          &controls->show_subject_shape_body_axes,
-                          shape_enabled);
-    drawAvailableCheckbox("Spline debug points",
-                          &controls->show_subject_shape_bspline_debug_points,
-                          shape_enabled);
-    ImGui::SameLine();
-    drawAvailableCheckbox("Control points",
-                          &controls->show_subject_shape_bspline_control_points,
-                          shape_enabled);
-    drawAvailableCheckbox("Tail samples",
-                          &controls->show_subject_shape_tail_samples,
-                          shape_enabled);
-    ImGui::SameLine();
-    drawAvailableCheckbox("Tail normals",
-                          &controls->show_subject_shape_tail_normals,
-                          shape_enabled);
-    ImGui::EndTabItem();
-  }
-
-  if (ImGui::BeginTabItem(
-          "Eye Angles", nullptr,
-          selected_flags(crimson::workspace::FrameInspectView::EyeAngles))) {
-    observe_view(crimson::workspace::FrameInspectView::EyeAngles);
-    const bool detailed = controls->mask_mode !=
-                          crimson::overlay::ReadOnlyMaskOverlayMode::Realtime;
-    drawAvailableCheckbox("Show eye geometry", &controls->show_eye_geometry,
-                          availability.eye_geometry && detailed);
-    const bool eye_details_enabled =
-        availability.eye_geometry && detailed && controls->show_eye_geometry;
-    drawAvailableCheckbox("Visual cones", &controls->show_eye_direction_beams,
-                          eye_details_enabled);
-    ImGui::SameLine();
-    drawAvailableCheckbox("Gaze rays", &controls->show_eye_gaze_rays,
-                          eye_details_enabled);
-    drawAvailableCheckbox("Angle arcs", &controls->show_eye_angle_arcs,
-                          eye_details_enabled);
-    ImGui::SameLine();
-    drawAvailableCheckbox("Angle labels", &controls->show_eye_angle_labels,
-                          eye_details_enabled);
-    ImGui::EndTabItem();
-  }
-  ImGui::EndTabBar();
-
-  ImGui::SeparatorText("Motion and Insets");
-  ImGui::BeginDisabled();
-  ImGui::Checkbox("Motion trail", &presentation->show_motion_trail);
-  ImGui::SetNextItemWidth(140.0f);
-  ImGui::SliderFloat("Trail duration", &presentation->motion_trail_seconds,
-                     0.25f, 10.0f, "%.2f s");
-  ImGui::Checkbox("Valid samples only", &presentation->motion_valid_only);
-  ImGui::EndDisabled();
-  ImGui::TextDisabled(
-      "Motion-trail input is unavailable in the current read-only adapter.");
-
-  if (!polar_available) {
-    ImGui::BeginDisabled();
-  }
-  ImGui::Checkbox("Polar inset", &presentation->polar_inset.show_inset);
-  ImGui::BeginDisabled(!presentation->polar_inset.show_inset);
-  ImGui::SetNextItemWidth(140.0f);
-  ImGui::SliderFloat("Polar inset width", &presentation->polar_inset.width_px,
-                     140.0f, 360.0f, "%.0f px");
-  presentation->polar_inset.width_px =
-      std::clamp(presentation->polar_inset.width_px, 140.0f, 360.0f);
-  ImGui::SetNextItemWidth(140.0f);
-  ImGui::SliderFloat("Polar inset opacity", &presentation->polar_inset.opacity,
-                     0.20f, 1.0f, "%.2f");
-  presentation->polar_inset.opacity =
-      std::clamp(presentation->polar_inset.opacity, 0.20f, 1.0f);
-  ImGui::Checkbox("Polar labels", &presentation->polar_inset.show_labels);
-  ImGui::SameLine();
-  ImGui::Checkbox("Polar readout", &presentation->polar_inset.show_readout);
-  ImGui::EndDisabled();
-  if (!polar_available) {
-    ImGui::EndDisabled();
-  }
-
-  if (!interactive) {
-    ImGui::EndDisabled();
-  }
-  ImGui::End();
+  setFirstUseGeometry(currentWorkspaceLayout().frame_inspect);
+  crimson::gui::FrameInspectWindowOptions options;
+  options.interactive = interactive;
+  crimson::gui::drawFrameInspectWindow(options, selections->frame_inspect_view,
+                                       presentation->tab_sync, composition);
 }
 
 void drawAppleAdvancedCropPreviewWindow(bool *open,

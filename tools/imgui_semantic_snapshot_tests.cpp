@@ -1,4 +1,5 @@
 #include "gui/camera_view_transport_controls.h"
+#include "gui/frame_inspect_window.h"
 #include "gui/session_loading_modal.h"
 #include "imgui.h"
 #include "imgui_semantic_snapshot.h"
@@ -190,11 +191,87 @@ bool testCameraTransportUses64BitFrameState() {
   return true;
 }
 
+bool testFrameInspectWindowComposition() {
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO &io = ImGui::GetIO();
+  io.DisplaySize = ImVec2(800.0f, 600.0f);
+  io.DeltaTime = 1.0f / 60.0f;
+  unsigned char *pixels = nullptr;
+  int width = 0;
+  int height = 0;
+  io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+
+  using crimson::workspace::FrameInspectView;
+  FrameInspectView selected = FrameInspectView::Keypoints;
+  crimson::workspace::FrameInspectViewSyncState sync;
+  int header_draws = 0;
+  int detect_draws = 0;
+  int keypoint_draws = 0;
+  int hidden_draws = 0;
+  int footer_draws = 0;
+  crimson::gui::FrameInspectWindowComposition composition;
+  composition.draw_header = [&]() {
+    ++header_draws;
+    ImGui::TextUnformatted("Inspection header");
+  };
+  composition.modules = {
+      {FrameInspectView::Detect, "Detect", true,
+       [&]() {
+         ++detect_draws;
+         ImGui::TextUnformatted("Detection module");
+       }},
+      {FrameInspectView::Keypoints, "Keypoints", true,
+       [&]() {
+         ++keypoint_draws;
+         ImGui::TextUnformatted("Keypoint module");
+       }},
+      {FrameInspectView::EyeMasks, "Subject Masks", false,
+       [&]() {
+         ++hidden_draws;
+         ImGui::TextUnformatted("Hidden module");
+       }},
+  };
+  composition.draw_footer = [&]() {
+    ++footer_draws;
+    ImGui::TextUnformatted("Inspection footer");
+  };
+
+  ImGui::NewFrame();
+  crimson::gui::drawFrameInspectWindow({}, selected, sync, composition);
+  ImGui::Render();
+
+  header_draws = 0;
+  detect_draws = 0;
+  keypoint_draws = 0;
+  hidden_draws = 0;
+  footer_draws = 0;
+  ImGui::NewFrame();
+  const auto result =
+      crimson::gui::drawFrameInspectWindow({}, selected, sync, composition);
+  ImGui::Render();
+
+  CHECK(result.window_visible);
+  CHECK(result.rendered_module);
+  CHECK(result.active_module == FrameInspectView::Keypoints);
+  CHECK(selected == FrameInspectView::Keypoints);
+  CHECK(header_draws == 1);
+  CHECK(detect_draws == 0);
+  CHECK(keypoint_draws == 1);
+  CHECK(hidden_draws == 0);
+  CHECK(footer_draws == 1);
+  CHECK(!sync.shouldApply(FrameInspectView::Keypoints));
+
+  ImGui::DestroyContext();
+  return true;
+}
+
 } // namespace
 
 int main() {
   if (!testSemanticSnapshot() || !testSessionLoadingModalSnapshot() ||
-      !testCameraTransportUses64BitFrameState()) {
+      !testCameraTransportUses64BitFrameState() ||
+      !testFrameInspectWindowComposition()) {
     return 1;
   }
   std::cout << "imgui_semantic_snapshot_tests: PASS\n";
