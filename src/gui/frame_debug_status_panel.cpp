@@ -2,9 +2,11 @@
 
 #include "gui/frame_debug_detection_adapter.h"
 #include "gui/frame_debug_eye_angle_tab.h"
+#include "gui/frame_debug_keypoint_adapter.h"
 #include "gui/frame_debug_subject_mask_tab.h"
 #include "gui/frame_debug_tail_kinematics_tab.h"
 #include "gui/frame_inspect_detection_module.h"
+#include "gui/frame_inspect_keypoint_module.h"
 
 #include "imgui.h"
 
@@ -262,31 +264,15 @@ void drawKeypointTab(
     }
 
     if (context.zarr_loader.hasKeypointData()) {
-        ImGui::Text("Run: %s",
-                    context.zarr_loader.getKeypointsRunName().c_str());
-        ImGui::Text("Refined keypoints: %s",
-                    context.zarr_loader.isRefinedKeypoints() ? "Yes" : "No");
+        crimson::gui::KeypointInspectModuleState presentation_state;
+        const auto presentation =
+            makeFrameDebugKeypointInspectPresentation(context);
+        crimson::gui::drawFrameInspectKeypointModule(presentation,
+                                                     presentation_state);
         ImGui::Separator();
         drawKeypointSkeletonSection(context);
         ImGui::Separator();
         drawHeadingContractSection(context);
-
-        if (context.detection_details != nullptr &&
-            context.detection_details->has_keypoints) {
-            size_t detections_with_keypoints = 0;
-            for (const auto& keypoints :
-                 context.detection_details->keypoints_pixels) {
-                if (!keypoints.empty()) {
-                    ++detections_with_keypoints;
-                }
-            }
-            ImGui::Text("Current frame detections with keypoints: %zu",
-                        detections_with_keypoints);
-            if (context.detection_details->keypoints_per_detection > 0) {
-                ImGui::Text("Keypoints per detection: %zu",
-                            context.detection_details->keypoints_per_detection);
-            }
-        }
     } else {
         ImGui::TextDisabled("Keypoint arrays unavailable for current dataset");
     }

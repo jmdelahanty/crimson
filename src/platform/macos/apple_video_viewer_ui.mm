@@ -3,7 +3,9 @@
 #include "IconsForkAwesome.h"
 #include "gui/canonical_detection_inspect_adapter.h"
 #include "gui/frame_inspect_detection_module.h"
+#include "gui/frame_inspect_keypoint_module.h"
 #include "gui/frame_inspect_window.h"
+#include "gui/keypoint_overlay_inspect_adapter.h"
 #include "imgui.h"
 #include "implot.h"
 #include "platform/macos/apple_workspace_layout.h"
@@ -2118,150 +2120,41 @@ void drawAppleFrameInspectWindow(
   composition.modules.push_back(
       {crimson::workspace::FrameInspectView::Keypoints, "Keypoints", true,
        [&]() {
-         ImGui::TextUnformatted("Read-only presentation");
          drawAvailableCheckbox("Keypoint markers", &controls->show_keypoints,
                                availability.keypoints);
          ImGui::SameLine();
          drawAvailableCheckbox("Heading arrows", &controls->show_headings,
                                availability.headings);
-         if (keypoint_descriptor == nullptr ||
-             keypoint_descriptor->run_name.empty()) {
-           ImGui::TextDisabled("No raw or refined keypoint-v2 run is open.");
-         } else {
-           ImGui::Text("Surface: %s", keypoint_descriptor->refined
-                                          ? "Refined snapshot"
-                                          : "Raw observations");
-           ImGui::TextWrapped("Run: %s", keypoint_descriptor->run_name.c_str());
-           const bool frame_matches =
-               keypoint_frame != nullptr &&
-               keypoint_frame->camera_frame == stats.presented_frame;
-           if (!frame_matches) {
-             ImGui::TextDisabled(
-                 "Loading keypoints for the presented frame...");
-           } else {
-             ImGui::Text("Frame %lld  |  %zu observations",
-                         static_cast<long long>(keypoint_frame->camera_frame),
-                         keypoint_frame->detections.size());
-             if (keypoint_frame->detections.empty()) {
-               ImGui::TextDisabled("No keypoint observations in this frame.");
-             } else if (ImGui::BeginTable(
-                            "##current-keypoints", 4,
-                            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                                ImGuiTableFlags_SizingStretchProp)) {
-               ImGui::TableSetupColumn("Observation");
-               ImGui::TableSetupColumn("Pose confidence");
-               ImGui::TableSetupColumn("Valid landmarks");
-               ImGui::TableSetupColumn("State");
-               ImGui::TableHeadersRow();
-               for (size_t index = 0; index < keypoint_frame->detections.size();
-                    ++index) {
-                 const auto &detection = keypoint_frame->detections[index];
-                 ImGui::TableNextRow();
-                 ImGui::TableSetColumnIndex(0);
-                 ImGui::PushID(static_cast<int>(index));
-                 const bool selected =
-                     detection.instance_key != 0 &&
-                     keypoint_inspect->selected_instance_key ==
-                         detection.instance_key;
-                 const std::string label = "#" + std::to_string(index + 1);
-                 if (ImGui::Selectable(label.c_str(), selected) &&
-                     detection.instance_key != 0) {
-                   keypoint_inspect->selected_instance_key =
-                       detection.instance_key;
-                 }
-                 ImGui::PopID();
-                 ImGui::TableSetColumnIndex(1);
-                 if (std::isfinite(detection.pose_confidence) &&
-                     (!detection.refined_keypoints ||
-                      detection.confidence_valid)) {
-                   ImGui::Text("%.3f", detection.pose_confidence);
-                 } else {
-                   ImGui::TextDisabled("n/a");
-                 }
-                 ImGui::TableSetColumnIndex(2);
-                 const size_t valid = static_cast<size_t>(
-                     std::count(detection.keypoint_valid.begin(),
-                                detection.keypoint_valid.end(), uint8_t{1}));
-                 ImGui::Text("%zu / %zu", valid,
-                             detection.keypoint_valid.size());
-                 ImGui::TableSetColumnIndex(3);
-                 ImGui::TextUnformatted(
-                     detection.refined_keypoints
-                         ? detection.keypoint_usable ? "Usable" : "Rejected"
-                     : detection.source_success ? "Succeeded"
-                                                : "Failed");
-               }
-               ImGui::EndTable();
-             }
-             const auto selected = std::find_if(
-                 keypoint_frame->detections.begin(),
-                 keypoint_frame->detections.end(), [&](const auto &candidate) {
-                   return candidate.instance_key != 0 &&
-                          candidate.instance_key ==
-                              keypoint_inspect->selected_instance_key;
-                 });
-             if (selected != keypoint_frame->detections.end() &&
-                 ImGui::BeginTable("##selected-keypoint-confidence", 4,
-                                   ImGuiTableFlags_Borders |
-                                       ImGuiTableFlags_RowBg |
-                                       ImGuiTableFlags_SizingStretchProp)) {
-               ImGui::TableSetupColumn("Landmark");
-               ImGui::TableSetupColumn("Confidence");
-               ImGui::TableSetupColumn("Valid");
-               ImGui::TableSetupColumn("Edited");
-               ImGui::TableHeadersRow();
-               for (size_t point = 0;
-                    point < keypoint_descriptor->keypoint_labels.size();
-                    ++point) {
-                 ImGui::TableNextRow();
-                 ImGui::TableSetColumnIndex(0);
-                 ImGui::TextUnformatted(
-                     keypoint_descriptor->keypoint_labels[point].c_str());
-                 ImGui::TableSetColumnIndex(1);
-                 if (point < selected->keypoint_confidences.size() &&
-                     (!selected->refined_keypoints ||
-                      selected->confidence_valid)) {
-                   ImGui::Text("%.3f", selected->keypoint_confidences[point]);
-                 } else {
-                   ImGui::TextDisabled("n/a");
-                 }
-                 ImGui::TableSetColumnIndex(2);
-                 ImGui::TextUnformatted(
-                     point < selected->keypoint_valid.size() &&
-                             selected->keypoint_valid[point]
-                         ? "Yes"
-                         : "No");
-                 ImGui::TableSetColumnIndex(3);
-                 ImGui::TextUnformatted(
-                     point < selected->keypoint_edit_flags.size() &&
-                             selected->keypoint_edit_flags[point]
-                         ? "Yes"
-                         : "No");
-               }
-               ImGui::EndTable();
-             }
-           }
-           if (ImGui::Button(ICON_FK_LINE_CHART " Keypoint Quality Timeline")) {
-             *keypoint_quality_timeline = true;
-           }
-           ImGui::SameLine();
-           switch (keypoint_quality_state) {
-           case AppleKeypointQualityLoadState::Closed:
-             ImGui::TextDisabled("not loaded");
-             break;
-           case AppleKeypointQualityLoadState::Opening:
-             ImGui::TextDisabled("opening...");
-             break;
-           case AppleKeypointQualityLoadState::Ready:
-             ImGui::TextDisabled("ready");
-             break;
-           case AppleKeypointQualityLoadState::Failed:
-             ImGui::TextDisabled("unavailable");
-             if (!keypoint_quality_error.empty()) {
-               showItemTooltip(keypoint_quality_error.c_str());
-             }
-             break;
-           }
+         auto keypoint_presentation =
+             crimson::gui::makeKeypointOverlayInspectPresentation(
+                 keypoint_descriptor, keypoint_frame.get(),
+                 stats.presented_frame);
+         keypoint_presentation.timeline_visible =
+             keypoint_presentation.available;
+         keypoint_presentation.timeline_error = keypoint_quality_error;
+         switch (keypoint_quality_state) {
+         case AppleKeypointQualityLoadState::Closed:
+           keypoint_presentation.timeline_state =
+               crimson::gui::KeypointInspectTimelineState::Closed;
+           break;
+         case AppleKeypointQualityLoadState::Opening:
+           keypoint_presentation.timeline_state =
+               crimson::gui::KeypointInspectTimelineState::Opening;
+           break;
+         case AppleKeypointQualityLoadState::Ready:
+           keypoint_presentation.timeline_state =
+               crimson::gui::KeypointInspectTimelineState::Ready;
+           break;
+         case AppleKeypointQualityLoadState::Failed:
+           keypoint_presentation.timeline_state =
+               crimson::gui::KeypointInspectTimelineState::Failed;
+           break;
+         }
+         const auto keypoint_result =
+             crimson::gui::drawFrameInspectKeypointModule(keypoint_presentation,
+                                                          *keypoint_inspect);
+         if (keypoint_result.request_open_timeline) {
+           *keypoint_quality_timeline = true;
          }
          ImGui::Separator();
          if (ImGui::Button("Reset overlay defaults")) {

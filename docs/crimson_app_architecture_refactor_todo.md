@@ -96,6 +96,15 @@ canonical/refined repository adapter and the Linux legacy-loader adapter are
 separate. Linux review, diagnostics, and bounding-box editing remain extension
 panels below the shared presentation rather than dependencies of it.
 
+Keypoints now follows the same module boundary. One shared presentation model
+and ImGui renderer owns surface/run identity, frame readiness, complete
+observation rows, stable instance selection, pose and per-landmark confidence,
+validity/edit state, and quality-timeline status. The strict keypoint-v2
+repository adapter and Linux legacy-loader adapter remain independent. Overlay
+visibility and styling, skeleton and heading diagnostics, review, and crop
+editing remain platform extensions, so extracting the read-only surface does
+not weaken either platform's maintained workflows.
+
 ## Why This Exists
 
 `crimson` has already done useful mechanical splits, but the core architecture

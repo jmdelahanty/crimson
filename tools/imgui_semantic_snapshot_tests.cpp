@@ -1,7 +1,9 @@
 #include "gui/camera_view_transport_controls.h"
 #include "gui/canonical_detection_inspect_adapter.h"
 #include "gui/frame_inspect_detection_module.h"
+#include "gui/frame_inspect_keypoint_module.h"
 #include "gui/frame_inspect_window.h"
+#include "gui/keypoint_overlay_inspect_adapter.h"
 #include "gui/session_loading_modal.h"
 #include "imgui.h"
 #include "imgui_semantic_snapshot.h"
@@ -390,6 +392,131 @@ bool testDetectionInspectModuleSnapshot() {
   return true;
 }
 
+bool testKeypointOverlayInspectAdapter() {
+  crimson::zarr::KeypointOverlayDescriptor descriptor;
+  descriptor.run_name = "refined_keypoint_fixture";
+  descriptor.refined = true;
+  descriptor.camera_frame_count = 20;
+  descriptor.keypoint_labels = {"snout_tip", "eye_left", "tail_tip"};
+
+  crimson::zarr::KeypointOverlayResolution frame;
+  frame.camera_frame = 7;
+  crimson::zarr::KeypointOverlayDetection usable;
+  usable.instance_key = 201;
+  usable.refined_keypoints = true;
+  usable.keypoint_usable = true;
+  usable.confidence_valid = true;
+  usable.pose_confidence = 0.97;
+  usable.keypoint_confidences = {0.98, 0.96, 0.94};
+  usable.keypoint_valid = {1, 1, 0};
+  usable.keypoint_edit_flags = {0, 1, 0};
+  crimson::zarr::KeypointOverlayDetection rejected = usable;
+  rejected.instance_key = 202;
+  rejected.keypoint_usable = false;
+  rejected.confidence_valid = false;
+  rejected.pose_confidence = 0.0;
+  frame.detections = {usable, rejected};
+
+  const auto presentation =
+      crimson::gui::makeKeypointOverlayInspectPresentation(&descriptor, &frame,
+                                                           frame.camera_frame);
+  CHECK(presentation.available);
+  CHECK(presentation.frame_ready);
+  CHECK(presentation.surface_label == "Refined snapshot");
+  CHECK(presentation.run_name == "refined_keypoint_fixture");
+  CHECK(presentation.observations.size() == 2);
+  CHECK(presentation.observations[0].selectable);
+  CHECK(presentation.observations[0].pose_confidence_valid);
+  CHECK(presentation.observations[0].valid_landmark_count == 2);
+  CHECK(presentation.observations[0].landmark_count == 3);
+  CHECK(presentation.observations[0].state_label == "Usable");
+  CHECK(presentation.observations[0].landmarks.size() == 3);
+  CHECK(presentation.observations[0].landmarks[1].edited);
+  CHECK(!presentation.observations[1].pose_confidence_valid);
+  CHECK(presentation.observations[1].state_label == "Rejected");
+
+  const auto loading = crimson::gui::makeKeypointOverlayInspectPresentation(
+      &descriptor, &frame, frame.camera_frame + 1);
+  CHECK(loading.available);
+  CHECK(!loading.frame_ready);
+  CHECK(loading.observations.empty());
+  return true;
+}
+
+bool testKeypointInspectModuleSnapshot() {
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO &io = ImGui::GetIO();
+  io.DisplaySize = ImVec2(800.0f, 600.0f);
+  io.DeltaTime = 1.0f / 60.0f;
+  unsigned char *pixels = nullptr;
+  int width = 0;
+  int height = 0;
+  io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+
+  crimson::gui::KeypointInspectPresentation presentation;
+  presentation.available = true;
+  presentation.surface_label = "Refined snapshot";
+  presentation.run_name = "refined_keypoint_fixture";
+  presentation.frame_ready = true;
+  presentation.camera_frame = 7;
+  presentation.timeline_visible = true;
+  presentation.timeline_state =
+      crimson::gui::KeypointInspectTimelineState::Ready;
+  crimson::gui::KeypointInspectObservation observation;
+  observation.instance_key = 201;
+  observation.selectable = true;
+  observation.pose_confidence = 0.97f;
+  observation.pose_confidence_valid = true;
+  observation.valid_landmark_count = 1;
+  observation.landmark_count = 1;
+  observation.state_label = "Usable";
+  crimson::gui::KeypointInspectLandmark landmark;
+  landmark.label = "snout_tip";
+  landmark.confidence = 0.98f;
+  landmark.confidence_valid = true;
+  landmark.valid = true;
+  landmark.valid_known = true;
+  landmark.edited_known = true;
+  observation.landmarks = {landmark};
+  presentation.observations = {observation};
+  crimson::gui::KeypointInspectModuleState state;
+  state.selected_instance_key = 201;
+
+  ImGui::NewFrame();
+  ImGui::Begin("Keypoint module fixture");
+  crimson::gui::drawFrameInspectKeypointModule(presentation, state);
+  ImGui::End();
+  ImGui::Render();
+
+  crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(), true);
+  crimson::ui::beginSemanticFrame(ImGui::GetCurrentContext());
+  ImGui::NewFrame();
+  ImGui::Begin("Keypoint module fixture");
+  const auto result =
+      crimson::gui::drawFrameInspectKeypointModule(presentation, state);
+  ImGui::End();
+  ImGui::Render();
+  const auto snapshot =
+      crimson::ui::finishSemanticFrame(ImGui::GetCurrentContext());
+
+  bool found_observation = false;
+  bool found_timeline = false;
+  for (const auto &item : snapshot.items) {
+    found_observation |= item.visible_label == "#1";
+    found_timeline |= item.visible_label.find("Keypoint Quality Timeline") !=
+                      std::string::npos;
+  }
+  CHECK(found_observation);
+  CHECK(found_timeline);
+  CHECK(!result.request_open_timeline);
+  CHECK(state.selected_instance_key == 201);
+
+  crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(), false);
+  ImGui::DestroyContext();
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -397,7 +524,9 @@ int main() {
       !testCameraTransportUses64BitFrameState() ||
       !testFrameInspectWindowComposition() ||
       !testCanonicalDetectionInspectAdapter() ||
-      !testDetectionInspectModuleSnapshot()) {
+      !testDetectionInspectModuleSnapshot() ||
+      !testKeypointOverlayInspectAdapter() ||
+      !testKeypointInspectModuleSnapshot()) {
     return 1;
   }
   std::cout << "imgui_semantic_snapshot_tests: PASS\n";

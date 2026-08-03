@@ -3104,7 +3104,9 @@ if(CRIMSON_BUILD_MACOS_APP)
         src/gui/camera_view_transport_controls.cpp
         src/gui/canonical_detection_inspect_adapter.cpp
         src/gui/frame_inspect_detection_module.cpp
+        src/gui/frame_inspect_keypoint_module.cpp
         src/gui/frame_inspect_window.cpp
+        src/gui/keypoint_overlay_inspect_adapter.cpp
         src/gui/quality_timeline_session.cpp
         src/gui/quality_timeline_window.cpp
         src/gui/session_loading_modal.cpp
@@ -3168,7 +3170,9 @@ if(CRIMSON_BUILD_MACOS_APP)
         src/gui/camera_view_transport_controls.cpp
         src/gui/canonical_detection_inspect_adapter.cpp
         src/gui/frame_inspect_detection_module.cpp
+        src/gui/frame_inspect_keypoint_module.cpp
         src/gui/frame_inspect_window.cpp
+        src/gui/keypoint_overlay_inspect_adapter.cpp
         src/gui/session_loading_modal.cpp
         src/imgui_semantic_snapshot.cpp
         ${CRIMSON_MACOS_IMGUI_DIR}/imgui.cpp
