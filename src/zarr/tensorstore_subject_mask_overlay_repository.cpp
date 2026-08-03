@@ -627,6 +627,21 @@ struct ContourSource {
   ts::TensorStore<float, 2> ragged_points;
 };
 
+using SampledPointReadFuture =
+    decltype(ts::Read(std::declval<ts::TensorStore<float, 3>>()));
+using SampledBoolReadFuture =
+    decltype(ts::Read(std::declval<ts::TensorStore<bool, 1>>()));
+using SampledByteReadFuture =
+    decltype(ts::Read(std::declval<ts::TensorStore<uint8_t, 1>>()));
+
+struct PendingSampledContourRead {
+  const ContourSource* source = nullptr;
+  size_t channel = 0;
+  SampledPointReadFuture points;
+  SampledBoolReadFuture valid_bool;
+  SampledByteReadFuture valid_byte;
+};
+
 struct RleSource {
   bool available = false;
   ts::TensorStore<uint32_t, 1> counts;
@@ -1741,28 +1756,53 @@ class TensorStoreSubjectMaskOverlayRepository final
   bool loadContourChunk(size_t first, size_t last,
                         CachedMaskChunk* chunk) const {
     bool loaded = true;
+    std::vector<PendingSampledContourRead> pending_sampled;
+    pending_sampled.reserve(contours_.size());
     for (size_t channel = 0; channel < descriptor_.component_labels.size() &&
                              channel < contours_.size();
          ++channel) {
       const auto& source = contours_[channel];
       if (source.kind == ContourKind::Sampled) {
-        loaded =
-            loadSampledContourChunk(source, first, last, channel, chunk) &&
-            loaded;
+        PendingSampledContourRead pending;
+        pending.source = &source;
+        pending.channel = channel;
+        pending.points = ts::Read(SliceFirstDimension(
+            source.sampled_points, static_cast<ts::Index>(first),
+            static_cast<ts::Index>(last)));
+        pending.points.Force();
+        if (source.sampled_valid_is_byte) {
+          pending.valid_byte = ts::Read(SliceFirstDimension(
+              source.sampled_valid_byte, static_cast<ts::Index>(first),
+              static_cast<ts::Index>(last)));
+          pending.valid_byte.Force();
+        } else {
+          pending.valid_bool = ts::Read(SliceFirstDimension(
+              source.sampled_valid_bool, static_cast<ts::Index>(first),
+              static_cast<ts::Index>(last)));
+          pending.valid_bool.Force();
+        }
+        pending_sampled.push_back(std::move(pending));
       } else if (source.kind == ContourKind::Ragged) {
         loadRaggedContourChunk(source, first, last, channel, chunk);
       }
+    }
+    for (const auto& pending : pending_sampled) {
+      loaded = loadSampledContourChunk(
+                   *pending.source, first, last, pending.channel,
+                   pending.points, pending.valid_bool, pending.valid_byte,
+                   chunk) &&
+               loaded;
     }
     return loaded;
   }
 
   bool loadSampledContourChunk(const ContourSource& source, size_t first,
                                size_t last, size_t channel,
+                               const SampledPointReadFuture& points_future,
+                               const SampledBoolReadFuture& valid_bool_future,
+                               const SampledByteReadFuture& valid_byte_future,
                                CachedMaskChunk* chunk) const {
-    auto points = ts::Read(SliceFirstDimension(source.sampled_points,
-                                               static_cast<ts::Index>(first),
-                                               static_cast<ts::Index>(last)))
-                      .result();
+    const auto& points = points_future.result();
     ++chunk->contour_payload_reads;
     if (!points.ok() || points->rank() != 3 ||
         static_cast<size_t>(points->shape()[0]) != last - first ||
@@ -1781,10 +1821,7 @@ class TensorStoreSubjectMaskOverlayRepository final
 
     std::vector<uint8_t> valid(last - first, 0);
     if (source.sampled_valid_is_byte) {
-      auto values = ts::Read(SliceFirstDimension(source.sampled_valid_byte,
-                                                 static_cast<ts::Index>(first),
-                                                 static_cast<ts::Index>(last)))
-                        .result();
+      const auto& values = valid_byte_future.result();
       ++chunk->contour_payload_reads;
       if (!values.ok() || values->rank() != 1 ||
           static_cast<size_t>(values->shape()[0]) != valid.size()) {
@@ -1800,10 +1837,7 @@ class TensorStoreSubjectMaskOverlayRepository final
         valid[index] = *(origin + static_cast<ts::Index>(index) * strides[0]);
       }
     } else {
-      auto values = ts::Read(SliceFirstDimension(source.sampled_valid_bool,
-                                                 static_cast<ts::Index>(first),
-                                                 static_cast<ts::Index>(last)))
-                        .result();
+      const auto& values = valid_bool_future.result();
       ++chunk->contour_payload_reads;
       if (!values.ok() || values->rank() != 1 ||
           static_cast<size_t>(values->shape()[0]) != valid.size()) {

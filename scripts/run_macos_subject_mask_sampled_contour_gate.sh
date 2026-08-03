@@ -57,6 +57,7 @@ results=()
 for ((repetition = 0; repetition < repetitions; ++repetition)); do
     output="$output_dir/repetition-$(printf '%03d' "$repetition").json"
     echo "Running sampled-contour process $((repetition + 1))/$repetitions"
+    trial_status=0
     "$binary" \
         --store "$source_store" \
         --run "$source_run" \
@@ -67,7 +68,11 @@ for ((repetition = 0; repetition < repetitions; ++repetition)); do
         --frame-size 4512x4512 \
         --workload "$workload" \
         --repetition "$repetition" \
-        --output "$output"
+        --output "$output" || trial_status=$?
+    if [[ "$trial_status" -ne 0 && "$trial_status" -ne 2 ]]; then
+        echo "Benchmark process failed before producing a valid gate result." >&2
+        exit "$trial_status"
+    fi
     results+=("$output")
 done
 
