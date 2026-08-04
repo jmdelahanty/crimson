@@ -13,10 +13,12 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -63,6 +65,57 @@ public:
 
 private:
   std::filesystem::path path_;
+};
+
+struct BlockingKeypointRepositoryState {
+  std::mutex mutex;
+  std::condition_variable condition;
+  bool speculative_read_started = false;
+  bool release_speculative_read = false;
+};
+
+class BlockingKeypointRepository final
+    : public crimson::zarr::KeypointOverlayRepository {
+public:
+  explicit BlockingKeypointRepository(
+      std::shared_ptr<BlockingKeypointRepositoryState> state)
+      : state_(std::move(state)) {
+    descriptor_.source_group = "refined_keypoints_runs";
+    descriptor_.run_name = "reverse_buffer_fixture";
+    descriptor_.coordinate_space =
+        crimson::zarr::KeypointCoordinateSpace::Image;
+    descriptor_.keypoint_labels = {"point"};
+    descriptor_.row_count = 7;
+    descriptor_.camera_frame_count = 7;
+  }
+
+  const crimson::zarr::KeypointOverlayDescriptor &descriptor() const override {
+    return descriptor_;
+  }
+
+  crimson::zarr::KeypointOverlayResolution
+  resolveCameraFrame(int64_t camera_frame, int, int) const override {
+    if (camera_frame == 6) {
+      std::unique_lock<std::mutex> lock(state_->mutex);
+      state_->speculative_read_started = true;
+      state_->condition.notify_all();
+      state_->condition.wait(lock,
+                             [&] { return state_->release_speculative_read; });
+    }
+
+    crimson::zarr::KeypointOverlayResolution resolution;
+    resolution.status = crimson::zarr::KeypointOverlayStatus::Mapped;
+    resolution.camera_frame = camera_frame;
+    crimson::zarr::KeypointOverlayDetection detection;
+    detection.detection_index = camera_frame;
+    detection.keypoints = {{static_cast<double>(camera_frame), 2.0}};
+    resolution.detections.push_back(std::move(detection));
+    return resolution;
+  }
+
+private:
+  std::shared_ptr<BlockingKeypointRepositoryState> state_;
+  crimson::zarr::KeypointOverlayDescriptor descriptor_;
 };
 
 bool WriteJson(const std::filesystem::path &path, const json &value) {
@@ -368,36 +421,38 @@ bool TestScheduledBuffer() {
 }
 
 bool TestScheduledBufferReversePrefetch() {
-  crimson::zarr::KeypointOverlayDescriptor descriptor;
-  descriptor.source_group = "refined_keypoints_runs";
-  descriptor.run_name = "reverse_buffer_fixture";
-  descriptor.coordinate_space = crimson::zarr::KeypointCoordinateSpace::Image;
-  descriptor.keypoint_labels = {"point"};
-  std::vector<crimson::zarr::KeypointOverlayRow> rows;
-  for (int64_t frame = 0; frame <= 6; ++frame) {
-    crimson::zarr::KeypointOverlayRow row;
-    row.camera_frame = frame;
-    row.detection_index = frame;
-    row.keypoints = {{static_cast<double>(frame), 2.0}};
-    rows.push_back(std::move(row));
-  }
+  auto state = std::make_shared<BlockingKeypointRepositoryState>();
   auto scheduler =
       std::make_shared<crimson::data::DataAccessScheduler>(16, 2, 1);
   KeypointOverlayBuffer buffer(scheduler, "reverse_fixture");
   std::string error;
-  CHECK(buffer.open(crimson::zarr::MakeKeypointOverlayRepository(
-                        std::move(descriptor), std::move(rows)),
-                    2, 5, &error));
+  CHECK(buffer.open(std::make_unique<BlockingKeypointRepository>(state), 2, 5,
+                    &error));
 
   CHECK(buffer.requestFrame(5, 100, 80, true, &error));
   CHECK(buffer.waitForFrame(5, std::chrono::seconds(2)));
+  {
+    std::unique_lock<std::mutex> lock(state->mutex);
+    CHECK(state->condition.wait_for(lock, std::chrono::seconds(2), [&] {
+      return state->speculative_read_started;
+    }));
+  }
   CHECK(buffer.requestFrame(4, 100, 80, false, &error));
+  {
+    std::lock_guard<std::mutex> lock(state->mutex);
+    state->release_speculative_read = true;
+    state->condition.notify_all();
+  }
   CHECK(buffer.waitForFrame(4, std::chrono::seconds(2)));
   CHECK(buffer.waitForFrame(3, std::chrono::seconds(2)));
   CHECK(buffer.waitForFrame(2, std::chrono::seconds(2)));
+  scheduler->waitUntilIdle();
   CHECK(buffer.frame(5) != nullptr);
+  CHECK(buffer.frame(4) != nullptr);
+  CHECK(buffer.frame(3) != nullptr);
   CHECK(buffer.frame(2) != nullptr);
-  CHECK(buffer.metrics().discarded_results == 0);
+  CHECK(buffer.frame(6) == nullptr);
+  CHECK(buffer.metrics().discarded_results == 1);
 
   buffer.close();
   scheduler->shutdown();
