@@ -4,8 +4,10 @@
 #include "gui/canonical_detection_inspect_adapter.h"
 #include "gui/frame_inspect_detection_module.h"
 #include "gui/frame_inspect_keypoint_module.h"
+#include "gui/frame_inspect_subject_mask_module.h"
 #include "gui/frame_inspect_window.h"
 #include "gui/keypoint_overlay_inspect_adapter.h"
+#include "gui/subject_mask_overlay_inspect_adapter.h"
 #include "imgui.h"
 #include "implot.h"
 #include "platform/macos/apple_workspace_layout.h"
@@ -1961,13 +1963,19 @@ void drawAppleFrameInspectWindow(
     AppleKeypointQualityLoadState keypoint_quality_state,
     const std::string &keypoint_quality_error,
     AppleKeypointInspectState *keypoint_inspect,
-    bool *keypoint_quality_timeline, const AppleVideoViewerStats &stats,
+    bool *keypoint_quality_timeline,
+    const crimson::zarr::SubjectMaskOverlayDescriptor *subject_mask_descriptor,
+    const std::shared_ptr<const crimson::zarr::SubjectMaskOverlayResolution>
+        &subject_mask_frame,
+    AppleSubjectMaskInspectState *subject_mask_inspect,
+    const AppleVideoViewerStats &stats,
     AppleFrameInspectPresentationState *presentation,
     bool *advanced_crop_preview, bool *stimulus_debug, bool interactive) {
   if (selections == nullptr || controls == nullptr || presentation == nullptr ||
       detection_inspect == nullptr || detection_quality_timeline == nullptr ||
       keypoint_inspect == nullptr || keypoint_quality_timeline == nullptr ||
-      advanced_crop_preview == nullptr || stimulus_debug == nullptr) {
+      subject_mask_inspect == nullptr || advanced_crop_preview == nullptr ||
+      stimulus_debug == nullptr) {
     return;
   }
 
@@ -2165,6 +2173,13 @@ void drawAppleFrameInspectWindow(
   composition.modules.push_back(
       {crimson::workspace::FrameInspectView::EyeMasks, "Subject Masks", true,
        [&]() {
+         const auto subject_mask_presentation =
+             crimson::gui::makeSubjectMaskOverlayInspectPresentation(
+                 subject_mask_descriptor, subject_mask_frame.get(),
+                 stats.presented_frame);
+         crimson::gui::drawFrameInspectSubjectMaskModule(
+             subject_mask_presentation, *subject_mask_inspect);
+         ImGui::Separator();
          drawAvailableCheckbox("Show masks", &controls->show_subject_masks,
                                availability.subject_masks);
 

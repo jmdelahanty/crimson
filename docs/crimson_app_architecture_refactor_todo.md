@@ -107,6 +107,17 @@ visibility and styling, skeleton and heading diagnostics, review, and crop
 editing remain platform extensions, so extracting the read-only surface does
 not weaken either platform's maintained workflows.
 
+Subject Masks now uses the same boundary. The shared presentation model and
+renderer preserve complete per-frame observation ranges, ROI dimensions,
+component/channel availability, pixel-payload and contour counts, source-crop
+lineage, and stable `instance_key` selection. A resolved empty frame is
+presented as zero observations rather than as an in-progress read. The strict
+subject-mask repository adapter and the Linux legacy-loader adapter remain
+separate; overlay modes and component visibility, subject-shape controls,
+mask editing, and review metadata remain platform extensions. This keeps the
+dense-mask and sampled-contour repositories out of the UI module while
+preserving the Linux editing workflow.
+
 ## Why This Exists
 
 `crimson` has already done useful mechanical splits, but the core architecture

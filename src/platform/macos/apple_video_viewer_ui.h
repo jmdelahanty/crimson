@@ -11,6 +11,7 @@
 #include "gui/camera_view_transport_controls.h"
 #include "gui/frame_inspect_detection_module.h"
 #include "gui/frame_inspect_keypoint_module.h"
+#include "gui/frame_inspect_subject_mask_module.h"
 #include "gui/quality_timeline_window.h"
 #include "keypoint_quality_timeline.h"
 #include "platform/macos/apple_workspace_layout.h"
@@ -27,6 +28,7 @@
 #include "workspace_state.h"
 #include "zarr/canonical_detection_repository.h"
 #include "zarr/keypoint_overlay_repository.h"
+#include "zarr/subject_mask_overlay_repository.h"
 
 #include <cstdint>
 #include <limits>
@@ -169,6 +171,9 @@ using AppleKeypointQualityTimelineControls =
 
 using AppleKeypointInspectState = crimson::gui::KeypointInspectModuleState;
 
+using AppleSubjectMaskInspectState =
+    crimson::gui::SubjectMaskInspectModuleState;
+
 struct AppleCropViewerControls {
   crimson::crop::CropSourcePreference preference =
       crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
@@ -296,7 +301,12 @@ void drawAppleFrameInspectWindow(
     AppleKeypointQualityLoadState keypoint_quality_state,
     const std::string &keypoint_quality_error,
     AppleKeypointInspectState *keypoint_inspect,
-    bool *keypoint_quality_timeline, const AppleVideoViewerStats &stats,
+    bool *keypoint_quality_timeline,
+    const crimson::zarr::SubjectMaskOverlayDescriptor *subject_mask_descriptor,
+    const std::shared_ptr<const crimson::zarr::SubjectMaskOverlayResolution>
+        &subject_mask_frame,
+    AppleSubjectMaskInspectState *subject_mask_inspect,
+    const AppleVideoViewerStats &stats,
     AppleFrameInspectPresentationState *presentation,
     bool *advanced_crop_preview, bool *stimulus_debug, bool interactive);
 

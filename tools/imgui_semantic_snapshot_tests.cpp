@@ -2,9 +2,11 @@
 #include "gui/canonical_detection_inspect_adapter.h"
 #include "gui/frame_inspect_detection_module.h"
 #include "gui/frame_inspect_keypoint_module.h"
+#include "gui/frame_inspect_subject_mask_module.h"
 #include "gui/frame_inspect_window.h"
 #include "gui/keypoint_overlay_inspect_adapter.h"
 #include "gui/session_loading_modal.h"
+#include "gui/subject_mask_overlay_inspect_adapter.h"
 #include "imgui.h"
 #include "imgui_semantic_snapshot.h"
 #include "loading_progress.h"
@@ -517,6 +519,149 @@ bool testKeypointInspectModuleSnapshot() {
   return true;
 }
 
+bool testSubjectMaskOverlayInspectAdapter() {
+  crimson::zarr::SubjectMaskOverlayDescriptor descriptor;
+  descriptor.source_group = "refined_subject_masks_runs";
+  descriptor.run_name = "refined_subject_mask_fixture";
+  descriptor.source_crop_run = "crop_fixture";
+  descriptor.storage = crimson::zarr::SubjectMaskStorage::Dense;
+  descriptor.component_labels = {"subject_body", "eye_left"};
+  descriptor.mask_width = 512;
+  descriptor.mask_height = 512;
+  descriptor.strict_v1 = true;
+  descriptor.contour_only = true;
+  descriptor.presentation_cache_run = "sampled_contour_fixture";
+
+  crimson::zarr::SubjectMaskOverlayResolution frame;
+  frame.status = crimson::zarr::SubjectMaskOverlayStatus::Mapped;
+  frame.camera_frame = 12;
+  crimson::zarr::SubjectMaskOverlayDetection first;
+  first.instance_key = 701;
+  first.source_crop_row_id = 31;
+  first.roi_width = 512.0;
+  first.roi_height = 512.0;
+  crimson::zarr::SubjectMaskOverlayComponent body;
+  body.label = "subject_body";
+  body.channel_index = 0;
+  body.present = true;
+  body.mask = std::make_shared<const std::vector<uint8_t>>(
+      std::vector<uint8_t>{1, 0, 1, 1});
+  body.contour = {{1.0, 2.0}, {3.0, 4.0}};
+  first.components = {body};
+  crimson::zarr::SubjectMaskOverlayDetection second;
+  second.instance_key = 702;
+  second.source_crop_row_id = 32;
+  second.roi_width = 256.0;
+  second.roi_height = 256.0;
+  crimson::zarr::SubjectMaskOverlayComponent eye;
+  eye.label = "eye_left";
+  eye.channel_index = 1;
+  eye.present = true;
+  second.components = {eye};
+  frame.detections = {first, second};
+
+  const auto presentation =
+      crimson::gui::makeSubjectMaskOverlayInspectPresentation(
+          &descriptor, &frame, frame.camera_frame);
+  CHECK(presentation.available);
+  CHECK(presentation.frame_ready);
+  CHECK(presentation.surface_label == "Sampled contour cache");
+  CHECK(presentation.run_name == "refined_subject_mask_fixture");
+  CHECK(presentation.observations.size() == 2);
+  CHECK(presentation.observations[0].selectable);
+  CHECK(presentation.observations[0].instance_key == 701);
+  CHECK(presentation.observations[0].source_crop_row_id == 31);
+  CHECK(presentation.observations[0].roi_valid);
+  CHECK(presentation.observations[0].components.size() == 1);
+  CHECK(presentation.observations[0].components[0].pixel_payload_available);
+  CHECK(presentation.observations[0].components[0].pixel_payload_value_count ==
+        4);
+  CHECK(presentation.observations[0].components[0].contour_point_count == 2);
+
+  crimson::zarr::SubjectMaskOverlayResolution empty;
+  empty.status = crimson::zarr::SubjectMaskOverlayStatus::Missing;
+  empty.camera_frame = 13;
+  const auto empty_presentation =
+      crimson::gui::makeSubjectMaskOverlayInspectPresentation(
+          &descriptor, &empty, empty.camera_frame);
+  CHECK(empty_presentation.frame_ready);
+  CHECK(empty_presentation.observations.empty());
+  CHECK(empty_presentation.warning.empty());
+
+  const auto loading = crimson::gui::makeSubjectMaskOverlayInspectPresentation(
+      &descriptor, &frame, frame.camera_frame + 1);
+  CHECK(loading.available);
+  CHECK(!loading.frame_ready);
+  CHECK(loading.observations.empty());
+  return true;
+}
+
+bool testSubjectMaskInspectModuleSnapshot() {
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO &io = ImGui::GetIO();
+  io.DisplaySize = ImVec2(800.0f, 600.0f);
+  io.DeltaTime = 1.0f / 60.0f;
+  unsigned char *pixels = nullptr;
+  int width = 0;
+  int height = 0;
+  io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+
+  crimson::gui::SubjectMaskInspectPresentation presentation;
+  presentation.available = true;
+  presentation.surface_label = "Subject-mask v1";
+  presentation.run_name = "refined_subject_mask_fixture";
+  presentation.frame_ready = true;
+  presentation.camera_frame = 12;
+  crimson::gui::SubjectMaskInspectObservation observation;
+  observation.instance_key = 701;
+  observation.selectable = true;
+  observation.valid = true;
+  observation.source_crop_row_id = 31;
+  observation.source_crop_row_id_valid = true;
+  observation.roi_width = 512.0;
+  observation.roi_height = 512.0;
+  observation.roi_valid = true;
+  crimson::gui::SubjectMaskInspectComponent component;
+  component.label = "subject_body";
+  component.channel_index = 0;
+  component.channel_index_valid = true;
+  component.present = true;
+  component.contour_available = true;
+  component.contour_point_count = 128;
+  observation.components = {component};
+  presentation.observations = {observation};
+  crimson::gui::SubjectMaskInspectModuleState state;
+  state.selected_instance_key = 701;
+
+  ImGui::NewFrame();
+  ImGui::Begin("Subject-mask module fixture");
+  crimson::gui::drawFrameInspectSubjectMaskModule(presentation, state);
+  ImGui::End();
+  ImGui::Render();
+
+  crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(), true);
+  crimson::ui::beginSemanticFrame(ImGui::GetCurrentContext());
+  ImGui::NewFrame();
+  ImGui::Begin("Subject-mask module fixture");
+  crimson::gui::drawFrameInspectSubjectMaskModule(presentation, state);
+  ImGui::End();
+  ImGui::Render();
+  const auto snapshot =
+      crimson::ui::finishSemanticFrame(ImGui::GetCurrentContext());
+
+  bool found_observation = false;
+  for (const auto &item : snapshot.items) {
+    found_observation |= item.visible_label == "#1";
+  }
+  CHECK(found_observation);
+  CHECK(state.selected_instance_key == 701);
+
+  crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(), false);
+  ImGui::DestroyContext();
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -526,7 +671,9 @@ int main() {
       !testCanonicalDetectionInspectAdapter() ||
       !testDetectionInspectModuleSnapshot() ||
       !testKeypointOverlayInspectAdapter() ||
-      !testKeypointInspectModuleSnapshot()) {
+      !testKeypointInspectModuleSnapshot() ||
+      !testSubjectMaskOverlayInspectAdapter() ||
+      !testSubjectMaskInspectModuleSnapshot()) {
     return 1;
   }
   std::cout << "imgui_semantic_snapshot_tests: PASS\n";

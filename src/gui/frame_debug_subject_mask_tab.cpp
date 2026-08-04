@@ -1,9 +1,11 @@
 #include "gui/frame_debug_subject_mask_tab.h"
 
+#include "gui/frame_debug_subject_mask_adapter.h"
+#include "gui/frame_inspect_subject_mask_module.h"
+
 #include "imgui.h"
 
 #include <algorithm>
-#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -53,13 +55,6 @@ const char* maskReviewTitle(const FrameDebugWindowContext& context) {
                    context.zarr_loader.hasSubjectShapeData()
                ? "Subject Mask Review:"
                : "Eye Mask Review:";
-}
-
-const char* unavailableMaskDetailsText(const FrameDebugWindowContext& context) {
-    return context.zarr_loader.eyeMasksUseRefinedSubjectMasks() ||
-                   context.zarr_loader.hasSubjectShapeData()
-               ? "Current frame subject-mask details unavailable"
-               : "Current frame eye-mask details unavailable";
 }
 
 std::string shortSubjectMaskComponentLabel(const std::string& label) {
@@ -525,98 +520,13 @@ void drawSubjectMaskTab(
         return;
     }
 
+    const auto presentation =
+        makeFrameDebugSubjectMaskInspectPresentation(context);
+    crimson::gui::drawFrameInspectSubjectMaskModule(
+        presentation, state.subject_mask_inspect);
+
     if (context.zarr_loader.hasEyeMasks()) {
-        if (!context.zarr_loader.getEyeMaskSourceLabel().empty()) {
-            ImGui::Text("Source: %s",
-                        context.zarr_loader.getEyeMaskSourceLabel().c_str());
-        }
-        if (!context.zarr_loader.getEyeMaskSourcePath().empty()) {
-            ImGui::TextWrapped("Dataset: %s",
-                               context.zarr_loader.getEyeMaskSourcePath().c_str());
-        } else {
-            ImGui::Text("Run: %s",
-                        context.zarr_loader.getEyeMaskRunName().c_str());
-        }
-        if (context.zarr_loader.eyeMasksUseRefinedSubjectMasks()) {
-            const auto& labels = context.zarr_loader.getEyeMaskChannelLabels();
-            const auto& channels = context.zarr_loader.getEyeMaskChannelIndices();
-            const std::string left_channel =
-                channels[0] == std::numeric_limits<size_t>::max()
-                    ? "unavailable"
-                    : std::to_string(channels[0]);
-            const std::string right_channel =
-                channels[1] == std::numeric_limits<size_t>::max()
-                    ? "unavailable"
-                    : std::to_string(channels[1]);
-            ImGui::Text("Channels: %s=%s, %s=%s",
-                        labels[0].c_str(),
-                        left_channel.c_str(),
-                        labels[1].c_str(),
-                        right_channel.c_str());
-        }
-        if (!context.zarr_loader.getEyeMaskWarning().empty()) {
-            ImGui::TextWrapped("Warning: %s",
-                               context.zarr_loader.getEyeMaskWarning().c_str());
-        }
-        if (context.detection_details != nullptr &&
-            context.detection_details->includes_eye_masks) {
-            size_t valid_masks = 0;
-            size_t masks_with_axes = 0;
-            size_t masks_with_angle_labels = 0;
-            size_t masks_with_subject_body = 0;
-            size_t masks_with_swim_bladder = 0;
-            size_t masks_with_component_contours = 0;
-            for (const auto& mask : context.detection_details->eye_masks) {
-                if (mask.valid) {
-                    ++valid_masks;
-                }
-                if (mask.has_feret_axes) {
-                    ++masks_with_axes;
-                }
-                if ((mask.has_eye_frame_angles &&
-                     ((mask.eye_frame_angle_valid[0] != 0) ||
-                      (mask.eye_frame_angle_valid[1] != 0) ||
-                      mask.eye_frame_vergence_valid != 0)) ||
-                    (mask.has_eye_angles &&
-                     ((mask.feret_angle_valid[0] != 0) ||
-                      (mask.feret_angle_valid[1] != 0)))) {
-                    ++masks_with_angle_labels;
-                }
-                for (const auto& component : mask.subject_mask_components) {
-                    if (!component.valid) {
-                        continue;
-                    }
-                    if (component.label == "subject_body") {
-                        ++masks_with_subject_body;
-                    } else if (component.label == "swim_bladder") {
-                        ++masks_with_swim_bladder;
-                    }
-                    if (component.has_contour) {
-                        ++masks_with_component_contours;
-                    }
-                }
-            }
-            ImGui::Text("Current frame valid masks: %zu", valid_masks);
-            ImGui::Text("Current frame masks with axes: %zu", masks_with_axes);
-            ImGui::Text("Current frame masks with angle labels: %zu",
-                        masks_with_angle_labels);
-            if (context.zarr_loader.eyeMasksUseRefinedSubjectMasks()) {
-                ImGui::Text("Current frame body/swim bladder masks: %zu / %zu",
-                            masks_with_subject_body,
-                            masks_with_swim_bladder);
-                ImGui::Text("Current frame component contours: %zu",
-                            masks_with_component_contours);
-            }
-        } else {
-            ImGui::TextDisabled("%s", unavailableMaskDetailsText(context));
-        }
-        if (context.zarr_loader.hasEyeAngleData()) {
-            ImGui::Text("Angle run: %s",
-                        context.zarr_loader.getEyeAngleRunName().c_str());
-        }
         drawSubjectMaskEditPreviewSection(context, state);
-    } else {
-        ImGui::TextDisabled("Eye mask arrays unavailable for current dataset");
     }
     drawSubjectShapeQcSection(context, state, result);
 
