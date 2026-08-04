@@ -2,6 +2,7 @@
 
 #include "IconsForkAwesome.h"
 #include "gui/canonical_detection_inspect_adapter.h"
+#include "gui/eye_geometry_overlay_controls.h"
 #include "gui/eye_geometry_overlay_inspect_adapter.h"
 #include "gui/frame_inspect_detection_module.h"
 #include "gui/frame_inspect_eye_angle_module.h"
@@ -10,6 +11,7 @@
 #include "gui/frame_inspect_subject_shape_module.h"
 #include "gui/frame_inspect_window.h"
 #include "gui/keypoint_overlay_inspect_adapter.h"
+#include "gui/read_only_eye_geometry_controls_adapter.h"
 #include "gui/read_only_subject_shape_controls_adapter.h"
 #include "gui/subject_mask_overlay_inspect_adapter.h"
 #include "gui/subject_shape_overlay_controls.h"
@@ -2295,23 +2297,14 @@ void drawAppleFrameInspectWindow(
          const bool detailed =
              controls->mask_mode !=
              crimson::overlay::ReadOnlyMaskOverlayMode::Realtime;
-         drawAvailableCheckbox("Show eye geometry",
-                               &controls->show_eye_geometry,
-                               availability.eye_geometry && detailed);
-         const bool eye_details_enabled = availability.eye_geometry &&
-                                          detailed &&
-                                          controls->show_eye_geometry;
-         drawAvailableCheckbox("Visual cones",
-                               &controls->show_eye_direction_beams,
-                               eye_details_enabled);
-         ImGui::SameLine();
-         drawAvailableCheckbox("Gaze rays", &controls->show_eye_gaze_rays,
-                               eye_details_enabled);
-         drawAvailableCheckbox("Angle arcs", &controls->show_eye_angle_arcs,
-                               eye_details_enabled);
-         ImGui::SameLine();
-         drawAvailableCheckbox("Angle labels", &controls->show_eye_angle_labels,
-                               eye_details_enabled);
+         auto eye_geometry_controls =
+             crimson::gui::makeReadOnlyEyeGeometryOverlayControlState(
+                 *controls);
+         crimson::gui::drawEyeGeometryOverlayControls(
+             eye_geometry_controls,
+             {availability.eye_geometry && detailed, true});
+         crimson::gui::applyReadOnlyEyeGeometryOverlayControlState(
+             eye_geometry_controls, controls);
        }});
 
   composition.draw_footer = [&]() {

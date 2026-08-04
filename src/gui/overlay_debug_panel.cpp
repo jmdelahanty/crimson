@@ -1,6 +1,7 @@
 #include "gui/overlay_debug_panel.h"
 
 #include "gui/camera_view_subject_shape_controls_adapter.h"
+#include "gui/eye_geometry_overlay_controls.h"
 #include "gui/subject_shape_overlay_controls.h"
 
 #include "imgui.h"
@@ -250,27 +251,19 @@ void drawEyeMaskSection(const FrameDebugWindowContext& context,
         ImGui::SameLine();
         ImGui::Checkbox("Right eye", &result.show_eye_right_mask);
     }
-    ImGui::Checkbox("Eye visual cones", &result.show_eye_direction_beams);
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip(
-            "Draw translucent 163 degree visual-field cones from each eye, centered on Palette gaze vectors when available and falling back to the ellipse minor axis.");
-    }
-    ImGui::Checkbox("Gaze rays", &result.show_eye_gaze_rays);
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip(
-            "Draw Palette eye-angle gaze vectors from left_gaze_xy/right_gaze_xy when available.");
-    }
-    ImGui::Checkbox("Eye angle arcs", &result.show_eye_angle_arcs);
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip(
-            "Draw signed gaze-angle arcs from the body-frame forward axis to the ellipse minor-axis gaze direction.");
-    }
-    ImGui::SameLine();
-    ImGui::Checkbox("Angle labels", &result.show_eye_angle_labels);
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip(
-            "Draw text labels for eye-frame per-eye angles and vergence; legacy archives fall back to explicitly labeled gaze-signed values.");
-    }
+    crimson::gui::EyeGeometryOverlayControlState eye_geometry_controls;
+    eye_geometry_controls.show_direction_beams =
+        context.show_eye_direction_beams;
+    eye_geometry_controls.show_gaze_rays = context.show_eye_gaze_rays;
+    eye_geometry_controls.show_angle_arcs = context.show_eye_angle_arcs;
+    eye_geometry_controls.show_angle_labels = context.show_eye_angle_labels;
+    crimson::gui::drawEyeGeometryOverlayControls(eye_geometry_controls,
+                                                 {true, false});
+    result.show_eye_direction_beams =
+        eye_geometry_controls.show_direction_beams;
+    result.show_eye_gaze_rays = eye_geometry_controls.show_gaze_rays;
+    result.show_eye_angle_arcs = eye_geometry_controls.show_angle_arcs;
+    result.show_eye_angle_labels = eye_geometry_controls.show_angle_labels;
     if (!context.zarr_loader.getEyeMaskWarning().empty()) {
         ImGui::TextWrapped("  Warning: %s",
                            context.zarr_loader.getEyeMaskWarning().c_str());

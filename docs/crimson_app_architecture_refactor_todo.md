@@ -78,9 +78,10 @@ adapter. See `docs/crimson_shared_affiliated_media_checkpoint_2026-07-31.md`.
 The macOS and Linux/Windows shells now compose Frame Inspect through one
 backend-neutral ImGui window module. The shared module owns window and tab-bar
 lifecycle, visible-module ordering, disabled interaction state, stable
-programmatic tab selection, and header/footer placement. Platform composition
-roots register Detect, Keypoints, Subject Masks, Tail Kinematics, and Eye
-Angles as callbacks.
+programmatic tab selection, and header/footer placement. Both platform
+composition roots register Detect, Keypoints, Subject Masks, and Eye Angles as
+callbacks. Linux/Windows additionally registers its maintained Tail Kinematics
+inspection tab; macOS exposes tail kinematics through Analysis Timeline.
 
 This is intentionally a presentation boundary rather than a merge of platform
 repositories or editing policies. macOS callbacks retain the strict read-only
@@ -144,6 +145,13 @@ capabilities explicitly gate the legacy body, swim-bladder, and eye contour
 toggles that are not part of the strict macOS overlay surface. Thin adapters
 translate the existing read-only Metal state and Linux camera-view options;
 rendering, storage access, Linux QC, and editing ownership remain unchanged.
+
+Eye Geometry overlay controls now follow the same pattern. The shared widget
+owns visual-cone, gaze-ray, angle-arc, and label visibility. A capability keeps
+the explicit macOS master toggle and its Review/Debug availability gating,
+while Linux/Windows retains its direct detail toggles. The strict Metal adapter
+only translates control state; mask modes, repositories, scene construction,
+and platform renderers remain independently owned.
 
 ## Why This Exists
 

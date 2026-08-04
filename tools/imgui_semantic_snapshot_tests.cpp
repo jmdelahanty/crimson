@@ -1,5 +1,6 @@
 #include "gui/camera_view_transport_controls.h"
 #include "gui/canonical_detection_inspect_adapter.h"
+#include "gui/eye_geometry_overlay_controls.h"
 #include "gui/eye_geometry_overlay_inspect_adapter.h"
 #include "gui/frame_inspect_detection_module.h"
 #include "gui/frame_inspect_eye_angle_module.h"
@@ -8,6 +9,7 @@
 #include "gui/frame_inspect_subject_shape_module.h"
 #include "gui/frame_inspect_window.h"
 #include "gui/keypoint_overlay_inspect_adapter.h"
+#include "gui/read_only_eye_geometry_controls_adapter.h"
 #include "gui/read_only_subject_shape_controls_adapter.h"
 #include "gui/session_loading_modal.h"
 #include "gui/subject_mask_overlay_inspect_adapter.h"
@@ -947,6 +949,99 @@ bool testSubjectShapeOverlayControlsSnapshot() {
   return true;
 }
 
+bool testReadOnlyEyeGeometryControlAdapter() {
+  crimson::overlay::ReadOnlyOverlayControlState source;
+  source.show_eye_geometry = false;
+  source.show_eye_direction_beams = false;
+  source.show_eye_gaze_rays = true;
+  source.show_eye_angle_arcs = false;
+  source.show_eye_angle_labels = true;
+
+  auto shared =
+      crimson::gui::makeReadOnlyEyeGeometryOverlayControlState(source);
+  CHECK(!shared.show_overlay);
+  CHECK(!shared.show_direction_beams);
+  CHECK(shared.show_gaze_rays);
+  CHECK(!shared.show_angle_arcs);
+  CHECK(shared.show_angle_labels);
+
+  shared.show_overlay = true;
+  shared.show_direction_beams = true;
+  shared.show_gaze_rays = false;
+  shared.show_angle_arcs = true;
+  shared.show_angle_labels = false;
+  crimson::gui::applyReadOnlyEyeGeometryOverlayControlState(shared, &source);
+  CHECK(source.show_eye_geometry);
+  CHECK(source.show_eye_direction_beams);
+  CHECK(!source.show_eye_gaze_rays);
+  CHECK(source.show_eye_angle_arcs);
+  CHECK(!source.show_eye_angle_labels);
+  crimson::gui::applyReadOnlyEyeGeometryOverlayControlState(shared, nullptr);
+  return true;
+}
+
+bool testEyeGeometryOverlayControlsSnapshot() {
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO &io = ImGui::GetIO();
+  io.DisplaySize = ImVec2(900.0f, 700.0f);
+  io.DeltaTime = 1.0f / 60.0f;
+  unsigned char *pixels = nullptr;
+  int width = 0;
+  int height = 0;
+  io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+
+  crimson::gui::EyeGeometryOverlayControlState strict_state;
+  crimson::gui::EyeGeometryOverlayControlState legacy_state;
+  ImGui::NewFrame();
+  ImGui::Begin("Strict eye controls");
+  crimson::gui::drawEyeGeometryOverlayControls(strict_state, {true, true});
+  ImGui::End();
+  ImGui::Begin("Legacy eye controls");
+  crimson::gui::drawEyeGeometryOverlayControls(legacy_state, {true, false});
+  ImGui::End();
+  ImGui::Render();
+
+  crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(), true);
+  crimson::ui::beginSemanticFrame(ImGui::GetCurrentContext());
+  ImGui::NewFrame();
+  ImGui::Begin("Strict eye controls");
+  const auto strict_result =
+      crimson::gui::drawEyeGeometryOverlayControls(strict_state, {true, true});
+  ImGui::End();
+  ImGui::Begin("Legacy eye controls");
+  const auto legacy_result =
+      crimson::gui::drawEyeGeometryOverlayControls(legacy_state, {true, false});
+  ImGui::End();
+  ImGui::Render();
+  const auto snapshot =
+      crimson::ui::finishSemanticFrame(ImGui::GetCurrentContext());
+
+  bool strict_has_master = false;
+  bool strict_has_details = false;
+  bool legacy_has_master = false;
+  bool legacy_has_details = false;
+  for (const auto &item : snapshot.items) {
+    if (item.window_name == "Strict eye controls") {
+      strict_has_master |= item.visible_label == "Show eye geometry";
+      strict_has_details |= item.visible_label == "Eye visual cones";
+    } else if (item.window_name == "Legacy eye controls") {
+      legacy_has_master |= item.visible_label == "Show eye geometry";
+      legacy_has_details |= item.visible_label == "Eye visual cones";
+    }
+  }
+  CHECK(strict_has_master);
+  CHECK(strict_has_details);
+  CHECK(!legacy_has_master);
+  CHECK(legacy_has_details);
+  CHECK(!strict_result.changed);
+  CHECK(!legacy_result.changed);
+
+  crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(), false);
+  ImGui::DestroyContext();
+  return true;
+}
+
 bool testEyeGeometryOverlayInspectAdapter() {
   crimson::zarr::EyeGeometryOverlayDescriptor descriptor;
   descriptor.source_group = "analysis/eye_angle_runs";
@@ -1117,6 +1212,8 @@ int main() {
       !testSubjectShapeInspectModuleSnapshot() ||
       !testReadOnlySubjectShapeControlAdapter() ||
       !testSubjectShapeOverlayControlsSnapshot() ||
+      !testReadOnlyEyeGeometryControlAdapter() ||
+      !testEyeGeometryOverlayControlsSnapshot() ||
       !testEyeGeometryOverlayInspectAdapter() ||
       !testEyeAngleInspectModuleSnapshot()) {
     return 1;
