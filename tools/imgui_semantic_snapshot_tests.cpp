@@ -1,6 +1,8 @@
 #include "gui/camera_view_transport_controls.h"
 #include "gui/canonical_detection_inspect_adapter.h"
+#include "gui/eye_geometry_overlay_inspect_adapter.h"
 #include "gui/frame_inspect_detection_module.h"
+#include "gui/frame_inspect_eye_angle_module.h"
 #include "gui/frame_inspect_keypoint_module.h"
 #include "gui/frame_inspect_subject_mask_module.h"
 #include "gui/frame_inspect_window.h"
@@ -662,6 +664,160 @@ bool testSubjectMaskInspectModuleSnapshot() {
   return true;
 }
 
+bool testEyeGeometryOverlayInspectAdapter() {
+  crimson::zarr::EyeGeometryOverlayDescriptor descriptor;
+  descriptor.source_group = "analysis/eye_angle_runs";
+  descriptor.run_name = "eye_geometry_fixture";
+  descriptor.source_refined_subject_masks_run = "refined_masks_fixture";
+  descriptor.source_crop_run = "crop_fixture";
+  descriptor.schema_id = "analysis.eye_angle_runs";
+  descriptor.schema_version = 5;
+  descriptor.method = "ellipse_and_centroid_eye_angles";
+  descriptor.method_version = "1";
+
+  crimson::zarr::EyeGeometryOverlayResolution frame;
+  frame.status = crimson::zarr::EyeGeometryOverlayStatus::Mapped;
+  frame.camera_frame = 14;
+  crimson::zarr::EyeGeometryOverlayDetection first;
+  first.eye_row = 10;
+  first.camera_frame = 14;
+  first.detection_index = 3;
+  first.source_crop_row_id = 21;
+  first.frame_valid = true;
+  first.eyes[0].valid = true;
+  first.eyes[0].eye_frame_angle_valid = true;
+  first.eyes[0].eye_frame_angle_degrees = 12.5;
+  first.eyes[0].signed_angle_valid = true;
+  first.eyes[0].signed_angle_degrees = -8.0;
+  first.eyes[0].gaze_valid = true;
+  first.eyes[0].gaze = {0.25, 0.75};
+  first.eyes[1].valid = true;
+  first.eyes[1].eye_frame_angle_valid = true;
+  first.eyes[1].eye_frame_angle_degrees = -11.0;
+  first.eyes[1].signed_angle_valid = true;
+  first.eyes[1].signed_angle_degrees = 7.5;
+  first.eyes[1].gaze_valid = true;
+  first.eyes[1].gaze = {-0.25, 0.75};
+  first.vergence_valid = true;
+  first.vergence_degrees = 23.5;
+  crimson::zarr::EyeGeometryOverlayDetection second;
+  second.eye_row = 11;
+  second.camera_frame = 14;
+  second.detection_index = 4;
+  second.source_crop_row_id = 22;
+  second.frame_valid = false;
+  frame.detections = {first, second};
+
+  const auto presentation =
+      crimson::gui::makeEyeGeometryOverlayInspectPresentation(
+          &descriptor, &frame, frame.camera_frame);
+  CHECK(presentation.available);
+  CHECK(presentation.frame_ready);
+  CHECK(presentation.run_name == "eye_geometry_fixture");
+  CHECK(presentation.default_representation_key == "eye_frame");
+  CHECK(presentation.representations.size() == 3);
+  CHECK(presentation.observations.size() == 2);
+  CHECK(presentation.observations[0].row_selection_key == 11);
+  CHECK(presentation.observations[0].source_row == 10);
+  CHECK(presentation.observations[0].detection_index == 3);
+  CHECK(presentation.observations[0].source_crop_row_id == 21);
+  CHECK(presentation.observations[0].left_valid);
+  CHECK(presentation.observations[0].right_valid);
+  CHECK(presentation.observations[0].fields.size() == 7);
+  CHECK(presentation.observations[0].fields[0].valid);
+  CHECK(near(static_cast<float>(presentation.observations[0].fields[0].value_x),
+             12.5f));
+  CHECK(!presentation.observations[1].frame_valid);
+
+  crimson::zarr::EyeGeometryOverlayResolution empty;
+  empty.status = crimson::zarr::EyeGeometryOverlayStatus::Missing;
+  empty.camera_frame = 15;
+  const auto empty_presentation =
+      crimson::gui::makeEyeGeometryOverlayInspectPresentation(
+          &descriptor, &empty, empty.camera_frame);
+  CHECK(empty_presentation.frame_ready);
+  CHECK(empty_presentation.observations.empty());
+  CHECK(empty_presentation.warning.empty());
+
+  const auto loading = crimson::gui::makeEyeGeometryOverlayInspectPresentation(
+      &descriptor, &frame, frame.camera_frame + 1);
+  CHECK(loading.available);
+  CHECK(!loading.frame_ready);
+  CHECK(loading.observations.empty());
+  return true;
+}
+
+bool testEyeAngleInspectModuleSnapshot() {
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO &io = ImGui::GetIO();
+  io.DisplaySize = ImVec2(800.0f, 600.0f);
+  io.DeltaTime = 1.0f / 60.0f;
+  unsigned char *pixels = nullptr;
+  int width = 0;
+  int height = 0;
+  io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+
+  crimson::gui::EyeAngleInspectPresentation presentation;
+  presentation.available = true;
+  presentation.surface_label = "Eye-geometry overlay";
+  presentation.run_name = "eye_geometry_fixture";
+  presentation.default_representation_key = "eye_frame";
+  presentation.representations = {
+      {"eye_frame", "Eye frame", "body-relative eye angle", "eye frame"}};
+  presentation.frame_ready = true;
+  presentation.camera_frame = 14;
+  crimson::gui::EyeAngleInspectObservation observation;
+  observation.row_selection_key = 11;
+  observation.selectable = true;
+  observation.source_row = 10;
+  observation.source_row_valid = true;
+  observation.frame_valid = true;
+  observation.frame_valid_known = true;
+  observation.left_valid = true;
+  observation.left_valid_known = true;
+  observation.right_valid = true;
+  observation.right_valid_known = true;
+  crimson::gui::EyeAngleInspectField field;
+  field.representation_key = "eye_frame";
+  field.label = "Vergence";
+  field.units = "deg";
+  field.value_x = 23.5;
+  field.valid = true;
+  observation.fields = {field};
+  presentation.observations = {observation};
+  crimson::gui::EyeAngleInspectModuleState state;
+  state.selected_row_key = 11;
+
+  ImGui::NewFrame();
+  ImGui::Begin("Eye-angle module fixture");
+  crimson::gui::drawFrameInspectEyeAngleModule(presentation, state);
+  ImGui::End();
+  ImGui::Render();
+
+  crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(), true);
+  crimson::ui::beginSemanticFrame(ImGui::GetCurrentContext());
+  ImGui::NewFrame();
+  ImGui::Begin("Eye-angle module fixture");
+  crimson::gui::drawFrameInspectEyeAngleModule(presentation, state);
+  ImGui::End();
+  ImGui::Render();
+  const auto snapshot =
+      crimson::ui::finishSemanticFrame(ImGui::GetCurrentContext());
+
+  bool found_observation = false;
+  for (const auto &item : snapshot.items) {
+    found_observation |= item.visible_label == "#1";
+  }
+  CHECK(found_observation);
+  CHECK(state.selected_row_key == 11);
+  CHECK(state.selected_representation_key == "eye_frame");
+
+  crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(), false);
+  ImGui::DestroyContext();
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -673,7 +829,9 @@ int main() {
       !testKeypointOverlayInspectAdapter() ||
       !testKeypointInspectModuleSnapshot() ||
       !testSubjectMaskOverlayInspectAdapter() ||
-      !testSubjectMaskInspectModuleSnapshot()) {
+      !testSubjectMaskInspectModuleSnapshot() ||
+      !testEyeGeometryOverlayInspectAdapter() ||
+      !testEyeAngleInspectModuleSnapshot()) {
     return 1;
   }
   std::cout << "imgui_semantic_snapshot_tests: PASS\n";

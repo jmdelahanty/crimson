@@ -2,7 +2,9 @@
 
 #include "IconsForkAwesome.h"
 #include "gui/canonical_detection_inspect_adapter.h"
+#include "gui/eye_geometry_overlay_inspect_adapter.h"
 #include "gui/frame_inspect_detection_module.h"
+#include "gui/frame_inspect_eye_angle_module.h"
 #include "gui/frame_inspect_keypoint_module.h"
 #include "gui/frame_inspect_subject_mask_module.h"
 #include "gui/frame_inspect_window.h"
@@ -1968,14 +1970,18 @@ void drawAppleFrameInspectWindow(
     const std::shared_ptr<const crimson::zarr::SubjectMaskOverlayResolution>
         &subject_mask_frame,
     AppleSubjectMaskInspectState *subject_mask_inspect,
+    const crimson::zarr::EyeGeometryOverlayDescriptor *eye_geometry_descriptor,
+    const std::shared_ptr<const crimson::zarr::EyeGeometryOverlayResolution>
+        &eye_geometry_frame,
+    AppleEyeAngleInspectState *eye_angle_inspect,
     const AppleVideoViewerStats &stats,
     AppleFrameInspectPresentationState *presentation,
     bool *advanced_crop_preview, bool *stimulus_debug, bool interactive) {
   if (selections == nullptr || controls == nullptr || presentation == nullptr ||
       detection_inspect == nullptr || detection_quality_timeline == nullptr ||
       keypoint_inspect == nullptr || keypoint_quality_timeline == nullptr ||
-      subject_mask_inspect == nullptr || advanced_crop_preview == nullptr ||
-      stimulus_debug == nullptr) {
+      subject_mask_inspect == nullptr || eye_angle_inspect == nullptr ||
+      advanced_crop_preview == nullptr || stimulus_debug == nullptr) {
     return;
   }
 
@@ -2266,6 +2272,26 @@ void drawAppleFrameInspectWindow(
   composition.modules.push_back(
       {crimson::workspace::FrameInspectView::EyeAngles, "Eye Angles", true,
        [&]() {
+         const auto eye_angle_presentation =
+             crimson::gui::makeEyeGeometryOverlayInspectPresentation(
+                 eye_geometry_descriptor, eye_geometry_frame.get(),
+                 stats.presented_frame);
+         const auto selected_eye_row = std::find_if(
+             eye_angle_presentation.observations.begin(),
+             eye_angle_presentation.observations.end(),
+             [&](const crimson::gui::EyeAngleInspectObservation &observation) {
+               return observation.selectable &&
+                      observation.row_selection_key ==
+                          eye_angle_inspect->selected_row_key;
+             });
+         if (!eye_angle_presentation.observations.empty() &&
+             selected_eye_row == eye_angle_presentation.observations.end()) {
+           eye_angle_inspect->selected_row_key =
+               eye_angle_presentation.observations.front().row_selection_key;
+         }
+         crimson::gui::drawFrameInspectEyeAngleModule(eye_angle_presentation,
+                                                      *eye_angle_inspect);
+         ImGui::Separator();
          const bool detailed =
              controls->mask_mode !=
              crimson::overlay::ReadOnlyMaskOverlayMode::Realtime;

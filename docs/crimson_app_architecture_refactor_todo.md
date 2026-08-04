@@ -118,6 +118,15 @@ mask editing, and review metadata remain platform extensions. This keeps the
 dense-mask and sampled-contour repositories out of the UI module while
 preserving the Linux editing workflow.
 
+Eye Angles now follows the same boundary. The shared presentation model and
+renderer preserve complete per-frame observation ranges, row-scoped UI
+selection, representation-specific scalar and vector fields, validity,
+marginal/reason state, and source/crop lineage. The UI selection key is
+explicitly not scientific observation identity. A strict eye-geometry
+repository adapter and a Linux legacy-loader adapter remain separate; overlay
+styling, QC filtering and navigation, and timeline controls remain platform
+extensions.
+
 ## Why This Exists
 
 `crimson` has already done useful mechanical splits, but the core architecture

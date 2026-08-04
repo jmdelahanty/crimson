@@ -3103,7 +3103,9 @@ if(CRIMSON_BUILD_MACOS_APP)
         src/platform/macos/apple_video_viewer_ui.mm
         src/gui/camera_view_transport_controls.cpp
         src/gui/canonical_detection_inspect_adapter.cpp
+        src/gui/eye_geometry_overlay_inspect_adapter.cpp
         src/gui/frame_inspect_detection_module.cpp
+        src/gui/frame_inspect_eye_angle_module.cpp
         src/gui/frame_inspect_keypoint_module.cpp
         src/gui/frame_inspect_subject_mask_module.cpp
         src/gui/frame_inspect_window.cpp
@@ -3171,7 +3173,9 @@ if(CRIMSON_BUILD_MACOS_APP)
         tools/imgui_semantic_snapshot_tests.cpp
         src/gui/camera_view_transport_controls.cpp
         src/gui/canonical_detection_inspect_adapter.cpp
+        src/gui/eye_geometry_overlay_inspect_adapter.cpp
         src/gui/frame_inspect_detection_module.cpp
+        src/gui/frame_inspect_eye_angle_module.cpp
         src/gui/frame_inspect_keypoint_module.cpp
         src/gui/frame_inspect_subject_mask_module.cpp
         src/gui/frame_inspect_window.cpp

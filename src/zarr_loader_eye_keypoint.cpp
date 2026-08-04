@@ -3824,6 +3824,8 @@ bool ZarrDetectionLoader::loadEyeAngleData(const ts::kvstore::KvStore& store,
                 eye,
                 "Eye-angle support/frame_indices missing or length-mismatched; QC seeking may be unavailable.");
         }
+        eye.row_to_frame_nondecreasing =
+            std::is_sorted(eye.row_to_frame.begin(), eye.row_to_frame.end());
 
         auto scalar_roi_values =
             [&](const std::vector<std::string>& candidates)
@@ -4242,6 +4244,14 @@ std::optional<size_t> ZarrDetectionLoader::findEyeAngleRowForFrame(
     const auto& eye = data_.eye_angle_analysis;
     if (!eye.loaded || frame < 0) {
         return std::nullopt;
+    }
+    if (eye.row_to_frame_nondecreasing) {
+        const auto found = std::lower_bound(eye.row_to_frame.begin(),
+                                            eye.row_to_frame.end(), frame);
+        if (found == eye.row_to_frame.end() || *found != frame) {
+            return std::nullopt;
+        }
+        return static_cast<size_t>(found - eye.row_to_frame.begin());
     }
     for (size_t row = 0; row < eye.row_to_frame.size(); ++row) {
         if (eye.row_to_frame[row] == frame) {

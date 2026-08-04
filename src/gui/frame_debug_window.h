@@ -2,6 +2,7 @@
 
 #include "gui/camera_view_overlay_renderer.h"
 #include "gui/crop_keypoint_editor.h"
+#include "gui/frame_inspect_eye_angle_module.h"
 #include "gui/frame_inspect_subject_mask_module.h"
 #include "gui/refined_keypoint_review_panel.h"
 #include "gui/review_metadata_editor.h"
@@ -35,8 +36,8 @@ struct FrameDebugWindowState {
     ZarrDetectionLoader::EyeAngleQcFilterOptions eye_angle_qc_filters;
     std::array<char, 128> eye_angle_reason_filter{};
     std::string eye_angle_qc_status;
+    crimson::gui::EyeAngleInspectModuleState eye_angle_inspect;
     int eye_angle_selected_row = -1;
-    int eye_angle_representation_index = -1;
     crimson::workspace::FrameInspectView active_view =
         crimson::workspace::FrameInspectView::Detect;
     crimson::workspace::FrameInspectViewSyncState view_sync;

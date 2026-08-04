@@ -10,6 +10,7 @@
 #include "eye_angle_timeline.h"
 #include "gui/camera_view_transport_controls.h"
 #include "gui/frame_inspect_detection_module.h"
+#include "gui/frame_inspect_eye_angle_module.h"
 #include "gui/frame_inspect_keypoint_module.h"
 #include "gui/frame_inspect_subject_mask_module.h"
 #include "gui/quality_timeline_window.h"
@@ -27,6 +28,7 @@
 #include "ui_path_config.h"
 #include "workspace_state.h"
 #include "zarr/canonical_detection_repository.h"
+#include "zarr/eye_geometry_overlay_repository.h"
 #include "zarr/keypoint_overlay_repository.h"
 #include "zarr/subject_mask_overlay_repository.h"
 
@@ -174,6 +176,8 @@ using AppleKeypointInspectState = crimson::gui::KeypointInspectModuleState;
 using AppleSubjectMaskInspectState =
     crimson::gui::SubjectMaskInspectModuleState;
 
+using AppleEyeAngleInspectState = crimson::gui::EyeAngleInspectModuleState;
+
 struct AppleCropViewerControls {
   crimson::crop::CropSourcePreference preference =
       crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
@@ -306,6 +310,10 @@ void drawAppleFrameInspectWindow(
     const std::shared_ptr<const crimson::zarr::SubjectMaskOverlayResolution>
         &subject_mask_frame,
     AppleSubjectMaskInspectState *subject_mask_inspect,
+    const crimson::zarr::EyeGeometryOverlayDescriptor *eye_geometry_descriptor,
+    const std::shared_ptr<const crimson::zarr::EyeGeometryOverlayResolution>
+        &eye_geometry_frame,
+    AppleEyeAngleInspectState *eye_angle_inspect,
     const AppleVideoViewerStats &stats,
     AppleFrameInspectPresentationState *presentation,
     bool *advanced_crop_preview, bool *stimulus_debug, bool interactive);

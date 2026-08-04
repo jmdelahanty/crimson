@@ -385,6 +385,7 @@ struct ZarrDetectionData {
         std::unordered_map<int32_t, std::string> reason_code_map;
         std::vector<int32_t> roi_frame_indices;
         std::vector<int32_t> row_to_frame;
+        bool row_to_frame_nondecreasing = false;
         std::vector<float> roi_time_seconds;
         std::vector<float> frame_time_seconds;
         std::vector<uint8_t> roi_valid_left;
