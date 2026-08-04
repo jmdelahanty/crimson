@@ -138,6 +138,13 @@ remain separate, while Metal/OpenGL overlay controls, Linux QC navigation, and
 mask editing remain platform extensions. This extraction does not freeze the
 still-evolving Palette subject-shape storage manifest.
 
+Subject Shape overlay controls now use a shared widget module as well. Its
+backend-neutral state covers the common geometry visibility controls, while
+capabilities explicitly gate the legacy body, swim-bladder, and eye contour
+toggles that are not part of the strict macOS overlay surface. Thin adapters
+translate the existing read-only Metal state and Linux camera-view options;
+rendering, storage access, Linux QC, and editing ownership remain unchanged.
+
 ## Why This Exists
 
 `crimson` has already done useful mechanical splits, but the core architecture

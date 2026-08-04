@@ -10,7 +10,9 @@
 #include "gui/frame_inspect_subject_shape_module.h"
 #include "gui/frame_inspect_window.h"
 #include "gui/keypoint_overlay_inspect_adapter.h"
+#include "gui/read_only_subject_shape_controls_adapter.h"
 #include "gui/subject_mask_overlay_inspect_adapter.h"
+#include "gui/subject_shape_overlay_controls.h"
 #include "gui/subject_shape_overlay_inspect_adapter.h"
 #include "imgui.h"
 #include "implot.h"
@@ -2257,48 +2259,14 @@ void drawAppleFrameInspectWindow(
          drawAvailableCheckbox("Right eye", &controls->show_eye_right_mask,
                                eye_components_available);
          ImGui::SeparatorText("Subject shape");
-         drawAvailableCheckbox("Show subject shape",
-                               &controls->show_subject_shape,
-                               availability.subject_shape);
-         const bool shape_enabled =
-             availability.subject_shape && controls->show_subject_shape;
-         drawAvailableCheckbox("Snout tip",
-                               &controls->show_subject_shape_snout_tip,
-                               shape_enabled);
-         ImGui::SameLine();
-         drawAvailableCheckbox("Tail base",
-                               &controls->show_subject_shape_tail_base,
-                               shape_enabled);
-         ImGui::SameLine();
-         drawAvailableCheckbox(
-             "Tail tip", &controls->show_subject_shape_tail_tip, shape_enabled);
-         drawAvailableCheckbox("Caudal anchor",
-                               &controls->show_subject_shape_caudal_anchor,
-                               shape_enabled);
-         drawAvailableCheckbox("Centerline",
-                               &controls->show_subject_shape_centerline,
-                               shape_enabled);
-         drawAvailableCheckbox("Dense B-spline",
-                               &controls->show_subject_shape_bspline,
-                               shape_enabled);
-         drawAvailableCheckbox("Body frame axes",
-                               &controls->show_subject_shape_body_axes,
-                               shape_enabled);
-         drawAvailableCheckbox(
-             "Spline debug points",
-             &controls->show_subject_shape_bspline_debug_points, shape_enabled);
-         ImGui::SameLine();
-         drawAvailableCheckbox(
-             "Control points",
-             &controls->show_subject_shape_bspline_control_points,
-             shape_enabled);
-         drawAvailableCheckbox("Tail samples",
-                               &controls->show_subject_shape_tail_samples,
-                               shape_enabled);
-         ImGui::SameLine();
-         drawAvailableCheckbox("Tail normals",
-                               &controls->show_subject_shape_tail_normals,
-                               shape_enabled);
+         auto subject_shape_controls =
+             crimson::gui::makeReadOnlySubjectShapeOverlayControlState(
+                 *controls);
+         crimson::gui::drawSubjectShapeOverlayControls(
+             subject_shape_controls,
+             {availability.subject_shape, false, false, false});
+         crimson::gui::applyReadOnlySubjectShapeOverlayControlState(
+             subject_shape_controls, controls);
        }});
 
   composition.modules.push_back(

@@ -1,5 +1,8 @@
 #include "gui/overlay_debug_panel.h"
 
+#include "gui/camera_view_subject_shape_controls_adapter.h"
+#include "gui/subject_shape_overlay_controls.h"
+
 #include "imgui.h"
 
 #include <algorithm>
@@ -284,10 +287,8 @@ void drawSubjectShapeSection(const FrameDebugWindowContext& context,
         return;
     }
 
-    auto options = context.subject_shape_overlay_options;
     ImGui::Separator();
     ImGui::Text("Subject Shape Geometry:");
-    ImGui::Checkbox("Show subject shape", &options.show_overlay);
     ImGui::Text("  Run: %s", context.zarr_loader.getSubjectShapeRunName().c_str());
     if (!context.zarr_loader
              .getSubjectShapeSourceRefinedSubjectMasksRun()
@@ -307,34 +308,12 @@ void drawSubjectShapeSection(const FrameDebugWindowContext& context,
                            context.zarr_loader.getSubjectShapeWarning().c_str());
     }
 
-    ImGui::BeginDisabled(!options.show_overlay);
-    ImGui::Checkbox("Snout tip", &options.show_snout_tip);
-    ImGui::SameLine();
-    ImGui::Checkbox("Tail base", &options.show_tail_base);
-    ImGui::SameLine();
-    ImGui::Checkbox("Tail tip", &options.show_tail_tip);
-    ImGui::Checkbox("Caudal swim-bladder anchor",
-                    &options.show_caudal_anchor);
-    ImGui::Checkbox("Centerline", &options.show_centerline);
-    ImGui::Checkbox("Dense B-spline centerline (geometry/QC)",
-                    &options.show_bspline_sample);
-    ImGui::Checkbox("Body frame axes", &options.show_body_frame_axes);
-    ImGui::Checkbox("Body contour", &options.show_body_contour);
-    ImGui::SameLine();
-    ImGui::Checkbox("Swim-bladder contour",
-                    &options.show_swim_bladder_contour);
-    ImGui::Checkbox("Eye contours", &options.show_eye_contours);
-    ImGui::Checkbox("Spline debug points",
-                    &options.show_bspline_debug_points);
-    ImGui::SameLine();
-    ImGui::Checkbox("Spline control points",
-                    &options.show_bspline_control_points);
-    ImGui::Checkbox("Dense tail geometry samples (source geometry)",
-                    &options.show_tail_samples);
-    ImGui::Checkbox("Tail normals", &options.show_tail_normals);
-    ImGui::EndDisabled();
-
-    result.subject_shape_overlay_options = options;
+    auto controls = makeCameraViewSubjectShapeOverlayControlState(
+        context.subject_shape_overlay_options);
+    crimson::gui::drawSubjectShapeOverlayControls(
+        controls, {true, true, true, true});
+    applyCameraViewSubjectShapeOverlayControlState(
+        controls, &result.subject_shape_overlay_options);
 }
 
 void drawTailKinematicsOverlaySection(const FrameDebugWindowContext& context,

@@ -8,8 +8,10 @@
 #include "gui/frame_inspect_subject_shape_module.h"
 #include "gui/frame_inspect_window.h"
 #include "gui/keypoint_overlay_inspect_adapter.h"
+#include "gui/read_only_subject_shape_controls_adapter.h"
 #include "gui/session_loading_modal.h"
 #include "gui/subject_mask_overlay_inspect_adapter.h"
+#include "gui/subject_shape_overlay_controls.h"
 #include "gui/subject_shape_overlay_inspect_adapter.h"
 #include "imgui.h"
 #include "imgui_semantic_snapshot.h"
@@ -812,6 +814,139 @@ bool testSubjectShapeInspectModuleSnapshot() {
   return true;
 }
 
+bool testReadOnlySubjectShapeControlAdapter() {
+  crimson::overlay::ReadOnlyOverlayControlState source;
+  source.show_subject_shape = false;
+  source.show_subject_shape_body_axes = true;
+  source.show_subject_shape_snout_tip = false;
+  source.show_subject_shape_caudal_anchor = false;
+  source.show_subject_shape_tail_base = false;
+  source.show_subject_shape_tail_tip = false;
+  source.show_subject_shape_centerline = false;
+  source.show_subject_shape_bspline = false;
+  source.show_subject_shape_bspline_debug_points = true;
+  source.show_subject_shape_bspline_control_points = true;
+  source.show_subject_shape_tail_samples = true;
+  source.show_subject_shape_tail_normals = true;
+
+  auto shared =
+      crimson::gui::makeReadOnlySubjectShapeOverlayControlState(source);
+  CHECK(!shared.show_overlay);
+  CHECK(shared.show_body_frame_axes);
+  CHECK(!shared.show_snout_tip);
+  CHECK(!shared.show_caudal_anchor);
+  CHECK(!shared.show_tail_base);
+  CHECK(!shared.show_tail_tip);
+  CHECK(!shared.show_centerline);
+  CHECK(!shared.show_bspline_sample);
+  CHECK(shared.show_bspline_debug_points);
+  CHECK(shared.show_bspline_control_points);
+  CHECK(shared.show_tail_samples);
+  CHECK(shared.show_tail_normals);
+  CHECK(!shared.show_body_contour);
+  CHECK(!shared.show_swim_bladder_contour);
+  CHECK(!shared.show_eye_contours);
+
+  shared.show_overlay = true;
+  shared.show_body_frame_axes = false;
+  shared.show_snout_tip = true;
+  shared.show_caudal_anchor = true;
+  shared.show_tail_base = true;
+  shared.show_tail_tip = true;
+  shared.show_centerline = true;
+  shared.show_bspline_sample = true;
+  shared.show_bspline_debug_points = false;
+  shared.show_bspline_control_points = false;
+  shared.show_tail_samples = false;
+  shared.show_tail_normals = false;
+  crimson::gui::applyReadOnlySubjectShapeOverlayControlState(shared, &source);
+  CHECK(source.show_subject_shape);
+  CHECK(!source.show_subject_shape_body_axes);
+  CHECK(source.show_subject_shape_snout_tip);
+  CHECK(source.show_subject_shape_caudal_anchor);
+  CHECK(source.show_subject_shape_tail_base);
+  CHECK(source.show_subject_shape_tail_tip);
+  CHECK(source.show_subject_shape_centerline);
+  CHECK(source.show_subject_shape_bspline);
+  CHECK(!source.show_subject_shape_bspline_debug_points);
+  CHECK(!source.show_subject_shape_bspline_control_points);
+  CHECK(!source.show_subject_shape_tail_samples);
+  CHECK(!source.show_subject_shape_tail_normals);
+  crimson::gui::applyReadOnlySubjectShapeOverlayControlState(shared, nullptr);
+  return true;
+}
+
+bool testSubjectShapeOverlayControlsSnapshot() {
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO &io = ImGui::GetIO();
+  io.DisplaySize = ImVec2(900.0f, 700.0f);
+  io.DeltaTime = 1.0f / 60.0f;
+  unsigned char *pixels = nullptr;
+  int width = 0;
+  int height = 0;
+  io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+
+  crimson::gui::SubjectShapeOverlayControlState strict_state;
+  crimson::gui::SubjectShapeOverlayControlState legacy_state;
+  ImGui::NewFrame();
+  ImGui::Begin("Strict shape controls");
+  crimson::gui::drawSubjectShapeOverlayControls(
+      strict_state, {true, false, false, false});
+  ImGui::End();
+  ImGui::Begin("Legacy shape controls");
+  crimson::gui::drawSubjectShapeOverlayControls(
+      legacy_state, {true, true, true, true});
+  ImGui::End();
+  ImGui::Render();
+
+  crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(), true);
+  crimson::ui::beginSemanticFrame(ImGui::GetCurrentContext());
+  ImGui::NewFrame();
+  ImGui::Begin("Strict shape controls");
+  const auto strict_result = crimson::gui::drawSubjectShapeOverlayControls(
+      strict_state, {true, false, false, false});
+  ImGui::End();
+  ImGui::Begin("Legacy shape controls");
+  const auto legacy_result = crimson::gui::drawSubjectShapeOverlayControls(
+      legacy_state, {true, true, true, true});
+  ImGui::End();
+  ImGui::Render();
+  const auto snapshot =
+      crimson::ui::finishSemanticFrame(ImGui::GetCurrentContext());
+
+  bool strict_has_common = false;
+  bool strict_has_contour = false;
+  bool legacy_has_common = false;
+  bool legacy_has_body_contour = false;
+  bool legacy_has_swim_bladder_contour = false;
+  bool legacy_has_eye_contours = false;
+  for (const auto &item : snapshot.items) {
+    if (item.window_name == "Strict shape controls") {
+      strict_has_common |= item.visible_label == "Centerline";
+      strict_has_contour |= item.visible_label == "Body contour";
+    } else if (item.window_name == "Legacy shape controls") {
+      legacy_has_common |= item.visible_label == "Centerline";
+      legacy_has_body_contour |= item.visible_label == "Body contour";
+      legacy_has_swim_bladder_contour |=
+          item.visible_label == "Swim-bladder contour";
+      legacy_has_eye_contours |= item.visible_label == "Eye contours";
+    }
+  }
+  CHECK(strict_has_common);
+  CHECK(!strict_has_contour);
+  CHECK(legacy_has_common);
+  CHECK(legacy_has_body_contour);
+  CHECK(legacy_has_swim_bladder_contour);
+  CHECK(legacy_has_eye_contours);
+  CHECK(!strict_result.changed);
+  CHECK(!legacy_result.changed);
+
+  crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(), false);
+  ImGui::DestroyContext();
+  return true;
+}
+
 bool testEyeGeometryOverlayInspectAdapter() {
   crimson::zarr::EyeGeometryOverlayDescriptor descriptor;
   descriptor.source_group = "analysis/eye_angle_runs";
@@ -980,6 +1115,8 @@ int main() {
       !testSubjectMaskInspectModuleSnapshot() ||
       !testSubjectShapeOverlayInspectAdapter() ||
       !testSubjectShapeInspectModuleSnapshot() ||
+      !testReadOnlySubjectShapeControlAdapter() ||
+      !testSubjectShapeOverlayControlsSnapshot() ||
       !testEyeGeometryOverlayInspectAdapter() ||
       !testEyeAngleInspectModuleSnapshot()) {
     return 1;
