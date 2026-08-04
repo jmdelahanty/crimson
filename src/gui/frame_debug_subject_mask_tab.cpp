@@ -1,7 +1,9 @@
 #include "gui/frame_debug_subject_mask_tab.h"
 
 #include "gui/frame_debug_subject_mask_adapter.h"
+#include "gui/frame_debug_subject_shape_adapter.h"
 #include "gui/frame_inspect_subject_mask_module.h"
+#include "gui/frame_inspect_subject_shape_module.h"
 
 #include "imgui.h"
 
@@ -524,6 +526,28 @@ void drawSubjectMaskTab(
         makeFrameDebugSubjectMaskInspectPresentation(context);
     crimson::gui::drawFrameInspectSubjectMaskModule(
         presentation, state.subject_mask_inspect);
+
+    const auto subject_shape_presentation =
+        makeFrameDebugSubjectShapeInspectPresentation(context);
+    if (subject_shape_presentation.available) {
+        const auto selected_shape = std::find_if(
+            subject_shape_presentation.observations.begin(),
+            subject_shape_presentation.observations.end(),
+            [&](const crimson::gui::SubjectShapeInspectObservation& observation) {
+                return observation.selectable &&
+                       observation.row_selection_key ==
+                           state.subject_shape_inspect.selected_row_key;
+            });
+        if (!subject_shape_presentation.observations.empty() &&
+            selected_shape == subject_shape_presentation.observations.end()) {
+            state.subject_shape_inspect.selected_row_key =
+                subject_shape_presentation.observations.front()
+                    .row_selection_key;
+        }
+        ImGui::Separator();
+        crimson::gui::drawFrameInspectSubjectShapeModule(
+            subject_shape_presentation, state.subject_shape_inspect);
+    }
 
     if (context.zarr_loader.hasEyeMasks()) {
         drawSubjectMaskEditPreviewSection(context, state);

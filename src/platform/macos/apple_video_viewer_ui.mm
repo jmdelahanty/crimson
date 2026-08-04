@@ -7,9 +7,11 @@
 #include "gui/frame_inspect_eye_angle_module.h"
 #include "gui/frame_inspect_keypoint_module.h"
 #include "gui/frame_inspect_subject_mask_module.h"
+#include "gui/frame_inspect_subject_shape_module.h"
 #include "gui/frame_inspect_window.h"
 #include "gui/keypoint_overlay_inspect_adapter.h"
 #include "gui/subject_mask_overlay_inspect_adapter.h"
+#include "gui/subject_shape_overlay_inspect_adapter.h"
 #include "imgui.h"
 #include "implot.h"
 #include "platform/macos/apple_workspace_layout.h"
@@ -1970,6 +1972,10 @@ void drawAppleFrameInspectWindow(
     const std::shared_ptr<const crimson::zarr::SubjectMaskOverlayResolution>
         &subject_mask_frame,
     AppleSubjectMaskInspectState *subject_mask_inspect,
+    const crimson::zarr::SubjectShapeOverlayDescriptor *subject_shape_descriptor,
+    const std::shared_ptr<const crimson::zarr::SubjectShapeOverlayResolution>
+        &subject_shape_frame,
+    AppleSubjectShapeInspectState *subject_shape_inspect,
     const crimson::zarr::EyeGeometryOverlayDescriptor *eye_geometry_descriptor,
     const std::shared_ptr<const crimson::zarr::EyeGeometryOverlayResolution>
         &eye_geometry_frame,
@@ -1980,7 +1986,8 @@ void drawAppleFrameInspectWindow(
   if (selections == nullptr || controls == nullptr || presentation == nullptr ||
       detection_inspect == nullptr || detection_quality_timeline == nullptr ||
       keypoint_inspect == nullptr || keypoint_quality_timeline == nullptr ||
-      subject_mask_inspect == nullptr || eye_angle_inspect == nullptr ||
+      subject_mask_inspect == nullptr || subject_shape_inspect == nullptr ||
+      eye_angle_inspect == nullptr ||
       advanced_crop_preview == nullptr || stimulus_debug == nullptr) {
     return;
   }
@@ -2185,6 +2192,31 @@ void drawAppleFrameInspectWindow(
                  stats.presented_frame);
          crimson::gui::drawFrameInspectSubjectMaskModule(
              subject_mask_presentation, *subject_mask_inspect);
+         const auto subject_shape_presentation =
+             crimson::gui::makeSubjectShapeOverlayInspectPresentation(
+                 subject_shape_descriptor, subject_shape_frame.get(),
+                 stats.presented_frame);
+         if (subject_shape_presentation.available) {
+           const auto selected_shape = std::find_if(
+               subject_shape_presentation.observations.begin(),
+               subject_shape_presentation.observations.end(),
+               [&](const crimson::gui::SubjectShapeInspectObservation
+                       &observation) {
+                 return observation.selectable &&
+                        observation.row_selection_key ==
+                            subject_shape_inspect->selected_row_key;
+               });
+           if (!subject_shape_presentation.observations.empty() &&
+               selected_shape ==
+                   subject_shape_presentation.observations.end()) {
+             subject_shape_inspect->selected_row_key =
+                 subject_shape_presentation.observations.front()
+                     .row_selection_key;
+           }
+           ImGui::Separator();
+           crimson::gui::drawFrameInspectSubjectShapeModule(
+               subject_shape_presentation, *subject_shape_inspect);
+         }
          ImGui::Separator();
          drawAvailableCheckbox("Show masks", &controls->show_subject_masks,
                                availability.subject_masks);

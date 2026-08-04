@@ -1993,6 +1993,7 @@ int main(int argc, char **argv) {
   AppleKeypointInspectState keypoint_inspect_state;
   AppleKeypointQualityTimelineControls keypoint_quality_timeline_controls;
   AppleSubjectMaskInspectState subject_mask_inspect_state;
+  AppleSubjectShapeInspectState subject_shape_inspect_state;
   AppleEyeAngleInspectState eye_angle_inspect_state;
   AppleStimulusDebugState stimulus_debug_state;
   crimson::session::SessionLifecycle session_lifecycle;
@@ -4422,6 +4423,11 @@ int main(int argc, char **argv) {
                 ? eye_geometry_overlay_buffer.frame(
                       viewer_stats.presented_frame)
                 : nullptr;
+        const auto presented_subject_shape_resolution =
+            subject_shape_overlay_available && viewer_stats.presented_frame >= 0
+                ? subject_shape_overlay_buffer.frame(
+                      viewer_stats.presented_frame)
+                : nullptr;
         drawAppleFrameInspectWindow(
             &workspace_state.selections(), &overlay_controls,
             overlay_availability, crop_enabled ? &crop_controls : nullptr,
@@ -4439,6 +4445,9 @@ int main(int argc, char **argv) {
             &keypoint_quality_requested,
             subject_mask_overlay_available ? &subject_mask_descriptor : nullptr,
             presented_subject_mask_resolution, &subject_mask_inspect_state,
+            subject_shape_overlay_available ? &subject_shape_descriptor
+                                            : nullptr,
+            presented_subject_shape_resolution, &subject_shape_inspect_state,
             eye_geometry_overlay_available ? &eye_geometry_descriptor : nullptr,
             presented_eye_geometry_resolution, &eye_angle_inspect_state,
             viewer_stats, &frame_inspect_presentation, &crop_preview_requested,

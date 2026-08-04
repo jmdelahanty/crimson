@@ -4,6 +4,7 @@
 #include "gui/crop_keypoint_editor.h"
 #include "gui/frame_inspect_eye_angle_module.h"
 #include "gui/frame_inspect_subject_mask_module.h"
+#include "gui/frame_inspect_subject_shape_module.h"
 #include "gui/refined_keypoint_review_panel.h"
 #include "gui/review_metadata_editor.h"
 #include "review_frame_state.h"
@@ -22,6 +23,7 @@ struct FrameDebugWindowState {
     SubjectMaskBrushState subject_mask_brush;
     CameraViewActiveRoiInsetOptions active_roi_inset_options;
     crimson::gui::SubjectMaskInspectModuleState subject_mask_inspect;
+    crimson::gui::SubjectShapeInspectModuleState subject_shape_inspect;
     int subject_mask_edit_detection_index = -1;
     std::string subject_mask_edit_component_name = "subject_body";
     std::string subject_mask_edit_status;

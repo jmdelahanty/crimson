@@ -13,6 +13,7 @@
 #include "gui/frame_inspect_eye_angle_module.h"
 #include "gui/frame_inspect_keypoint_module.h"
 #include "gui/frame_inspect_subject_mask_module.h"
+#include "gui/frame_inspect_subject_shape_module.h"
 #include "gui/quality_timeline_window.h"
 #include "keypoint_quality_timeline.h"
 #include "platform/macos/apple_workspace_layout.h"
@@ -31,6 +32,7 @@
 #include "zarr/eye_geometry_overlay_repository.h"
 #include "zarr/keypoint_overlay_repository.h"
 #include "zarr/subject_mask_overlay_repository.h"
+#include "zarr/subject_shape_overlay_repository.h"
 
 #include <cstdint>
 #include <limits>
@@ -176,6 +178,9 @@ using AppleKeypointInspectState = crimson::gui::KeypointInspectModuleState;
 using AppleSubjectMaskInspectState =
     crimson::gui::SubjectMaskInspectModuleState;
 
+using AppleSubjectShapeInspectState =
+    crimson::gui::SubjectShapeInspectModuleState;
+
 using AppleEyeAngleInspectState = crimson::gui::EyeAngleInspectModuleState;
 
 struct AppleCropViewerControls {
@@ -310,6 +315,10 @@ void drawAppleFrameInspectWindow(
     const std::shared_ptr<const crimson::zarr::SubjectMaskOverlayResolution>
         &subject_mask_frame,
     AppleSubjectMaskInspectState *subject_mask_inspect,
+    const crimson::zarr::SubjectShapeOverlayDescriptor *subject_shape_descriptor,
+    const std::shared_ptr<const crimson::zarr::SubjectShapeOverlayResolution>
+        &subject_shape_frame,
+    AppleSubjectShapeInspectState *subject_shape_inspect,
     const crimson::zarr::EyeGeometryOverlayDescriptor *eye_geometry_descriptor,
     const std::shared_ptr<const crimson::zarr::EyeGeometryOverlayResolution>
         &eye_geometry_frame,

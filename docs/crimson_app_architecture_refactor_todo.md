@@ -127,6 +127,17 @@ repository adapter and a Linux legacy-loader adapter remain separate; overlay
 styling, QC filtering and navigation, and timeline controls remain platform
 extensions.
 
+Subject Shape now composes inside the Subject Masks view through the same
+boundary. The shared model and renderer preserve every resolved observation,
+row-scoped UI selection, source/refined/crop lineage when declared, ROI size,
+per-feature validity, curve/sample counts, and failure reasons. It deliberately
+does not infer one overall validity value: the legacy loader's row-valid flag
+and the strict repository's feature-valid flags do not mean the same thing.
+The strict subject-shape repository adapter and Linux legacy-loader adapter
+remain separate, while Metal/OpenGL overlay controls, Linux QC navigation, and
+mask editing remain platform extensions. This extraction does not freeze the
+still-evolving Palette subject-shape storage manifest.
+
 ## Why This Exists
 
 `crimson` has already done useful mechanical splits, but the core architecture

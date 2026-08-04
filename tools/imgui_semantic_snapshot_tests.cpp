@@ -5,10 +5,12 @@
 #include "gui/frame_inspect_eye_angle_module.h"
 #include "gui/frame_inspect_keypoint_module.h"
 #include "gui/frame_inspect_subject_mask_module.h"
+#include "gui/frame_inspect_subject_shape_module.h"
 #include "gui/frame_inspect_window.h"
 #include "gui/keypoint_overlay_inspect_adapter.h"
 #include "gui/session_loading_modal.h"
 #include "gui/subject_mask_overlay_inspect_adapter.h"
+#include "gui/subject_shape_overlay_inspect_adapter.h"
 #include "imgui.h"
 #include "imgui_semantic_snapshot.h"
 #include "loading_progress.h"
@@ -664,6 +666,152 @@ bool testSubjectMaskInspectModuleSnapshot() {
   return true;
 }
 
+bool testSubjectShapeOverlayInspectAdapter() {
+  crimson::zarr::SubjectShapeOverlayDescriptor descriptor;
+  descriptor.source_group = "analysis/subject_shape_runs";
+  descriptor.run_name = "subject_shape_fixture";
+  descriptor.source_refined_subject_masks_run = "refined_masks_fixture";
+  descriptor.source_crop_run = "crop_fixture";
+  descriptor.schema_id = "analysis.subject_shape_runs";
+  descriptor.schema_version = 1;
+  descriptor.method = "centerline_and_bspline";
+  descriptor.method_version = 2;
+  descriptor.head_endpoint_semantics = "snout_tip";
+
+  crimson::zarr::SubjectShapeOverlayResolution frame;
+  frame.status = crimson::zarr::SubjectShapeOverlayStatus::Mapped;
+  frame.camera_frame = 13;
+  crimson::zarr::SubjectShapeOverlayDetection first;
+  first.shape_row = 40;
+  first.detection_index = 2;
+  first.source_refined_row_id = 71;
+  first.source_crop_row_id = 31;
+  first.roi_width = 512.0;
+  first.roi_height = 512.0;
+  first.geometry.body_frame_valid = true;
+  first.geometry.snout_tip_valid = true;
+  first.geometry.tail_base_valid = true;
+  first.geometry.centerline_valid = true;
+  first.geometry.centerline = {{1.0, 2.0}, {3.0, 4.0}};
+  first.geometry.bspline_valid = true;
+  first.geometry.bspline_sample = {
+      {1.0, 2.0}, {2.0, 3.0}, {3.0, 4.0}};
+  first.geometry.tail_sample_valid = true;
+  first.geometry.tail_samples = {{3.0, 4.0}, {4.0, 5.0}};
+  crimson::zarr::SubjectShapeOverlayDetection second;
+  second.shape_row = 41;
+  second.detection_index = 3;
+  second.source_refined_row_id = 72;
+  second.source_crop_row_id = 32;
+  second.roi_width = 256.0;
+  second.roi_height = 256.0;
+  frame.detections = {first, second};
+
+  const auto presentation =
+      crimson::gui::makeSubjectShapeOverlayInspectPresentation(
+          &descriptor, &frame, frame.camera_frame);
+  CHECK(presentation.available);
+  CHECK(presentation.frame_ready);
+  CHECK(presentation.run_name == "subject_shape_fixture");
+  CHECK(presentation.observations.size() == 2);
+  CHECK(presentation.observations[0].row_selection_key == 41);
+  CHECK(presentation.observations[0].source_row == 40);
+  CHECK(presentation.observations[0].detection_index == 2);
+  CHECK(presentation.observations[0].source_refined_row_id == 71);
+  CHECK(presentation.observations[0].source_crop_row_id == 31);
+  CHECK(presentation.observations[0].roi_valid);
+  CHECK(presentation.observations[0].features.size() == 11);
+  CHECK(presentation.observations[0].features[5].key == "centerline");
+  CHECK(presentation.observations[0].features[5].point_count == 2);
+  CHECK(presentation.observations[0].features[7].key == "bspline");
+  CHECK(presentation.observations[0].features[7].point_count == 3);
+  CHECK(!presentation.observations[1].features[0].valid);
+
+  crimson::zarr::SubjectShapeOverlayResolution empty;
+  empty.status = crimson::zarr::SubjectShapeOverlayStatus::Missing;
+  empty.camera_frame = 14;
+  const auto empty_presentation =
+      crimson::gui::makeSubjectShapeOverlayInspectPresentation(
+          &descriptor, &empty, empty.camera_frame);
+  CHECK(empty_presentation.frame_ready);
+  CHECK(empty_presentation.observations.empty());
+  CHECK(empty_presentation.warning.empty());
+
+  const auto loading =
+      crimson::gui::makeSubjectShapeOverlayInspectPresentation(
+          &descriptor, &frame, frame.camera_frame + 1);
+  CHECK(loading.available);
+  CHECK(!loading.frame_ready);
+  CHECK(loading.observations.empty());
+  return true;
+}
+
+bool testSubjectShapeInspectModuleSnapshot() {
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO &io = ImGui::GetIO();
+  io.DisplaySize = ImVec2(800.0f, 600.0f);
+  io.DeltaTime = 1.0f / 60.0f;
+  unsigned char *pixels = nullptr;
+  int width = 0;
+  int height = 0;
+  io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+
+  crimson::gui::SubjectShapeInspectPresentation presentation;
+  presentation.available = true;
+  presentation.surface_label = "Subject-shape overlay";
+  presentation.run_name = "subject_shape_fixture";
+  presentation.frame_ready = true;
+  presentation.camera_frame = 13;
+  crimson::gui::SubjectShapeInspectObservation observation;
+  observation.row_selection_key = 41;
+  observation.selectable = true;
+  observation.source_row = 40;
+  observation.source_row_valid = true;
+  observation.source_crop_row_id = 31;
+  observation.source_crop_row_id_valid = true;
+  observation.roi_width = 512.0;
+  observation.roi_height = 512.0;
+  observation.roi_valid = true;
+  observation.features = {
+      {"body_frame", "Body frame", true, true, 3},
+      {"snout_tip", "Snout tip", true, true, 1},
+      {"tail_base", "Tail base", true, true, 1},
+      {"centerline", "Centerline", true, true, 64},
+      {"bspline", "B-spline", true, true, 64},
+  };
+  presentation.observations = {observation};
+  crimson::gui::SubjectShapeInspectModuleState state;
+  state.selected_row_key = 41;
+
+  ImGui::NewFrame();
+  ImGui::Begin("Subject-shape module fixture");
+  crimson::gui::drawFrameInspectSubjectShapeModule(presentation, state);
+  ImGui::End();
+  ImGui::Render();
+
+  crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(), true);
+  crimson::ui::beginSemanticFrame(ImGui::GetCurrentContext());
+  ImGui::NewFrame();
+  ImGui::Begin("Subject-shape module fixture");
+  crimson::gui::drawFrameInspectSubjectShapeModule(presentation, state);
+  ImGui::End();
+  ImGui::Render();
+  const auto snapshot =
+      crimson::ui::finishSemanticFrame(ImGui::GetCurrentContext());
+
+  bool found_observation = false;
+  for (const auto &item : snapshot.items) {
+    found_observation |= item.visible_label == "#1";
+  }
+  CHECK(found_observation);
+  CHECK(state.selected_row_key == 41);
+
+  crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(), false);
+  ImGui::DestroyContext();
+  return true;
+}
+
 bool testEyeGeometryOverlayInspectAdapter() {
   crimson::zarr::EyeGeometryOverlayDescriptor descriptor;
   descriptor.source_group = "analysis/eye_angle_runs";
@@ -830,6 +978,8 @@ int main() {
       !testKeypointInspectModuleSnapshot() ||
       !testSubjectMaskOverlayInspectAdapter() ||
       !testSubjectMaskInspectModuleSnapshot() ||
+      !testSubjectShapeOverlayInspectAdapter() ||
+      !testSubjectShapeInspectModuleSnapshot() ||
       !testEyeGeometryOverlayInspectAdapter() ||
       !testEyeAngleInspectModuleSnapshot()) {
     return 1;

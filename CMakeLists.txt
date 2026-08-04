@@ -3108,12 +3108,14 @@ if(CRIMSON_BUILD_MACOS_APP)
         src/gui/frame_inspect_eye_angle_module.cpp
         src/gui/frame_inspect_keypoint_module.cpp
         src/gui/frame_inspect_subject_mask_module.cpp
+        src/gui/frame_inspect_subject_shape_module.cpp
         src/gui/frame_inspect_window.cpp
         src/gui/keypoint_overlay_inspect_adapter.cpp
         src/gui/quality_timeline_session.cpp
         src/gui/quality_timeline_window.cpp
         src/gui/session_loading_modal.cpp
         src/gui/subject_mask_overlay_inspect_adapter.cpp
+        src/gui/subject_shape_overlay_inspect_adapter.cpp
         src/imgui_semantic_snapshot.cpp
         src/ui_path_config.cpp
         ${CRIMSON_MACOS_IMGUI_DIR}/imgui.cpp
@@ -3178,10 +3180,12 @@ if(CRIMSON_BUILD_MACOS_APP)
         src/gui/frame_inspect_eye_angle_module.cpp
         src/gui/frame_inspect_keypoint_module.cpp
         src/gui/frame_inspect_subject_mask_module.cpp
+        src/gui/frame_inspect_subject_shape_module.cpp
         src/gui/frame_inspect_window.cpp
         src/gui/keypoint_overlay_inspect_adapter.cpp
         src/gui/session_loading_modal.cpp
         src/gui/subject_mask_overlay_inspect_adapter.cpp
+        src/gui/subject_shape_overlay_inspect_adapter.cpp
         src/imgui_semantic_snapshot.cpp
         ${CRIMSON_MACOS_IMGUI_DIR}/imgui.cpp
         ${CRIMSON_MACOS_IMGUI_DIR}/imgui_draw.cpp
