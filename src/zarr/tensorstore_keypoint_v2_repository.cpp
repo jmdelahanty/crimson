@@ -1706,16 +1706,28 @@ OpenKeypointV2Repository(const KeypointV2RepositoryOpenRequest &request,
       descriptor.selected.frame_count != descriptor.raw.frame_count ||
       descriptor.selected.row_count != descriptor.raw.row_count ||
       descriptor.selected.keypoint_count != descriptor.raw.keypoint_count ||
-      (refined && (descriptor.selected.source_manifest_digest !=
-                       descriptor.raw.manifest_digest ||
-                   descriptor.selected.quality_source_manifest_digest !=
-                       descriptor.quality.manifest_digest)) ||
+      (refined &&
+       (descriptor.selected.source_manifest_digest !=
+            descriptor.raw.manifest_digest ||
+        descriptor.selected.quality_source_manifest_digest !=
+            descriptor.quality.manifest_digest ||
+        descriptor.selected.skeleton_id != descriptor.raw.skeleton_id ||
+        descriptor.selected.skeleton_digest != descriptor.raw.skeleton_digest ||
+        (!descriptor.selected.keypoint_labels.empty() &&
+         descriptor.selected.keypoint_labels !=
+             descriptor.raw.keypoint_labels) ||
+        (!descriptor.selected.skeleton_edges.empty() &&
+         descriptor.selected.skeleton_edges !=
+             descriptor.raw.skeleton_edges))) ||
       descriptor.body_frame.source_manifest_digest !=
           descriptor.selected.manifest_digest ||
       descriptor.body_frame.source_row_signatures_digest !=
           descriptor.selected.row_signatures_digest ||
       descriptor.body_frame.frame_count != descriptor.selected.frame_count ||
-      descriptor.body_frame.row_count != descriptor.selected.row_count) {
+      descriptor.body_frame.row_count != descriptor.selected.row_count ||
+      descriptor.body_frame.skeleton_id != descriptor.selected.skeleton_id ||
+      descriptor.body_frame.skeleton_digest !=
+          descriptor.selected.skeleton_digest) {
     assignError(error_message,
                 "Keypoint v2 cross-stage manifest bindings disagree");
     return nullptr;

@@ -122,6 +122,74 @@ bool TestRefinedCodeRegistries() {
   return true;
 }
 
+nlohmann::json RefinedSkeletonSemantics() {
+  return {
+      {"schema_id", "palette.keypoint.skeleton_semantics"},
+      {"schema_version", 1},
+      {"skeleton_id", "pose_skel_traditional_v2"},
+      {"kpt_shape", {5, 2}},
+      {"keypoint_labels",
+       {"swim_bladder", "eye_left", "eye_right", "snout_tip", "tail_tip"}},
+      {"nodes",
+       {{{"id", 0}, {"name", "swim_bladder"}},
+        {{"id", 1}, {"name", "eye_left"}},
+        {{"id", 2}, {"name", "eye_right"}},
+        {{"id", 3}, {"name", "snout_tip"}},
+        {{"id", 4}, {"name", "tail_tip"}}}},
+      {"edges", {{0, 1}, {0, 2}, {1, 2}, {1, 3}, {2, 3}, {0, 4}}},
+      {"heading_computation",
+       {{"dependent_keypoints", {"swim_bladder", "eye_left", "eye_right"}},
+        {"direction_from", {{"label", "swim_bladder"}, {"op", "keypoint"}}},
+        {"direction_to",
+         {{"labels", {"eye_left", "eye_right"}}, {"op", "midpoint"}}},
+        {"enabled", true},
+        {"origin", {{"labels", {"eye_left", "eye_right"}}, {"op", "midpoint"}}},
+        {"version", 1}}},
+      {"heading_computation_source",
+       "authoritative_ordered_labels_controlled_policy_v1"},
+  };
+}
+
+bool TestRefinedSkeletonSemantics() {
+  const auto valid = RefinedSkeletonSemantics();
+  const std::string digest = crimson::zarr::CanonicalJsonSha256(valid);
+  std::vector<std::string> labels;
+  std::vector<std::array<size_t, 2>> edges;
+  std::string error;
+  CHECK(crimson::zarr::ValidateRefinedKeypointV2SkeletonSemantics(
+      valid, 5, "pose_skel_traditional_v2", digest, &labels, &edges, &error));
+  CHECK(labels ==
+        std::vector<std::string>({"swim_bladder", "eye_left", "eye_right",
+                                  "snout_tip", "tail_tip"}));
+  const std::vector<std::array<size_t, 2>> expected_edges = {
+      {0, 1}, {0, 2}, {1, 2}, {1, 3}, {2, 3}, {0, 4}};
+  CHECK(edges == expected_edges);
+
+  auto invalid = valid;
+  invalid["keypoint_labels"][4] = "snout_tip";
+  invalid["nodes"][4]["name"] = "snout_tip";
+  CHECK(!crimson::zarr::ValidateRefinedKeypointV2SkeletonSemantics(
+      invalid, 5, "pose_skel_traditional_v2",
+      crimson::zarr::CanonicalJsonSha256(invalid), nullptr, nullptr, &error));
+
+  invalid = valid;
+  invalid["edges"].push_back({0, 1});
+  CHECK(!crimson::zarr::ValidateRefinedKeypointV2SkeletonSemantics(
+      invalid, 5, "pose_skel_traditional_v2",
+      crimson::zarr::CanonicalJsonSha256(invalid), nullptr, nullptr, &error));
+
+  invalid = valid;
+  invalid["heading_computation_source"] = "";
+  CHECK(!crimson::zarr::ValidateRefinedKeypointV2SkeletonSemantics(
+      invalid, 5, "pose_skel_traditional_v2",
+      crimson::zarr::CanonicalJsonSha256(invalid), nullptr, nullptr, &error));
+
+  CHECK(!crimson::zarr::ValidateRefinedKeypointV2SkeletonSemantics(
+      valid, 5, "pose_skel_traditional_v2", std::string(64, '0'), nullptr,
+      nullptr, &error));
+  return true;
+}
+
 bool TestPresentationPreservesRefinedState() {
   crimson::zarr::KeypointOverlayDescriptor descriptor;
   descriptor.source_group = "refined_keypoints_runs";
@@ -182,7 +250,7 @@ bool TestPresentationPreservesRefinedState() {
 
 int main() {
   if (!TestMultiObservationFrameIndex() || !TestStableObservationKeys() ||
-      !TestRefinedCodeRegistries() ||
+      !TestRefinedCodeRegistries() || !TestRefinedSkeletonSemantics() ||
       !TestPresentationPreservesRefinedState()) {
     return 1;
   }

@@ -55,6 +55,14 @@ bool ValidateRefinedKeypointV2RunManifest(const nlohmann::json &manifest,
 bool ValidateRefinedKeypointV2CodeRegistries(const nlohmann::json &registries,
                                              std::string *error = nullptr);
 
+bool ValidateRefinedKeypointV2SkeletonSemantics(
+    const nlohmann::json &semantics, size_t expected_keypoint_count,
+    const std::string &expected_skeleton_id,
+    const std::string &expected_skeleton_digest,
+    std::vector<std::string> *keypoint_labels = nullptr,
+    std::vector<std::array<size_t, 2>> *skeleton_edges = nullptr,
+    std::string *error = nullptr);
+
 bool ValidateKeypointQualityV1RunManifest(const nlohmann::json &manifest,
                                           const std::string &requested_run,
                                           KeypointV2ManifestSummary *summary,

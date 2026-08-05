@@ -446,6 +446,108 @@ bool validateCodeMap(
 
 } // namespace
 
+bool ValidateRefinedKeypointV2SkeletonSemantics(
+    const json &semantics, size_t expected_keypoint_count,
+    const std::string &expected_skeleton_id,
+    const std::string &expected_skeleton_digest,
+    std::vector<std::string> *keypoint_labels,
+    std::vector<std::array<size_t, 2>> *skeleton_edges, std::string *error) {
+  try {
+    if (!exactKeys(semantics,
+                   {"schema_id", "schema_version", "skeleton_id", "kpt_shape",
+                    "keypoint_labels", "nodes", "edges", "heading_computation",
+                    "heading_computation_source"}) ||
+        semantics.value("schema_id", "") !=
+            "palette.keypoint.skeleton_semantics" ||
+        semantics.value("schema_version", 0) != 1 ||
+        semantics.value("skeleton_id", "") != expected_skeleton_id ||
+        !IsLowerSha256(expected_skeleton_digest) ||
+        CanonicalJsonSha256(semantics) != expected_skeleton_digest) {
+      assignError(error,
+                  "Refined keypoint skeleton semantic identity is invalid");
+      return false;
+    }
+
+    const auto &shape = semantics.at("kpt_shape");
+    const auto &labels = semantics.at("keypoint_labels");
+    const auto &nodes = semantics.at("nodes");
+    const auto &edges = semantics.at("edges");
+    if (!shape.is_array() || shape.size() != 2 ||
+        shape[0].get<size_t>() != expected_keypoint_count ||
+        shape[1].get<size_t>() != 2 || !labels.is_array() ||
+        labels.size() != expected_keypoint_count || !nodes.is_array() ||
+        nodes.size() != expected_keypoint_count || !edges.is_array() ||
+        !semantics.at("heading_computation").is_object() ||
+        !semantics.at("heading_computation_source").is_string() ||
+        semantics.at("heading_computation_source").get<std::string>().empty()) {
+      assignError(error,
+                  "Refined keypoint skeleton semantic dimensions are invalid");
+      return false;
+    }
+
+    std::vector<std::string> parsed_labels;
+    parsed_labels.reserve(expected_keypoint_count);
+    std::unordered_set<std::string> unique_labels;
+    for (size_t index = 0; index < expected_keypoint_count; ++index) {
+      if (!labels[index].is_string()) {
+        assignError(error, "Refined keypoint ordered label is invalid");
+        return false;
+      }
+      const std::string label = labels[index].get<std::string>();
+      if (label.empty() || !unique_labels.insert(label).second ||
+          !exactKeys(nodes[index], {"id", "name"}) ||
+          nodes[index].value("id", std::numeric_limits<size_t>::max()) !=
+              index ||
+          nodes[index].value("name", "") != label) {
+        assignError(error,
+                    "Refined keypoint ordered labels or nodes are invalid");
+        return false;
+      }
+      parsed_labels.push_back(label);
+    }
+
+    std::vector<std::array<size_t, 2>> parsed_edges;
+    parsed_edges.reserve(edges.size());
+    std::unordered_set<std::string> unique_edges;
+    for (const auto &edge : edges) {
+      if (!edge.is_array() || edge.size() != 2 ||
+          !edge[0].is_number_integer() || !edge[1].is_number_integer()) {
+        assignError(error, "Refined keypoint skeleton edge is invalid");
+        return false;
+      }
+      const int64_t first = edge[0].get<int64_t>();
+      const int64_t second = edge[1].get<int64_t>();
+      if (first < 0 || second < 0 ||
+          static_cast<size_t>(first) >= expected_keypoint_count ||
+          static_cast<size_t>(second) >= expected_keypoint_count) {
+        assignError(error, "Refined keypoint skeleton edge is out of range");
+        return false;
+      }
+      const std::string edge_key =
+          std::to_string(first) + ":" + std::to_string(second);
+      if (!unique_edges.insert(edge_key).second) {
+        assignError(error,
+                    "Refined keypoint skeleton edges contain duplicates");
+        return false;
+      }
+      parsed_edges.push_back(
+          {static_cast<size_t>(first), static_cast<size_t>(second)});
+    }
+
+    if (keypoint_labels) {
+      *keypoint_labels = std::move(parsed_labels);
+    }
+    if (skeleton_edges) {
+      *skeleton_edges = std::move(parsed_edges);
+    }
+    return true;
+  } catch (const json::exception &exception) {
+    assignError(error, "Invalid refined keypoint skeleton semantics: " +
+                           std::string(exception.what()));
+    return false;
+  }
+}
+
 bool ValidateRefinedKeypointV2CodeRegistries(const json &registries,
                                              std::string *error) {
   try {
@@ -707,13 +809,14 @@ bool ValidateRefinedKeypointV2RunManifest(const json &manifest,
       return false;
     }
     const auto &sources = payload->at("source_bindings");
+    const int source_bindings_version = sources.value("schema_version", 0);
     if (!exactKeys(sources, {"schema_id", "schema_version",
                              "recording_identity", "raw_keypoint_snapshot",
                              "quality_snapshot", "crop_snapshot", "skeleton",
                              "coordinate_catalog_digest", "dimensions"}) ||
         sources.value("schema_id", "") !=
             "palette.refined_keypoint.source_bindings" ||
-        sources.value("schema_version", 0) != 1 ||
+        (source_bindings_version != 1 && source_bindings_version != 2) ||
         sources.at("dimensions") != dimensions) {
       assignError(error, "Refined keypoint source bindings are invalid");
       return false;
@@ -747,11 +850,24 @@ bool ValidateRefinedKeypointV2RunManifest(const json &manifest,
     parsed.source_schema_id = raw.at("schema_id").get<std::string>();
     parsed.source_row_signatures_digest =
         raw.at("keypoint_row_signatures_digest").get<std::string>();
-    parsed.skeleton_id = sources.at("skeleton").value("skeleton_id", "");
-    parsed.skeleton_digest =
-        sources.at("skeleton").value("skeleton_digest", "");
-    if (parsed.skeleton_id.empty() || !IsLowerSha256(parsed.skeleton_digest)) {
+    const auto &skeleton = sources.at("skeleton");
+    parsed.skeleton_id = skeleton.value("skeleton_id", "");
+    parsed.skeleton_digest = skeleton.value("skeleton_digest", "");
+    const bool skeleton_shape_valid =
+        source_bindings_version == 1
+            ? exactKeys(skeleton, {"skeleton_id", "skeleton_digest"})
+            : exactKeys(skeleton,
+                        {"skeleton_id", "skeleton_digest", "semantics"});
+    if (!skeleton_shape_valid || parsed.skeleton_id.empty() ||
+        !IsLowerSha256(parsed.skeleton_digest)) {
       assignError(error, "Refined keypoint skeleton identity is invalid");
+      return false;
+    }
+    if (source_bindings_version == 2 &&
+        !ValidateRefinedKeypointV2SkeletonSemantics(
+            skeleton.at("semantics"), parsed.keypoint_count, parsed.skeleton_id,
+            parsed.skeleton_digest, &parsed.keypoint_labels,
+            &parsed.skeleton_edges, error)) {
       return false;
     }
     const auto &identity = payload->at("snapshot_identity");
