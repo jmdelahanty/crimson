@@ -108,6 +108,7 @@ namespace {
 enum class AppleUiReferenceState : uint8_t {
   Empty,
   Workspace,
+  Keypoints,
   Overlays,
   Polar,
   StimulusOverlay,
@@ -122,6 +123,8 @@ const char *appleUiReferenceStateName(AppleUiReferenceState state) {
     return "empty";
   case AppleUiReferenceState::Workspace:
     return "workspace";
+  case AppleUiReferenceState::Keypoints:
+    return "keypoints";
   case AppleUiReferenceState::Overlays:
     return "overlays";
   case AppleUiReferenceState::Polar:
@@ -143,9 +146,10 @@ bool parseAppleUiReferenceState(const std::string &value,
   if (state == nullptr) {
     return false;
   }
-  static const std::array<std::pair<const char *, AppleUiReferenceState>, 8>
+  static const std::array<std::pair<const char *, AppleUiReferenceState>, 9>
       states = {{{"empty", AppleUiReferenceState::Empty},
                  {"workspace", AppleUiReferenceState::Workspace},
+                 {"keypoints", AppleUiReferenceState::Keypoints},
                  {"overlays", AppleUiReferenceState::Overlays},
                  {"polar", AppleUiReferenceState::Polar},
                  {"stimulus-overlay", AppleUiReferenceState::StimulusOverlay},
@@ -1138,7 +1142,8 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
         std::fprintf(
             stderr,
             "Invalid --ui-reference-state; expected empty, workspace, "
-            "overlays, polar, crop-preview, analysis-eye, or stimulus-debug\n");
+            "keypoints, overlays, polar, crop-preview, analysis-eye, or "
+            "stimulus-debug\n");
         return std::nullopt;
       }
       options.ui_reference.enabled = true;
@@ -2017,7 +2022,13 @@ int main(int argc, char **argv) {
         options->ui_reference.state == AppleUiReferenceState::Overlays ||
         options->ui_reference.state == AppleUiReferenceState::AnalysisEye;
     overlay_controls.show_subject_masks = masks_visible;
-    if (options->ui_reference.state == AppleUiReferenceState::Polar) {
+    if (options->ui_reference.state == AppleUiReferenceState::Keypoints) {
+      overlay_controls.show_keypoints = true;
+      overlay_controls.show_headings = true;
+      overlay_controls.show_subject_masks = false;
+      overlay_controls.show_eye_geometry = false;
+      overlay_controls.show_subject_shape = false;
+    } else if (options->ui_reference.state == AppleUiReferenceState::Polar) {
       overlay_controls.show_keypoints = false;
       overlay_controls.show_headings = false;
       overlay_controls.show_subject_masks = false;
@@ -3995,8 +4006,7 @@ int main(int argc, char **argv) {
                 crimson::zarr::DiscoverAffiliatedVideo(selected_archive,
                                                        &video_discovery_error);
             std::string clip_discovery_error;
-            std::optional<
-                crimson::zarr::AffiliatedRecordingClipIndexDescriptor>
+            std::optional<crimson::zarr::AffiliatedRecordingClipIndexDescriptor>
                 affiliated_clips;
             if (!affiliated_video) {
               affiliated_clips =
@@ -5395,7 +5405,9 @@ int main(int argc, char **argv) {
                 detection_scene.text_annotations.end());
           }
           if (options->ui_reference.enabled &&
-              (options->ui_reference.state == AppleUiReferenceState::Overlays ||
+              (options->ui_reference.state ==
+                   AppleUiReferenceState::Keypoints ||
+               options->ui_reference.state == AppleUiReferenceState::Overlays ||
                options->ui_reference.state ==
                    AppleUiReferenceState::AnalysisEye) &&
               metadata.frame_number == options->ui_reference.target_frame) {
@@ -5418,11 +5430,22 @@ int main(int argc, char **argv) {
                 {"subject_shape",
                  overlay_scene.count(
                      crimson::overlay::CameraOverlayLayer::SubjectShape)}};
-            ui_reference_overlay_ready =
-                overlay_scene.ready() && keypoint_overlay_ready &&
-                subject_mask_overlay_ready && eye_geometry_overlay_ready &&
-                overlay_scene.rasterCount(
-                    crimson::overlay::CameraOverlayLayer::SubjectMasks) > 0;
+            if (options->ui_reference.state ==
+                AppleUiReferenceState::Keypoints) {
+              ui_reference_overlay_ready =
+                  overlay_scene.ready() && keypoint_overlay_ready &&
+                  overlay_scene.count(
+                      crimson::overlay::CameraOverlayLayer::Keypoints) > 0 &&
+                  overlay_scene.count(
+                      crimson::overlay::CameraOverlayLayer::KeypointHeading) >
+                      0;
+            } else {
+              ui_reference_overlay_ready =
+                  overlay_scene.ready() && keypoint_overlay_ready &&
+                  subject_mask_overlay_ready && eye_geometry_overlay_ready &&
+                  overlay_scene.rasterCount(
+                      crimson::overlay::CameraOverlayLayer::SubjectMasks) > 0;
+            }
           }
           if (current_crop_selection.selected() &&
               current_crop_selection.camera_frame == metadata.frame_number &&
@@ -5721,6 +5744,11 @@ int main(int argc, char **argv) {
         case AppleUiReferenceState::Workspace:
           ui_reference_state_ready =
               ui_reference_camera_exact && loaded_windows_ready;
+          break;
+        case AppleUiReferenceState::Keypoints:
+          ui_reference_state_ready = ui_reference_camera_exact &&
+                                     loaded_windows_ready &&
+                                     ui_reference_overlay_ready;
           break;
         case AppleUiReferenceState::Overlays:
           ui_reference_state_ready = ui_reference_camera_exact &&
