@@ -2,8 +2,7 @@
 
 Date: 2026-08-05
 
-Status: headless mounted-store gate passed; source-matched GUI visual check is
-reported separately.
+Status: headless mounted-store and source-matched Metal GUI gates passed.
 
 ## Verdict
 
@@ -20,6 +19,10 @@ compatibility path. It does not probe dtypes, aliases, or selectors.
 
 - Crimson evidence revision: `c485b80596dc30dd1b3d311943c3761ff6ac3921`
 - Skeleton-v2 consumer revision: `ea0b5bea8606e4a4f9ef8199d15c4ad2a907d1e2`
+- Keypoint-only GUI gate revision:
+  `c8aaf9d161d5f9c6e637dcdade5aa683ef1aa34e`
+- Clean GUI capture revision:
+  `5cb57bd2ab8c119daa4c66b766ed6283e06b73a2`
 - Palette implementation revision:
   `9598f402e27c18b5ff2dfc390811cc0472a5eaec`
 - Selected refined manifest digest:
@@ -53,6 +56,26 @@ All five fresh processes passed.
   and forward/reverse traversal produced zero post-warmup deadline misses.
 - No selector, registry, archive, or Palette artifact was modified.
 
+## Metal Visual Gate
+
+The source-matched GUI gate used the camera video, analysis archive, explicit
+crop run, and all four explicit keypoint-v2 runs at frame 1,000. Crimson held
+the exact requested/presented frame for 60 stable renders before publishing
+the reference marker.
+
+- Platform: `macos-metal` on Apple Silicon arm64.
+- Crop source: exact live geometry for camera frame 1,000.
+- Keypoint-layer primitives: 11.
+- Body-frame heading primitives: 1.
+- Subject-mask and subject-shape primitives: 0, as expected for this
+  keypoint-only fixture.
+
+Visual inspection places the eye, swim-bladder, snout, tail, skeleton, and
+heading marks on the fish within the 348x348 live crop. No two-pixel model
+padding displacement is visible. This is a presentation smoke, while the
+manifest digest and exact-schema checks remain the machine-verifiable
+coordinate/provenance authority.
+
 ## Performance
 
 Median across five fresh processes:
@@ -79,6 +102,10 @@ working set was already resident in the process cache.
   `0a2d0f929336b54fbbfd30431f461bc3c2efbbbdccf5c534cdf664629ae60273`
 - `summary.svg` SHA-256:
   `0107635e0239eb12e1054b15dc2a69b4010d7e042541f0ae8ebee50c6bed9331`
+- `gui_reference.json` SHA-256:
+  `09a8a427eb7c6449c0f6694caeb6599d8a852f3c00732763fb0b25f442a57fed`
+- `gui_reference.png` SHA-256:
+  `595ee232f82597f7b7b789815f1d38ec3977e11f2937203d126adb9648cafa4f`
 
 The aggregate embeds every per-process command, structured result, environment
 record, raw metric distribution, and input evidence declaration.
