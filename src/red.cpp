@@ -1,5 +1,6 @@
 #include "IconsForkAwesome.h"
 #include "Logger.h"
+#include "app/frame_inspect_controller.h"
 #include "camera.h"
 #include "chained_crop_image_provider.h"
 #include "data_access_diagnostics.h"
@@ -46,6 +47,7 @@
 #include "media_session_loader.h"
 #include "perf_logging.h"
 #include "playback_session_controller.h"
+#include "platform/nvidia/nvidia_frame_inspect_adapter.h"
 #include "recording_open_workflow.h"
 #include "refined_keypoint_repository.h"
 #include "render.h"
@@ -2091,6 +2093,7 @@ int main(int argc, char **argv) {
   CropPreviewWindowState crop_preview_window_state;
   LabelingToolWindowState labeling_tool_window_state;
   FrameDebugWindowState frame_debug_window_state;
+  crimson::app::FrameInspectControllerState frame_inspect_controller_state;
   PendingKeypointWriteState pending_keypoint_write;
   PlaybackSessionController playback_session_controller(
       PlaybackSessionControllerContext{
@@ -4013,14 +4016,26 @@ int main(int argc, char **argv) {
       };
       const auto requested_frame_inspect_view =
           workspace_state.selections().frame_inspect_view;
-      if (frame_debug_window_state.view_sync.shouldApply(
-              requested_frame_inspect_view)) {
-        frame_debug_window_state.active_view = requested_frame_inspect_view;
-      }
+      const crimson::app::FrameInspectTabState frame_inspect_tab_state{
+          frame_debug_window_state.active_view,
+          frame_debug_window_state.view_sync};
+      (void)crimson::app::prepareFrameInspectPresentation(
+          frame_inspect_tab_state, {requested_frame_inspect_view});
       const FrameDebugWindowResult frame_debug_result =
           drawFrameDebugWindow(frame_debug_context, frame_debug_window_state);
       const DiagnosticsWindowResult diagnostics_result =
           drawDiagnosticsWindow(frame_debug_context);
+
+      crimson::app::observeFrameInspectActiveView(
+          frame_inspect_tab_state, frame_debug_window_state.active_view);
+      const auto frame_inspect_presentation =
+          crimson::nvidia::makeFrameInspectPresentationOutput(
+              frame_debug_result, workspace_state.overlayControls(),
+              frame_debug_window_state.keypoint_review_panel.full_frame_edit
+                  .enabled);
+      crimson::app::applyFrameInspectPresentation(
+          &frame_inspect_controller_state, frame_inspect_tab_state,
+          frame_inspect_presentation, &workspace_state);
 
       show_keypoint_markers = frame_debug_result.show_keypoint_markers;
       show_heading_arrows = frame_debug_result.show_heading_arrows;
@@ -4047,190 +4062,36 @@ int main(int argc, char **argv) {
           frame_debug_result.chaser_distance_polar_inset_options;
       show_stimulus_debug_windows =
           frame_debug_result.show_stimulus_debug_windows;
-      workspace_state.setWindowRequested(crimson::workspace::Window::Stimulus,
-                                         show_stimulus_debug_windows);
-      workspace_state.selections().frame_inspect_view =
-          frame_debug_window_state.active_view;
-      auto &portable_overlays = workspace_state.overlayControls();
-      portable_overlays.show_keypoints = show_keypoint_markers;
-      portable_overlays.show_headings = show_heading_arrows;
-      portable_overlays.show_subject_masks = show_eye_masks;
-      portable_overlays.show_subject_body_mask = show_subject_body_mask;
-      portable_overlays.show_eye_left_mask = show_eye_left_mask;
-      portable_overlays.show_eye_right_mask = show_eye_right_mask;
-      portable_overlays.show_swim_bladder_mask = show_swim_bladder_mask;
-      portable_overlays.show_eye_direction_beams = show_eye_direction_beams;
-      portable_overlays.show_eye_gaze_rays = show_eye_gaze_rays;
-      portable_overlays.show_eye_angle_arcs = show_eye_angle_arcs;
-      portable_overlays.show_eye_angle_labels = show_eye_angle_labels;
       active_full_frame_keypoint_selection =
           frame_debug_result.selected_keypoint_selection;
       keypoint_tab_full_frame_edit_enabled =
-          frame_debug_window_state.active_view ==
-              crimson::workspace::FrameInspectView::Keypoints &&
-          frame_debug_window_state.keypoint_review_panel.full_frame_edit
-              .enabled &&
-          active_full_frame_keypoint_selection.has_value();
+          frame_inspect_controller_state.keypoint_full_frame_edit_enabled;
 
-      if (frame_debug_result.requested_detection_dataset_index >= 0 &&
-          frame_debug_result.requested_detection_dataset_index <
-              static_cast<int>(detection_dataset_ids.size()) &&
-          zarr_loader.setActiveDetectionDataset(
-              detection_dataset_ids[frame_debug_result
-                                        .requested_detection_dataset_index])) {
-        detection_dataset_choice =
-            frame_debug_result.requested_detection_dataset_index;
-        refreshDetectionDatasetOptions(zarr_loader);
-        g_zarr_bbox_edit_state.clearAll();
-        invalidateReviewFrameCache(review_frame_cache);
-        review_frame_status.clear();
-        if (zarr_loader.getTotalFrames() > 0 &&
-            current_frame_num >=
-                static_cast<int>(zarr_loader.getTotalFrames())) {
-          current_frame_num =
-              static_cast<int>(zarr_loader.getTotalFrames()) - 1;
-        }
-      }
-
-      if (frame_debug_result.review_filters_changed) {
-        review_frame_filters = frame_debug_result.review_frame_filters;
-        invalidateReviewFrameCache(review_frame_cache);
-        review_frame_status.clear();
-      }
-      if (frame_debug_result.request_prev_review_frame) {
-        auto jump_result = computeReviewFrameJump(
-            zarr_loaded, zarr_loader, review_frame_filters, review_frame_cache,
-            current_frame_num, false);
-        review_frame_status = std::move(jump_result.status);
-        if (jump_result.target_frame.has_value()) {
-          playback_session_controller.seekToFrame(*jump_result.target_frame,
-                                                  true);
-        }
-      }
-      if (frame_debug_result.request_next_review_frame) {
-        auto jump_result = computeReviewFrameJump(
-            zarr_loaded, zarr_loader, review_frame_filters, review_frame_cache,
-            current_frame_num, true);
-        review_frame_status = std::move(jump_result.status);
-        if (jump_result.target_frame.has_value()) {
-          playback_session_controller.seekToFrame(*jump_result.target_frame,
-                                                  true);
-        }
-      }
-      if (frame_debug_result.request_prev_subject_shape_qc_frame) {
-        auto jump_result = zarr_loader.computeSubjectShapeQcJump(
-            frame_debug_window_state.subject_shape_qc_filters,
-            current_frame_num, false);
-        frame_debug_window_state.subject_shape_qc_status =
-            std::move(jump_result.status);
-        if (jump_result.target_frame.has_value()) {
-          playback_session_controller.seekToFrame(*jump_result.target_frame,
-                                                  true);
-        }
-      }
-      if (frame_debug_result.request_next_subject_shape_qc_frame) {
-        auto jump_result = zarr_loader.computeSubjectShapeQcJump(
-            frame_debug_window_state.subject_shape_qc_filters,
-            current_frame_num, true);
-        frame_debug_window_state.subject_shape_qc_status =
-            std::move(jump_result.status);
-        if (jump_result.target_frame.has_value()) {
-          playback_session_controller.seekToFrame(*jump_result.target_frame,
-                                                  true);
-        }
-      }
-      if (frame_debug_result.request_prev_tail_kinematics_qc_frame) {
-        auto jump_result = zarr_loader.computeTailKinematicsQcJump(
-            frame_debug_window_state.tail_kinematics_qc_filters,
-            current_frame_num, false);
-        frame_debug_window_state.tail_kinematics_qc_status =
-            std::move(jump_result.status);
-        if (jump_result.target_row.has_value()) {
-          frame_debug_window_state.tail_kinematics_selected_row =
-              static_cast<int>(*jump_result.target_row);
-        }
-        if (jump_result.target_frame.has_value()) {
-          playback_session_controller.seekToFrame(*jump_result.target_frame,
-                                                  true);
-        }
-      }
-      if (frame_debug_result.request_next_tail_kinematics_qc_frame) {
-        auto jump_result = zarr_loader.computeTailKinematicsQcJump(
-            frame_debug_window_state.tail_kinematics_qc_filters,
-            current_frame_num, true);
-        frame_debug_window_state.tail_kinematics_qc_status =
-            std::move(jump_result.status);
-        if (jump_result.target_row.has_value()) {
-          frame_debug_window_state.tail_kinematics_selected_row =
-              static_cast<int>(*jump_result.target_row);
-        }
-        if (jump_result.target_frame.has_value()) {
-          playback_session_controller.seekToFrame(*jump_result.target_frame,
-                                                  true);
-        }
-      }
-      if (frame_debug_result.request_seek_tail_kinematics_row) {
-        frame_debug_window_state.tail_kinematics_selected_row =
-            static_cast<int>(frame_debug_result.requested_tail_kinematics_row);
-        auto frame = zarr_loader.getTailKinematicsFrameForRow(
-            frame_debug_result.requested_tail_kinematics_row);
-        if (frame.has_value()) {
-          playback_session_controller.seekToFrame(*frame, true);
-          frame_debug_window_state.tail_kinematics_qc_status =
-              "Selected tail row " +
-              std::to_string(frame_debug_result.requested_tail_kinematics_row) +
-              " mapped to frame " + std::to_string(*frame) + ".";
-        } else {
-          frame_debug_window_state.tail_kinematics_qc_status =
-              "Selected tail row has no frame mapping.";
-        }
-      }
-      if (frame_debug_result.request_prev_eye_angle_qc_frame) {
-        auto jump_result = zarr_loader.computeEyeAngleQcJump(
-            frame_debug_window_state.eye_angle_qc_filters, current_frame_num,
-            false);
-        frame_debug_window_state.eye_angle_qc_status =
-            std::move(jump_result.status);
-        if (jump_result.target_row.has_value()) {
-          frame_debug_window_state.eye_angle_selected_row =
-              static_cast<int>(*jump_result.target_row);
-        }
-        if (jump_result.target_frame.has_value()) {
-          playback_session_controller.seekToFrame(*jump_result.target_frame,
-                                                  true);
-        }
-      }
-      if (frame_debug_result.request_next_eye_angle_qc_frame) {
-        auto jump_result = zarr_loader.computeEyeAngleQcJump(
-            frame_debug_window_state.eye_angle_qc_filters, current_frame_num,
-            true);
-        frame_debug_window_state.eye_angle_qc_status =
-            std::move(jump_result.status);
-        if (jump_result.target_row.has_value()) {
-          frame_debug_window_state.eye_angle_selected_row =
-              static_cast<int>(*jump_result.target_row);
-        }
-        if (jump_result.target_frame.has_value()) {
-          playback_session_controller.seekToFrame(*jump_result.target_frame,
-                                                  true);
-        }
-      }
-      if (frame_debug_result.request_seek_eye_angle_row) {
-        frame_debug_window_state.eye_angle_selected_row =
-            static_cast<int>(frame_debug_result.requested_eye_angle_row);
-        auto frame = zarr_loader.getEyeAngleFrameForRow(
-            frame_debug_result.requested_eye_angle_row);
-        if (frame.has_value()) {
-          playback_session_controller.seekToFrame(*frame, true);
-          frame_debug_window_state.eye_angle_qc_status =
-              "Selected eye-angle row " +
-              std::to_string(frame_debug_result.requested_eye_angle_row) +
-              " mapped to frame " + std::to_string(*frame) + ".";
-        } else {
-          frame_debug_window_state.eye_angle_qc_status =
-              "Selected eye-angle row has no frame mapping.";
-        }
-      }
+      const auto frame_inspect_navigation_request =
+          crimson::nvidia::makeFrameInspectNavigationRequest(
+              frame_debug_result);
+      auto frame_inspect_navigation_context =
+          crimson::nvidia::FrameInspectNavigationContext{
+              zarr_loaded,
+              zarr_loader,
+              current_frame_num,
+              detection_dataset_ids,
+              detection_dataset_choice,
+              review_frame_filters,
+              review_frame_cache,
+              review_frame_status,
+              g_zarr_bbox_edit_state,
+              frame_debug_window_state,
+              [&](int frame, bool prefer_buffer_when_paused) {
+                playback_session_controller.seekToFrame(
+                    frame, prefer_buffer_when_paused);
+              },
+              [&]() { refreshDetectionDatasetOptions(zarr_loader); },
+          };
+      const auto frame_inspect_navigation_result =
+          crimson::nvidia::applyFrameInspectNavigation(
+              frame_inspect_navigation_request,
+              frame_inspect_navigation_context);
       if (diagnostics_result.request_dump_decode_buffers) {
         dumpDecodeBuffersToVideos(makeDecodeDebugDumpContext(), "manual_dump",
                                   decode_debug_status);
@@ -4251,13 +4112,10 @@ int main(int argc, char **argv) {
             },
             decode_debug_status);
       }
-      if (frame_debug_result.request_reset_frame_bbox_edits) {
-        g_zarr_bbox_edit_state.clearFrameEdits(current_frame_num);
-      }
-      if (frame_debug_result.request_clear_bbox_selection) {
-        g_zarr_bbox_edit_state.clearSelection();
-      }
-      if (frame_debug_result.request_build_manual_payload_preview) {
+      if (crimson::nvidia::containsFrameInspectCommand(
+              frame_inspect_navigation_result.unhandled_commands,
+              crimson::app::FrameInspectCommandKind::
+                  BuildManualPayloadPreview)) {
         manual_payload_preview = buildManualDetectPayloadPreview(
             zarr_loaded, zarr_loader, g_zarr_bbox_edit_state,
             scene->num_cams > 0
@@ -4275,7 +4133,9 @@ int main(int argc, char **argv) {
               g_zarr_bbox_edit_state.dirtyFrameCount());
         }
       }
-      if (frame_debug_result.request_write_manual_payload) {
+      if (crimson::nvidia::containsFrameInspectCommand(
+              frame_inspect_navigation_result.unhandled_commands,
+              crimson::app::FrameInspectCommandKind::WriteManualPayload)) {
         if (zarr_loaded && zarr_loader.hasClippedCollection()) {
           manual_payload_preview.reset();
           bbox_payload_status =
@@ -4370,7 +4230,9 @@ int main(int argc, char **argv) {
           }
         }
       }
-      if (frame_debug_result.request_keypoint_review_write) {
+      if (crimson::nvidia::containsFrameInspectCommand(
+              frame_inspect_navigation_result.unhandled_commands,
+              crimson::app::FrameInspectCommandKind::WriteKeypointReview)) {
         RefinedKeypointRepository refined_keypoint_repo(zarr_loader);
         const RefinedKeypointReviewWriteWorkflowResult review_write_result =
             applyRefinedKeypointReviewWrite(

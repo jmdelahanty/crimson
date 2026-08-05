@@ -161,6 +161,19 @@ behavior, including their distinct Realtime tooltip semantics. Platform master
 toggles, legacy eye-mask fallback, metadata, contour diagnostics, editing/QC,
 repositories, scene construction, and renderers remain independently owned.
 
+Frame Inspect workflow projection now has a backend-neutral controller as
+well. It owns stable tab synchronization, workspace overlay/window projection,
+portable keypoint-selection state, full-frame edit eligibility, and a
+deterministic command sequence. The NVIDIA adapter translates the legacy Frame
+Debug result and executes dataset switching, review/QC navigation, row seeks,
+and in-memory bounding-box reset/selection commands. Archive writes, payload
+construction, decoder diagnostics, repository reloads, and rendering remain
+explicitly in the NVIDIA composition root pending their own transaction
+boundaries. The portable controller has headless state and command-order tests;
+the adapter is compiled with the isolated Linux application build. This is a
+bounded Phase 3 extraction and does not change storage, editing, or coordinate
+contracts.
+
 ## Why This Exists
 
 `crimson` has already done useful mechanical splits, but the core architecture

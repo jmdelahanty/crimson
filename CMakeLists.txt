@@ -237,6 +237,7 @@ target_link_libraries(crimson_stimulus_playback_contracts PUBLIC
 )
 
 add_library(crimson_workspace_contracts STATIC
+    src/app/frame_inspect_controller.cpp
     src/workspace_state.cpp
 )
 target_include_directories(crimson_workspace_contracts PUBLIC
@@ -1320,6 +1321,22 @@ set_tests_properties(workspace_workflow_tests PROPERTIES
     LABELS "headless;portable;workspace;workflow"
 )
 
+add_executable(frame_inspect_workflow_tests
+    tools/frame_inspect_workflow_tests.cpp
+)
+target_link_libraries(frame_inspect_workflow_tests PRIVATE
+    crimson_workspace_contracts
+)
+target_compile_features(frame_inspect_workflow_tests PRIVATE cxx_std_17)
+set_target_properties(frame_inspect_workflow_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME frame_inspect_workflow_tests
+    COMMAND $<TARGET_FILE:frame_inspect_workflow_tests>)
+set_tests_properties(frame_inspect_workflow_tests PROPERTIES
+    LABELS "headless;portable;workspace;workflow"
+)
+
 add_executable(crop_source_contract_tests
     tools/crop_source_contract_tests.cpp
 )
@@ -2290,6 +2307,9 @@ file(GLOB CPP_SOURCES CONFIGURE_DEPENDS
     "src/*.cpp"
     "src/gui/*.cpp"
     "src/zarr/*.cpp")
+list(APPEND CPP_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_frame_inspect_adapter.cpp"
+)
 list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/coordinate_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/data_access.cpp"
