@@ -3,6 +3,7 @@
 #include "debug_flags.h"
 #include "gui/camera_view_presenter.h"
 #include "playback_clock.h"
+#include "playback_presentation_lifecycle.h"
 #include "stimulus_playback.h"
 
 #include <atomic>
@@ -57,6 +58,12 @@ public:
   void applyPlaybackToggle() const;
   std::optional<crimson::playback::PlaybackSeekExecutionResult>
   pollSeekState() const;
+  crimson::playback::PlaybackPresentationTarget
+  planPresentationTarget(int requested_frame,
+                         std::optional<int> minimum_decoded_frame) const;
+  crimson::playback::PlaybackPresentationCommit
+  commitPresentedFrame(int presenter_target_frame, int presented_frame,
+                       int presented_slot) const;
 
 private:
   int findDisplaySlotForFrame(int cam_idx, int target_frame,

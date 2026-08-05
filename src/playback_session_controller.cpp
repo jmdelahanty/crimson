@@ -76,6 +76,115 @@ int PlaybackSessionController::getVisibleCameraIndex() const {
   return 0;
 }
 
+crimson::playback::PlaybackPresentationTarget
+PlaybackSessionController::planPresentationTarget(
+    int requested_frame, std::optional<int> minimum_decoded_frame) const {
+  crimson::playback::PlaybackPresentationTargetInput input;
+  input.requested_frame = requested_frame;
+  input.minimum_decoded_frame = minimum_decoded_frame;
+  if (context_.playback_state == nullptr || context_.scene == nullptr ||
+      context_.decoder_context == nullptr) {
+    return crimson::playback::planPlaybackPresentationTarget(input);
+  }
+
+  input.just_seeked = context_.playback_state->just_seeked;
+  input.decoding_active = context_.decoder_context->decoding_flag;
+  input.playing = context_.playback_state->play_video;
+  input.buffer_size = static_cast<int>(context_.scene->size_of_buffer);
+  input.previous_committed_frame =
+      context_.playback_state->to_display_frame_number;
+  input.preferred_slot =
+      input.buffer_size > 0
+          ? context_.playback_state->read_head % input.buffer_size
+          : -1;
+  if (input.just_seeked || !input.decoding_active || !input.playing ||
+      input.buffer_size <= 0) {
+    return crimson::playback::planPlaybackPresentationTarget(input);
+  }
+  int visible_idx = getVisibleCameraIndex();
+  if (visible_idx < 0 || visible_idx >= context_.scene->num_cams) {
+    visible_idx = context_.scene->num_cams > 0 ? 0 : -1;
+  }
+  if (visible_idx >= 0) {
+    input.buffered_frames.reserve(context_.scene->size_of_buffer);
+    for (int slot_idx = 0;
+         slot_idx < static_cast<int>(context_.scene->size_of_buffer);
+         ++slot_idx) {
+      if (auto metadata = frameSlotSnapshotReadable(
+              context_.scene->cameras[visible_idx].display_buffer[slot_idx])) {
+        input.buffered_frames.push_back({slot_idx, std::move(*metadata)});
+      }
+    }
+  }
+  return crimson::playback::planPlaybackPresentationTarget(input);
+}
+
+crimson::playback::PlaybackPresentationCommit
+PlaybackSessionController::commitPresentedFrame(int presenter_target_frame,
+                                                int presented_frame,
+                                                int presented_slot) const {
+  crimson::playback::PlaybackPresentationCommitInput input;
+  input.presenter_target_frame = presenter_target_frame;
+  input.presented_frame = presented_frame;
+  input.presented_slot = presented_slot;
+  if (context_.playback_state == nullptr || context_.scene == nullptr ||
+      context_.decoder_context == nullptr) {
+    return crimson::playback::planPlaybackPresentationCommit(input);
+  }
+
+  input.decoding_active = context_.decoder_context->decoding_flag;
+  input.playing = context_.playback_state->play_video;
+  input.buffer_size = static_cast<int>(context_.scene->size_of_buffer);
+  input.previous_committed_frame =
+      context_.playback_state->to_display_frame_number;
+  crimson::playback::PlaybackPresentationCommit result =
+      crimson::playback::planPlaybackPresentationCommit(input);
+  if (!result.committed) {
+    return result;
+  }
+
+  if (result.slot < 0 && input.buffer_size > 0) {
+    const int visible_idx = getVisibleCameraIndex();
+    result.slot = findDisplaySlotForFrame(visible_idx, result.frame,
+                                          context_.playback_state->read_head %
+                                              input.buffer_size);
+  }
+  context_.playback_state->to_display_frame_number = result.frame;
+  context_.playback_state->slider_frame_number = result.frame;
+  if (result.slot >= 0) {
+    context_.playback_state->read_head = result.slot;
+  }
+
+  std::vector<crimson::playback::PlaybackHistoryReleaseCandidate> candidates;
+  candidates.reserve(context_.scene->size_of_buffer * context_.scene->num_cams);
+  for (int slot_idx = 0;
+       slot_idx < static_cast<int>(context_.scene->size_of_buffer);
+       ++slot_idx) {
+    for (int cam_idx = 0; cam_idx < static_cast<int>(context_.scene->num_cams);
+         ++cam_idx) {
+      const auto &slot =
+          context_.scene->cameras[cam_idx].display_buffer[slot_idx];
+      auto metadata = frameSlotSnapshotReadable(slot);
+      if (metadata) {
+        candidates.push_back({cam_idx, slot_idx, metadata->frame_number});
+      }
+    }
+  }
+  for (const auto &candidate :
+       crimson::playback::selectPlaybackHistoryReleaseCandidates(
+           candidates, result.frame)) {
+    auto &slot = context_.scene->cameras[candidate.camera_index]
+                     .display_buffer[candidate.slot_index];
+    ++result.release_attempts;
+    if (frameSlotTryReleaseForReuse(slot, candidate.frame_number)) {
+      ++result.release_count;
+    } else {
+      ++result.release_skip_count;
+    }
+  }
+  return result;
+}
+
 void PlaybackSessionController::setCameraDecodeRequests(bool enabled) const {
   if (context_.camera_names == nullptr ||
       context_.window_need_decoding == nullptr) {
@@ -177,9 +286,10 @@ int PlaybackSessionController::findDisplaySlotForFrame(
 }
 
 crimson::playback::PlaybackSeekExecutionResult
-PlaybackSessionController::seekToFrame(
-    int target_frame, bool prefer_buffer_when_paused, bool force_inaccurate,
-    bool skip_stimulus_hard_seek) const {
+PlaybackSessionController::seekToFrame(int target_frame,
+                                       bool prefer_buffer_when_paused,
+                                       bool force_inaccurate,
+                                       bool skip_stimulus_hard_seek) const {
   const auto service_start = std::chrono::steady_clock::now();
   crimson::playback::PlaybackSeekExecutionResult result;
   result.status = crimson::playback::PlaybackSeekExecutionStatus::Failed;
@@ -241,13 +351,13 @@ PlaybackSessionController::seekToFrame(
                 << " state=" << seekStateName(context_.seek_progress->state)
                 << std::endl;
     }
-    result.status = crimson::playback::PlaybackSeekExecutionStatus::Deduplicated;
+    result.status =
+        crimson::playback::PlaybackSeekExecutionStatus::Deduplicated;
     result.path = crimson::playback::PlaybackSeekExecutionPath::BackendDecoder;
     result.resolved_frame = clamped_frame;
-    result.service_ms =
-        std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - service_start)
-            .count();
+    result.service_ms = std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - service_start)
+                            .count();
     return result;
   }
 
@@ -295,10 +405,9 @@ PlaybackSessionController::seekToFrame(
     result.status = crimson::playback::PlaybackSeekExecutionStatus::Completed;
     result.path = crimson::playback::PlaybackSeekExecutionPath::ResidentBuffer;
     result.resolved_frame = clamped_frame;
-    result.service_ms =
-        std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - service_start)
-            .count();
+    result.service_ms = std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - service_start)
+                            .count();
     return result;
   }
 
@@ -357,10 +466,9 @@ PlaybackSessionController::seekToFrame(
   result.status = crimson::playback::PlaybackSeekExecutionStatus::Submitted;
   result.path = crimson::playback::PlaybackSeekExecutionPath::BackendDecoder;
   result.resolved_frame = clamped_frame;
-  result.service_ms =
-      std::chrono::duration<double, std::milli>(
-          std::chrono::steady_clock::now() - service_start)
-          .count();
+  result.service_ms = std::chrono::duration<double, std::milli>(
+                          std::chrono::steady_clock::now() - service_start)
+                          .count();
   return result;
 }
 

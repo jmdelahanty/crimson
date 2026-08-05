@@ -1,4 +1,5 @@
 #include "playback_clock.h"
+#include "playback_presentation_lifecycle.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -16,6 +17,8 @@ namespace {
     }                                                                          \
   } while (false)
 
+using crimson::playback::PlaybackPresentationCommitInput;
+using crimson::playback::PlaybackPresentationTargetInput;
 using crimson::playback::PlaybackTransportCommand;
 using crimson::playback::PlaybackTransportController;
 using crimson::playback::PlaybackTransportRejection;
@@ -251,6 +254,125 @@ bool testInvalidConfigurationAndRate() {
   return true;
 }
 
+BufferedFrameCandidate candidate(int slot, int frame) {
+  BufferedFrameCandidate result;
+  result.slot_index = slot;
+  result.metadata.frame_number = frame;
+  return result;
+}
+
+bool testPresentationTargetUsesDecodeBoundAndReadableSlots() {
+  PlaybackPresentationTargetInput input;
+  input.decoding_active = true;
+  input.playing = true;
+  input.buffer_size = 4;
+  input.previous_committed_frame = 100;
+  input.preferred_slot = 2;
+  input.requested_frame = 120;
+  input.minimum_decoded_frame = 115;
+  input.buffered_frames = {candidate(0, 101), candidate(2, 115),
+                           candidate(3, 114)};
+
+  const auto target = crimson::playback::planPlaybackPresentationTarget(input);
+  CHECK(target.active);
+  CHECK(target.requested_frame == 120);
+  CHECK(target.bounded_target_frame == 115);
+  CHECK(target.minimum_decoded_frame == 115);
+  CHECK(target.frame == 115);
+  CHECK(target.slot == 2);
+  CHECK(!target.clamped_to_buffer);
+  return true;
+}
+
+bool testPresentationTargetFallsBackOrHoldsCommittedFrame() {
+  PlaybackPresentationTargetInput input;
+  input.decoding_active = true;
+  input.playing = true;
+  input.buffer_size = 4;
+  input.previous_committed_frame = 100;
+  input.requested_frame = 120;
+  input.minimum_decoded_frame = 118;
+  input.buffered_frames = {candidate(0, 99), candidate(1, 105),
+                           candidate(2, 111), candidate(3, 119)};
+
+  auto target = crimson::playback::planPlaybackPresentationTarget(input);
+  CHECK(target.active);
+  CHECK(target.frame == 111);
+  CHECK(target.bounded_target_frame == 118);
+  CHECK(target.slot == 2);
+  CHECK(target.clamped_to_buffer);
+
+  input.minimum_decoded_frame.reset();
+  target = crimson::playback::planPlaybackPresentationTarget(input);
+  CHECK(target.frame == 100);
+  CHECK(target.bounded_target_frame == 100);
+  CHECK(target.slot == -1);
+  CHECK(!target.clamped_to_buffer);
+
+  input.just_seeked = true;
+  target = crimson::playback::planPlaybackPresentationTarget(input);
+  CHECK(!target.active);
+  CHECK(target.frame == 100);
+  return true;
+}
+
+bool testPresentationCommitRequiresCurrentSlotAndDefersRelease() {
+  PlaybackPresentationCommitInput input;
+  input.decoding_active = true;
+  input.playing = true;
+  input.buffer_size = 4;
+  input.previous_committed_frame = 100;
+  input.presenter_target_frame = 110;
+  input.presented_frame = 110;
+  input.presented_slot = 1;
+
+  auto commit = crimson::playback::planPlaybackPresentationCommit(input);
+  CHECK(commit.eligible);
+  CHECK(commit.presented_from_slot);
+  CHECK(commit.committed);
+  CHECK(commit.frame == 110);
+  CHECK(commit.slot == 1);
+  CHECK(!commit.release_deferred);
+
+  input.presented_slot = -1;
+  commit = crimson::playback::planPlaybackPresentationCommit(input);
+  CHECK(commit.eligible);
+  CHECK(!commit.presented_from_slot);
+  CHECK(!commit.committed);
+  CHECK(commit.release_deferred);
+
+  input.presented_slot = 1;
+  input.presented_frame = 99;
+  commit = crimson::playback::planPlaybackPresentationCommit(input);
+  CHECK(!commit.committed);
+  CHECK(commit.release_deferred);
+
+  input.playing = false;
+  commit = crimson::playback::planPlaybackPresentationCommit(input);
+  CHECK(!commit.eligible);
+  CHECK(!commit.committed);
+  CHECK(!commit.release_deferred);
+  return true;
+}
+
+bool testHistoryReleaseSelectionAcrossCameras() {
+  using crimson::playback::PlaybackHistoryReleaseCandidate;
+  const std::vector<PlaybackHistoryReleaseCandidate> candidates{
+      {0, 0, 99},  {0, 1, 100}, {0, 2, 101}, {1, 0, 98},
+      {1, 1, 100}, {1, 2, 102}, {2, 0, -1},  {-1, 1, 97}};
+  const auto release =
+      crimson::playback::selectPlaybackHistoryReleaseCandidates(candidates,
+                                                                100);
+  CHECK(release.size() == 2);
+  CHECK(release[0].camera_index == 0);
+  CHECK(release[0].slot_index == 0);
+  CHECK(release[0].frame_number == 99);
+  CHECK(release[1].camera_index == 1);
+  CHECK(release[1].slot_index == 0);
+  CHECK(release[1].frame_number == 98);
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -259,7 +381,11 @@ int main() {
       !testRateContinuityAndEndOfStream() ||
       !testTimelineUpdatePreservesPositionAndState() ||
       !testInvalidConfigurationAndRate() || !testSeekPlanningAcrossAdapters() ||
-      !testSeekGenerationAndTelemetry()) {
+      !testSeekGenerationAndTelemetry() ||
+      !testPresentationTargetUsesDecodeBoundAndReadableSlots() ||
+      !testPresentationTargetFallsBackOrHoldsCommittedFrame() ||
+      !testPresentationCommitRequiresCurrentSlotAndDefersRelease() ||
+      !testHistoryReleaseSelectionAcrossCameras()) {
     return EXIT_FAILURE;
   }
   std::cout << "playback_transport_tests: PASS\n";

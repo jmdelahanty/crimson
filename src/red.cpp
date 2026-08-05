@@ -3,6 +3,7 @@
 #include "app/frame_inspect_controller.h"
 #include "camera.h"
 #include "chained_crop_image_provider.h"
+#include "clipped_media_handoff.h"
 #include "data_access_diagnostics.h"
 #include "debug_flags.h"
 #include "decode_debug_workflow.h"
@@ -46,8 +47,9 @@
 #include "manual_detect_payload_preview.h"
 #include "media_session_loader.h"
 #include "perf_logging.h"
-#include "playback_session_controller.h"
 #include "platform/nvidia/nvidia_frame_inspect_adapter.h"
+#include "playback_diagnostics.h"
+#include "playback_session_controller.h"
 #include "recording_open_workflow.h"
 #include "refined_keypoint_repository.h"
 #include "render.h"
@@ -151,67 +153,8 @@ namespace {
 
 using json = nlohmann::json;
 
-struct PlaybackTraceLogWriter {
-  std::ofstream stream;
-  std::filesystem::path jsonl_path;
-  std::string label = "PlaybackTrace";
-  std::chrono::steady_clock::time_point start_steady{};
-  uint64_t sequence = 0;
-  int samples_since_flush = 0;
-
-  bool open(const std::filesystem::path &output_path,
-            const std::string &log_label = "PlaybackTrace") {
-    if (output_path.empty()) {
-      return false;
-    }
-    label = log_label.empty() ? "PlaybackTrace" : log_label;
-    jsonl_path = output_path;
-    std::error_code ec;
-    if (jsonl_path.has_parent_path()) {
-      std::filesystem::create_directories(jsonl_path.parent_path(), ec);
-      if (ec) {
-        std::cerr << "[" << label << "] Failed to create parent "
-                  << "directory for " << jsonl_path << ": " << ec.message()
-                  << std::endl;
-        return false;
-      }
-    }
-    stream.open(jsonl_path, std::ios::out | std::ios::trunc);
-    if (!stream.is_open()) {
-      std::cerr << "[" << label << "] Failed to open " << jsonl_path
-                << " for writing" << std::endl;
-      return false;
-    }
-    start_steady = std::chrono::steady_clock::now();
-    std::cout << "[" << label << "] Writing JSONL samples to " << jsonl_path
-              << std::endl;
-    return true;
-  }
-
-  bool enabled() const { return stream.is_open(); }
-
-  void write(json sample, bool force_flush = false) {
-    if (!enabled()) {
-      return;
-    }
-    const auto now_steady = std::chrono::steady_clock::now();
-    const auto now_system = std::chrono::system_clock::now();
-    sample["format"] = "crimson_playback_trace_v1";
-    sample["sequence"] = sequence++;
-    sample["elapsed_s"] =
-        std::chrono::duration<double>(now_steady - start_steady).count();
-    sample["wall_epoch_ms"] =
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            now_system.time_since_epoch())
-            .count();
-    stream << sample.dump() << "\n";
-    samples_since_flush++;
-    if (force_flush || samples_since_flush >= 30) {
-      stream.flush();
-      samples_since_flush = 0;
-    }
-  }
-};
+using PlaybackTraceLogWriter =
+    crimson::playback::diagnostics::PlaybackTraceJsonlWriter;
 
 struct FrameSyncTraceLastState {
   bool initialized = false;
@@ -1900,6 +1843,19 @@ int main(int argc, char **argv) {
   constexpr auto kPerfLogSamplePeriod = std::chrono::milliseconds(250);
   constexpr uint64_t kPlaybackWarmupPerfFrames = 120;
   constexpr uint64_t kPlaybackWarmupPerfSampleStride = 2;
+  auto openPlaybackTraceLog = [](PlaybackTraceLogWriter &writer,
+                                 const std::filesystem::path &path,
+                                 const char *label) {
+    const std::string log_label = label != nullptr ? label : "PlaybackTrace";
+    if (writer.open(path, log_label)) {
+      std::cout << "[" << log_label << "] Writing JSONL samples to "
+                << writer.path() << std::endl;
+      return true;
+    }
+    std::cerr << "[" << log_label << "] Failed to open " << path
+              << " for writing: " << writer.lastError() << std::endl;
+    return false;
+  };
   if (!cli_perf_log_path.empty()) {
     (void)perf_log_writer.open(cli_perf_log_path);
   }
@@ -1915,7 +1871,8 @@ int main(int argc, char **argv) {
     }
   }
   if (!cli_playback_trace_log_path.empty()) {
-    (void)playback_trace_log_writer.open(cli_playback_trace_log_path);
+    (void)openPlaybackTraceLog(playback_trace_log_writer,
+                               cli_playback_trace_log_path, "PlaybackTrace");
   }
   const char *frame_sync_trace_path_env =
       std::getenv("CRIMSON_FRAME_SYNC_TRACE_PATH");
@@ -1934,8 +1891,8 @@ int main(int argc, char **argv) {
     if (!cli_frame_sync_trace_log_path.empty()) {
       frame_sync_trace_path = cli_frame_sync_trace_log_path;
     }
-    (void)frame_sync_trace_log_writer.open(frame_sync_trace_path,
-                                           "FrameSyncTrace");
+    (void)openPlaybackTraceLog(frame_sync_trace_log_writer,
+                               frame_sync_trace_path, "FrameSyncTrace");
   }
   const char *clipped_texture_dump_frame_env =
       std::getenv("CRIMSON_CLIPPED_TEXTURE_DUMP_FRAME");
@@ -1984,8 +1941,8 @@ int main(int argc, char **argv) {
         clipped_frame_trace_path_env[0] != '\0') {
       clipped_frame_trace_path = clipped_frame_trace_path_env;
     }
-    (void)clipped_frame_trace_log_writer.open(clipped_frame_trace_path,
-                                              "ClippedFrameTrace");
+    (void)openPlaybackTraceLog(clipped_frame_trace_log_writer,
+                               clipped_frame_trace_path, "ClippedFrameTrace");
   }
   std::unordered_map<std::string, FrameSyncTraceLastState>
       frame_sync_trace_last_by_camera;
@@ -2253,123 +2210,93 @@ int main(int argc, char **argv) {
   };
   prewarmEyeMaskOverlayTexturesForPlayback("cli_bootstrap", current_frame_num);
   constexpr size_t kPlaybackMaskPrefetchLookaheadFrames = 1024;
-  auto clippedPlaybackEventStateJson = [&]() -> json {
-    auto nullableInt = [](int value) -> json {
-      return value >= 0 ? json(value) : json(nullptr);
+  auto playbackSnapshot = [&]() {
+    crimson::playback::diagnostics::PlaybackSnapshot snapshot;
+    snapshot.play_video = ps.play_video;
+    snapshot.to_display_frame_number = ps.to_display_frame_number;
+    snapshot.slider_frame_number = ps.slider_frame_number;
+    snapshot.read_head = ps.read_head;
+    snapshot.pause_selected = ps.pause_selected;
+    snapshot.pause_seeked = ps.pause_seeked;
+    snapshot.just_seeked = ps.just_seeked;
+    snapshot.slider_just_changed = ps.slider_just_changed;
+    snapshot.buffer_browsed_since_pause = ps.buffer_browsed_since_pause;
+    snapshot.paused_frame_on_toggle = ps.paused_frame_on_toggle;
+    snapshot.last_resume_path = resumePathName(ps.last_resume_path);
+    snapshot.last_resume_target_frame = ps.last_resume_target_frame;
+    snapshot.accumulated_play_time = ps.accumulated_play_time;
+    snapshot.current_stimulus_frame = ps.current_stimulus_frame;
+    return snapshot;
+  };
+  auto seekProgressSnapshot = [&]() {
+    return crimson::playback::diagnostics::SeekProgressSnapshot{
+        seekStateName(seek_progress.state),
+        seek_progress.seek_id,
+        seek_progress.requested_camera_frame,
+        seek_progress.target_camera_frame,
+        seek_progress.target_stimulus_frame,
+        seek_progress.accurate,
+        seek_progress.skip_stimulus_hard_seek,
+        seek_progress.cameras_settled,
+        seek_progress.cameras_total,
     };
-    json buffer = nullptr;
-    const int visible_idx = playback_session_controller.getVisibleCameraIndex();
-    if (scene != nullptr && visible_idx >= 0 && visible_idx < scene->num_cams &&
-        scene->size_of_buffer > 0) {
-      const auto &camera = scene->cameras[visible_idx];
-      const int normalized_read_head =
-          ps.read_head >= 0
-              ? ps.read_head % static_cast<int>(scene->size_of_buffer)
-              : -1;
-      int valid_slots = 0;
-      int oldest_frame = std::numeric_limits<int>::max();
-      int newest_frame = -1;
-      int read_head_frame = -1;
-      int selected_slot = -1;
-      int front_slot = -1;
-      int contiguous_span_start = -1;
-      int contiguous_span_end = -1;
-      std::vector<int> valid_frames;
-      valid_frames.reserve(scene->size_of_buffer);
-      for (int slot_idx = 0; slot_idx < static_cast<int>(scene->size_of_buffer);
-           ++slot_idx) {
-        const auto &slot = camera.display_buffer[slot_idx];
-        if (slot.available_to_write || slot.frame_number < 0) {
-          continue;
-        }
-        valid_slots++;
-        valid_frames.push_back(slot.frame_number);
-        oldest_frame = std::min(oldest_frame, slot.frame_number);
-        newest_frame = std::max(newest_frame, slot.frame_number);
-        if (slot_idx == normalized_read_head) {
-          read_head_frame = slot.frame_number;
-        }
-        if (slot.frame_number == ps.to_display_frame_number) {
-          selected_slot = slot_idx;
-        }
-        if (slot.frame_number == camera.last_uploaded_frame) {
-          front_slot = slot_idx;
-        }
-      }
-      if (!valid_frames.empty()) {
-        std::sort(valid_frames.begin(), valid_frames.end());
-        contiguous_span_end = valid_frames.back();
-        contiguous_span_start = contiguous_span_end;
-        for (int idx = static_cast<int>(valid_frames.size()) - 2; idx >= 0;
-             --idx) {
-          if (valid_frames[idx] + 1 == contiguous_span_start) {
-            contiguous_span_start = valid_frames[idx];
-            continue;
-          }
-          break;
-        }
-      }
-      buffer = {
-          {"visible_idx", visible_idx},
-          {"read_head", ps.read_head},
-          {"normalized_read_head", normalized_read_head},
-          {"read_head_frame", nullableInt(read_head_frame)},
-          {"selected_slot", selected_slot},
-          {"front_slot", front_slot},
-          {"valid_slots", valid_slots},
-          {"buffer_size", static_cast<int>(scene->size_of_buffer)},
-          {"oldest_frame",
-           valid_slots > 0 ? json(oldest_frame) : json(nullptr)},
-          {"newest_frame",
-           valid_slots > 0 ? json(newest_frame) : json(nullptr)},
-          {"newest_contiguous_span_start", nullableInt(contiguous_span_start)},
-          {"newest_contiguous_span_end", nullableInt(contiguous_span_end)},
-          {"front_parent_frame", camera.texture_has_valid_frame
-                                     ? json(camera.last_uploaded_frame)
-                                     : json(nullptr)},
-          {"front_local_frame", camera.texture_has_valid_frame
-                                    ? json(camera.last_uploaded_local_frame)
-                                    : json(nullptr)},
-          {"staging_valid", camera.playback_staging_valid},
-          {"staging_parent_frame", camera.playback_staging_valid
-                                       ? json(camera.playback_staging_frame)
-                                       : json(nullptr)},
-          {"staging_local_frame",
-           camera.playback_staging_valid
-               ? json(camera.playback_staging_local_frame)
-               : json(nullptr)},
-      };
+  };
+  auto cameraBufferSnapshot = [&](int visible_idx, int target_frame,
+                                  int selected_frame,
+                                  bool require_video_loaded = true) {
+    std::optional<crimson::playback::diagnostics::CameraBufferSnapshot>
+        snapshot;
+    if ((require_video_loaded && !video_loaded) || scene == nullptr ||
+        visible_idx < 0 || visible_idx >= scene->num_cams ||
+        scene->size_of_buffer == 0) {
+      return snapshot;
     }
-    return json{
-        {"current_frame_num", current_frame_num},
-        {"video_fps", video_fps},
-        {"playback",
-         {{"play_video", ps.play_video},
-          {"to_display_frame_number", ps.to_display_frame_number},
-          {"slider_frame_number", ps.slider_frame_number},
-          {"pause_selected", ps.pause_selected},
-          {"pause_seeked", ps.pause_seeked},
-          {"just_seeked", ps.just_seeked},
-          {"slider_just_changed", ps.slider_just_changed},
-          {"buffer_browsed_since_pause", ps.buffer_browsed_since_pause},
-          {"paused_frame_on_toggle", nullableInt(ps.paused_frame_on_toggle)},
-          {"last_resume_path", resumePathName(ps.last_resume_path)},
-          {"last_resume_target_frame",
-           nullableInt(ps.last_resume_target_frame)},
-          {"accumulated_play_time", ps.accumulated_play_time}}},
-        {"seek_progress",
-         {{"state", seekStateName(seek_progress.state)},
-          {"seek_id", seek_progress.seek_id},
-          {"requested_camera_frame",
-           nullableInt(seek_progress.requested_camera_frame)},
-          {"target_camera_frame",
-           nullableInt(seek_progress.target_camera_frame)},
-          {"target_stimulus_frame",
-           nullableInt(seek_progress.target_stimulus_frame)},
-          {"accurate", seek_progress.accurate},
-          {"skip_stimulus_hard_seek", seek_progress.skip_stimulus_hard_seek}}},
-        {"buffer", buffer},
-    };
+    const auto &camera = scene->cameras[visible_idx];
+    crimson::playback::diagnostics::CameraBufferSnapshot value;
+    value.visible_idx = visible_idx;
+    if (visible_idx < static_cast<int>(camera_names.size())) {
+      value.camera_name = camera_names[visible_idx];
+    }
+    value.buffer_size = static_cast<int>(scene->size_of_buffer);
+    value.read_head = ps.read_head;
+    value.target_frame = target_frame;
+    value.selected_frame = selected_frame;
+    value.last_uploaded_frame = camera.last_uploaded_frame;
+    value.last_uploaded_local_frame = camera.last_uploaded_local_frame;
+    value.texture_has_valid_frame = camera.texture_has_valid_frame;
+    value.staging_valid = camera.playback_staging_valid;
+    value.staging_frame = camera.playback_staging_frame;
+    value.staging_local_frame = camera.playback_staging_local_frame;
+    const auto latest =
+        latest_decoded_frame.find(value.camera_name.value_or(std::string{}));
+    value.latest_decoded_frame =
+        latest != latest_decoded_frame.end() ? latest->second.load() : -1;
+    value.slots.reserve(scene->size_of_buffer);
+    for (u32 slot_idx = 0; slot_idx < scene->size_of_buffer; ++slot_idx) {
+      const auto metadata =
+          frameSlotSnapshotReadable(camera.display_buffer[slot_idx]);
+      value.slots.push_back({metadata.has_value(), metadata.has_value()
+                                                       ? metadata->frame_number
+                                                       : -1});
+    }
+    return std::optional<crimson::playback::diagnostics::CameraBufferSnapshot>(
+        std::move(value));
+  };
+  auto clippedPlaybackSnapshot = [&]() {
+    crimson::playback::diagnostics::ClippedPlaybackSnapshot snapshot;
+    snapshot.current_frame_num = current_frame_num;
+    snapshot.video_fps = video_fps;
+    snapshot.playback = playbackSnapshot();
+    snapshot.seek = seekProgressSnapshot();
+    const int visible_idx = playback_session_controller.getVisibleCameraIndex();
+    snapshot.camera_buffer = cameraBufferSnapshot(
+        visible_idx, ps.to_display_frame_number, ps.to_display_frame_number,
+        /*require_video_loaded=*/false);
+    return snapshot;
+  };
+  auto clippedPlaybackEventStateJson = [&]() -> json {
+    return crimson::playback::diagnostics::clippedPlaybackStateJson(
+        clippedPlaybackSnapshot());
   };
   auto writeClippedPlaybackStateEvent = [&](const std::string &event_name,
                                             const json &details,
@@ -2379,10 +2306,8 @@ int main(int argc, char **argv) {
       return;
     }
     clipped_frame_trace_log_writer.write(
-        json{{"event", "clipped_playback_state"},
-             {"playback_event", event_name},
-             {"details", details},
-             {"state", clippedPlaybackEventStateJson()}},
+        crimson::playback::diagnostics::clippedPlaybackStateEventJson(
+            event_name, details, clippedPlaybackSnapshot()),
         force_flush);
   };
   auto clippedPlaybackRebaseTargetBeforePlay = [&]() {
@@ -2495,237 +2420,145 @@ int main(int argc, char **argv) {
       resetPlaybackStartPerf();
     }
   };
-  auto writePlaybackTraceEvent = [&](const std::string &event_name,
-                                     const json &details,
-                                     int presenter_view_idx = -1,
-                                     int presenter_target_frame = -1,
-                                     int presenter_preferred_paused_slot = -1,
-                                     int presenter_presented_slot = -1,
-                                     int presenter_presented_frame = -1,
-                                     int presenter_resolved_frame = -1,
-                                     bool presenter_prewarm_active = false) {
-    if (!playback_trace_log_writer.enabled()) {
-      return;
-    }
-
-    int visible_idx = presenter_view_idx;
-    if (visible_idx < 0) {
-      visible_idx = playback_session_controller.getVisibleCameraIndex();
-    }
-    const int target_frame =
-        std::max(0, presenter_target_frame >= 0 ? presenter_target_frame
-                                                : ps.to_display_frame_number);
-    json camera_buffer = json::object();
-    if (video_loaded && scene != nullptr && visible_idx >= 0 &&
-        visible_idx < scene->num_cams && scene->size_of_buffer > 0) {
-      const auto &camera = scene->cameras[visible_idx];
-      const int normalized_read_head =
-          ps.read_head >= 0
-              ? ps.read_head % static_cast<int>(scene->size_of_buffer)
-              : -1;
-      int valid_slots = 0;
-      int oldest_frame = std::numeric_limits<int>::max();
-      int newest_frame = -1;
-      int exact_target_slot = -1;
-      int read_head_frame = -1;
-      std::vector<int> sample_frames;
-      sample_frames.reserve(
-          std::min<int>(static_cast<int>(scene->size_of_buffer), 12));
-      for (int slot_idx = 0; slot_idx < static_cast<int>(scene->size_of_buffer);
-           ++slot_idx) {
-        const auto &slot = camera.display_buffer[slot_idx];
-        if (slot.available_to_write || slot.frame_number < 0) {
-          continue;
-        }
-        valid_slots++;
-        oldest_frame = std::min(oldest_frame, slot.frame_number);
-        newest_frame = std::max(newest_frame, slot.frame_number);
-        if (slot.frame_number == target_frame) {
-          exact_target_slot = slot_idx;
-        }
-        if (slot_idx == normalized_read_head) {
-          read_head_frame = slot.frame_number;
-        }
-        if (sample_frames.size() < 12) {
-          sample_frames.push_back(slot.frame_number);
-        }
-      }
-      std::sort(sample_frames.begin(), sample_frames.end());
-      auto latest_it = latest_decoded_frame.find(
-          visible_idx < static_cast<int>(camera_names.size())
-              ? camera_names[visible_idx]
-              : std::string{});
-      const int latest_decoded = latest_it != latest_decoded_frame.end()
-                                     ? latest_it->second.load()
-                                     : -1;
-      camera_buffer = {
-          {"visible_idx", visible_idx},
-          {"camera_name", visible_idx < static_cast<int>(camera_names.size())
-                              ? json(camera_names[visible_idx])
-                              : json(nullptr)},
-          {"valid_slots", valid_slots},
-          {"buffer_size", static_cast<int>(scene->size_of_buffer)},
-          {"oldest_frame",
-           valid_slots > 0 ? json(oldest_frame) : json(nullptr)},
-          {"newest_frame",
-           valid_slots > 0 ? json(newest_frame) : json(nullptr)},
-          {"sample_frames", sample_frames},
-          {"exact_target_slot", exact_target_slot},
-          {"contains_target", exact_target_slot >= 0},
-          {"read_head_frame", read_head_frame},
-          {"latest_decoded_frame", latest_decoded},
-          {"texture_has_valid_frame", camera.texture_has_valid_frame},
-          {"last_uploaded_frame", camera.last_uploaded_frame},
-          {"staging_valid", camera.playback_staging_valid},
-          {"staging_frame", camera.playback_staging_frame},
-      };
-    }
-
-    int window_need_decoding_count = 0;
+  auto playbackTraceSnapshot = [&](int presenter_view_idx,
+                                   int presenter_target_frame,
+                                   int presenter_preferred_paused_slot,
+                                   int presenter_presented_slot,
+                                   int presenter_presented_frame,
+                                   int presenter_resolved_frame,
+                                   bool presenter_prewarm_active) {
+    crimson::playback::diagnostics::PlaybackTraceSnapshot snapshot;
+    snapshot.video_loaded = video_loaded;
+    snapshot.video_fps = video_fps;
+    snapshot.current_frame_num = current_frame_num;
     for (const auto &entry : window_need_decoding) {
       if (entry.second.load()) {
-        window_need_decoding_count++;
+        ++snapshot.window_need_decoding_count;
       }
     }
-    int stimulus_buffered_frames = 0;
+    snapshot.playback = playbackSnapshot();
+    snapshot.seek = seekProgressSnapshot();
+    snapshot.presenter = {presenter_view_idx,
+                          presenter_target_frame,
+                          presenter_preferred_paused_slot,
+                          presenter_presented_slot,
+                          presenter_presented_frame,
+                          presenter_resolved_frame,
+                          presenter_prewarm_active};
+    const int visible_idx =
+        presenter_view_idx >= 0
+            ? presenter_view_idx
+            : playback_session_controller.getVisibleCameraIndex();
+    snapshot.camera_buffer = cameraBufferSnapshot(
+        visible_idx,
+        std::max(0, presenter_target_frame >= 0 ? presenter_target_frame
+                                                : ps.to_display_frame_number),
+        presenter_presented_frame);
+    snapshot.stimulus.loaded = stimulus_player.loaded;
+    snapshot.stimulus.window_name = stimulus_player.window_name;
+    snapshot.stimulus.current_stimulus_frame = ps.current_stimulus_frame;
+    const auto stimulus_latest =
+        latest_decoded_frame.find(stimulus_player.window_name);
+    snapshot.stimulus.latest_decoded_frame =
+        stimulus_latest != latest_decoded_frame.end()
+            ? stimulus_latest->second.load()
+            : -1;
+    snapshot.stimulus.last_displayed_frame =
+        stimulus_player.last_displayed_frame;
+    snapshot.stimulus.buffer_size = stimulus_player.buffer_size;
     if (stimulus_player.display_buffer != nullptr &&
         stimulus_player.buffer_size > 0) {
-      for (int i = 0; i < stimulus_player.buffer_size; ++i) {
-        auto metadata =
-            frameSlotSnapshotReadable(stimulus_player.display_buffer[i]);
-        if (metadata.has_value() && metadata->frame_number >= 0) {
-          stimulus_buffered_frames++;
-        }
+      snapshot.stimulus.slots.reserve(stimulus_player.buffer_size);
+      for (int slot_idx = 0; slot_idx < stimulus_player.buffer_size;
+           ++slot_idx) {
+        const auto metadata =
+            frameSlotSnapshotReadable(stimulus_player.display_buffer[slot_idx]);
+        snapshot.stimulus.slots.push_back(
+            {metadata.has_value(),
+             metadata.has_value() ? metadata->frame_number : -1});
       }
     }
-    const auto stimulus_latest_it =
-        latest_decoded_frame.find(stimulus_player.window_name);
-    const int stimulus_latest_decoded =
-        stimulus_latest_it != latest_decoded_frame.end()
-            ? stimulus_latest_it->second.load()
-            : -1;
-    bool stimulus_seek_use = false;
-    bool stimulus_seek_done = false;
-    uint64_t stimulus_seek_id = 0;
-    uint64_t stimulus_seek_frame = 0;
-    uint64_t stimulus_settled_seek_id = 0;
     {
       std::lock_guard<std::mutex> lock(g_seek_info_mutex);
-      stimulus_seek_use = stimulus_player.seek.use_seek;
-      stimulus_seek_done = stimulus_player.seek.seek_done;
-      stimulus_seek_id = stimulus_player.seek.seek_id;
-      stimulus_seek_frame = stimulus_player.seek.seek_frame;
-      stimulus_settled_seek_id = stimulus_player.seek.settled_seek_id;
+      snapshot.stimulus.seek_use = stimulus_player.seek.use_seek;
+      snapshot.stimulus.seek_done = stimulus_player.seek.seek_done;
+      snapshot.stimulus.seek_id = stimulus_player.seek.seek_id;
+      snapshot.stimulus.seek_frame = stimulus_player.seek.seek_frame;
+      snapshot.stimulus.settled_seek_id = stimulus_player.seek.settled_seek_id;
     }
-
-    json sample = {
-        {"event", event_name},
-        {"details", details},
-        {"video_loaded", video_loaded},
-        {"video_fps", video_fps},
-        {"current_frame_num", current_frame_num},
-        {"window_need_decoding_count", window_need_decoding_count},
-        {"playback",
-         {{"play_video", ps.play_video},
-          {"to_display_frame_number", ps.to_display_frame_number},
-          {"slider_frame_number", ps.slider_frame_number},
-          {"read_head", ps.read_head},
-          {"pause_seeked", ps.pause_seeked},
-          {"just_seeked", ps.just_seeked},
-          {"slider_just_changed", ps.slider_just_changed},
-          {"buffer_browsed_since_pause", ps.buffer_browsed_since_pause},
-          {"paused_frame_on_toggle", ps.paused_frame_on_toggle},
-          {"current_stimulus_frame", ps.current_stimulus_frame}}},
-        {"seek",
-         {{"state", seekStateName(seek_progress.state)},
-          {"seek_id", seek_progress.seek_id},
-          {"requested_camera_frame", seek_progress.requested_camera_frame},
-          {"target_camera_frame", seek_progress.target_camera_frame},
-          {"target_stimulus_frame", seek_progress.target_stimulus_frame},
-          {"accurate", seek_progress.accurate},
-          {"skip_stimulus_hard_seek", seek_progress.skip_stimulus_hard_seek},
-          {"cameras_settled", seek_progress.cameras_settled},
-          {"cameras_total", seek_progress.cameras_total}}},
-        {"presenter",
-         {{"view_idx", presenter_view_idx},
-          {"target_frame", presenter_target_frame},
-          {"preferred_paused_slot", presenter_preferred_paused_slot},
-          {"presented_slot", presenter_presented_slot},
-          {"presented_frame", presenter_presented_frame},
-          {"resolved_frame", presenter_resolved_frame},
-          {"prewarm_active", presenter_prewarm_active}}},
-        {"camera_buffer", camera_buffer},
-        {"stimulus",
-         {{"loaded", stimulus_player.loaded},
-          {"window_name", stimulus_player.window_name},
-          {"current_stimulus_frame", ps.current_stimulus_frame},
-          {"latest_decoded_frame", stimulus_latest_decoded},
-          {"last_displayed_frame", stimulus_player.last_displayed_frame},
-          {"buffered_frames", stimulus_buffered_frames},
-          {"buffer_size", stimulus_player.buffer_size},
-          {"seek_use", stimulus_seek_use},
-          {"seek_done", stimulus_seek_done},
-          {"seek_id", stimulus_seek_id},
-          {"seek_frame", stimulus_seek_frame},
-          {"settled_seek_id", stimulus_settled_seek_id}}},
-    };
-    playback_trace_log_writer.write(sample, event_name != "frame");
+    return snapshot;
   };
+  auto writePlaybackTraceEvent =
+      [&](const std::string &event_name, const json &details,
+          int presenter_view_idx = -1, int presenter_target_frame = -1,
+          int presenter_preferred_paused_slot = -1,
+          int presenter_presented_slot = -1, int presenter_presented_frame = -1,
+          int presenter_resolved_frame = -1,
+          bool presenter_prewarm_active = false) {
+        if (!playback_trace_log_writer.enabled()) {
+          return;
+        }
+        playback_trace_log_writer.write(
+            crimson::playback::diagnostics::playbackTraceEventJson(
+                event_name, details,
+                playbackTraceSnapshot(
+                    presenter_view_idx, presenter_target_frame,
+                    presenter_preferred_paused_slot, presenter_presented_slot,
+                    presenter_presented_frame, presenter_resolved_frame,
+                    presenter_prewarm_active)),
+            event_name != "frame");
+      };
 
-  auto playbackSeekEventDetails = [](
-                                      const crimson::playback::
-                                          PlaybackSeekTelemetryEvent &event,
-                                      const char *stage) {
-    const auto &transaction = event.transaction;
-    const auto &plan = event.plan;
-    const auto &result = event.result;
-    return json{
-        {"stage", stage},
-        {"generation", transaction.generation},
-        {"phase",
-         std::string(crimson::playback::playbackSeekPhaseName(
-             transaction.request.phase))},
-        {"origin",
-         std::string(crimson::playback::playbackSeekOriginName(
-             transaction.request.origin))},
-        {"target_frame", transaction.request.target_frame},
-        {"frame_count", transaction.request.frame_count},
-        {"plan_valid", plan.valid},
-        {"accuracy",
-         std::string(
-             crimson::playback::playbackSeekAccuracyName(plan.accuracy))},
-        {"execution_mode",
-         std::string(crimson::playback::playbackSeekExecutionModeName(
-             plan.mode))},
-        {"prefer_resident_frame", plan.prefer_resident_frame},
-        {"status",
-         std::string(stage) == "requested"
-             ? std::string("requested")
-             : std::string(
-                   crimson::playback::playbackSeekExecutionStatusName(
-                       result.status))},
-        {"execution_path",
-         std::string(crimson::playback::playbackSeekExecutionPathName(
-             result.path))},
-        {"resolved_frame", result.resolved_frame},
-        {"queue_ms", result.queue_ms},
-        {"service_ms", result.service_ms},
-        {"error", result.error},
-    };
-  };
+  auto playbackSeekEventDetails =
+      [](const crimson::playback::PlaybackSeekTelemetryEvent &event,
+         const char *stage) {
+        const auto &transaction = event.transaction;
+        const auto &plan = event.plan;
+        const auto &result = event.result;
+        return json{
+            {"stage", stage},
+            {"generation", transaction.generation},
+            {"phase", std::string(crimson::playback::playbackSeekPhaseName(
+                          transaction.request.phase))},
+            {"origin", std::string(crimson::playback::playbackSeekOriginName(
+                           transaction.request.origin))},
+            {"target_frame", transaction.request.target_frame},
+            {"frame_count", transaction.request.frame_count},
+            {"plan_valid", plan.valid},
+            {"accuracy",
+             std::string(
+                 crimson::playback::playbackSeekAccuracyName(plan.accuracy))},
+            {"execution_mode",
+             std::string(
+                 crimson::playback::playbackSeekExecutionModeName(plan.mode))},
+            {"prefer_resident_frame", plan.prefer_resident_frame},
+            {"status",
+             std::string(stage) == "requested"
+                 ? std::string("requested")
+                 : std::string(
+                       crimson::playback::playbackSeekExecutionStatusName(
+                           result.status))},
+            {"execution_path",
+             std::string(crimson::playback::playbackSeekExecutionPathName(
+                 result.path))},
+            {"resolved_frame", result.resolved_frame},
+            {"queue_ms", result.queue_ms},
+            {"service_ms", result.service_ms},
+            {"error", result.error},
+        };
+      };
 
   auto executePlaybackSeek =
       [&](const crimson::playback::PlaybackSeekRequest &request) {
         auto &coordinator = playback_transport.seekCoordinator();
         const auto transaction = coordinator.begin(request);
         const auto plan = crimson::playback::planPlaybackSeek(
-            transaction,
-            crimson::playback::PlaybackSeekAdapterCapabilities{
-                false,
-                true,
-                true,
-                true,
-            });
+            transaction, crimson::playback::PlaybackSeekAdapterCapabilities{
+                             false,
+                             true,
+                             true,
+                             true,
+                         });
         crimson::playback::PlaybackSeekTelemetryEvent requested_event{
             transaction, plan, {}};
         requested_event.result.resolved_frame = request.target_frame;
@@ -2756,10 +2589,8 @@ int main(int argc, char **argv) {
 
         const auto event =
             coordinator.record(transaction, plan, std::move(execution));
-        const json outcome_details =
-            playbackSeekEventDetails(event, "outcome");
-        writeClippedPlaybackStateEvent("transport_seek", outcome_details,
-                                       true);
+        const json outcome_details = playbackSeekEventDetails(event, "outcome");
+        writeClippedPlaybackStateEvent("transport_seek", outcome_details, true);
         writePlaybackTraceEvent("transport_seek", outcome_details);
         return event;
       };
@@ -2772,50 +2603,38 @@ int main(int argc, char **argv) {
         if (!frame_sync_trace_log_writer.enabled()) {
           return;
         }
-        json sample = {
-            {"event", "camera_frame_sync"},
-            {"details", details},
-            {"video_loaded", video_loaded},
-            {"video_fps", video_fps},
-            {"current_frame_num", current_frame_num},
-            {"playback",
-             {{"play_video", ps.play_video},
-              {"to_display_frame_number", ps.to_display_frame_number},
-              {"slider_frame_number", ps.slider_frame_number},
-              {"read_head", ps.read_head},
-              {"pause_seeked", ps.pause_seeked},
-              {"just_seeked", ps.just_seeked},
-              {"slider_just_changed", ps.slider_just_changed}}},
-            {"presenter",
-             {{"view_idx", presenter_view_idx},
-              {"target_frame", presenter_target_frame},
-              {"preferred_paused_slot", presenter_preferred_paused_slot},
-              {"presented_slot", presenter_presented_slot},
-              {"presented_frame", presenter_presented_frame},
-              {"resolved_frame", presenter_resolved_frame},
-              {"prewarm_active", presenter_prewarm_active}}},
-        };
-        frame_sync_trace_log_writer.write(std::move(sample),
-                                          /*force_flush=*/true);
+        frame_sync_trace_log_writer.write(
+            crimson::playback::diagnostics::frameSyncTraceEventJson(
+                details,
+                playbackTraceSnapshot(
+                    presenter_view_idx, presenter_target_frame,
+                    presenter_preferred_paused_slot, presenter_presented_slot,
+                    presenter_presented_frame, presenter_resolved_frame,
+                    presenter_prewarm_active)),
+            /*force_flush=*/true);
       };
 
-  auto clippedStateJson = [&]() -> json {
+  auto clippedMediaStateSnapshot =
+      [&]() -> std::optional<
+                crimson::playback::diagnostics::ClippedMediaStateSnapshot> {
     if (!zarr_loaded || !zarr_loader.hasClippedCollection()) {
-      return nullptr;
+      return std::nullopt;
     }
-    return json{
-        {"current_video_path", clipped_media_state.current_video_path},
-        {"clip_id", clipped_media_state.clip_id},
-        {"camera_serial", clipped_media_state.camera_serial},
-        {"selected_run_index", clipped_media_state.selected_run_index},
-        {"first_parent_frame", clipped_media_state.first_parent_frame},
-        {"last_parent_frame", clipped_media_state.last_parent_frame},
-        {"pending_switch_parent_frame",
-         clipped_media_state.pending_switch_parent_frame},
-        {"switch_in_progress", clipped_media_state.switch_in_progress},
-        {"last_presented_parent_frame",
-         clipped_media_state.last_presented_parent_frame},
-    };
+    return crimson::playback::diagnostics::ClippedMediaStateSnapshot{
+        clipped_media_state.current_video_path,
+        clipped_media_state.clip_id,
+        clipped_media_state.camera_serial,
+        static_cast<uint64_t>(clipped_media_state.selected_run_index),
+        clipped_media_state.first_parent_frame,
+        clipped_media_state.last_parent_frame,
+        clipped_media_state.pending_switch_parent_frame,
+        clipped_media_state.switch_in_progress,
+        clipped_media_state.last_presented_parent_frame};
+  };
+  auto clippedStateJson = [&]() -> json {
+    const auto state = clippedMediaStateSnapshot();
+    return state ? crimson::playback::diagnostics::clippedMediaStateJson(*state)
+                 : json(nullptr);
   };
 
   auto writeClippedHandoffTraceEvent = [&](const std::string &event_name,
@@ -2823,20 +2642,11 @@ int main(int argc, char **argv) {
     if (!frame_sync_trace_log_writer.enabled()) {
       return;
     }
-    json sample = {
-        {"event", "clipped_handoff"},
-        {"handoff_event", event_name},
-        {"details", details},
-        {"video_loaded", video_loaded},
-        {"current_frame_num", current_frame_num},
-        {"playback",
-         {{"play_video", ps.play_video},
-          {"to_display_frame_number", ps.to_display_frame_number},
-          {"read_head", ps.read_head}}},
-        {"clipped_state", clippedStateJson()},
-    };
-    frame_sync_trace_log_writer.write(std::move(sample),
-                                      /*force_flush=*/true);
+    frame_sync_trace_log_writer.write(
+        crimson::playback::diagnostics::clippedHandoffTraceEventJson(
+            event_name, details, video_loaded, current_frame_num,
+            playbackSnapshot(), clippedMediaStateSnapshot()),
+        /*force_flush=*/true);
   };
 
   auto clippedSelectedRunForFrame = [&](int parent_frame) -> size_t {
@@ -3138,23 +2948,108 @@ int main(int argc, char **argv) {
               << clipped_boundary_smoke.end_frame << std::endl;
   }
 
+  auto clippedFrameBindingForParentFrame = [&](int64_t parent_frame) {
+    crimson::playback::ClippedFrameBinding binding;
+    if (!zarr_loaded || !zarr_loader.hasClippedCollection() ||
+        parent_frame < 0) {
+      return binding;
+    }
+    const auto *row = zarr_loader.resolveClippedFrame(parent_frame);
+    if (row == nullptr) {
+      return binding;
+    }
+    const auto *selected =
+        zarr_loader.getClippedResolver().selectedRun(row->selected_run_index);
+    if (selected == nullptr || selected->clip_id.empty()) {
+      return binding;
+    }
+    binding.mapped = true;
+    binding.selected_run_index = row->selected_run_index;
+    binding.clip_id = selected->clip_id;
+    binding.clip_local_frame_index = row->clip_local_frame_index;
+    if (clipped_media_state.selected_run_index == row->selected_run_index &&
+        clipped_media_state.first_parent_frame >= 0 &&
+        clipped_media_state.last_parent_frame >=
+            clipped_media_state.first_parent_frame) {
+      binding.first_parent_frame = clipped_media_state.first_parent_frame;
+      binding.last_parent_frame = clipped_media_state.last_parent_frame;
+      return binding;
+    }
+    for (const int64_t mapped_parent_frame :
+         selected->parent_frame_by_clip_local) {
+      if (mapped_parent_frame < 0) {
+        continue;
+      }
+      if (binding.first_parent_frame < 0) {
+        binding.first_parent_frame = mapped_parent_frame;
+        binding.last_parent_frame = mapped_parent_frame;
+      } else {
+        binding.first_parent_frame =
+            std::min(binding.first_parent_frame, mapped_parent_frame);
+        binding.last_parent_frame =
+            std::max(binding.last_parent_frame, mapped_parent_frame);
+      }
+    }
+    return binding;
+  };
+  auto clippedHandoffStateFromMediaState = [&]() {
+    crimson::playback::ClippedMediaHandoffState state;
+    state.selected_run_index = clipped_media_state.selected_run_index;
+    state.clip_id = clipped_media_state.clip_id;
+    state.first_parent_frame = clipped_media_state.first_parent_frame;
+    state.last_parent_frame = clipped_media_state.last_parent_frame;
+    state.pending_switch_parent_frame =
+        clipped_media_state.pending_switch_parent_frame;
+    state.switch_in_progress = clipped_media_state.switch_in_progress;
+    state.last_presented_parent_frame =
+        clipped_media_state.last_presented_parent_frame;
+    return state;
+  };
+  auto applyClippedHandoffStateToMediaState =
+      [&](const crimson::playback::ClippedMediaHandoffState &state) {
+        clipped_media_state.selected_run_index = state.selected_run_index;
+        clipped_media_state.clip_id = state.clip_id;
+        clipped_media_state.first_parent_frame = state.first_parent_frame;
+        clipped_media_state.last_parent_frame = state.last_parent_frame;
+        clipped_media_state.pending_switch_parent_frame =
+            state.pending_switch_parent_frame;
+        clipped_media_state.switch_in_progress = state.switch_in_progress;
+        clipped_media_state.last_presented_parent_frame =
+            state.last_presented_parent_frame;
+      };
   auto maybeRequestClippedBoundaryHandoff = [&](int presented_parent_frame) {
     if (!ps.play_video || !zarr_loaded || !zarr_loader.hasClippedCollection() ||
         presented_parent_frame < 0) {
       return;
     }
 
-    const size_t presented_run =
-        clippedSelectedRunForFrame(presented_parent_frame);
-    if (presented_run != std::numeric_limits<size_t>::max()) {
-      clipped_media_state.last_presented_parent_frame = presented_parent_frame;
+    auto handoff_state = clippedHandoffStateFromMediaState();
+    if (!crimson::playback::isValidClippedMediaHandoffState(handoff_state)) {
+      return;
+    }
+    const auto presented_binding =
+        clippedFrameBindingForParentFrame(presented_parent_frame);
+    crimson::playback::ClippedFrameBinding next_binding;
+    const int64_t next_parent_frame =
+        static_cast<int64_t>(presented_parent_frame) + 1;
+    if (presented_parent_frame >= handoff_state.last_parent_frame &&
+        next_parent_frame >= 0 &&
+        static_cast<size_t>(next_parent_frame) < zarr_loader.getTotalFrames()) {
+      next_binding = clippedFrameBindingForParentFrame(next_parent_frame);
     }
 
-    if (clipped_media_state.switch_in_progress &&
-        clipped_media_state.pending_switch_parent_frame >= 0 &&
-        presented_parent_frame >=
-            clipped_media_state.pending_switch_parent_frame &&
-        presented_run == clipped_media_state.selected_run_index) {
+    const int64_t pending_switch_before =
+        handoff_state.pending_switch_parent_frame;
+    const std::string old_clip = handoff_state.clip_id;
+    const size_t old_selected_run = handoff_state.selected_run_index;
+    const auto handoff = crimson::playback::updateClippedMediaHandoff(
+        handoff_state, true, presented_parent_frame,
+        static_cast<int64_t>(zarr_loader.getTotalFrames()), presented_binding,
+        next_binding);
+    applyClippedHandoffStateToMediaState(handoff_state);
+
+    if (handoff.outcome ==
+        crimson::playback::ClippedMediaHandoffOutcome::SwitchSettled) {
       std::cout << "[ClippedHandoff] switch_presented parent_frame="
                 << presented_parent_frame
                 << " clip=" << clipped_media_state.clip_id
@@ -3163,84 +3058,74 @@ int main(int argc, char **argv) {
       writeClippedHandoffTraceEvent(
           "switch_presented",
           {{"presented_parent_frame", presented_parent_frame},
-           {"pending_switch_parent_frame",
-            clipped_media_state.pending_switch_parent_frame},
+           {"pending_switch_parent_frame", pending_switch_before},
            {"clip_id", clipped_media_state.clip_id},
            {"selected_run_index", clipped_media_state.selected_run_index}});
-      clipped_media_state.switch_in_progress = false;
-      clipped_media_state.pending_switch_parent_frame = -1;
-    }
-
-    if (clipped_media_state.switch_in_progress) {
       return;
     }
-    if (presented_parent_frame < clipped_media_state.last_parent_frame) {
+    if (handoff.outcome !=
+        crimson::playback::ClippedMediaHandoffOutcome::SwitchRequested) {
       return;
     }
 
-    const size_t total_frames = zarr_loader.getTotalFrames();
-    const int64_t next_parent_frame =
-        static_cast<int64_t>(presented_parent_frame) + 1;
-    if (next_parent_frame < 0 ||
-        static_cast<size_t>(next_parent_frame) >= total_frames) {
-      return;
-    }
-
-    const auto *next_row = zarr_loader.resolveClippedFrame(next_parent_frame);
-    if (next_row == nullptr || next_row->selected_run_index ==
-                                   clipped_media_state.selected_run_index) {
-      return;
-    }
-    const auto *next_selected = zarr_loader.getClippedResolver().selectedRun(
-        next_row->selected_run_index);
-    const std::string old_clip = clipped_media_state.clip_id;
-    const size_t old_selected_run = clipped_media_state.selected_run_index;
-    clipped_media_state.switch_in_progress = true;
-    clipped_media_state.pending_switch_parent_frame = next_parent_frame;
+    const auto &command = handoff.command;
     std::cout << "[ClippedHandoff] switch_request parent_frame="
-              << next_parent_frame << " old_clip=" << old_clip << " new_clip="
-              << (next_selected != nullptr ? next_selected->clip_id
-                                           : std::string("<unknown>"))
+              << command.parent_frame << " old_clip=" << old_clip
+              << " new_clip=" << command.expected_clip_id
               << " old_selected_run_index=" << old_selected_run
-              << " new_selected_run_index=" << next_row->selected_run_index
-              << " local_frame=" << next_row->clip_local_frame_index
+              << " new_selected_run_index="
+              << command.expected_selected_run_index
+              << " local_frame=" << command.expected_clip_local_frame_index
               << std::endl;
     writeClippedHandoffTraceEvent(
         "switch_request",
-        {{"parent_frame", next_parent_frame},
+        {{"parent_frame", command.parent_frame},
          {"old_clip_id", old_clip},
-         {"new_clip_id", next_selected != nullptr ? json(next_selected->clip_id)
-                                                  : json(nullptr)},
+         {"new_clip_id", command.expected_clip_id},
          {"old_selected_run_index", old_selected_run},
-         {"new_selected_run_index", next_row->selected_run_index},
-         {"clip_local_frame_index", next_row->clip_local_frame_index}});
+         {"new_selected_run_index", command.expected_selected_run_index},
+         {"clip_local_frame_index", command.expected_clip_local_frame_index}});
 
-    playback_session_controller.seekToFrame(static_cast<int>(next_parent_frame),
-                                            /*prefer_buffer_when_paused=*/false,
-                                            /*force_inaccurate=*/true,
-                                            /*skip_stimulus_hard_seek=*/true);
+    const auto seek_result = playback_session_controller.seekToFrame(
+        static_cast<int>(command.parent_frame),
+        /*prefer_buffer_when_paused=*/false,
+        /*force_inaccurate=*/true,
+        /*skip_stimulus_hard_seek=*/true);
+    const auto loaded_binding =
+        clippedFrameBindingForParentFrame(command.parent_frame);
+    const bool seek_succeeded =
+        seek_result.status ==
+            crimson::playback::PlaybackSeekExecutionStatus::Submitted ||
+        seek_result.status ==
+            crimson::playback::PlaybackSeekExecutionStatus::Completed ||
+        seek_result.status ==
+            crimson::playback::PlaybackSeekExecutionStatus::Deduplicated;
+    const auto completion = crimson::playback::completeClippedMediaHandoffLoad(
+        handoff_state, command, seek_succeeded, loaded_binding);
+    applyClippedHandoffStateToMediaState(handoff_state);
 
-    if (clipped_media_state.selected_run_index ==
-        next_row->selected_run_index) {
-      writeClippedHandoffTraceEvent(
-          "switch_loaded",
-          {{"parent_frame", next_parent_frame},
-           {"clip_id", clipped_media_state.clip_id},
-           {"selected_run_index", clipped_media_state.selected_run_index},
-           {"first_parent_frame", clipped_media_state.first_parent_frame},
-           {"last_parent_frame", clipped_media_state.last_parent_frame},
-           {"clip_local_frame_index", next_row->clip_local_frame_index}});
-    } else {
+    if (completion.outcome !=
+        crimson::playback::ClippedMediaHandoffOutcome::SwitchLoaded) {
+      (void)crimson::playback::resetClippedMediaHandoff(handoff_state);
+      applyClippedHandoffStateToMediaState(handoff_state);
       std::cout << "[ClippedHandoff] switch_failed parent_frame="
-                << next_parent_frame << " old_clip=" << old_clip << std::endl;
+                << command.parent_frame << " old_clip=" << old_clip
+                << std::endl;
       writeClippedHandoffTraceEvent(
           "switch_failed",
-          {{"parent_frame", next_parent_frame},
+          {{"parent_frame", command.parent_frame},
            {"old_clip_id", old_clip},
-           {"new_selected_run_index", next_row->selected_run_index}});
-      clipped_media_state.switch_in_progress = false;
-      clipped_media_state.pending_switch_parent_frame = -1;
+           {"new_selected_run_index", command.expected_selected_run_index}});
+      return;
     }
+    writeClippedHandoffTraceEvent(
+        "switch_loaded",
+        {{"parent_frame", command.parent_frame},
+         {"clip_id", clipped_media_state.clip_id},
+         {"selected_run_index", clipped_media_state.selected_run_index},
+         {"first_parent_frame", clipped_media_state.first_parent_frame},
+         {"last_parent_frame", clipped_media_state.last_parent_frame},
+         {"clip_local_frame_index", command.expected_clip_local_frame_index}});
   };
 
   auto makeDecodeDebugDumpContext = [&]() {
@@ -3571,8 +3456,7 @@ int main(int argc, char **argv) {
     if (seek_completion.has_value() &&
         playback_transport.seekCoordinator().activeGeneration() != 0) {
       const auto completed_event =
-          playback_transport.seekCoordinator().recordActive(
-              *seek_completion);
+          playback_transport.seekCoordinator().recordActive(*seek_completion);
       if (completed_event.has_value()) {
         const json details =
             playbackSeekEventDetails(*completed_event, "completion");
@@ -3600,130 +3484,44 @@ int main(int argc, char **argv) {
 
     const bool clipped_collection_playback =
         zarr_loaded && zarr_loader.hasClippedCollection();
-    auto visibleCameraIndexForPlayback = [&]() -> int {
-      int visible_idx = playback_session_controller.getVisibleCameraIndex();
-      if (visible_idx < 0 || visible_idx >= scene->num_cams) {
-        visible_idx = scene->num_cams > 0 ? 0 : -1;
-      }
-      return visible_idx;
-    };
-    auto findExactBufferedFrameSlot = [&](int target_frame,
-                                          int preferred_slot) -> int {
-      if (scene->num_cams <= 0 || scene->size_of_buffer <= 0 ||
-          target_frame < 0) {
-        return -1;
-      }
-      const int visible_idx = visibleCameraIndexForPlayback();
-      if (visible_idx < 0) {
-        return -1;
-      }
-      std::vector<BufferedFrameCandidate> candidates;
-      candidates.reserve(scene->size_of_buffer);
-      for (int slot_idx = 0; slot_idx < static_cast<int>(scene->size_of_buffer);
-           ++slot_idx) {
-        if (auto metadata = frameSlotSnapshotReadable(
-                scene->cameras[visible_idx].display_buffer[slot_idx])) {
-          candidates.push_back({slot_idx, std::move(*metadata)});
-        }
-      }
-      FrameSelectionRequest request;
-      request.target_frame = target_frame;
-      request.preferred_slot = preferred_slot;
-      request.fallback = FrameSelectionFallback::ExactOnly;
-      return selectBufferedFrame(candidates, request).slot_index;
-    };
-    auto findBestBufferedFrameAtOrBefore = [&](int target_frame, int min_frame,
-                                               int &out_slot) -> int {
-      out_slot = -1;
-      if (scene->num_cams <= 0 || scene->size_of_buffer <= 0 ||
-          target_frame < 0) {
-        return -1;
-      }
-      const int visible_idx = visibleCameraIndexForPlayback();
-      if (visible_idx < 0) {
-        return -1;
-      }
-      std::vector<BufferedFrameCandidate> candidates;
-      candidates.reserve(scene->size_of_buffer);
-      for (int slot_idx = 0; slot_idx < static_cast<int>(scene->size_of_buffer);
-           ++slot_idx) {
-        if (auto metadata = frameSlotSnapshotReadable(
-                scene->cameras[visible_idx].display_buffer[slot_idx])) {
-          candidates.push_back({slot_idx, std::move(*metadata)});
-        }
-      }
-      FrameSelectionRequest request;
-      request.target_frame = target_frame;
-      request.minimum_frame_exclusive = min_frame;
-      request.fallback = FrameSelectionFallback::LatestAtOrBefore;
-      const FrameSelectionResult selection =
-          selectBufferedFrame(candidates, request);
-      out_slot = selection.slot_index;
-      return selection.frame_number;
-    };
-    auto computePlaybackClockTarget = [&]() -> int {
-      const int frame_to_show = static_cast<int>(std::min<int64_t>(
-          transport_tick.requested_frame, std::numeric_limits<int>::max()));
-      playback_requested_camera_frame = frame_to_show;
-      perf_requested_camera_frame = frame_to_show;
-
-      int min_decoded_frame = INT_MAX;
-      bool have_decode_bound = false;
-      auto considerDecodeBound = [&](const std::string &stream_name) {
-        auto need_it = window_need_decoding.find(stream_name);
-        if (need_it == window_need_decoding.end() || !need_it->second.load()) {
-          return;
-        }
-        auto latest_it = latest_decoded_frame.find(stream_name);
-        if (latest_it == latest_decoded_frame.end()) {
-          return;
+    const int requested_playback_frame = static_cast<int>(std::min<int64_t>(
+        transport_tick.requested_frame, std::numeric_limits<int>::max()));
+    int min_decoded_frame = INT_MAX;
+    bool have_decode_bound = false;
+    const bool should_plan_playback_target =
+        !ps.just_seeked && dc_context->decoding_flag && ps.play_video &&
+        scene->size_of_buffer > 0;
+    if (should_plan_playback_target) {
+      for (const auto &cam_name : camera_names) {
+        const auto need_it = window_need_decoding.find(cam_name);
+        const auto latest_it = latest_decoded_frame.find(cam_name);
+        if (need_it == window_need_decoding.end() || !need_it->second.load() ||
+            latest_it == latest_decoded_frame.end()) {
+          continue;
         }
         const int decoded = latest_it->second.load();
-        if (decoded < 0) {
-          return;
-        }
-        min_decoded_frame = std::min(min_decoded_frame, decoded);
-        have_decode_bound = true;
-      };
-      for (const auto &cam_name : camera_names) {
-        considerDecodeBound(cam_name);
-      }
-      perf_min_decoded_camera_frame =
-          have_decode_bound ? min_decoded_frame : -1;
-      const int bounded_frame = have_decode_bound
-                                    ? std::min(frame_to_show, min_decoded_frame)
-                                    : ps.to_display_frame_number;
-      return std::max(ps.to_display_frame_number, bounded_frame);
-    };
-    if (!ps.just_seeked && dc_context->decoding_flag && ps.play_video &&
-        scene->size_of_buffer > 0) {
-      playback_presenter_target_frame = computePlaybackClockTarget();
-      const int requested_target = playback_presenter_target_frame;
-      if (playback_presenter_target_frame > ps.to_display_frame_number) {
-        const int preferred_slot = scene->size_of_buffer > 0
-                                       ? ps.read_head % scene->size_of_buffer
-                                       : -1;
-        playback_presenter_target_slot = findExactBufferedFrameSlot(
-            playback_presenter_target_frame, preferred_slot);
-        if (playback_presenter_target_slot < 0) {
-          int best_slot = -1;
-          const int best_frame = findBestBufferedFrameAtOrBefore(
-              playback_presenter_target_frame, ps.to_display_frame_number,
-              best_slot);
-          if (best_frame > ps.to_display_frame_number && best_slot >= 0) {
-            playback_presenter_target_frame = best_frame;
-            playback_presenter_target_slot = best_slot;
-          } else {
-            playback_presenter_target_frame = ps.to_display_frame_number;
-          }
+        if (decoded >= 0) {
+          min_decoded_frame = std::min(min_decoded_frame, decoded);
+          have_decode_bound = true;
         }
       }
-      playback_target_clamped_to_buffer =
-          requested_target != playback_presenter_target_frame;
+    }
+    const auto playback_target =
+        playback_session_controller.planPresentationTarget(
+            requested_playback_frame,
+            have_decode_bound ? std::optional<int>(min_decoded_frame)
+                              : std::nullopt);
+    if (playback_target.active) {
+      playback_requested_camera_frame = requested_playback_frame;
+      perf_requested_camera_frame = requested_playback_frame;
+      perf_min_decoded_camera_frame = playback_target.minimum_decoded_frame;
+      playback_presenter_target_frame = playback_target.frame;
+      playback_presenter_target_slot = playback_target.slot;
+      playback_target_clamped_to_buffer = playback_target.clamped_to_buffer;
       if (clipped_collection_playback && playback_target_clamped_to_buffer) {
         writeClippedPlaybackStateEvent(
             "playback_target_clamped_to_buffer",
-            json{{"requested_frame", requested_target},
+            json{{"requested_frame", playback_target.bounded_target_frame},
                  {"selected_frame", playback_presenter_target_frame},
                  {"previous_committed_frame", ps.to_display_frame_number},
                  {"target_slot", playback_presenter_target_slot}},
@@ -4784,7 +4582,6 @@ int main(int argc, char **argv) {
             }
           }
         }
-
       }
       ImGui::End();
       frame_buffer_window_ui_ms +=
@@ -6495,9 +6292,9 @@ int main(int argc, char **argv) {
           }
           const CameraViewTransportControlsResult &camera_transport_result =
               camera_view_result.transport_result;
-          ps.slider_frame_number = static_cast<int>(std::clamp<int64_t>(
-              camera_transport_result.slider_frame_number, 0,
-              std::numeric_limits<int>::max()));
+          ps.slider_frame_number = static_cast<int>(
+              std::clamp<int64_t>(camera_transport_result.slider_frame_number,
+                                  0, std::numeric_limits<int>::max()));
           ps.slider_just_changed = camera_transport_result.slider_just_changed;
           const auto &transport_intent = camera_transport_result.intent;
           if (camera_transport_result.action ==
@@ -6536,8 +6333,7 @@ int main(int argc, char **argv) {
                 ? crimson::workspace::Command::StepBackward
                 : crimson::workspace::Command::StepForward,
             workspaceCapabilities(), step_base, shortcut_frame_count,
-            std::nullopt,
-            std::abs(playback_shortcuts.step_delta));
+            std::nullopt, std::abs(playback_shortcuts.step_delta));
         if (intent.has_value()) {
           const auto request = crimson::playback::makePlaybackSeekRequest(
               crimson::playback::PlaybackSeekPhase::Discrete,
@@ -7461,50 +7257,19 @@ int main(int argc, char **argv) {
     if (playback_was_just_seeked) {
       ps.just_seeked = false;
     }
-    if (dc_context->decoding_flag && ps.play_video &&
-        scene->size_of_buffer > 0) {
-      playback_commit_previous_frame = ps.to_display_frame_number;
-      const bool presented_from_slot = playback_trace_presented_slot >= 0 &&
-                                       playback_trace_presented_frame >= 0;
-      const bool commit_presented_frame =
-          presented_from_slot &&
-          playback_trace_presented_frame >= playback_commit_previous_frame;
-
-      if (commit_presented_frame) {
-        playback_commit_frame = playback_trace_presented_frame;
-        playback_commit_slot = playback_trace_presented_slot;
-        if (playback_commit_slot < 0) {
-          playback_commit_slot = findExactBufferedFrameSlot(
-              playback_commit_frame,
-              ps.read_head % static_cast<int>(scene->size_of_buffer));
-        }
-        ps.to_display_frame_number = playback_commit_frame;
-        ps.slider_frame_number = playback_commit_frame;
-        if (playback_commit_slot >= 0) {
-          ps.read_head = playback_commit_slot;
-        }
-
-        for (int slot_idx = 0;
-             slot_idx < static_cast<int>(scene->size_of_buffer); ++slot_idx) {
-          for (int cam_idx = 0; cam_idx < static_cast<int>(scene->num_cams);
-               ++cam_idx) {
-            auto &slot = scene->cameras[cam_idx].display_buffer[slot_idx];
-            auto metadata = frameSlotSnapshotReadable(slot);
-            if (!metadata || metadata->frame_number >= playback_commit_frame) {
-              continue;
-            }
-            ++playback_release_attempts;
-            if (frameSlotTryReleaseForReuse(slot, metadata->frame_number)) {
-              ++playback_release_count;
-            } else {
-              ++playback_release_skip_count;
-            }
-          }
-        }
-      } else {
-        playback_release_deferred =
-            playback_presenter_target_frame > playback_commit_previous_frame;
-      }
+    const auto playback_commit =
+        playback_session_controller.commitPresentedFrame(
+            playback_presenter_target_frame, playback_trace_presented_frame,
+            playback_trace_presented_slot);
+    if (playback_commit.eligible) {
+      playback_commit_previous_frame = playback_commit.previous_committed_frame;
+      playback_commit_frame = playback_commit.frame;
+      playback_commit_slot = playback_commit.slot;
+      playback_release_attempts = playback_commit.release_attempts;
+      playback_release_count = playback_commit.release_count;
+      playback_release_skip_count = playback_commit.release_skip_count;
+      playback_release_deferred = playback_commit.release_deferred;
+      const bool presented_from_slot = playback_commit.presented_from_slot;
 
       if (playback_commit_frame >= 0 || playback_release_attempts > 0 ||
           playback_release_deferred || playback_target_clamped_to_buffer ||

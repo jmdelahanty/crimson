@@ -53,16 +53,22 @@ find_package(Python3 QUIET COMPONENTS Interpreter)
 include(cmake/CrimsonTensorStore.cmake)
 
 add_library(crimson_frame_contracts STATIC
+    src/clipped_media_handoff.cpp
     src/frame_types.cpp
     src/frame_selection.cpp
     src/frame_slot.cpp
     src/playback_clock.cpp
+    src/playback_diagnostics.cpp
     src/playback_seek.cpp
+    src/playback_presentation_lifecycle.cpp
 )
 target_include_directories(crimson_frame_contracts PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
-target_link_libraries(crimson_frame_contracts PUBLIC Threads::Threads)
+target_link_libraries(crimson_frame_contracts PUBLIC
+    Threads::Threads
+    nlohmann_json::nlohmann_json
+)
 target_compile_features(crimson_frame_contracts PUBLIC cxx_std_17)
 
 add_library(crimson_runtime_contracts STATIC
@@ -1186,6 +1192,36 @@ add_test(NAME playback_transport_tests
 )
 set_tests_properties(playback_transport_tests PROPERTIES
     LABELS "headless;playback;portable;transport"
+)
+
+add_executable(clipped_media_handoff_tests
+    tools/clipped_media_handoff_tests.cpp
+)
+target_link_libraries(clipped_media_handoff_tests PRIVATE crimson_frame_contracts)
+target_compile_features(clipped_media_handoff_tests PRIVATE cxx_std_17)
+set_target_properties(clipped_media_handoff_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME clipped_media_handoff_tests
+    COMMAND $<TARGET_FILE:clipped_media_handoff_tests>
+)
+set_tests_properties(clipped_media_handoff_tests PROPERTIES
+    LABELS "headless;playback;portable;clipped"
+)
+
+add_executable(playback_diagnostics_tests
+    tools/playback_diagnostics_tests.cpp
+)
+target_link_libraries(playback_diagnostics_tests PRIVATE crimson_frame_contracts)
+target_compile_features(playback_diagnostics_tests PRIVATE cxx_std_17)
+set_target_properties(playback_diagnostics_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME playback_diagnostics_tests
+    COMMAND $<TARGET_FILE:playback_diagnostics_tests>
+)
+set_tests_properties(playback_diagnostics_tests PROPERTIES
+    LABELS "headless;playback;portable;diagnostics"
 )
 
 foreach(runtime_test

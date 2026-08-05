@@ -174,6 +174,44 @@ the adapter is compiled with the isolated Linux application build. This is a
 bounded Phase 3 extraction and does not change storage, editing, or coordinate
 contracts.
 
+## 2026-08-05 Playback Presentation Lifecycle Checkpoint
+
+`PlaybackSessionController` now owns the playback-frame target and commit
+lifecycle that was previously embedded in `red.cpp`. The portable policy uses
+explicit target and commit input/output values, so paused and seek-settling
+states, decode bounds, buffered fallback, non-regressing commits, and deferred
+release decisions are headless-testable. The NVIDIA controller remains the
+only layer that reads or releases concrete frame slots; render/GL/CUDA work and
+trace serialization remain in `red.cpp`.
+
+This is a bounded Phase 3 extraction. It deliberately does not change the
+logical transport clock, clipped-media routing, stimulus handling, archive
+state, or renderer ownership. macOS can consume the same portable policy when
+its presenter reaches the corresponding explicit commit lifecycle.
+
+## 2026-08-05 Playback Diagnostics And Clipped Handoff Checkpoint
+
+Playback JSONL envelope writing and the common playback, seek, presenter,
+buffer, stimulus, frame-sync, and clipped-state serializers now live in a
+portable diagnostics module. The module has profile-specific serializers so
+existing playback, frame-sync, and clipped event field sets do not silently
+grow or drift. `red.cpp` still gathers concrete NVIDIA slot state, decoder
+progress, resolver results, and GPU texture evidence; the dense
+texture-draw and renderer-specific clipped-frame payload remains there.
+
+Clipped-media boundary policy is likewise portable. It accepts already
+resolved parent-frame bindings and emits only a load-and-seek command plus
+request/load/settlement/failure outcomes. The NVIDIA composition root retains
+Zarr resolver calls, media loading through `PlaybackSessionController`, decoder
+seek execution, GPU resources, and trace-sink ownership. This keeps the
+policy reusable without making the controller a media, renderer, or archive
+adapter.
+
+Headless tests cover JSONL envelope/flush behavior, field-profile stability,
+buffer summaries, and boundary request/load/settlement/failure behavior. This
+is a bounded Phase 3 extraction; it does not change clip-index storage,
+decoder scheduling, rendering, or archive selection.
+
 ## Why This Exists
 
 `crimson` has already done useful mechanical splits, but the core architecture
