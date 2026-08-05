@@ -71,6 +71,17 @@ target_link_libraries(crimson_frame_contracts PUBLIC
 )
 target_compile_features(crimson_frame_contracts PUBLIC cxx_std_17)
 
+add_library(crimson_nvidia_playback_diagnostics STATIC
+    src/platform/nvidia/nvidia_playback_trace_model.cpp
+)
+target_include_directories(crimson_nvidia_playback_diagnostics PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(crimson_nvidia_playback_diagnostics PUBLIC
+    nlohmann_json::nlohmann_json
+)
+target_compile_features(crimson_nvidia_playback_diagnostics PUBLIC cxx_std_17)
+
 add_library(crimson_runtime_contracts STATIC
     src/session_lifecycle.cpp
     src/loading_progress.cpp
@@ -1224,6 +1235,23 @@ set_tests_properties(playback_diagnostics_tests PROPERTIES
     LABELS "headless;playback;portable;diagnostics"
 )
 
+add_executable(nvidia_playback_trace_model_tests
+    tools/nvidia_playback_trace_model_tests.cpp
+)
+target_link_libraries(nvidia_playback_trace_model_tests PRIVATE
+    crimson_nvidia_playback_diagnostics
+)
+target_compile_features(nvidia_playback_trace_model_tests PRIVATE cxx_std_17)
+set_target_properties(nvidia_playback_trace_model_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME nvidia_playback_trace_model_tests
+    COMMAND $<TARGET_FILE:nvidia_playback_trace_model_tests>
+)
+set_tests_properties(nvidia_playback_trace_model_tests PROPERTIES
+    LABELS "headless;nvidia;playback;diagnostics"
+)
+
 foreach(runtime_test
         session_lifecycle_tests
         loading_progress_tests
@@ -2345,6 +2373,7 @@ file(GLOB CPP_SOURCES CONFIGURE_DEPENDS
     "src/zarr/*.cpp")
 list(APPEND CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_frame_inspect_adapter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_gl_diagnostics.cpp"
 )
 list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/coordinate_contract.cpp"
@@ -2444,6 +2473,7 @@ target_include_directories(redgui PRIVATE
 # --- Link Libraries ---
 target_link_libraries(redgui PRIVATE
     crimson_frame_contracts
+    crimson_nvidia_playback_diagnostics
     crimson_runtime_contracts
     crimson_overlay_contracts
     crimson_repository_contracts

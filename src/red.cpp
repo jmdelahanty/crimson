@@ -48,6 +48,8 @@
 #include "media_session_loader.h"
 #include "perf_logging.h"
 #include "platform/nvidia/nvidia_frame_inspect_adapter.h"
+#include "platform/nvidia/nvidia_gl_diagnostics.h"
+#include "platform/nvidia/nvidia_playback_trace_model.h"
 #include "playback_diagnostics.h"
 #include "playback_session_controller.h"
 #include "recording_open_workflow.h"
@@ -155,20 +157,7 @@ using json = nlohmann::json;
 
 using PlaybackTraceLogWriter =
     crimson::playback::diagnostics::PlaybackTraceJsonlWriter;
-
-struct FrameSyncTraceLastState {
-  bool initialized = false;
-  bool has_presented_frame = false;
-  int target_frame = std::numeric_limits<int>::min();
-  int presented_frame = std::numeric_limits<int>::min();
-  int bbox_query_frame = std::numeric_limits<int>::min();
-  int latest_decoded_frame = std::numeric_limits<int>::min();
-  int front_frame_before_draw = std::numeric_limits<int>::min();
-  int front_frame_after_draw = std::numeric_limits<int>::min();
-  int staging_frame_before_draw = std::numeric_limits<int>::min();
-  int staging_frame_after_draw = std::numeric_limits<int>::min();
-  int zarr_box_count = std::numeric_limits<int>::min();
-};
+namespace nvidia_trace = crimson::platform::nvidia::trace;
 
 struct ClippedBoundarySmokeConfig {
   bool enabled = false;
@@ -529,105 +518,103 @@ json stimulusCameraOverlaySceneReferenceJson(
   return result;
 }
 
-struct ClippedTextureDumpConfig {
-  bool enabled = false;
-  int parent_frame = -1;
-  std::filesystem::path output_path;
-  bool dumped = false;
-};
+nvidia_trace::BoundingBoxSnapshot
+toTraceBoundingBox(const LoggedBoundingBox &box) {
+  return {static_cast<int64_t>(box.payload_frame_id),
+          static_cast<int64_t>(box.payload_camera_id),
+          static_cast<int64_t>(box.box_index_in_payload),
+          box.x_min,
+          box.y_min,
+          box.width,
+          box.height,
+          static_cast<int64_t>(box.class_id),
+          box.confidence};
+}
 
-struct GlTextureDumpResult {
-  bool ok = false;
-  int width = 0;
-  int height = 0;
-  std::filesystem::path raw_path;
-  std::filesystem::path flip_y_path;
-  std::string error;
-};
-
-struct GlFramebufferDumpResult {
-  bool ok = false;
-  int width = 0;
-  int height = 0;
-  std::filesystem::path path;
-  std::string error;
-};
-
-struct ClippedTraceDeltaStats {
-  bool initialized = false;
-  int64_t min_delta = 0;
-  int64_t max_delta = 0;
-  std::unordered_map<int64_t, uint64_t> histogram;
-
-  void add(int64_t delta) {
-    if (!initialized) {
-      min_delta = delta;
-      max_delta = delta;
-      initialized = true;
-    } else {
-      min_delta = std::min(min_delta, delta);
-      max_delta = std::max(max_delta, delta);
-    }
-    histogram[delta]++;
+std::optional<nvidia_trace::BoundingBoxSnapshot>
+firstTraceBoundingBox(const std::vector<LoggedBoundingBox> &boxes) {
+  if (boxes.empty()) {
+    return std::nullopt;
   }
+  return toTraceBoundingBox(boxes.front());
+}
 
-  json summaryJson() const {
-    if (!initialized) {
-      return nullptr;
-    }
-    int64_t common_delta = 0;
-    uint64_t common_count = 0;
-    for (const auto &entry : histogram) {
-      if (entry.second > common_count ||
-          (entry.second == common_count && entry.first < common_delta)) {
-        common_delta = entry.first;
-        common_count = entry.second;
-      }
-    }
-    return json{{"min", min_delta},
-                {"max", max_delta},
-                {"most_common", common_delta},
-                {"most_common_count", common_count}};
+nvidia_trace::TextureDrawSnapshot
+toTraceTextureDraw(const CameraTextureDrawTrace &trace) {
+  return {trace.enabled,
+          trace.queue_sequence,
+          trace.view_idx,
+          static_cast<uint64_t>(trace.queued_texture_id),
+          static_cast<uint64_t>(trace.front_texture_id),
+          static_cast<uint64_t>(trace.staging_texture_id),
+          static_cast<uint64_t>(trace.front_pbo_id),
+          static_cast<uint64_t>(trace.staging_pbo_id),
+          trace.front_valid,
+          trace.front_parent_frame,
+          trace.front_local_frame,
+          trace.front_pts,
+          trace.staging_valid,
+          trace.staging_parent_frame,
+          trace.staging_local_frame,
+          trace.staging_pts,
+          trace.callback_observed,
+          static_cast<uint64_t>(trace.callback_count),
+          static_cast<uint64_t>(trace.callback_active_texture),
+          static_cast<uint64_t>(trace.callback_bound_texture_id),
+          trace.callback_bound_matches_queued};
+}
+
+std::optional<nvidia_trace::SelectedRunSnapshot>
+toTraceSelectedRun(const PaletteClippedResolver::SelectedRun *selected) {
+  if (selected == nullptr) {
+    return std::nullopt;
   }
-};
+  return nvidia_trace::SelectedRunSnapshot{
+      selected->work_unit_id,       selected->detect_run,
+      selected->refined_detect_run, selected->detect_group_path,
+      selected->refined_group_path, selected->video_path};
+}
 
-struct ClippedFrameTraceStats {
-  uint64_t frames_traced = 0;
-  uint64_t parent_mismatches = 0;
-  uint64_t bbox_parent_mismatches = 0;
-  uint64_t bbox_local_mismatches = 0;
-  uint64_t decoder_local_mismatches = 0;
-  uint64_t front_texture_before_mismatches = 0;
-  uint64_t front_texture_after_mismatches = 0;
-  uint64_t texture_draw_callback_missing = 0;
-  uint64_t texture_draw_bound_mismatches = 0;
-  ClippedTraceDeltaStats decoder_local_delta;
-  ClippedTraceDeltaStats bbox_parent_delta;
-  ClippedTraceDeltaStats bbox_local_delta;
-
-  json summaryJson() const {
-    return json{
-        {"frames_traced", frames_traced},
-        {"mismatches",
-         {{"parent_matches_resolver", parent_mismatches},
-          {"bbox_parent_matches_display", bbox_parent_mismatches},
-          {"bbox_local_matches_resolver", bbox_local_mismatches},
-          {"decoder_local_matches_resolver", decoder_local_mismatches},
-          {"front_texture_matches_resolver_before_draw",
-           front_texture_before_mismatches},
-          {"front_texture_matches_resolver_after_draw",
-           front_texture_after_mismatches},
-          {"texture_draw_callback_missing", texture_draw_callback_missing},
-          {"texture_draw_bound_mismatches", texture_draw_bound_mismatches}}},
-        {"deltas",
-         {{"decoder_presented_local_minus_clip_local",
-           decoder_local_delta.summaryJson()},
-          {"bbox_query_parent_minus_current_parent",
-           bbox_parent_delta.summaryJson()},
-          {"bbox_query_local_minus_clip_local",
-           bbox_local_delta.summaryJson()}}}};
+std::optional<nvidia_trace::ResolverSnapshot>
+toTraceResolver(const ZarrDetectionLoader &loader,
+                const PaletteClippedResolver::FrameRunRow *row) {
+  if (row == nullptr) {
+    return std::nullopt;
   }
-};
+  return nvidia_trace::ResolverSnapshot{
+      row->parent_frame_index,
+      row->recording_frame_id,
+      row->clip_id,
+      static_cast<uint64_t>(row->selected_run_index),
+      row->camera_serial,
+      row->clip_local_frame_index,
+      static_cast<uint64_t>(row->selected_run_index),
+      toTraceSelectedRun(
+          loader.getClippedResolver().selectedRun(row->selected_run_index))};
+}
+
+std::optional<nvidia_trace::DetectionSourceSnapshot>
+toTraceDetectionSource(const ZarrDetectionLoader::FrameDetections &details) {
+  if (details.detection_source.empty() && details.detection_reason.empty()) {
+    return std::nullopt;
+  }
+  const std::optional<int64_t> source_code =
+      details.detection_source.empty()
+          ? std::nullopt
+          : std::optional<int64_t>(details.detection_source.front());
+  const std::optional<std::string> source_kind =
+      details.detection_reason.empty() ||
+              details.detection_reason.front().empty()
+          ? std::nullopt
+          : std::optional<std::string>(details.detection_reason.front());
+  std::string reason_lower = source_kind.value_or("");
+  std::transform(
+      reason_lower.begin(), reason_lower.end(), reason_lower.begin(),
+      [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return nvidia_trace::DetectionSourceSnapshot{source_code, source_kind,
+                                               reason_lower.find("manual") !=
+                                                   std::string::npos};
+}
 
 double durationMs(std::chrono::steady_clock::duration duration) {
   return std::chrono::duration<double, std::milli>(duration).count();
@@ -645,165 +632,6 @@ bool parseIntArgument(const char *text, int &out) {
   }
   out = static_cast<int>(value);
   return true;
-}
-
-std::filesystem::path pathWithStemSuffix(const std::filesystem::path &path,
-                                         const std::string &suffix) {
-  const std::filesystem::path parent = path.parent_path();
-  const std::string stem = path.stem().string();
-  const std::string extension = path.extension().string();
-  return parent / (stem + suffix + extension);
-}
-
-std::filesystem::path pathWithExtension(const std::filesystem::path &path,
-                                        const std::string &extension) {
-  std::filesystem::path result = path;
-  result.replace_extension(extension);
-  return result;
-}
-
-GlTextureDumpResult
-dumpGlTextureToPng(GLuint texture_id,
-                   const std::filesystem::path &output_path) {
-  GlTextureDumpResult result;
-  result.raw_path = output_path;
-  result.flip_y_path = pathWithStemSuffix(output_path, "_flip_y");
-
-  if (texture_id == 0) {
-    result.error = "texture id is 0";
-    return result;
-  }
-
-  std::error_code ec;
-  if (result.raw_path.has_parent_path()) {
-    std::filesystem::create_directories(result.raw_path.parent_path(), ec);
-    if (ec) {
-      result.error = "failed to create output directory: " + ec.message();
-      return result;
-    }
-  }
-
-  GLint previous_active_texture = 0;
-  GLint previous_texture0 = 0;
-  GLint previous_pack_alignment = 0;
-  glGetIntegerv(GL_ACTIVE_TEXTURE, &previous_active_texture);
-  glActiveTexture(GL_TEXTURE0);
-  glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture0);
-  glGetIntegerv(GL_PACK_ALIGNMENT, &previous_pack_alignment);
-
-  glBindTexture(GL_TEXTURE_2D, texture_id);
-  GLint texture_width = 0;
-  GLint texture_height = 0;
-  glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &texture_width);
-  glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT,
-                           &texture_height);
-  if (texture_width <= 0 || texture_height <= 0) {
-    result.error = "texture has invalid dimensions";
-    glBindTexture(GL_TEXTURE_2D, previous_texture0);
-    glActiveTexture(previous_active_texture);
-    return result;
-  }
-
-  result.width = texture_width;
-  result.height = texture_height;
-  std::vector<unsigned char> rgba(static_cast<size_t>(texture_width) *
-                                  static_cast<size_t>(texture_height) * 4);
-  glPixelStorei(GL_PACK_ALIGNMENT, 1);
-  glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
-  const GLenum gl_error = glGetError();
-  glPixelStorei(GL_PACK_ALIGNMENT, previous_pack_alignment);
-  glBindTexture(GL_TEXTURE_2D, previous_texture0);
-  glActiveTexture(previous_active_texture);
-
-  if (gl_error != GL_NO_ERROR) {
-    std::ostringstream error;
-    error << "glGetTexImage failed with GL error 0x" << std::hex << gl_error;
-    result.error = error.str();
-    return result;
-  }
-
-  cv::Mat rgba_image(texture_height, texture_width, CV_8UC4, rgba.data());
-  cv::Mat bgra_image;
-  cv::cvtColor(rgba_image, bgra_image, cv::COLOR_RGBA2BGRA);
-  if (!cv::imwrite(result.raw_path.string(), bgra_image)) {
-    result.error = "failed to write " + result.raw_path.string();
-    return result;
-  }
-
-  cv::Mat flip_y_image;
-  cv::flip(bgra_image, flip_y_image, 0);
-  if (!cv::imwrite(result.flip_y_path.string(), flip_y_image)) {
-    result.error = "failed to write " + result.flip_y_path.string();
-    return result;
-  }
-
-  result.ok = true;
-  return result;
-}
-
-GlFramebufferDumpResult
-dumpGlBufferToPng(const std::filesystem::path &output_path, int width,
-                  int height, GLenum read_buffer) {
-  GlFramebufferDumpResult result;
-  result.path = output_path;
-  result.width = width;
-  result.height = height;
-  if (width <= 0 || height <= 0) {
-    result.error = "framebuffer has invalid dimensions";
-    return result;
-  }
-
-  std::error_code ec;
-  if (output_path.has_parent_path()) {
-    std::filesystem::create_directories(output_path.parent_path(), ec);
-    if (ec) {
-      result.error = "failed to create output directory: " + ec.message();
-      return result;
-    }
-  }
-
-  GLint previous_read_buffer = GL_BACK;
-  GLint previous_pack_alignment = 4;
-  GLint previous_pack_row_length = 0;
-  GLint previous_pack_buffer = 0;
-  glGetIntegerv(GL_READ_BUFFER, &previous_read_buffer);
-  glGetIntegerv(GL_PACK_ALIGNMENT, &previous_pack_alignment);
-  glGetIntegerv(GL_PACK_ROW_LENGTH, &previous_pack_row_length);
-  glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &previous_pack_buffer);
-
-  std::vector<unsigned char> rgba(static_cast<size_t>(width) *
-                                  static_cast<size_t>(height) * 4);
-  while (glGetError() != GL_NO_ERROR) {
-  }
-  glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-  glPixelStorei(GL_PACK_ALIGNMENT, 1);
-  glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-  glReadBuffer(read_buffer);
-  glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
-  const GLenum gl_error = glGetError();
-
-  glReadBuffer(previous_read_buffer);
-  glPixelStorei(GL_PACK_ROW_LENGTH, previous_pack_row_length);
-  glPixelStorei(GL_PACK_ALIGNMENT, previous_pack_alignment);
-  glBindBuffer(GL_PIXEL_PACK_BUFFER, static_cast<GLuint>(previous_pack_buffer));
-  if (gl_error != GL_NO_ERROR) {
-    std::ostringstream error;
-    error << "glReadPixels failed with GL error 0x" << std::hex << gl_error;
-    result.error = error.str();
-    return result;
-  }
-
-  cv::Mat rgba_image(height, width, CV_8UC4, rgba.data());
-  cv::Mat bgra_image;
-  cv::cvtColor(rgba_image, bgra_image, cv::COLOR_RGBA2BGRA);
-  cv::Mat top_down_image;
-  cv::flip(bgra_image, top_down_image, 0);
-  if (!cv::imwrite(output_path.string(), top_down_image)) {
-    result.error = "failed to write " + output_path.string();
-    return result;
-  }
-  result.ok = true;
-  return result;
 }
 
 bool parseFrameRangeArgument(const char *text, int &start, int &end) {
@@ -1836,8 +1664,8 @@ int main(int argc, char **argv) {
   PlaybackTraceLogWriter playback_trace_log_writer;
   PlaybackTraceLogWriter frame_sync_trace_log_writer;
   PlaybackTraceLogWriter clipped_frame_trace_log_writer;
-  ClippedFrameTraceStats clipped_frame_trace_stats;
-  ClippedTextureDumpConfig clipped_texture_dump;
+  nvidia_trace::ClippedFrameTraceStats clipped_frame_trace_stats;
+  crimson::platform::nvidia::ClippedTextureDumpConfig clipped_texture_dump;
   const bool clipped_rebase_before_play =
       crimson_env_flag_enabled("CRIMSON_CLIPPED_REBASE_BEFORE_PLAY");
   constexpr auto kPerfLogSamplePeriod = std::chrono::milliseconds(250);
@@ -1922,8 +1750,8 @@ int main(int argc, char **argv) {
       std::cout << "[ClippedTextureDump] Will dump parent frame "
                 << clipped_texture_dump.parent_frame << " to "
                 << clipped_texture_dump.output_path << " and "
-                << pathWithStemSuffix(clipped_texture_dump.output_path,
-                                      "_flip_y")
+                << crimson::platform::nvidia::pathWithStemSuffix(
+                       clipped_texture_dump.output_path, "_flip_y")
                 << std::endl;
     }
   }
@@ -1944,7 +1772,7 @@ int main(int argc, char **argv) {
     (void)openPlaybackTraceLog(clipped_frame_trace_log_writer,
                                clipped_frame_trace_path, "ClippedFrameTrace");
   }
-  std::unordered_map<std::string, FrameSyncTraceLastState>
+  std::unordered_map<std::string, nvidia_trace::FrameSyncTraceState>
       frame_sync_trace_last_by_camera;
   uint64_t mask_perf_sample_index = 0;
   int perf_playback_start_frame = -1;
@@ -5328,62 +5156,23 @@ int main(int argc, char **argv) {
 
           if (frame_sync_trace_log_writer.enabled()) {
             const int zarr_box_count = static_cast<int>(zarr_boxes.size());
-            FrameSyncTraceLastState &last_trace_state =
+            nvidia_trace::FrameSyncTraceState &last_trace_state =
                 frame_sync_trace_last_by_camera[win_name];
-            const bool trace_state_changed =
-                !last_trace_state.initialized ||
-                last_trace_state.has_presented_frame !=
-                    has_presented_camera_frame ||
-                last_trace_state.target_frame !=
-                    camera_view_presenter_context.target_display_frame ||
-                last_trace_state.presented_frame != presented_frame ||
-                last_trace_state.bbox_query_frame != zarr_bbox_query_frame ||
-                last_trace_state.latest_decoded_frame != latest_decoded ||
-                last_trace_state.front_frame_before_draw !=
-                    frame_sync_front_frame_before_draw ||
-                last_trace_state.front_frame_after_draw !=
-                    frame_sync_front_frame_after_draw ||
-                last_trace_state.staging_frame_before_draw !=
-                    frame_sync_staging_frame_before_draw ||
-                last_trace_state.staging_frame_after_draw !=
-                    frame_sync_staging_frame_after_draw ||
-                last_trace_state.zarr_box_count != zarr_box_count;
+            const nvidia_trace::FrameSyncTraceState trace_state{
+                true,
+                has_presented_camera_frame,
+                camera_view_presenter_context.target_display_frame,
+                presented_frame,
+                zarr_bbox_query_frame,
+                latest_decoded,
+                frame_sync_front_frame_before_draw,
+                frame_sync_front_frame_after_draw,
+                frame_sync_staging_frame_before_draw,
+                frame_sync_staging_frame_after_draw,
+                zarr_box_count};
 
-            if (trace_state_changed) {
-              auto makeTextureState = [](bool front_valid, int front_frame,
-                                         bool staging_valid,
-                                         int staging_frame) {
-                return json{
-                    {"front_valid", front_valid},
-                    {"front_frame", front_frame},
-                    {"staging_valid", staging_valid},
-                    {"staging_frame", staging_frame},
-                };
-              };
-              auto makeBboxSummary =
-                  [](const std::vector<LoggedBoundingBox> &boxes) {
-                    json summary = {
-                        {"count", static_cast<int>(boxes.size())},
-                    };
-                    if (!boxes.empty()) {
-                      const LoggedBoundingBox &box = boxes.front();
-                      summary["first"] = {
-                          {"payload_frame_id", box.payload_frame_id},
-                          {"payload_camera_id", box.payload_camera_id},
-                          {"box_index_in_payload",
-                           static_cast<int>(box.box_index_in_payload)},
-                          {"x", box.x_min},
-                          {"y", box.y_min},
-                          {"w", box.width},
-                          {"h", box.height},
-                          {"cx", box.x_min + box.width * 0.5f},
-                          {"cy", box.y_min + box.height * 0.5f},
-                          {"class_id", box.class_id},
-                          {"confidence", box.confidence},
-                      };
-                    }
-                    return summary;
-                  };
+            if (nvidia_trace::frameSyncTraceChanged(last_trace_state,
+                                                    trace_state)) {
               auto makeClippedMapping = [&](int frame) -> json {
                 if (!zarr_loaded || !zarr_loader.hasClippedCollection() ||
                     frame < 0) {
@@ -5438,19 +5227,26 @@ int main(int argc, char **argv) {
                   {"playback_surface_swapped_before_draw",
                    playback_surface_swapped_before_draw},
                   {"bbox_query_frame", zarr_bbox_query_frame},
-                  {"bbox", makeBboxSummary(zarr_boxes)},
-                  {"loaded_bbox", makeBboxSummary(loaded_zarr_boxes)},
+                  {"bbox", nvidia_trace::boundingBoxSummaryJson(
+                               static_cast<int64_t>(zarr_boxes.size()),
+                               firstTraceBoundingBox(zarr_boxes))},
+                  {"loaded_bbox",
+                   nvidia_trace::boundingBoxSummaryJson(
+                       static_cast<int64_t>(loaded_zarr_boxes.size()),
+                       firstTraceBoundingBox(loaded_zarr_boxes))},
                   {"detection_details_frame_id", nullptr},
                   {"texture_before_draw",
-                   makeTextureState(frame_sync_front_valid_before_draw,
-                                    frame_sync_front_frame_before_draw,
-                                    frame_sync_staging_valid_before_draw,
-                                    frame_sync_staging_frame_before_draw)},
+                   nvidia_trace::textureStateJson(
+                       {frame_sync_front_valid_before_draw,
+                        frame_sync_front_frame_before_draw,
+                        frame_sync_staging_valid_before_draw,
+                        frame_sync_staging_frame_before_draw})},
                   {"texture_after_draw",
-                   makeTextureState(frame_sync_front_valid_after_draw,
-                                    frame_sync_front_frame_after_draw,
-                                    frame_sync_staging_valid_after_draw,
-                                    frame_sync_staging_frame_after_draw)},
+                   nvidia_trace::textureStateJson(
+                       {frame_sync_front_valid_after_draw,
+                        frame_sync_front_frame_after_draw,
+                        frame_sync_staging_valid_after_draw,
+                        frame_sync_staging_frame_after_draw})},
                   {"frame_sync_summary",
                    {{"valid_slots", camera_view_result.frame_sync.valid_slots},
                     {"empty_slots", camera_view_result.frame_sync.empty_slots},
@@ -5499,22 +5295,8 @@ int main(int argc, char **argv) {
                   camera_view_presenter_result.resolved_current_frame_num,
                   prewarm_playback_textures);
 
-              last_trace_state.initialized = true;
-              last_trace_state.has_presented_frame = has_presented_camera_frame;
-              last_trace_state.target_frame =
-                  camera_view_presenter_context.target_display_frame;
-              last_trace_state.presented_frame = presented_frame;
-              last_trace_state.bbox_query_frame = zarr_bbox_query_frame;
-              last_trace_state.latest_decoded_frame = latest_decoded;
-              last_trace_state.front_frame_before_draw =
-                  frame_sync_front_frame_before_draw;
-              last_trace_state.front_frame_after_draw =
-                  frame_sync_front_frame_after_draw;
-              last_trace_state.staging_frame_before_draw =
-                  frame_sync_staging_frame_before_draw;
-              last_trace_state.staging_frame_after_draw =
-                  frame_sync_staging_frame_after_draw;
-              last_trace_state.zarr_box_count = zarr_box_count;
+              nvidia_trace::updateFrameSyncTraceState(last_trace_state,
+                                                      trace_state);
             }
           }
 
@@ -5530,12 +5312,6 @@ int main(int argc, char **argv) {
                 zarr_loader.resolveClippedFrame(requested_parent_frame_index);
             const auto *bbox_row =
                 zarr_loader.resolveClippedFrame(zarr_bbox_query_frame);
-            const auto *current_selected =
-                current_row != nullptr
-                    ? zarr_loader.getClippedResolver().selectedRun(
-                          current_row->selected_run_index)
-                    : nullptr;
-
             int decoder_presented_local_frame = -1;
             int64_t decoder_presented_pts = -1;
             int decoder_frame_source_code = 0;
@@ -5555,157 +5331,17 @@ int main(int argc, char **argv) {
               decoder_presented_pts = frame_sync_front_pts_before_draw;
             }
 
-            auto nullableInt = [](int64_t value) -> json {
-              return value >= 0 ? json(value) : json(nullptr);
-            };
-            auto sourceLabel = [](int code) -> const char * {
-              switch (code) {
-              case 1:
-                return "seek";
-              case 2:
-                return "sequential_decode";
-              default:
-                return "unknown";
-              }
-            };
-            auto presentationSource = [&]() -> const char * {
-              if (playback_surface_swapped_before_draw) {
-                return "prefetched_staged_texture";
-              }
-              if (camera_view_presenter_result.perf.upload_count > 0) {
-                return "uploaded_this_frame";
-              }
-              return "cached_front_texture";
-            };
-            auto selectedRunJson =
-                [&](const PaletteClippedResolver::SelectedRun *selected)
-                -> json {
-              if (selected == nullptr) {
-                return nullptr;
-              }
-              return json{
-                  {"work_unit_id", selected->work_unit_id},
-                  {"detect_run", selected->detect_run},
-                  {"refined_detect_run", selected->refined_detect_run},
-                  {"detect_group_path", selected->detect_group_path},
-                  {"refined_group_path", selected->refined_group_path},
-                  {"video_path", selected->video_path},
-              };
-            };
-            auto resolverJson =
-                [&](const PaletteClippedResolver::FrameRunRow *row) -> json {
-              if (row == nullptr) {
-                return nullptr;
-              }
-              const auto *selected =
-                  zarr_loader.getClippedResolver().selectedRun(
-                      row->selected_run_index);
-              return json{
-                  {"resolved_parent_frame_index", row->parent_frame_index},
-                  {"recording_frame_id", row->recording_frame_id},
-                  {"clip_id", row->clip_id},
-                  {"clip_index",
-                   static_cast<uint64_t>(row->selected_run_index)},
-                  {"camera_serial", row->camera_serial},
-                  {"clip_local_frame_index", row->clip_local_frame_index},
-                  {"selected_run_index",
-                   static_cast<uint64_t>(row->selected_run_index)},
-                  {"selected_run", selectedRunJson(selected)},
-              };
-            };
-            auto bboxJson =
-                [&](const std::vector<LoggedBoundingBox> &boxes) -> json {
-              if (boxes.empty()) {
-                return nullptr;
-              }
-              const auto &box = boxes.front();
-              return json{
-                  {"payload_frame_id", box.payload_frame_id},
-                  {"payload_camera_id", box.payload_camera_id},
-                  {"box_index_in_payload",
-                   static_cast<int>(box.box_index_in_payload)},
-                  {"x", box.x_min},
-                  {"y", box.y_min},
-                  {"w", box.width},
-                  {"h", box.height},
-                  {"cx", box.x_min + box.width * 0.5f},
-                  {"cy", box.y_min + box.height * 0.5f},
-                  {"class_id", box.class_id},
-                  {"confidence", box.confidence},
-              };
-            };
-            auto detectionSourceJson = [&]() -> json {
-              if (detection_details.detection_source.empty() &&
-                  detection_details.detection_reason.empty()) {
-                return nullptr;
-              }
-              std::string reason;
-              if (!detection_details.detection_reason.empty()) {
-                reason = detection_details.detection_reason.front();
-              }
-              std::string reason_lower = reason;
-              std::transform(reason_lower.begin(), reason_lower.end(),
-                             reason_lower.begin(), [](unsigned char c) {
-                               return static_cast<char>(std::tolower(c));
-                             });
-              return json{
-                  {"source_code",
-                   !detection_details.detection_source.empty()
-                       ? json(static_cast<int>(
-                             detection_details.detection_source.front()))
-                       : json(nullptr)},
-                  {"source_kind",
-                   !reason.empty() ? json(reason) : json(nullptr)},
-                  {"manual", reason_lower.find("manual") != std::string::npos},
-              };
-            };
-            auto textureDrawTraceJson =
-                [&](const CameraTextureDrawTrace &trace) -> json {
-              if (!trace.enabled || trace.queue_sequence == 0) {
-                return nullptr;
-              }
-              return json{
-                  {"draw_sequence", trace.queue_sequence},
-                  {"view_idx", trace.view_idx},
-                  {"queued_texture_id",
-                   static_cast<uint64_t>(trace.queued_texture_id)},
-                  {"front_texture_id",
-                   static_cast<uint64_t>(trace.front_texture_id)},
-                  {"staging_texture_id",
-                   static_cast<uint64_t>(trace.staging_texture_id)},
-                  {"front_pbo_id", static_cast<uint64_t>(trace.front_pbo_id)},
-                  {"staging_pbo_id",
-                   static_cast<uint64_t>(trace.staging_pbo_id)},
-                  {"queued_texture_matches_front",
-                   trace.queued_texture_id == trace.front_texture_id},
-                  {"queued_texture_matches_staging",
-                   trace.queued_texture_id == trace.staging_texture_id},
-                  {"front",
-                   {{"valid", trace.front_valid},
-                    {"parent_frame", nullableInt(trace.front_parent_frame)},
-                    {"local_frame", nullableInt(trace.front_local_frame)},
-                    {"pts", nullableInt(trace.front_pts)}}},
-                  {"staging",
-                   {{"valid", trace.staging_valid},
-                    {"parent_frame", nullableInt(trace.staging_parent_frame)},
-                    {"local_frame", nullableInt(trace.staging_local_frame)},
-                    {"pts", nullableInt(trace.staging_pts)}}},
-                  {"callback_observed", trace.callback_observed},
-                  {"callback_count", trace.callback_count},
-                  {"callback_active_texture",
-                   trace.callback_observed ? json(trace.callback_active_texture)
-                                           : json(nullptr)},
-                  {"callback_bound_texture_id",
-                   trace.callback_observed
-                       ? json(static_cast<uint64_t>(
-                             trace.callback_bound_texture_id))
-                       : json(nullptr)},
-                  {"callback_bound_matches_queued",
-                   trace.callback_observed
-                       ? json(trace.callback_bound_matches_queued)
-                       : json(nullptr)},
-              };
-            };
+            const auto current_trace_resolver =
+                toTraceResolver(zarr_loader, current_row);
+            const auto requested_trace_resolver =
+                toTraceResolver(zarr_loader, requested_row);
+            const auto first_source_bbox =
+                firstTraceBoundingBox(loaded_zarr_boxes);
+            const auto first_display_bbox = firstTraceBoundingBox(zarr_boxes);
+            const auto first_detection_source =
+                toTraceDetectionSource(detection_details);
+            const auto texture_draw =
+                toTraceTextureDraw(scene->cameras[j].texture_draw_trace);
             auto clippedPlaybackStateJson = [&]() -> json {
               json buffer = nullptr;
               if (scene != nullptr && j >= 0 && j < scene->num_cams &&
@@ -5781,7 +5417,8 @@ int main(int argc, char **argv) {
                     {"current_frame_source", current_frame_source},
                     {"read_head", ps.read_head},
                     {"normalized_read_head", normalized_read_head},
-                    {"read_head_frame", nullableInt(read_head_frame)},
+                    {"read_head_frame",
+                     nvidia_trace::nullableInt64(read_head_frame)},
                     {"presented_slot", presented_slot},
                     {"presented_slot_by_frame", presented_slot_by_frame},
                     {"target_slot", target_slot},
@@ -5793,18 +5430,21 @@ int main(int argc, char **argv) {
                     {"newest_frame",
                      valid_slots > 0 ? json(newest_frame) : json(nullptr)},
                     {"newest_contiguous_span_start",
-                     nullableInt(contiguous_span_start)},
+                     nvidia_trace::nullableInt64(contiguous_span_start)},
                     {"newest_contiguous_span_end",
-                     nullableInt(contiguous_span_end)},
+                     nvidia_trace::nullableInt64(contiguous_span_end)},
                     {"front_parent_frame",
-                     nullableInt(camera.last_uploaded_frame)},
+                     nvidia_trace::nullableInt64(camera.last_uploaded_frame)},
                     {"front_local_frame",
-                     nullableInt(camera.last_uploaded_local_frame)},
+                     nvidia_trace::nullableInt64(
+                         camera.last_uploaded_local_frame)},
                     {"staging_valid", camera.playback_staging_valid},
                     {"staging_parent_frame",
-                     nullableInt(camera.playback_staging_frame)},
+                     nvidia_trace::nullableInt64(
+                         camera.playback_staging_frame)},
                     {"staging_local_frame",
-                     nullableInt(camera.playback_staging_local_frame)},
+                     nvidia_trace::nullableInt64(
+                         camera.playback_staging_local_frame)},
                 };
               }
 
@@ -5818,10 +5458,10 @@ int main(int argc, char **argv) {
                   {"slider_just_changed", ps.slider_just_changed},
                   {"buffer_browsed_since_pause", ps.buffer_browsed_since_pause},
                   {"paused_frame_on_toggle",
-                   nullableInt(ps.paused_frame_on_toggle)},
+                   nvidia_trace::nullableInt64(ps.paused_frame_on_toggle)},
                   {"last_resume_path", resumePathName(ps.last_resume_path)},
                   {"last_resume_target_frame",
-                   nullableInt(ps.last_resume_target_frame)},
+                   nvidia_trace::nullableInt64(ps.last_resume_target_frame)},
                   {"accumulated_play_time", ps.accumulated_play_time},
                   {"clock_frame", static_cast<int>(std::ceil(
                                       ps.accumulated_play_time * video_fps))},
@@ -5830,164 +5470,115 @@ int main(int argc, char **argv) {
               };
             };
 
-            const bool parent_matches_resolver =
-                current_row != nullptr &&
-                current_parent_frame_index == current_row->parent_frame_index;
-            const bool bbox_parent_matches_display =
-                zarr_bbox_query_frame == current_parent_frame_index;
-            const bool bbox_local_matches_resolver =
-                current_row != nullptr && bbox_row != nullptr &&
-                bbox_row->clip_local_frame_index ==
-                    current_row->clip_local_frame_index;
-            const bool decoder_local_known =
-                current_row != nullptr && decoder_presented_local_frame >= 0;
-            const bool decoder_local_matches_resolver =
-                decoder_local_known && decoder_presented_local_frame ==
-                                           current_row->clip_local_frame_index;
-            const bool front_before_known =
-                current_row != nullptr && frame_sync_front_valid_before_draw &&
-                frame_sync_front_local_before_draw >= 0;
-            const bool front_after_known =
-                current_row != nullptr && frame_sync_front_valid_after_draw &&
-                frame_sync_front_local_after_draw >= 0;
-            const bool front_texture_matches_resolver_before =
-                front_before_known && frame_sync_front_local_before_draw ==
-                                          current_row->clip_local_frame_index;
-            const bool front_texture_matches_resolver_after =
-                front_after_known && frame_sync_front_local_after_draw ==
-                                         current_row->clip_local_frame_index;
-
-            clipped_frame_trace_stats.frames_traced++;
-            if (!parent_matches_resolver) {
-              clipped_frame_trace_stats.parent_mismatches++;
-            }
-            if (!bbox_parent_matches_display) {
-              clipped_frame_trace_stats.bbox_parent_mismatches++;
-            }
-            if (!bbox_local_matches_resolver) {
-              clipped_frame_trace_stats.bbox_local_mismatches++;
-            }
-            if (decoder_local_known) {
-              const int64_t delta =
-                  static_cast<int64_t>(decoder_presented_local_frame) -
+            nvidia_trace::ClippedFrameComparison comparison;
+            comparison.current_parent_frame = current_parent_frame_index;
+            comparison.bbox_query_parent_frame = zarr_bbox_query_frame;
+            if (current_row != nullptr) {
+              comparison.resolved_parent_frame =
+                  current_row->parent_frame_index;
+              comparison.current_clip_local_frame =
                   current_row->clip_local_frame_index;
-              clipped_frame_trace_stats.decoder_local_delta.add(delta);
-              if (!decoder_local_matches_resolver) {
-                clipped_frame_trace_stats.decoder_local_mismatches++;
-              }
             }
-            clipped_frame_trace_stats.bbox_parent_delta.add(
-                static_cast<int64_t>(zarr_bbox_query_frame) -
-                current_parent_frame_index);
-            if (current_row != nullptr && bbox_row != nullptr) {
-              clipped_frame_trace_stats.bbox_local_delta.add(
-                  bbox_row->clip_local_frame_index -
-                  current_row->clip_local_frame_index);
+            if (bbox_row != nullptr) {
+              comparison.bbox_clip_local_frame =
+                  bbox_row->clip_local_frame_index;
             }
-            if (front_before_known && !front_texture_matches_resolver_before) {
-              clipped_frame_trace_stats.front_texture_before_mismatches++;
+            if (decoder_presented_local_frame >= 0) {
+              comparison.decoder_presented_local_frame =
+                  decoder_presented_local_frame;
             }
-            if (front_after_known && !front_texture_matches_resolver_after) {
-              clipped_frame_trace_stats.front_texture_after_mismatches++;
+            comparison.front_before_valid = frame_sync_front_valid_before_draw;
+            if (frame_sync_front_local_before_draw >= 0) {
+              comparison.front_before_local_frame =
+                  frame_sync_front_local_before_draw;
             }
+            comparison.front_after_valid = frame_sync_front_valid_after_draw;
+            if (frame_sync_front_local_after_draw >= 0) {
+              comparison.front_after_local_frame =
+                  frame_sync_front_local_after_draw;
+            }
+            const auto sanity = nvidia_trace::evaluateClippedFrame(comparison);
+            nvidia_trace::recordClippedFrame(clipped_frame_trace_stats, sanity);
 
             double active_timebase = 0.0;
             if (j < static_cast<int>(demuxers.size()) &&
                 demuxers[j] != nullptr) {
               active_timebase = demuxers[j]->GetTimebase();
             }
+            nvidia_trace::ClippedFrameTraceSnapshot trace_snapshot;
+            trace_snapshot.current_parent_frame_index =
+                current_parent_frame_index;
+            trace_snapshot.requested_parent_frame_index =
+                requested_parent_frame_index;
+            trace_snapshot.playback_running = ps.play_video;
+            trace_snapshot.playback_speed = set_playback_speed;
+            trace_snapshot.playback_state = clippedPlaybackStateJson();
+            trace_snapshot.resolver = current_trace_resolver;
+            trace_snapshot.requested_resolver = requested_trace_resolver;
+            trace_snapshot.active_video_path =
+                clipped_media_state.current_video_path;
+            trace_snapshot.active_clip_id = clipped_media_state.clip_id;
+            if (requested_row != nullptr) {
+              trace_snapshot.requested_decoder_local_frame =
+                  requested_row->clip_local_frame_index;
+            }
+            if (decoder_presented_local_frame >= 0) {
+              trace_snapshot.decoder_presented_local_frame =
+                  decoder_presented_local_frame;
+            }
+            if (frame_sync_front_local_before_draw >= 0) {
+              trace_snapshot.front_texture_local_frame_before_draw =
+                  frame_sync_front_local_before_draw;
+            }
+            if (frame_sync_front_local_after_draw >= 0) {
+              trace_snapshot.front_texture_local_frame_after_draw =
+                  frame_sync_front_local_after_draw;
+            }
+            if (frame_sync_front_frame_before_draw >= 0) {
+              trace_snapshot.front_texture_parent_frame_before_draw =
+                  frame_sync_front_frame_before_draw;
+            }
+            if (frame_sync_front_frame_after_draw >= 0) {
+              trace_snapshot.front_texture_parent_frame_after_draw =
+                  frame_sync_front_frame_after_draw;
+            }
+            if (decoder_presented_pts >= 0) {
+              trace_snapshot.presented_pts = decoder_presented_pts;
+            }
+            if (frame_sync_front_pts_before_draw >= 0) {
+              trace_snapshot.front_texture_pts_before_draw =
+                  frame_sync_front_pts_before_draw;
+            }
+            if (frame_sync_front_pts_after_draw >= 0) {
+              trace_snapshot.front_texture_pts_after_draw =
+                  frame_sync_front_pts_after_draw;
+            }
+            trace_snapshot.timebase = active_timebase;
+            trace_snapshot.decoder_frame_source_code =
+                decoder_frame_source_code;
+            trace_snapshot.surface_swapped_before_draw =
+                playback_surface_swapped_before_draw;
+            trace_snapshot.upload_count =
+                camera_view_presenter_result.perf.upload_count;
+            trace_snapshot.presented_slot = presented_slot;
+            trace_snapshot.latest_decoded_parent_frame = latest_decoded;
+            trace_snapshot.texture_draw = texture_draw;
+            trace_snapshot.bbox_query_parent_frame_index =
+                zarr_bbox_query_frame;
+            if (bbox_row != nullptr) {
+              trace_snapshot.bbox_query_clip_local_frame_index =
+                  bbox_row->clip_local_frame_index;
+            }
+            trace_snapshot.bbox_row_count =
+                static_cast<int64_t>(loaded_zarr_boxes.size());
+            trace_snapshot.first_bbox_source_image = first_source_bbox;
+            trace_snapshot.first_bbox_display = first_display_bbox;
+            trace_snapshot.first_bbox_source = first_detection_source;
+            trace_snapshot.detection_details_frame_id =
+                static_cast<int64_t>(detection_details.frame_id);
+            trace_snapshot.sanity = sanity;
             clipped_frame_trace_log_writer.write(
-                json{{"event", "clipped_frame"},
-                     {"ui_parent_timeline",
-                      {{"current_parent_frame_index",
-                        current_parent_frame_index},
-                       {"requested_parent_frame_index",
-                        requested_parent_frame_index},
-                       {"playback_running", ps.play_video},
-                       {"playback_speed", set_playback_speed}}},
-                     {"playback_state", clippedPlaybackStateJson()},
-                     {"resolver", resolverJson(current_row)},
-                     {"requested_resolver", resolverJson(requested_row)},
-                     {"video",
-                      {{"active_video_path",
-                        clipped_media_state.current_video_path},
-                       {"active_clip_id", clipped_media_state.clip_id},
-                       {"requested_decoder_local_frame",
-                        requested_row != nullptr
-                            ? json(requested_row->clip_local_frame_index)
-                            : json(nullptr)},
-                       {"decoder_presented_local_frame",
-                        nullableInt(decoder_presented_local_frame)},
-                       {"front_texture_local_frame_before_draw",
-                        nullableInt(frame_sync_front_local_before_draw)},
-                       {"front_texture_local_frame_after_draw",
-                        nullableInt(frame_sync_front_local_after_draw)},
-                       {"front_texture_parent_frame_before_draw",
-                        nullableInt(frame_sync_front_frame_before_draw)},
-                       {"front_texture_parent_frame_after_draw",
-                        nullableInt(frame_sync_front_frame_after_draw)},
-                       {"presented_pts", nullableInt(decoder_presented_pts)},
-                       {"front_texture_pts_before_draw",
-                        nullableInt(frame_sync_front_pts_before_draw)},
-                       {"front_texture_pts_after_draw",
-                        nullableInt(frame_sync_front_pts_after_draw)},
-                       {"timebase", active_timebase},
-                       {"decoder_frame_source",
-                        sourceLabel(decoder_frame_source_code)},
-                       {"presentation_source", presentationSource()},
-                       {"presented_slot", presented_slot},
-                       {"latest_decoded_parent_frame", latest_decoded},
-                       {"draw_texture",
-                        textureDrawTraceJson(
-                            scene->cameras[j].texture_draw_trace)}}},
-                     {"bbox",
-                      {{"bbox_query_parent_frame_index", zarr_bbox_query_frame},
-                       {"bbox_query_clip_local_frame_index",
-                        bbox_row != nullptr
-                            ? json(bbox_row->clip_local_frame_index)
-                            : json(nullptr)},
-                       {"bbox_payload_frame_index",
-                        bbox_row != nullptr
-                            ? json(bbox_row->clip_local_frame_index)
-                            : json(nullptr)},
-                       {"bbox_row_count",
-                        static_cast<int>(loaded_zarr_boxes.size())},
-                       {"first_bbox_source_image", bboxJson(loaded_zarr_boxes)},
-                       {"first_bbox_display", bboxJson(zarr_boxes)},
-                       {"first_bbox_source", detectionSourceJson()},
-                       {"detection_details_frame_id",
-                        detection_details.frame_id}}},
-                     {"sanity",
-                      {{"parent_matches_resolver", parent_matches_resolver},
-                       {"bbox_parent_matches_display",
-                        bbox_parent_matches_display},
-                       {"bbox_local_matches_resolver",
-                        bbox_local_matches_resolver},
-                       {"decoder_local_matches_resolver",
-                        decoder_local_known
-                            ? json(decoder_local_matches_resolver)
-                            : json(nullptr)},
-                       {"front_texture_matches_resolver_before_draw",
-                        front_before_known
-                            ? json(front_texture_matches_resolver_before)
-                            : json(nullptr)},
-                       {"front_texture_matches_resolver_after_draw",
-                        front_after_known
-                            ? json(front_texture_matches_resolver_after)
-                            : json(nullptr)}}},
-                     {"deltas",
-                      {{"decoder_presented_local_minus_clip_local",
-                        decoder_local_known
-                            ? json(decoder_presented_local_frame -
-                                   current_row->clip_local_frame_index)
-                            : json(nullptr)},
-                       {"bbox_query_parent_minus_current_parent",
-                        zarr_bbox_query_frame - current_parent_frame_index},
-                       {"bbox_query_local_minus_clip_local",
-                        current_row != nullptr && bbox_row != nullptr
-                            ? json(bbox_row->clip_local_frame_index -
-                                   current_row->clip_local_frame_index)
-                            : json(nullptr)}}}},
+                nvidia_trace::clippedFrameJson(trace_snapshot),
                 /*force_flush=*/false);
 
             if ((clipped_frame_trace_stats.frames_traced % 300) == 0) {
@@ -6927,9 +6518,6 @@ int main(int argc, char **argv) {
         durationMs(std::chrono::steady_clock::now() - gl_draw_start);
     if (clipped_frame_trace_log_writer.enabled() && zarr_loaded &&
         zarr_loader.hasClippedCollection() && scene != nullptr) {
-      auto nullableInt = [](int64_t value) -> json {
-        return value >= 0 ? json(value) : json(nullptr);
-      };
       for (int camera_idx = 0; camera_idx < static_cast<int>(scene->num_cams);
            ++camera_idx) {
         auto &trace = scene->cameras[camera_idx].texture_draw_trace;
@@ -6938,11 +6526,8 @@ int main(int argc, char **argv) {
           continue;
         }
         trace.last_logged_sequence = trace.queue_sequence;
-        if (!trace.callback_observed) {
-          clipped_frame_trace_stats.texture_draw_callback_missing++;
-        } else if (!trace.callback_bound_matches_queued) {
-          clipped_frame_trace_stats.texture_draw_bound_mismatches++;
-        }
+        nvidia_trace::recordTextureDrawOutcome(clipped_frame_trace_stats,
+                                               toTraceTextureDraw(trace));
         clipped_frame_trace_log_writer.write(
             json{
                 {"event", "clipped_texture_draw"},
@@ -6962,14 +6547,18 @@ int main(int argc, char **argv) {
                  trace.queued_texture_id == trace.staging_texture_id},
                 {"front",
                  {{"valid", trace.front_valid},
-                  {"parent_frame", nullableInt(trace.front_parent_frame)},
-                  {"local_frame", nullableInt(trace.front_local_frame)},
-                  {"pts", nullableInt(trace.front_pts)}}},
+                  {"parent_frame",
+                   nvidia_trace::nullableInt64(trace.front_parent_frame)},
+                  {"local_frame",
+                   nvidia_trace::nullableInt64(trace.front_local_frame)},
+                  {"pts", nvidia_trace::nullableInt64(trace.front_pts)}}},
                 {"staging",
                  {{"valid", trace.staging_valid},
-                  {"parent_frame", nullableInt(trace.staging_parent_frame)},
-                  {"local_frame", nullableInt(trace.staging_local_frame)},
-                  {"pts", nullableInt(trace.staging_pts)}}},
+                  {"parent_frame",
+                   nvidia_trace::nullableInt64(trace.staging_parent_frame)},
+                  {"local_frame",
+                   nvidia_trace::nullableInt64(trace.staging_local_frame)},
+                  {"pts", nvidia_trace::nullableInt64(trace.staging_pts)}}},
                 {"callback",
                  {{"observed", trace.callback_observed},
                   {"count", trace.callback_count},
@@ -6991,9 +6580,10 @@ int main(int argc, char **argv) {
             trace.callback_observed && trace.callback_bound_texture_id != 0 &&
             trace.front_parent_frame == clipped_texture_dump.parent_frame) {
           clipped_texture_dump.dumped = true;
-          const GlTextureDumpResult dump_result =
-              dumpGlTextureToPng(trace.callback_bound_texture_id,
-                                 clipped_texture_dump.output_path);
+          const auto dump_result =
+              crimson::platform::nvidia::dumpGlTextureToPng(
+                  trace.callback_bound_texture_id,
+                  clipped_texture_dump.output_path);
 
           json resolver_json = nullptr;
           if (trace.front_parent_frame >= 0) {
@@ -7012,7 +6602,8 @@ int main(int argc, char **argv) {
           }
 
           const std::filesystem::path metadata_path =
-              pathWithExtension(dump_result.raw_path, ".json");
+              crimson::platform::nvidia::pathWithExtension(dump_result.raw_path,
+                                                           ".json");
           json dump_event = {
               {"event", "clipped_texture_dump"},
               {"requested_parent_frame", clipped_texture_dump.parent_frame},
@@ -7037,14 +6628,18 @@ int main(int argc, char **argv) {
               {"bound_matches_queued", trace.callback_bound_matches_queued},
               {"front",
                {{"valid", trace.front_valid},
-                {"parent_frame", nullableInt(trace.front_parent_frame)},
-                {"local_frame", nullableInt(trace.front_local_frame)},
-                {"pts", nullableInt(trace.front_pts)}}},
+                {"parent_frame",
+                 nvidia_trace::nullableInt64(trace.front_parent_frame)},
+                {"local_frame",
+                 nvidia_trace::nullableInt64(trace.front_local_frame)},
+                {"pts", nvidia_trace::nullableInt64(trace.front_pts)}}},
               {"staging",
                {{"valid", trace.staging_valid},
-                {"parent_frame", nullableInt(trace.staging_parent_frame)},
-                {"local_frame", nullableInt(trace.staging_local_frame)},
-                {"pts", nullableInt(trace.staging_pts)}}},
+                {"parent_frame",
+                 nvidia_trace::nullableInt64(trace.staging_parent_frame)},
+                {"local_frame",
+                 nvidia_trace::nullableInt64(trace.staging_local_frame)},
+                {"pts", nvidia_trace::nullableInt64(trace.staging_pts)}}},
               {"resolver", resolver_json},
           };
 
@@ -7098,7 +6693,7 @@ int main(int argc, char **argv) {
       ui_reference.rendered_image_file = ui_reference.ready_file;
       ui_reference.rendered_image_file += ".png";
       glFinish();
-      const GlFramebufferDumpResult image_result = dumpGlBufferToPng(
+      const auto image_result = crimson::platform::nvidia::dumpGlBufferToPng(
           ui_reference.rendered_image_file, display_w, display_h, GL_FRONT);
       if (!image_result.ok) {
         std::cerr << "[UiReference] failed to capture rendered image: "

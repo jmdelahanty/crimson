@@ -197,7 +197,8 @@ portable diagnostics module. The module has profile-specific serializers so
 existing playback, frame-sync, and clipped event field sets do not silently
 grow or drift. `red.cpp` still gathers concrete NVIDIA slot state, decoder
 progress, resolver results, and GPU texture evidence; the dense
-texture-draw and renderer-specific clipped-frame payload remains there.
+texture-draw and renderer-specific clipped-frame payload remained there at
+this checkpoint.
 
 Clipped-media boundary policy is likewise portable. It accepts already
 resolved parent-frame bindings and emits only a load-and-seek command plus
@@ -211,6 +212,28 @@ Headless tests cover JSONL envelope/flush behavior, field-profile stability,
 buffer summaries, and boundary request/load/settlement/failure behavior. This
 is a bounded Phase 3 extraction; it does not change clip-index storage,
 decoder scheduling, rendering, or archive selection.
+
+## 2026-08-05 NVIDIA Playback Diagnostics Adapter Checkpoint
+
+The remaining NVIDIA playback trace rules are now separated from the
+application loop. `nvidia_playback_trace_model` owns frame-sync change gating,
+clipped-frame comparison and mismatch aggregation, source-label policy, and the
+stable JSON payloads for resolver, bounding-box, texture-draw, and clipped-frame
+events. It consumes plain snapshots and has no Zarr, CUDA, OpenGL, ImGui, or
+decoder dependency. Headless tests cover change suppression, unknown-value
+nullability, delta summaries, callback failures, and the established event
+schema.
+
+`red.cpp` remains the NVIDIA composition layer: it resolves concrete Palette
+rows, inspects decoder and ring-buffer state, captures renderer texture IDs,
+and adapts those values into trace snapshots. OpenGL texture and framebuffer
+readback are isolated in `nvidia_gl_diagnostics`; that module is intentionally
+backend-specific because its correctness depends on a current GL context and
+restoring GL bindings and pixel-pack state after readback.
+
+This extraction changes neither playback scheduling nor the JSONL diagnostic
+schema. It reduces `red.cpp` from 7,544 to 7,139 lines across the GL and trace
+diagnostics slice while preserving the existing NVIDIA runtime evidence path.
 
 ## Why This Exists
 
