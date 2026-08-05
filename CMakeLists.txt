@@ -2374,6 +2374,7 @@ file(GLOB CPP_SOURCES CONFIGURE_DEPENDS
 list(APPEND CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_frame_inspect_adapter.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_gl_diagnostics.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_playback_diagnostics_adapter.cpp"
 )
 list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/coordinate_contract.cpp"

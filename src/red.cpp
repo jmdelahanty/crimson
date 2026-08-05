@@ -49,6 +49,7 @@
 #include "perf_logging.h"
 #include "platform/nvidia/nvidia_frame_inspect_adapter.h"
 #include "platform/nvidia/nvidia_gl_diagnostics.h"
+#include "platform/nvidia/nvidia_playback_diagnostics_adapter.h"
 #include "platform/nvidia/nvidia_playback_trace_model.h"
 #include "playback_diagnostics.h"
 #include "playback_session_controller.h"
@@ -158,6 +159,7 @@ using json = nlohmann::json;
 using PlaybackTraceLogWriter =
     crimson::playback::diagnostics::PlaybackTraceJsonlWriter;
 namespace nvidia_trace = crimson::platform::nvidia::trace;
+namespace nvidia_diagnostics = crimson::platform::nvidia::diagnostics;
 
 struct ClippedBoundarySmokeConfig {
   bool enabled = false;
@@ -516,104 +518,6 @@ json stimulusCameraOverlaySceneReferenceJson(
     });
   }
   return result;
-}
-
-nvidia_trace::BoundingBoxSnapshot
-toTraceBoundingBox(const LoggedBoundingBox &box) {
-  return {static_cast<int64_t>(box.payload_frame_id),
-          static_cast<int64_t>(box.payload_camera_id),
-          static_cast<int64_t>(box.box_index_in_payload),
-          box.x_min,
-          box.y_min,
-          box.width,
-          box.height,
-          static_cast<int64_t>(box.class_id),
-          box.confidence};
-}
-
-std::optional<nvidia_trace::BoundingBoxSnapshot>
-firstTraceBoundingBox(const std::vector<LoggedBoundingBox> &boxes) {
-  if (boxes.empty()) {
-    return std::nullopt;
-  }
-  return toTraceBoundingBox(boxes.front());
-}
-
-nvidia_trace::TextureDrawSnapshot
-toTraceTextureDraw(const CameraTextureDrawTrace &trace) {
-  return {trace.enabled,
-          trace.queue_sequence,
-          trace.view_idx,
-          static_cast<uint64_t>(trace.queued_texture_id),
-          static_cast<uint64_t>(trace.front_texture_id),
-          static_cast<uint64_t>(trace.staging_texture_id),
-          static_cast<uint64_t>(trace.front_pbo_id),
-          static_cast<uint64_t>(trace.staging_pbo_id),
-          trace.front_valid,
-          trace.front_parent_frame,
-          trace.front_local_frame,
-          trace.front_pts,
-          trace.staging_valid,
-          trace.staging_parent_frame,
-          trace.staging_local_frame,
-          trace.staging_pts,
-          trace.callback_observed,
-          static_cast<uint64_t>(trace.callback_count),
-          static_cast<uint64_t>(trace.callback_active_texture),
-          static_cast<uint64_t>(trace.callback_bound_texture_id),
-          trace.callback_bound_matches_queued};
-}
-
-std::optional<nvidia_trace::SelectedRunSnapshot>
-toTraceSelectedRun(const PaletteClippedResolver::SelectedRun *selected) {
-  if (selected == nullptr) {
-    return std::nullopt;
-  }
-  return nvidia_trace::SelectedRunSnapshot{
-      selected->work_unit_id,       selected->detect_run,
-      selected->refined_detect_run, selected->detect_group_path,
-      selected->refined_group_path, selected->video_path};
-}
-
-std::optional<nvidia_trace::ResolverSnapshot>
-toTraceResolver(const ZarrDetectionLoader &loader,
-                const PaletteClippedResolver::FrameRunRow *row) {
-  if (row == nullptr) {
-    return std::nullopt;
-  }
-  return nvidia_trace::ResolverSnapshot{
-      row->parent_frame_index,
-      row->recording_frame_id,
-      row->clip_id,
-      static_cast<uint64_t>(row->selected_run_index),
-      row->camera_serial,
-      row->clip_local_frame_index,
-      static_cast<uint64_t>(row->selected_run_index),
-      toTraceSelectedRun(
-          loader.getClippedResolver().selectedRun(row->selected_run_index))};
-}
-
-std::optional<nvidia_trace::DetectionSourceSnapshot>
-toTraceDetectionSource(const ZarrDetectionLoader::FrameDetections &details) {
-  if (details.detection_source.empty() && details.detection_reason.empty()) {
-    return std::nullopt;
-  }
-  const std::optional<int64_t> source_code =
-      details.detection_source.empty()
-          ? std::nullopt
-          : std::optional<int64_t>(details.detection_source.front());
-  const std::optional<std::string> source_kind =
-      details.detection_reason.empty() ||
-              details.detection_reason.front().empty()
-          ? std::nullopt
-          : std::optional<std::string>(details.detection_reason.front());
-  std::string reason_lower = source_kind.value_or("");
-  std::transform(
-      reason_lower.begin(), reason_lower.end(), reason_lower.begin(),
-      [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return nvidia_trace::DetectionSourceSnapshot{source_code, source_kind,
-                                               reason_lower.find("manual") !=
-                                                   std::string::npos};
 }
 
 double durationMs(std::chrono::steady_clock::duration duration) {
@@ -2072,55 +1976,18 @@ int main(int argc, char **argv) {
   auto cameraBufferSnapshot = [&](int visible_idx, int target_frame,
                                   int selected_frame,
                                   bool require_video_loaded = true) {
-    std::optional<crimson::playback::diagnostics::CameraBufferSnapshot>
-        snapshot;
-    if ((require_video_loaded && !video_loaded) || scene == nullptr ||
-        visible_idx < 0 || visible_idx >= scene->num_cams ||
-        scene->size_of_buffer == 0) {
-      return snapshot;
-    }
-    const auto &camera = scene->cameras[visible_idx];
-    crimson::playback::diagnostics::CameraBufferSnapshot value;
-    value.visible_idx = visible_idx;
-    if (visible_idx < static_cast<int>(camera_names.size())) {
-      value.camera_name = camera_names[visible_idx];
-    }
-    value.buffer_size = static_cast<int>(scene->size_of_buffer);
-    value.read_head = ps.read_head;
-    value.target_frame = target_frame;
-    value.selected_frame = selected_frame;
-    value.last_uploaded_frame = camera.last_uploaded_frame;
-    value.last_uploaded_local_frame = camera.last_uploaded_local_frame;
-    value.texture_has_valid_frame = camera.texture_has_valid_frame;
-    value.staging_valid = camera.playback_staging_valid;
-    value.staging_frame = camera.playback_staging_frame;
-    value.staging_local_frame = camera.playback_staging_local_frame;
-    const auto latest =
-        latest_decoded_frame.find(value.camera_name.value_or(std::string{}));
-    value.latest_decoded_frame =
-        latest != latest_decoded_frame.end() ? latest->second.load() : -1;
-    value.slots.reserve(scene->size_of_buffer);
-    for (u32 slot_idx = 0; slot_idx < scene->size_of_buffer; ++slot_idx) {
-      const auto metadata =
-          frameSlotSnapshotReadable(camera.display_buffer[slot_idx]);
-      value.slots.push_back({metadata.has_value(), metadata.has_value()
-                                                       ? metadata->frame_number
-                                                       : -1});
-    }
-    return std::optional<crimson::playback::diagnostics::CameraBufferSnapshot>(
-        std::move(value));
+    return nvidia_diagnostics::makeCameraBufferSnapshot(
+        {video_loaded, require_video_loaded, scene, visible_idx, ps.read_head,
+         target_frame, selected_frame, &camera_names, &latest_decoded_frame});
   };
   auto clippedPlaybackSnapshot = [&]() {
-    crimson::playback::diagnostics::ClippedPlaybackSnapshot snapshot;
-    snapshot.current_frame_num = current_frame_num;
-    snapshot.video_fps = video_fps;
-    snapshot.playback = playbackSnapshot();
-    snapshot.seek = seekProgressSnapshot();
     const int visible_idx = playback_session_controller.getVisibleCameraIndex();
-    snapshot.camera_buffer = cameraBufferSnapshot(
-        visible_idx, ps.to_display_frame_number, ps.to_display_frame_number,
-        /*require_video_loaded=*/false);
-    return snapshot;
+    return nvidia_diagnostics::makeClippedPlaybackSnapshot(
+        current_frame_num, video_fps, playbackSnapshot(),
+        seekProgressSnapshot(),
+        cameraBufferSnapshot(visible_idx, ps.to_display_frame_number,
+                             ps.to_display_frame_number,
+                             /*require_video_loaded=*/false));
   };
   auto clippedPlaybackEventStateJson = [&]() -> json {
     return crimson::playback::diagnostics::clippedPlaybackStateJson(
@@ -2485,6 +2352,33 @@ int main(int argc, char **argv) {
     const auto *row = zarr_loader.resolveClippedFrame(parent_frame);
     return row != nullptr ? row->selected_run_index
                           : std::numeric_limits<size_t>::max();
+  };
+
+  auto clippedResolverTraceSource =
+      [&](const PaletteClippedResolver::FrameRunRow *row)
+      -> std::optional<nvidia_diagnostics::ResolverSourceSnapshot> {
+    if (row == nullptr) {
+      return std::nullopt;
+    }
+    std::optional<nvidia_diagnostics::SelectedRunSourceSnapshot>
+        selected_snapshot;
+    const auto *selected =
+        zarr_loader.getClippedResolver().selectedRun(row->selected_run_index);
+    if (selected != nullptr) {
+      selected_snapshot = nvidia_diagnostics::SelectedRunSourceSnapshot{
+          selected->work_unit_id,       selected->detect_run,
+          selected->refined_detect_run, selected->detect_group_path,
+          selected->refined_group_path, selected->video_path};
+    }
+    return nvidia_diagnostics::ResolverSourceSnapshot{
+        row->parent_frame_index,
+        row->recording_frame_id,
+        row->clip_id,
+        static_cast<uint64_t>(row->selected_run_index),
+        row->camera_serial,
+        row->clip_local_frame_index,
+        static_cast<uint64_t>(row->selected_run_index),
+        std::move(selected_snapshot)};
   };
 
   auto writeClippedFrameTraceSummary = [&](const char *reason) {
@@ -5227,13 +5121,15 @@ int main(int argc, char **argv) {
                   {"playback_surface_swapped_before_draw",
                    playback_surface_swapped_before_draw},
                   {"bbox_query_frame", zarr_bbox_query_frame},
-                  {"bbox", nvidia_trace::boundingBoxSummaryJson(
-                               static_cast<int64_t>(zarr_boxes.size()),
-                               firstTraceBoundingBox(zarr_boxes))},
+                  {"bbox",
+                   nvidia_trace::boundingBoxSummaryJson(
+                       static_cast<int64_t>(zarr_boxes.size()),
+                       nvidia_diagnostics::firstTraceBoundingBox(zarr_boxes))},
                   {"loaded_bbox",
                    nvidia_trace::boundingBoxSummaryJson(
                        static_cast<int64_t>(loaded_zarr_boxes.size()),
-                       firstTraceBoundingBox(loaded_zarr_boxes))},
+                       nvidia_diagnostics::firstTraceBoundingBox(
+                           loaded_zarr_boxes))},
                   {"detection_details_frame_id", nullptr},
                   {"texture_before_draw",
                    nvidia_trace::textureStateJson(
@@ -5332,143 +5228,28 @@ int main(int argc, char **argv) {
             }
 
             const auto current_trace_resolver =
-                toTraceResolver(zarr_loader, current_row);
+                nvidia_diagnostics::toTraceResolver(
+                    clippedResolverTraceSource(current_row));
             const auto requested_trace_resolver =
-                toTraceResolver(zarr_loader, requested_row);
+                nvidia_diagnostics::toTraceResolver(
+                    clippedResolverTraceSource(requested_row));
             const auto first_source_bbox =
-                firstTraceBoundingBox(loaded_zarr_boxes);
-            const auto first_display_bbox = firstTraceBoundingBox(zarr_boxes);
+                nvidia_diagnostics::firstTraceBoundingBox(loaded_zarr_boxes);
+            const auto first_display_bbox =
+                nvidia_diagnostics::firstTraceBoundingBox(zarr_boxes);
             const auto first_detection_source =
-                toTraceDetectionSource(detection_details);
-            const auto texture_draw =
-                toTraceTextureDraw(scene->cameras[j].texture_draw_trace);
-            auto clippedPlaybackStateJson = [&]() -> json {
-              json buffer = nullptr;
-              if (scene != nullptr && j >= 0 && j < scene->num_cams &&
-                  scene->size_of_buffer > 0) {
-                const auto &camera = scene->cameras[j];
-                const int normalized_read_head =
-                    ps.read_head >= 0
-                        ? ps.read_head % static_cast<int>(scene->size_of_buffer)
-                        : -1;
-                int valid_slots = 0;
-                int oldest_frame = std::numeric_limits<int>::max();
-                int newest_frame = -1;
-                int read_head_frame = -1;
-                int target_slot = -1;
-                int presented_slot_by_frame = -1;
-                int front_slot = -1;
-                int contiguous_span_start = -1;
-                int contiguous_span_end = -1;
-                std::vector<int> valid_frames;
-                valid_frames.reserve(scene->size_of_buffer);
-                for (int slot_idx = 0;
-                     slot_idx < static_cast<int>(scene->size_of_buffer);
-                     ++slot_idx) {
-                  const auto &slot = camera.display_buffer[slot_idx];
-                  if (slot.available_to_write || slot.frame_number < 0) {
-                    continue;
-                  }
-                  valid_slots++;
-                  valid_frames.push_back(slot.frame_number);
-                  oldest_frame = std::min(oldest_frame, slot.frame_number);
-                  newest_frame = std::max(newest_frame, slot.frame_number);
-                  if (slot_idx == normalized_read_head) {
-                    read_head_frame = slot.frame_number;
-                  }
-                  if (slot.frame_number == requested_parent_frame_index) {
-                    target_slot = slot_idx;
-                  }
-                  if (slot.frame_number == presented_frame) {
-                    presented_slot_by_frame = slot_idx;
-                  }
-                  if (slot.frame_number == camera.last_uploaded_frame) {
-                    front_slot = slot_idx;
-                  }
-                }
-                if (!valid_frames.empty()) {
-                  std::sort(valid_frames.begin(), valid_frames.end());
-                  contiguous_span_end = valid_frames.back();
-                  contiguous_span_start = contiguous_span_end;
-                  for (int idx = static_cast<int>(valid_frames.size()) - 2;
-                       idx >= 0; --idx) {
-                    if (valid_frames[idx] + 1 == contiguous_span_start) {
-                      contiguous_span_start = valid_frames[idx];
-                      continue;
-                    }
-                    break;
-                  }
-                }
-
-                std::string current_frame_source = "presenter_presented_frame";
-                if (!has_presented_camera_frame) {
-                  current_frame_source = ps.play_video && read_head_frame >= 0
-                                             ? "read_head_slot"
-                                             : "to_display_frame_number";
-                } else if (presented_slot >= 0 &&
-                           presented_slot == normalized_read_head) {
-                  current_frame_source = "presenter_read_head_slot";
-                } else if (presented_slot_by_frame >= 0 &&
-                           presented_slot_by_frame != normalized_read_head) {
-                  current_frame_source = "presenter_exact_frame_search";
-                }
-
-                buffer = {
-                    {"current_frame_source", current_frame_source},
-                    {"read_head", ps.read_head},
-                    {"normalized_read_head", normalized_read_head},
-                    {"read_head_frame",
-                     nvidia_trace::nullableInt64(read_head_frame)},
-                    {"presented_slot", presented_slot},
-                    {"presented_slot_by_frame", presented_slot_by_frame},
-                    {"target_slot", target_slot},
-                    {"front_slot", front_slot},
-                    {"valid_slots", valid_slots},
-                    {"buffer_size", static_cast<int>(scene->size_of_buffer)},
-                    {"oldest_frame",
-                     valid_slots > 0 ? json(oldest_frame) : json(nullptr)},
-                    {"newest_frame",
-                     valid_slots > 0 ? json(newest_frame) : json(nullptr)},
-                    {"newest_contiguous_span_start",
-                     nvidia_trace::nullableInt64(contiguous_span_start)},
-                    {"newest_contiguous_span_end",
-                     nvidia_trace::nullableInt64(contiguous_span_end)},
-                    {"front_parent_frame",
-                     nvidia_trace::nullableInt64(camera.last_uploaded_frame)},
-                    {"front_local_frame",
-                     nvidia_trace::nullableInt64(
-                         camera.last_uploaded_local_frame)},
-                    {"staging_valid", camera.playback_staging_valid},
-                    {"staging_parent_frame",
-                     nvidia_trace::nullableInt64(
-                         camera.playback_staging_frame)},
-                    {"staging_local_frame",
-                     nvidia_trace::nullableInt64(
-                         camera.playback_staging_local_frame)},
-                };
-              }
-
-              return json{
-                  {"play_video", ps.play_video},
-                  {"to_display_frame_number", ps.to_display_frame_number},
-                  {"slider_frame_number", ps.slider_frame_number},
-                  {"pause_selected", ps.pause_selected},
-                  {"pause_seeked", ps.pause_seeked},
-                  {"just_seeked", ps.just_seeked},
-                  {"slider_just_changed", ps.slider_just_changed},
-                  {"buffer_browsed_since_pause", ps.buffer_browsed_since_pause},
-                  {"paused_frame_on_toggle",
-                   nvidia_trace::nullableInt64(ps.paused_frame_on_toggle)},
-                  {"last_resume_path", resumePathName(ps.last_resume_path)},
-                  {"last_resume_target_frame",
-                   nvidia_trace::nullableInt64(ps.last_resume_target_frame)},
-                  {"accumulated_play_time", ps.accumulated_play_time},
-                  {"clock_frame", static_cast<int>(std::ceil(
-                                      ps.accumulated_play_time * video_fps))},
-                  {"clipped_rebase_before_play", clipped_rebase_before_play},
-                  {"buffer", buffer},
-              };
-            };
+                nvidia_diagnostics::toTraceDetectionSource(
+                    detection_details.detection_source,
+                    detection_details.detection_reason);
+            const auto texture_draw = nvidia_diagnostics::toTraceTextureDraw(
+                scene->cameras[j].texture_draw_trace);
+            const auto clipped_playback_state =
+                nvidia_diagnostics::makeClippedFramePlaybackStateJson(
+                    {has_presented_camera_frame, presented_slot, video_fps,
+                     clipped_rebase_before_play, playbackSnapshot(),
+                     cameraBufferSnapshot(j, requested_parent_frame_index,
+                                          presented_frame,
+                                          /*require_video_loaded=*/false)});
 
             nvidia_trace::ClippedFrameComparison comparison;
             comparison.current_parent_frame = current_parent_frame_index;
@@ -5512,7 +5293,7 @@ int main(int argc, char **argv) {
                 requested_parent_frame_index;
             trace_snapshot.playback_running = ps.play_video;
             trace_snapshot.playback_speed = set_playback_speed;
-            trace_snapshot.playback_state = clippedPlaybackStateJson();
+            trace_snapshot.playback_state = clipped_playback_state;
             trace_snapshot.resolver = current_trace_resolver;
             trace_snapshot.requested_resolver = requested_trace_resolver;
             trace_snapshot.active_video_path =
@@ -6526,54 +6307,11 @@ int main(int argc, char **argv) {
           continue;
         }
         trace.last_logged_sequence = trace.queue_sequence;
+        const auto texture_draw = nvidia_diagnostics::toTraceTextureDraw(trace);
         nvidia_trace::recordTextureDrawOutcome(clipped_frame_trace_stats,
-                                               toTraceTextureDraw(trace));
+                                               texture_draw);
         clipped_frame_trace_log_writer.write(
-            json{
-                {"event", "clipped_texture_draw"},
-                {"draw_sequence", trace.queue_sequence},
-                {"view_idx", trace.view_idx},
-                {"queued_texture_id",
-                 static_cast<uint64_t>(trace.queued_texture_id)},
-                {"front_texture_id",
-                 static_cast<uint64_t>(trace.front_texture_id)},
-                {"staging_texture_id",
-                 static_cast<uint64_t>(trace.staging_texture_id)},
-                {"front_pbo_id", static_cast<uint64_t>(trace.front_pbo_id)},
-                {"staging_pbo_id", static_cast<uint64_t>(trace.staging_pbo_id)},
-                {"queued_texture_matches_front",
-                 trace.queued_texture_id == trace.front_texture_id},
-                {"queued_texture_matches_staging",
-                 trace.queued_texture_id == trace.staging_texture_id},
-                {"front",
-                 {{"valid", trace.front_valid},
-                  {"parent_frame",
-                   nvidia_trace::nullableInt64(trace.front_parent_frame)},
-                  {"local_frame",
-                   nvidia_trace::nullableInt64(trace.front_local_frame)},
-                  {"pts", nvidia_trace::nullableInt64(trace.front_pts)}}},
-                {"staging",
-                 {{"valid", trace.staging_valid},
-                  {"parent_frame",
-                   nvidia_trace::nullableInt64(trace.staging_parent_frame)},
-                  {"local_frame",
-                   nvidia_trace::nullableInt64(trace.staging_local_frame)},
-                  {"pts", nvidia_trace::nullableInt64(trace.staging_pts)}}},
-                {"callback",
-                 {{"observed", trace.callback_observed},
-                  {"count", trace.callback_count},
-                  {"active_texture", trace.callback_observed
-                                         ? json(trace.callback_active_texture)
-                                         : json(nullptr)},
-                  {"bound_texture_id",
-                   trace.callback_observed
-                       ? json(static_cast<uint64_t>(
-                             trace.callback_bound_texture_id))
-                       : json(nullptr)},
-                  {"bound_matches_queued",
-                   trace.callback_observed
-                       ? json(trace.callback_bound_matches_queued)
-                       : json(nullptr)}}}},
+            nvidia_trace::clippedTextureDrawEventJson(texture_draw),
             /*force_flush=*/false);
 
         if (clipped_texture_dump.enabled && !clipped_texture_dump.dumped &&
@@ -6585,63 +6323,41 @@ int main(int argc, char **argv) {
                   trace.callback_bound_texture_id,
                   clipped_texture_dump.output_path);
 
-          json resolver_json = nullptr;
+          std::optional<nvidia_trace::ClippedTextureDumpResolverSnapshot>
+              dump_resolver;
           if (trace.front_parent_frame >= 0) {
             const auto *row =
                 zarr_loader.resolveClippedFrame(trace.front_parent_frame);
             if (row != nullptr) {
-              resolver_json = json{
-                  {"resolved_parent_frame_index", row->parent_frame_index},
-                  {"recording_frame_id", row->recording_frame_id},
-                  {"clip_id", row->clip_id},
-                  {"clip_local_frame_index", row->clip_local_frame_index},
-                  {"camera_serial", row->camera_serial},
-                  {"selected_run_index", row->selected_run_index},
-              };
+              dump_resolver = nvidia_trace::ClippedTextureDumpResolverSnapshot{
+                  row->parent_frame_index,
+                  row->recording_frame_id,
+                  row->clip_id,
+                  row->clip_local_frame_index,
+                  row->camera_serial,
+                  static_cast<uint64_t>(row->selected_run_index)};
             }
           }
 
           const std::filesystem::path metadata_path =
               crimson::platform::nvidia::pathWithExtension(dump_result.raw_path,
                                                            ".json");
-          json dump_event = {
-              {"event", "clipped_texture_dump"},
-              {"requested_parent_frame", clipped_texture_dump.parent_frame},
-              {"ok", dump_result.ok},
-              {"error", dump_result.error.empty() ? json(nullptr)
-                                                  : json(dump_result.error)},
-              {"raw_path", dump_result.raw_path.string()},
-              {"flip_y_path", dump_result.flip_y_path.string()},
-              {"metadata_path", metadata_path.string()},
-              {"width", dump_result.width},
-              {"height", dump_result.height},
-              {"draw_sequence", trace.queue_sequence},
-              {"view_idx", trace.view_idx},
-              {"bound_texture_id",
-               static_cast<uint64_t>(trace.callback_bound_texture_id)},
-              {"queued_texture_id",
-               static_cast<uint64_t>(trace.queued_texture_id)},
-              {"front_texture_id",
-               static_cast<uint64_t>(trace.front_texture_id)},
-              {"staging_texture_id",
-               static_cast<uint64_t>(trace.staging_texture_id)},
-              {"bound_matches_queued", trace.callback_bound_matches_queued},
-              {"front",
-               {{"valid", trace.front_valid},
-                {"parent_frame",
-                 nvidia_trace::nullableInt64(trace.front_parent_frame)},
-                {"local_frame",
-                 nvidia_trace::nullableInt64(trace.front_local_frame)},
-                {"pts", nvidia_trace::nullableInt64(trace.front_pts)}}},
-              {"staging",
-               {{"valid", trace.staging_valid},
-                {"parent_frame",
-                 nvidia_trace::nullableInt64(trace.staging_parent_frame)},
-                {"local_frame",
-                 nvidia_trace::nullableInt64(trace.staging_local_frame)},
-                {"pts", nvidia_trace::nullableInt64(trace.staging_pts)}}},
-              {"resolver", resolver_json},
-          };
+          nvidia_trace::ClippedTextureDumpSnapshot dump_snapshot;
+          dump_snapshot.requested_parent_frame =
+              clipped_texture_dump.parent_frame;
+          dump_snapshot.ok = dump_result.ok;
+          if (!dump_result.error.empty()) {
+            dump_snapshot.error = dump_result.error;
+          }
+          dump_snapshot.raw_path = dump_result.raw_path.string();
+          dump_snapshot.flip_y_path = dump_result.flip_y_path.string();
+          dump_snapshot.metadata_path = metadata_path.string();
+          dump_snapshot.width = dump_result.width;
+          dump_snapshot.height = dump_result.height;
+          dump_snapshot.texture_draw = texture_draw;
+          dump_snapshot.resolver = std::move(dump_resolver);
+          json dump_event =
+              nvidia_trace::clippedTextureDumpEventJson(dump_snapshot);
 
           std::error_code metadata_ec;
           if (metadata_path.has_parent_path()) {

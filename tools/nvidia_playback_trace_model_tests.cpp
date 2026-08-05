@@ -188,6 +188,58 @@ void testTextureDrawSchema() {
   require(json.at("callback_active_texture").is_null() &&
               json.at("front").at("parent_frame").is_null(),
           "unobserved callback and unknown front frame remain null");
+
+  const auto standalone =
+      crimson::platform::nvidia::trace::clippedTextureDrawEventJson(trace);
+  require(standalone.at("event") == "clipped_texture_draw" &&
+              standalone.at("callback").at("observed") == false,
+          "standalone texture event preserves its nested callback schema");
+  require(standalone.at("callback").at("active_texture").is_null() &&
+              !standalone.contains("callback_active_texture"),
+          "standalone callback nullability stays distinct from embedded trace");
+}
+
+void testTextureDumpSchema() {
+  crimson::platform::nvidia::trace::ClippedTextureDumpSnapshot dump;
+  dump.requested_parent_frame = 120;
+  dump.ok = true;
+  dump.raw_path = "/tmp/front.raw";
+  dump.flip_y_path = "/tmp/front_flip_y.png";
+  dump.metadata_path = "/tmp/front.raw.json";
+  dump.width = 512;
+  dump.height = 512;
+  dump.texture_draw.enabled = true;
+  dump.texture_draw.draw_sequence = 9;
+  dump.texture_draw.view_idx = 2;
+  dump.texture_draw.callback_bound_texture_id = 44;
+  dump.texture_draw.queued_texture_id = 44;
+  dump.texture_draw.front_texture_id = 44;
+  dump.texture_draw.staging_texture_id = 45;
+  dump.texture_draw.callback_bound_matches_queued = true;
+  dump.texture_draw.front_valid = true;
+  dump.texture_draw.front_parent_frame = 120;
+  dump.resolver = {120, 991, "clip-3", 7, "2010093", 3};
+
+  auto event =
+      crimson::platform::nvidia::trace::clippedTextureDumpEventJson(dump);
+  require(event.at("event") == "clipped_texture_dump" &&
+              event.at("error").is_null() &&
+              !event.contains("metadata_write_error"),
+          "successful dump preserves null error and no write-error field");
+  require(event.at("resolver").at("clip_local_frame_index") == 7 &&
+              !event.at("resolver").contains("selected_run"),
+          "dump resolver keeps its deliberately narrower schema");
+  require(event.at("front").at("parent_frame") == 120 &&
+              event.at("staging").at("parent_frame").is_null(),
+          "dump front and staging frame nullability is preserved");
+
+  dump.ok = false;
+  dump.error = "texture readback failed";
+  dump.metadata_write_error = "permission denied";
+  event = crimson::platform::nvidia::trace::clippedTextureDumpEventJson(dump);
+  require(event.at("error") == "texture readback failed" &&
+              event.at("metadata_write_error") == "permission denied",
+          "failure metadata is added only when supplied by the call site");
 }
 
 void testFrameSyncHelpers() {
@@ -216,6 +268,7 @@ int main() {
   testUnknownComparisonStaysNull();
   testExactClippedFrameSchema();
   testTextureDrawSchema();
+  testTextureDumpSchema();
   testFrameSyncHelpers();
   std::cout << "nvidia_playback_trace_model_tests: PASS\n";
   return 0;

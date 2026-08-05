@@ -279,6 +279,97 @@ Json textureDrawJson(const TextureDrawSnapshot &snapshot) {
   };
 }
 
+Json clippedTextureDrawEventJson(const TextureDrawSnapshot &snapshot) {
+  if (!snapshot.enabled || snapshot.draw_sequence == 0) {
+    return nullptr;
+  }
+  return {
+      {"event", "clipped_texture_draw"},
+      {"draw_sequence", snapshot.draw_sequence},
+      {"view_idx", snapshot.view_idx},
+      {"queued_texture_id", snapshot.queued_texture_id},
+      {"front_texture_id", snapshot.front_texture_id},
+      {"staging_texture_id", snapshot.staging_texture_id},
+      {"front_pbo_id", snapshot.front_pbo_id},
+      {"staging_pbo_id", snapshot.staging_pbo_id},
+      {"queued_texture_matches_front",
+       snapshot.queued_texture_id == snapshot.front_texture_id},
+      {"queued_texture_matches_staging",
+       snapshot.queued_texture_id == snapshot.staging_texture_id},
+      {"front",
+       {{"valid", snapshot.front_valid},
+        {"parent_frame", nullableInt64(snapshot.front_parent_frame)},
+        {"local_frame", nullableInt64(snapshot.front_local_frame)},
+        {"pts", nullableInt64(snapshot.front_pts)}}},
+      {"staging",
+       {{"valid", snapshot.staging_valid},
+        {"parent_frame", nullableInt64(snapshot.staging_parent_frame)},
+        {"local_frame", nullableInt64(snapshot.staging_local_frame)},
+        {"pts", nullableInt64(snapshot.staging_pts)}}},
+      {"callback",
+       {{"observed", snapshot.callback_observed},
+        {"count", snapshot.callback_count},
+        {"active_texture", snapshot.callback_observed
+                               ? Json(snapshot.callback_active_texture)
+                               : Json(nullptr)},
+        {"bound_texture_id", snapshot.callback_observed
+                                 ? Json(snapshot.callback_bound_texture_id)
+                                 : Json(nullptr)},
+        {"bound_matches_queued",
+         snapshot.callback_observed
+             ? Json(snapshot.callback_bound_matches_queued)
+             : Json(nullptr)}}},
+  };
+}
+
+Json clippedTextureDumpEventJson(const ClippedTextureDumpSnapshot &snapshot) {
+  const auto &trace = snapshot.texture_draw;
+  Json resolver = nullptr;
+  if (snapshot.resolver) {
+    resolver = {
+        {"resolved_parent_frame_index",
+         snapshot.resolver->resolved_parent_frame_index},
+        {"recording_frame_id", snapshot.resolver->recording_frame_id},
+        {"clip_id", snapshot.resolver->clip_id},
+        {"clip_local_frame_index", snapshot.resolver->clip_local_frame_index},
+        {"camera_serial", snapshot.resolver->camera_serial},
+        {"selected_run_index", snapshot.resolver->selected_run_index}};
+  }
+  Json result = {
+      {"event", "clipped_texture_dump"},
+      {"requested_parent_frame", snapshot.requested_parent_frame},
+      {"ok", snapshot.ok},
+      {"error", snapshot.error ? Json(*snapshot.error) : Json(nullptr)},
+      {"raw_path", snapshot.raw_path},
+      {"flip_y_path", snapshot.flip_y_path},
+      {"metadata_path", snapshot.metadata_path},
+      {"width", snapshot.width},
+      {"height", snapshot.height},
+      {"draw_sequence", trace.draw_sequence},
+      {"view_idx", trace.view_idx},
+      {"bound_texture_id", trace.callback_bound_texture_id},
+      {"queued_texture_id", trace.queued_texture_id},
+      {"front_texture_id", trace.front_texture_id},
+      {"staging_texture_id", trace.staging_texture_id},
+      {"bound_matches_queued", trace.callback_bound_matches_queued},
+      {"front",
+       {{"valid", trace.front_valid},
+        {"parent_frame", nullableInt64(trace.front_parent_frame)},
+        {"local_frame", nullableInt64(trace.front_local_frame)},
+        {"pts", nullableInt64(trace.front_pts)}}},
+      {"staging",
+       {{"valid", trace.staging_valid},
+        {"parent_frame", nullableInt64(trace.staging_parent_frame)},
+        {"local_frame", nullableInt64(trace.staging_local_frame)},
+        {"pts", nullableInt64(trace.staging_pts)}}},
+      {"resolver", resolver},
+  };
+  if (snapshot.metadata_write_error) {
+    result["metadata_write_error"] = *snapshot.metadata_write_error;
+  }
+  return result;
+}
+
 const char *decoderFrameSourceLabel(int source_code) {
   switch (source_code) {
   case 1:

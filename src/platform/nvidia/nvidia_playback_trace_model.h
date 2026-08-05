@@ -176,6 +176,37 @@ Json detectionSourceJson(
     const std::optional<DetectionSourceSnapshot> &snapshot);
 Json textureDrawJson(const TextureDrawSnapshot &snapshot);
 
+// The standalone post-draw event deliberately differs from textureDrawJson:
+// its callback fields are nested below `callback` for historical consumers.
+Json clippedTextureDrawEventJson(const TextureDrawSnapshot &snapshot);
+
+struct ClippedTextureDumpResolverSnapshot {
+  int64_t resolved_parent_frame_index = -1;
+  int64_t recording_frame_id = -1;
+  std::string clip_id;
+  int64_t clip_local_frame_index = -1;
+  std::string camera_serial;
+  uint64_t selected_run_index = 0;
+};
+
+struct ClippedTextureDumpSnapshot {
+  int64_t requested_parent_frame = -1;
+  bool ok = false;
+  std::optional<std::string> error;
+  std::string raw_path;
+  std::string flip_y_path;
+  std::string metadata_path;
+  int64_t width = 0;
+  int64_t height = 0;
+  TextureDrawSnapshot texture_draw;
+  std::optional<ClippedTextureDumpResolverSnapshot> resolver;
+  // This is absent on the initial on-disk metadata payload and only added
+  // when the call-site metadata write itself fails.
+  std::optional<std::string> metadata_write_error;
+};
+
+Json clippedTextureDumpEventJson(const ClippedTextureDumpSnapshot &snapshot);
+
 // Presentation-source naming is part of the on-disk trace schema.
 const char *decoderFrameSourceLabel(int source_code);
 const char *presentationSourceLabel(bool surface_swapped_before_draw,

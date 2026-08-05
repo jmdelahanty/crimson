@@ -231,9 +231,18 @@ readback are isolated in `nvidia_gl_diagnostics`; that module is intentionally
 backend-specific because its correctness depends on a current GL context and
 restoring GL bindings and pixel-pack state after readback.
 
-This extraction changes neither playback scheduling nor the JSONL diagnostic
-schema. It reduces `red.cpp` from 7,544 to 7,139 lines across the GL and trace
-diagnostics slice while preserving the existing NVIDIA runtime evidence path.
+A follow-up adapter now owns the concrete bounding-box and texture conversions,
+camera ring-buffer snapshot gathering, and the detailed clipped-playback buffer
+summary. Resolver rows are converted to plain values at the composition edge;
+the adapter does not acquire a new direct dependency on `zarr_loader.h`.
+Standalone clipped texture-draw and texture-dump event schemas also moved into
+the pure trace model. The render loop retains the timing-sensitive pre/post-draw
+capture, GL readback call, media/resolver lookup, and log-writer invocation.
+
+These extractions change neither playback scheduling nor the JSONL diagnostic
+schema. The first checkpoint reduced `red.cpp` from 7,544 to 7,139 lines; the
+follow-up reduces it to 6,855 lines, a cumulative 689-line reduction while
+preserving the existing NVIDIA runtime evidence path.
 
 ## Why This Exists
 
