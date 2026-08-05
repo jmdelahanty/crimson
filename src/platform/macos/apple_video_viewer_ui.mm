@@ -12,8 +12,10 @@
 #include "gui/frame_inspect_window.h"
 #include "gui/keypoint_overlay_inspect_adapter.h"
 #include "gui/read_only_eye_geometry_controls_adapter.h"
+#include "gui/read_only_subject_mask_controls_adapter.h"
 #include "gui/read_only_subject_shape_controls_adapter.h"
 #include "gui/subject_mask_overlay_inspect_adapter.h"
+#include "gui/subject_mask_overlay_controls.h"
 #include "gui/subject_shape_overlay_controls.h"
 #include "gui/subject_shape_overlay_inspect_adapter.h"
 #include "imgui.h"
@@ -2225,41 +2227,22 @@ void drawAppleFrameInspectWindow(
          drawAvailableCheckbox("Show masks", &controls->show_subject_masks,
                                availability.subject_masks);
 
-         const bool mode_available =
-             availability.subject_masks || availability.eye_geometry;
-         if (!mode_available) {
-           ImGui::BeginDisabled();
-         }
-         int mode = static_cast<int>(controls->mask_mode);
-         const char *mode_labels[] = {"Realtime", "Review", "Debug"};
-         ImGui::SetNextItemWidth(150.0f);
-         if (ImGui::Combo("Mode", &mode, mode_labels, 3)) {
-           controls->mask_mode =
-               static_cast<crimson::overlay::ReadOnlyMaskOverlayMode>(mode);
-         }
-         showItemTooltip(
-             "Realtime draws fills only; Review and Debug add contours "
-             "and eye geometry");
-         if (!mode_available) {
-           ImGui::EndDisabled();
-         }
-
+         auto subject_mask_controls =
+             crimson::gui::makeReadOnlySubjectMaskOverlayControlState(
+                 *controls);
          const bool mask_components_enabled =
              availability.subject_masks && controls->show_subject_masks;
-         drawAvailableCheckbox("Subject body",
-                               &controls->show_subject_body_mask,
-                               mask_components_enabled);
-         ImGui::SameLine();
-         drawAvailableCheckbox("Swim bladder",
-                               &controls->show_swim_bladder_mask,
-                               mask_components_enabled);
          const bool eye_components_available =
              availability.subject_masks || availability.eye_geometry;
-         drawAvailableCheckbox("Left eye", &controls->show_eye_left_mask,
-                               eye_components_available);
-         ImGui::SameLine();
-         drawAvailableCheckbox("Right eye", &controls->show_eye_right_mask,
-                               eye_components_available);
+         crimson::gui::drawSubjectMaskOverlayControls(
+             subject_mask_controls,
+             {true, eye_components_available, true,
+              mask_components_enabled, mask_components_enabled,
+              eye_components_available, eye_components_available},
+             {"Realtime draws fills only; Review and Debug add contours and "
+              "eye geometry."});
+         crimson::gui::applyReadOnlySubjectMaskOverlayControlState(
+             subject_mask_controls, controls);
          ImGui::SeparatorText("Subject shape");
          auto subject_shape_controls =
              crimson::gui::makeReadOnlySubjectShapeOverlayControlState(

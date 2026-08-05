@@ -10,9 +10,11 @@
 #include "gui/frame_inspect_window.h"
 #include "gui/keypoint_overlay_inspect_adapter.h"
 #include "gui/read_only_eye_geometry_controls_adapter.h"
+#include "gui/read_only_subject_mask_controls_adapter.h"
 #include "gui/read_only_subject_shape_controls_adapter.h"
 #include "gui/session_loading_modal.h"
 #include "gui/subject_mask_overlay_inspect_adapter.h"
+#include "gui/subject_mask_overlay_controls.h"
 #include "gui/subject_shape_overlay_controls.h"
 #include "gui/subject_shape_overlay_inspect_adapter.h"
 #include "imgui.h"
@@ -949,6 +951,124 @@ bool testSubjectShapeOverlayControlsSnapshot() {
   return true;
 }
 
+bool testReadOnlySubjectMaskControlAdapter() {
+  crimson::overlay::ReadOnlyOverlayControlState source;
+  source.show_subject_masks = false;
+  source.mask_mode = crimson::overlay::ReadOnlyMaskOverlayMode::Realtime;
+  source.show_subject_body_mask = false;
+  source.show_swim_bladder_mask = true;
+  source.show_eye_left_mask = false;
+  source.show_eye_right_mask = true;
+
+  auto shared =
+      crimson::gui::makeReadOnlySubjectMaskOverlayControlState(source);
+  CHECK(shared.mode == crimson::overlay::ReadOnlyMaskOverlayMode::Realtime);
+  CHECK(!shared.show_subject_body);
+  CHECK(shared.show_swim_bladder);
+  CHECK(!shared.show_left_eye);
+  CHECK(shared.show_right_eye);
+
+  shared.mode = crimson::overlay::ReadOnlyMaskOverlayMode::Debug;
+  shared.show_subject_body = true;
+  shared.show_swim_bladder = false;
+  shared.show_left_eye = true;
+  shared.show_right_eye = false;
+  crimson::gui::applyReadOnlySubjectMaskOverlayControlState(shared, &source);
+  CHECK(!source.show_subject_masks);
+  CHECK(source.mask_mode == crimson::overlay::ReadOnlyMaskOverlayMode::Debug);
+  CHECK(source.show_subject_body_mask);
+  CHECK(!source.show_swim_bladder_mask);
+  CHECK(source.show_eye_left_mask);
+  CHECK(!source.show_eye_right_mask);
+  crimson::gui::applyReadOnlySubjectMaskOverlayControlState(shared, nullptr);
+  return true;
+}
+
+bool testSubjectMaskOverlayControlsSnapshot() {
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO &io = ImGui::GetIO();
+  io.DisplaySize = ImVec2(900.0f, 700.0f);
+  io.DeltaTime = 1.0f / 60.0f;
+  unsigned char *pixels = nullptr;
+  int width = 0;
+  int height = 0;
+  io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+
+  crimson::gui::SubjectMaskOverlayControlState strict_state;
+  crimson::gui::SubjectMaskOverlayControlState camera_view_state;
+  crimson::gui::SubjectMaskOverlayControlState hidden_state;
+  const crimson::gui::SubjectMaskOverlayControlCapabilities strict_capabilities{
+      true, true, true, false, false, true, true};
+  const crimson::gui::SubjectMaskOverlayControlCapabilities
+      camera_view_capabilities{true, true, true, true, true, true, true};
+  const crimson::gui::SubjectMaskOverlayControlCapabilities hidden_capabilities;
+
+  const auto draw_windows = [&]() {
+    ImGui::Begin("Strict mask controls");
+    crimson::gui::drawSubjectMaskOverlayControls(
+        strict_state, strict_capabilities,
+        {"Realtime draws fills only."});
+    ImGui::End();
+    ImGui::Begin("Camera-view mask controls");
+    crimson::gui::drawSubjectMaskOverlayControls(
+        camera_view_state, camera_view_capabilities,
+        {"Realtime draws fills and the selected contour only."});
+    ImGui::End();
+    ImGui::Begin("Hidden mask controls");
+    crimson::gui::drawSubjectMaskOverlayControls(hidden_state,
+                                                 hidden_capabilities);
+    ImGui::End();
+  };
+
+  ImGui::NewFrame();
+  draw_windows();
+  ImGui::Render();
+
+  crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(), true);
+  crimson::ui::beginSemanticFrame(ImGui::GetCurrentContext());
+  ImGui::NewFrame();
+  ImGui::Begin("Strict mask controls");
+  const auto strict_result = crimson::gui::drawSubjectMaskOverlayControls(
+      strict_state, strict_capabilities, {"Realtime draws fills only."});
+  ImGui::End();
+  ImGui::Begin("Camera-view mask controls");
+  const auto camera_view_result = crimson::gui::drawSubjectMaskOverlayControls(
+      camera_view_state, camera_view_capabilities,
+      {"Realtime draws fills and the selected contour only."});
+  ImGui::End();
+  ImGui::Begin("Hidden mask controls");
+  const auto hidden_result = crimson::gui::drawSubjectMaskOverlayControls(
+      hidden_state, hidden_capabilities);
+  ImGui::End();
+  ImGui::Render();
+  const auto snapshot =
+      crimson::ui::finishSemanticFrame(ImGui::GetCurrentContext());
+
+  bool strict_has_components = false;
+  bool camera_view_has_components = false;
+  bool hidden_has_controls = false;
+  for (const auto &item : snapshot.items) {
+    if (item.window_name == "Strict mask controls") {
+      strict_has_components |= item.visible_label == "Subject body";
+    } else if (item.window_name == "Camera-view mask controls") {
+      camera_view_has_components |= item.visible_label == "Subject body";
+    } else if (item.window_name == "Hidden mask controls") {
+      hidden_has_controls |= item.visible_label == "Subject body";
+    }
+  }
+  CHECK(strict_has_components);
+  CHECK(camera_view_has_components);
+  CHECK(!hidden_has_controls);
+  CHECK(!strict_result.changed);
+  CHECK(!camera_view_result.changed);
+  CHECK(!hidden_result.changed);
+
+  crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(), false);
+  ImGui::DestroyContext();
+  return true;
+}
+
 bool testReadOnlyEyeGeometryControlAdapter() {
   crimson::overlay::ReadOnlyOverlayControlState source;
   source.show_eye_geometry = false;
@@ -1212,6 +1332,8 @@ int main() {
       !testSubjectShapeInspectModuleSnapshot() ||
       !testReadOnlySubjectShapeControlAdapter() ||
       !testSubjectShapeOverlayControlsSnapshot() ||
+      !testReadOnlySubjectMaskControlAdapter() ||
+      !testSubjectMaskOverlayControlsSnapshot() ||
       !testReadOnlyEyeGeometryControlAdapter() ||
       !testEyeGeometryOverlayControlsSnapshot() ||
       !testEyeGeometryOverlayInspectAdapter() ||

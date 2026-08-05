@@ -1,7 +1,9 @@
 #include "gui/overlay_debug_panel.h"
 
+#include "gui/camera_view_subject_mask_controls_adapter.h"
 #include "gui/camera_view_subject_shape_controls_adapter.h"
 #include "gui/eye_geometry_overlay_controls.h"
+#include "gui/subject_mask_overlay_controls.h"
 #include "gui/subject_shape_overlay_controls.h"
 
 #include "imgui.h"
@@ -173,31 +175,19 @@ void drawEyeMaskSection(const FrameDebugWindowContext& context,
         result.show_eye_left_mask = context.show_eye_left_mask;
         result.show_eye_right_mask = context.show_eye_right_mask;
         result.show_swim_bladder_mask = context.show_swim_bladder_mask;
-
-        const CameraViewMaskOverlayMode modes[] = {
-            CameraViewMaskOverlayMode::Realtime,
-            CameraViewMaskOverlayMode::Review,
-            CameraViewMaskOverlayMode::Debug,
-        };
-        if (ImGui::BeginCombo("Mode##subject_mask_overlay_mode",
-                              cameraViewMaskOverlayModeLabel(
-                                  result.mask_overlay_mode))) {
-            for (CameraViewMaskOverlayMode mode : modes) {
-                const bool selected = mode == result.mask_overlay_mode;
-                if (ImGui::Selectable(cameraViewMaskOverlayModeLabel(mode),
-                                      selected)) {
-                    result.mask_overlay_mode = mode;
-                }
-                if (selected) {
-                    ImGui::SetItemDefaultFocus();
-                }
-            }
-            ImGui::EndCombo();
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip(
-                "Realtime draws fills and the selected contour only; Review/Debug draw contours and eye geometry.");
-        }
+        CameraViewMaskOverlayOptions mask_options;
+        mask_options.show_subject_body = context.show_subject_body_mask;
+        mask_options.show_eye_left = context.show_eye_left_mask;
+        mask_options.show_eye_right = context.show_eye_right_mask;
+        mask_options.show_swim_bladder = context.show_swim_bladder_mask;
+        mask_options.mode = context.mask_overlay_mode;
+        auto subject_mask_controls =
+            makeCameraViewSubjectMaskOverlayControlState(mask_options);
+        crimson::gui::drawSubjectMaskOverlayControls(
+            subject_mask_controls,
+            {true, true, false, false, false, false, false},
+            {"Realtime draws fills and the selected contour only; "
+             "Review/Debug draw contours and eye geometry."});
 
         const auto& labels = context.zarr_loader.getEyeMaskChannelLabels();
         const auto& channels = context.zarr_loader.getEyeMaskChannelIndices();
@@ -244,12 +234,16 @@ void drawEyeMaskSection(const FrameDebugWindowContext& context,
             ImGui::TextDisabled("  %s", optional_overlay_status.c_str());
         }
 
-        ImGui::Checkbox("Subject body", &result.show_subject_body_mask);
-        ImGui::SameLine();
-        ImGui::Checkbox("Swim bladder", &result.show_swim_bladder_mask);
-        ImGui::Checkbox("Left eye", &result.show_eye_left_mask);
-        ImGui::SameLine();
-        ImGui::Checkbox("Right eye", &result.show_eye_right_mask);
+        crimson::gui::drawSubjectMaskOverlayControls(
+            subject_mask_controls,
+            {false, false, true, true, true, true, true});
+        applyCameraViewSubjectMaskOverlayControlState(subject_mask_controls,
+                                                      &mask_options);
+        result.mask_overlay_mode = mask_options.mode;
+        result.show_subject_body_mask = mask_options.show_subject_body;
+        result.show_swim_bladder_mask = mask_options.show_swim_bladder;
+        result.show_eye_left_mask = mask_options.show_eye_left;
+        result.show_eye_right_mask = mask_options.show_eye_right;
     }
     crimson::gui::EyeGeometryOverlayControlState eye_geometry_controls;
     eye_geometry_controls.show_direction_beams =

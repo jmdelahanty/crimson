@@ -153,6 +153,14 @@ while Linux/Windows retains its direct detail toggles. The strict Metal adapter
 only translates control state; mask modes, repositories, scene construction,
 and platform renderers remain independently owned.
 
+Subject Mask mode and component controls are now shared as a separate narrow
+module. It reuses the existing backend-neutral Realtime/Review/Debug mode and
+owns visibility controls for the body, swim bladder, and both eyes. Capability
+inputs preserve macOS availability gating and Linux/Windows refined-mask
+behavior, including their distinct Realtime tooltip semantics. Platform master
+toggles, legacy eye-mask fallback, metadata, contour diagnostics, editing/QC,
+repositories, scene construction, and renderers remain independently owned.
+
 ## Why This Exists
 
 `crimson` has already done useful mechanical splits, but the core architecture
