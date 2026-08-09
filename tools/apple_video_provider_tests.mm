@@ -1,3 +1,4 @@
+#include "platform/macos/apple_playback_presentation_adapter.h"
 #include "platform/macos/apple_video_frame_provider.h"
 #include "platform/macos/apple_video_playback_buffer.h"
 
@@ -290,6 +291,48 @@ void testBoundedPlaybackBuffer(const std::string &path) {
   playback.close();
 }
 
+void testPlaybackPresentationAdapter(const std::string &path) {
+  AppleVideoPlaybackBuffer playback;
+  std::string error;
+  CHECK(playback.open(path, "fixture-presentation", 4, &error));
+  CHECK(playback.waitForFrame(0, std::chrono::seconds(5)));
+
+  auto paused = updateApplePlaybackPresentation(
+      playback, {0, false, 10.0, false, std::nullopt});
+  CHECK(!paused.plan.active);
+  CHECK(paused.present_selected);
+  CHECK(paused.selected_frame.has_value());
+  CHECK(paused.selected_frame->metadata.frame_number == 0);
+
+  CHECK(playback.waitForFrame(2, std::chrono::seconds(5)));
+  auto playing = updateApplePlaybackPresentation(
+      playback, {2, true, 10.0, false, int64_t{0}});
+  CHECK(playing.plan.active);
+  CHECK(playing.present_selected);
+  CHECK(playing.commit.committed);
+  CHECK(!playing.commit.observed_slot);
+  CHECK(playing.commit.release_policy ==
+        crimson::playback::PlaybackPresentationReleasePolicy::None);
+  CHECK(playing.selected_frame.has_value());
+  CHECK(playing.selected_frame->metadata.frame_number == 2);
+
+  CHECK(playback.requestSeek(6, &error));
+  CHECK(playback.waitForFrame(6, std::chrono::seconds(5)));
+  auto discontinuous = updateApplePlaybackPresentation(
+      playback, {6, false, 10.0, true, int64_t{2}});
+  CHECK(!discontinuous.plan.active);
+  CHECK(discontinuous.plan.discontinuity);
+  CHECK(discontinuous.present_selected);
+  CHECK(discontinuous.selected_frame.has_value());
+  CHECK(discontinuous.selected_frame->metadata.frame_number == 6);
+
+  std::shared_ptr<const FrameSurface> retained =
+      discontinuous.selected_frame->surface;
+  playback.close();
+  CHECK(retained != nullptr);
+  CHECK(retained->nativeHandle() != 0);
+}
+
 void testClipIndexedPlaybackBuffer() {
   using json = nlohmann::json;
   const auto root = makeFixtureDirectory();
@@ -492,6 +535,7 @@ int main(int argc, char **argv) {
       CHECK(writeFixtureWithRetry(fixture, &error));
       testExactSeekStepAndLifetime(fixture);
       testBoundedPlaybackBuffer(fixture);
+      testPlaybackPresentationAdapter(fixture);
       testClipIndexedPlaybackBuffer();
       if ((argc == 3 || argc == 5) && std::string(argv[1]) == "--asset") {
         std::string golden_path = CRIMSON_SOURCE_DIR

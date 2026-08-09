@@ -3060,6 +3060,7 @@ if(CRIMSON_BUILD_MACOS_APP)
     )
 
     add_library(crimson_apple_video STATIC
+        src/platform/macos/apple_playback_presentation_adapter.cpp
         src/platform/macos/apple_video_frame_provider.mm
         src/platform/macos/apple_video_playback_buffer.cpp
         src/platform/macos/apple_video_metal_renderer.mm
@@ -3074,6 +3075,7 @@ if(CRIMSON_BUILD_MACOS_APP)
     target_link_libraries(crimson_apple_video PUBLIC
         crimson_frame_contracts
         crimson_recording_contracts
+        crimson_runtime_contracts
         ${AVFOUNDATION_FRAMEWORK}
         ${COREMEDIA_FRAMEWORK}
         ${COREVIDEO_FRAMEWORK}

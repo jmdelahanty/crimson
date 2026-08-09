@@ -2,6 +2,7 @@
 
 #include "frame_selection.h"
 
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -62,6 +63,94 @@ struct PlaybackPresentationCommit {
 
 PlaybackPresentationCommit
 planPlaybackPresentationCommit(const PlaybackPresentationCommitInput &input);
+
+// Portable adapter contract for renderers that either can or cannot identify
+// the decoded-buffer slot responsible for a displayed frame. It consumes only
+// portable frame/slot metadata; platform code remains responsible for mapping
+// a selection request to a renderer resource and for releasing that resource.
+enum class PlaybackPresentationSelectionMode {
+  HoldCommittedFrame,
+  Exact,
+  LatestAtOrBefore,
+};
+
+struct PlaybackPresentationSelectionRequest {
+  PlaybackPresentationSelectionMode mode =
+      PlaybackPresentationSelectionMode::HoldCommittedFrame;
+  int64_t target_frame = -1;
+  int64_t minimum_frame_exclusive = -1;
+  int preferred_slot = -1;
+};
+
+struct PlaybackPresentationCandidate {
+  int64_t frame_number = -1;
+  std::optional<int> slot;
+};
+
+struct PlaybackPresentationAdapterPlanInput {
+  bool just_seeked = false;
+  bool decoding_active = false;
+  bool playing = false;
+  int buffer_size = 0;
+  int64_t previous_committed_frame = -1;
+  int preferred_slot = -1;
+  int64_t requested_frame = -1;
+  std::optional<int64_t> minimum_decoded_frame;
+  std::vector<PlaybackPresentationCandidate> buffered_frames;
+};
+
+struct PlaybackPresentationAdapterPlan {
+  bool active = false;
+  bool discontinuity = false;
+  int64_t requested_frame = -1;
+  int64_t bounded_target_frame = -1;
+  int64_t minimum_decoded_frame = -1;
+  int64_t frame = -1;
+  std::optional<int> slot;
+  bool clamped_to_buffer = false;
+  PlaybackPresentationSelectionRequest selection;
+};
+
+PlaybackPresentationAdapterPlan planPlaybackPresentationAdapter(
+    const PlaybackPresentationAdapterPlanInput &input);
+
+struct PlaybackPresentationObservation {
+  int64_t presented_frame = -1;
+  std::optional<int> slot;
+};
+
+enum class PlaybackPresentationReleasePolicy {
+  None,
+  DeferUntilPresentation,
+  ReleaseHistoryBeforeCommittedFrame,
+};
+
+struct PlaybackPresentationAdapterCommitInput {
+  bool just_seeked = false;
+  bool decoding_active = false;
+  bool playing = false;
+  bool release_history_explicitly = false;
+  int buffer_size = 0;
+  int64_t previous_committed_frame = -1;
+  int64_t presenter_target_frame = -1;
+  PlaybackPresentationObservation observation;
+};
+
+struct PlaybackPresentationAdapterCommit {
+  bool eligible = false;
+  bool discontinuity = false;
+  bool observed_slot = false;
+  bool committed = false;
+  int64_t previous_committed_frame = -1;
+  int64_t frame = -1;
+  int slot = -1;
+  PlaybackPresentationReleasePolicy release_policy =
+      PlaybackPresentationReleasePolicy::None;
+  int64_t release_before_frame = -1;
+};
+
+PlaybackPresentationAdapterCommit planPlaybackPresentationAdapterCommit(
+    const PlaybackPresentationAdapterCommitInput &input);
 
 struct PlaybackHistoryReleaseCandidate {
   int camera_index = -1;

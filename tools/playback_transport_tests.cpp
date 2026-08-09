@@ -355,6 +355,114 @@ bool testPresentationCommitRequiresCurrentSlotAndDefersRelease() {
   return true;
 }
 
+bool testPortablePresentationAdapterContract() {
+  using namespace crimson::playback;
+  PlaybackPresentationAdapterPlanInput plan_input;
+  plan_input.decoding_active = true;
+  plan_input.playing = true;
+  plan_input.buffer_size = 4;
+  plan_input.previous_committed_frame = 10000000000LL;
+  plan_input.preferred_slot = 2;
+  plan_input.requested_frame = 10000000020LL;
+  plan_input.minimum_decoded_frame = 10000000018LL;
+  plan_input.buffered_frames = {
+      {10000000001LL, 0}, {10000000018LL, std::nullopt}, {10000000015LL, 1}};
+
+  auto plan = planPlaybackPresentationAdapter(plan_input);
+  CHECK(plan.active);
+  CHECK(!plan.discontinuity);
+  CHECK(plan.frame == 10000000018LL);
+  CHECK(!plan.slot.has_value());
+  CHECK(plan.selection.mode == PlaybackPresentationSelectionMode::Exact);
+  CHECK(plan.selection.target_frame == 10000000018LL);
+  CHECK(plan.minimum_decoded_frame == 10000000018LL);
+  CHECK(plan.selection.preferred_slot == 2);
+
+  // Multiple exact NVIDIA candidates still choose the preferred slot without
+  // requiring the backend to select the same frame a second time.
+  plan_input.buffered_frames = {{10000000018LL, 1}, {10000000018LL, 2}};
+  plan = planPlaybackPresentationAdapter(plan_input);
+  CHECK(plan.frame == 10000000018LL);
+  CHECK(plan.slot == 2);
+  CHECK(plan.selection.mode == PlaybackPresentationSelectionMode::Exact);
+
+  plan_input.buffered_frames = {{10000000001LL, 0},
+                                {10000000012LL, 3},
+                                {10000000015LL, 1},
+                                {10000000021LL, 2}};
+  plan = planPlaybackPresentationAdapter(plan_input);
+  CHECK(plan.frame == 10000000015LL);
+  CHECK(plan.slot == 1);
+  CHECK(plan.clamped_to_buffer);
+  CHECK(plan.selection.mode ==
+        PlaybackPresentationSelectionMode::LatestAtOrBefore);
+  CHECK(plan.selection.minimum_frame_exclusive == 10000000000LL);
+
+  plan_input.buffered_frames = {{9999999999LL, 0}, {10000000021LL, 2}};
+  plan = planPlaybackPresentationAdapter(plan_input);
+  CHECK(plan.frame == 10000000000LL);
+  CHECK(!plan.slot.has_value());
+  CHECK(plan.selection.mode ==
+        PlaybackPresentationSelectionMode::HoldCommittedFrame);
+
+  plan_input.playing = false;
+  plan = planPlaybackPresentationAdapter(plan_input);
+  CHECK(!plan.active);
+  plan_input.playing = true;
+  plan_input.just_seeked = true;
+  plan = planPlaybackPresentationAdapter(plan_input);
+  CHECK(!plan.active);
+  CHECK(plan.discontinuity);
+
+  PlaybackPresentationAdapterCommitInput commit_input;
+  commit_input.decoding_active = true;
+  commit_input.playing = true;
+  commit_input.buffer_size = 4;
+  commit_input.previous_committed_frame = 10000000000LL;
+  commit_input.presenter_target_frame = 10000000010LL;
+  commit_input.observation.presented_frame = 10000000010LL;
+
+  auto commit = planPlaybackPresentationAdapterCommit(commit_input);
+  CHECK(commit.eligible);
+  CHECK(!commit.observed_slot);
+  CHECK(commit.committed);
+  CHECK(commit.frame == 10000000010LL);
+  CHECK(commit.slot == -1);
+  CHECK(commit.release_policy == PlaybackPresentationReleasePolicy::None);
+  CHECK(commit.release_before_frame == -1);
+
+  commit_input.release_history_explicitly = true;
+  commit_input.observation.presented_frame = 10000000011LL;
+  commit_input.observation.slot = 3;
+  commit = planPlaybackPresentationAdapterCommit(commit_input);
+  CHECK(commit.committed);
+  CHECK(commit.observed_slot);
+  CHECK(commit.slot == 3);
+  CHECK(commit.release_policy ==
+        PlaybackPresentationReleasePolicy::ReleaseHistoryBeforeCommittedFrame);
+  CHECK(commit.release_before_frame == 10000000011LL);
+
+  commit_input.observation.presented_frame = 9999999999LL;
+  commit_input.observation.slot.reset();
+  commit = planPlaybackPresentationAdapterCommit(commit_input);
+  CHECK(!commit.committed);
+  CHECK(commit.release_policy ==
+        PlaybackPresentationReleasePolicy::DeferUntilPresentation);
+
+  commit_input.release_history_explicitly = false;
+  commit = planPlaybackPresentationAdapterCommit(commit_input);
+  CHECK(!commit.committed);
+  CHECK(commit.release_policy == PlaybackPresentationReleasePolicy::None);
+
+  commit_input.just_seeked = true;
+  commit_input.observation.presented_frame = 10000000010LL;
+  commit = planPlaybackPresentationAdapterCommit(commit_input);
+  CHECK(!commit.eligible);
+  CHECK(commit.discontinuity);
+  CHECK(commit.release_policy == PlaybackPresentationReleasePolicy::None);
+  return true;
+}
+
 bool testHistoryReleaseSelectionAcrossCameras() {
   using crimson::playback::PlaybackHistoryReleaseCandidate;
   const std::vector<PlaybackHistoryReleaseCandidate> candidates{
@@ -385,6 +493,7 @@ int main() {
       !testPresentationTargetUsesDecodeBoundAndReadableSlots() ||
       !testPresentationTargetFallsBackOrHoldsCommittedFrame() ||
       !testPresentationCommitRequiresCurrentSlotAndDefersRelease() ||
+      !testPortablePresentationAdapterContract() ||
       !testHistoryReleaseSelectionAcrossCameras()) {
     return EXIT_FAILURE;
   }

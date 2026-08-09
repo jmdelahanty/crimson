@@ -244,6 +244,34 @@ schema. The first checkpoint reduced `red.cpp` from 7,544 to 7,139 lines; the
 follow-up reduces it to 6,855 lines, a cumulative 689-line reduction while
 preserving the existing NVIDIA runtime evidence path.
 
+## 2026-08-05 Shared Playback Presentation Adapter Checkpoint
+
+Buffered playback target selection and presentation commit policy now use one
+backend-neutral adapter contract. The contract consumes portable frame
+candidates with optional platform slot identities, uses 64-bit frame numbers,
+and emits exact, latest-at-or-before, or hold decisions. Commit policy treats a
+committable presentation independently from slot identity, so a retained Apple
+decode surface can advance presentation without pretending it belongs to an
+NVIDIA ring slot.
+
+The NVIDIA session controller supplies concrete ring-slot identities and keeps
+snapshot reads, leases, playback-state mutation, and compare-frame history
+release. The macOS adapter supplies slotless decoded frames and keeps
+AVFoundation deque eviction and retained pixel-buffer ownership. Metal,
+OpenGL, CUDA, FFmpeg, decoder scheduling, composite stimulus/crop alignment,
+and renderer ownership remain in their platform layers.
+
+Headless tests cover 64-bit targets, preferred exact slots, buffered fallback,
+paused/discontinuous gating, slotless and slotted commits, non-regression, and
+explicit-release policy. This completes the roadmap note that macOS should
+adopt the same portable target/commit lifecycle without imposing NVIDIA buffer
+semantics on the Apple backend.
+
+The policy contract is 64-bit, but both current platform transport boundaries
+remain legacy `int` surfaces: Apple decoded-frame metadata and the NVIDIA
+session-controller API narrow frame numbers before entering or leaving the
+adapter. End-to-end 64-bit playback remains a separate transport migration.
+
 ## Why This Exists
 
 `crimson` has already done useful mechanical splits, but the core architecture

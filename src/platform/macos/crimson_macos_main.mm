@@ -4,6 +4,7 @@
 #include "apple_analysis_repository_loader.h"
 #include "apple_metal_presentation_texture.h"
 #include "apple_overlay_metal_renderer.h"
+#include "apple_playback_presentation_adapter.h"
 #include "apple_stimulus_playback_session.h"
 #include "apple_video_frame_provider.h"
 #include "apple_video_metal_renderer.h"
@@ -4673,45 +4674,33 @@ int main(int argc, char **argv) {
         }
         pending_crop_discontinuity =
             pending_crop_discontinuity || pending_camera_discontinuity;
-        video_playback.setPlaybackState(viewer_stats.requested_frame,
-                                        video_clock.isPlaying(),
-                                        video_clock.effectiveFramesPerSecond());
         if (composite_enabled && pending_camera_discontinuity) {
           pending_video_frame.reset();
           candidate_stimulus_frame.reset();
           stimulus_candidate_ready = false;
         }
-        auto selected = video_playback.frameForTarget(
-            viewer_stats.requested_frame, !video_clock.isPlaying());
-        const auto selected_camera_frame =
-            selected ? std::optional<int64_t>(selected->metadata.frame_number)
-                     : std::nullopt;
         const auto visible_camera_frame =
             current_video_frame
                 ? std::optional<int64_t>(
                       current_video_frame->metadata.frame_number)
                 : std::nullopt;
-        const auto camera_presentation_decision =
-            crimson::playback::resolveFramePresentation(
-                {viewer_stats.requested_frame, selected_camera_frame,
-                 visible_camera_frame,
-                 video_clock.isPlaying()
-                     ? crimson::playback::MissingFramePolicy::HoldVisible
-                     : crimson::playback::MissingFramePolicy::ClearVisible,
-                 pending_camera_discontinuity});
+        auto apple_presentation = updateApplePlaybackPresentation(
+            video_playback,
+            {viewer_stats.requested_frame, video_clock.isPlaying(),
+             video_clock.effectiveFramesPerSecond(),
+             pending_camera_discontinuity, visible_camera_frame});
+        auto &selected = apple_presentation.selected_frame;
+        const auto &camera_presentation_decision = apple_presentation.decision;
+        const bool present_selected = apple_presentation.present_selected;
         if (!composite_enabled) {
-          if (camera_presentation_decision.action ==
-                  crimson::playback::FramePresentationAction::Present &&
-              selected) {
+          if (present_selected) {
             current_video_frame = std::move(selected);
           } else if (camera_presentation_decision.action ==
                      crimson::playback::FramePresentationAction::Clear) {
             current_video_frame.reset();
           }
         } else if (!stimulus_enabled) {
-          if (camera_presentation_decision.action ==
-                  crimson::playback::FramePresentationAction::Present &&
-              selected &&
+          if (present_selected &&
               (!pending_video_frame || pending_camera_discontinuity)) {
             pending_video_frame = std::move(selected);
           }
@@ -4720,9 +4709,7 @@ int main(int argc, char **argv) {
           stimulus_candidate_ready = pending_video_frame.has_value();
           pending_camera_discontinuity = false;
         } else if (!stimulus_failed) {
-          if (camera_presentation_decision.action ==
-                  crimson::playback::FramePresentationAction::Present &&
-              selected &&
+          if (present_selected &&
               (!pending_video_frame || pending_camera_discontinuity)) {
             pending_video_frame = std::move(selected);
           }
@@ -4795,9 +4782,7 @@ int main(int argc, char **argv) {
             stimulus_presentation.resetVisibleFrame();
           }
         } else {
-          if (camera_presentation_decision.action ==
-                  crimson::playback::FramePresentationAction::Present &&
-              selected &&
+          if (present_selected &&
               (!pending_video_frame || pending_camera_discontinuity)) {
             pending_video_frame = std::move(selected);
           }
@@ -4962,7 +4947,9 @@ int main(int argc, char **argv) {
           }
           const int64_t previous_presented_frame =
               viewer_stats.last_presented_frame;
-          if (viewer_stats.presented_frame != previous_presented_frame) {
+          if (viewer_stats.presented_frame != previous_presented_frame &&
+              (!apple_presentation.plan.active ||
+               apple_presentation.commit.committed)) {
             viewer_presentation_discontinuity = false;
           }
           const auto &metadata = current_video_frame->metadata;

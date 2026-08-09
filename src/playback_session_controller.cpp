@@ -11,6 +11,15 @@
 
 extern std::mutex g_seek_info_mutex;
 
+namespace {
+
+int legacyPlaybackFrame(int64_t frame) {
+  return static_cast<int>(std::clamp<int64_t>(
+      frame, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()));
+}
+
+} // namespace
+
 double playbackPreviewScaleFactor(int playback_preview_scale_mode) {
   switch (playback_preview_scale_mode) {
   case 1:
@@ -79,12 +88,27 @@ int PlaybackSessionController::getVisibleCameraIndex() const {
 crimson::playback::PlaybackPresentationTarget
 PlaybackSessionController::planPresentationTarget(
     int requested_frame, std::optional<int> minimum_decoded_frame) const {
-  crimson::playback::PlaybackPresentationTargetInput input;
+  crimson::playback::PlaybackPresentationAdapterPlanInput input;
+  input.previous_committed_frame = 0;
   input.requested_frame = requested_frame;
   input.minimum_decoded_frame = minimum_decoded_frame;
+  const auto makeTarget = [&](const auto &adapter) {
+    crimson::playback::PlaybackPresentationTarget result{
+        adapter.active,
+        requested_frame,
+        legacyPlaybackFrame(adapter.bounded_target_frame),
+        legacyPlaybackFrame(adapter.minimum_decoded_frame),
+        legacyPlaybackFrame(adapter.frame),
+        adapter.slot.value_or(-1),
+        adapter.clamped_to_buffer ||
+            adapter.bounded_target_frame != adapter.frame};
+    return result;
+  };
   if (context_.playback_state == nullptr || context_.scene == nullptr ||
       context_.decoder_context == nullptr) {
-    return crimson::playback::planPlaybackPresentationTarget(input);
+    const auto adapter =
+        crimson::playback::planPlaybackPresentationAdapter(input);
+    return makeTarget(adapter);
   }
 
   input.just_seeked = context_.playback_state->just_seeked;
@@ -99,7 +123,9 @@ PlaybackSessionController::planPresentationTarget(
           : -1;
   if (input.just_seeked || !input.decoding_active || !input.playing ||
       input.buffer_size <= 0) {
-    return crimson::playback::planPlaybackPresentationTarget(input);
+    const auto adapter =
+        crimson::playback::planPlaybackPresentationAdapter(input);
+    return makeTarget(adapter);
   }
   int visible_idx = getVisibleCameraIndex();
   if (visible_idx < 0 || visible_idx >= context_.scene->num_cams) {
@@ -112,42 +138,61 @@ PlaybackSessionController::planPresentationTarget(
          ++slot_idx) {
       if (auto metadata = frameSlotSnapshotReadable(
               context_.scene->cameras[visible_idx].display_buffer[slot_idx])) {
-        input.buffered_frames.push_back({slot_idx, std::move(*metadata)});
+        input.buffered_frames.push_back({metadata->frame_number, slot_idx});
       }
     }
   }
-  return crimson::playback::planPlaybackPresentationTarget(input);
+  const auto adapter =
+      crimson::playback::planPlaybackPresentationAdapter(input);
+  return makeTarget(adapter);
 }
 
 crimson::playback::PlaybackPresentationCommit
 PlaybackSessionController::commitPresentedFrame(int presenter_target_frame,
                                                 int presented_frame,
                                                 int presented_slot) const {
-  crimson::playback::PlaybackPresentationCommitInput input;
+  crimson::playback::PlaybackPresentationAdapterCommitInput input;
   input.presenter_target_frame = presenter_target_frame;
-  input.presented_frame = presented_frame;
-  input.presented_slot = presented_slot;
+  input.release_history_explicitly = true;
   if (context_.playback_state == nullptr || context_.scene == nullptr ||
       context_.decoder_context == nullptr) {
-    return crimson::playback::planPlaybackPresentationCommit(input);
+    const auto adapter =
+        crimson::playback::planPlaybackPresentationAdapterCommit(input);
+    return {adapter.eligible,
+            adapter.observed_slot,
+            adapter.committed && adapter.observed_slot,
+            legacyPlaybackFrame(adapter.previous_committed_frame),
+            legacyPlaybackFrame(adapter.frame),
+            adapter.slot,
+            adapter.release_policy ==
+                crimson::playback::PlaybackPresentationReleasePolicy::
+                    DeferUntilPresentation};
   }
 
+  input.just_seeked = context_.playback_state->just_seeked;
   input.decoding_active = context_.decoder_context->decoding_flag;
   input.playing = context_.playback_state->play_video;
   input.buffer_size = static_cast<int>(context_.scene->size_of_buffer);
   input.previous_committed_frame =
       context_.playback_state->to_display_frame_number;
-  crimson::playback::PlaybackPresentationCommit result =
-      crimson::playback::planPlaybackPresentationCommit(input);
+  if (presented_slot >= 0 && presented_frame >= 0) {
+    input.observation.presented_frame = presented_frame;
+    input.observation.slot = presented_slot;
+  }
+  const auto adapter =
+      crimson::playback::planPlaybackPresentationAdapterCommit(input);
+  crimson::playback::PlaybackPresentationCommit result{
+      adapter.eligible,
+      adapter.observed_slot,
+      adapter.committed && adapter.observed_slot,
+      legacyPlaybackFrame(adapter.previous_committed_frame),
+      legacyPlaybackFrame(adapter.frame),
+      adapter.slot,
+      adapter.release_policy ==
+          crimson::playback::PlaybackPresentationReleasePolicy::
+              DeferUntilPresentation};
   if (!result.committed) {
     return result;
-  }
-
-  if (result.slot < 0 && input.buffer_size > 0) {
-    const int visible_idx = getVisibleCameraIndex();
-    result.slot = findDisplaySlotForFrame(visible_idx, result.frame,
-                                          context_.playback_state->read_head %
-                                              input.buffer_size);
   }
   context_.playback_state->to_display_frame_number = result.frame;
   context_.playback_state->slider_frame_number = result.frame;
