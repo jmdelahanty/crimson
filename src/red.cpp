@@ -50,6 +50,7 @@
 #include "perf_logging.h"
 #include "platform/nvidia/nvidia_clipped_media_coordinator.h"
 #include "platform/nvidia/nvidia_diagnostics_session.h"
+#include "platform/nvidia/nvidia_detection_presentation_adapter.h"
 #include "platform/nvidia/nvidia_frame_buffer_adapter.h"
 #include "platform/nvidia/nvidia_frame_inspect_adapter.h"
 #include "platform/nvidia/nvidia_gl_diagnostics.h"
@@ -73,6 +74,7 @@
 #include "workspace_state.h"
 #include "yolo_detection.h"
 #include "zarr/chaser_distance_polar_legacy_repository.h"
+#include "zarr/legacy_detection_repository.h"
 #include "zarr/stimulus_context_timeline_legacy_repository.h"
 #include "zarr_loader.h"
 #include "zarr_persisted_crop_provider.h"
@@ -134,23 +136,24 @@ std::mutex g_decoder_perf_mutex;
 
 // Global variables
 bool show_interpolation_debug = false;
-std::vector<ZarrDetectionLoader::DetectionDataset> detection_dataset_ids;
+std::vector<crimson::zarr::DetectionDataset> detection_dataset_ids;
 std::vector<std::string> detection_dataset_labels;
 int detection_dataset_choice = 0;
 ZarrBBoxEditState g_zarr_bbox_edit_state;
 
 #include "review_frame_state.h"
 
-void refreshDetectionDatasetOptions(ZarrDetectionLoader &loader) {
+void refreshDetectionDatasetOptions(
+    crimson::zarr::DetectionRepository &repository) {
   detection_dataset_ids.clear();
   detection_dataset_labels.clear();
   detection_dataset_choice = 0;
-  auto options = loader.getAvailableDetectionDatasets();
-  auto active = loader.getActiveDetectionDataset();
+  const auto options = repository.availableDatasets();
+  const auto active = repository.descriptor().active_dataset;
   for (size_t i = 0; i < options.size(); ++i) {
-    detection_dataset_ids.push_back(options[i].first);
-    detection_dataset_labels.push_back(options[i].second);
-    if (options[i].first == active) {
+    detection_dataset_ids.push_back(options[i].dataset);
+    detection_dataset_labels.push_back(options[i].label);
+    if (options[i].dataset == active) {
       detection_dataset_choice = static_cast<int>(i);
     }
   }
@@ -329,6 +332,7 @@ int main(int argc, char **argv) {
 
   // Zarr loading
   ZarrDetectionLoader zarr_loader;
+  crimson::zarr::LegacyDetectionRepository detection_repository(zarr_loader);
   auto analysis_data_scheduler =
       std::make_shared<crimson::data::DataAccessScheduler>(64, 4, 1, 1);
   zarr_loader.setDataAccessScheduler(analysis_data_scheduler);
@@ -618,7 +622,7 @@ int main(int argc, char **argv) {
 
   media_session_loader.bootstrapFromCli(
       cli_zarr_override_path, cli_recording_path, cli_recording_clip_index_path,
-      [&]() { refreshDetectionDatasetOptions(zarr_loader); },
+      [&]() { refreshDetectionDatasetOptions(detection_repository); },
       [&]() { g_zarr_bbox_edit_state.clearAll(); });
   if (session_lifecycle.snapshot().phase !=
       crimson::session::SessionPhase::Empty) {
@@ -1318,7 +1322,7 @@ int main(int argc, char **argv) {
       if (ui_reference.state == UiReferenceState::CropPreview) {
         if (!(zarr_loader.hasCropImages() || zarr_loader.hasKeypointData() ||
               zarr_loader.hasEyeMasks()) ||
-            !zarr_loader.hasDetectionData()) {
+            !detection_repository.descriptor().available) {
           std::cerr << "[UiReference] crop-preview requires detection "
                        "and crop/keypoint/mask data"
                     << std::endl;
@@ -1640,9 +1644,10 @@ int main(int argc, char **argv) {
   };
   auto reloadActiveZarrPreserveDataset =
       [&](std::string &reload_error,
-          std::optional<ZarrDetectionLoader::DetectionDataset>
+          std::optional<crimson::zarr::DetectionDataset>
               preferred_dataset = std::nullopt) -> bool {
-    const auto previous_dataset = zarr_loader.getActiveDetectionDataset();
+    const auto previous_dataset =
+        detection_repository.descriptor().active_dataset;
     const std::string archive_path = zarr_loader.getArchivePath();
     if (archive_path.empty()) {
       reload_error = "No loaded Zarr archive.";
@@ -1658,10 +1663,10 @@ int main(int argc, char **argv) {
     zarr_loaded = true;
     const auto dataset_to_restore =
         preferred_dataset.value_or(previous_dataset);
-    if (zarr_loader.isDatasetAvailable(dataset_to_restore)) {
-      (void)zarr_loader.setActiveDetectionDataset(dataset_to_restore);
+    if (detection_repository.isDatasetAvailable(dataset_to_restore)) {
+      (void)detection_repository.selectDataset(dataset_to_restore);
     }
-    refreshDetectionDatasetOptions(zarr_loader);
+    refreshDetectionDatasetOptions(detection_repository);
     invalidateReviewFrameCache(review_frame_cache);
     review_frame_status.clear();
     if (zarr_loader.getTotalFrames() > 0 &&
@@ -2207,27 +2212,31 @@ int main(int argc, char **argv) {
           g_zarr_bbox_edit_state.isFrameDirty(current_frame_num);
       bool dataset_has_synthetic_boxes = false;
       bool dataset_allows_bbox_edit = false;
+      crimson::zarr::DetectionRepositoryDescriptor detection_descriptor;
+      crimson::zarr::DetectionFrame detection_frame;
+      const crimson::zarr::DetectionFrame *detection_frame_ptr = nullptr;
       ZarrDetectionLoader::FrameDetections detection_details;
       const ZarrDetectionLoader::FrameDetections *detection_details_ptr =
           nullptr;
       if (zarr_loaded) {
+        detection_descriptor = detection_repository.descriptor();
         dataset_has_synthetic_boxes =
-            zarr_loader.activeDatasetHasSyntheticDetections();
-        if (zarr_loader.hasInterpolation()) {
+            detection_descriptor.active_dataset_has_synthetic_observations;
+        if (detection_descriptor.interpolation_available) {
           frame_is_interpolated =
-              zarr_loader.isFrameInterpolated(current_frame_num);
+              detection_repository.isFrameInterpolated(current_frame_num);
         }
+        detection_frame = detection_repository.resolveFrame(
+            static_cast<size_t>(current_frame_num), false);
+        detection_frame_ptr = detection_frame.ready() ? &detection_frame
+                                                       : nullptr;
         std::vector<LoggedBoundingBox> loaded_zarr_boxes =
-            zarr_loader.getBoundingBoxesForFrame(current_frame_num);
+            crimson::platform::nvidia::makeLegacyBoundingBoxes(
+                detection_descriptor, detection_frame);
         zarr_boxes = g_zarr_bbox_edit_state.resolveFrameBoxes(
             current_frame_num, loaded_zarr_boxes);
-        const bool active_dataset_is_raw_detect =
-            zarr_loader.hasDetectionData() &&
-            (zarr_loader.getActiveDetectionDataset() ==
-             ZarrDetectionLoader::DetectionDataset::RawDetect);
-        dataset_allows_bbox_edit = zarr_loader.hasDetectionData() &&
-                                   !active_dataset_is_raw_detect &&
-                                   !zarr_loader.hasClippedCollection();
+        dataset_allows_bbox_edit =
+            detection_descriptor.activeDatasetAllowsBboxEditing();
         if (!dataset_allows_bbox_edit) {
           g_zarr_bbox_edit_state.draw_mode = false;
           g_zarr_bbox_edit_state.cancelDraw();
@@ -2253,8 +2262,8 @@ int main(int argc, char **argv) {
              frame_debug_window_state.active_view ==
                  crimson::workspace::FrameInspectView::EyeMasks);
         const bool need_details =
-            zarr_loader.hasScores() || zarr_loader.hasHeadingData() ||
-            zarr_loader.hasKeypointData() || include_eye_masks_in_details ||
+            zarr_loader.hasHeadingData() || zarr_loader.hasKeypointData() ||
+            include_eye_masks_in_details ||
             include_subject_shapes_in_details || dataset_has_synthetic_boxes;
         if (need_details) {
           const bool allow_blocking_eye_mask_load = !ps.play_video;
@@ -2289,6 +2298,8 @@ int main(int argc, char **argv) {
           frame_sync_debug_line,
           zarr_loaded,
           zarr_loader,
+          detection_descriptor,
+          detection_frame_ptr,
           chaser_distance_polar_repository != nullptr
               ? &chaser_distance_polar_repository->descriptor()
               : nullptr,
@@ -2390,6 +2401,7 @@ int main(int argc, char **argv) {
           crimson::nvidia::FrameInspectNavigationContext{
               zarr_loaded,
               zarr_loader,
+              detection_repository,
               current_frame_num,
               detection_dataset_ids,
               detection_dataset_choice,
@@ -2402,7 +2414,7 @@ int main(int argc, char **argv) {
                 playback_session_controller.seekToFrame(
                     frame, prefer_buffer_when_paused);
               },
-              [&]() { refreshDetectionDatasetOptions(zarr_loader); },
+              [&]() { refreshDetectionDatasetOptions(detection_repository); },
           };
       const auto frame_inspect_navigation_result =
           crimson::nvidia::applyFrameInspectNavigation(
@@ -2471,8 +2483,8 @@ int main(int argc, char **argv) {
                 manual_payload_preview->error;
           } else {
             std::string source_variant = "interpolated";
-            if (zarr_loader.getActiveDetectionDataset() ==
-                ZarrDetectionLoader::DetectionDataset::RefinedFiltered) {
+            if (detection_repository.descriptor().active_dataset ==
+                crimson::zarr::DetectionDataset::RefinedFiltered) {
               source_variant = "filtered";
             }
 
@@ -2505,12 +2517,12 @@ int main(int argc, char **argv) {
               if (!archive_path.empty() &&
                   zarr_loader.loadZarrFile(archive_path, reload_error)) {
                 zarr_loaded = true;
-                if (zarr_loader.isDatasetAvailable(
-                        ZarrDetectionLoader::DetectionDataset::RefinedRoot)) {
-                  (void)zarr_loader.setActiveDetectionDataset(
-                      ZarrDetectionLoader::DetectionDataset::RefinedRoot);
+                if (detection_repository.isDatasetAvailable(
+                        crimson::zarr::DetectionDataset::RefinedRoot)) {
+                  (void)detection_repository.selectDataset(
+                      crimson::zarr::DetectionDataset::RefinedRoot);
                 }
-                refreshDetectionDatasetOptions(zarr_loader);
+                refreshDetectionDatasetOptions(detection_repository);
                 g_zarr_bbox_edit_state.clearAll();
                 manual_payload_preview.reset();
                 invalidateReviewFrameCache(review_frame_cache);
@@ -2607,7 +2619,7 @@ int main(int argc, char **argv) {
         std::string zarr_error;
         if (loadZarrDetectionFromDirectory(root_dir, zarr_loader, zarr_error)) {
           zarr_loaded = true;
-          refreshDetectionDatasetOptions(zarr_loader);
+          refreshDetectionDatasetOptions(detection_repository);
           refreshChaserDistancePolarRepository();
           g_zarr_bbox_edit_state.clearAll();
           warmEyeMaskCacheForFrame("media_dialog_zarr", current_frame_num);
@@ -2690,7 +2702,7 @@ int main(int argc, char **argv) {
                 },
                 [&](int64_t frame) {
                   zarr_loaded = true;
-                  refreshDetectionDatasetOptions(zarr_loader);
+                  refreshDetectionDatasetOptions(detection_repository);
                   refreshChaserDistancePolarRepository();
                   g_zarr_bbox_edit_state.clearAll();
                   invalidateReviewFrameCache(review_frame_cache);
@@ -3089,6 +3101,9 @@ int main(int argc, char **argv) {
           }
 
           ZarrDetectionLoader::FrameDetections detection_details;
+          crimson::zarr::DetectionFrame presented_detection_frame;
+          const auto camera_detection_descriptor =
+              detection_repository.descriptor();
           const bool has_presented_camera_frame = presented_frame >= 0;
           int zarr_bbox_query_frame =
               has_presented_camera_frame ? presented_frame : current_frame_num;
@@ -3127,16 +3142,11 @@ int main(int argc, char **argv) {
               zarr_loader.hasEyeMasks();
           const bool is_zarr_interpolated =
               zarr_loaded && has_presented_camera_frame &&
-              zarr_loader.hasInterpolation() &&
-              zarr_loader.isFrameInterpolated(zarr_bbox_query_frame);
-          const bool active_dataset_is_raw_detect =
-              zarr_loaded && zarr_loader.hasDetectionData() &&
-              (zarr_loader.getActiveDetectionDataset() ==
-               ZarrDetectionLoader::DetectionDataset::RawDetect);
+              camera_detection_descriptor.interpolation_available &&
+              detection_repository.isFrameInterpolated(zarr_bbox_query_frame);
           const bool dataset_allows_bbox_edit =
               zarr_loaded && has_presented_camera_frame &&
-              zarr_loader.hasDetectionData() && !active_dataset_is_raw_detect &&
-              !zarr_loader.hasClippedCollection();
+              camera_detection_descriptor.activeDatasetAllowsBboxEditing();
           if (zarr_loaded && !dataset_allows_bbox_edit) {
             g_zarr_bbox_edit_state.draw_mode = false;
             g_zarr_bbox_edit_state.cancelDraw();
@@ -3152,8 +3162,11 @@ int main(int argc, char **argv) {
             frame_bbox_query_frame = zarr_bbox_query_frame;
             const auto bbox_load_total_start = std::chrono::steady_clock::now();
             const auto bbox_get_boxes_start = std::chrono::steady_clock::now();
+            presented_detection_frame = detection_repository.resolveFrame(
+                static_cast<size_t>(zarr_bbox_query_frame), false);
             loaded_zarr_boxes =
-                zarr_loader.getBoundingBoxesForFrame(zarr_bbox_query_frame);
+                crimson::platform::nvidia::makeLegacyBoundingBoxes(
+                    camera_detection_descriptor, presented_detection_frame);
             frame_bbox_get_boxes_ms += durationMs(
                 std::chrono::steady_clock::now() - bbox_get_boxes_start);
             frame_bbox_loaded_count =
@@ -3388,7 +3401,8 @@ int main(int argc, char **argv) {
                 heading_debug_logged_no_data = false;
               }
               if (zarr_loaded &&
-                  zarr_loader.activeDatasetHasSyntheticDetections()) {
+                  camera_detection_descriptor
+                      .active_dataset_has_synthetic_observations) {
                 if (!heading_debug_logged_interpolated) {
                   headingDebugLog("Dataset contains synthetic detections; "
                                   "headings render only for real boxes.");
@@ -4339,9 +4353,14 @@ int main(int argc, char **argv) {
       int selected_detection_index = -1;
       if (g_zarr_bbox_edit_state.selected_frame == crop_preview_frame_num &&
           g_zarr_bbox_edit_state.selected_box >= 0 &&
-          zarr_loader.hasDetectionData()) {
+          detection_repository.descriptor().available) {
+        const auto crop_detection_descriptor =
+            detection_repository.descriptor();
+        const auto crop_detection_frame = detection_repository.resolveFrame(
+            static_cast<size_t>(crop_preview_frame_num), false);
         const auto loaded_crop_boxes =
-            zarr_loader.getBoundingBoxesForFrame(crop_preview_frame_num);
+            crimson::platform::nvidia::makeLegacyBoundingBoxes(
+                crop_detection_descriptor, crop_detection_frame);
         const auto resolved_crop_boxes =
             g_zarr_bbox_edit_state.resolveFrameBoxes(crop_preview_frame_num,
                                                      loaded_crop_boxes);

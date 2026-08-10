@@ -23,7 +23,7 @@ makeFrameDebugDetectionInspectPresentation(
     presentation.presentation_label = "Current-frame presentation";
     presentation.unavailable_message =
         "Detection runs are unavailable in metadata/stimulus-only mode.";
-    presentation.available = context.zarr_loader.hasDetectionData();
+    presentation.available = context.detection_descriptor.available;
     if (!presentation.available) {
         return presentation;
     }
@@ -36,26 +36,24 @@ makeFrameDebugDetectionInspectPresentation(
     } else {
         presentation.surface_label = "Legacy detection adapter";
     }
-    presentation.run_name = context.zarr_loader.getDetectRunName();
+    presentation.run_name = context.detection_descriptor.run_name;
     presentation.frame_ready = true;
     presentation.camera_frame = context.current_frame_num;
     presentation.observations.reserve(context.zarr_boxes.size());
     for (size_t index = 0; index < context.zarr_boxes.size(); ++index) {
         crimson::gui::DetectionInspectObservation observation;
-        if (context.detection_details != nullptr) {
-            if (index < context.detection_details->scores.size() &&
-                std::isfinite(context.detection_details->scores[index])) {
-                observation.confidence =
-                    context.detection_details->scores[index];
+        if (context.detection_frame != nullptr &&
+            index < context.detection_frame->observations.size()) {
+            const auto& source = context.detection_frame->observations[index];
+            if (source.score_valid && std::isfinite(source.score)) {
+                observation.confidence = source.score;
                 observation.confidence_valid = true;
             }
-            if (index < context.detection_details->class_ids.size()) {
-                observation.class_id =
-                    context.detection_details->class_ids[index];
+            if (source.class_id_valid) {
+                observation.class_id = source.class_id;
                 observation.class_id_valid = true;
             }
-            if (index < context.detection_details->detection_source.size() &&
-                context.detection_details->detection_source[index] != 0) {
+            if (source.source_kind != 0) {
                 observation.source_label = "Interpolated";
             }
         }
@@ -69,14 +67,14 @@ makeFrameDebugDetectionInspectPresentation(
         presentation.observations.push_back(std::move(observation));
     }
 
-    if (context.detection_details != nullptr &&
-        !context.detection_details->scores.empty()) {
+    if (context.detection_frame != nullptr &&
+        !context.detection_frame->observations.empty()) {
         float maximum = 0.0f;
         bool maximum_valid = false;
-        for (const float score : context.detection_details->scores) {
-            if (std::isfinite(score) &&
-                (!maximum_valid || score > maximum)) {
-                maximum = score;
+        for (const auto& observation : context.detection_frame->observations) {
+            if (observation.score_valid && std::isfinite(observation.score) &&
+                (!maximum_valid || observation.score > maximum)) {
+                maximum = observation.score;
                 maximum_valid = true;
             }
         }
@@ -85,7 +83,7 @@ makeFrameDebugDetectionInspectPresentation(
                 "Max confidence: " + formatConfidence(maximum));
         }
     }
-    if (context.zarr_loader.hasClassIDs()) {
+    if (context.detection_descriptor.has_class_ids) {
         presentation.detail_lines.push_back("Class IDs available: Yes");
     }
     if (context.zarr_loader.hasHeadingData()) {
@@ -102,7 +100,7 @@ makeFrameDebugDetectionInspectPresentation(
                 "Heading vectors available (use original detections)");
         }
     }
-    if (context.zarr_loader.hasInterpolation()) {
+    if (context.detection_descriptor.interpolation_available) {
         presentation.detail_lines.push_back("Interpolation available: Yes");
         presentation.detail_lines.push_back(
             std::string("Current frame interpolated: ") +
@@ -111,7 +109,7 @@ makeFrameDebugDetectionInspectPresentation(
             std::string("Using interpolation: ") +
             (context.dataset_has_synthetic_boxes ? "Yes" : "No"));
         presentation.detail_lines.push_back(
-            "Method: " + context.zarr_loader.getInterpolationMethod());
+            "Method: " + context.detection_descriptor.interpolation_method);
     }
     return presentation;
 }

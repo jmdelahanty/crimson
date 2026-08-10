@@ -28,6 +28,7 @@
 #include "h5_loader.h"  // For LoggedBoundingBox structure compatibility
 #include "data_access_scheduler.h"
 #include "keypoint_heading_utils.h"
+#include "zarr/detection_repository.h"
 #include "zarr/review_write_repository.h"
 #include "zarr/palette_clipped_resolver.h"
 
@@ -878,13 +879,7 @@ public:
     static constexpr size_t kEyeMaskPrefetchQueueCapacity = 8;
     static constexpr size_t kEyeMaskPrefetchAheadChunks = 2;
 
-    enum class DetectionDataset {
-        RawDetect = 0,
-        RefinedFiltered = 1,
-        RefinedInterpolated = 2,
-        RefinedManual = 3,
-        RefinedRoot = 4
-    };
+    using DetectionDataset = crimson::zarr::DetectionDataset;
     
     // Main loading function
     bool loadZarrFile(const std::string& filepath, std::string& error_message);

@@ -13,12 +13,12 @@ struct ReviewFrameJumpResult {
 void invalidateReviewFrameCache(ReviewFrameCache& cache);
 
 void ensureReviewFrameIndex(bool zarr_loaded,
-                            ZarrDetectionLoader& zarr_loader,
+                            crimson::zarr::DetectionRepository& repository,
                             const ReviewFrameFilters& filters,
                             ReviewFrameCache& cache);
 
 ReviewFrameJumpResult computeReviewFrameJump(bool zarr_loaded,
-                                             ZarrDetectionLoader& zarr_loader,
+                                             crimson::zarr::DetectionRepository& repository,
                                              const ReviewFrameFilters& filters,
                                              ReviewFrameCache& cache,
                                              int current_frame_num,

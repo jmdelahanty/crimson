@@ -31,10 +31,10 @@ struct FrameInspectNavigationResult {
 struct FrameInspectNavigationContext {
   bool zarr_loaded = false;
   ZarrDetectionLoader &zarr_loader;
+  zarr::DetectionRepository &detection_repository;
   int &current_frame_num;
 
-  const std::vector<ZarrDetectionLoader::DetectionDataset>
-      &detection_dataset_ids;
+  const std::vector<zarr::DetectionDataset> &detection_dataset_ids;
   int &detection_dataset_choice;
   ReviewFrameFilters &review_frame_filters;
   ReviewFrameCache &review_frame_cache;
@@ -61,9 +61,9 @@ bool containsFrameInspectCommand(
     const std::vector<app::FrameInspectCommand> &commands,
     app::FrameInspectCommandKind kind);
 
-// Applies portable Frame Inspect commands that can be satisfied solely through
-// the legacy ZarrDetectionLoader navigation surface. Commands outside this
-// slice are returned so callers cannot silently drop them.
+// Applies portable Frame Inspect commands through narrow repositories where
+// available. Legacy QC navigation remains on ZarrDetectionLoader until its
+// domain repositories are extracted. Other commands are returned to callers.
 FrameInspectNavigationResult
 applyFrameInspectNavigation(const FrameInspectNavigationRequest &request,
                             FrameInspectNavigationContext &context);

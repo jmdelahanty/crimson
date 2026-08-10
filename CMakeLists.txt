@@ -317,6 +317,47 @@ set_tests_properties(review_write_repository_tests PROPERTIES
     LABELS "headless;keypoints;repository;write"
 )
 
+add_executable(detection_repository_tests
+    tools/detection_repository_tests.cpp
+)
+target_include_directories(detection_repository_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(detection_repository_tests PRIVATE
+    crimson_repository_contracts
+)
+target_compile_features(detection_repository_tests PRIVATE cxx_std_17)
+set_target_properties(detection_repository_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME detection_repository_tests
+    COMMAND $<TARGET_FILE:detection_repository_tests>
+)
+set_tests_properties(detection_repository_tests PROPERTIES
+    LABELS "detection;headless;portable;repository"
+)
+
+add_executable(review_frame_index_tests
+    tools/review_frame_index_tests.cpp
+    src/review_frame_index.cpp
+)
+target_include_directories(review_frame_index_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(review_frame_index_tests PRIVATE
+    crimson_repository_contracts
+)
+target_compile_features(review_frame_index_tests PRIVATE cxx_std_17)
+set_target_properties(review_frame_index_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME review_frame_index_tests
+    COMMAND $<TARGET_FILE:review_frame_index_tests>
+)
+set_tests_properties(review_frame_index_tests PROPERTIES
+    LABELS "detection;headless;portable;review"
+)
+
 add_library(crimson_ui_reference_scene_evidence STATIC
     src/ui_reference_scene_evidence.cpp
 )
@@ -2638,6 +2679,7 @@ file(GLOB CPP_SOURCES CONFIGURE_DEPENDS
     "src/gui/*.cpp"
     "src/zarr/*.cpp")
 list(APPEND CPP_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_detection_presentation_adapter.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_frame_inspect_adapter.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_gl_diagnostics.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_playback_diagnostics_adapter.cpp"
@@ -2824,6 +2866,28 @@ add_test(NAME nvidia_refined_keypoint_write_session_tests
 )
 set_tests_properties(nvidia_refined_keypoint_write_session_tests PROPERTIES
     LABELS "headless;keypoints;nvidia;session;write"
+)
+
+add_executable(nvidia_detection_presentation_adapter_tests
+    tools/nvidia_detection_presentation_adapter_tests.cpp
+    src/platform/nvidia/nvidia_detection_presentation_adapter.cpp
+)
+target_include_directories(nvidia_detection_presentation_adapter_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+    ${HDF5_INCLUDE_DIRS}
+)
+target_compile_features(nvidia_detection_presentation_adapter_tests PRIVATE
+    cxx_std_17
+)
+set_target_properties(nvidia_detection_presentation_adapter_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME nvidia_detection_presentation_adapter_tests
+    COMMAND $<TARGET_FILE:nvidia_detection_presentation_adapter_tests>
+)
+set_tests_properties(nvidia_detection_presentation_adapter_tests PROPERTIES
+    LABELS "detection;headless;nvidia;presentation"
 )
 
 if(CRIMSON_ENABLE_NVENC)

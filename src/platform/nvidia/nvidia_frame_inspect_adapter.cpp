@@ -17,8 +17,9 @@ void seekToFrame(FrameInspectNavigationContext &context, int frame) {
 
 void applyReviewJump(FrameInspectNavigationContext &context, bool forward) {
   auto jump_result = computeReviewFrameJump(
-      context.zarr_loaded, context.zarr_loader, context.review_frame_filters,
-      context.review_frame_cache, context.current_frame_num, forward);
+      context.zarr_loaded, context.detection_repository,
+      context.review_frame_filters, context.review_frame_cache,
+      context.current_frame_num, forward);
   context.review_frame_status = std::move(jump_result.status);
   if (jump_result.target_frame.has_value()) {
     seekToFrame(context, *jump_result.target_frame);
@@ -175,13 +176,13 @@ applyFrameInspectNavigation(const FrameInspectNavigationRequest &request,
       apply_review_filters();
     }
     switch (command.kind) {
-    case app::FrameInspectCommandKind::SelectDetectionDataset:
+    case app::FrameInspectCommandKind::SelectDetectionDataset: {
       if (command.value < 0 ||
           command.value >=
               static_cast<int64_t>(context.detection_dataset_ids.size()) ||
-          !context.zarr_loader.setActiveDetectionDataset(
-              context
-                  .detection_dataset_ids[static_cast<size_t>(command.value)])) {
+          !context.detection_repository.selectDataset(
+              context.detection_dataset_ids[static_cast<size_t>(
+                  command.value)])) {
         break;
       }
       context.detection_dataset_choice = static_cast<int>(command.value);
@@ -191,13 +192,16 @@ applyFrameInspectNavigation(const FrameInspectNavigationRequest &request,
       context.bbox_edit_state.clearAll();
       invalidateReviewFrameCache(context.review_frame_cache);
       context.review_frame_status.clear();
-      if (context.zarr_loader.getTotalFrames() > 0 &&
+      const auto detection_descriptor =
+          context.detection_repository.descriptor();
+      if (detection_descriptor.total_frames > 0 &&
           context.current_frame_num >=
-              static_cast<int>(context.zarr_loader.getTotalFrames())) {
+              static_cast<int>(detection_descriptor.total_frames)) {
         context.current_frame_num =
-            static_cast<int>(context.zarr_loader.getTotalFrames()) - 1;
+            static_cast<int>(detection_descriptor.total_frames) - 1;
       }
       break;
+    }
     case app::FrameInspectCommandKind::PreviousReviewFrame:
       applyReviewJump(context, false);
       break;

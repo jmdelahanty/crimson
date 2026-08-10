@@ -22,10 +22,10 @@ set(CRIMSON_ZARR_LOADER_DIRECT_INCLUDE_ALLOWLIST
     src/media_session_loader.h
     src/red.cpp
     src/refined_keypoint_repository.h
-    src/review_frame_state.h
     src/stimulus_playback.h
     src/subject_mask_edit_session.h
     src/zarr/clipped_detection_repository.h
+    src/zarr/legacy_detection_repository.cpp
     src/zarr_bbox_edit.h
     src/zarr_loader_internal.h
     src/zarr_persisted_crop_provider.h

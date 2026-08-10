@@ -102,6 +102,38 @@ cache installation, reload fallback, reload failure, and invalidation. The
 direct-loader dependency policy no longer carries an NVIDIA write-adapter
 exception.
 
+### 2026-08-10 Detection Repository Facade
+
+The NVIDIA application now reaches selected detection datasets through the
+backend-neutral `DetectionRepository` contract for dataset enumeration and
+selection, archive/run capabilities, complete per-frame observation ranges,
+frame cardinality, interpolation status, and read-only bbox presentation. The
+contract preserves arbitrary observation counts with `size_t` ordinals and has
+no GUI, renderer, HDF5, OpenCV, TensorStore, platform, or
+`ZarrDetectionLoader` dependency.
+
+`LegacyDetectionRepository` is the single compatibility adapter over the
+eagerly loaded NVIDIA session. A separate NVIDIA presentation adapter converts
+neutral XYXY observations into the existing `LoggedBoundingBox` UI record;
+that record's `uint8_t` ordinal is a legacy presentation limitation and is not
+part of repository identity. The composition root retains the compatibility
+adapter while strict canonical/refined TensorStore repositories remain
+available for future session adoption.
+
+Dataset switching, reload restoration, camera and crop-preview bbox reads,
+detection confidence/class/source inspection, and review-frame indexing now
+consume the facade. Review indexing no longer includes `zarr_loader.h` and is
+covered with empty, interpolated, non-clean, overlapping, same-class, and
+multi-observation frames. The direct-loader dependency baseline remains 28:
+the named legacy adapter replaces the removed `review_frame_state.h`
+dependency.
+
+This checkpoint deliberately leaves the legacy combined frame-detail read in
+place for keypoints, headings, masks, eye geometry, and subject shape. Those
+products need their own repositories; adding them to `DetectionRepository`
+would recreate the monolith. Manual bbox writes also remain outside this
+read-only contract until their storage/edit lifecycle is stable.
+
 ### 2026-08-10 Async Single-Flight Write Extraction
 
 The reusable asynchronous boundary is execution policy, not a universal data
@@ -1174,7 +1206,7 @@ Acceptance:
     now uses it, while full Linux session ownership remains a later extraction.
 - [ ] Split the public loader API by domain, even if implementation initially
       delegates to the current code:
-  - `DetectionRepository`
+  - [x] `DetectionRepository`
   - `KeypointRepository`
   - `EyeMaskRepository`
   - `StimulusRepository`
