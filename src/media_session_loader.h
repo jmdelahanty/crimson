@@ -6,6 +6,7 @@
 #include "playback_clock.h"
 #include "recording_clip_media_provider.h"
 #include "recording_open_workflow.h"
+#include "stimulus_media_open.h"
 #include "stimulus_playback.h"
 #include "ui_path_config.h"
 #include "zarr_loader.h"
@@ -82,6 +83,8 @@ public:
   void loadCameraCalibrationsForCurrentMedia() const;
   void tryAutoLoadAffiliatedVideoFromZarr(const char *trigger_label) const;
   void tryAutoLoadStimulusVideo(const char *trigger_label) const;
+  crimson::media::StimulusMediaOpenResult openStimulusMedia(
+      const crimson::media::StimulusMediaOpenRequest &request) const;
   bool loadClippedVideoForParentFrame(int parent_frame) const;
   bool hasMappedMedia() const;
   int64_t mappedMediaFrameCount() const;

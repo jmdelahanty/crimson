@@ -1,5 +1,6 @@
 #include "media_session_loader.h"
 #include "global.h"
+#include "platform/nvidia/nvidia_stimulus_media_loader.h"
 #include "render.h"
 #include "zarr/affiliated_video_repository.h"
 #include "zarr/archive_context.h"
@@ -975,29 +976,36 @@ void MediaSessionLoader::tryAutoLoadStimulusVideo(
     return;
   }
 
-  const int stim_buf_size = std::max(1, *context_.stimulus_buffer_size);
-  if (!initializeStimulusPlayback(
-          *context_.stimulus_player, resolved->string(), stim_buf_size,
-          *context_.stimulus_use_cpu_buffer,
-          *context_.stimulus_use_software_decode, context_.cuda_device_index)) {
-    std::cerr << "[Stimulus] Failed to auto-load stimulus video: "
-              << resolved->string() << std::endl;
+  const auto result = openStimulusMedia(
+      {resolved->string(), *context_.stimulus_buffer_size,
+       *context_.stimulus_use_cpu_buffer,
+       *context_.stimulus_use_software_decode, *context_.video_loaded,
+       context_.playback_state->to_display_frame_number,
+       !context_.playback_state->play_video});
+  if (!result.ready) {
+    std::cerr << "[Stimulus] " << result.error << std::endl;
     return;
-  }
-
-  (*context_.window_was_decoding)[context_.stimulus_player->window_name] =
-      false;
-  (*context_.window_need_decoding)[context_.stimulus_player->window_name].store(
-      false);
-
-  if (*context_.video_loaded) {
-    scheduleStimulusSeek(*context_.stimulus_player, context_.zarr_loader,
-                         context_.playback_state->to_display_frame_number,
-                         !context_.playback_state->play_video);
   }
 
   std::cout << "[Stimulus] Auto-loaded stimulus video (" << trigger_label
             << "): " << resolved->string() << std::endl;
+}
+
+crimson::media::StimulusMediaOpenResult MediaSessionLoader::openStimulusMedia(
+    const crimson::media::StimulusMediaOpenRequest &request) const {
+  crimson::media::StimulusMediaOpenResult result;
+  result.path = request.path;
+  if (context_.stimulus_player == nullptr || context_.zarr_loader == nullptr ||
+      context_.window_was_decoding == nullptr ||
+      context_.window_need_decoding == nullptr) {
+    result.error = "Stimulus media loader is not configured";
+    return result;
+  }
+
+  return crimson::platform::nvidia::openStimulusMedia(
+      request, {context_.stimulus_player, context_.zarr_loader,
+                context_.window_need_decoding, context_.window_was_decoding,
+                context_.cuda_device_index});
 }
 
 void MediaSessionLoader::bootstrapFromCli(

@@ -1,6 +1,7 @@
 #include "IconsForkAwesome.h"
 #include "Logger.h"
 #include "app/frame_inspect_controller.h"
+#include "archive_open_coordinator.h"
 #include "camera.h"
 #include "chained_crop_image_provider.h"
 #include "data_access_diagnostics.h"
@@ -61,6 +62,7 @@
 #include "review_frame_index.h"
 #include "session_lifecycle.h"
 #include "skeleton.h"
+#include "stimulus_open_coordinator.h"
 #include "utils.h"
 #include "workspace_state.h"
 #include "yolo_detection.h"
@@ -3818,55 +3820,58 @@ int main(int argc, char **argv) {
           selected_zarr_path = ImGuiFileDialog::Instance()->GetCurrentPath();
         }
 
-        crimson::session::SessionDescriptor requested_session =
-            session_lifecycle.snapshot().active;
-        requested_session.zarr_path = selected_zarr_path;
-        recording_open_workflow.begin(
-            {requested_session,
-             "Opening Zarr archive",
-             {{"archive",
-               crimson::session::ProductAvailabilityRequirement::Required}}});
-        recording_open_workflow.startProduct("archive", "Resolving archive");
-        std::string zarr_error;
-        if (loadZarrDetectionFromPath(selected_zarr_path, zarr_loader,
-                                      zarr_error)) {
-          zarr_loaded = true;
-          refreshDetectionDatasetOptions(zarr_loader);
-          refreshChaserDistancePolarRepository();
-          g_zarr_bbox_edit_state.clearAll();
-          invalidateReviewFrameCache(review_frame_cache);
-          review_frame_status.clear();
-          warmEyeMaskCacheForFrame("zarr_dialog", current_frame_num);
-          prewarmEyeMaskOverlayTexturesForPlayback("zarr_dialog",
-                                                   current_frame_num);
-          std::cout << "Loaded Zarr archive override: "
-                    << zarr_loader.getArchivePath() << std::endl;
-          media_session_loader.tryAutoLoadAffiliatedVideoFromZarr(
-              "Load Zarr Archive");
-          media_session_loader.tryAutoLoadStimulusVideo("file-dialog");
-          requested_session.zarr_path = zarr_loader.getArchivePath();
-          requested_session.recording_clip_index_path =
-              media_session_loader.activeRecordingClipIndexPath();
-          recording_open_workflow.completeProduct("archive", "Archive ready",
-                                                  true);
-          std::string transaction_error;
-          recording_open_workflow.commit(requested_session, "Archive ready",
-                                         "Archive unavailable",
-                                         &transaction_error);
-        } else {
+        const auto archive_result = crimson::session::executeArchiveOpen(
+            recording_open_workflow,
+            {session_lifecycle.snapshot().active, selected_zarr_path,
+             current_frame_num},
+            {
+                [&](const std::string &path, std::string &resolved_path,
+                    std::string &error) {
+                  if (!loadZarrDetectionFromPath(path, zarr_loader, error)) {
+                    return false;
+                  }
+                  resolved_path = zarr_loader.getArchivePath();
+                  return true;
+                },
+                [&](int64_t frame) {
+                  zarr_loaded = true;
+                  refreshDetectionDatasetOptions(zarr_loader);
+                  refreshChaserDistancePolarRepository();
+                  g_zarr_bbox_edit_state.clearAll();
+                  invalidateReviewFrameCache(review_frame_cache);
+                  review_frame_status.clear();
+                  warmEyeMaskCacheForFrame("zarr_dialog",
+                                           static_cast<int>(frame));
+                  prewarmEyeMaskOverlayTexturesForPlayback(
+                      "zarr_dialog", static_cast<int>(frame));
+                  std::cout << "Loaded Zarr archive override: "
+                            << zarr_loader.getArchivePath() << std::endl;
+                },
+                [&]() {
+                  zarr_loaded = false;
+                  refreshChaserDistancePolarRepository();
+                  g_zarr_bbox_edit_state.clearAll();
+                  invalidateReviewFrameCache(review_frame_cache);
+                  review_frame_status.clear();
+                  detection_dataset_ids.clear();
+                  detection_dataset_labels.clear();
+                  detection_dataset_choice = 0;
+                },
+                [&]() {
+                  media_session_loader.tryAutoLoadAffiliatedVideoFromZarr(
+                      "Load Zarr Archive");
+                },
+                [&]() {
+                  media_session_loader.tryAutoLoadStimulusVideo("file-dialog");
+                },
+                [&]() {
+                  return media_session_loader.activeRecordingClipIndexPath();
+                },
+            });
+        if (!archive_result.ready) {
           zarr_loaded = false;
-          refreshChaserDistancePolarRepository();
-          g_zarr_bbox_edit_state.clearAll();
-          invalidateReviewFrameCache(review_frame_cache);
-          review_frame_status.clear();
-          std::cout << "Failed to load Zarr archive override: " << zarr_error
-                    << std::endl;
-          detection_dataset_ids.clear();
-          detection_dataset_labels.clear();
-          detection_dataset_choice = 0;
-          recording_open_workflow.failProduct("archive", "Archive unavailable",
-                                              zarr_error,
-                                              "Archive unavailable");
+          std::cout << "Failed to load Zarr archive override: "
+                    << archive_result.error << std::endl;
         }
         crimson::diagnostics::writeRuntimeDiagnostics(
             std::cout, "Nvidia",
@@ -3881,39 +3886,19 @@ int main(int argc, char **argv) {
         auto selection = ImGuiFileDialog::Instance()->GetSelection();
         if (!selection.empty()) {
           std::string stimulus_path = selection.begin()->second;
-          crimson::session::SessionDescriptor requested_session =
-              session_lifecycle.snapshot().active;
-          requested_session.stimulus_video_path = stimulus_path;
-          recording_open_workflow.begin(
-              {requested_session,
-               "Opening stimulus media",
-               {{"stimulus",
-                 crimson::session::ProductAvailabilityRequirement::Required}}});
-          recording_open_workflow.startProduct("stimulus",
-                                               "Opening stimulus media");
-          int selected_stimulus_buffer_size = std::max(1, stimulus_buffer_size);
-          if (!initializeStimulusPlayback(
-                  stimulus_player, stimulus_path, selected_stimulus_buffer_size,
-                  stimulus_use_cpu_buffer, stimulus_use_software_decode,
-                  kCudaDeviceIndex)) {
+          const auto stimulus_result = crimson::session::executeStimulusOpen(
+              recording_open_workflow,
+              {session_lifecycle.snapshot().active,
+               {stimulus_path, stimulus_buffer_size, stimulus_use_cpu_buffer,
+                stimulus_use_software_decode, zarr_loaded,
+                ps.to_display_frame_number, !ps.play_video}},
+              {[&](const crimson::media::StimulusMediaOpenRequest &request) {
+                 return media_session_loader.openStimulusMedia(request);
+               },
+               {}});
+          if (!stimulus_result.ready) {
             show_error = true;
-            error_message = "Failed to load stimulus video: " + stimulus_path;
-            recording_open_workflow.failProduct(
-                "stimulus", "Stimulus media unavailable", error_message,
-                "Stimulus media unavailable");
-          } else {
-            window_was_decoding[stimulus_player.window_name] = false;
-            window_need_decoding[stimulus_player.window_name].store(false);
-            if (zarr_loaded) {
-              scheduleStimulusSeek(stimulus_player, &zarr_loader,
-                                   ps.to_display_frame_number, !ps.play_video);
-            }
-            recording_open_workflow.completeProduct(
-                "stimulus", "Stimulus media ready", true);
-            std::string transaction_error;
-            recording_open_workflow.commit(
-                requested_session, "Stimulus media ready",
-                "Stimulus media unavailable", &transaction_error);
+            error_message = stimulus_result.media.error;
           }
           crimson::diagnostics::writeRuntimeDiagnostics(
               std::cout, "Nvidia",

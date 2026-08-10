@@ -126,6 +126,33 @@ bounded Phase 3 extraction reduces `red.cpp` from 6,646 to 6,556 lines. FFmpeg,
 NVDEC, CUDA, OpenGL, and concrete thread ownership remain platform-specific;
 the selection plan and session lifecycle remain backend-neutral.
 
+### 2026-08-10 Archive And Stimulus Open Extraction
+
+Archive and stimulus file-dialog opens now use backend-neutral command/result
+coordinators. The archive coordinator owns the required-product transaction,
+resolved-path adoption order, affiliated camera/stimulus discovery order,
+recording-clip-index capture, commit, and fail-closed cleanup. The stimulus
+coordinator owns the corresponding transaction and carries a portable media
+request containing buffer policy and optional initial-seek intent. Neither
+coordinator includes ImGui, Zarr, FFmpeg, CUDA, OpenGL, Metal, or decoder types.
+
+`MediaSessionLoader` remains the NVIDIA execution facade. Its narrow stimulus
+adapter translates the portable request into the existing FFmpeg/NVDEC
+stimulus player, resets decoder demand flags, and schedules the initial mapped
+seek when requested. The archive adapter still invokes the legacy
+`ZarrDetectionLoader` and presentation-cache refresh callbacks at the
+composition edge; this preserves current legacy archive compatibility without
+moving that loader into the portable runtime contract.
+
+Headless tests cover successful commits, descriptor preservation, resolved
+paths, callback ordering, open failures, thrown adapter failures, fail-closed
+cleanup, and invalid commands that must not begin a transaction. The native
+Ubuntu 22/CUDA/TensorRT application compiles and its authenticated GPU smoke
+advances frames 0 through 300 after opening the GoodCopBadCop archive. This
+bounded extraction reduces `red.cpp` from 6,556 to 6,541 lines while removing
+the remaining archive/stimulus transaction implementation from the dialog
+branches.
+
 ## 2026-07-23 Runtime Contract Checkpoint
 
 The first backend-neutral runtime slices are now shared by the macOS and

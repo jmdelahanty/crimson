@@ -96,6 +96,8 @@ target_link_libraries(crimson_nvidia_playback_diagnostics PUBLIC
 target_compile_features(crimson_nvidia_playback_diagnostics PUBLIC cxx_std_17)
 
 add_library(crimson_runtime_contracts STATIC
+    src/archive_open_coordinator.cpp
+    src/stimulus_open_coordinator.cpp
     src/session_lifecycle.cpp
     src/loading_progress.cpp
     src/frame_presentation.cpp
@@ -1347,6 +1349,8 @@ foreach(runtime_test
         session_readiness_tests
         session_open_transaction_tests
         recording_open_workflow_tests
+        archive_open_coordinator_tests
+        stimulus_open_coordinator_tests
         session_loading_presentation_tests)
     add_executable(${runtime_test} tools/${runtime_test}.cpp)
     target_link_libraries(${runtime_test} PRIVATE crimson_runtime_contracts)
@@ -2460,6 +2464,7 @@ list(APPEND CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_frame_inspect_adapter.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_gl_diagnostics.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_playback_diagnostics_adapter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_stimulus_media_loader.cpp"
 )
 list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/coordinate_contract.cpp"
@@ -2485,6 +2490,8 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_slot.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/playback_buffer_browser.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/session_lifecycle.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/archive_open_coordinator.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/stimulus_open_coordinator.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/loading_progress.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/media_selection_plan.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_presentation.cpp"
