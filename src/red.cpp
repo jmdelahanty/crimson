@@ -65,6 +65,7 @@
 #include "skeleton.h"
 #include "stimulus_open_coordinator.h"
 #include "ui_reference_capture.h"
+#include "ui_reference_contract.h"
 #include "utils.h"
 #include "workspace_state.h"
 #include "yolo_detection.h"
@@ -760,7 +761,7 @@ int main(int argc, char **argv) {
   ui_reference.state = launch_options.ui_reference.state;
   ui_reference.target_frame = launch_options.ui_reference.target_frame;
   ui_reference.ready_file = launch_options.ui_reference.ready_file;
-  ui_reference.timeout_s = launch_options.ui_reference.timeout_s;
+  ui_reference.timeout_s = launch_options.ui_reference.timeout_seconds;
   crimson::ui_reference::CaptureCoordinator ui_reference_capture(
       {60, ui_reference.timeout_s});
   crimson::ui::SemanticSnapshot ui_semantic_snapshot;
@@ -5315,6 +5316,11 @@ int main(int argc, char **argv) {
             zarr_loader.hasTailKinematicsData() &&
             (zarr_loader.hasStimulusSteps() || zarr_loader.hasStimulusEvents());
         break;
+      case UiReferenceState::Empty:
+      case UiReferenceState::Keypoints:
+      case UiReferenceState::Count:
+        state_ready = false;
+        break;
       }
       if (ui_reference_capture.observeFrame(exact_camera_ready, state_ready)) {
         std::cout << "[UiReference] render-ready state="
@@ -5506,23 +5512,25 @@ int main(int argc, char **argv) {
         eye_representation_key =
             eye_representations[eye_representation_index].key;
       }
-      const json marker = {
-          {"format", "crimson_ui_reference_v1"},
-          {"platform", "linux-opengl"},
-          {"state", uiReferenceStateName(ui_reference.state)},
-          {"archive", cli_zarr_override_path},
-          {"write_contract", "read-only"},
-          {"target_frame", ui_reference.target_frame},
-          {"presented_frame", ui_reference.presented_frame},
+      json marker = crimson::ui_reference::makeMarkerEnvelope(
+          {"linux-opengl",
+           ui_reference.state,
+           cli_zarr_override_path,
+           ui_reference.target_frame,
+           ui_reference.presented_frame,
+           ui_reference_capture.stableFrameCount(),
+           {client_width, client_height},
+           {framebuffer_width, framebuffer_height},
+           {ui_reference.rendered_image_file,
+            ui_reference.rendered_image_width,
+            ui_reference.rendered_image_height,
+            "opengl_front_buffer"}});
+      marker.update({
           {"presented_slot", ui_reference.presented_slot},
           {"view_idx", ui_reference.view_idx},
           {"current_frame", current_frame_num},
           {"slider_frame", ps.slider_frame_number},
           {"bbox_query_frame", ui_reference.bbox_query_frame},
-          {"stable_frames", ui_reference_capture.stableFrameCount()},
-          {"client_size", {{"width", client_width}, {"height", client_height}}},
-          {"framebuffer_size",
-           {{"width", framebuffer_width}, {"height", framebuffer_height}}},
           {"viewports",
            {{"camera",
              {{"x", perf_camera_viewport_x_px},
@@ -5541,11 +5549,6 @@ int main(int argc, char **argv) {
             {"camera_capacity", ui_reference.camera_buffer_capacity},
             {"stimulus_valid", ui_reference.stimulus_buffer_valid},
             {"stimulus_capacity", ui_reference.stimulus_buffer_capacity}}},
-          {"rendered_image",
-           {{"path", ui_reference.rendered_image_file.string()},
-            {"width", ui_reference.rendered_image_width},
-            {"height", ui_reference.rendered_image_height},
-            {"surface", "opengl_front_buffer"}}},
           {"polar", polarSceneReferenceJson(
                         perf_chaser_distance_polar_scene,
                         perf_chaser_distance_polar_origin_x_px,
@@ -5602,7 +5605,7 @@ int main(int argc, char **argv) {
             {"show_tail_curvature",
              analysis_timeline_window_state.show_tail_curvature},
             {"show_stimulus_context",
-             analysis_timeline_window_state.show_stimulus_context}}}};
+             analysis_timeline_window_state.show_stimulus_context}}}});
       std::string marker_error;
       if (!crimson::ui_reference::writeUiReferenceMarkerAtomically(
               ui_reference.ready_file, marker, &marker_error)) {

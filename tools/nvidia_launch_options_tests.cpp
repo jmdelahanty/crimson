@@ -48,7 +48,7 @@ bool testDefaultsAndUnknownArguments() {
   CHECK(result.options.mask_perf_log_enabled);
   CHECK(result.options.mask_perf_sample_every == 10);
   CHECK(result.options.playback_smoke.timeout_s == 20.0);
-  CHECK(result.options.ui_reference.timeout_s == 60.0);
+  CHECK(result.options.ui_reference.timeout_seconds == 60.0);
   CHECK(result.diagnostics.size() == 1);
   CHECK(result.diagnostics.front() ==
         "Ignoring unknown argument: --future-option");
@@ -207,7 +207,7 @@ bool testUiReferenceAndFramePacing() {
   CHECK(ui.options.ui_reference.state == UiReferenceState::StimulusOverlay);
   CHECK(ui.options.ui_reference.target_frame == 52);
   CHECK(ui.options.ui_reference.ready_file == "ready.json");
-  CHECK(ui.options.ui_reference.timeout_s == 15.0);
+  CHECK(ui.options.ui_reference.timeout_seconds == 15.0);
 
   auto pacing = parse({"redgui", "--swap-interval", "0"});
   CHECK(pacing.ok);
@@ -235,6 +235,11 @@ bool testValidationFailures() {
        "require complete raw"},
       {{"redgui", "--ui-reference-frame", "4"},
        "requires --ui-reference-state"},
+      {{"redgui", "--ui-reference-timeout", "4"},
+       "requires --ui-reference-state"},
+      {{"redgui", "--ui-reference-state", "empty", "--ui-reference-frame", "0",
+        "--ui-reference-ready-file", "ready"},
+       "expected workspace"},
       {{"redgui", "--ui-reference-state", "workspace", "--ui-reference-frame",
         "4", "--ui-reference-ready-file", "ready", "--playback-smoke", "0:2"},
        "cannot run with playback"},

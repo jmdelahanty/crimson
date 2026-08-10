@@ -1,6 +1,5 @@
 #include "platform/nvidia/nvidia_launch_options.h"
 
-#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -47,24 +46,18 @@ bool parseFrameRangeArgument(const char *text, int &start, int &end) {
   return true;
 }
 
-bool parseUiReferenceState(const std::string &value, UiReferenceState &state) {
-  static const std::array<std::pair<const char *, UiReferenceState>, 8> states =
-      {{{"workspace", UiReferenceState::Workspace},
-        {"overlays", UiReferenceState::Overlays},
-        {"polar", UiReferenceState::Polar},
-        {"stimulus-overlay", UiReferenceState::StimulusOverlay},
-        {"stimulus-debug", UiReferenceState::StimulusDebug},
-        {"crop-preview", UiReferenceState::CropPreview},
-        {"analysis-eye", UiReferenceState::AnalysisEye},
-        {"analysis-tail-stimulus", UiReferenceState::AnalysisTailStimulus}}};
-  for (const auto &entry : states) {
-    if (value == entry.first) {
-      state = entry.second;
-      return true;
-    }
-  }
-  return false;
-}
+constexpr crimson::ui_reference::StateMask kNvidiaUiReferenceStates =
+    crimson::ui_reference::stateBit(UiReferenceState::Workspace) |
+    crimson::ui_reference::stateBit(UiReferenceState::Overlays) |
+    crimson::ui_reference::stateBit(UiReferenceState::Polar) |
+    crimson::ui_reference::stateBit(UiReferenceState::StimulusOverlay) |
+    crimson::ui_reference::stateBit(UiReferenceState::StimulusDebug) |
+    crimson::ui_reference::stateBit(UiReferenceState::CropPreview) |
+    crimson::ui_reference::stateBit(UiReferenceState::AnalysisEye) |
+    crimson::ui_reference::stateBit(UiReferenceState::AnalysisTailStimulus);
+
+constexpr crimson::ui_reference::LaunchParsePolicy kUiReferenceParsePolicy{
+    kNvidiaUiReferenceStates, false, 4096};
 
 bool isDirectory(const std::filesystem::path &path) {
   std::error_code error;
@@ -79,25 +72,7 @@ bool isRegularFile(const std::filesystem::path &path) {
 } // namespace
 
 const char *uiReferenceStateName(UiReferenceState state) {
-  switch (state) {
-  case UiReferenceState::Workspace:
-    return "workspace";
-  case UiReferenceState::Overlays:
-    return "overlays";
-  case UiReferenceState::Polar:
-    return "polar";
-  case UiReferenceState::StimulusOverlay:
-    return "stimulus-overlay";
-  case UiReferenceState::StimulusDebug:
-    return "stimulus-debug";
-  case UiReferenceState::CropPreview:
-    return "crop-preview";
-  case UiReferenceState::AnalysisEye:
-    return "analysis-eye";
-  case UiReferenceState::AnalysisTailStimulus:
-    return "analysis-tail-stimulus";
-  }
-  return "unknown";
+  return crimson::ui_reference::stateName(state);
 }
 
 bool ArtifactSelection::empty() const {
@@ -140,6 +115,18 @@ NvidiaLaunchParseResult parseNvidiaLaunchOptions(int argc,
       }
       return argv[++i];
     };
+
+    const auto ui_reference_argument =
+        crimson::ui_reference::consumeLaunchArgument(
+            argc, argv, i, options.ui_reference, kUiReferenceParsePolicy);
+    if (ui_reference_argument.status ==
+        crimson::ui_reference::ArgumentParseStatus::Error) {
+      return fail(ui_reference_argument.error);
+    }
+    if (ui_reference_argument.status ==
+        crimson::ui_reference::ArgumentParseStatus::Consumed) {
+      continue;
+    }
 
     if (arg == "--zarr") {
       const char *value = requireValue("Missing value for --zarr");
@@ -335,65 +322,6 @@ NvidiaLaunchParseResult parseNvidiaLaunchOptions(int argc,
       options.playback_smoke.timeout_s = parsed;
       continue;
     }
-    if (arg == "--ui-reference-state") {
-      const char *value =
-          requireValue("Missing value for --ui-reference-state");
-      if (value == nullptr) {
-        return result;
-      }
-      if (!parseUiReferenceState(value, options.ui_reference.state)) {
-        return fail("Invalid --ui-reference-state value '" +
-                    std::string(value) +
-                    "'; expected workspace, overlays, polar, "
-                    "stimulus-debug, crop-preview, analysis-eye, or "
-                    "analysis-tail-stimulus");
-      }
-      options.ui_reference.enabled = true;
-      options.ui_reference.state_set = true;
-      continue;
-    }
-    if (arg == "--ui-reference-frame") {
-      const char *value =
-          requireValue("Missing value for --ui-reference-frame");
-      if (value == nullptr) {
-        return result;
-      }
-      int parsed = -1;
-      if (!parseIntegerArgument(value, parsed) || parsed < 0) {
-        return fail("Invalid --ui-reference-frame value; expected an integer "
-                    ">= 0");
-      }
-      options.ui_reference.enabled = true;
-      options.ui_reference.frame_set = true;
-      options.ui_reference.target_frame = parsed;
-      continue;
-    }
-    if (arg == "--ui-reference-ready-file") {
-      const char *value =
-          requireValue("Missing value for --ui-reference-ready-file");
-      if (value == nullptr || *value == '\0') {
-        return fail("Invalid --ui-reference-ready-file value; expected a "
-                    "non-empty path");
-      }
-      options.ui_reference.ready_file = value;
-      options.ui_reference.enabled = true;
-      options.ui_reference.ready_file_set = true;
-      continue;
-    }
-    if (arg == "--ui-reference-timeout") {
-      const char *value =
-          requireValue("Missing value for --ui-reference-timeout");
-      if (value == nullptr) {
-        return result;
-      }
-      double parsed = 0.0;
-      if (!parseDoubleArgument(value, parsed) || parsed <= 0.0) {
-        return fail("Invalid --ui-reference-timeout value; expected a positive "
-                    "number of seconds");
-      }
-      options.ui_reference.timeout_s = parsed;
-      continue;
-    }
     if (arg == "--no-mask-perf-log") {
       options.mask_perf_log_enabled = false;
       continue;
@@ -470,11 +398,10 @@ NvidiaLaunchParseResult parseNvidiaLaunchOptions(int argc,
                 "and body-frame selections; refined must be complete when "
                 "provided");
   }
-  if (options.ui_reference.enabled &&
-      (!options.ui_reference.state_set || !options.ui_reference.frame_set ||
-       !options.ui_reference.ready_file_set)) {
-    return fail("UI reference capture requires --ui-reference-state, "
-                "--ui-reference-frame, and --ui-reference-ready-file");
+  if (const auto ui_reference_error =
+          crimson::ui_reference::validateLaunchOptions(
+              options.ui_reference, kUiReferenceParsePolicy)) {
+    return fail(*ui_reference_error);
   }
   if (options.ui_reference.enabled &&
       (options.playback_smoke.enabled ||

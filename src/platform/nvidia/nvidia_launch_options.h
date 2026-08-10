@@ -5,18 +5,11 @@
 #include <string>
 #include <vector>
 
+#include "ui_reference_contract.h"
+
 namespace crimson::platform::nvidia {
 
-enum class UiReferenceState {
-  Workspace,
-  Overlays,
-  Polar,
-  StimulusOverlay,
-  StimulusDebug,
-  CropPreview,
-  AnalysisEye,
-  AnalysisTailStimulus,
-};
+using UiReferenceState = crimson::ui_reference::State;
 
 const char *uiReferenceStateName(UiReferenceState state);
 
@@ -39,16 +32,7 @@ struct PlaybackSmokeLaunchOptions : FrameRangeLaunchOptions {
   double timeout_s = 20.0;
 };
 
-struct UiReferenceLaunchOptions {
-  bool enabled = false;
-  bool state_set = false;
-  bool frame_set = false;
-  bool ready_file_set = false;
-  UiReferenceState state = UiReferenceState::Workspace;
-  int target_frame = -1;
-  std::filesystem::path ready_file;
-  double timeout_s = 60.0;
-};
+using UiReferenceLaunchOptions = crimson::ui_reference::LaunchOptions;
 
 struct NvidiaLaunchOptions {
   std::string zarr_override_path;

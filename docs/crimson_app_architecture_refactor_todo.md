@@ -200,6 +200,33 @@ capture on the authenticated X display. The adoption reduces `red.cpp` from
 5,982 to 5,917 lines and removes the duplicate lifecycle and atomic-marker
 implementations from both composition roots.
 
+### 2026-08-10 Shared UI Reference Contract Extraction
+
+UI-reference automation now uses one backend-neutral option and marker
+contract. The contract owns the complete state vocabulary, canonical state
+names, backend capability masks, parsing of state/frame/output/size/timeout
+arguments, common fail-closed validation, and the mandatory v1 JSON envelope.
+The Metal shell retains its 90-second default and logical-size option; the
+NVIDIA shell retains its 60-second default and rejects Metal-only states.
+
+Both shells add their existing renderer and feature evidence to the shared
+envelope. Viewports, buffer inventories, overlay counts, crop/stimulus state,
+analysis selections, semantic snapshots, and GPU surface capture remain with
+the platform composition roots. The shared contract fixes the common fields:
+format, platform, state, archive, read-only declaration, target/presented frame,
+stable-frame count, client/framebuffer sizes, and rendered-image identity.
+
+Portable tests cover the state vocabulary, capability rejection, complete and
+partial option sets, numeric/size limits, and exact marker-envelope fields.
+NVIDIA launch tests also prove that a timeout-only request fails closed and
+that unsupported Metal states cannot enter the OpenGL runtime.
+
+Real captures preserve the automation surface on both backends: Metal
+published an empty 1280x720 reference and OpenGL published a frame-exact
+1920x1080 workspace reference at frame 56, both after exactly 60 stable frames.
+The authenticated NVIDIA playback smoke also advanced frames 0 through 300 in
+3.00 seconds after the parser adoption.
+
 ## 2026-07-23 Runtime Contract Checkpoint
 
 The first backend-neutral runtime slices are now shared by the macOS and

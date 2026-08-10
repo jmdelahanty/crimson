@@ -40,6 +40,7 @@
 #include "subject_shape_overlay_buffer.h"
 #include "swim_bout_timeline_buffer.h"
 #include "ui_reference_capture.h"
+#include "ui_reference_contract.h"
 #include "ui_path_config.h"
 #include "zarr/affiliated_video_repository.h"
 #include "zarr/analysis_crop_geometry_repository.h"
@@ -107,78 +108,26 @@
 
 namespace {
 
-enum class AppleUiReferenceState : uint8_t {
-  Empty,
-  Workspace,
-  Keypoints,
-  Overlays,
-  Polar,
-  StimulusOverlay,
-  CropPreview,
-  AnalysisEye,
-  StimulusDebug,
-};
+using AppleUiReferenceState = crimson::ui_reference::State;
+using AppleUiReferenceConfig = crimson::ui_reference::LaunchOptions;
+
+constexpr crimson::ui_reference::StateMask kAppleUiReferenceStates =
+    crimson::ui_reference::stateBit(AppleUiReferenceState::Empty) |
+    crimson::ui_reference::stateBit(AppleUiReferenceState::Workspace) |
+    crimson::ui_reference::stateBit(AppleUiReferenceState::Keypoints) |
+    crimson::ui_reference::stateBit(AppleUiReferenceState::Overlays) |
+    crimson::ui_reference::stateBit(AppleUiReferenceState::Polar) |
+    crimson::ui_reference::stateBit(AppleUiReferenceState::StimulusOverlay) |
+    crimson::ui_reference::stateBit(AppleUiReferenceState::CropPreview) |
+    crimson::ui_reference::stateBit(AppleUiReferenceState::AnalysisEye) |
+    crimson::ui_reference::stateBit(AppleUiReferenceState::StimulusDebug);
+
+constexpr crimson::ui_reference::LaunchParsePolicy kUiReferenceParsePolicy{
+    kAppleUiReferenceStates, true, 4096};
 
 const char *appleUiReferenceStateName(AppleUiReferenceState state) {
-  switch (state) {
-  case AppleUiReferenceState::Empty:
-    return "empty";
-  case AppleUiReferenceState::Workspace:
-    return "workspace";
-  case AppleUiReferenceState::Keypoints:
-    return "keypoints";
-  case AppleUiReferenceState::Overlays:
-    return "overlays";
-  case AppleUiReferenceState::Polar:
-    return "polar";
-  case AppleUiReferenceState::StimulusOverlay:
-    return "stimulus-overlay";
-  case AppleUiReferenceState::CropPreview:
-    return "crop-preview";
-  case AppleUiReferenceState::AnalysisEye:
-    return "analysis-eye";
-  case AppleUiReferenceState::StimulusDebug:
-    return "stimulus-debug";
-  }
-  return "unknown";
+  return crimson::ui_reference::stateName(state);
 }
-
-bool parseAppleUiReferenceState(const std::string &value,
-                                AppleUiReferenceState *state) {
-  if (state == nullptr) {
-    return false;
-  }
-  static const std::array<std::pair<const char *, AppleUiReferenceState>, 9>
-      states = {{{"empty", AppleUiReferenceState::Empty},
-                 {"workspace", AppleUiReferenceState::Workspace},
-                 {"keypoints", AppleUiReferenceState::Keypoints},
-                 {"overlays", AppleUiReferenceState::Overlays},
-                 {"polar", AppleUiReferenceState::Polar},
-                 {"stimulus-overlay", AppleUiReferenceState::StimulusOverlay},
-                 {"crop-preview", AppleUiReferenceState::CropPreview},
-                 {"analysis-eye", AppleUiReferenceState::AnalysisEye},
-                 {"stimulus-debug", AppleUiReferenceState::StimulusDebug}}};
-  for (const auto &candidate : states) {
-    if (value == candidate.first) {
-      *state = candidate.second;
-      return true;
-    }
-  }
-  return false;
-}
-
-struct AppleUiReferenceConfig {
-  bool enabled = false;
-  bool state_set = false;
-  bool frame_set = false;
-  bool ready_file_set = false;
-  AppleUiReferenceState state = AppleUiReferenceState::Workspace;
-  int target_frame = 0;
-  std::filesystem::path ready_file;
-  int logical_width = 1920;
-  int logical_height = 1080;
-  double timeout_seconds = 90.0;
-};
 
 struct LaunchOptions {
   bool smoke = false;
@@ -229,7 +178,11 @@ struct LaunchOptions {
   bool subject_mask_contour_only = false;
   size_t video_buffer_capacity = 6;
   size_t stimulus_buffer_capacity = 6;
-  AppleUiReferenceConfig ui_reference;
+  AppleUiReferenceConfig ui_reference = [] {
+    AppleUiReferenceConfig options;
+    options.timeout_seconds = 90.0;
+    return options;
+  }();
   crimson::crop::CropSourcePreference crop_preference =
       crimson::crop::CropSourcePreference::PreferAcquisitionVideo;
 };
@@ -303,24 +256,6 @@ bool parseFrameRange(const std::string &value, int *start, int *end) {
   }
   *start = *parsed_start;
   *end = *parsed_end;
-  return true;
-}
-
-bool parsePositiveSize(const std::string &value, int *width, int *height) {
-  const size_t separator = value.find('x');
-  if (separator == std::string::npos) {
-    return false;
-  }
-  const auto parsed_width =
-      parsePositiveInt(value.substr(0, separator).c_str());
-  const auto parsed_height =
-      parsePositiveInt(value.substr(separator + 1).c_str());
-  if (!parsed_width || !parsed_height || *parsed_width > 4096 ||
-      *parsed_height > 4096) {
-    return false;
-  }
-  *width = *parsed_width;
-  *height = *parsed_height;
   return true;
 }
 
@@ -793,10 +728,22 @@ std::string recordingWindowName(const std::string &path) {
   return name.empty() ? "Camera" : name;
 }
 
-std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
+std::optional<LaunchOptions> parseOptions(int argc, const char *const *argv) {
   LaunchOptions options;
   for (int i = 1; i < argc; ++i) {
     const std::string argument = argv[i];
+    const auto ui_reference_argument =
+        crimson::ui_reference::consumeLaunchArgument(
+            argc, argv, i, options.ui_reference, kUiReferenceParsePolicy);
+    if (ui_reference_argument.status ==
+        crimson::ui_reference::ArgumentParseStatus::Error) {
+      std::fprintf(stderr, "%s\n", ui_reference_argument.error.c_str());
+      return std::nullopt;
+    }
+    if (ui_reference_argument.status ==
+        crimson::ui_reference::ArgumentParseStatus::Consumed) {
+      continue;
+    }
     if (argument == "--smoke") {
       options.smoke = true;
       continue;
@@ -1086,76 +1033,6 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
       options.crop_run = argv[++i];
       continue;
     }
-    if (argument == "--ui-reference-state") {
-      if (i + 1 >= argc ||
-          !parseAppleUiReferenceState(argv[++i], &options.ui_reference.state)) {
-        std::fprintf(
-            stderr,
-            "Invalid --ui-reference-state; expected empty, workspace, "
-            "keypoints, overlays, polar, crop-preview, analysis-eye, or "
-            "stimulus-debug\n");
-        return std::nullopt;
-      }
-      options.ui_reference.enabled = true;
-      options.ui_reference.state_set = true;
-      continue;
-    }
-    if (argument == "--ui-reference-frame") {
-      if (i + 1 >= argc) {
-        std::fprintf(stderr, "Missing value for --ui-reference-frame\n");
-        return std::nullopt;
-      }
-      const auto frame = parseNonNegativeInt(argv[++i]);
-      if (!frame) {
-        std::fprintf(stderr,
-                     "Invalid --ui-reference-frame; expected a frame >= 0\n");
-        return std::nullopt;
-      }
-      options.ui_reference.enabled = true;
-      options.ui_reference.frame_set = true;
-      options.ui_reference.target_frame = *frame;
-      continue;
-    }
-    if (argument == "--ui-reference-ready-file") {
-      if (i + 1 >= argc || argv[i + 1][0] == '\0') {
-        std::fprintf(stderr, "Missing value for --ui-reference-ready-file\n");
-        return std::nullopt;
-      }
-      options.ui_reference.enabled = true;
-      options.ui_reference.ready_file_set = true;
-      options.ui_reference.ready_file = argv[++i];
-      continue;
-    }
-    if (argument == "--ui-reference-size") {
-      if (i + 1 >= argc ||
-          !parsePositiveSize(argv[++i], &options.ui_reference.logical_width,
-                             &options.ui_reference.logical_height)) {
-        std::fprintf(stderr,
-                     "Invalid --ui-reference-size; expected WIDTHxHEIGHT up "
-                     "to 4096x4096\n");
-        return std::nullopt;
-      }
-      options.ui_reference.enabled = true;
-      continue;
-    }
-    if (argument == "--ui-reference-timeout") {
-      if (i + 1 >= argc) {
-        std::fprintf(stderr, "Missing value for --ui-reference-timeout\n");
-        return std::nullopt;
-      }
-      char *end = nullptr;
-      const char *value = argv[++i];
-      const double timeout = std::strtod(value, &end);
-      if (end == value || end == nullptr || *end != '\0' ||
-          !std::isfinite(timeout) || timeout <= 0.0) {
-        std::fprintf(stderr,
-                     "Invalid --ui-reference-timeout; expected seconds > 0\n");
-        return std::nullopt;
-      }
-      options.ui_reference.enabled = true;
-      options.ui_reference.timeout_seconds = timeout;
-      continue;
-    }
     if (argument == "--video-smoke") {
       if (i + 1 >= argc ||
           !parseFrameRange(argv[++i], &options.video_smoke_start,
@@ -1253,14 +1130,13 @@ std::optional<LaunchOptions> parseOptions(int argc, char **argv) {
     std::fprintf(stderr, "Unknown argument: %s\n", argument.c_str());
     return std::nullopt;
   }
+  if (const auto ui_reference_error =
+          crimson::ui_reference::validateLaunchOptions(
+              options.ui_reference, kUiReferenceParsePolicy)) {
+    std::fprintf(stderr, "%s\n", ui_reference_error->c_str());
+    return std::nullopt;
+  }
   if (options.ui_reference.enabled) {
-    if (!options.ui_reference.state_set || !options.ui_reference.frame_set ||
-        !options.ui_reference.ready_file_set) {
-      std::fprintf(stderr,
-                   "UI reference capture requires --ui-reference-state, "
-                   "--ui-reference-frame, and --ui-reference-ready-file\n");
-      return std::nullopt;
-    }
     if (options.smoke || options.validate_metal) {
       std::fprintf(stderr,
                    "UI reference capture cannot be combined with smoke or "
@@ -5731,6 +5607,10 @@ int main(int argc, char **argv) {
               ui_reference_stimulus_exact && has_window("Stimulus") &&
               has_window("Stimulus Frames in Buffer");
           break;
+        case AppleUiReferenceState::AnalysisTailStimulus:
+        case AppleUiReferenceState::Count:
+          ui_reference_state_ready = false;
+          break;
         }
         // The state predicate already includes exact-frame requirements. Empty
         // references intentionally have no camera frame to present.
@@ -5820,24 +5700,24 @@ int main(int argc, char **argv) {
                         crimson::crop::CropSourceKind::AcquisitionVideo
                     ? "acquisition-video"
                     : "none";
-            const nlohmann::json marker = {
-                {"format", "crimson_ui_reference_v1"},
-                {"platform", "macos-metal"},
-                {"state",
-                 appleUiReferenceStateName(options->ui_reference.state)},
+            nlohmann::json marker =
+                crimson::ui_reference::makeMarkerEnvelope(
+                    {"macos-metal",
+                     options->ui_reference.state,
+                     options->zarr_path,
+                     options->ui_reference.target_frame,
+                     viewer_stats.presented_frame,
+                     ui_reference_capture.stableFrameCount(),
+                     {client_width, client_height},
+                     {width, height},
+                     {image_path, width, height,
+                      "metal_drawable_pre_present"}});
+            marker.update({
                 {"video", options->video_path},
-                {"archive", options->zarr_path},
-                {"write_contract", "read-only"},
-                {"target_frame", options->ui_reference.target_frame},
                 {"requested_frame", viewer_stats.requested_frame},
-                {"presented_frame", viewer_stats.presented_frame},
-                {"stable_frames", ui_reference_capture.stableFrameCount()},
-                {"client_size",
-                 {{"width", client_width}, {"height", client_height}}},
                 {"logical_content_size",
                  {{"width", options->ui_reference.logical_width},
                   {"height", options->ui_reference.logical_height}}},
-                {"framebuffer_size", {{"width", width}, {"height", height}}},
                 {"framebuffer_scale",
                  {{"x", io.DisplayFramebufferScale.x},
                   {"y", io.DisplayFramebufferScale.y}}},
@@ -5851,11 +5731,6 @@ int main(int argc, char **argv) {
                        : 0},
                   {"stimulus_capacity",
                    stimulus_enabled ? options->stimulus_buffer_capacity : 0}}},
-                {"rendered_image",
-                 {{"path", image_path.string()},
-                  {"width", width},
-                  {"height", height},
-                  {"surface", "metal_drawable_pre_present"}}},
                 {"viewports",
                  {{"camera", viewportJson(video_viewports.camera)},
                   {"crop_inset", viewportJson(video_viewports.crop_inset)},
@@ -5903,7 +5778,7 @@ int main(int argc, char **argv) {
                   {"eye_representation",
                    workspace_state.selections().eye_angle_representation_key}}},
                 {"semantic_snapshot",
-                 crimson::ui::semanticSnapshotJson(ui_semantic_snapshot)}};
+                 crimson::ui::semanticSnapshotJson(ui_semantic_snapshot)}});
             if (!crimson::ui_reference::writeUiReferenceMarkerAtomically(
                     options->ui_reference.ready_file, marker, &capture_error)) {
               std::fprintf(stderr,
