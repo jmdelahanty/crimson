@@ -2,6 +2,7 @@
 
 #include "gui/camera_view_window.h"
 #include "gui/frame_debug_window.h"
+#include "zarr/subject_mask_overlay_repository.h"
 
 #include <opencv2/core.hpp>
 
@@ -35,6 +36,8 @@ struct CameraViewFrameContextInput {
     const crimson::zarr::KeypointOverlayDescriptor* keypoint_descriptor =
         nullptr;
     const crimson::zarr::KeypointOverlayResolution* keypoint_frame = nullptr;
+    const crimson::zarr::SubjectMaskOverlayRepository*
+        subject_mask_repository = nullptr;
     bool frame_is_interpolated = false;
     int latest_decoded_frame = -1;
     int total_recording_frames = -1;
@@ -94,6 +97,8 @@ struct CameraViewFrameContextInput {
 
 struct PreparedCameraViewFrameContext {
     std::optional<ZarrDetectionLoader::FrameDetections> mask_details;
+    crimson::zarr::SubjectMaskOverlayResolution subject_mask_frame;
+    crimson::overlay::ReadOnlyOverlayScene subject_mask_scene;
     std::optional<ZarrDetectionLoader::MovementFrameSample>
         movement_frame_sample;
     std::vector<ZarrDetectionLoader::MovementTrailPoint> movement_trail_points;

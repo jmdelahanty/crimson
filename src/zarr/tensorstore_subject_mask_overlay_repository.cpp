@@ -2794,6 +2794,7 @@ OpenStrictSubjectMaskV1(const ArchiveContext::Impl &archive,
   }
 
   SubjectMaskOverlayDescriptor descriptor;
+  descriptor.cache_namespace = archive.root_path.string() + ":" + run_name;
   descriptor.source_group = "refined_subject_masks_runs";
   descriptor.run_name = run_name;
   descriptor.source_crop_run = StringValue(run_attributes, "source_crop_run");
@@ -2895,6 +2896,7 @@ std::unique_ptr<SubjectMaskOverlayRepository> OpenSubjectMaskOverlayRepository(
   }
 
   SubjectMaskOverlayDescriptor descriptor;
+  descriptor.cache_namespace = archive->rootPath().string() + ":" + run_name;
   descriptor.source_group = group;
   descriptor.run_name = run_name;
   descriptor.source_crop_run = StringValue(*run_attributes, "source_crop_run");

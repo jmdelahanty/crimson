@@ -20,6 +20,7 @@ struct SubjectMaskOverlayPoint {
 };
 
 struct SubjectMaskOverlayDescriptor {
+  std::string cache_namespace;
   std::string source_group;
   std::string run_name;
   std::string source_crop_run;

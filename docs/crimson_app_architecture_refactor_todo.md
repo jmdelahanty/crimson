@@ -1260,10 +1260,14 @@ Acceptance:
       delegates to the current code:
   - [x] `DetectionRepository`
   - [x] `KeypointOverlayRepository` (read-only presentation)
-  - `EyeMaskRepository`
+  - [x] `SubjectMaskOverlayRepository` (read-only presentation)
   - [x] `StimulusRepository`
   - `MovementRepository`
   - [x] `ReviewWriteRepository`
+  - The strict TensorStore and Linux legacy-loader subject-mask adapters now
+    feed the same scene contract. Linux mask editing, picking, ROI previews,
+    and eye-axis/angle geometry remain compatibility extensions rather than
+    responsibilities of the read-only repository.
 - [ ] Move call sites toward those facades before moving implementation.
 - [ ] Keep `ZarrDetectionLoader` as a backend adapter during this phase.
 

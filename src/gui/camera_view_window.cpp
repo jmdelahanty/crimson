@@ -1099,6 +1099,12 @@ CameraViewWindowResult drawCameraViewWindowContents(
                         break;
                     case CameraOverlayLayer::SubjectMasks:
                         if (context.can_draw_eye_masks &&
+                            context.subject_mask_scene != nullptr) {
+                            drawCameraViewReadOnlyOverlayScene(
+                                *context.subject_mask_scene, image_height_px,
+                                &result.perf.mask_overlay);
+                        }
+                        if (context.can_draw_eye_masks &&
                             context.mask_details != nullptr) {
                             CameraViewMaskPerfMetrics mask_perf =
                                 drawCameraViewEyeMaskOverlay(
@@ -1107,7 +1113,8 @@ CameraViewWindowResult drawCameraViewWindowContents(
                                     image_height_px,
                                     context.eye_mask_smoothing_run_id,
                                     context.mask_overlay_options,
-                                    &subject_mask_preview);
+                                    &subject_mask_preview,
+                                    context.subject_mask_scene == nullptr);
                             accumulateCameraViewMaskPerfMetrics(
                                 result.perf.mask_overlay, mask_perf);
                             if (context.subject_mask_brush_input_enabled &&

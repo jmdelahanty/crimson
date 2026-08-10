@@ -24,6 +24,7 @@ set(CRIMSON_ZARR_LOADER_DIRECT_INCLUDE_ALLOWLIST
     src/zarr/clipped_detection_repository.h
     src/zarr/legacy_detection_repository.cpp
     src/zarr/legacy_keypoint_overlay_repository.cpp
+    src/zarr/legacy_subject_mask_overlay_repository.cpp
     src/zarr/legacy_stimulus_repository.cpp
     src/zarr_bbox_edit.h
     src/zarr_loader_internal.h

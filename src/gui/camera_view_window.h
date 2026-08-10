@@ -97,6 +97,7 @@ struct CameraViewWindowContext {
     bool can_draw_headings = false;
     bool can_draw_eye_masks = false;
     const ZarrDetectionLoader::FrameDetections* mask_details = nullptr;
+    const crimson::overlay::ReadOnlyOverlayScene* subject_mask_scene = nullptr;
     const ZarrDetectionLoader::FrameDetections* subject_shape_details = nullptr;
     std::string eye_mask_smoothing_run_id;
     CameraViewMaskOverlayOptions mask_overlay_options;

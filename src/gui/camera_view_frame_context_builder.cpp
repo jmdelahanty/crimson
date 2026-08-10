@@ -1,4 +1,5 @@
 #include "gui/camera_view_frame_context_builder.h"
+#include "gui/camera_view_subject_mask_scene_adapter.h"
 
 #include <algorithm>
 #include <chrono>
@@ -204,6 +205,46 @@ void prepareCameraViewFrameContext(
     const auto* detection_details = input.detection_details;
     const ZarrDetectionLoader::FrameDetections* mask_details = nullptr;
 
+    const int overlay_camera_frame =
+        input.presented_frame >= 0 ? input.presented_frame
+                                   : input.current_frame_num;
+    if (input.can_draw_eye_masks && input.subject_mask_repository != nullptr) {
+        const auto mask_load_start = std::chrono::steady_clock::now();
+        int image_width = 0;
+        int image_height = 0;
+        if (input.scene != nullptr && input.view_idx >= 0 &&
+            input.view_idx < static_cast<int>(input.scene->cameras.size())) {
+            image_width = static_cast<int>(
+                input.scene->cameras[input.view_idx].image_width);
+            image_height = static_cast<int>(
+                input.scene->cameras[input.view_idx].image_height);
+        }
+        prepared.subject_mask_frame =
+            input.subject_mask_repository->resolveCameraFrame(
+                overlay_camera_frame, image_width, image_height);
+        prepared.mask_data_load_ms += durationMs(
+            std::chrono::steady_clock::now() - mask_load_start);
+        if (image_width > 0 && image_height > 0) {
+            const auto preview =
+                buildSubjectMaskPreview(input.subject_mask_edit_session);
+            crimson::gui::CameraViewSubjectMaskSceneOptions options;
+            options.mode = input.mask_overlay_mode;
+            options.show_subject_body = input.show_subject_body_mask;
+            options.show_eye_left = input.show_eye_left_mask;
+            options.show_eye_right = input.show_eye_right_mask;
+            options.show_swim_bladder = input.show_swim_bladder_mask;
+            if (preview.active && preview.dirty) {
+                options.suppressed_source_crop_row_id = preview.roi_index;
+                options.suppressed_component = preview.component_name;
+            }
+            prepared.subject_mask_scene =
+                crimson::gui::makeCameraViewSubjectMaskScene(
+                    input.subject_mask_repository->descriptor(),
+                    prepared.subject_mask_frame, options, input.view_idx,
+                    overlay_camera_frame, image_width, image_height);
+        }
+    }
+
     if (input.can_draw_eye_masks && zarr_available) {
         if (detection_details != nullptr &&
             detection_details->includes_eye_masks) {
@@ -297,6 +338,8 @@ void prepareCameraViewFrameContext(
         input.can_draw_headings,
         input.can_draw_eye_masks,
         mask_details,
+        prepared.subject_mask_scene.ready() ? &prepared.subject_mask_scene
+                                            : nullptr,
         zarr_available ? detection_details : nullptr,
         zarr_available
             ? (input.zarr_loader->getEyeMaskSourcePath() + "|" +

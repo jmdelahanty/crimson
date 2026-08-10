@@ -170,6 +170,11 @@ void drawCameraViewHeadingOverlay(
 
 void drawCameraViewReadOnlyOverlayScene(
     const crimson::overlay::ReadOnlyOverlayScene& scene,
+    float image_height_px,
+    CameraViewMaskPerfMetrics* mask_perf = nullptr);
+
+CameraViewMaskPerfMetrics drawCameraViewReadOnlyRasterMasks(
+    const crimson::overlay::ReadOnlyOverlayScene& scene,
     float image_height_px);
 
 void drawCameraViewMovementOverlay(
@@ -187,7 +192,8 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
     float image_height_px,
     const std::string& smoothing_run_id,
     const CameraViewMaskOverlayOptions& options,
-    const CameraViewSubjectMaskPreview* edit_preview = nullptr);
+    const CameraViewSubjectMaskPreview* edit_preview = nullptr,
+    bool draw_mask_payloads = true);
 
 CameraViewMaskPerfMetrics prewarmCameraViewEyeMaskOverlayTextures(
     const ZarrDetectionLoader::FrameDetections& mask_details,

@@ -26,8 +26,10 @@ bool appendSubjectMaskOverlaySceneInput(
         continue;
       }
       overlay::SubjectMaskComponentInput mask;
-      mask.cache_namespace =
-          descriptor.source_group + "/" + descriptor.run_name;
+      mask.cache_namespace = descriptor.cache_namespace.empty()
+                                 ? descriptor.source_group + "/" +
+                                       descriptor.run_name
+                                 : descriptor.cache_namespace;
       mask.label = component.label;
       mask.source_crop_row_id = detection.source_crop_row_id;
       mask.channel_index = component.channel_index;

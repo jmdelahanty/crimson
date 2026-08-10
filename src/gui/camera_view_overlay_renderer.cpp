@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <iomanip>
@@ -313,9 +314,17 @@ void drawCameraViewHeadingOverlay(
 
 void drawCameraViewReadOnlyOverlayScene(
     const crimson::overlay::ReadOnlyOverlayScene& scene,
-    float image_height_px) {
+    float image_height_px,
+    CameraViewMaskPerfMetrics* mask_perf) {
     if (!scene.ready()) {
         return;
+    }
+    if (mask_perf != nullptr) {
+        accumulateCameraViewMaskPerfMetrics(
+            *mask_perf,
+            drawCameraViewReadOnlyRasterMasks(scene, image_height_px));
+    } else {
+        drawCameraViewReadOnlyRasterMasks(scene, image_height_px);
     }
     for (const auto& primitive : scene.primitives) {
         if (primitive.type == crimson::overlay::PrimitiveType::Polyline) {
@@ -333,8 +342,24 @@ void drawCameraViewReadOnlyOverlayScene(
             ImPlot::SetNextLineStyle(
                 toImVec4(primitive.stroke),
                 static_cast<float>(primitive.stroke_width_px));
+            const bool subject_mask_contour =
+                mask_perf != nullptr &&
+                primitive.layer ==
+                    crimson::overlay::CameraOverlayLayer::SubjectMasks;
+            const auto contour_draw_start = std::chrono::steady_clock::now();
             ImPlot::PlotLine(primitive.label.c_str(), x.data(), y.data(),
                              static_cast<int>(x.size()));
+            if (subject_mask_contour) {
+                const double elapsed_ms =
+                    std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - contour_draw_start)
+                        .count();
+                mask_perf->contours_drawn++;
+                mask_perf->contour_points +=
+                    static_cast<int>(primitive.points.size());
+                mask_perf->contour_draw_ms += elapsed_ms;
+                mask_perf->total_draw_ms += elapsed_ms;
+            }
             continue;
         }
         if (primitive.type == crimson::overlay::PrimitiveType::Marker) {

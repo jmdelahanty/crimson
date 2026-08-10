@@ -589,7 +589,8 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
     float image_height_px,
     const std::string& smoothing_run_id,
     const CameraViewMaskOverlayOptions& options,
-    const CameraViewSubjectMaskPreview* edit_preview) {
+    const CameraViewSubjectMaskPreview* edit_preview,
+    bool draw_mask_payloads) {
     CameraViewMaskPerfMetrics metrics;
     metrics.attempted = true;
     metrics.mode = cameraViewMaskOverlayModeLabel(options.mode);
@@ -735,7 +736,8 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
             };
 
         for (const auto& component : mask_info.subject_mask_components) {
-            if (!component.valid || component.pixel_indices.empty() ||
+            if (!draw_mask_payloads || !component.valid ||
+                component.pixel_indices.empty() ||
                 isEyeMaskComponent(component.label) ||
                 !shouldDrawSubjectMaskComponent(component.label, options) ||
                 previewReplacesComponent(edit_preview,
@@ -817,7 +819,7 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
             metrics.component_fill_count++;
         }
 
-        if (draw_all_contours) {
+        if (draw_mask_payloads && draw_all_contours) {
             for (const auto& component : mask_info.subject_mask_components) {
                 if (isEyeMaskComponent(component.label) ||
                     previewReplacesComponent(edit_preview,
@@ -960,7 +962,7 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
                                     : ImVec4(1.0f, 0.3f, 0.6f, 0.35f);
 
             bool drew_texture = false;
-            if (has_pixels && !preview_replaces_eye) {
+            if (draw_mask_payloads && has_pixels && !preview_replaces_eye) {
                 GLuint texture_id = eyeMaskTextureCache().getOrCreate(
                     smoothing_run_id,
                     mask_info,
@@ -1028,7 +1030,7 @@ CameraViewMaskPerfMetrics drawCameraViewEyeMaskOverlay(
                         SubjectMaskComponent& component) {
                     return component.label == eye_label;
                 });
-            if (draw_all_contours &&
+            if (draw_mask_payloads && draw_all_contours &&
                 contour_component != mask_info.subject_mask_components.end() &&
                 !preview_replaces_eye) {
                 draw_component_contour(

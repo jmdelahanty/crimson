@@ -3,7 +3,7 @@
 Date: 2026-07-31
 
 Status: backend-neutral frame policy and subject-mask adapter implemented;
-macOS subject-mask presentation adopted; Linux legacy adapter adoption pending
+macOS and Linux/NVIDIA read-only subject-mask presentation adopted
 
 ## Boundary
 
@@ -47,7 +47,7 @@ removed the local `last_subject_mask_camera_request` state and reduced
 portable diagnostics.
 
 Legacy subject-mask discovery and storage remain unchanged. The strict v1 and
-legacy repositories both feed the same shared buffer and presentation adapter.
+legacy repositories both feed the same shared scene and presentation contract.
 
 ## Verification
 
@@ -72,12 +72,41 @@ stale or mismatched candidates, zero rejected requests, and one pending
 presentation probe when the video smoke closed on its final frame. The video
 smoke itself passed at frame 1020 with 202.4 MiB peak RSS.
 
-## Next Adoption
+## 2026-08-10 Linux/NVIDIA Adoption
 
-The next safe use is the keypoint buffer because its repository, scene adapter,
-and long-duration behavior are already validated. Subject-shape and eye-
-geometry adoption should wait for their Palette contracts. The Linux legacy
-mask path currently performs a synchronous current-frame load inside its
-camera-view context builder; it can use the generic frame policy through a thin
-legacy adapter without changing storage or editing behavior.
+The Linux/NVIDIA camera view now resolves read-only subject-mask payloads
+through `LegacySubjectMaskOverlayRepository` and builds the same
+`ReadOnlyOverlayScene` used by strict TensorStore repositories. The named
+compatibility adapter preserves the legacy loader's discovery and chunk-cache
+behavior while translating its sparse pixel indexes and ROI-local contours
+into the backend-neutral mask and source-camera geometry contract. Complete
+per-frame observation sets are preserved; the adapter does not manufacture an
+`instance_key` when legacy storage lacks one.
 
+OpenGL owns only the final raster upload and draw. A bounded 64-entry texture
+cache is keyed by archive/run namespace, crop row, and component channel, so a
+session change cannot reuse stale GPU payloads. The existing eye-axis,
+eye-angle, picking, selected-contour, ROI inset, and mask-edit preview paths
+remain Linux compatibility extensions. While a component is being edited, its
+shared read-only presentation is suppressed and the authoritative edit preview
+is drawn in its place. If the shared repository cannot resolve a legacy
+archive, the maintained legacy renderer remains the fallback.
+
+The authenticated NVIDIA playback smoke covered frames 0--300 of the maintained
+GoodCopBadCop archive and passed in 3.006 seconds. Across 349 sampled camera
+draws, shared subject-mask rendering measured 1.010 ms median and 1.719 ms p95;
+mask data resolution measured 0.062 ms p95. The run presented all four semantic
+components, recorded no late playback frames, and retained the existing Linux
+eye-geometry overlays. The editing path remained compiled and isolated behind
+its legacy extension; it was not exercised by this playback smoke. The portable
+macOS suite passed all 99 tests, including multi-observation, edit-suppression,
+and stale-frame scene tests.
+
+## Remaining Boundary
+
+Read-only scientific subject-mask presentation is now shared. Persisted mask
+editing, eye-axis/angle geometry, hit testing, and ROI edit previews still use
+the Linux legacy loader and renderer. Those should move only behind dedicated
+interfaces that preserve their mutation and identity semantics; they should
+not be folded into the read-only repository merely to remove a compatibility
+call site.

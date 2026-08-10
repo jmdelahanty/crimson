@@ -77,6 +77,7 @@
 #include "zarr/legacy_detection_repository.h"
 #include "zarr/legacy_keypoint_overlay_repository.h"
 #include "zarr/legacy_stimulus_repository.h"
+#include "zarr/legacy_subject_mask_overlay_repository.h"
 #include "zarr/stimulus_context_timeline_legacy_repository.h"
 #include "zarr_loader.h"
 #include "zarr_persisted_crop_provider.h"
@@ -514,6 +515,8 @@ int main(int argc, char **argv) {
   double video_fps = 60.0f;
   float set_playback_speed = 1.0f;
   PlaybackState ps;
+  crimson::zarr::LegacySubjectMaskOverlayRepository subject_mask_repository(
+      zarr_loader, [&ps] { return !ps.play_video; });
   crimson::playback::PlaybackTransportController playback_transport;
   SeekProgress seek_progress;
   std::string frame_sync_debug_line;
@@ -3533,6 +3536,8 @@ int main(int argc, char **argv) {
                   ? &camera_keypoint_descriptor
                   : nullptr;
           camera_context_input.keypoint_frame = presented_keypoint_frame_ptr;
+          camera_context_input.subject_mask_repository =
+              &subject_mask_repository;
           camera_context_input.frame_is_interpolated = is_zarr_interpolated;
           camera_context_input.latest_decoded_frame = latest_decoded;
           camera_context_input.total_recording_frames = total_recording_frames;
