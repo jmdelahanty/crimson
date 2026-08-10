@@ -2375,6 +2375,7 @@ int main(int argc, char **argv) {
                      archive_error.c_str());
       } else {
         AppleAnalysisProductAdoptionOptions adoption_options;
+        adoption_options.generation = initial_recording_open_generation;
         adoption_options.initial_frame = initial_frame;
         adoption_options.video_smoke = options->video_smoke;
         adoption_options.ui_reference_enabled = options->ui_reference.enabled;
@@ -2489,6 +2490,7 @@ int main(int argc, char **argv) {
             if (!renderAppleLoadingFrame(
                     window, layer, command_queue, progress.phase,
                     progress.completed_products, progress.total_products)) {
+              analysis_product_adopter->cancel();
               analysis_loader.cancel();
               break;
             }
@@ -5027,6 +5029,9 @@ int main(int argc, char **argv) {
   const auto final_analysis_loading_progress = analysis_loader.progress();
   current_stimulus_frame.reset();
   current_crop_frame.reset();
+  if (analysis_product_adopter) {
+    analysis_product_adopter->cancel();
+  }
   analysis_loader.close();
   quality_timeline_session.close();
   const auto final_quality_timeline_metrics =

@@ -130,6 +130,7 @@ target_link_libraries(crimson_ui_reference_capture PUBLIC
 target_compile_features(crimson_ui_reference_capture PUBLIC cxx_std_17)
 
 add_library(crimson_runtime_contracts STATIC
+    src/analysis_product_lifecycle.cpp
     src/archive_open_coordinator.cpp
     src/stimulus_open_coordinator.cpp
     src/session_lifecycle.cpp
@@ -1425,6 +1426,7 @@ set_tests_properties(ui_reference_contract_tests PROPERTIES
 )
 
 foreach(runtime_test
+        analysis_product_lifecycle_tests
         session_lifecycle_tests
         loading_progress_tests
         frame_presentation_tests
@@ -2552,6 +2554,7 @@ list(APPEND CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_stimulus_media_loader.cpp"
 )
 list(REMOVE_ITEM CPP_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/analysis_product_lifecycle.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/coordinate_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/data_access.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/data_access_cache.cpp"
@@ -3372,7 +3375,6 @@ if(CRIMSON_BUILD_MACOS_APP)
 
     set(CRIMSON_MACOS_APP_SOURCES
         src/platform/macos/crimson_macos_main.mm
-        src/platform/macos/apple_analysis_product_adoption_policy.cpp
         src/platform/macos/apple_analysis_product_adopter.cpp
         src/platform/macos/apple_video_viewer_ui.mm
         src/gui/camera_view_transport_controls.cpp
@@ -3544,21 +3546,6 @@ if(CRIMSON_BUILD_MACOS_APP)
         TIMEOUT 30
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
-
-    add_executable(apple_analysis_product_adoption_policy_tests
-        tools/apple_analysis_product_adoption_policy_tests.cpp
-        src/platform/macos/apple_analysis_product_adoption_policy.cpp
-    )
-    target_compile_features(apple_analysis_product_adoption_policy_tests
-        PRIVATE cxx_std_17)
-    target_include_directories(apple_analysis_product_adoption_policy_tests
-        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    set_target_properties(apple_analysis_product_adoption_policy_tests
-        PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    add_test(NAME apple_analysis_product_adoption_policy_tests
-        COMMAND $<TARGET_FILE:apple_analysis_product_adoption_policy_tests>)
-    set_tests_properties(apple_analysis_product_adoption_policy_tests PROPERTIES
-        LABELS "headless;macos;analysis;policy")
 
     add_executable(canonical_detection_full_archive_integration_gate
         tools/canonical_detection_full_archive_integration_gate.cpp

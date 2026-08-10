@@ -251,6 +251,34 @@ AVFoundation/Metal-side playback and Apple buffers. Repository schemas,
 timeline selection contracts, scheduling, and overlay scene adapters remain
 backend-neutral where already shared.
 
+### 2026-08-10 Shared Analysis Product Lifecycle
+
+The initial-frame demand rule and product dependency state machine now live in
+the backend-neutral `AnalysisProductLifecycleController` within
+`crimson_runtime_contracts`. A lifecycle plan is generation-bound and contains
+only named product dependencies. Platform adapters route an opaque payload,
+install it when instructed, and report its terminal available or unavailable
+state. The controller never sees repositories, TensorStore handles, decoders,
+buffers, renderers, or UI state.
+
+The controller rejects invalid dependency graphs, stale generations, duplicate
+adoption, unrouted completion, and work submitted after cancellation. Deferred
+products are released in deterministic order once every prerequisite has
+settled; an unavailable prerequisite still releases its dependents so the
+platform adapter can apply its own required/optional failure policy. Portable
+tests cover multi-prerequisite ordering, unavailable prerequisites, generation
+replacement, cancellation, duplicates, graph validation, and initial-frame
+demand.
+
+The Apple adopter now uses this shared controller for the `motion` to
+`swim_bouts` dependency and binds it to the recording-open generation. Apple
+continues to own the deferred repository bundle and all concrete installation.
+The NVIDIA application links and compiles the same controller through the
+shared runtime library, but its current archive loader installs analysis
+synchronously and therefore has no asynchronous payload queue to route yet.
+This is an explicit compatibility boundary, not a second platform-specific
+lifecycle implementation.
+
 ## 2026-07-23 Runtime Contract Checkpoint
 
 The first backend-neutral runtime slices are now shared by the macOS and

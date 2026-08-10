@@ -1,5 +1,6 @@
 #pragma once
 
+#include "analysis_product_lifecycle.h"
 #include "analysis_series_timeline_buffer.h"
 #include "apple_acquisition_crop_playback_session.h"
 #include "apple_analysis_repository_loader.h"
@@ -27,6 +28,7 @@
 #include <string>
 
 struct AppleAnalysisProductAdoptionOptions {
+  uint64_t generation = 0;
   int64_t initial_frame = 0;
   bool video_smoke = false;
   bool ui_reference_enabled = false;
@@ -194,10 +196,13 @@ public:
 
   void adopt(AppleAnalysisRepositoryBundle result,
              bool analysis_loader_loading);
+  void cancel();
   bool hasDeferredSwimBoutResult() const;
 
 private:
   AppleAnalysisProductAdoptionOptions options_;
   AppleAnalysisProductAdoptionContext context_;
+  crimson::analysis::AnalysisProductLifecycleController lifecycle_;
+  bool lifecycle_ready_ = false;
   std::optional<AppleAnalysisRepositoryBundle> deferred_swim_bout_result_;
 };

@@ -1,7 +1,5 @@
 #include "platform/macos/apple_analysis_product_adopter.h"
 
-#include "platform/macos/apple_analysis_product_adoption_policy.h"
-
 #include "debug_flags.h"
 
 #include <algorithm>
@@ -13,7 +11,20 @@
 AppleAnalysisProductAdopter::AppleAnalysisProductAdopter(
     AppleAnalysisProductAdoptionOptions options,
     AppleAnalysisProductAdoptionContext context)
-    : options_(std::move(options)), context_(std::move(context)) {}
+    : options_(std::move(options)), context_(std::move(context)) {
+  std::string error;
+  lifecycle_ready_ = lifecycle_.begin(
+      {options_.generation, {{"swim_bouts", "motion"}}}, &error);
+  if (!lifecycle_ready_) {
+    std::fprintf(stderr, "[AppleAnalysisLifecycle] Unavailable: %s\n",
+                 error.c_str());
+  }
+}
+
+void AppleAnalysisProductAdopter::cancel() {
+  lifecycle_.cancel(options_.generation);
+  deferred_swim_bout_result_.reset();
+}
 
 bool AppleAnalysisProductAdopter::hasDeferredSwimBoutResult() const {
   return deferred_swim_bout_result_.has_value();
@@ -126,17 +137,41 @@ void AppleAnalysisProductAdopter::adopt(AppleAnalysisRepositoryBundle result,
 
   auto loaded_analysis =
       std::optional<AppleAnalysisRepositoryBundle>(std::move(result));
-  if (DecideAppleAnalysisProductAdoption(
-          loaded_analysis->hasResultFor("swim_bouts"),
-          motion_timeline_available, motion_timeline_failed) ==
-      AppleAnalysisProductAdoptionDecision::DeferSwimBoutsUntilMotionSettles) {
-    deferred_swim_bout_result_ = std::move(*loaded_analysis);
+  if (!lifecycle_ready_) {
     return;
   }
+  const bool has_motion_result = loaded_analysis->hasResultFor("motion");
+  const bool has_swim_bout_result = loaded_analysis->hasResultFor("swim_bouts");
+  bool motion_routed = false;
+  bool swim_bouts_routed = false;
+  bool release_deferred_swim_bouts = false;
+  if (has_motion_result) {
+    const auto route = lifecycle_.route(options_.generation, "motion");
+    if (!route.adopt()) {
+      std::fprintf(stderr, "[AppleAnalysisLifecycle] product=motion state=%s\n",
+                   route.reason.c_str());
+      return;
+    }
+    motion_routed = true;
+  }
+  if (has_swim_bout_result && !has_motion_result) {
+    const auto route = lifecycle_.route(options_.generation, "swim_bouts");
+    if (route.deferred()) {
+      deferred_swim_bout_result_ = std::move(*loaded_analysis);
+      return;
+    }
+    if (!route.adopt()) {
+      std::fprintf(stderr,
+                   "[AppleAnalysisLifecycle] product=swim_bouts state=%s\n",
+                   route.reason.c_str());
+      return;
+    }
+    swim_bouts_routed = true;
+  }
   const bool request_initial_analysis_frame =
-      ShouldRequestInitialAppleAnalysisFrame(options_.video_smoke,
-                                             options_.ui_reference_enabled,
-                                             analysis_loader_loading);
+      crimson::analysis::shouldRequestInitialFrame(
+          options_.video_smoke || options_.ui_reference_enabled,
+          analysis_loader_loading);
   std::printf(
       "[AppleAnalysisLoad] state=ready total_ms=%.1f products=%zu "
       "preloaded_trace_bytes=%llu preload_budget_bytes=%llu\n",
@@ -711,6 +746,36 @@ void AppleAnalysisProductAdopter::adopt(AppleAnalysisRepositoryBundle result,
     }
   }
 
+  if (motion_routed) {
+    const auto completion = lifecycle_.complete(options_.generation, "motion",
+                                                motion_timeline_available);
+    if (!completion.accepted) {
+      std::fprintf(stderr,
+                   "[AppleAnalysisLifecycle] product=motion completion=%s\n",
+                   completion.reason.c_str());
+      return;
+    }
+    release_deferred_swim_bouts =
+        std::find(completion.released_products.begin(),
+                  completion.released_products.end(),
+                  "swim_bouts") != completion.released_products.end();
+  }
+
+  if (has_swim_bout_result && !swim_bouts_routed) {
+    const auto route = lifecycle_.route(options_.generation, "swim_bouts");
+    if (route.deferred()) {
+      deferred_swim_bout_result_ = std::move(*loaded_analysis);
+      return;
+    }
+    if (!route.adopt()) {
+      std::fprintf(stderr,
+                   "[AppleAnalysisLifecycle] product=swim_bouts state=%s\n",
+                   route.reason.c_str());
+      return;
+    }
+    swim_bouts_routed = true;
+  }
+
   if (loaded_analysis->hasResultFor("swim_bouts") &&
       options_.swim_bout_timeline_enabled && motion_timeline_available) {
     swim_bout_timeline_error = loaded_analysis->errorFor("swim_bouts");
@@ -783,6 +848,17 @@ void AppleAnalysisProductAdopter::adopt(AppleAnalysisRepositoryBundle result,
         "Swim-bout timelines require a compatible motion timeline";
     std::fprintf(stderr, "[AppleSwimBoutTimeline] Unavailable: %s\n",
                  swim_bout_timeline_error.c_str());
+  }
+
+  if (swim_bouts_routed) {
+    const auto completion = lifecycle_.complete(
+        options_.generation, "swim_bouts", swim_bout_timeline_available);
+    if (!completion.accepted) {
+      std::fprintf(
+          stderr, "[AppleAnalysisLifecycle] product=swim_bouts completion=%s\n",
+          completion.reason.c_str());
+      return;
+    }
   }
 
   if (loaded_analysis->hasResultFor("eye_angles") &&
@@ -1086,7 +1162,7 @@ void AppleAnalysisProductAdopter::adopt(AppleAnalysisRepositoryBundle result,
     }
   }
   composite_enabled = stimulus_enabled || crop_enabled;
-  if (loaded_analysis->hasResultFor("motion") && deferred_swim_bout_result_) {
+  if (release_deferred_swim_bouts && deferred_swim_bout_result_) {
     auto deferred = std::move(*deferred_swim_bout_result_);
     deferred_swim_bout_result_.reset();
     adopt(std::move(deferred), analysis_loader_loading);
