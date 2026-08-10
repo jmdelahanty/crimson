@@ -58,6 +58,7 @@ add_library(crimson_frame_contracts STATIC
     src/frame_selection.cpp
     src/frame_slot.cpp
     src/playback_clock.cpp
+    src/playback_buffer_browser.cpp
     src/playback_diagnostics.cpp
     src/playback_seek.cpp
     src/playback_presentation_lifecycle.cpp
@@ -73,6 +74,7 @@ target_compile_features(crimson_frame_contracts PUBLIC cxx_std_17)
 
 add_library(crimson_nvidia_playback_adapter STATIC
     src/platform/nvidia/nvidia_clipped_media_coordinator.cpp
+    src/platform/nvidia/nvidia_frame_buffer_adapter.cpp
 )
 target_include_directories(crimson_nvidia_playback_adapter PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -1217,6 +1219,23 @@ set_tests_properties(playback_transport_tests PROPERTIES
     LABELS "headless;playback;portable;transport"
 )
 
+add_executable(playback_buffer_browser_tests
+    tools/playback_buffer_browser_tests.cpp
+)
+target_link_libraries(playback_buffer_browser_tests PRIVATE
+    crimson_frame_contracts
+)
+target_compile_features(playback_buffer_browser_tests PRIVATE cxx_std_17)
+set_target_properties(playback_buffer_browser_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME playback_buffer_browser_tests
+    COMMAND $<TARGET_FILE:playback_buffer_browser_tests>
+)
+set_tests_properties(playback_buffer_browser_tests PROPERTIES
+    LABELS "headless;playback;portable;buffer"
+)
+
 add_executable(clipped_media_handoff_tests
     tools/clipped_media_handoff_tests.cpp
 )
@@ -1249,6 +1268,23 @@ add_test(NAME nvidia_clipped_media_coordinator_tests
 )
 set_tests_properties(nvidia_clipped_media_coordinator_tests PROPERTIES
     LABELS "headless;playback;nvidia;clipped"
+)
+
+add_executable(nvidia_frame_buffer_adapter_tests
+    tools/nvidia_frame_buffer_adapter_tests.cpp
+)
+target_link_libraries(nvidia_frame_buffer_adapter_tests PRIVATE
+    crimson_nvidia_playback_adapter
+)
+target_compile_features(nvidia_frame_buffer_adapter_tests PRIVATE cxx_std_17)
+set_target_properties(nvidia_frame_buffer_adapter_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME nvidia_frame_buffer_adapter_tests
+    COMMAND $<TARGET_FILE:nvidia_frame_buffer_adapter_tests>
+)
+set_tests_properties(nvidia_frame_buffer_adapter_tests PROPERTIES
+    LABELS "headless;playback;nvidia;buffer"
 )
 
 add_executable(playback_diagnostics_tests
@@ -2429,6 +2465,7 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_types.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_selection.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_slot.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/playback_buffer_browser.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/session_lifecycle.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/loading_progress.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_presentation.cpp"
@@ -3232,6 +3269,7 @@ if(CRIMSON_BUILD_MACOS_APP)
         src/gui/frame_inspect_subject_mask_module.cpp
         src/gui/frame_inspect_subject_shape_module.cpp
         src/gui/frame_inspect_window.cpp
+        src/gui/frame_buffer_window.cpp
         src/gui/keypoint_overlay_inspect_adapter.cpp
         src/gui/quality_timeline_session.cpp
         src/gui/quality_timeline_window.cpp
@@ -3310,6 +3348,7 @@ if(CRIMSON_BUILD_MACOS_APP)
         src/gui/frame_inspect_subject_mask_module.cpp
         src/gui/frame_inspect_subject_shape_module.cpp
         src/gui/frame_inspect_window.cpp
+        src/gui/frame_buffer_window.cpp
         src/gui/keypoint_overlay_inspect_adapter.cpp
         src/gui/read_only_eye_geometry_controls_adapter.cpp
         src/gui/read_only_subject_mask_controls_adapter.cpp

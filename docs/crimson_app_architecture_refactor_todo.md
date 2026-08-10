@@ -69,6 +69,37 @@ The composition root now wires media queries, seek execution, and telemetry;
 it no longer implements clipped-media state transitions or provider-specific
 frame binding.
 
+### 2026-08-10 Decoded Buffer Browser Extraction
+
+The decoded-frame browser now has a backend-neutral model and composable ImGui
+window. The model consumes 64-bit presentation candidates with optional
+platform slot identities, sorts an immutable snapshot, groups contiguous
+spans, measures gaps, highlights the nearest frame with the maintained
+later-frame tie rule, and exposes a preferred slot only for an exact slotted
+match. This makes the policy usable by both NVIDIA rings and retained Apple
+decode surfaces without inventing a slot identity for Apple.
+
+The ImGui module owns the existing `Frames in the buffer` presentation and
+returns a selection command; it does not mutate playback, decoder, renderer,
+or telemetry state. The NVIDIA adapter obtains candidates through synchronized
+`frameSlotSnapshotReadable` calls instead of reading the legacy ring fields
+directly. `red.cpp` retains camera choice, command application, and event
+publication as composition responsibilities.
+
+Headless tests cover sorting, spans and gaps, exact and nearest selection,
+duplicate frames, empty buffers, 64-bit slotless candidates, and readable-slot
+snapshot isolation. Semantic ImGui coverage preserves the shared window and
+selection labels. The module compiles into the macOS app, but the Apple
+workspace does not expose this diagnostic window yet. The maintained NVIDIA
+application remains the active user of the ring-slot adapter.
+
+This extraction reduces `red.cpp` from 6,796 to 6,646 lines without changing
+buffer release, pause/resume, seek, decoder, CUDA, OpenGL, or Metal behavior.
+The macOS build and all 83 configured tests pass. An isolated native Ubuntu
+22/CUDA 12.4/TensorRT 10 build also passes the focused model and adapter tests;
+the authenticated ws1 playback smoke advanced parent frames 0 through 300 and
+presented frame 300 from slot 0 in 3.00 seconds.
+
 ## 2026-07-23 Runtime Contract Checkpoint
 
 The first backend-neutral runtime slices are now shared by the macOS and

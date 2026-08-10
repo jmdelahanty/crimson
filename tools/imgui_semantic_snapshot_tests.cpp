@@ -2,6 +2,7 @@
 #include "gui/canonical_detection_inspect_adapter.h"
 #include "gui/eye_geometry_overlay_controls.h"
 #include "gui/eye_geometry_overlay_inspect_adapter.h"
+#include "gui/frame_buffer_window.h"
 #include "gui/frame_inspect_detection_module.h"
 #include "gui/frame_inspect_eye_angle_module.h"
 #include "gui/frame_inspect_keypoint_module.h"
@@ -13,8 +14,8 @@
 #include "gui/read_only_subject_mask_controls_adapter.h"
 #include "gui/read_only_subject_shape_controls_adapter.h"
 #include "gui/session_loading_modal.h"
-#include "gui/subject_mask_overlay_inspect_adapter.h"
 #include "gui/subject_mask_overlay_controls.h"
+#include "gui/subject_mask_overlay_inspect_adapter.h"
 #include "gui/subject_shape_overlay_controls.h"
 #include "gui/subject_shape_overlay_inspect_adapter.h"
 #include "imgui.h"
@@ -700,8 +701,7 @@ bool testSubjectShapeOverlayInspectAdapter() {
   first.geometry.centerline_valid = true;
   first.geometry.centerline = {{1.0, 2.0}, {3.0, 4.0}};
   first.geometry.bspline_valid = true;
-  first.geometry.bspline_sample = {
-      {1.0, 2.0}, {2.0, 3.0}, {3.0, 4.0}};
+  first.geometry.bspline_sample = {{1.0, 2.0}, {2.0, 3.0}, {3.0, 4.0}};
   first.geometry.tail_sample_valid = true;
   first.geometry.tail_samples = {{3.0, 4.0}, {4.0, 5.0}};
   crimson::zarr::SubjectShapeOverlayDetection second;
@@ -743,9 +743,8 @@ bool testSubjectShapeOverlayInspectAdapter() {
   CHECK(empty_presentation.observations.empty());
   CHECK(empty_presentation.warning.empty());
 
-  const auto loading =
-      crimson::gui::makeSubjectShapeOverlayInspectPresentation(
-          &descriptor, &frame, frame.camera_frame + 1);
+  const auto loading = crimson::gui::makeSubjectShapeOverlayInspectPresentation(
+      &descriptor, &frame, frame.camera_frame + 1);
   CHECK(loading.available);
   CHECK(!loading.frame_ready);
   CHECK(loading.observations.empty());
@@ -895,12 +894,12 @@ bool testSubjectShapeOverlayControlsSnapshot() {
   crimson::gui::SubjectShapeOverlayControlState legacy_state;
   ImGui::NewFrame();
   ImGui::Begin("Strict shape controls");
-  crimson::gui::drawSubjectShapeOverlayControls(
-      strict_state, {true, false, false, false});
+  crimson::gui::drawSubjectShapeOverlayControls(strict_state,
+                                                {true, false, false, false});
   ImGui::End();
   ImGui::Begin("Legacy shape controls");
-  crimson::gui::drawSubjectShapeOverlayControls(
-      legacy_state, {true, true, true, true});
+  crimson::gui::drawSubjectShapeOverlayControls(legacy_state,
+                                                {true, true, true, true});
   ImGui::End();
   ImGui::Render();
 
@@ -1007,8 +1006,7 @@ bool testSubjectMaskOverlayControlsSnapshot() {
   const auto draw_windows = [&]() {
     ImGui::Begin("Strict mask controls");
     crimson::gui::drawSubjectMaskOverlayControls(
-        strict_state, strict_capabilities,
-        {"Realtime draws fills only."});
+        strict_state, strict_capabilities, {"Realtime draws fills only."});
     ImGui::End();
     ImGui::Begin("Camera-view mask controls");
     crimson::gui::drawSubjectMaskOverlayControls(
@@ -1316,6 +1314,57 @@ bool testEyeAngleInspectModuleSnapshot() {
   return true;
 }
 
+bool testFrameBufferWindowSnapshot() {
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO &io = ImGui::GetIO();
+  io.DisplaySize = ImVec2(800.0f, 600.0f);
+  io.DeltaTime = 1.0f / 60.0f;
+  unsigned char *pixels = nullptr;
+  int width = 0;
+  int height = 0;
+  io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+
+  const auto model = crimson::playback::buildPlaybackBufferBrowserModel(
+      {{15, 4}, {10, 1}, {11, 2}}, 11);
+  const crimson::gui::FrameBufferWindowContext context{
+      model,
+      8,
+      10,
+      true,
+      crimson::gui::FrameBufferResumeSummary{"camera re-anchor", 11},
+  };
+
+  ImGui::NewFrame();
+  crimson::gui::drawFrameBufferWindow(context);
+  ImGui::Render();
+
+  crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(), true);
+  crimson::ui::beginSemanticFrame(ImGui::GetCurrentContext());
+  ImGui::NewFrame();
+  const auto result = crimson::gui::drawFrameBufferWindow(context);
+  ImGui::Render();
+  const auto snapshot =
+      crimson::ui::finishSemanticFrame(ImGui::GetCurrentContext());
+
+  bool found_window = false;
+  bool found_selected_frame = false;
+  for (const auto &window : snapshot.windows) {
+    found_window |= window.visible_name == "Frames in the buffer";
+  }
+  for (const auto &item : snapshot.items) {
+    found_selected_frame |= item.window_name == "Frames in the buffer" &&
+                            item.visible_label.find("Frame 11 (slot 2") == 0;
+  }
+  CHECK(found_window);
+  CHECK(found_selected_frame);
+  CHECK(!result.selection.has_value());
+
+  crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(), false);
+  ImGui::DestroyContext();
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -1337,7 +1386,8 @@ int main() {
       !testReadOnlyEyeGeometryControlAdapter() ||
       !testEyeGeometryOverlayControlsSnapshot() ||
       !testEyeGeometryOverlayInspectAdapter() ||
-      !testEyeAngleInspectModuleSnapshot()) {
+      !testEyeAngleInspectModuleSnapshot() ||
+      !testFrameBufferWindowSnapshot()) {
     return 1;
   }
   std::cout << "imgui_semantic_snapshot_tests: PASS\n";

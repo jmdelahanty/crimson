@@ -23,6 +23,7 @@
 #include "gui/crop_preview_window.h"
 #include "gui/diagnostics_window.h"
 #include "gui/file_browser_window.h"
+#include "gui/frame_buffer_window.h"
 #include "gui/frame_debug_window.h"
 #include "gui/full_frame_rect_edit_overlay.h"
 #include "gui/keypoints_window.h"
@@ -47,6 +48,7 @@
 #include "media_session_loader.h"
 #include "perf_logging.h"
 #include "platform/nvidia/nvidia_clipped_media_coordinator.h"
+#include "platform/nvidia/nvidia_frame_buffer_adapter.h"
 #include "platform/nvidia/nvidia_frame_inspect_adapter.h"
 #include "platform/nvidia/nvidia_gl_diagnostics.h"
 #include "platform/nvidia/nvidia_playback_diagnostics_adapter.h"
@@ -4056,202 +4058,50 @@ int main(int argc, char **argv) {
         }
       }
 
-      struct PausedBufferListItem {
-        int slot = -1;
-        int frame = -1;
-      };
-      std::vector<PausedBufferListItem> paused_buffer_items;
-      paused_buffer_items.reserve(scene->size_of_buffer);
-      for (int i = 0; i < scene->size_of_buffer; ++i) {
-        const auto &slot = scene->cameras[visible_idx].display_buffer[i];
-        if (slot.available_to_write || slot.frame_number < 0) {
-          continue;
-        }
-        paused_buffer_items.push_back({i, slot.frame_number});
+      const auto buffered_frames =
+          crimson::platform::nvidia::snapshotFrameBuffer(
+              scene->cameras[visible_idx].display_buffer,
+              scene->size_of_buffer);
+      const auto buffer_model =
+          crimson::playback::buildPlaybackBufferBrowserModel(
+              buffered_frames, ps.to_display_frame_number);
+      std::optional<crimson::gui::FrameBufferResumeSummary> last_resume;
+      if (ps.last_resume_path != ResumePath::None) {
+        last_resume = crimson::gui::FrameBufferResumeSummary{
+            resumePathName(ps.last_resume_path), ps.last_resume_target_frame};
       }
-      std::sort(
-          paused_buffer_items.begin(), paused_buffer_items.end(),
-          [](const PausedBufferListItem &a, const PausedBufferListItem &b) {
-            if (a.frame == b.frame) {
-              return a.slot < b.slot;
-            }
-            return a.frame < b.frame;
-          });
+      const auto buffer_window = crimson::gui::drawFrameBufferWindow(
+          {buffer_model,
+           scene->size_of_buffer,
+           ps.paused_frame_on_toggle >= 0
+               ? std::optional<int64_t>(ps.paused_frame_on_toggle)
+               : std::nullopt,
+           ps.buffer_browsed_since_pause,
+           last_resume});
+      frame_buffer_window_ui_ms += buffer_window.draw_ms;
 
-      struct PausedBufferSpan {
-        int start_index = -1;
-        int end_index = -1;
-      };
-      std::vector<PausedBufferSpan> paused_buffer_spans;
-      paused_buffer_spans.reserve(paused_buffer_items.size());
-      for (int i = 0; i < static_cast<int>(paused_buffer_items.size()); ++i) {
-        if (paused_buffer_spans.empty() ||
-            paused_buffer_items[i].frame !=
-                paused_buffer_items[paused_buffer_spans.back().end_index]
-                        .frame +
-                    1) {
-          paused_buffer_spans.push_back({i, i});
-        } else {
-          paused_buffer_spans.back().end_index = i;
-        }
+      select_corr_head = buffer_model.preferred_slot.value_or(-1);
+      if (buffer_window.selection) {
+        const int previous_frame = ps.to_display_frame_number;
+        const int selected_frame =
+            static_cast<int>(buffer_window.selection->frame_number);
+        ps.to_display_frame_number = selected_frame;
+        ps.slider_frame_number = selected_frame;
+        ps.pause_seeked = true;
+        ps.buffer_browsed_since_pause =
+            ps.paused_frame_on_toggle >= 0 &&
+            selected_frame != ps.paused_frame_on_toggle;
+        select_corr_head = buffer_window.selection->slot.value_or(-1);
+        writeClippedPlaybackStateEvent(
+            "paused_buffer_select",
+            json{{"previous_frame", previous_frame},
+                 {"target_frame", selected_frame},
+                 {"slot", select_corr_head}},
+            true);
       }
-
-      auto getPreferredPausedSlot = [&]() -> int {
-        int exact_slot = -1;
-        for (int i = 0; i < scene->size_of_buffer; ++i) {
-          const auto &slot = scene->cameras[visible_idx].display_buffer[i];
-          if (!slot.available_to_write &&
-              slot.frame_number == ps.to_display_frame_number) {
-            exact_slot = i;
-            break;
-          }
-        }
-        if (exact_slot >= 0) {
-          return exact_slot;
-        }
-        return -1;
-      };
-
-      ImGui::SetNextWindowSize(ImVec2(500, 440), ImGuiCond_FirstUseEver);
-      const auto buffer_window_ui_start = std::chrono::steady_clock::now();
-      if (ImGui::Begin("Frames in the buffer")) {
-        ImGui::Text("Valid frames: %zu / %u", paused_buffer_items.size(),
-                    scene->size_of_buffer);
-        if (ps.paused_frame_on_toggle >= 0) {
-          ImGui::Text("Pause origin frame: %d, resume mode: %s",
-                      ps.paused_frame_on_toggle,
-                      ps.buffer_browsed_since_pause
-                          ? "buffered resume / camera re-anchor"
-                          : "smooth resume from pause frame");
-        }
-        if (ps.last_resume_path != ResumePath::None) {
-          ImGui::Text("Last resume: %s (target %d)",
-                      resumePathName(ps.last_resume_path),
-                      ps.last_resume_target_frame);
-        }
-        if (!paused_buffer_items.empty()) {
-          const int oldest_buffered_frame = paused_buffer_items.front().frame;
-          const int newest_buffered_frame = paused_buffer_items.back().frame;
-          int largest_gap = 0;
-          for (int span_idx = 1;
-               span_idx < static_cast<int>(paused_buffer_spans.size());
-               ++span_idx) {
-            const auto &previous_last_item =
-                paused_buffer_items[paused_buffer_spans[span_idx - 1]
-                                        .end_index];
-            const auto &current_first_item =
-                paused_buffer_items[paused_buffer_spans[span_idx].start_index];
-            largest_gap =
-                std::max(largest_gap, current_first_item.frame -
-                                          previous_last_item.frame - 1);
-          }
-          ImGui::Text("Selected/displayed frame: %d",
-                      ps.to_display_frame_number);
-          ImGui::Text(
-              "Buffered spans: %zu, oldest: %d, newest: %d, largest gap: %d",
-              paused_buffer_spans.size(), oldest_buffered_frame,
-              newest_buffered_frame, largest_gap);
-          ImGui::Text("Newest buffered frame: %d", newest_buffered_frame);
-        }
-        int selected_item = -1;
-        int best_distance = std::numeric_limits<int>::max();
-        int best_frame = std::numeric_limits<int>::min();
-        for (int i = 0; i < static_cast<int>(paused_buffer_items.size()); ++i) {
-          const auto &item = paused_buffer_items[i];
-          if (item.frame == ps.to_display_frame_number) {
-            selected_item = i;
-            best_distance = 0;
-            best_frame = item.frame;
-            break;
-          }
-          const int distance =
-              std::abs(item.frame - ps.to_display_frame_number);
-          if (distance < best_distance ||
-              (distance == best_distance && item.frame > best_frame)) {
-            best_distance = distance;
-            best_frame = item.frame;
-            selected_item = i;
-          }
-        }
-        if (paused_buffer_items.empty()) {
-          ImGui::TextDisabled("No decoded frames currently buffered.");
-        } else {
-          const int newest_buffered_frame = paused_buffer_items.back().frame;
-          for (int span_idx = 0;
-               span_idx < static_cast<int>(paused_buffer_spans.size());
-               ++span_idx) {
-            const auto &span = paused_buffer_spans[span_idx];
-            const auto &first_item = paused_buffer_items[span.start_index];
-            const auto &last_item = paused_buffer_items[span.end_index];
-
-            if (span_idx > 0) {
-              const auto &previous_last_item =
-                  paused_buffer_items[paused_buffer_spans[span_idx - 1]
-                                          .end_index];
-              const int missing_frames =
-                  first_item.frame - previous_last_item.frame - 1;
-              if (missing_frames > 0) {
-                const int missing_start = previous_last_item.frame + 1;
-                const int missing_end = first_item.frame - 1;
-                ImGui::Separator();
-                ImGui::TextDisabled("Gap: %d missing frames (%d..%d)",
-                                    missing_frames, missing_start, missing_end);
-              }
-            }
-
-            char span_label[192];
-            snprintf(span_label, sizeof(span_label),
-                     "Span %d-%d (%d frames, slots %d-%d, selected %+d..%+d, "
-                     "newest %+d..%+d)",
-                     first_item.frame, last_item.frame,
-                     span.end_index - span.start_index + 1, first_item.slot,
-                     last_item.slot,
-                     first_item.frame - ps.to_display_frame_number,
-                     last_item.frame - ps.to_display_frame_number,
-                     first_item.frame - newest_buffered_frame,
-                     last_item.frame - newest_buffered_frame);
-            ImGui::TextDisabled("%s", span_label);
-
-            for (int i = span.start_index; i <= span.end_index; ++i) {
-              const auto &item = paused_buffer_items[i];
-              char label[128];
-              const int selected_delta =
-                  item.frame - ps.to_display_frame_number;
-              const int newest_delta = item.frame - newest_buffered_frame;
-              snprintf(label, sizeof(label),
-                       "Frame %d (slot %d, selected %+d, newest %+d)",
-                       item.frame, item.slot, selected_delta, newest_delta);
-              ImGui::PushID(i);
-              if (ImGui::Selectable(label, selected_item == i)) {
-                const int previous_frame = ps.to_display_frame_number;
-                selected_item = i;
-                ps.to_display_frame_number = item.frame;
-                ps.slider_frame_number = item.frame;
-                ps.pause_seeked = true;
-                ps.buffer_browsed_since_pause =
-                    (ps.paused_frame_on_toggle >= 0 &&
-                     item.frame != ps.paused_frame_on_toggle);
-                writeClippedPlaybackStateEvent(
-                    "paused_buffer_select",
-                    json{{"previous_frame", previous_frame},
-                         {"target_frame", item.frame},
-                         {"slot", item.slot}},
-                    true);
-              }
-              ImGui::PopID();
-            }
-          }
-        }
-      }
-      ImGui::End();
-      frame_buffer_window_ui_ms +=
-          durationMs(std::chrono::steady_clock::now() - buffer_window_ui_start);
-      select_corr_head = getPreferredPausedSlot();
       if (select_corr_head >= 0) {
         ps.read_head = select_corr_head;
-        current_frame_num = scene->cameras[visible_idx]
-                                .display_buffer[select_corr_head]
-                                .frame_number;
+        current_frame_num = ps.to_display_frame_number;
         // Keep paused seek target stable unless the user explicitly
         // selects/seeks a different frame.
       } else {
