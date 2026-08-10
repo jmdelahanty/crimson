@@ -227,6 +227,30 @@ published an empty 1280x720 reference and OpenGL published a frame-exact
 The authenticated NVIDIA playback smoke also advanced frames 0 through 300 in
 3.00 seconds after the parser adoption.
 
+### 2026-08-10 Apple Analysis Product Adoption Extraction
+
+The macOS composition root now delegates completed analysis-repository bundles
+to `AppleAnalysisProductAdopter`. The adopter owns the product installation
+sequence, initial-frame demand policy, buffer-open and smoke-wait policy,
+availability/error transitions, descriptor logging, crop source fallback, and
+the dependency that defers swim-bout adoption until motion has settled.
+
+Bindings are grouped by product and remain references to the existing macOS
+session state. This deliberately preserves buffer, playback, renderer, and
+workspace ownership while making every dependency explicit; moving those
+objects into a consolidated Apple analysis session is a later ownership step,
+not part of this behavior-preserving extraction. A small pure policy module
+provides headless truth-table coverage for progressive initial-frame demand and
+swim-bout deferral.
+
+The extraction reduces `crimson_macos_main.mm` from 7,064 to 6,113 lines. The
+composition root now starts the asynchronous loader and submits completed
+bundles; it no longer implements roughly one thousand lines of per-product
+repository adoption. This module is Apple-specific because it opens
+AVFoundation/Metal-side playback and Apple buffers. Repository schemas,
+timeline selection contracts, scheduling, and overlay scene adapters remain
+backend-neutral where already shared.
+
 ## 2026-07-23 Runtime Contract Checkpoint
 
 The first backend-neutral runtime slices are now shared by the macOS and

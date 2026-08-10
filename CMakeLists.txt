@@ -3372,6 +3372,8 @@ if(CRIMSON_BUILD_MACOS_APP)
 
     set(CRIMSON_MACOS_APP_SOURCES
         src/platform/macos/crimson_macos_main.mm
+        src/platform/macos/apple_analysis_product_adoption_policy.cpp
+        src/platform/macos/apple_analysis_product_adopter.cpp
         src/platform/macos/apple_video_viewer_ui.mm
         src/gui/camera_view_transport_controls.cpp
         src/gui/canonical_detection_inspect_adapter.cpp
@@ -3542,6 +3544,21 @@ if(CRIMSON_BUILD_MACOS_APP)
         TIMEOUT 30
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
+
+    add_executable(apple_analysis_product_adoption_policy_tests
+        tools/apple_analysis_product_adoption_policy_tests.cpp
+        src/platform/macos/apple_analysis_product_adoption_policy.cpp
+    )
+    target_compile_features(apple_analysis_product_adoption_policy_tests
+        PRIVATE cxx_std_17)
+    target_include_directories(apple_analysis_product_adoption_policy_tests
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    set_target_properties(apple_analysis_product_adoption_policy_tests
+        PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME apple_analysis_product_adoption_policy_tests
+        COMMAND $<TARGET_FILE:apple_analysis_product_adoption_policy_tests>)
+    set_tests_properties(apple_analysis_product_adoption_policy_tests PROPERTIES
+        LABELS "headless;macos;analysis;policy")
 
     add_executable(canonical_detection_full_archive_integration_gate
         tools/canonical_detection_full_archive_integration_gate.cpp
