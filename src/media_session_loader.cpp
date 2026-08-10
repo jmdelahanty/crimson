@@ -74,13 +74,13 @@ bool applyZarrCalibrationToCameraParams(const ZarrCalibrationData &calibration,
 }
 
 void resetClippedMediaState(PaletteClippedMediaState &state) {
-  const int64_t last_presented = state.last_presented_parent_frame;
-  const int64_t pending_switch = state.pending_switch_parent_frame;
-  const bool switch_in_progress = state.switch_in_progress;
+  const int64_t last_presented = state.handoff.last_presented_parent_frame;
+  const int64_t pending_switch = state.handoff.pending_switch_parent_frame;
+  const bool switch_in_progress = state.handoff.switch_in_progress;
   state = PaletteClippedMediaState();
-  state.last_presented_parent_frame = last_presented;
-  state.pending_switch_parent_frame = pending_switch;
-  state.switch_in_progress = switch_in_progress;
+  state.handoff.last_presented_parent_frame = last_presented;
+  state.handoff.pending_switch_parent_frame = pending_switch;
+  state.handoff.switch_in_progress = switch_in_progress;
 }
 
 std::pair<int64_t, int64_t> parentFrameRangeForClip(
@@ -148,6 +148,83 @@ void configurePlaybackTransport(const MediaSessionLoaderContext &context,
 
 MediaSessionLoader::MediaSessionLoader(const MediaSessionLoaderContext &context)
     : context_(context) {}
+
+bool MediaSessionLoader::hasMappedMedia() const {
+  return context_.clipped_media_state != nullptr &&
+         (context_.clipped_media_state->recording_clip_provider != nullptr ||
+          (context_.zarr_loaded != nullptr && *context_.zarr_loaded &&
+           context_.zarr_loader != nullptr &&
+           context_.zarr_loader->hasClippedCollection()));
+}
+
+int64_t MediaSessionLoader::mappedMediaFrameCount() const {
+  if (context_.clipped_media_state != nullptr &&
+      context_.clipped_media_state->recording_clip_provider != nullptr) {
+    return context_.clipped_media_state->recording_clip_provider->index()
+        .totalFrameCount();
+  }
+  if (context_.zarr_loaded != nullptr && *context_.zarr_loaded &&
+      context_.zarr_loader != nullptr &&
+      context_.zarr_loader->hasClippedCollection()) {
+    return static_cast<int64_t>(std::min<size_t>(
+        context_.zarr_loader->getTotalFrames(),
+        static_cast<size_t>(std::numeric_limits<int64_t>::max())));
+  }
+  return 0;
+}
+
+crimson::playback::ClippedFrameBinding
+MediaSessionLoader::resolveMappedMediaFrame(int64_t parent_frame) const {
+  crimson::playback::ClippedFrameBinding binding;
+  if (parent_frame < 0 || context_.clipped_media_state == nullptr) {
+    return binding;
+  }
+  const auto &state = *context_.clipped_media_state;
+  if (state.recording_clip_provider != nullptr) {
+    const auto resolved =
+        state.recording_clip_provider->resolveParentFrame(parent_frame);
+    if (!resolved) {
+      return binding;
+    }
+    binding.mapped = true;
+    binding.selected_run_index = resolved->clip_index;
+    binding.clip_id = resolved->clip_id;
+    binding.clip_local_frame_index = resolved->clip_local_frame;
+    binding.first_parent_frame = resolved->first_parent_frame;
+    binding.last_parent_frame = resolved->last_parent_frame;
+    return binding;
+  }
+  if (context_.zarr_loaded == nullptr || !*context_.zarr_loaded ||
+      context_.zarr_loader == nullptr ||
+      !context_.zarr_loader->hasClippedCollection()) {
+    return binding;
+  }
+
+  const auto *row = context_.zarr_loader->resolveClippedFrame(parent_frame);
+  if (row == nullptr) {
+    return binding;
+  }
+  const auto *selected = context_.zarr_loader->getClippedResolver().selectedRun(
+      row->selected_run_index);
+  if (selected == nullptr || selected->clip_id.empty()) {
+    return binding;
+  }
+
+  binding.mapped = true;
+  binding.selected_run_index = row->selected_run_index;
+  binding.clip_id = selected->clip_id;
+  binding.clip_local_frame_index = row->clip_local_frame_index;
+  if (state.handoff.selected_run_index == row->selected_run_index &&
+      state.handoff.first_parent_frame >= 0 &&
+      state.handoff.last_parent_frame >= state.handoff.first_parent_frame) {
+    binding.first_parent_frame = state.handoff.first_parent_frame;
+    binding.last_parent_frame = state.handoff.last_parent_frame;
+  } else {
+    std::tie(binding.first_parent_frame, binding.last_parent_frame) =
+        parentFrameRangeForClip(selected->parent_frame_by_clip_local);
+  }
+  return binding;
+}
 
 bool MediaSessionLoader::activateRecordingClipIndex(
     const std::filesystem::path &index_path, std::string *error_message) const {
@@ -338,9 +415,9 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
   const bool requested_clip_loaded =
       *context_.video_loaded && clipped_state != nullptr &&
       clipped_state->source == source &&
-      clipped_state->selected_run_index == selected_index &&
-      parent_frame >= clipped_state->first_parent_frame &&
-      parent_frame <= clipped_state->last_parent_frame &&
+      clipped_state->handoff.selected_run_index == selected_index &&
+      parent_frame >= clipped_state->handoff.first_parent_frame &&
+      parent_frame <= clipped_state->handoff.last_parent_frame &&
       !context_.decoder_threads->empty();
   if (requested_clip_loaded) {
     if (context_.scene->num_cams > 0 && !context_.scene->cameras.empty()) {
@@ -413,15 +490,15 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
       clipped_state->source = source;
       clipped_state->recording_clip_provider = recording_provider;
       clipped_state->current_video_path = resolved_video;
-      clipped_state->clip_id = clip_id;
       clipped_state->camera_serial = camera_serial;
       clipped_state->parent_frame_by_clip_local = frame_map;
-      clipped_state->selected_run_index = selected_index;
-      clipped_state->first_parent_frame = first_parent_frame;
-      clipped_state->last_parent_frame = last_parent_frame;
-      if (clipped_state->pending_switch_parent_frame != parent_frame) {
-        clipped_state->pending_switch_parent_frame = -1;
-        clipped_state->switch_in_progress = false;
+      clipped_state->handoff.selected_run_index = selected_index;
+      clipped_state->handoff.clip_id = clip_id;
+      clipped_state->handoff.first_parent_frame = first_parent_frame;
+      clipped_state->handoff.last_parent_frame = last_parent_frame;
+      if (clipped_state->handoff.pending_switch_parent_frame != parent_frame) {
+        clipped_state->handoff.pending_switch_parent_frame = -1;
+        clipped_state->handoff.switch_in_progress = false;
       }
     }
 
@@ -458,14 +535,6 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
               << " Loaded clipped video for parent frame " << parent_frame
               << " -> " << clip_id << " local frame " << clip_local_frame
               << ": " << resolved_video << std::endl;
-    if (clipped_state != nullptr && clipped_state->switch_in_progress) {
-      std::cout << "[ClippedHandoff] switch_loaded parent_frame="
-                << parent_frame << " clip=" << clip_id
-                << " selected_run_index=" << selected_index
-                << " local_frame=" << clip_local_frame
-                << " range=" << first_parent_frame << "-" << last_parent_frame
-                << std::endl;
-    }
     loadCameraCalibrationsForCurrentMedia();
     return true;
   } catch (const std::exception &e) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "camera.h"
+#include "clipped_media_handoff.h"
 #include "playback_clock.h"
 #include "recording_clip_media_provider.h"
 #include "recording_open_workflow.h"
@@ -11,7 +12,6 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
-#include <limits>
 #include <memory>
 #include <string>
 #include <thread>
@@ -29,15 +29,9 @@ struct PaletteClippedMediaState {
   std::shared_ptr<const crimson::media::RecordingClipMediaProvider>
       recording_clip_provider;
   std::string current_video_path;
-  std::string clip_id;
   std::string camera_serial;
   std::shared_ptr<const std::vector<int64_t>> parent_frame_by_clip_local;
-  size_t selected_run_index = std::numeric_limits<size_t>::max();
-  int64_t first_parent_frame = -1;
-  int64_t last_parent_frame = -1;
-  int64_t pending_switch_parent_frame = -1;
-  bool switch_in_progress = false;
-  int64_t last_presented_parent_frame = -1;
+  crimson::playback::ClippedMediaHandoffState handoff;
 };
 
 struct MediaSessionLoaderContext {
@@ -84,6 +78,10 @@ public:
   void tryAutoLoadAffiliatedVideoFromZarr(const char *trigger_label) const;
   void tryAutoLoadStimulusVideo(const char *trigger_label) const;
   bool loadClippedVideoForParentFrame(int parent_frame) const;
+  bool hasMappedMedia() const;
+  int64_t mappedMediaFrameCount() const;
+  crimson::playback::ClippedFrameBinding
+  resolveMappedMediaFrame(int64_t parent_frame) const;
   std::optional<int> resolveDecoderFrameForParentFrame(int parent_frame) const;
   std::string activeRecordingClipIndexPath() const;
   void bootstrapFromCli(

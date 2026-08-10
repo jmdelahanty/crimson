@@ -71,6 +71,17 @@ target_link_libraries(crimson_frame_contracts PUBLIC
 )
 target_compile_features(crimson_frame_contracts PUBLIC cxx_std_17)
 
+add_library(crimson_nvidia_playback_adapter STATIC
+    src/platform/nvidia/nvidia_clipped_media_coordinator.cpp
+)
+target_include_directories(crimson_nvidia_playback_adapter PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(crimson_nvidia_playback_adapter PUBLIC
+    crimson_frame_contracts
+)
+target_compile_features(crimson_nvidia_playback_adapter PUBLIC cxx_std_17)
+
 add_library(crimson_nvidia_playback_diagnostics STATIC
     src/platform/nvidia/nvidia_playback_trace_model.cpp
 )
@@ -1219,6 +1230,25 @@ add_test(NAME clipped_media_handoff_tests
 )
 set_tests_properties(clipped_media_handoff_tests PROPERTIES
     LABELS "headless;playback;portable;clipped"
+)
+
+add_executable(nvidia_clipped_media_coordinator_tests
+    tools/nvidia_clipped_media_coordinator_tests.cpp
+)
+target_link_libraries(nvidia_clipped_media_coordinator_tests PRIVATE
+    crimson_nvidia_playback_adapter
+)
+target_compile_features(nvidia_clipped_media_coordinator_tests PRIVATE
+    cxx_std_17
+)
+set_target_properties(nvidia_clipped_media_coordinator_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME nvidia_clipped_media_coordinator_tests
+    COMMAND $<TARGET_FILE:nvidia_clipped_media_coordinator_tests>
+)
+set_tests_properties(nvidia_clipped_media_coordinator_tests PROPERTIES
+    LABELS "headless;playback;nvidia;clipped"
 )
 
 add_executable(playback_diagnostics_tests
@@ -2475,6 +2505,7 @@ target_include_directories(redgui PRIVATE
 # --- Link Libraries ---
 target_link_libraries(redgui PRIVATE
     crimson_frame_contracts
+    crimson_nvidia_playback_adapter
     crimson_nvidia_playback_diagnostics
     crimson_runtime_contracts
     crimson_overlay_contracts

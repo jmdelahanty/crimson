@@ -83,6 +83,13 @@ The native NVIDIA smoke used the same parent range through
 zero, the shared handoff settled after parent frame 54,000 presented, and the
 smoke passed at parent frame 54,010 with the overlay query on frame 54,010.
 
+The NVIDIA mapped-media adapter exposes the strict index and legacy clipped
+collections through the same `ClippedFrameBinding` query. A narrow coordinator
+applies the portable boundary policy, invokes the injected load/seek command,
+validates the newly loaded binding, and publishes lifecycle events. The
+application composition root does not parse index entries, scan legacy clip
+ranges, or mirror the active handoff state.
+
 ## Platform Adoption
 
 The index parser, validated descriptors, frame mapping, archive discovery, and

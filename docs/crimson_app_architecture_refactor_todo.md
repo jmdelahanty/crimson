@@ -45,6 +45,30 @@ parent frames `53990:54010`, switched from clip 0 to clip 1 at parent frame
 both at 54,010. Windows shares this adapter source but still requires its
 native build and GUI smoke before a Windows release claim.
 
+### 2026-08-10 NVIDIA Handoff Coordinator Extraction
+
+Mapped-media queries now live behind `MediaSessionLoader`: callers ask whether
+mapped media is active, obtain its parent-frame count, and resolve a parent
+frame to one backend-neutral `ClippedFrameBinding`. The loader translates both
+the strict recording clip index and legacy Zarr clipped collections.
+`PaletteClippedMediaState` now contains the one authoritative
+`ClippedMediaHandoffState`; `red.cpp` no longer copies clip identity, range, or
+pending-switch fields into parallel state.
+
+The NVIDIA-specific command executor is isolated in
+`nvidia_clipped_media_coordinator`. It applies the portable handoff policy,
+invokes an injected load/seek callback, validates the loaded binding, and
+publishes request, load, presentation, and failure events. FFmpeg, NVDEC,
+CUDA, OpenGL, Zarr, ImGui, and concrete log writers remain outside the
+coordinator. Headless tests cover interior frames, one-shot boundary loading,
+duplicate suppression, presentation settlement, failed loads, paused playback,
+invalid state, and unmapped boundaries.
+
+This bounded Phase 3 extraction reduces `red.cpp` from 6,910 to 6,796 lines.
+The composition root now wires media queries, seek execution, and telemetry;
+it no longer implements clipped-media state transitions or provider-specific
+frame binding.
+
 ## 2026-07-23 Runtime Contract Checkpoint
 
 The first backend-neutral runtime slices are now shared by the macOS and
@@ -230,9 +254,11 @@ this checkpoint.
 Clipped-media boundary policy is likewise portable. It accepts already
 resolved parent-frame bindings and emits only a load-and-seek command plus
 request/load/settlement/failure outcomes. The NVIDIA composition root retains
-Zarr resolver calls, media loading through `PlaybackSessionController`, decoder
-seek execution, GPU resources, and trace-sink ownership. This keeps the
-policy reusable without making the controller a media, renderer, or archive
+media loading through `PlaybackSessionController`, decoder seek execution, GPU
+resources, and trace-sink ownership. Provider-specific binding lookup and
+handoff command execution have since moved into the mapped-media loader facade
+and narrow NVIDIA coordinator described in the 2026-08-10 checkpoint. This
+keeps the policy reusable without making it a media, renderer, or archive
 adapter.
 
 Headless tests cover JSONL envelope/flush behavior, field-profile stability,
