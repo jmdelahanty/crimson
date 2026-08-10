@@ -131,6 +131,7 @@ target_compile_features(crimson_ui_reference_capture PUBLIC cxx_std_17)
 
 add_library(crimson_runtime_contracts STATIC
     src/analysis_product_lifecycle.cpp
+    src/async_single_flight_job.cpp
     src/archive_open_coordinator.cpp
     src/stimulus_open_coordinator.cpp
     src/session_lifecycle.cpp
@@ -1456,6 +1457,7 @@ set_tests_properties(ui_reference_scene_evidence_tests PROPERTIES
 
 foreach(runtime_test
         analysis_product_lifecycle_tests
+        async_single_flight_job_tests
         session_lifecycle_tests
         loading_progress_tests
         frame_presentation_tests
@@ -2580,10 +2582,13 @@ list(APPEND CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_frame_inspect_adapter.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_gl_diagnostics.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_playback_diagnostics_adapter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_refined_keypoint_write_adapter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_refined_keypoint_write_session.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_stimulus_media_loader.cpp"
 )
 list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/analysis_product_lifecycle.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/async_single_flight_job.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/coordinate_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/data_access.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/data_access_cache.cpp"
@@ -2729,6 +2734,33 @@ target_link_libraries(redgui PRIVATE
     Threads::Threads
 )
 crimson_configure_parquet_support(redgui)
+
+add_executable(nvidia_refined_keypoint_write_session_tests
+    tools/nvidia_refined_keypoint_write_session_tests.cpp
+    src/platform/nvidia/nvidia_refined_keypoint_write_session.cpp
+)
+target_include_directories(nvidia_refined_keypoint_write_session_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${IMGUI_DIR}
+    ${OpenCV_INCLUDE_DIRS}
+    ${HDF5_INCLUDE_DIRS}
+)
+target_link_libraries(nvidia_refined_keypoint_write_session_tests PRIVATE
+    crimson_runtime_contracts
+    tensorstore::all_drivers
+)
+target_compile_features(nvidia_refined_keypoint_write_session_tests PRIVATE
+    cxx_std_17
+)
+set_target_properties(nvidia_refined_keypoint_write_session_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME nvidia_refined_keypoint_write_session_tests
+    COMMAND $<TARGET_FILE:nvidia_refined_keypoint_write_session_tests>
+)
+set_tests_properties(nvidia_refined_keypoint_write_session_tests PROPERTIES
+    LABELS "headless;keypoints;nvidia;session;write"
+)
 
 if(CRIMSON_ENABLE_NVENC)
     target_link_libraries(redgui PRIVATE ${NVENC_LIBRARY})

@@ -53,6 +53,43 @@ explicit, and compile against every backend that consumes the new module.
 - [ ] Stop extracting a region when its remaining code is platform wiring with
       one clear owner and no independently testable policy.
 
+### 2026-08-10 Async Single-Flight Write Extraction
+
+The reusable asynchronous boundary is execution policy, not a universal data
+loader. `AsyncSingleFlightJob` now owns immediate background launch, one-active
+job enforcement, monotonic sequence identity, exception capture, nonblocking
+completion polling, queue/service timing, and shutdown joining. It contains no
+Zarr, keypoint, UI, renderer, or platform types. Running work is deliberately
+not cancelled: a durable mutation must finish, while its typed consumer decides
+whether the completion is still relevant.
+
+The Linux/Windows application uses that mechanism through a typed
+`RefinedKeypointWriteSession`. Requests bind the write to both the recording
+session generation and archive path. The session owns validation, busy
+rejection, status construction, stale-completion suppression, and the reset
+intent returned to the main thread. Its worker is injected, so lifecycle tests
+do not require a real archive mutation.
+
+The concrete legacy adapter remains NVIDIA-app-specific. It opens the legacy
+Zarr loader on the worker, performs the refined-keypoint mutation, and applies
+the targeted cache update or reload fallback on the GUI thread. It also owns
+editor reset and downstream presentation invalidation. The application closes
+the write session before tearing down the active loader and schedulers.
+
+This is intentionally separate from `DataAccessScheduler`, which retains
+priority, cancellation, and demand-reservation semantics for frame-local
+reads. Video decoders also retain dedicated long-lived workers. Future
+repository-open or mutation workflows may reuse the single-flight runner when
+they share its exact lifetime semantics; each product still requires a typed
+request, result, and settlement adapter.
+
+Portable tests cover invalid jobs, busy rejection, ordered sequence identity,
+exception capture, timing, and close/join behavior. NVIDIA fake-worker tests
+cover ignored and invalid keypoint requests, single-flight behavior, exact
+success and failure states, generation/archive staleness, reset intent, and
+worker exceptions. The extraction reduces `red.cpp` from 5,718 to 5,472 lines
+without adding keypoint-write support to the read-only Metal application.
+
 ## Recording Clip Index Media
 
 - [x] Extract strict backend-neutral `recording_clip_index.json` parsing and
