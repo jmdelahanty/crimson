@@ -64,6 +64,7 @@
 #include "session_lifecycle.h"
 #include "skeleton.h"
 #include "stimulus_open_coordinator.h"
+#include "ui_reference_capture.h"
 #include "utils.h"
 #include "workspace_state.h"
 #include "yolo_detection.h"
@@ -191,8 +192,6 @@ struct PlaybackSmokeConfig {
   int last_view_idx = -1;
 };
 
-constexpr int kUiReferenceStableFrameTarget = 60;
-
 struct UiReferenceConfig {
   bool enabled = false;
   bool state_set = false;
@@ -202,13 +201,8 @@ struct UiReferenceConfig {
   int target_frame = -1;
   std::filesystem::path ready_file;
   double timeout_s = 60.0;
-  std::chrono::steady_clock::time_point start_time{};
-  bool started = false;
   bool analysis_state_applied = false;
   bool exact_presented_this_frame = false;
-  bool ready_pending = false;
-  bool ready_written = false;
-  int stable_frame_count = 0;
   int presented_frame = -1;
   int presented_slot = -1;
   int view_idx = -1;
@@ -218,7 +212,6 @@ struct UiReferenceConfig {
   bool crop_ready = false;
   int crop_source_frame = -1;
   std::string crop_source_label;
-  bool rendered_image_written = false;
   std::filesystem::path rendered_image_file;
   int rendered_image_width = 0;
   int rendered_image_height = 0;
@@ -227,48 +220,6 @@ struct UiReferenceConfig {
   int stimulus_buffer_valid = 0;
   int stimulus_buffer_capacity = 0;
 };
-
-bool writeJsonAtomically(const std::filesystem::path &output_path,
-                         const json &contents, std::string &error) {
-  if (output_path.empty()) {
-    error = "output path is empty";
-    return false;
-  }
-  std::error_code ec;
-  if (output_path.has_parent_path()) {
-    std::filesystem::create_directories(output_path.parent_path(), ec);
-    if (ec) {
-      error = "failed to create parent directory: " + ec.message();
-      return false;
-    }
-  }
-  std::filesystem::path temporary = output_path;
-  temporary += ".tmp";
-  std::filesystem::remove(temporary, ec);
-  ec.clear();
-  {
-    std::ofstream stream(temporary, std::ios::out | std::ios::trunc);
-    if (!stream.is_open()) {
-      error = "failed to open temporary marker";
-      return false;
-    }
-    stream << contents.dump(2) << "\n";
-    stream.flush();
-    if (!stream.good()) {
-      error = "failed to write temporary marker";
-      return false;
-    }
-  }
-  std::filesystem::remove(output_path, ec);
-  ec.clear();
-  std::filesystem::rename(temporary, output_path, ec);
-  if (ec) {
-    error = "failed to publish marker: " + ec.message();
-    std::filesystem::remove(temporary, ec);
-    return false;
-  }
-  return true;
-}
 
 json polarSceneReferenceJson(
     const crimson::polar::ChaserDistancePolarScene &scene,
@@ -810,6 +761,8 @@ int main(int argc, char **argv) {
   ui_reference.target_frame = launch_options.ui_reference.target_frame;
   ui_reference.ready_file = launch_options.ui_reference.ready_file;
   ui_reference.timeout_s = launch_options.ui_reference.timeout_s;
+  crimson::ui_reference::CaptureCoordinator ui_reference_capture(
+      {60, ui_reference.timeout_s});
   crimson::ui::SemanticSnapshot ui_semantic_snapshot;
   int app_exit_code = 0;
   gx_context *window = new gx_context();
@@ -1852,7 +1805,7 @@ int main(int argc, char **argv) {
   if (ui_reference.enabled) {
     auto rejectUiReferenceStart = [&]() {
       ui_reference.enabled = false;
-      ui_reference.started = false;
+      ui_reference_capture.fail("UI-reference startup rejected");
       app_exit_code = 2;
       glfwSetWindowShouldClose(window->render_target, GLFW_TRUE);
     };
@@ -1988,26 +1941,23 @@ int main(int argc, char **argv) {
             crimson::workspace::FrameInspectView::TailKinematics;
       }
 
-      std::error_code marker_ec;
-      std::filesystem::remove(ui_reference.ready_file, marker_ec);
-      if (marker_ec) {
-        std::cerr << "[UiReference] failed to clear ready file: "
-                  << marker_ec.message() << std::endl;
-        rejectUiReferenceStart();
-        break;
-      }
-      std::filesystem::path temporary_ready = ui_reference.ready_file;
-      temporary_ready += ".tmp";
-      std::filesystem::remove(temporary_ready, marker_ec);
-      if (marker_ec) {
-        std::cerr << "[UiReference] failed to clear temporary ready file: "
-                  << marker_ec.message() << std::endl;
+      std::string output_error;
+      if (!crimson::ui_reference::prepareUiReferenceOutput(
+              ui_reference.ready_file, &output_error)) {
+        std::cerr << "[UiReference] failed to prepare output: " << output_error
+                  << std::endl;
         rejectUiReferenceStart();
         break;
       }
 
-      ui_reference.started = true;
-      ui_reference.start_time = std::chrono::steady_clock::now();
+      ui_reference.rendered_image_file =
+          crimson::ui_reference::uiReferenceImagePath(ui_reference.ready_file);
+      if (!ui_reference_capture.start()) {
+        std::cerr << "[UiReference] failed to start capture coordinator: "
+                  << ui_reference_capture.snapshot().failure_reason << std::endl;
+        rejectUiReferenceStart();
+        break;
+      }
       playback_session_controller.seekToFrame(
           ui_reference.target_frame,
           /*prefer_buffer_when_paused=*/false,
@@ -2335,7 +2285,7 @@ int main(int argc, char **argv) {
 
   while (!glfwWindowShouldClose(window->render_target)) {
     static FileBrowserWindowState file_browser_window_state;
-    if (ui_reference.enabled && ui_reference.ready_written) {
+    if (ui_reference_capture.published()) {
       // Preserve the proven front buffer until the external harness has
       // captured it. Rendering another frame can race an X11 capture.
       glfwWaitEventsTimeout(0.05);
@@ -2462,35 +2412,31 @@ int main(int argc, char **argv) {
 
     // Poll and handle events (inputs, window resize, etc.)
     glfwPollEvents();
-    if (ui_reference.enabled && ui_reference.started &&
-        !ui_reference.ready_written) {
+    if (ui_reference_capture.waitingForStableFrame()) {
       ui_reference.exact_presented_this_frame = false;
       ui_reference.crop_ready = false;
       ui_reference.crop_source_frame = -1;
       ui_reference.crop_source_label.clear();
-      if (std::chrono::duration<double>(std::chrono::steady_clock::now() -
-                                        ui_reference.start_time)
-              .count() > ui_reference.timeout_s) {
-        std::cerr << "[UiReference] TIMEOUT state="
-                  << uiReferenceStateName(ui_reference.state)
-                  << " target_frame=" << ui_reference.target_frame
-                  << " presented_frame=" << ui_reference.presented_frame
-                  << " bbox_query_frame=" << ui_reference.bbox_query_frame
-                  << " target_stimulus_frame="
-                  << ui_reference.target_stimulus_frame
-                  << " presented_stimulus_frame="
-                  << ui_reference.presented_stimulus_frame
-                  << " crop_source_frame=" << ui_reference.crop_source_frame
-                  << " camera_buffer=" << ui_reference.camera_buffer_valid
-                  << "/" << ui_reference.camera_buffer_capacity
-                  << " stimulus_buffer=" << ui_reference.stimulus_buffer_valid
-                  << "/" << ui_reference.stimulus_buffer_capacity
-                  << " stable_frames=" << ui_reference.stable_frame_count
-                  << std::endl;
-        ui_reference.started = false;
-        app_exit_code = 3;
-        glfwSetWindowShouldClose(window->render_target, GLFW_TRUE);
-      }
+    }
+    if (ui_reference_capture.pollTimeout()) {
+      std::cerr << "[UiReference] TIMEOUT state="
+                << uiReferenceStateName(ui_reference.state)
+                << " target_frame=" << ui_reference.target_frame
+                << " presented_frame=" << ui_reference.presented_frame
+                << " bbox_query_frame=" << ui_reference.bbox_query_frame
+                << " target_stimulus_frame="
+                << ui_reference.target_stimulus_frame
+                << " presented_stimulus_frame="
+                << ui_reference.presented_stimulus_frame
+                << " crop_source_frame=" << ui_reference.crop_source_frame
+                << " camera_buffer=" << ui_reference.camera_buffer_valid << "/"
+                << ui_reference.camera_buffer_capacity
+                << " stimulus_buffer=" << ui_reference.stimulus_buffer_valid
+                << "/" << ui_reference.stimulus_buffer_capacity
+                << " stable_frames="
+                << ui_reference_capture.stableFrameCount() << std::endl;
+      app_exit_code = 3;
+      glfwSetWindowShouldClose(window->render_target, GLFW_TRUE);
     }
     if (playback_smoke.enabled && playback_smoke.started &&
         !playback_smoke.completed &&
@@ -4493,8 +4439,7 @@ int main(int argc, char **argv) {
             }
           }
 
-          if (ui_reference.enabled && ui_reference.started &&
-              !ui_reference.ready_written &&
+          if (ui_reference_capture.waitingForStableFrame() &&
               j == playback_session_controller.getVisibleCameraIndex() &&
               has_presented_camera_frame &&
               presented_frame == ui_reference.target_frame) {
@@ -4976,7 +4921,7 @@ int main(int argc, char **argv) {
       const auto crop_preview_result = drawCropPreviewWindow(
           crop_preview_context, crop_preview_window_state);
       frame_crop_preview_perf = crop_preview_result.perf;
-      if (ui_reference.enabled && ui_reference.started &&
+      if (ui_reference_capture.waitingForStableFrame() &&
           ui_reference.state == UiReferenceState::CropPreview &&
           crop_preview_window_state.displayed_crop_source_frame ==
               ui_reference.target_frame &&
@@ -5075,7 +5020,7 @@ int main(int argc, char **argv) {
     static StimulusEventTimelineWindowState stimulus_timeline_window_state;
     static AnalysisTimelineWindowState analysis_timeline_window_state;
 
-    if (ui_reference.enabled && ui_reference.started &&
+    if (ui_reference_capture.waitingForStableFrame() &&
         !ui_reference.analysis_state_applied &&
         (ui_reference.state == UiReferenceState::AnalysisEye ||
          ui_reference.state == UiReferenceState::AnalysisTailStimulus)) {
@@ -5257,8 +5202,7 @@ int main(int argc, char **argv) {
 
     drawErrorPopup(show_error, error_message);
 
-    if (ui_reference.enabled && ui_reference.started &&
-        !ui_reference.ready_written && !ui_reference.ready_pending) {
+    if (ui_reference_capture.waitingForStableFrame()) {
       ui_reference.presented_stimulus_frame =
           stimulus_player.last_displayed_frame;
       ui_reference.camera_buffer_valid = 0;
@@ -5372,19 +5316,13 @@ int main(int argc, char **argv) {
             (zarr_loader.hasStimulusSteps() || zarr_loader.hasStimulusEvents());
         break;
       }
-      if (exact_camera_ready && state_ready) {
-        ++ui_reference.stable_frame_count;
-      } else {
-        ui_reference.stable_frame_count = 0;
-      }
-      if (ui_reference.stable_frame_count >= kUiReferenceStableFrameTarget) {
-        ui_reference.ready_pending = true;
+      if (ui_reference_capture.observeFrame(exact_camera_ready, state_ready)) {
         std::cout << "[UiReference] render-ready state="
                   << uiReferenceStateName(ui_reference.state)
                   << " target_frame=" << ui_reference.target_frame
                   << " presented_frame=" << ui_reference.presented_frame
-                  << " stable_frames=" << ui_reference.stable_frame_count
-                  << std::endl;
+                  << " stable_frames="
+                  << ui_reference_capture.stableFrameCount() << std::endl;
       }
     }
 
@@ -5531,28 +5469,24 @@ int main(int argc, char **argv) {
     glfwSwapBuffers(window->render_target);
     frame_swap_ms = durationMs(std::chrono::steady_clock::now() - swap_start);
 
-    if (ui_reference.enabled && ui_reference.ready_pending &&
-        !ui_reference.ready_written && !ui_reference.rendered_image_written) {
-      ui_reference.rendered_image_file = ui_reference.ready_file;
-      ui_reference.rendered_image_file += ".png";
+    if (ui_reference_capture.captureRequested()) {
       glFinish();
       const auto image_result = crimson::platform::nvidia::dumpGlBufferToPng(
           ui_reference.rendered_image_file, display_w, display_h, GL_FRONT);
       if (!image_result.ok) {
         std::cerr << "[UiReference] failed to capture rendered image: "
                   << image_result.error << std::endl;
-        ui_reference.ready_pending = false;
+        ui_reference_capture.fail(image_result.error);
         app_exit_code = 4;
         glfwSetWindowShouldClose(window->render_target, GLFW_TRUE);
       } else {
-        ui_reference.rendered_image_written = true;
         ui_reference.rendered_image_width = image_result.width;
         ui_reference.rendered_image_height = image_result.height;
+        (void)ui_reference_capture.markCaptureComplete();
       }
     }
 
-    if (ui_reference.enabled && ui_reference.ready_pending &&
-        ui_reference.rendered_image_written && !ui_reference.ready_written) {
+    if (ui_reference_capture.readyToPublish()) {
       glFinish();
       int client_width = 0;
       int client_height = 0;
@@ -5585,7 +5519,7 @@ int main(int argc, char **argv) {
           {"current_frame", current_frame_num},
           {"slider_frame", ps.slider_frame_number},
           {"bbox_query_frame", ui_reference.bbox_query_frame},
-          {"stable_frames", ui_reference.stable_frame_count},
+          {"stable_frames", ui_reference_capture.stableFrameCount()},
           {"client_size", {{"width", client_width}, {"height", client_height}}},
           {"framebuffer_size",
            {{"width", framebuffer_width}, {"height", framebuffer_height}}},
@@ -5670,14 +5604,15 @@ int main(int argc, char **argv) {
             {"show_stimulus_context",
              analysis_timeline_window_state.show_stimulus_context}}}};
       std::string marker_error;
-      if (!writeJsonAtomically(ui_reference.ready_file, marker, marker_error)) {
+      if (!crimson::ui_reference::writeUiReferenceMarkerAtomically(
+              ui_reference.ready_file, marker, &marker_error)) {
         std::cerr << "[UiReference] failed to write ready marker: "
                   << marker_error << std::endl;
+        ui_reference_capture.fail(marker_error);
         app_exit_code = 4;
         glfwSetWindowShouldClose(window->render_target, GLFW_TRUE);
       } else {
-        ui_reference.ready_written = true;
-        ui_reference.ready_pending = false;
+        (void)ui_reference_capture.markPublished();
         std::cout << "[UiReference] READY state="
                   << uiReferenceStateName(ui_reference.state)
                   << " target_frame=" << ui_reference.target_frame

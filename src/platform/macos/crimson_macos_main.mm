@@ -39,6 +39,7 @@
 #include "subject_mask_presentation_coordinator.h"
 #include "subject_shape_overlay_buffer.h"
 #include "swim_bout_timeline_buffer.h"
+#include "ui_reference_capture.h"
 #include "ui_path_config.h"
 #include "zarr/affiliated_video_repository.h"
 #include "zarr/analysis_crop_geometry_repository.h"
@@ -337,58 +338,6 @@ bool viewportHasArea(const AppleMetalVideoViewport &viewport) {
   return std::isfinite(viewport.x) && std::isfinite(viewport.y) &&
          std::isfinite(viewport.width) && std::isfinite(viewport.height) &&
          viewport.width > 0.0 && viewport.height > 0.0;
-}
-
-bool writeJsonAtomically(const std::filesystem::path &output_path,
-                         const nlohmann::json &contents, std::string *error) {
-  std::error_code ec;
-  if (output_path.empty()) {
-    if (error != nullptr) {
-      *error = "output path is empty";
-    }
-    return false;
-  }
-  if (output_path.has_parent_path()) {
-    std::filesystem::create_directories(output_path.parent_path(), ec);
-    if (ec) {
-      if (error != nullptr) {
-        *error = "failed to create parent directory: " + ec.message();
-      }
-      return false;
-    }
-  }
-  std::filesystem::path temporary = output_path;
-  temporary += ".tmp";
-  std::filesystem::remove(temporary, ec);
-  ec.clear();
-  {
-    std::ofstream stream(temporary, std::ios::out | std::ios::trunc);
-    if (!stream.is_open()) {
-      if (error != nullptr) {
-        *error = "failed to open temporary marker";
-      }
-      return false;
-    }
-    stream << contents.dump(2) << '\n';
-    stream.flush();
-    if (!stream.good()) {
-      if (error != nullptr) {
-        *error = "failed to write temporary marker";
-      }
-      return false;
-    }
-  }
-  std::filesystem::remove(output_path, ec);
-  ec.clear();
-  std::filesystem::rename(temporary, output_path, ec);
-  if (ec) {
-    if (error != nullptr) {
-      *error = "failed to publish marker: " + ec.message();
-    }
-    std::filesystem::remove(temporary, ec);
-    return false;
-  }
-  return true;
 }
 
 bool writeBgraPng(const std::filesystem::path &output_path,
@@ -1954,20 +1903,29 @@ int main(int argc, char **argv) {
               "revision=%s font=%s workspace=%s\n",
               CRIMSON_GIT_COMMIT, font_path.c_str(),
               workspace_ini_path ? workspace_ini_path->c_str() : "transient");
+  crimson::ui_reference::CaptureCoordinator ui_reference_capture(
+      {60, options->ui_reference.timeout_seconds});
+  bool ui_reference_setup_failed = false;
   if (options->ui_reference.enabled) {
-    std::error_code reference_ec;
-    std::filesystem::remove(options->ui_reference.ready_file, reference_ec);
-    std::filesystem::path image_path = options->ui_reference.ready_file;
-    image_path += ".png";
-    std::filesystem::remove(image_path, reference_ec);
-    std::printf("[AppleUiReference] START state=%s target_frame=%d size=%dx%d "
-                "ready_file=%s timeout_s=%.1f\n",
-                appleUiReferenceStateName(options->ui_reference.state),
-                options->ui_reference.target_frame,
-                options->ui_reference.logical_width,
-                options->ui_reference.logical_height,
-                options->ui_reference.ready_file.string().c_str(),
-                options->ui_reference.timeout_seconds);
+    std::string reference_error;
+    if (!crimson::ui_reference::prepareUiReferenceOutput(
+            options->ui_reference.ready_file, &reference_error)) {
+      std::fprintf(stderr, "[AppleUiReference] START failed: %s\n",
+                   reference_error.c_str());
+      ui_reference_capture.fail(reference_error);
+      ui_reference_setup_failed = true;
+      glfwSetWindowShouldClose(window, GLFW_TRUE);
+    } else {
+      std::printf(
+          "[AppleUiReference] START state=%s target_frame=%d size=%dx%d "
+          "ready_file=%s timeout_s=%.1f\n",
+          appleUiReferenceStateName(options->ui_reference.state),
+          options->ui_reference.target_frame,
+          options->ui_reference.logical_width,
+          options->ui_reference.logical_height,
+          options->ui_reference.ready_file.string().c_str(),
+          options->ui_reference.timeout_seconds);
+    }
   }
 
   AppleVideoPlaybackBuffer video_playback;
@@ -3778,13 +3736,17 @@ int main(int argc, char **argv) {
   std::array<float, 120> frame_times_ms{};
   int frame_time_count = 0;
   int presented_frames = 0;
-  bool render_failed = false;
+  bool render_failed = ui_reference_setup_failed;
+  if (options->ui_reference.enabled && !ui_reference_setup_failed &&
+      !ui_reference_capture.start()) {
+    std::fprintf(stderr, "[AppleUiReference] START failed: %s\n",
+                 ui_reference_capture.snapshot().failure_reason.c_str());
+    render_failed = true;
+    glfwSetWindowShouldClose(window, GLFW_TRUE);
+  }
   bool invalid_workspace_viewport_logged = false;
   auto previous_frame_time = std::chrono::steady_clock::now();
   auto last_process_metric_time = LogicalPlaybackClock::TimePoint{};
-  const auto ui_reference_started = std::chrono::steady_clock::now();
-  int ui_reference_stable_frames = 0;
-  bool ui_reference_written = false;
   crimson::ui::SemanticSnapshot ui_semantic_snapshot;
 
   auto current_analysis_progress = [&] {
@@ -5705,6 +5667,7 @@ int main(int argc, char **argv) {
           crimson::session::makeSessionLoadingPresentation(analysis_progress,
                                                            analysis_readiness));
       ImGui::Render();
+      bool ui_reference_timed_out = ui_reference_capture.pollTimeout();
       bool ui_reference_state_ready = false;
       if (options->ui_reference.enabled) {
         ui_semantic_snapshot =
@@ -5769,19 +5732,21 @@ int main(int argc, char **argv) {
               has_window("Stimulus Frames in Buffer");
           break;
         }
-        if (ui_reference_state_ready) {
-          ++ui_reference_stable_frames;
-        } else {
-          ui_reference_stable_frames = 0;
-        }
+        // The state predicate already includes exact-frame requirements. Empty
+        // references intentionally have no camera frame to present.
+        (void)ui_reference_capture.observeFrame(true,
+                                                ui_reference_state_ready);
+        ui_reference_timed_out =
+            ui_reference_timed_out ||
+            ui_reference_capture.phase() ==
+                crimson::ui_reference::CapturePhase::TimedOut;
       }
       ImGui_ImplMetal_RenderDrawData(ImGui::GetDrawData(), command_buffer,
                                      encoder);
       [encoder endEncoding];
 
-      const bool capture_ui_reference = options->ui_reference.enabled &&
-                                        !ui_reference_written &&
-                                        ui_reference_stable_frames >= 60;
+      const bool capture_ui_reference =
+          ui_reference_capture.captureRequested();
       id<MTLBuffer> ui_reference_buffer = nil;
       size_t ui_reference_bytes_per_row = 0;
       if (capture_ui_reference) {
@@ -5797,6 +5762,7 @@ int main(int argc, char **argv) {
         if (blit == nil) {
           std::fprintf(stderr,
                        "[AppleUiReference] Failed to create Metal readback\n");
+          ui_reference_capture.fail("failed to create Metal readback");
           render_failed = true;
         } else {
           [blit copyFromTexture:drawable.texture
@@ -5822,10 +5788,12 @@ int main(int argc, char **argv) {
           std::fprintf(stderr,
                        "[AppleUiReference] Metal capture command failed: %s\n",
                        command_buffer.error.localizedDescription.UTF8String);
+          ui_reference_capture.fail("Metal capture command failed");
           render_failed = true;
         } else {
-          std::filesystem::path image_path = options->ui_reference.ready_file;
-          image_path += ".png";
+          const std::filesystem::path image_path =
+              crimson::ui_reference::uiReferenceImagePath(
+                  options->ui_reference.ready_file);
           std::string capture_error;
           if (!writeBgraPng(
                   image_path,
@@ -5834,8 +5802,10 @@ int main(int argc, char **argv) {
                   ui_reference_bytes_per_row, &capture_error)) {
             std::fprintf(stderr, "[AppleUiReference] PNG capture failed: %s\n",
                          capture_error.c_str());
+            ui_reference_capture.fail(capture_error);
             render_failed = true;
           } else {
+            (void)ui_reference_capture.markCaptureComplete();
             int client_width = 0;
             int client_height = 0;
             glfwGetWindowSize(window, &client_width, &client_height);
@@ -5861,7 +5831,7 @@ int main(int argc, char **argv) {
                 {"target_frame", options->ui_reference.target_frame},
                 {"requested_frame", viewer_stats.requested_frame},
                 {"presented_frame", viewer_stats.presented_frame},
-                {"stable_frames", ui_reference_stable_frames},
+                {"stable_frames", ui_reference_capture.stableFrameCount()},
                 {"client_size",
                  {{"width", client_width}, {"height", client_height}}},
                 {"logical_content_size",
@@ -5934,31 +5904,30 @@ int main(int argc, char **argv) {
                    workspace_state.selections().eye_angle_representation_key}}},
                 {"semantic_snapshot",
                  crimson::ui::semanticSnapshotJson(ui_semantic_snapshot)}};
-            if (!writeJsonAtomically(options->ui_reference.ready_file, marker,
-                                     &capture_error)) {
+            if (!crimson::ui_reference::writeUiReferenceMarkerAtomically(
+                    options->ui_reference.ready_file, marker, &capture_error)) {
               std::fprintf(stderr,
                            "[AppleUiReference] Marker write failed: %s\n",
                            capture_error.c_str());
+              ui_reference_capture.fail(capture_error);
               render_failed = true;
             } else {
-              ui_reference_written = true;
+              (void)ui_reference_capture.markPublished();
               std::printf(
                   "[AppleUiReference] READY state=%s target_frame=%d "
                   "presented_frame=%lld stable_frames=%d image=%s\n",
                   appleUiReferenceStateName(options->ui_reference.state),
                   options->ui_reference.target_frame,
                   static_cast<long long>(viewer_stats.presented_frame),
-                  ui_reference_stable_frames, image_path.string().c_str());
+                  ui_reference_capture.stableFrameCount(),
+                  image_path.string().c_str());
               glfwSetWindowShouldClose(window, GLFW_TRUE);
             }
           }
         }
       }
 
-      if (options->ui_reference.enabled && !ui_reference_written &&
-          std::chrono::duration<double>(std::chrono::steady_clock::now() -
-                                        ui_reference_started)
-                  .count() > options->ui_reference.timeout_seconds) {
+      if (ui_reference_timed_out) {
         std::fprintf(
             stderr,
             "[AppleUiReference] Timed out state=%s target=%d requested=%lld "
@@ -5968,7 +5937,7 @@ int main(int argc, char **argv) {
             options->ui_reference.target_frame,
             static_cast<long long>(viewer_stats.requested_frame),
             static_cast<long long>(viewer_stats.presented_frame),
-            ui_reference_stable_frames, ui_reference_camera_exact,
+            ui_reference_capture.stableFrameCount(), ui_reference_camera_exact,
             ui_reference_overlay_ready, ui_reference_crop_exact,
             ui_reference_stimulus_exact, ui_reference_analysis_ready,
             ui_reference_polar_ready);

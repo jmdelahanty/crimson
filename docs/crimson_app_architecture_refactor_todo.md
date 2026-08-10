@@ -177,6 +177,29 @@ UI-reference completeness, and saved CUDA-device parsing. This extraction
 reduces `red.cpp` from 6,541 to 5,982 lines without changing the accepted
 command-line interface.
 
+### 2026-08-10 Shared UI Reference Capture Extraction
+
+The Metal and OpenGL shells now use one backend-neutral UI-reference capture
+coordinator. It owns stable-frame accumulation and reset, timeout transition,
+one-shot capture and publication phases, terminal failure state, output cleanup,
+and atomic JSON marker publication. Headless tests cover exact-presentation
+gating, readiness loss, timeout boundaries, invalid policy, capture failure,
+duplicate publication prevention, stale-output cleanup, and marker replacement.
+
+Each shell still owns its state-specific readiness predicate and evidence
+payload. Metal retains drawable readback and BGRA-to-PNG conversion; OpenGL
+retains front-buffer readback. Neither renderer, workspace layout, archive
+selection, nor semantic snapshot schema moved into the coordinator. This keeps
+the shared lifecycle usable without pretending that Metal and OpenGL have the
+same GPU capture mechanics or that every reference state requires a camera
+frame.
+
+Real capture checks reached publication after exactly 60 stable frames on both
+backends: an empty-workspace Metal capture and a frame-exact NVIDIA workspace
+capture on the authenticated X display. The adoption reduces `red.cpp` from
+5,982 to 5,917 lines and removes the duplicate lifecycle and atomic-marker
+implementations from both composition roots.
+
 ## 2026-07-23 Runtime Contract Checkpoint
 
 The first backend-neutral runtime slices are now shared by the macOS and

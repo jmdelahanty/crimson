@@ -106,6 +106,17 @@ target_link_libraries(crimson_nvidia_launch_options PUBLIC
 )
 target_compile_features(crimson_nvidia_launch_options PUBLIC cxx_std_17)
 
+add_library(crimson_ui_reference_capture STATIC
+    src/ui_reference_capture.cpp
+)
+target_include_directories(crimson_ui_reference_capture PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(crimson_ui_reference_capture PUBLIC
+    nlohmann_json::nlohmann_json
+)
+target_compile_features(crimson_ui_reference_capture PUBLIC cxx_std_17)
+
 add_library(crimson_runtime_contracts STATIC
     src/archive_open_coordinator.cpp
     src/stimulus_open_coordinator.cpp
@@ -1367,6 +1378,23 @@ set_tests_properties(nvidia_launch_options_tests PROPERTIES
     LABELS "headless;nvidia;launch;configuration"
 )
 
+add_executable(ui_reference_capture_tests
+    tools/ui_reference_capture_tests.cpp
+)
+target_link_libraries(ui_reference_capture_tests PRIVATE
+    crimson_ui_reference_capture
+)
+target_compile_features(ui_reference_capture_tests PRIVATE cxx_std_17)
+set_target_properties(ui_reference_capture_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME ui_reference_capture_tests
+    COMMAND $<TARGET_FILE:ui_reference_capture_tests>
+)
+set_tests_properties(ui_reference_capture_tests PROPERTIES
+    LABELS "headless;portable;ui;reference"
+)
+
 foreach(runtime_test
         session_lifecycle_tests
         loading_progress_tests
@@ -2599,6 +2627,7 @@ target_link_libraries(redgui PRIVATE
     crimson_nvidia_playback_adapter
     crimson_nvidia_playback_diagnostics
     crimson_nvidia_launch_options
+    crimson_ui_reference_capture
     crimson_runtime_contracts
     crimson_overlay_contracts
     crimson_repository_contracts
@@ -3379,6 +3408,7 @@ if(CRIMSON_BUILD_MACOS_APP)
         crimson_apple_overlay
         crimson_apple_acquisition_crop_playback
         crimson_apple_stimulus_playback
+        crimson_ui_reference_capture
         crimson_tensorstore_repositories
         crimson_workspace_contracts
         crimson::tensorstore_zarr
