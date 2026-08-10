@@ -943,6 +943,7 @@ int ResolveCudaDeviceIndex() {
 int main(int argc, char **argv) {
   std::string cli_zarr_override_path;
   std::string cli_recording_path;
+  std::string cli_recording_clip_index_path;
   std::string cli_subject_shape_run;
   std::string cli_refined_subject_mask_run;
   std::string cli_refined_subject_mask_storage;
@@ -991,6 +992,14 @@ int main(int argc, char **argv) {
         return 1;
       }
       cli_recording_path = argv[++i];
+      continue;
+    }
+    if (arg == "--recording-clip-index") {
+      if (i + 1 >= argc) {
+        std::cerr << "Missing value for --recording-clip-index" << std::endl;
+        return 1;
+      }
+      cli_recording_clip_index_path = argv[++i];
       continue;
     }
     if (arg == "--subject-shape-run") {
@@ -1353,6 +1362,20 @@ int main(int argc, char **argv) {
     std::cerr << "Error: --recording path is not a directory: "
               << cli_recording_path << std::endl;
     cli_recording_path.clear();
+  }
+  if (!cli_recording_clip_index_path.empty()) {
+    std::error_code clip_index_error;
+    if (!std::filesystem::is_regular_file(cli_recording_clip_index_path,
+                                          clip_index_error)) {
+      std::cerr << "Error: --recording-clip-index path is not a file: "
+                << cli_recording_clip_index_path << std::endl;
+      return 1;
+    }
+    if (cli_zarr_override_path.empty() && cli_recording_path.empty()) {
+      std::cerr << "--recording-clip-index requires --zarr or --recording"
+                << std::endl;
+      return 1;
+    }
   }
 
   gx_context *window = new gx_context();
@@ -1723,6 +1746,17 @@ int main(int argc, char **argv) {
       &recording_open_workflow,
       kCudaDeviceIndex,
   });
+  auto hasMappedClipMedia = [&]() {
+    return clipped_media_state.recording_clip_provider != nullptr ||
+           (zarr_loaded && zarr_loader.hasClippedCollection());
+  };
+  auto mappedClipFrameCount = [&]() -> int64_t {
+    if (clipped_media_state.recording_clip_provider != nullptr) {
+      return clipped_media_state.recording_clip_provider->index()
+          .totalFrameCount();
+    }
+    return zarr_loaded ? static_cast<int64_t>(zarr_loader.getTotalFrames()) : 0;
+  };
 
   auto refreshChaserDistancePolarRepository = [&]() {
     chaser_distance_polar_repository.reset();
@@ -1757,7 +1791,7 @@ int main(int argc, char **argv) {
   };
 
   media_session_loader.bootstrapFromCli(
-      cli_zarr_override_path, cli_recording_path,
+      cli_zarr_override_path, cli_recording_path, cli_recording_clip_index_path,
       [&]() { refreshDetectionDatasetOptions(zarr_loader); },
       [&]() { g_zarr_bbox_edit_state.clearAll(); });
   if (session_lifecycle.snapshot().phase !=
@@ -1799,7 +1833,7 @@ int main(int argc, char **argv) {
           &window_was_decoding,
           &window_need_decoding,
           [&](int parent_frame) {
-            return media_session_loader.loadClippedVideoForParentFrame(
+            return media_session_loader.resolveDecoderFrameForParentFrame(
                 parent_frame);
           },
       });
@@ -1996,8 +2030,7 @@ int main(int argc, char **argv) {
   auto writeClippedPlaybackStateEvent = [&](const std::string &event_name,
                                             const json &details,
                                             bool force_flush) {
-    if (!clipped_frame_trace_log_writer.enabled() || !zarr_loaded ||
-        !zarr_loader.hasClippedCollection()) {
+    if (!clipped_frame_trace_log_writer.enabled() || !hasMappedClipMedia()) {
       return;
     }
     clipped_frame_trace_log_writer.write(
@@ -2063,8 +2096,7 @@ int main(int argc, char **argv) {
   };
   auto applyPlaybackToggleForPerf = [&]() {
     const bool was_playing = ps.play_video;
-    if (!was_playing && clipped_rebase_before_play && zarr_loaded &&
-        zarr_loader.hasClippedCollection()) {
+    if (!was_playing && clipped_rebase_before_play && hasMappedClipMedia()) {
       const json rebase_target = clippedPlaybackRebaseTargetBeforePlay();
       const int target_frame = rebase_target.value(
           "target_frame", std::max(0, ps.to_display_frame_number));
@@ -2312,7 +2344,7 @@ int main(int argc, char **argv) {
   auto clippedMediaStateSnapshot =
       [&]() -> std::optional<
                 crimson::playback::diagnostics::ClippedMediaStateSnapshot> {
-    if (!zarr_loaded || !zarr_loader.hasClippedCollection()) {
+    if (!hasMappedClipMedia()) {
       return std::nullopt;
     }
     return crimson::playback::diagnostics::ClippedMediaStateSnapshot{
@@ -2345,8 +2377,16 @@ int main(int argc, char **argv) {
   };
 
   auto clippedSelectedRunForFrame = [&](int parent_frame) -> size_t {
-    if (!zarr_loaded || !zarr_loader.hasClippedCollection() ||
-        parent_frame < 0) {
+    if (parent_frame < 0) {
+      return std::numeric_limits<size_t>::max();
+    }
+    if (clipped_media_state.recording_clip_provider != nullptr) {
+      const auto binding =
+          clipped_media_state.recording_clip_provider->resolveParentFrame(
+              parent_frame);
+      return binding ? binding->clip_index : std::numeric_limits<size_t>::max();
+    }
+    if (!zarr_loaded || !zarr_loader.hasClippedCollection()) {
       return std::numeric_limits<size_t>::max();
     }
     const auto *row = zarr_loader.resolveClippedFrame(parent_frame);
@@ -2624,14 +2664,15 @@ int main(int argc, char **argv) {
   }
 
   if (clipped_boundary_smoke.enabled) {
-    if (!zarr_loaded || !zarr_loader.hasClippedCollection()) {
+    if (!hasMappedClipMedia()) {
       std::cerr << "[ClippedBoundarySmoke] requested but the loaded "
                 << "archive is not a clipped collection" << std::endl;
       return 2;
     }
-    const int max_frame = static_cast<int>(std::min<size_t>(
-        zarr_loader.getTotalFrames() > 0 ? zarr_loader.getTotalFrames() - 1 : 0,
-        static_cast<size_t>(std::numeric_limits<int>::max())));
+    const int64_t mapped_frame_count = mappedClipFrameCount();
+    const int max_frame = static_cast<int>(
+        std::clamp<int64_t>(mapped_frame_count > 0 ? mapped_frame_count - 1 : 0,
+                            0, std::numeric_limits<int>::max()));
     if (clipped_boundary_smoke.end_frame > max_frame) {
       std::cerr << "[ClippedBoundarySmoke] end frame "
                 << clipped_boundary_smoke.end_frame
@@ -2672,8 +2713,25 @@ int main(int argc, char **argv) {
 
   auto clippedFrameBindingForParentFrame = [&](int64_t parent_frame) {
     crimson::playback::ClippedFrameBinding binding;
-    if (!zarr_loaded || !zarr_loader.hasClippedCollection() ||
-        parent_frame < 0) {
+    if (parent_frame < 0) {
+      return binding;
+    }
+    if (clipped_media_state.recording_clip_provider != nullptr) {
+      const auto resolved =
+          clipped_media_state.recording_clip_provider->resolveParentFrame(
+              parent_frame);
+      if (!resolved) {
+        return binding;
+      }
+      binding.mapped = true;
+      binding.selected_run_index = resolved->clip_index;
+      binding.clip_id = resolved->clip_id;
+      binding.clip_local_frame_index = resolved->clip_local_frame;
+      binding.first_parent_frame = resolved->first_parent_frame;
+      binding.last_parent_frame = resolved->last_parent_frame;
+      return binding;
+    }
+    if (!zarr_loaded || !zarr_loader.hasClippedCollection()) {
       return binding;
     }
     const auto *row = zarr_loader.resolveClippedFrame(parent_frame);
@@ -2740,8 +2798,7 @@ int main(int argc, char **argv) {
             state.last_presented_parent_frame;
       };
   auto maybeRequestClippedBoundaryHandoff = [&](int presented_parent_frame) {
-    if (!ps.play_video || !zarr_loaded || !zarr_loader.hasClippedCollection() ||
-        presented_parent_frame < 0) {
+    if (!ps.play_video || !hasMappedClipMedia() || presented_parent_frame < 0) {
       return;
     }
 
@@ -2755,8 +2812,7 @@ int main(int argc, char **argv) {
     const int64_t next_parent_frame =
         static_cast<int64_t>(presented_parent_frame) + 1;
     if (presented_parent_frame >= handoff_state.last_parent_frame &&
-        next_parent_frame >= 0 &&
-        static_cast<size_t>(next_parent_frame) < zarr_loader.getTotalFrames()) {
+        next_parent_frame >= 0 && next_parent_frame < mappedClipFrameCount()) {
       next_binding = clippedFrameBindingForParentFrame(next_parent_frame);
     }
 
@@ -2765,9 +2821,8 @@ int main(int argc, char **argv) {
     const std::string old_clip = handoff_state.clip_id;
     const size_t old_selected_run = handoff_state.selected_run_index;
     const auto handoff = crimson::playback::updateClippedMediaHandoff(
-        handoff_state, true, presented_parent_frame,
-        static_cast<int64_t>(zarr_loader.getTotalFrames()), presented_binding,
-        next_binding);
+        handoff_state, true, presented_parent_frame, mappedClipFrameCount(),
+        presented_binding, next_binding);
     applyClippedHandoffStateToMediaState(handoff_state);
 
     if (handoff.outcome ==
@@ -3204,8 +3259,7 @@ int main(int argc, char **argv) {
       resetPlaybackStartPerf();
     }
 
-    const bool clipped_collection_playback =
-        zarr_loaded && zarr_loader.hasClippedCollection();
+    const bool clipped_collection_playback = hasMappedClipMedia();
     const int requested_playback_frame = static_cast<int>(std::min<int64_t>(
         transport_tick.requested_frame, std::numeric_limits<int>::max()));
     int min_decoded_frame = INT_MAX;
@@ -3994,6 +4048,8 @@ int main(int argc, char **argv) {
               "Load Zarr Archive");
           media_session_loader.tryAutoLoadStimulusVideo("file-dialog");
           requested_session.zarr_path = zarr_loader.getArchivePath();
+          requested_session.recording_clip_index_path =
+              media_session_loader.activeRecordingClipIndexPath();
           recording_open_workflow.completeProduct("archive", "Archive ready",
                                                   true);
           std::string transaction_error;
@@ -4553,8 +4609,7 @@ int main(int argc, char **argv) {
           const bool has_presented_camera_frame = presented_frame >= 0;
           int zarr_bbox_query_frame =
               has_presented_camera_frame ? presented_frame : current_frame_num;
-          if (zarr_loaded && zarr_loader.hasClippedCollection() &&
-              clipped_media_state.switch_in_progress &&
+          if (hasMappedClipMedia() && clipped_media_state.switch_in_progress &&
               clipped_media_state.pending_switch_parent_frame >= 0 &&
               clipped_media_state.last_presented_parent_frame >= 0) {
             const bool presented_new_clip_frame =

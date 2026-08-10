@@ -13,10 +13,37 @@ Lifecycle: **active architecture roadmap**.
 - [x] Add macOS AVFoundation clip switching on a global recording frame axis.
 - [x] Add recording-identity-based archive discovery and mounted boundary
       smoke coverage.
-- [ ] Adopt the shared mapping contract in the Linux/Windows FFmpeg/NVIDIA
+- [x] Adopt the shared mapping contract in the Linux/Windows FFmpeg/NVIDIA
       decoder adapter.
 - [ ] Replace the compatibility envelope when Palette publishes a versioned,
       digest-bound recording clip index contract.
+
+### 2026-08-10 NVIDIA Adoption Checkpoint
+
+The FFmpeg/NVIDIA application now consumes a backend-neutral
+`RecordingClipMediaProvider` built from the same strict `RecordingClipIndex`
+used by macOS. The provider owns immutable clip descriptors, parent-to-local
+frame resolution, and per-clip parent-frame maps. The platform loader retains
+ownership of FFmpeg demuxers, NVDEC threads, CUDA resources, decoder-local
+seeks, and atomic media replacement.
+
+The NVIDIA playback controller no longer reaches into the legacy Zarr clipped
+resolver to interpret a seek. It asks one media callback for the decoder-local
+frame, so single-file media, recording clip indexes, and the legacy clipped-
+collection compatibility adapter all use the same transport command path.
+Affiliated-media discovery preserves the existing legacy clipped-collection
+behavior, prefers a valid full affiliated video for standard archives, and
+uses `recording_clip_index.json` when no full video is available.
+
+Deterministic coverage resolves frames on both sides of a clip boundary and
+exercises switch request, duplicate suppression, completion, settlement,
+failure, invalid mapping, and cancellation reset. The Ubuntu 22/CUDA/TensorRT
+NVIDIA target and its focused tests compile and pass in the isolated Linux
+build. A native ws1 GPU smoke used the explicit index entry point, crossed
+parent frames `53990:54010`, switched from clip 0 to clip 1 at parent frame
+54,000/local frame 0, and passed with the presented and overlay-query frames
+both at 54,010. Windows shares this adapter source but still requires its
+native build and GUI smoke before a Windows release claim.
 
 ## 2026-07-23 Runtime Contract Checkpoint
 

@@ -28,7 +28,10 @@ struct PlaybackSessionControllerContext {
   std::unordered_map<std::string, bool> *window_was_decoding = nullptr;
   std::unordered_map<std::string, std::atomic<bool>> *window_need_decoding =
       nullptr;
-  std::function<bool(int)> ensure_clipped_media_for_parent_frame;
+  // Resolves the parent recording frame to the active decoder's local frame,
+  // loading/switching media when required. Single-file adapters return the
+  // parent frame unchanged.
+  std::function<std::optional<int>(int)> resolve_decoder_frame_for_parent_frame;
 };
 
 double playbackPreviewScaleFactor(int playback_preview_scale_mode);

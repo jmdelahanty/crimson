@@ -345,11 +345,8 @@ PlaybackSessionController::seekToFrame(int target_frame,
     result.error = "playback session is incomplete";
     return result;
   }
-  const bool clipped_collection = context_.zarr_loader->hasClippedCollection();
   const int64_t max_frame_value =
-      clipped_collection
-          ? static_cast<int64_t>(context_.zarr_loader->getTotalFrames()) - 1
-      : context_.playback_transport->configured()
+      context_.playback_transport->configured()
           ? context_.playback_transport->frameCount() - 1
           : static_cast<int64_t>(context_.decoder_context->total_num_frame) - 1;
   const int max_frame = static_cast<int>(
@@ -357,20 +354,14 @@ PlaybackSessionController::seekToFrame(int target_frame,
   const int clamped_frame = std::clamp(target_frame, 0, max_frame);
   int decoder_seek_frame = clamped_frame;
 
-  if (clipped_collection) {
-    if (context_.ensure_clipped_media_for_parent_frame &&
-        !context_.ensure_clipped_media_for_parent_frame(clamped_frame)) {
-      result.error = "clipped media is unavailable for the requested frame";
+  if (context_.resolve_decoder_frame_for_parent_frame) {
+    const auto resolved_decoder_frame =
+        context_.resolve_decoder_frame_for_parent_frame(clamped_frame);
+    if (!resolved_decoder_frame) {
+      result.error = "media mapping is unavailable for the requested frame";
       return result;
     }
-    const auto *row = context_.zarr_loader->resolveClippedFrame(clamped_frame);
-    if (row == nullptr) {
-      std::cout << "[Seek] no clipped mapping for parent frame "
-                << clamped_frame << std::endl;
-      result.error = "clipped frame mapping is unavailable";
-      return result;
-    }
-    decoder_seek_frame = row->clip_local_frame_index;
+    decoder_seek_frame = *resolved_decoder_frame;
   }
 
   if (context_.scene->num_cams <= 0) {

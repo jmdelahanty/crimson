@@ -1,4 +1,5 @@
 #include "recording_clip_index.h"
+#include "recording_clip_media_provider.h"
 
 #include <chrono>
 #include <filesystem>
@@ -147,6 +148,41 @@ void TestValidMapping() {
   CHECK(!index->resolveParentFrame(5));
 }
 
+void TestMediaProviderTransitions() {
+  TemporaryDirectory temporary;
+  std::string error;
+  auto provider = crimson::media::RecordingClipMediaProvider::Open(
+      WriteFixture(temporary.path(), ValidIndex()), &error);
+  CHECK(provider.has_value());
+  CHECK(error.empty());
+
+  const auto first = provider->resolveParentFrame(0);
+  const auto before_boundary = provider->resolveParentFrame(2);
+  const auto boundary = provider->resolveParentFrame(3);
+  const auto final = provider->resolveParentFrame(4);
+  CHECK(first && first->clip_index == 0 && first->clip_local_frame == 0);
+  CHECK(before_boundary && before_boundary->clip_index == 0 &&
+        before_boundary->clip_local_frame == 2);
+  CHECK(boundary && boundary->clip_index == 1 &&
+        boundary->clip_local_frame == 0);
+  CHECK(final && final->clip_index == 1 && final->clip_local_frame == 1);
+  CHECK(!provider->resolveParentFrame(-1));
+  CHECK(!provider->resolveParentFrame(5));
+
+  CHECK(first->first_parent_frame == 0 && first->last_parent_frame == 2);
+  CHECK(boundary->first_parent_frame == 3 && boundary->last_parent_frame == 4);
+  CHECK(first->parent_frame_by_clip_local->size() == 3);
+  CHECK((*first->parent_frame_by_clip_local)[0] == 0);
+  CHECK((*first->parent_frame_by_clip_local)[2] == 2);
+  CHECK(boundary->parent_frame_by_clip_local->size() == 2);
+  CHECK((*boundary->parent_frame_by_clip_local)[0] == 3);
+  CHECK((*boundary->parent_frame_by_clip_local)[1] == 4);
+  CHECK(first->parent_frame_by_clip_local ==
+        before_boundary->parent_frame_by_clip_local);
+  CHECK(first->parent_frame_by_clip_local !=
+        boundary->parent_frame_by_clip_local);
+}
+
 void TestMalformedIndexesFailClosed() {
   {
     TemporaryDirectory temporary;
@@ -201,6 +237,7 @@ void TestMalformedIndexesFailClosed() {
 int main() {
   try {
     TestValidMapping();
+    TestMediaProviderTransitions();
     TestMalformedIndexesFailClosed();
     std::cout << "recording_clip_index_tests: PASS\n";
     return 0;

@@ -1,6 +1,7 @@
 # Recording Clip Index Media Provider
 
-Status: shared compatibility contract and macOS playback adapter implemented
+Status: shared compatibility contract with macOS and NVIDIA playback adapters
+implemented
 
 ## Purpose
 
@@ -45,14 +46,17 @@ nominal frame rate against the validated index and the first clip.
 
 ## Discovery And Launch
 
-Crimson accepts an explicit index:
+Both application shells accept an explicit index alongside an analysis
+archive:
 
 ```bash
-Crimson --recording-clip-index /path/to/recording_clip_index.json
+Crimson --zarr /path/to/analysis.zarr \
+  --recording-clip-index /path/to/recording_clip_index.json
 ```
 
-`--recording-clip-index` and `--video` are mutually exclusive. A Zarr archive
-can be supplied normally with `--zarr`.
+On macOS, `--recording-clip-index` and `--video` are mutually exclusive. The
+NVIDIA shell requires `--zarr` or `--recording` so the global analysis frame
+axis remains explicit.
 
 The macOS File menu also exposes **Open Recording Clip Index...** for direct
 interactive use.
@@ -74,11 +78,19 @@ The mounted Sleepyfish smoke crossed the first boundary from parent frame
 53,990 through 54,010. It presented frame 54,010 with zero PTS error while the
 decoder switched from clip 0 to clip 1.
 
+The native NVIDIA smoke used the same parent range through
+`--recording-clip-index`. FFmpeg/NVDEC loaded clip 1 at decoder-local frame
+zero, the shared handoff settled after parent frame 54,000 presented, and the
+smoke passed at parent frame 54,010 with the overlay query on frame 54,010.
+
 ## Platform Adoption
 
 The index parser, validated descriptors, frame mapping, archive discovery, and
 session source field are backend-neutral C++.
 
-The macOS adapter switches AVFoundation/VideoToolbox providers. Linux and
-Windows can consume the same mapping contract in their FFmpeg/NVIDIA decoder
-adapter; they should not duplicate JSON parsing or parent/local-frame policy.
+The macOS adapter switches AVFoundation/VideoToolbox providers. The shared
+Linux/Windows adapter now consumes `RecordingClipMediaProvider` and switches
+FFmpeg/NVDEC media while keeping playback on the parent frame axis. Neither
+adapter duplicates JSON parsing or parent/local-frame policy. Linux has a
+native compile and focused test gate; Windows still needs a native build and
+GUI smoke before release qualification.

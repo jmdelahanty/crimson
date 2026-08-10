@@ -105,6 +105,7 @@ endif()
 
 add_library(crimson_recording_contracts STATIC
     src/recording_clip_index.cpp
+    src/recording_clip_media_provider.cpp
     src/recording_path_resolution.cpp
 )
 target_include_directories(crimson_recording_contracts PUBLIC

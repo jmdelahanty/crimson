@@ -13,6 +13,7 @@
 #include <map>
 #include <mutex>
 #include <sstream>
+#include <tuple>
 
 extern std::mutex g_seek_info_mutex;
 
@@ -148,6 +149,67 @@ void configurePlaybackTransport(const MediaSessionLoaderContext &context,
 MediaSessionLoader::MediaSessionLoader(const MediaSessionLoaderContext &context)
     : context_(context) {}
 
+bool MediaSessionLoader::activateRecordingClipIndex(
+    const std::filesystem::path &index_path, std::string *error_message) const {
+  if (context_.clipped_media_state == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "recording clip media state is unavailable";
+    }
+    return false;
+  }
+  auto provider = crimson::media::RecordingClipMediaProvider::Open(
+      index_path, error_message);
+  if (!provider) {
+    return false;
+  }
+  context_.clipped_media_state->source = ClippedMediaSource::RecordingClipIndex;
+  context_.clipped_media_state->recording_clip_provider =
+      std::make_shared<const crimson::media::RecordingClipMediaProvider>(
+          std::move(*provider));
+  return true;
+}
+
+std::optional<int>
+MediaSessionLoader::resolveDecoderFrameForParentFrame(int parent_frame) const {
+  if (parent_frame < 0) {
+    return std::nullopt;
+  }
+  if (context_.clipped_media_state != nullptr &&
+      context_.clipped_media_state->recording_clip_provider != nullptr) {
+    const auto binding = context_.clipped_media_state->recording_clip_provider
+                             ->resolveParentFrame(parent_frame);
+    if (!binding || !loadClippedVideoForParentFrame(parent_frame)) {
+      return std::nullopt;
+    }
+    return static_cast<int>(std::clamp<int64_t>(
+        binding->clip_local_frame, 0, std::numeric_limits<int>::max()));
+  }
+  if (context_.zarr_loaded != nullptr && *context_.zarr_loaded &&
+      context_.zarr_loader != nullptr &&
+      context_.zarr_loader->hasClippedCollection()) {
+    if (!loadClippedVideoForParentFrame(parent_frame)) {
+      return std::nullopt;
+    }
+    const auto *row = context_.zarr_loader->resolveClippedFrame(parent_frame);
+    if (row == nullptr) {
+      return std::nullopt;
+    }
+    return static_cast<int>(std::clamp<int64_t>(
+        row->clip_local_frame_index, 0, std::numeric_limits<int>::max()));
+  }
+  return parent_frame;
+}
+
+std::string MediaSessionLoader::activeRecordingClipIndexPath() const {
+  if (context_.clipped_media_state == nullptr ||
+      context_.clipped_media_state->recording_clip_provider == nullptr) {
+    return {};
+  }
+  return context_.clipped_media_state->recording_clip_provider->index()
+      .indexPath()
+      .string();
+}
+
 void MediaSessionLoader::stopCameraDecodersForReload() const {
   if (context_.decoder_context == nullptr ||
       context_.decoder_threads == nullptr || context_.demuxers == nullptr ||
@@ -187,9 +249,16 @@ void MediaSessionLoader::stopCameraDecodersForReload() const {
 
 bool MediaSessionLoader::loadClippedVideoForParentFrame(
     int parent_frame) const {
-  if (context_.zarr_loaded == nullptr || !*context_.zarr_loaded ||
-      context_.zarr_loader == nullptr ||
-      !context_.zarr_loader->hasClippedCollection()) {
+  const auto recording_provider =
+      context_.clipped_media_state != nullptr
+          ? context_.clipped_media_state->recording_clip_provider
+          : nullptr;
+  const bool recording_clip_media = recording_provider != nullptr;
+  const bool legacy_clipped_media =
+      context_.zarr_loaded != nullptr && *context_.zarr_loaded &&
+      context_.zarr_loader != nullptr &&
+      context_.zarr_loader->hasClippedCollection();
+  if (!recording_clip_media && !legacy_clipped_media) {
     return true;
   }
   if (context_.scene == nullptr || context_.decoder_context == nullptr ||
@@ -204,34 +273,72 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
     return false;
   }
 
-  const auto *row = context_.zarr_loader->resolveClippedFrame(parent_frame);
-  if (row == nullptr) {
-    std::cout << "[Zarr] No clipped frame-run mapping for parent frame "
-              << parent_frame << std::endl;
-    return false;
+  size_t selected_index = std::numeric_limits<size_t>::max();
+  std::string clip_id;
+  std::string camera_serial;
+  std::string resolved_video;
+  int64_t clip_local_frame = -1;
+  int64_t first_parent_frame = -1;
+  int64_t last_parent_frame = -1;
+  std::shared_ptr<const std::vector<int64_t>> frame_map;
+  const std::vector<int64_t> *legacy_frame_map_source = nullptr;
+  ClippedMediaSource source = ClippedMediaSource::None;
+
+  if (recording_clip_media) {
+    const auto binding = recording_provider->resolveParentFrame(parent_frame);
+    if (!binding) {
+      std::cout << "[RecordingClipIndex] No media mapping for parent frame "
+                << parent_frame << std::endl;
+      return false;
+    }
+    selected_index = binding->clip_index;
+    clip_id = binding->clip_id;
+    camera_serial = binding->camera_serial;
+    resolved_video = binding->video_path.string();
+    clip_local_frame = binding->clip_local_frame;
+    first_parent_frame = binding->first_parent_frame;
+    last_parent_frame = binding->last_parent_frame;
+    frame_map = binding->parent_frame_by_clip_local;
+    source = ClippedMediaSource::RecordingClipIndex;
+  } else {
+    const auto *row = context_.zarr_loader->resolveClippedFrame(parent_frame);
+    if (row == nullptr) {
+      std::cout << "[Zarr] No clipped frame-run mapping for parent frame "
+                << parent_frame << std::endl;
+      return false;
+    }
+    const auto *selected =
+        context_.zarr_loader->getClippedResolver().selectedRun(
+            row->selected_run_index);
+    if (selected == nullptr || selected->video_path.empty()) {
+      std::cout
+          << "[Zarr] Clipped mapping has no source video for parent frame "
+          << parent_frame << std::endl;
+      return false;
+    }
+    auto resolved_video_opt = ResolveAffiliatedVideoPath(
+        selected->video_path, context_.zarr_loader->getArchivePath());
+    if (!resolved_video_opt.has_value()) {
+      std::cout << "[Zarr] Could not resolve clipped source video path: "
+                << selected->video_path << std::endl;
+      return false;
+    }
+    selected_index = row->selected_run_index;
+    clip_id = selected->clip_id;
+    camera_serial = selected->camera_serial;
+    resolved_video = resolved_video_opt->string();
+    clip_local_frame = row->clip_local_frame_index;
+    legacy_frame_map_source = &selected->parent_frame_by_clip_local;
+    std::tie(first_parent_frame, last_parent_frame) =
+        parentFrameRangeForClip(*legacy_frame_map_source);
+    source = ClippedMediaSource::LegacyZarrCollection;
   }
 
-  const auto *selected = context_.zarr_loader->getClippedResolver().selectedRun(
-      row->selected_run_index);
-  if (selected == nullptr || selected->video_path.empty()) {
-    std::cout << "[Zarr] Clipped mapping has no source video for parent frame "
-              << parent_frame << std::endl;
-    return false;
-  }
-
-  auto resolved_video_opt = ResolveAffiliatedVideoPath(
-      selected->video_path, context_.zarr_loader->getArchivePath());
-  if (!resolved_video_opt.has_value()) {
-    std::cout << "[Zarr] Could not resolve clipped source video path: "
-              << selected->video_path << std::endl;
-    return false;
-  }
-
-  const std::string resolved_video = resolved_video_opt->string();
   PaletteClippedMediaState *clipped_state = context_.clipped_media_state;
   const bool requested_clip_loaded =
       *context_.video_loaded && clipped_state != nullptr &&
-      clipped_state->selected_run_index == row->selected_run_index &&
+      clipped_state->source == source &&
+      clipped_state->selected_run_index == selected_index &&
       parent_frame >= clipped_state->first_parent_frame &&
       parent_frame <= clipped_state->last_parent_frame &&
       !context_.decoder_threads->empty();
@@ -242,6 +349,10 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
           clipped_state->parent_frame_by_clip_local;
     }
     return true;
+  }
+  if (frame_map == nullptr && legacy_frame_map_source != nullptr) {
+    frame_map =
+        std::make_shared<const std::vector<int64_t>>(*legacy_frame_map_source);
   }
 
   if (*context_.video_loaded || !context_.decoder_threads->empty() ||
@@ -255,8 +366,7 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
     context_.demuxers->clear();
     context_.is_view_focused->clear();
 
-    std::string camera_name =
-        "Cam" + selected->camera_serial + "_" + selected->clip_id;
+    std::string camera_name = "Cam" + camera_serial + "_" + clip_id;
     context_.camera_names->push_back(camera_name);
     (*context_.window_need_decoding)[camera_name].store(true);
     (*context_.window_was_decoding)[camera_name] = true;
@@ -295,20 +405,18 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
       context_.scene->cameras[0].playback_staging_valid = false;
     }
 
-    auto frame_map = std::make_shared<const std::vector<int64_t>>(
-        selected->parent_frame_by_clip_local);
-    const auto [first_parent_frame, last_parent_frame] =
-        parentFrameRangeForClip(*frame_map);
     {
       std::lock_guard<std::mutex> lock(g_seek_info_mutex);
       context_.scene->cameras[0].seek_context.frame_number_map = frame_map;
     }
     if (clipped_state != nullptr) {
+      clipped_state->source = source;
+      clipped_state->recording_clip_provider = recording_provider;
       clipped_state->current_video_path = resolved_video;
-      clipped_state->clip_id = selected->clip_id;
-      clipped_state->camera_serial = selected->camera_serial;
+      clipped_state->clip_id = clip_id;
+      clipped_state->camera_serial = camera_serial;
       clipped_state->parent_frame_by_clip_local = frame_map;
-      clipped_state->selected_run_index = row->selected_run_index;
+      clipped_state->selected_run_index = selected_index;
       clipped_state->first_parent_frame = first_parent_frame;
       clipped_state->last_parent_frame = last_parent_frame;
       if (clipped_state->pending_switch_parent_frame != parent_frame) {
@@ -317,10 +425,13 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
       }
     }
 
-    const size_t total_parent_frames = context_.zarr_loader->getTotalFrames();
-    context_.decoder_context->total_num_frame = static_cast<int>(
-        std::min<size_t>(total_parent_frames,
-                         static_cast<size_t>(std::numeric_limits<int>::max())));
+    const int64_t total_parent_frames =
+        recording_clip_media
+            ? recording_provider->index().totalFrameCount()
+            : static_cast<int64_t>(context_.zarr_loader->getTotalFrames());
+    context_.decoder_context->total_num_frame =
+        static_cast<int>(std::clamp<int64_t>(total_parent_frames, 0,
+                                             std::numeric_limits<int>::max()));
     context_.decoder_context->estimated_num_frames =
         std::max(0, context_.decoder_context->total_num_frame - 1);
 
@@ -337,21 +448,21 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
                                parent_frame, true);
 
     std::filesystem::path inferred_root = InferRecordingRootPath(
-        *resolved_video_opt, context_.zarr_loader->getArchivePath());
+        resolved_video, context_.zarr_loader->getArchivePath());
     if (!inferred_root.empty()) {
       *context_.root_dir = inferred_root.string();
       *context_.skeleton_dir = *context_.root_dir;
     }
 
-    std::cout << "[Zarr] Loaded clipped video for parent frame " << parent_frame
-              << " -> " << selected->clip_id << " local frame "
-              << row->clip_local_frame_index << ": " << resolved_video
-              << std::endl;
+    std::cout << (recording_clip_media ? "[RecordingClipIndex]" : "[Zarr]")
+              << " Loaded clipped video for parent frame " << parent_frame
+              << " -> " << clip_id << " local frame " << clip_local_frame
+              << ": " << resolved_video << std::endl;
     if (clipped_state != nullptr && clipped_state->switch_in_progress) {
       std::cout << "[ClippedHandoff] switch_loaded parent_frame="
-                << parent_frame << " clip=" << selected->clip_id
-                << " selected_run_index=" << row->selected_run_index
-                << " local_frame=" << row->clip_local_frame_index
+                << parent_frame << " clip=" << clip_id
+                << " selected_run_index=" << selected_index
+                << " local_frame=" << clip_local_frame
                 << " range=" << first_parent_frame << "-" << last_parent_frame
                 << std::endl;
     }
@@ -519,8 +630,7 @@ bool MediaSessionLoader::loadSingleVideoMedia(
 
     std::cout << success_label << video_path.string() << std::endl;
     if (context_.clipped_media_state != nullptr) {
-      context_.clipped_media_state->current_video_path.clear();
-      context_.clipped_media_state->parent_frame_by_clip_local.reset();
+      *context_.clipped_media_state = PaletteClippedMediaState();
     }
     loadCameraCalibrationsForCurrentMedia();
     return true;
@@ -538,24 +648,6 @@ void MediaSessionLoader::tryAutoLoadAffiliatedVideoFromZarr(
     return;
   }
 
-  if (context_.zarr_loader->hasClippedCollection()) {
-    const int parent_frame =
-        context_.playback_state != nullptr
-            ? std::max(0, context_.playback_state->to_display_frame_number)
-            : 0;
-    if (loadClippedVideoForParentFrame(parent_frame)) {
-      std::cout << "[Zarr] Auto-loaded clipped collection media ("
-                << trigger_label << ")" << std::endl;
-    }
-    return;
-  }
-
-  if (*context_.video_loaded || !context_.decoder_threads->empty()) {
-    std::cout << "[Zarr] Skipping affiliated video auto-load (" << trigger_label
-              << "): media already loaded" << std::endl;
-    return;
-  }
-
   const std::string archive_path = context_.zarr_loader->getArchivePath();
   std::string discovery_error;
   const auto archive =
@@ -564,6 +656,24 @@ void MediaSessionLoader::tryAutoLoadAffiliatedVideoFromZarr(
     std::cout << "[Zarr] Could not open shared archive context for affiliated "
                  "video discovery: "
               << discovery_error << std::endl;
+    return;
+  }
+
+  if (context_.zarr_loader->hasClippedCollection()) {
+    const int parent_frame =
+        context_.playback_state != nullptr
+            ? std::max(0, context_.playback_state->to_display_frame_number)
+            : 0;
+    if (loadClippedVideoForParentFrame(parent_frame)) {
+      std::cout << "[Zarr] Auto-loaded legacy clipped collection media ("
+                << trigger_label << ")" << std::endl;
+    }
+    return;
+  }
+
+  if (*context_.video_loaded || !context_.decoder_threads->empty()) {
+    std::cout << "[Zarr] Skipping affiliated video auto-load (" << trigger_label
+              << "): media already loaded" << std::endl;
     return;
   }
 
@@ -580,11 +690,46 @@ void MediaSessionLoader::tryAutoLoadAffiliatedVideoFromZarr(
                      affiliated_video->resolution)
               << " stored=" << affiliated_video->stored_path
               << " resolved=" << affiliated_video->resolved_path << std::endl;
-  } else if (!discovery_error.empty()) {
-    std::cout << "[Zarr] Affiliated video discovery failed: " << discovery_error
-              << std::endl;
-    return;
   } else {
+    const std::string video_discovery_error = discovery_error;
+    discovery_error.clear();
+    const auto recording_clip_index =
+        crimson::zarr::DiscoverAffiliatedRecordingClipIndex(archive,
+                                                            &discovery_error);
+    if (recording_clip_index) {
+      std::string provider_error;
+      if (!activateRecordingClipIndex(recording_clip_index->index_path,
+                                      &provider_error)) {
+        std::cout
+            << "[RecordingClipIndex] Could not activate affiliated media: "
+            << provider_error << std::endl;
+        return;
+      }
+      const int parent_frame =
+          context_.playback_state != nullptr
+              ? std::max(0, context_.playback_state->to_display_frame_number)
+              : 0;
+      if (loadClippedVideoForParentFrame(parent_frame)) {
+        std::cout << "[RecordingClipIndex] Auto-loaded indexed media ("
+                  << trigger_label
+                  << ") index=" << recording_clip_index->index_path
+                  << " frames=" << recording_clip_index->frame_count
+                  << " fps=" << recording_clip_index->frames_per_second
+                  << std::endl;
+      }
+      return;
+    }
+    if (!discovery_error.empty()) {
+      std::cout << "[RecordingClipIndex] Affiliated media discovery failed: "
+                << discovery_error << std::endl;
+      return;
+    }
+    if (!video_discovery_error.empty()) {
+      std::cout << "[Zarr] Affiliated video discovery failed: "
+                << video_discovery_error << std::endl;
+      return;
+    }
+
     const std::string source_hint = context_.zarr_loader->getSourceVideoPath();
     if (source_hint.empty()) {
       std::cout << "[Zarr] Archive did not provide source video metadata; "
@@ -670,6 +815,7 @@ void MediaSessionLoader::tryAutoLoadStimulusVideo(
 void MediaSessionLoader::bootstrapFromCli(
     const std::string &cli_zarr_override_path,
     const std::string &cli_recording_path,
+    const std::string &cli_recording_clip_index_path,
     const std::function<void()> &refresh_detection_dataset_options,
     const std::function<void()> &clear_bbox_edits) const {
   if (context_.zarr_loaded == nullptr || context_.root_dir == nullptr ||
@@ -683,6 +829,7 @@ void MediaSessionLoader::bootstrapFromCli(
 
   crimson::session::SessionDescriptor requested_session;
   requested_session.zarr_path = cli_zarr_override_path;
+  requested_session.recording_clip_index_path = cli_recording_clip_index_path;
   std::vector<crimson::session::SessionReadinessProductRule> products;
   if (!cli_zarr_override_path.empty()) {
     products.push_back(
@@ -720,6 +867,27 @@ void MediaSessionLoader::bootstrapFromCli(
       }
     }
   };
+  auto loadExplicitRecordingClipIndex = [&](std::string *error) {
+    if (cli_recording_clip_index_path.empty()) {
+      return true;
+    }
+    if (!activateRecordingClipIndex(cli_recording_clip_index_path, error)) {
+      return false;
+    }
+    const int parent_frame =
+        context_.playback_state != nullptr
+            ? std::max(0, context_.playback_state->to_display_frame_number)
+            : 0;
+    if (!loadClippedVideoForParentFrame(parent_frame)) {
+      if (error != nullptr && error->empty()) {
+        *error = "Failed to open explicit recording clip media";
+      }
+      return false;
+    }
+    std::cout << "[RecordingClipIndex] Loaded explicit index="
+              << cli_recording_clip_index_path << std::endl;
+    return true;
+  };
 
   if (!cli_zarr_override_path.empty()) {
     session_open.startProduct("archive", "Resolving archive");
@@ -731,7 +899,12 @@ void MediaSessionLoader::bootstrapFromCli(
       clear_bbox_edits();
       std::cout << "Loaded Zarr archive from --zarr: "
                 << context_.zarr_loader->getArchivePath() << std::endl;
-      tryAutoLoadAffiliatedVideoFromZarr("--zarr");
+      std::string media_error;
+      const bool explicit_media_ready =
+          loadExplicitRecordingClipIndex(&media_error);
+      if (explicit_media_ready && cli_recording_clip_index_path.empty()) {
+        tryAutoLoadAffiliatedVideoFromZarr("--zarr");
+      }
       tryAutoLoadStimulusVideo("--zarr");
       session_open.completeProduct("archive", "Archive ready", true);
       session_open.startProduct("affiliated_media",
@@ -740,10 +913,15 @@ void MediaSessionLoader::bootstrapFromCli(
                                    *context_.video_loaded
                                        ? "Affiliated media ready"
                                        : "No affiliated media",
-                                   *context_.video_loaded);
+                                   *context_.video_loaded, media_error);
+      if (!explicit_media_ready) {
+        finishSession(false, {}, media_error);
+        return;
+      }
       if (cli_recording_path.empty()) {
         crimson::session::SessionDescriptor resolved;
         resolved.zarr_path = context_.zarr_loader->getArchivePath();
+        resolved.recording_clip_index_path = activeRecordingClipIndexPath();
         finishSession(true, std::move(resolved), {});
       }
     } else {
@@ -777,7 +955,12 @@ void MediaSessionLoader::bootstrapFromCli(
     clear_bbox_edits();
     std::cout << "Loaded Zarr archive from --recording: "
               << context_.zarr_loader->getArchivePath() << std::endl;
-    tryAutoLoadAffiliatedVideoFromZarr("--recording");
+    std::string media_error;
+    const bool explicit_media_ready =
+        loadExplicitRecordingClipIndex(&media_error);
+    if (explicit_media_ready && cli_recording_clip_index_path.empty()) {
+      tryAutoLoadAffiliatedVideoFromZarr("--recording");
+    }
     tryAutoLoadStimulusVideo("--recording");
     session_open.completeProduct("recording_archive", "Recording archive ready",
                                  true);
@@ -786,9 +969,14 @@ void MediaSessionLoader::bootstrapFromCli(
                                  *context_.video_loaded
                                      ? "Recording media ready"
                                      : "No affiliated recording media",
-                                 *context_.video_loaded);
+                                 *context_.video_loaded, media_error);
+    if (!explicit_media_ready) {
+      finishSession(false, {}, media_error);
+      return;
+    }
     crimson::session::SessionDescriptor resolved;
     resolved.zarr_path = context_.zarr_loader->getArchivePath();
+    resolved.recording_clip_index_path = activeRecordingClipIndexPath();
     finishSession(true, std::move(resolved), {});
     return;
   }

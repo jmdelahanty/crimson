@@ -2,6 +2,7 @@
 
 #include "camera.h"
 #include "playback_clock.h"
+#include "recording_clip_media_provider.h"
 #include "recording_open_workflow.h"
 #include "stimulus_playback.h"
 #include "ui_path_config.h"
@@ -17,7 +18,16 @@
 #include <unordered_map>
 #include <vector>
 
+enum class ClippedMediaSource : uint8_t {
+  None,
+  RecordingClipIndex,
+  LegacyZarrCollection,
+};
+
 struct PaletteClippedMediaState {
+  ClippedMediaSource source = ClippedMediaSource::None;
+  std::shared_ptr<const crimson::media::RecordingClipMediaProvider>
+      recording_clip_provider;
   std::string current_video_path;
   std::string clip_id;
   std::string camera_serial;
@@ -74,9 +84,12 @@ public:
   void tryAutoLoadAffiliatedVideoFromZarr(const char *trigger_label) const;
   void tryAutoLoadStimulusVideo(const char *trigger_label) const;
   bool loadClippedVideoForParentFrame(int parent_frame) const;
+  std::optional<int> resolveDecoderFrameForParentFrame(int parent_frame) const;
+  std::string activeRecordingClipIndexPath() const;
   void bootstrapFromCli(
       const std::string &cli_zarr_override_path,
       const std::string &cli_recording_path,
+      const std::string &cli_recording_clip_index_path,
       const std::function<void()> &refresh_detection_dataset_options,
       const std::function<void()> &clear_bbox_edits) const;
 
@@ -85,6 +98,8 @@ private:
   bool loadSingleVideoMedia(const std::filesystem::path &video_path,
                             bool infer_recording_root,
                             const char *success_label) const;
+  bool activateRecordingClipIndex(const std::filesystem::path &index_path,
+                                  std::string *error_message = nullptr) const;
 
   const MediaSessionLoaderContext context_;
 };
