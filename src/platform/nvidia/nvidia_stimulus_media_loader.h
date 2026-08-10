@@ -7,13 +7,16 @@
 #include <unordered_map>
 
 struct StimulusPlayback;
-class ZarrDetectionLoader;
+
+namespace crimson::zarr {
+class StimulusRepository;
+}
 
 namespace crimson::platform::nvidia {
 
 struct NvidiaStimulusMediaOpenContext {
   StimulusPlayback *stimulus_player = nullptr;
-  ZarrDetectionLoader *zarr_loader = nullptr;
+  const crimson::zarr::StimulusRepository *stimulus_repository = nullptr;
   std::unordered_map<std::string, std::atomic<bool>> *window_need_decoding =
       nullptr;
   std::unordered_map<std::string, bool> *window_was_decoding = nullptr;

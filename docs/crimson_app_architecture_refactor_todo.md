@@ -53,6 +53,34 @@ explicit, and compile against every backend that consumes the new module.
 - [ ] Stop extracting a region when its remaining code is platform wiring with
       one clear owner and no independently testable policy.
 
+### 2026-08-10 NVIDIA Stimulus Alignment Repository Adoption
+
+The NVIDIA application now uses the backend-neutral `StimulusRepository` for
+camera-to-stimulus frame resolution throughout playback transport, paused
+buffer browsing, media-open initial seeks, per-frame presentation, UI-reference
+capture, and stimulus diagnostics. `LegacyStimulusRepository` is the one named
+compatibility adapter over the eagerly loaded NVIDIA archive session. It
+preserves corrected-first mapping with legacy fallback, exact missing and
+out-of-range states, interpolation provenance, reverse lookup, the alignment
+run identity, and the alignment's own camera-frame extent.
+
+This adoption does not move stimulus video decoding or rendering into the
+repository. FFmpeg/NVDEC workers, decoded buffers, CUDA/OpenGL resources,
+textures, demand flags, and media replacement remain NVIDIA-owned. Apple keeps
+its AVFoundation/Metal implementation while consuming the same repository
+contract. Event and step timelines remain on the separate
+`StimulusContextTimelineRepository`; legacy archive and source-HDF5 path
+fallback remain at the NVIDIA media-session composition edge.
+
+Portable tests freeze corrected lookup, legacy fallback, interpolation state,
+missing and out-of-range behavior, and the optional frame helper used by GUI
+callers. The direct-loader dependency policy removes the stimulus playback
+header and stimulus playback-window exceptions and adds only the named legacy
+adapter. All 98 macOS tests pass. The isolated Ubuntu NVIDIA target and focused
+stimulus tests compile and pass; its authenticated GoodCopBadCop playback smoke
+advanced frames 0 through 300 in 3.01 seconds, and the stimulus-inset smoke
+confirmed automatic stimulus-media loading and mapped presentation updates.
+
 ### 2026-08-10 NVIDIA Keypoint Presentation Adoption
 
 The NVIDIA application now consumes the existing backend-neutral
@@ -1233,7 +1261,7 @@ Acceptance:
   - [x] `DetectionRepository`
   - [x] `KeypointOverlayRepository` (read-only presentation)
   - `EyeMaskRepository`
-  - `StimulusRepository`
+  - [x] `StimulusRepository`
   - `MovementRepository`
   - [x] `ReviewWriteRepository`
 - [ ] Move call sites toward those facades before moving implementation.

@@ -165,10 +165,11 @@ void drawHeadingContractSection(const FrameDebugWindowContext& context) {
 
 void drawFrameOverviewSection(const FrameDebugWindowContext& context) {
     ImGui::Text("Inspecting Frame: %d", context.current_frame_num);
-    if (context.zarr_loader.hasStimulusAlignment()) {
+    if (context.stimulus_repository != nullptr &&
+        context.stimulus_repository->hasMapping()) {
         if (auto current_stimulus_frame =
-                context.zarr_loader.getStimulusFrameForCameraFrame(
-                    context.current_frame_num)) {
+                crimson::zarr::StimulusFrameForCamera(
+                    context.stimulus_repository, context.current_frame_num)) {
             ImGui::Text("Stimulus frame: %d", *current_stimulus_frame);
         } else {
             ImGui::TextDisabled("Stimulus frame: not mapped");

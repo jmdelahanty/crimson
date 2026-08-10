@@ -4,7 +4,6 @@
 #include "frame_slot.h"
 #include "global.h"
 #include "imgui.h"
-#include "zarr_loader.h"
 
 #include <algorithm>
 #include <chrono>
@@ -42,9 +41,8 @@ StimulusPlaybackPresentationResult updateStimulusPlaybackPresentation(
     auto& playback_state = context.playback_state;
     auto& seek_progress = context.seek_progress;
 
-    const bool mapping_available =
-        context.zarr_loader != nullptr &&
-        context.zarr_loader->hasStimulusAlignment();
+    const bool mapping_available = context.stimulus_repository != nullptr &&
+                                   context.stimulus_repository->hasMapping();
     const bool seek_needs_stimulus =
         (seek_progress.state == SeekState::WaitingStimulus);
     const bool base_decode_request =
@@ -58,7 +56,7 @@ StimulusPlaybackPresentationResult updateStimulusPlaybackPresentation(
     if (effective_target_frame < 0) {
         std::optional<int32_t> first_stim;
         if (mapping_available) {
-            auto opt_first = context.zarr_loader->getFirstStimulusFrameNumber();
+            auto opt_first = context.stimulus_repository->firstStimulusFrame();
             if (opt_first) {
                 first_stim = *opt_first;
             }
@@ -292,9 +290,8 @@ StimulusPlaybackDebugWindowsResult drawStimulusPlaybackDebugWindows(
     auto& playback_state = context.playback_state;
     auto& seek_progress = context.seek_progress;
 
-    const bool mapping_available =
-        context.zarr_loader != nullptr &&
-        context.zarr_loader->hasStimulusAlignment();
+    const bool mapping_available = context.stimulus_repository != nullptr &&
+                                   context.stimulus_repository->hasMapping();
     const int target_stimulus_frame = playback_state.current_stimulus_frame;
 
     ImGui::SetNextWindowSize(ImVec2(480.0f, 360.0f),

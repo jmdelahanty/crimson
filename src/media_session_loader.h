@@ -40,6 +40,7 @@ struct MediaSessionLoaderContext {
   render_scene *scene = nullptr;
   DecoderContext *decoder_context = nullptr;
   ZarrDetectionLoader *zarr_loader = nullptr;
+  const crimson::zarr::StimulusRepository *stimulus_repository = nullptr;
   StimulusPlayback *stimulus_player = nullptr;
   PlaybackState *playback_state = nullptr;
   crimson::playback::PlaybackTransportController *playback_transport = nullptr;

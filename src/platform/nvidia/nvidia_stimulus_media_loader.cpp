@@ -15,7 +15,8 @@ openStimulusMedia(const media::StimulusMediaOpenRequest &request,
     result.error = "No stimulus media path was selected";
     return result;
   }
-  if (context.stimulus_player == nullptr || context.zarr_loader == nullptr ||
+  if (context.stimulus_player == nullptr ||
+      context.stimulus_repository == nullptr ||
       context.window_need_decoding == nullptr ||
       context.window_was_decoding == nullptr) {
     result.error = "Stimulus media loader is not configured";
@@ -35,7 +36,8 @@ openStimulusMedia(const media::StimulusMediaOpenRequest &request,
       false);
 
   if (request.schedule_initial_seek) {
-    scheduleStimulusSeek(*context.stimulus_player, context.zarr_loader,
+    scheduleStimulusSeek(*context.stimulus_player,
+                         context.stimulus_repository,
                          request.initial_camera_frame,
                          request.initial_seek_accurate);
     result.initial_seek_scheduled = true;

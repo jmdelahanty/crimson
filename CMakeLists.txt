@@ -297,6 +297,26 @@ target_link_libraries(crimson_repository_contracts PUBLIC
     Threads::Threads
 )
 
+add_executable(stimulus_repository_contract_tests
+    tools/stimulus_repository_contract_tests.cpp
+)
+target_include_directories(stimulus_repository_contract_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(stimulus_repository_contract_tests PRIVATE
+    crimson_repository_contracts
+)
+target_compile_features(stimulus_repository_contract_tests PRIVATE cxx_std_17)
+set_target_properties(stimulus_repository_contract_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME stimulus_repository_contract_tests
+    COMMAND $<TARGET_FILE:stimulus_repository_contract_tests>
+)
+set_tests_properties(stimulus_repository_contract_tests PROPERTIES
+    LABELS "headless;portable;repository;stimulus"
+)
+
 add_executable(review_write_repository_tests
     tools/review_write_repository_tests.cpp
 )

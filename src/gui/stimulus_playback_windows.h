@@ -2,8 +2,6 @@
 
 #include "stimulus_playback.h"
 
-class ZarrDetectionLoader;
-
 struct StimulusPlaybackPresentationState {
     bool last_decoder_logged = false;
     int last_logged_target_stimulus_frame = -2;
@@ -15,7 +13,7 @@ struct StimulusPlaybackPresentationState {
 
 struct StimulusPlaybackPresentationContext {
     StimulusPlayback& stimulus_player;
-    ZarrDetectionLoader* zarr_loader = nullptr;
+    const crimson::zarr::StimulusRepository* stimulus_repository = nullptr;
     PlaybackState& playback_state;
     SeekProgress& seek_progress;
     int current_frame_num = 0;
@@ -35,7 +33,7 @@ struct StimulusPlaybackPresentationResult {
 
 struct StimulusPlaybackDebugWindowsContext {
     StimulusPlayback& stimulus_player;
-    ZarrDetectionLoader* zarr_loader = nullptr;
+    const crimson::zarr::StimulusRepository* stimulus_repository = nullptr;
     PlaybackState& playback_state;
     SeekProgress& seek_progress;
     int current_frame_num = 0;

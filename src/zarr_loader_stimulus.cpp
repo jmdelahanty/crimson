@@ -2686,6 +2686,10 @@ bool ZarrDetectionLoader::hasStimulusFrameMapping() const {
     return crimson::zarr::HasStimulusMapping(StimulusAlignment(data_));
 }
 
+size_t ZarrDetectionLoader::getStimulusFrameMappingCount() const {
+    return crimson::zarr::StimulusCameraFrameCount(StimulusAlignment(data_));
+}
+
 bool ZarrDetectionLoader::hasCorrectedStimulusFrameMapping() const {
     return crimson::zarr::HasCorrectedStimulusMapping(StimulusAlignment(data_));
 }
@@ -2723,10 +2727,17 @@ ZarrDetectionLoader::getStimulusMetadataIndexForCameraFrame(int32_t camera_frame
 std::optional<int32_t>
 ZarrDetectionLoader::getStimulusFrameForCameraFrame(int32_t camera_frame,
                                                     bool prefer_corrected) const {
-    return crimson::zarr::ResolveStimulusFrame(
-               StimulusAlignment(data_), camera_frame,
-               StimulusPreference(prefer_corrected))
+    return getStimulusFrameResolution(camera_frame,
+                                      StimulusPreference(prefer_corrected))
         .stimulus_frame;
+}
+
+crimson::zarr::StimulusFrameResolution
+ZarrDetectionLoader::getStimulusFrameResolution(
+    int32_t camera_frame,
+    crimson::zarr::StimulusMappingPreference preference) const {
+    return crimson::zarr::ResolveStimulusFrame(
+        StimulusAlignment(data_), camera_frame, preference);
 }
 
 std::optional<int32_t>

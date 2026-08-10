@@ -12,6 +12,7 @@
 #include "workspace_state.h"
 #include "zarr/detection_repository.h"
 #include "zarr/keypoint_overlay_repository.h"
+#include "zarr/stimulus_repository.h"
 #include "zarr_bbox_edit.h"
 
 #include <array>
@@ -61,6 +62,7 @@ struct FrameDebugWindowContext {
 
     bool zarr_loaded = false;
     ZarrDetectionLoader& zarr_loader;
+    const crimson::zarr::StimulusRepository* stimulus_repository = nullptr;
     const crimson::zarr::DetectionRepositoryDescriptor& detection_descriptor;
     const crimson::zarr::DetectionFrame* detection_frame = nullptr;
     const crimson::zarr::KeypointOverlayDescriptor* keypoint_descriptor =

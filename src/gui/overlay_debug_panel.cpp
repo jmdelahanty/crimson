@@ -371,7 +371,8 @@ void drawTrackKinematicsOverlaySection(const FrameDebugWindowContext& context,
 
 void drawStimulusOverlaySection(const FrameDebugWindowContext& context,
                                 FrameDebugWindowResult& result) {
-    if (!(context.zarr_loader.hasStimulusAlignment() ||
+    if (!((context.stimulus_repository != nullptr &&
+           context.stimulus_repository->hasMapping()) ||
           context.zarr_loader.hasStimulusSteps())) {
         return;
     }

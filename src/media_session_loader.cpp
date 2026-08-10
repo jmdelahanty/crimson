@@ -789,7 +789,8 @@ bool MediaSessionLoader::executeCameraMediaPlan(
       const double seek_fps =
           (*context_.video_fps > 0.0) ? *context_.video_fps : 30.0;
       seek_all_cameras(context_.scene, initial_frame, seek_fps,
-                       *context_.playback_state, true, context_.zarr_loader,
+                       *context_.playback_state, true,
+                       context_.stimulus_repository,
                        context_.stimulus_player);
     }
 
@@ -952,6 +953,7 @@ void MediaSessionLoader::tryAutoLoadStimulusVideo(
     const char *trigger_label) const {
   if (context_.zarr_loaded == nullptr || !*context_.zarr_loaded ||
       context_.stimulus_player == nullptr || context_.zarr_loader == nullptr ||
+      context_.stimulus_repository == nullptr ||
       context_.root_dir == nullptr ||
       context_.stimulus_buffer_size == nullptr ||
       context_.stimulus_use_cpu_buffer == nullptr ||
@@ -962,14 +964,20 @@ void MediaSessionLoader::tryAutoLoadStimulusVideo(
     return;
   }
   if (context_.stimulus_player->loaded ||
-      !context_.zarr_loader->hasStimulusAlignment()) {
+      !context_.stimulus_repository->hasMapping()) {
     return;
   }
 
-  auto resolved = ResolveStimulusVideoPath(
-      context_.zarr_loader->getStimulusVideoPath(),
-      context_.zarr_loader->getStimulusSourceH5(),
-      context_.zarr_loader->getArchivePath(), *context_.root_dir);
+  std::optional<std::filesystem::path> resolved;
+  if (!context_.stimulus_repository->resolvedSourceVideoPath().empty()) {
+    resolved = std::filesystem::path(
+        context_.stimulus_repository->resolvedSourceVideoPath());
+  } else {
+    resolved = ResolveStimulusVideoPath(
+        context_.stimulus_repository->sourceVideoPath(),
+        context_.zarr_loader->getStimulusSourceH5(),
+        context_.zarr_loader->getArchivePath(), *context_.root_dir);
+  }
   if (!resolved.has_value()) {
     std::cout << "[Stimulus] Could not auto-discover stimulus video ("
               << trigger_label << ")" << std::endl;
@@ -995,7 +1003,8 @@ crimson::media::StimulusMediaOpenResult MediaSessionLoader::openStimulusMedia(
     const crimson::media::StimulusMediaOpenRequest &request) const {
   crimson::media::StimulusMediaOpenResult result;
   result.path = request.path;
-  if (context_.stimulus_player == nullptr || context_.zarr_loader == nullptr ||
+  if (context_.stimulus_player == nullptr ||
+      context_.stimulus_repository == nullptr ||
       context_.window_was_decoding == nullptr ||
       context_.window_need_decoding == nullptr) {
     result.error = "Stimulus media loader is not configured";
@@ -1003,7 +1012,7 @@ crimson::media::StimulusMediaOpenResult MediaSessionLoader::openStimulusMedia(
   }
 
   return crimson::platform::nvidia::openStimulusMedia(
-      request, {context_.stimulus_player, context_.zarr_loader,
+      request, {context_.stimulus_player, context_.stimulus_repository,
                 context_.window_need_decoding, context_.window_was_decoding,
                 context_.cuda_device_index});
 }

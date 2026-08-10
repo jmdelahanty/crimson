@@ -135,6 +135,11 @@ class StimulusRepository {
           StimulusMappingPreference::PreferCorrected) const = 0;
 };
 
+std::optional<int32_t> StimulusFrameForCamera(
+    const StimulusRepository* repository, int32_t camera_frame,
+    StimulusMappingPreference preference =
+        StimulusMappingPreference::PreferCorrected);
+
 std::unique_ptr<StimulusRepository> MakeStimulusRepository(
     StimulusAlignmentData alignment);
 

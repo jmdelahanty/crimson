@@ -313,4 +313,18 @@ std::unique_ptr<StimulusRepository> MakeStimulusRepository(
   return std::make_unique<OwnedStimulusRepository>(std::move(alignment));
 }
 
+std::optional<int32_t> StimulusFrameForCamera(
+    const StimulusRepository* repository, int32_t camera_frame,
+    StimulusMappingPreference preference) {
+  if (repository == nullptr || !repository->hasMapping()) {
+    return std::nullopt;
+  }
+  const auto resolution =
+      repository->resolveCameraFrame(camera_frame, preference);
+  if (resolution.status != StimulusMappingStatus::Mapped) {
+    return std::nullopt;
+  }
+  return resolution.stimulus_frame;
+}
+
 }  // namespace crimson::zarr

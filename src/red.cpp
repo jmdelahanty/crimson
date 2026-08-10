@@ -76,6 +76,7 @@
 #include "zarr/chaser_distance_polar_legacy_repository.h"
 #include "zarr/legacy_detection_repository.h"
 #include "zarr/legacy_keypoint_overlay_repository.h"
+#include "zarr/legacy_stimulus_repository.h"
 #include "zarr/stimulus_context_timeline_legacy_repository.h"
 #include "zarr_loader.h"
 #include "zarr_persisted_crop_provider.h"
@@ -336,6 +337,7 @@ int main(int argc, char **argv) {
   crimson::zarr::LegacyDetectionRepository detection_repository(zarr_loader);
   crimson::zarr::LegacyKeypointOverlayRepository keypoint_repository(
       zarr_loader);
+  crimson::zarr::LegacyStimulusRepository stimulus_repository(zarr_loader);
   auto analysis_data_scheduler =
       std::make_shared<crimson::data::DataAccessScheduler>(64, 4, 1, 1);
   zarr_loader.setDataAccessScheduler(analysis_data_scheduler);
@@ -564,6 +566,7 @@ int main(int argc, char **argv) {
       scene,
       dc_context,
       &zarr_loader,
+      &stimulus_repository,
       &stimulus_player,
       &ps,
       &playback_transport,
@@ -672,7 +675,7 @@ int main(int argc, char **argv) {
       PlaybackSessionControllerContext{
           scene,
           dc_context,
-          &zarr_loader,
+          &stimulus_repository,
           &stimulus_player,
           &ps,
           &playback_transport,
@@ -1302,15 +1305,15 @@ int main(int argc, char **argv) {
         break;
       }
       if (ui_reference.state == UiReferenceState::StimulusDebug) {
-        if (!stimulus_player.loaded || !zarr_loader.hasStimulusAlignment()) {
+        if (!stimulus_player.loaded || !stimulus_repository.hasMapping()) {
           std::cerr << "[UiReference] stimulus-debug requires an "
                        "auto-loaded stimulus video and alignment"
                     << std::endl;
           rejectUiReferenceStart();
           break;
         }
-        const auto mapped = zarr_loader.getStimulusFrameForCameraFrame(
-            ui_reference.target_frame);
+        const auto mapped = crimson::zarr::StimulusFrameForCamera(
+            &stimulus_repository, ui_reference.target_frame);
         if (!mapped.has_value() || *mapped < 0) {
           std::cerr << "[UiReference] stimulus-debug target camera "
                        "frame is not mapped to a stimulus frame"
@@ -2319,6 +2322,7 @@ int main(int argc, char **argv) {
           frame_sync_debug_line,
           zarr_loaded,
           zarr_loader,
+          &stimulus_repository,
           detection_descriptor,
           detection_frame_ptr,
           keypoint_descriptor_ptr,
@@ -2914,13 +2918,13 @@ int main(int argc, char **argv) {
       const bool freeze_stimulus_during_seek =
           seek_progress.state == SeekState::WaitingCameras ||
           seek_progress.state == SeekState::WaitingStimulus;
-      if (zarr_loaded && zarr_loader.hasStimulusAlignment()) {
+      if (zarr_loaded && stimulus_repository.hasMapping()) {
         if (!freeze_stimulus_during_paused_browse &&
             !freeze_stimulus_during_seek) {
           int stim_source_frame =
               ps.play_video ? current_frame_num : ps.to_display_frame_number;
-          if (auto stim_frame = zarr_loader.getStimulusFrameForCameraFrame(
-                  stim_source_frame)) {
+          if (auto stim_frame = crimson::zarr::StimulusFrameForCamera(
+                  &stimulus_repository, stim_source_frame)) {
             ps.current_stimulus_frame = *stim_frame;
           } else {
             ps.current_stimulus_frame = -1;
@@ -2934,7 +2938,7 @@ int main(int argc, char **argv) {
             updateStimulusPlaybackPresentation(
                 StimulusPlaybackPresentationContext{
                     stimulus_player,
-                    zarr_loaded ? &zarr_loader : nullptr,
+                    zarr_loaded ? &stimulus_repository : nullptr,
                     ps,
                     seek_progress,
                     current_frame_num,
@@ -3341,7 +3345,7 @@ int main(int argc, char **argv) {
                 zarr_loader.getChaserInterpolatedStatesForCameraFrame(
                     current_frame_num);
             if (chaser_states.empty() && ps.current_stimulus_frame >= 0 &&
-                zarr_loader.hasStimulusFrameMapping()) {
+                stimulus_repository.hasMapping()) {
               chaser_states = zarr_loader.getChaserStatesForStimulusFrame(
                   ps.current_stimulus_frame);
             }
@@ -4479,7 +4483,7 @@ int main(int argc, char **argv) {
       const auto stimulus_debug_windows_result =
           drawStimulusPlaybackDebugWindows(StimulusPlaybackDebugWindowsContext{
               stimulus_player,
-              zarr_loaded ? &zarr_loader : nullptr,
+              zarr_loaded ? &stimulus_repository : nullptr,
               ps,
               seek_progress,
               current_frame_num,

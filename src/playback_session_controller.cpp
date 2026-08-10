@@ -18,6 +18,12 @@ int legacyPlaybackFrame(int64_t frame) {
       frame, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()));
 }
 
+std::optional<int32_t> mappedStimulusFrame(
+    const PlaybackSessionControllerContext &context, int camera_frame) {
+  return crimson::zarr::StimulusFrameForCamera(context.stimulus_repository,
+                                                camera_frame);
+}
+
 } // namespace
 
 double playbackPreviewScaleFactor(int playback_preview_scale_mode) {
@@ -340,7 +346,7 @@ PlaybackSessionController::seekToFrame(int target_frame,
   result.status = crimson::playback::PlaybackSeekExecutionStatus::Failed;
   if (context_.scene == nullptr || context_.decoder_context == nullptr ||
       context_.playback_state == nullptr || context_.seek_progress == nullptr ||
-      context_.stimulus_player == nullptr || context_.zarr_loader == nullptr ||
+      context_.stimulus_player == nullptr ||
       context_.video_fps == nullptr || context_.playback_transport == nullptr) {
     result.error = "playback session is incomplete";
     return result;
@@ -400,10 +406,8 @@ PlaybackSessionController::seekToFrame(int target_frame,
   context_.playback_transport->seek(clamped_frame);
 
   if (prefer_buffer_when_paused && stepPausedFrameFromBuffer(clamped_frame)) {
-    if (context_.stimulus_player->loaded &&
-        context_.zarr_loader->hasStimulusAlignment()) {
-      auto stim_frame =
-          context_.zarr_loader->getStimulusFrameForCameraFrame(clamped_frame);
+    if (context_.stimulus_player->loaded) {
+      auto stim_frame = mappedStimulusFrame(context_, clamped_frame);
       if (stim_frame && *stim_frame >= 0) {
         context_.playback_state->current_stimulus_frame = *stim_frame;
         context_.seek_progress->seek_id++;
@@ -476,10 +480,8 @@ PlaybackSessionController::seekToFrame(int target_frame,
   context_.playback_state->last_wall_time_playspeed =
       std::chrono::steady_clock::now();
 
-  if (!skip_stimulus_hard_seek && context_.stimulus_player->loaded &&
-      context_.zarr_loader->hasStimulusAlignment()) {
-    auto stim_frame =
-        context_.zarr_loader->getStimulusFrameForCameraFrame(clamped_frame);
+  if (!skip_stimulus_hard_seek && context_.stimulus_player->loaded) {
+    auto stim_frame = mappedStimulusFrame(context_, clamped_frame);
     if (stim_frame && *stim_frame >= 0) {
       context_.playback_state->current_stimulus_frame = *stim_frame;
       context_.seek_progress->target_stimulus_frame = *stim_frame;
@@ -593,13 +595,9 @@ bool PlaybackSessionController::resumeFromBufferedFrame(
     context_.stimulus_player->throttle_resume_frame = -1;
     (*context_.window_need_decoding)[context_.stimulus_player->window_name]
         .store(true);
-    if (context_.zarr_loader != nullptr &&
-        context_.zarr_loader->hasStimulusAlignment()) {
-      auto stim_frame =
-          context_.zarr_loader->getStimulusFrameForCameraFrame(clamped_frame);
-      context_.playback_state->current_stimulus_frame =
-          (stim_frame && *stim_frame >= 0) ? *stim_frame : -1;
-    }
+    auto stim_frame = mappedStimulusFrame(context_, clamped_frame);
+    context_.playback_state->current_stimulus_frame =
+        (stim_frame && *stim_frame >= 0) ? *stim_frame : -1;
   }
 
   return true;
@@ -750,7 +748,7 @@ std::optional<crimson::playback::PlaybackSeekExecutionResult>
 PlaybackSessionController::pollSeekState() const {
   if (context_.seek_progress == nullptr || context_.playback_state == nullptr ||
       context_.scene == nullptr || context_.stimulus_player == nullptr ||
-      context_.zarr_loader == nullptr) {
+      context_.window_need_decoding == nullptr) {
     return std::nullopt;
   }
 
@@ -797,10 +795,8 @@ PlaybackSessionController::pollSeekState() const {
       }
 
       int remapped_stimulus_frame = -1;
-      if (context_.stimulus_player->loaded &&
-          context_.zarr_loader->hasStimulusAlignment()) {
-        auto stim_frame = context_.zarr_loader->getStimulusFrameForCameraFrame(
-            settled_camera_frame);
+      if (context_.stimulus_player->loaded) {
+        auto stim_frame = mappedStimulusFrame(context_, settled_camera_frame);
         if (stim_frame && *stim_frame >= 0) {
           remapped_stimulus_frame = *stim_frame;
         }

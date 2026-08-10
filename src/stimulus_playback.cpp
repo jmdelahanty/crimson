@@ -556,14 +556,15 @@ int getNewestStimulusFrame(const StimulusPlayback &stim) {
 }
 
 void scheduleStimulusSeek(StimulusPlayback &stim,
-                          ZarrDetectionLoader *loader,
+                          const crimson::zarr::StimulusRepository *repository,
                           int camera_frame,
                           bool seek_accurate,
                           uint64_t seek_id) {
-    if (!stim.loaded || !loader || !loader->hasStimulusAlignment()) {
+    if (!stim.loaded) {
         return;
     }
-    auto stim_frame = loader->getStimulusFrameForCameraFrame(camera_frame);
+    auto stim_frame =
+        crimson::zarr::StimulusFrameForCamera(repository, camera_frame);
     if (!stim_frame || *stim_frame < 0) {
         return;
     }
@@ -589,7 +590,7 @@ void scheduleStimulusSeek(StimulusPlayback &stim,
 
 void seek_all_cameras(render_scene *scene, int frame_number, double video_fps,
                       PlaybackState &state, bool seek_accurate,
-                      ZarrDetectionLoader *zarr_loader,
+                      const crimson::zarr::StimulusRepository *repository,
                       StimulusPlayback *stimulus) {
     const uint64_t seek_id = nextSeekGeneration();
     initiate_camera_seeks(scene, frame_number, seek_id, seek_accurate);
@@ -606,13 +607,12 @@ void seek_all_cameras(render_scene *scene, int frame_number, double video_fps,
     state.last_wall_time_playspeed = std::chrono::steady_clock::now();
 
     if (stimulus && stimulus->loaded) {
-        if (zarr_loader && zarr_loader->hasStimulusAlignment()) {
-            auto stim_frame = zarr_loader->getStimulusFrameForCameraFrame(frame_number);
-            if (stim_frame && *stim_frame >= 0) {
-                state.current_stimulus_frame = *stim_frame;
-            }
+        auto stim_frame =
+            crimson::zarr::StimulusFrameForCamera(repository, frame_number);
+        if (stim_frame && *stim_frame >= 0) {
+            state.current_stimulus_frame = *stim_frame;
         }
-        scheduleStimulusSeek(*stimulus, zarr_loader, frame_number, seek_accurate,
+        scheduleStimulusSeek(*stimulus, repository, frame_number, seek_accurate,
                              seek_id);
     }
 }

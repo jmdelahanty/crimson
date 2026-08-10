@@ -2,7 +2,7 @@
 
 #include "global.h"
 #include "render.h"
-#include "zarr_loader.h"
+#include "zarr/stimulus_repository.h"
 
 #include <chrono>
 #include <iostream>
@@ -121,13 +121,13 @@ void discardStimulusFramesOlderThan(StimulusPlayback &stim, int keep_threshold);
 int getOldestStimulusFrame(const StimulusPlayback &stim);
 int getNewestStimulusFrame(const StimulusPlayback &stim);
 void scheduleStimulusSeek(StimulusPlayback &stim,
-                          ZarrDetectionLoader *loader,
+                          const crimson::zarr::StimulusRepository *repository,
                           int camera_frame,
                           bool seek_accurate,
                           uint64_t seek_id = 0);
 void seek_all_cameras(render_scene *scene, int frame_number, double video_fps,
                       PlaybackState &state, bool seek_accurate,
-                      ZarrDetectionLoader *zarr_loader,
+                      const crimson::zarr::StimulusRepository *repository,
                       StimulusPlayback *stimulus);
 
 // Non-blocking seek API (Steps 3-4 of seek refactor)

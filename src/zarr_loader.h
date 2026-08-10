@@ -30,6 +30,7 @@
 #include "keypoint_heading_utils.h"
 #include "zarr/detection_repository.h"
 #include "zarr/review_write_repository.h"
+#include "zarr/stimulus_repository.h"
 #include "zarr/palette_clipped_resolver.h"
 
 namespace ts = tensorstore;
@@ -1224,6 +1225,7 @@ public:
     std::string getStimulusRunName() const {
         return data_.has_interpolation ? data_.latest_interpolation.stimulus_run_name : "";
     }
+    size_t getStimulusFrameMappingCount() const;
     bool hasStimulusFrameMapping() const;
     bool hasCorrectedStimulusFrameMapping() const;
     int64_t getStimulusCameraFrameOffset() const;
@@ -1233,6 +1235,10 @@ public:
     std::optional<int32_t> getStimulusFrameForCameraFrame(
         int32_t camera_frame,
         bool prefer_corrected = true) const;
+    crimson::zarr::StimulusFrameResolution getStimulusFrameResolution(
+        int32_t camera_frame,
+        crimson::zarr::StimulusMappingPreference preference =
+            crimson::zarr::StimulusMappingPreference::PreferCorrected) const;
     std::optional<int32_t> getCameraFrameForStimulusFrame(
         int32_t stimulus_frame,
         bool prefer_corrected = true) const;
