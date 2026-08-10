@@ -75,6 +75,7 @@
 #include "yolo_detection.h"
 #include "zarr/chaser_distance_polar_legacy_repository.h"
 #include "zarr/legacy_detection_repository.h"
+#include "zarr/legacy_keypoint_overlay_repository.h"
 #include "zarr/stimulus_context_timeline_legacy_repository.h"
 #include "zarr_loader.h"
 #include "zarr_persisted_crop_provider.h"
@@ -333,6 +334,8 @@ int main(int argc, char **argv) {
   // Zarr loading
   ZarrDetectionLoader zarr_loader;
   crimson::zarr::LegacyDetectionRepository detection_repository(zarr_loader);
+  crimson::zarr::LegacyKeypointOverlayRepository keypoint_repository(
+      zarr_loader);
   auto analysis_data_scheduler =
       std::make_shared<crimson::data::DataAccessScheduler>(64, 4, 1, 1);
   zarr_loader.setDataAccessScheduler(analysis_data_scheduler);
@@ -1320,7 +1323,8 @@ int main(int argc, char **argv) {
         stimulus_inset_options.show_inset = true;
       }
       if (ui_reference.state == UiReferenceState::CropPreview) {
-        if (!(zarr_loader.hasCropImages() || zarr_loader.hasKeypointData() ||
+        if (!(zarr_loader.hasCropImages() ||
+              !keypoint_repository.descriptor().run_name.empty() ||
               zarr_loader.hasEyeMasks()) ||
             !detection_repository.descriptor().available) {
           std::cerr << "[UiReference] crop-preview requires detection "
@@ -1689,7 +1693,8 @@ int main(int argc, char **argv) {
     capabilities.zarr_loaded = zarr_loaded;
     capabilities.crop_preview_available =
         zarr_loaded &&
-        (zarr_loader.hasCropImages() || zarr_loader.hasKeypointData() ||
+        (zarr_loader.hasCropImages() ||
+         !keypoint_repository.descriptor().run_name.empty() ||
          zarr_loader.hasEyeMasks());
     capabilities.stimulus_video_loaded = stimulus_player.loaded;
     capabilities.analysis_timeline_available =
@@ -2059,7 +2064,7 @@ int main(int argc, char **argv) {
     const std::string active_skeleton_name =
         legacy_labeling_state.activeSkeletonName();
     const bool has_active_zarr_keypoint_review =
-        zarr_loaded && zarr_loader.hasKeypointData();
+        zarr_loaded && !keypoint_repository.descriptor().run_name.empty();
     FileBrowserWindowContext file_browser_context{
         ui_path_config,
         start_folder_name,
@@ -2215,6 +2220,12 @@ int main(int argc, char **argv) {
       crimson::zarr::DetectionRepositoryDescriptor detection_descriptor;
       crimson::zarr::DetectionFrame detection_frame;
       const crimson::zarr::DetectionFrame *detection_frame_ptr = nullptr;
+      crimson::zarr::KeypointOverlayDescriptor keypoint_descriptor;
+      const crimson::zarr::KeypointOverlayDescriptor *keypoint_descriptor_ptr =
+          nullptr;
+      crimson::zarr::KeypointOverlayResolution keypoint_frame;
+      const crimson::zarr::KeypointOverlayResolution *keypoint_frame_ptr =
+          nullptr;
       ZarrDetectionLoader::FrameDetections detection_details;
       const ZarrDetectionLoader::FrameDetections *detection_details_ptr =
           nullptr;
@@ -2230,6 +2241,14 @@ int main(int argc, char **argv) {
             static_cast<size_t>(current_frame_num), false);
         detection_frame_ptr = detection_frame.ready() ? &detection_frame
                                                        : nullptr;
+        keypoint_descriptor = keypoint_repository.descriptor();
+        if (!keypoint_descriptor.run_name.empty()) {
+          keypoint_descriptor_ptr = &keypoint_descriptor;
+          keypoint_frame = keypoint_repository.resolveCameraFrame(
+              current_frame_num, zarr_loader.getImageWidth(),
+              zarr_loader.getImageHeight());
+          keypoint_frame_ptr = &keypoint_frame;
+        }
         std::vector<LoggedBoundingBox> loaded_zarr_boxes =
             crimson::platform::nvidia::makeLegacyBoundingBoxes(
                 detection_descriptor, detection_frame);
@@ -2262,7 +2281,9 @@ int main(int argc, char **argv) {
              frame_debug_window_state.active_view ==
                  crimson::workspace::FrameInspectView::EyeMasks);
         const bool need_details =
-            zarr_loader.hasHeadingData() || zarr_loader.hasKeypointData() ||
+            (keypoint_descriptor_ptr != nullptr &&
+             frame_debug_window_state.active_view ==
+                 crimson::workspace::FrameInspectView::Keypoints) ||
             include_eye_masks_in_details ||
             include_subject_shapes_in_details || dataset_has_synthetic_boxes;
         if (need_details) {
@@ -2300,6 +2321,8 @@ int main(int argc, char **argv) {
           zarr_loader,
           detection_descriptor,
           detection_frame_ptr,
+          keypoint_descriptor_ptr,
+          keypoint_frame_ptr,
           chaser_distance_polar_repository != nullptr
               ? &chaser_distance_polar_repository->descriptor()
               : nullptr,
@@ -3104,6 +3127,11 @@ int main(int argc, char **argv) {
           crimson::zarr::DetectionFrame presented_detection_frame;
           const auto camera_detection_descriptor =
               detection_repository.descriptor();
+          const auto camera_keypoint_descriptor =
+              keypoint_repository.descriptor();
+          crimson::zarr::KeypointOverlayResolution presented_keypoint_frame;
+          const crimson::zarr::KeypointOverlayResolution*
+              presented_keypoint_frame_ptr = nullptr;
           const bool has_presented_camera_frame = presented_frame >= 0;
           int zarr_bbox_query_frame =
               has_presented_camera_frame ? presented_frame : current_frame_num;
@@ -3164,6 +3192,13 @@ int main(int argc, char **argv) {
             const auto bbox_get_boxes_start = std::chrono::steady_clock::now();
             presented_detection_frame = detection_repository.resolveFrame(
                 static_cast<size_t>(zarr_bbox_query_frame), false);
+            if (!camera_keypoint_descriptor.run_name.empty()) {
+              presented_keypoint_frame =
+                  keypoint_repository.resolveCameraFrame(
+                      zarr_bbox_query_frame, zarr_loader.getImageWidth(),
+                      zarr_loader.getImageHeight());
+              presented_keypoint_frame_ptr = &presented_keypoint_frame;
+            }
             loaded_zarr_boxes =
                 crimson::platform::nvidia::makeLegacyBoundingBoxes(
                     camera_detection_descriptor, presented_detection_frame);
@@ -3367,7 +3402,12 @@ int main(int argc, char **argv) {
 
           const bool heading_overlay_enabled = show_heading_arrows;
           const bool heading_data_available =
-              zarr_loaded && zarr_loader.hasHeadingData();
+              zarr_loaded && presented_keypoint_frame_ptr != nullptr &&
+              std::any_of(presented_keypoint_frame.detections.begin(),
+                          presented_keypoint_frame.detections.end(),
+                          [](const auto& detection) {
+                            return detection.heading_valid;
+                          });
           const bool eye_mask_overlay_enabled = show_eye_masks;
           const bool eye_mask_data_available =
               zarr_loaded && zarr_loader.hasEyeMasks();
@@ -3391,8 +3431,8 @@ int main(int argc, char **argv) {
               }
               if (!heading_data_available) {
                 if (!heading_debug_logged_no_data) {
-                  headingDebugLog("Zarr loader reports no heading data; arrows "
-                                  "will not be drawn.");
+                headingDebugLog("Keypoint repository reports no heading for "
+                                "this frame; arrows will not be drawn.");
                   heading_debug_logged_no_data = true;
                 }
               } else if (heading_debug_logged_no_data) {
@@ -3484,6 +3524,11 @@ int main(int argc, char **argv) {
           camera_context_input.detection_details =
               zarr_loaded && has_presented_camera_frame ? &detection_details
                                                         : nullptr;
+          camera_context_input.keypoint_descriptor =
+              !camera_keypoint_descriptor.run_name.empty()
+                  ? &camera_keypoint_descriptor
+                  : nullptr;
+          camera_context_input.keypoint_frame = presented_keypoint_frame_ptr;
           camera_context_input.frame_is_interpolated = is_zarr_interpolated;
           camera_context_input.latest_decoded_frame = latest_decoded;
           camera_context_input.total_recording_frames = total_recording_frames;
@@ -4395,6 +4440,7 @@ int main(int argc, char **argv) {
       const CropPreviewWindowContext crop_preview_context{
           crop_image_provider,
           zarr_loader,
+          keypoint_repository,
           refined_keypoint_repo,
           crop_preview_frame_num,
           g_zarr_bbox_edit_state.selected_frame,

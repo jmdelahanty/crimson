@@ -358,6 +358,31 @@ set_tests_properties(review_frame_index_tests PROPERTIES
     LABELS "detection;headless;portable;review"
 )
 
+add_executable(camera_view_keypoint_scene_adapter_tests
+    tools/camera_view_keypoint_scene_adapter_tests.cpp
+    src/gui/camera_view_keypoint_scene_adapter.cpp
+    src/zarr/keypoint_overlay_scene_adapter.cpp
+)
+target_include_directories(camera_view_keypoint_scene_adapter_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(camera_view_keypoint_scene_adapter_tests PRIVATE
+    crimson_overlay_contracts
+    crimson_repository_contracts
+)
+target_compile_features(camera_view_keypoint_scene_adapter_tests PRIVATE
+    cxx_std_17
+)
+set_target_properties(camera_view_keypoint_scene_adapter_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME camera_view_keypoint_scene_adapter_tests
+    COMMAND $<TARGET_FILE:camera_view_keypoint_scene_adapter_tests>
+)
+set_tests_properties(camera_view_keypoint_scene_adapter_tests PROPERTIES
+    LABELS "headless;keypoints;portable;presentation"
+)
+
 add_library(crimson_ui_reference_scene_evidence STATIC
     src/ui_reference_scene_evidence.cpp
 )

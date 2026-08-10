@@ -86,13 +86,13 @@ makeFrameDebugDetectionInspectPresentation(
     if (context.detection_descriptor.has_class_ids) {
         presentation.detail_lines.push_back("Class IDs available: Yes");
     }
-    if (context.zarr_loader.hasHeadingData()) {
+    if (context.keypoint_descriptor != nullptr) {
         if (!context.dataset_has_synthetic_boxes &&
-            context.detection_details != nullptr &&
-            !context.detection_details->heading_valid.empty()) {
-            const size_t valid = static_cast<size_t>(std::count(
-                context.detection_details->heading_valid.begin(),
-                context.detection_details->heading_valid.end(), uint8_t{1}));
+            context.keypoint_frame != nullptr) {
+            const size_t valid = static_cast<size_t>(std::count_if(
+                context.keypoint_frame->detections.begin(),
+                context.keypoint_frame->detections.end(),
+                [](const auto& detection) { return detection.heading_valid; }));
             presentation.detail_lines.push_back(
                 "Heading vectors: " + std::to_string(valid) + " valid");
         } else {

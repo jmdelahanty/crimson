@@ -76,6 +76,9 @@ struct CameraViewWindowContext {
     FullFrameRectEditStateView full_frame_edit_state;
     const std::vector<LoggedBoundingBox>* zarr_boxes = nullptr;
     const ZarrDetectionLoader::FrameDetections* detection_details = nullptr;
+    const crimson::zarr::KeypointOverlayDescriptor* keypoint_descriptor =
+        nullptr;
+    const crimson::zarr::KeypointOverlayResolution* keypoint_frame = nullptr;
     const KeypointHeadingComputationSpec* heading_spec = nullptr;
     bool active_dataset_has_synthetic_detections = false;
     bool frame_is_interpolated = false;
@@ -93,7 +96,6 @@ struct CameraViewWindowContext {
     FullFrameKeypointEditState full_frame_keypoint_edit_state;
     bool can_draw_headings = false;
     bool can_draw_eye_masks = false;
-    const ZarrDetectionLoader::FrameDetections* heading_details = nullptr;
     const ZarrDetectionLoader::FrameDetections* mask_details = nullptr;
     const ZarrDetectionLoader::FrameDetections* subject_shape_details = nullptr;
     std::string eye_mask_smoothing_run_id;

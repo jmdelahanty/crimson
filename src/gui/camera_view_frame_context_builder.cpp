@@ -202,12 +202,7 @@ void prepareCameraViewFrameContext(
 
     const bool zarr_available = input.zarr_loaded && input.zarr_loader != nullptr;
     const auto* detection_details = input.detection_details;
-    const ZarrDetectionLoader::FrameDetections* heading_details = nullptr;
     const ZarrDetectionLoader::FrameDetections* mask_details = nullptr;
-
-    if (input.can_draw_headings) {
-        heading_details = detection_details;
-    }
 
     if (input.can_draw_eye_masks && zarr_available) {
         if (detection_details != nullptr &&
@@ -281,6 +276,8 @@ void prepareCameraViewFrameContext(
         input.full_frame_edit_state,
         zarr_available ? input.zarr_boxes : nullptr,
         zarr_available ? detection_details : nullptr,
+        zarr_available ? input.keypoint_descriptor : nullptr,
+        zarr_available ? input.keypoint_frame : nullptr,
         zarr_available ? &input.zarr_loader->getHeadingComputationSpec()
                        : nullptr,
         zarr_available &&
@@ -299,7 +296,6 @@ void prepareCameraViewFrameContext(
         full_frame_keypoint_edit_state,
         input.can_draw_headings,
         input.can_draw_eye_masks,
-        heading_details,
         mask_details,
         zarr_available ? detection_details : nullptr,
         zarr_available

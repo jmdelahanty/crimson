@@ -11,6 +11,7 @@
 #include "subject_mask_edit_session.h"
 #include "workspace_state.h"
 #include "zarr/detection_repository.h"
+#include "zarr/keypoint_overlay_repository.h"
 #include "zarr_bbox_edit.h"
 
 #include <array>
@@ -62,6 +63,9 @@ struct FrameDebugWindowContext {
     ZarrDetectionLoader& zarr_loader;
     const crimson::zarr::DetectionRepositoryDescriptor& detection_descriptor;
     const crimson::zarr::DetectionFrame* detection_frame = nullptr;
+    const crimson::zarr::KeypointOverlayDescriptor* keypoint_descriptor =
+        nullptr;
+    const crimson::zarr::KeypointOverlayResolution* keypoint_frame = nullptr;
     const crimson::polar::ChaserDistancePolarDescriptor*
         chaser_distance_polar_descriptor = nullptr;
     const std::vector<std::string>& detection_dataset_labels;

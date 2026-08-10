@@ -1078,14 +1078,15 @@ CameraViewWindowResult drawCameraViewWindowContents(
                         break;
                     case CameraOverlayLayer::KeypointHeading:
                         if (context.can_draw_headings &&
-                            context.heading_details != nullptr) {
+                            context.keypoint_descriptor != nullptr &&
+                            context.keypoint_frame != nullptr) {
                             drawCameraViewHeadingOverlay(
-                                *context.heading_details,
+                                *context.keypoint_descriptor,
+                                *context.keypoint_frame,
                                 static_cast<float>(camera.image_width),
                                 image_height_px,
                                 context.view_idx,
-                                context.presented_frame,
-                                context.current_frame_num);
+                                context.presented_frame);
                         }
                         break;
                     case CameraOverlayLayer::MovementLabel:
@@ -1177,7 +1178,8 @@ CameraViewWindowResult drawCameraViewWindowContents(
                         }
                         break;
                     case CameraOverlayLayer::Keypoints:
-                        if (context.detection_details != nullptr) {
+                        if (context.keypoint_descriptor != nullptr &&
+                            context.keypoint_frame != nullptr) {
                             const int keypoint_skip_detection =
                                 context.full_frame_keypoint_edit_enabled &&
                                         context.selected_keypoint_selection !=
@@ -1189,13 +1191,13 @@ CameraViewWindowResult drawCameraViewWindowContents(
                                               ->detection_index)
                                     : -1;
                             drawCameraViewDetectionKeypointMarkers(
-                                *context.detection_details,
+                                *context.keypoint_descriptor,
+                                *context.keypoint_frame,
                                 context.show_keypoint_markers,
                                 static_cast<float>(camera.image_width),
                                 image_height_px,
                                 context.view_idx,
                                 context.presented_frame,
-                                context.current_frame_num,
                                 keypoint_skip_detection);
                         }
                         break;

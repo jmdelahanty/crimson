@@ -1,7 +1,6 @@
 #include "gui/refined_keypoint_review_window.h"
 
 #include "imgui.h"
-#include "zarr_loader.h"
 
 namespace {
 

@@ -7,6 +7,7 @@
 #include "read_only_overlay_controls.h"
 #include "read_only_overlay_scene.h"
 #include "roi_inset_presentation.h"
+#include "zarr/keypoint_overlay_repository.h"
 #include "zarr/review_write_repository.h"
 #include "zarr_bbox_edit.h"
 
@@ -150,22 +151,22 @@ buildCameraViewBoundingBoxOverlayScene(
     bool is_zarr_interpolated);
 
 void drawCameraViewDetectionKeypointMarkers(
-    const ZarrDetectionLoader::FrameDetections& detection_details,
+    const crimson::zarr::KeypointOverlayDescriptor& descriptor,
+    const crimson::zarr::KeypointOverlayResolution& keypoint_frame,
     bool show_keypoint_markers,
     float image_width_px,
     float image_height_px,
     int view_idx,
     int presented_frame,
-    int current_frame_num,
     int skip_detection_index = -1);
 
 void drawCameraViewHeadingOverlay(
-    const ZarrDetectionLoader::FrameDetections& heading_details,
+    const crimson::zarr::KeypointOverlayDescriptor& descriptor,
+    const crimson::zarr::KeypointOverlayResolution& keypoint_frame,
     float image_width_px,
     float image_height_px,
     int view_idx,
-    int presented_frame,
-    int current_frame_num);
+    int presented_frame);
 
 void drawCameraViewReadOnlyOverlayScene(
     const crimson::overlay::ReadOnlyOverlayScene& scene,

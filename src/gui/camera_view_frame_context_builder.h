@@ -32,6 +32,9 @@ struct CameraViewFrameContextInput {
     FullFrameRectEditStateView full_frame_edit_state;
     const std::vector<LoggedBoundingBox>* zarr_boxes = nullptr;
     const ZarrDetectionLoader::FrameDetections* detection_details = nullptr;
+    const crimson::zarr::KeypointOverlayDescriptor* keypoint_descriptor =
+        nullptr;
+    const crimson::zarr::KeypointOverlayResolution* keypoint_frame = nullptr;
     bool frame_is_interpolated = false;
     int latest_decoded_frame = -1;
     int total_recording_frames = -1;

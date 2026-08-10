@@ -116,8 +116,14 @@ std::string formatPointSpec(const KeypointHeadingPointSpec& spec) {
 }
 
 void drawKeypointSkeletonSection(const FrameDebugWindowContext& context) {
-    const auto& labels = context.zarr_loader.getKeypointLabels();
-    const auto& edges = context.zarr_loader.getSkeletonEdges();
+    static const std::vector<std::string> kNoLabels;
+    static const std::vector<std::array<size_t, 2>> kNoEdges;
+    const auto& labels = context.keypoint_descriptor != nullptr
+                             ? context.keypoint_descriptor->keypoint_labels
+                             : kNoLabels;
+    const auto& edges = context.keypoint_descriptor != nullptr
+                            ? context.keypoint_descriptor->skeleton_edges
+                            : kNoEdges;
     ImGui::Text("Skeleton:");
     ImGui::Text("Keypoint count: %zu", labels.size());
     ImGui::Text("Edge count: %zu", edges.size());
@@ -258,12 +264,12 @@ void drawDetectionTab(
 void drawKeypointTab(
     const FrameDebugWindowContext& context,
     const ZarrDetectionLoader::ReviewArtifactSummary* artifact) {
-    if (!context.zarr_loader.hasKeypointData() && artifact == nullptr) {
+    if (context.keypoint_descriptor == nullptr && artifact == nullptr) {
         ImGui::TextDisabled("Keypoint data unavailable");
         return;
     }
 
-    if (context.zarr_loader.hasKeypointData()) {
+    if (context.keypoint_descriptor != nullptr) {
         crimson::gui::KeypointInspectModuleState presentation_state;
         const auto presentation =
             makeFrameDebugKeypointInspectPresentation(context);
@@ -316,7 +322,7 @@ bool frameDebugModuleAvailable(
             return context.zarr_loader.hasDetectionData() ||
                    detection_artifact != nullptr;
         case crimson::workspace::FrameInspectView::Keypoints:
-            return context.zarr_loader.hasKeypointData() ||
+            return context.keypoint_descriptor != nullptr ||
                    keypoint_artifact != nullptr;
         case crimson::workspace::FrameInspectView::EyeMasks:
             return context.zarr_loader.hasEyeMasks() ||

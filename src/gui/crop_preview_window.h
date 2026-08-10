@@ -4,6 +4,7 @@
 #include "gui/crop_keypoint_editor.h"
 #include "gui/crop_preview_perf.h"
 #include "refined_keypoint_repository.h"
+#include "zarr/keypoint_overlay_repository.h"
 
 #include <array>
 #include <chrono>
@@ -50,6 +51,7 @@ struct CropPreviewWindowState {
 struct CropPreviewWindowContext {
     const CropImageProvider& crop_image_provider;
     ZarrDetectionLoader& zarr_loader;
+    const crimson::zarr::KeypointOverlayRepository& keypoint_repository;
     RefinedKeypointRepository& refined_keypoint_repo;
     int current_frame_num = 0;
     int selected_frame = -1;

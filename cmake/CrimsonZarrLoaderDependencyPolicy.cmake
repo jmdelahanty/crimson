@@ -14,7 +14,6 @@ set(CRIMSON_ZARR_LOADER_DIRECT_INCLUDE_ALLOWLIST
     src/gui/camera_view_window.h
     src/gui/full_frame_keypoint_edit_overlay.h
     src/gui/refined_keypoint_review_panel.h
-    src/gui/refined_keypoint_review_window.cpp
     src/gui/stimulus_event_timeline_window.cpp
     src/gui/stimulus_playback_windows.cpp
     src/gui_interpolation.h
@@ -26,6 +25,7 @@ set(CRIMSON_ZARR_LOADER_DIRECT_INCLUDE_ALLOWLIST
     src/subject_mask_edit_session.h
     src/zarr/clipped_detection_repository.h
     src/zarr/legacy_detection_repository.cpp
+    src/zarr/legacy_keypoint_overlay_repository.cpp
     src/zarr_bbox_edit.h
     src/zarr_loader_internal.h
     src/zarr_persisted_crop_provider.h

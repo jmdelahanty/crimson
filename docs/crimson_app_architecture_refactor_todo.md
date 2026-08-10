@@ -53,6 +53,30 @@ explicit, and compile against every backend that consumes the new module.
 - [ ] Stop extracting a region when its remaining code is platform wiring with
       one clear owner and no independently testable policy.
 
+### 2026-08-10 NVIDIA Keypoint Presentation Adoption
+
+The NVIDIA application now consumes the existing backend-neutral
+`KeypointOverlayRepository` for read-only frame inspection, camera keypoint and
+heading scenes, overlay diagnostics, and rotated crop-preview presentation.
+`LegacyKeypointOverlayRepository` is the one named compatibility adapter over
+the eagerly loaded NVIDIA session. Strict keypoint-v2 repositories continue to
+implement the same contract directly, so the shared GUI modules do not depend
+on a platform renderer or on `ZarrDetectionLoader`.
+
+Camera keypoint scene construction is now a pure portable adapter over the
+shared read-only overlay scene. Headless coverage freezes complete multi-row
+frame presentation, independent marker and heading layers, edit-marker
+suppression by detection ordinal, and stale-frame rejection. The Ubuntu
+NVIDIA build and authenticated 0:300 playback smoke pass with the new path.
+
+The compatibility boundary remains explicit. Legacy archives do not provide a
+stable `instance_key`, per-point confidence, or v2 source-audit identity, so
+the adapter leaves those fields unset instead of manufacturing scientific
+identity. Editing selection, ROI placement, heading-computation metadata,
+masks, and subject-shape access remain on their existing write or product
+contracts. They must migrate through their own repositories rather than being
+added to the keypoint presentation facade.
+
 ### 2026-08-10 NVIDIA Diagnostics Session Extraction
 
 The NVIDIA composition root now delegates diagnostic sink configuration and
@@ -1207,7 +1231,7 @@ Acceptance:
 - [ ] Split the public loader API by domain, even if implementation initially
       delegates to the current code:
   - [x] `DetectionRepository`
-  - `KeypointRepository`
+  - [x] `KeypointOverlayRepository` (read-only presentation)
   - `EyeMaskRepository`
   - `StimulusRepository`
   - `MovementRepository`

@@ -1,5 +1,7 @@
 #include "gui/camera_view_overlay_renderer.h"
 
+#include "gui/camera_view_keypoint_scene_adapter.h"
+
 #include "imgui.h"
 #include "implot.h"
 
@@ -270,132 +272,43 @@ buildCameraViewBoundingBoxOverlayScene(
 }
 
 void drawCameraViewDetectionKeypointMarkers(
-    const ZarrDetectionLoader::FrameDetections& detection_details,
+    const crimson::zarr::KeypointOverlayDescriptor& descriptor,
+    const crimson::zarr::KeypointOverlayResolution& keypoint_frame,
     bool show_keypoint_markers,
     float image_width_px,
     float image_height_px,
     int view_idx,
     int presented_frame,
-    int current_frame_num,
     int skip_detection_index) {
-    if (!(show_keypoint_markers && detection_details.has_keypoints &&
-          !detection_details.keypoints_pixels.empty() &&
-          detection_details.keypoints_per_detection > 0)) {
+    if (!show_keypoint_markers ||
+        keypoint_frame.status != crimson::zarr::KeypointOverlayStatus::Mapped) {
         return;
     }
-
-    crimson::overlay::ReadOnlyOverlayInput input;
-    input.identity =
-        overlayIdentity(view_idx, presented_frame, current_frame_num);
-    input.source_width = image_width_px;
-    input.source_height = image_height_px;
-    input.keypoint_labels = detection_details.keypoint_labels;
-    input.skeleton_edges = detection_details.skeleton_edges;
-    input.show_boxes = false;
-    input.show_headings = false;
-    const size_t detection_count =
-        std::min(detection_details.keypoints_pixels.size(),
-                 detection_details.boxes.size());
-    input.detections.reserve(detection_count);
-    for (size_t det_idx = 0; det_idx < detection_count; ++det_idx) {
-        const auto& keypoints = detection_details.keypoints_pixels[det_idx];
-        if (keypoints.size() != detection_details.keypoints_per_detection) {
-            continue;
-        }
-        crimson::overlay::DetectionOverlayInput detection;
-        detection.box = crimson::overlay::DetectionBoxInput{
-            overlayRectFromXyxy(detection_details.boxes[det_idx])};
-        detection.keypoints = overlayPoints(keypoints);
-        detection.suppress_keypoint_markers =
-            skip_detection_index >= 0 &&
-            det_idx == static_cast<size_t>(skip_detection_index);
-        if (!detection_details.detection_source.empty() &&
-            det_idx < detection_details.detection_source.size()) {
-            detection.detection_interpolated =
-                detection_details.detection_source[det_idx] != 0;
-        }
-        detection.heading_valid = true;
-        if (!detection_details.heading_valid.empty() &&
-            det_idx < detection_details.heading_valid.size()) {
-            detection.heading_valid =
-                detection_details.heading_valid[det_idx] != 0;
-        }
-        detection.refined_keypoints =
-            detection_details.is_refined_keypoints;
-        if (det_idx < detection_details.keypoint_usable.size()) {
-            detection.keypoint_usable =
-                detection_details.keypoint_usable[det_idx] != 0;
-        }
-        if (det_idx < detection_details.keypoint_detection_source.size()) {
-            detection.keypoint_detection_interpolated =
-                detection_details.keypoint_detection_source[det_idx] != 0;
-        }
-        if (det_idx < detection_details.keypoint_flip_corrected.size()) {
-            detection.keypoint_flip_corrected =
-                detection_details.keypoint_flip_corrected[det_idx] != 0;
-        }
-        input.detections.push_back(std::move(detection));
-    }
     drawCameraViewReadOnlyOverlayScene(
-        crimson::overlay::buildReadOnlyOverlayScene(input), image_height_px);
+        crimson::gui::makeCameraViewKeypointMarkerScene(
+            descriptor, keypoint_frame, view_idx, presented_frame,
+            static_cast<int>(image_width_px),
+            static_cast<int>(image_height_px), skip_detection_index),
+        image_height_px);
 }
 
 void drawCameraViewHeadingOverlay(
-    const ZarrDetectionLoader::FrameDetections& heading_details,
+    const crimson::zarr::KeypointOverlayDescriptor& descriptor,
+    const crimson::zarr::KeypointOverlayResolution& keypoint_frame,
     float image_width_px,
     float image_height_px,
     int view_idx,
-    int presented_frame,
-    int current_frame_num) {
-    const size_t det_count = heading_details.boxes.size();
-    const size_t valid_count = heading_details.heading_valid.size();
-    if (det_count == 0 || valid_count != det_count) {
+    int presented_frame) {
+    if (keypoint_frame.status !=
+        crimson::zarr::KeypointOverlayStatus::Mapped) {
         return;
     }
-    crimson::overlay::ReadOnlyOverlayInput input;
-    input.identity =
-        overlayIdentity(view_idx, presented_frame, current_frame_num);
-    input.source_width = image_width_px;
-    input.source_height = image_height_px;
-    const bool has_keypoint_heading_source =
-        heading_details.has_keypoints &&
-        !heading_details.keypoints_pixels.empty() &&
-        !heading_details.keypoint_labels.empty();
-    if (has_keypoint_heading_source) {
-        input.keypoint_labels = heading_details.keypoint_labels;
-    }
-    input.show_boxes = false;
-    input.show_keypoints = false;
-    input.detections.reserve(det_count);
-    for (size_t det_idx = 0; det_idx < det_count; ++det_idx) {
-        crimson::overlay::DetectionOverlayInput detection;
-        detection.box = crimson::overlay::DetectionBoxInput{
-            overlayRectFromXyxy(heading_details.boxes[det_idx])};
-        detection.heading_valid =
-            heading_details.heading_valid[det_idx] != 0;
-        if (!heading_details.detection_source.empty() &&
-            det_idx < heading_details.detection_source.size()) {
-            detection.detection_interpolated =
-                heading_details.detection_source[det_idx] != 0;
-        }
-        if (det_idx < heading_details.swim_bladder_pixels.size()) {
-            const auto& point = heading_details.swim_bladder_pixels[det_idx];
-            detection.heading_origin =
-                crimson::overlay::Point{point[0], point[1]};
-        }
-        if (det_idx < heading_details.headings_deg.size()) {
-            detection.heading_degrees =
-                heading_details.headings_deg[det_idx];
-        }
-        if (has_keypoint_heading_source &&
-            det_idx < heading_details.keypoints_pixels.size()) {
-            detection.keypoints =
-                overlayPoints(heading_details.keypoints_pixels[det_idx]);
-        }
-        input.detections.push_back(std::move(detection));
-    }
     drawCameraViewReadOnlyOverlayScene(
-        crimson::overlay::buildReadOnlyOverlayScene(input), image_height_px);
+        crimson::gui::makeCameraViewKeypointHeadingScene(
+            descriptor, keypoint_frame, view_idx, presented_frame,
+            static_cast<int>(image_width_px),
+            static_cast<int>(image_height_px)),
+        image_height_px);
 }
 
 void drawCameraViewReadOnlyOverlayScene(

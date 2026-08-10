@@ -851,33 +851,52 @@ void buildRotatedCropPreview(const CropPreviewWindowContext& context,
     state.rotated_kp_edges.clear();
     state.arrow_origin_valid = false;
 
-    if (!context.zarr_loader.hasKeypointData()) {
+    const auto& keypoint_descriptor = context.keypoint_repository.descriptor();
+    if (keypoint_descriptor.run_name.empty()) {
         return;
     }
 
     const auto detection_start = std::chrono::steady_clock::now();
-    auto det = context.zarr_loader.getRawDetections(
-        static_cast<size_t>(context.current_frame_num), false, false);
+    const auto keypoint_frame = context.keypoint_repository.resolveCameraFrame(
+        context.current_frame_num, context.zarr_loader.getImageWidth(),
+        context.zarr_loader.getImageHeight());
     if (perf != nullptr) {
         perf->get_raw_detections_ms +=
             durationMs(std::chrono::steady_clock::now() - detection_start);
     }
+    if (keypoint_frame.status !=
+        crimson::zarr::KeypointOverlayStatus::Mapped) {
+        return;
+    }
     size_t matched = SIZE_MAX;
     std::optional<RefinedKeypointSelection> matched_keypoint_selection;
     if (selected_keypoint_selection.has_value() &&
-        selected_keypoint_selection->detection_index < det.boxes.size() &&
         (selected_keypoint_selection->roi_index == crop_roi_index ||
          crop_spec.has_value())) {
-        matched = selected_keypoint_selection->detection_index;
-        matched_keypoint_selection = selected_keypoint_selection;
+        const auto found = std::find_if(
+            keypoint_frame.detections.begin(),
+            keypoint_frame.detections.end(), [&](const auto& detection) {
+                return detection.detection_index ==
+                       static_cast<int64_t>(
+                           selected_keypoint_selection->detection_index);
+            });
+        if (found != keypoint_frame.detections.end()) {
+            matched = static_cast<size_t>(std::distance(
+                keypoint_frame.detections.begin(), found));
+            matched_keypoint_selection = selected_keypoint_selection;
+        }
     }
-    if (matched == SIZE_MAX && det.has_keypoints) {
-        const size_t keypoint_detection_count =
-            std::min(det.keypoints_pixels.size(), det.boxes.size());
-        for (size_t di = 0; di < keypoint_detection_count; ++di) {
+    if (matched == SIZE_MAX) {
+        for (size_t di = 0; di < keypoint_frame.detections.size(); ++di) {
+            const int64_t detection_index =
+                keypoint_frame.detections[di].detection_index;
+            if (detection_index < 0) {
+                continue;
+            }
             auto candidate =
                 context.refined_keypoint_repo.resolveFrameDetectionSelection(
-                    static_cast<size_t>(context.current_frame_num), di, false);
+                    static_cast<size_t>(context.current_frame_num),
+                    static_cast<size_t>(detection_index), false);
             if (candidate.valid && candidate.roi_index == crop_roi_index) {
                 matched = di;
                 matched_keypoint_selection = std::move(candidate);
@@ -886,12 +905,14 @@ void buildRotatedCropPreview(const CropPreviewWindowContext& context,
         }
     }
 
-    if (matched == SIZE_MAX || matched >= det.headings_deg.size() ||
-        matched >= det.heading_valid.size() || !det.heading_valid[matched]) {
+    if (matched == SIZE_MAX ||
+        !keypoint_frame.detections[matched].heading_valid ||
+        !keypoint_frame.detections[matched].heading_degrees.has_value()) {
         return;
     }
 
-    state.stored_heading_deg = det.headings_deg[matched];
+    state.stored_heading_deg = static_cast<float>(
+        *keypoint_frame.detections[matched].heading_degrees);
     state.stored_heading_valid = true;
 
     const float angle = -state.stored_heading_deg;
@@ -917,9 +938,9 @@ void buildRotatedCropPreview(const CropPreviewWindowContext& context,
     }
 
     const auto transform_start = std::chrono::steady_clock::now();
-    state.rotated_kp_edges = det.skeleton_edges;
-    state.crop_kp_edges = det.skeleton_edges;
-    if (!det.has_keypoints || matched >= det.keypoints_pixels.size()) {
+    state.rotated_kp_edges = keypoint_descriptor.skeleton_edges;
+    state.crop_kp_edges = keypoint_descriptor.skeleton_edges;
+    if (matched >= keypoint_frame.detections.size()) {
         if (perf != nullptr) {
             perf->keypoint_transform_ms +=
                 durationMs(std::chrono::steady_clock::now() - transform_start);
@@ -927,7 +948,7 @@ void buildRotatedCropPreview(const CropPreviewWindowContext& context,
         return;
     }
 
-    const auto& keypoints = det.keypoints_pixels[matched];
+    const auto& keypoints = keypoint_frame.detections[matched].keypoints;
     float offset_x = NAN;
     float offset_y = NAN;
     if (crop_spec.has_value() && crop_spec->valid) {
@@ -956,12 +977,13 @@ void buildRotatedCropPreview(const CropPreviewWindowContext& context,
         context.zarr_loader.getHeadingComputationSpec();
 
     for (size_t ki = 0; ki < keypoints.size(); ++ki) {
-        if (!std::isfinite(keypoints[ki][0]) || !std::isfinite(keypoints[ki][1])) {
+        if (!std::isfinite(keypoints[ki].x) ||
+            !std::isfinite(keypoints[ki].y)) {
             state.crop_kp_positions.push_back({NAN, NAN});
             state.rotated_kp_positions.push_back({NAN, NAN});
         } else {
-            const float px = keypoints[ki][0] - offset_x;
-            const float py = keypoints[ki][1] - offset_y;
+            const float px = static_cast<float>(keypoints[ki].x) - offset_x;
+            const float py = static_cast<float>(keypoints[ki].y) - offset_y;
             state.crop_kp_positions.push_back({px, py});
             const float dx = px - crop_center_x;
             const float dy = py - crop_center_y;
@@ -971,7 +993,9 @@ void buildRotatedCropPreview(const CropPreviewWindowContext& context,
         }
 
         const std::string label =
-            ki < det.keypoint_labels.size() ? det.keypoint_labels[ki] : "";
+            ki < keypoint_descriptor.keypoint_labels.size()
+                ? keypoint_descriptor.keypoint_labels[ki]
+                : "";
         state.crop_kp_labels.push_back(label);
         state.rotated_kp_labels.push_back(label);
     }

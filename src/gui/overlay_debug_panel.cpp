@@ -16,8 +16,7 @@ namespace {
 
 void drawKeypointHeadingOverlaySection(const FrameDebugWindowContext& context,
                                        FrameDebugWindowResult& result) {
-    if (!(context.zarr_loader.hasKeypointData() ||
-          context.zarr_loader.hasHeadingData())) {
+    if (context.keypoint_descriptor == nullptr) {
         return;
     }
 
@@ -25,31 +24,32 @@ void drawKeypointHeadingOverlaySection(const FrameDebugWindowContext& context,
     result.show_heading_arrows = context.show_heading_arrows;
 
     ImGui::Separator();
-    if (context.zarr_loader.hasKeypointData()) {
+    {
         ImGui::Text("Keypoint Overlay:");
         ImGui::Checkbox("Show keypoint markers", &result.show_keypoint_markers);
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip(
                 "Overlay swim bladder and eye keypoints on the video frame.");
         }
-        if (!context.zarr_loader.getKeypointsRunName().empty()) {
+        if (!context.keypoint_descriptor->run_name.empty()) {
             ImGui::Text("  Keypoints run: %s (%s)",
-                        context.zarr_loader.getKeypointsRunName().c_str(),
-                        context.zarr_loader.isRefinedKeypoints() ? "refined"
-                                                                 : "raw");
+                        context.keypoint_descriptor->run_name.c_str(),
+                        context.keypoint_descriptor->refined ? "refined"
+                                                             : "raw");
         }
-        if (context.detection_details != nullptr &&
-            context.detection_details->is_refined_keypoints &&
-            !context.detection_details->keypoint_usable.empty()) {
+        if (context.keypoint_frame != nullptr &&
+            context.keypoint_descriptor->refined &&
+            !context.keypoint_frame->detections.empty()) {
             size_t usable_count = 0;
             size_t flip_count = 0;
-            size_t det_count = context.detection_details->keypoint_usable.size();
-            for (size_t qi = 0; qi < det_count; ++qi) {
-                if (context.detection_details->keypoint_usable[qi] != 0) {
+            const size_t det_count =
+                context.keypoint_frame->detections.size();
+            for (const auto& detection :
+                 context.keypoint_frame->detections) {
+                if (detection.keypoint_usable) {
                     usable_count++;
                 }
-                if (qi < context.detection_details->keypoint_flip_corrected.size() &&
-                    context.detection_details->keypoint_flip_corrected[qi] != 0) {
+                if (detection.keypoint_flip_corrected) {
                     flip_count++;
                 }
             }
@@ -57,26 +57,18 @@ void drawKeypointHeadingOverlaySection(const FrameDebugWindowContext& context,
                         usable_count,
                         det_count,
                         flip_count);
-            if (!context.detection_details->keypoint_reason.empty() &&
-                !context.detection_details->keypoint_reason[0].empty()) {
-                ImGui::TextWrapped("  Reason: %s",
-                                   context.detection_details->keypoint_reason[0]
-                                       .c_str());
-            }
         }
-        if (context.detection_details != nullptr &&
-            context.detection_details->keypoints_per_detection > 0 &&
-            !context.detection_details->keypoint_labels.empty()) {
+        if (!context.keypoint_descriptor->keypoint_labels.empty()) {
             std::string label_list;
             for (size_t i = 0;
-                 i < context.detection_details->keypoint_labels.size();
+                 i < context.keypoint_descriptor->keypoint_labels.size();
                  ++i) {
                 if (i > 0) {
                     label_list += ", ";
                 }
-                label_list += context.detection_details->keypoint_labels[i];
+                label_list += context.keypoint_descriptor->keypoint_labels[i];
                 if (label_list.size() > 72 &&
-                    i + 1 < context.detection_details->keypoint_labels.size()) {
+                    i + 1 < context.keypoint_descriptor->keypoint_labels.size()) {
                     label_list += "...";
                     break;
                 }
@@ -85,30 +77,28 @@ void drawKeypointHeadingOverlaySection(const FrameDebugWindowContext& context,
                 ImGui::TextWrapped("  Labels: %s", label_list.c_str());
             }
         }
-        if (context.zarr_loader.activeDatasetHasSyntheticDetections()) {
+        if (context.dataset_has_synthetic_boxes) {
             ImGui::TextWrapped(
                 "Synthetic detections are present; interpolated boxes draw with hollow keypoint markers.");
         }
     }
 
-    if (context.zarr_loader.hasHeadingData()) {
-        if (context.zarr_loader.hasKeypointData()) {
-            ImGui::Spacing();
-        }
+    const bool heading_available =
+        context.keypoint_frame != nullptr &&
+        std::any_of(context.keypoint_frame->detections.begin(),
+                    context.keypoint_frame->detections.end(),
+                    [](const auto& detection) {
+                        return detection.heading_valid;
+                    });
+    if (heading_available) {
+        ImGui::Spacing();
         ImGui::Text("Heading Overlay:");
         ImGui::Checkbox("Show heading arrows", &result.show_heading_arrows);
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip(
                 "Visualize swim bladder headings from the keypoints run.");
         }
-        if (!context.zarr_loader.getKeypointsRunName().empty() &&
-            !context.zarr_loader.hasKeypointData()) {
-            ImGui::Text("  Keypoints run: %s (%s)",
-                        context.zarr_loader.getKeypointsRunName().c_str(),
-                        context.zarr_loader.isRefinedKeypoints() ? "refined"
-                                                                 : "raw");
-        }
-        if (context.zarr_loader.activeDatasetHasSyntheticDetections()) {
+        if (context.dataset_has_synthetic_boxes) {
             ImGui::TextWrapped(
                 "Synthetic detections are present; arrows render only for real boxes.");
         }
