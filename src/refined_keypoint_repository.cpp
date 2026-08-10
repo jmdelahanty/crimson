@@ -2642,3 +2642,68 @@ bool RefinedKeypointRepository::markDetectionIssue(
         error_message,
         edit_result);
 }
+
+crimson::zarr::ReviewWriteResult RefinedKeypointRepository::write(
+    const crimson::zarr::ReviewWriteOperation& operation) {
+    crimson::zarr::ReviewWriteResult result;
+    switch (operation.kind) {
+    case crimson::zarr::ReviewWriteOperationKind::ManualKeypointCorrection:
+        result.ok = writeManualCorrection(
+            operation.selection,
+            operation.keypoints_roi,
+            result.error,
+            &result.edit_result);
+        break;
+    case crimson::zarr::ReviewWriteOperationKind::FishPresentNoKeypoints:
+        result.ok = markFishPresentNoKeypoints(
+            operation.selection,
+            result.error,
+            &result.edit_result);
+        break;
+    case crimson::zarr::ReviewWriteOperationKind::DetectionIssue:
+        result.ok = markDetectionIssue(
+            operation.selection,
+            result.error,
+            &result.edit_result);
+        break;
+    }
+    return result;
+}
+
+namespace {
+
+class LegacyReviewWriteRepository final
+    : public crimson::zarr::ReviewWriteRepository {
+public:
+    explicit LegacyReviewWriteRepository(
+        std::unique_ptr<ZarrDetectionLoader> loader)
+        : loader_(std::move(loader)), repository_(*loader_) {}
+
+    crimson::zarr::ReviewWriteResult write(
+        const crimson::zarr::ReviewWriteOperation& operation) override {
+        return repository_.write(operation);
+    }
+
+private:
+    std::unique_ptr<ZarrDetectionLoader> loader_;
+    RefinedKeypointRepository repository_;
+};
+
+}  // namespace
+
+namespace crimson::zarr {
+
+std::unique_ptr<ReviewWriteRepository> OpenLegacyReviewWriteRepository(
+    const std::string& archive_path,
+    std::string& error) {
+    auto loader = std::make_unique<ZarrDetectionLoader>();
+    std::string load_error;
+    if (!loader->loadZarrFile(archive_path, load_error)) {
+        error = "Worker failed to load active Zarr: " + load_error;
+        return nullptr;
+    }
+    error.clear();
+    return std::make_unique<LegacyReviewWriteRepository>(std::move(loader));
+}
+
+}  // namespace crimson::zarr

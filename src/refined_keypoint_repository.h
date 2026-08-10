@@ -1,22 +1,14 @@
 #ifndef REFINED_KEYPOINT_REPOSITORY_H
 #define REFINED_KEYPOINT_REPOSITORY_H
 
+#include "zarr/review_write_repository.h"
+
 #include <array>
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <vector>
 #include "zarr_loader.h"
-
-struct RefinedKeypointSelection {
-    bool valid = false;
-    bool editable = false;
-    size_t frame_id = 0;
-    size_t detection_index = 0;
-    int32_t roi_index = -1;
-    ZarrDetectionLoader::KeypointRoiMetadata roi_metadata;
-    std::string run_name;
-    std::string message;
-};
 
 struct RefinedKeypointReviewStatusWriteOptions {
     std::string state = "approved";
@@ -27,16 +19,9 @@ struct RefinedKeypointReviewStatusWriteOptions {
     bool update_latest = true;
 };
 
-struct RefinedKeypointEditResult {
-    bool changed = false;
-    bool summary_updated = false;
-    int stale_eye_mask_runs = 0;
-    ZarrDetectionLoader::RefinedKeypointCacheUpdate cache_update;
-};
-
 // Central seam for refined-keypoint editing. Selection, review-status writes,
 // and row-level manual-write operations land here.
-class RefinedKeypointRepository {
+class RefinedKeypointRepository : public crimson::zarr::ReviewWriteRepository {
 public:
     explicit RefinedKeypointRepository(const ZarrDetectionLoader& loader)
         : loader_(loader) {}
@@ -63,9 +48,19 @@ public:
         const RefinedKeypointSelection& selection,
         std::string& error_message,
         RefinedKeypointEditResult* edit_result = nullptr) const;
+    crimson::zarr::ReviewWriteResult write(
+        const crimson::zarr::ReviewWriteOperation& operation) override;
 
 private:
     const ZarrDetectionLoader& loader_;
 };
+
+namespace crimson::zarr {
+
+std::unique_ptr<ReviewWriteRepository> OpenLegacyReviewWriteRepository(
+    const std::string& archive_path,
+    std::string& error);
+
+}  // namespace crimson::zarr
 
 #endif

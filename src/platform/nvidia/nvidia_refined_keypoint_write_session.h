@@ -1,16 +1,13 @@
 #pragma once
 
 #include "gui/crop_keypoint_editor.h"
-#include "gui/full_frame_keypoint_edit_overlay.h"
-#include "refined_keypoint_repository.h"
+#include "zarr/review_write_repository.h"
 
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
-
-class ZarrDetectionLoader;
 
 namespace crimson::platform::nvidia {
 
@@ -23,11 +20,7 @@ struct RefinedKeypointWriteRequest {
   bool reset_full_frame_editor = false;
 };
 
-struct RefinedKeypointWriteWorkerResult {
-  bool ok = false;
-  RefinedKeypointEditResult edit_result;
-  std::string error;
-};
+using RefinedKeypointWriteWorkerResult = crimson::zarr::ReviewWriteResult;
 
 using RefinedKeypointWriteWorker =
     std::function<RefinedKeypointWriteWorkerResult(
@@ -80,15 +73,22 @@ private:
   std::unique_ptr<Impl> impl_;
 };
 
-RefinedKeypointWriteWorkerResult
-executeLegacyRefinedKeypointWrite(const RefinedKeypointWriteRequest &request);
+RefinedKeypointWriteWorkerResult executeRefinedKeypointWrite(
+    const RefinedKeypointWriteRequest &request,
+    const crimson::zarr::ReviewWriteRepositoryFactory &repository_factory);
 
-bool pollAndApplyLegacyRefinedKeypointWrite(
+struct RefinedKeypointWriteSettlementCallbacks {
+  std::function<bool(const RefinedKeypointCacheUpdate &, std::string *)>
+      apply_cache_update;
+  std::function<bool(std::string &)> reload_active_zarr;
+  std::function<void()> reset_crop_editor;
+  std::function<void()> reset_full_frame_editor;
+  std::function<void()> invalidate_after_write;
+};
+
+bool pollAndApplyRefinedKeypointWrite(
     RefinedKeypointWriteSession &session, uint64_t active_session_generation,
-    ZarrDetectionLoader &loader, CropKeypointEditorState &crop_editor_state,
-    FullFrameKeypointEditState &full_frame_editor_state,
-    std::string &status_out,
-    const std::function<bool(std::string &)> &reload_active_zarr,
-    const std::function<void()> &invalidate_after_write);
+    const std::string &active_archive_path, std::string &status_out,
+    const RefinedKeypointWriteSettlementCallbacks &callbacks);
 
 } // namespace crimson::platform::nvidia

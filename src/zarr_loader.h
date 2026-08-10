@@ -28,6 +28,7 @@
 #include "h5_loader.h"  // For LoggedBoundingBox structure compatibility
 #include "data_access_scheduler.h"
 #include "keypoint_heading_utils.h"
+#include "zarr/review_write_repository.h"
 #include "zarr/palette_clipped_resolver.h"
 
 namespace ts = tensorstore;
@@ -1420,15 +1421,7 @@ public:
         int32_t roi_index = -1;
     };
     bool getCropImageForIndex(int32_t roi_index, CropImageView& out_view) const;
-    struct KeypointRoiMetadata {
-        bool valid = false;
-        bool has_crop_metadata = false;
-        int32_t roi_index = -1;
-        float offset_x = std::numeric_limits<float>::quiet_NaN();
-        float offset_y = std::numeric_limits<float>::quiet_NaN();
-        float roi_width = 0.0f;
-        float roi_height = 0.0f;
-    };
+    using KeypointRoiMetadata = crimson::zarr::KeypointRoiMetadata;
     KeypointRoiMetadata getCropRoiMetadataForRoiIndex(int32_t roi_index) const;
     KeypointRoiMetadata getKeypointRoiMetadataForFrameDetection(
         size_t frame_id,
@@ -1716,25 +1709,7 @@ public:
                                                  size_t detection_idx,
                                                  bool use_interpolated = false) const;
 
-    struct RefinedKeypointCacheUpdate {
-        bool valid = false;
-        size_t frame_id = 0;
-        size_t detection_index = 0;
-        int32_t roi_index = -1;
-        std::vector<std::array<float, 2>> keypoints_img;
-        float heading_deg = std::numeric_limits<float>::quiet_NaN();
-        std::array<float, 2> heading_origin_img = {
-            std::numeric_limits<float>::quiet_NaN(),
-            std::numeric_limits<float>::quiet_NaN()};
-        bool heading_valid = false;
-        int32_t quality_label = -1;
-        std::string reason;
-        uint8_t flip_corrected = 0;
-        uint8_t usable = 0;
-        uint8_t confidence_valid = 0;
-        uint8_t geometry_valid = 0;
-        uint8_t refined_success = 0;
-    };
+    using RefinedKeypointCacheUpdate = crimson::zarr::RefinedKeypointCacheUpdate;
     bool applyRefinedKeypointCacheUpdate(
         const RefinedKeypointCacheUpdate& update,
         std::string* error_message = nullptr);

@@ -1,7 +1,5 @@
 #include "platform/nvidia/nvidia_refined_keypoint_write_session.h"
 
-#include "zarr_loader.h"
-
 namespace crimson::platform::nvidia {
 
 namespace {
@@ -23,58 +21,45 @@ std::string reloadFailurePrefix(CropKeypointEditorActionType action_type) {
 
 } // namespace
 
-RefinedKeypointWriteWorkerResult
-executeLegacyRefinedKeypointWrite(const RefinedKeypointWriteRequest &request) {
+RefinedKeypointWriteWorkerResult executeRefinedKeypointWrite(
+    const RefinedKeypointWriteRequest &request,
+    const crimson::zarr::ReviewWriteRepositoryFactory &repository_factory) {
   RefinedKeypointWriteWorkerResult result;
   if (!request.selection.has_value()) {
     result.error = "No keypoint selection.";
     return result;
   }
-  if (request.archive_path.empty()) {
-    result.error = "No loaded Zarr archive.";
-    return result;
-  }
-
-  ZarrDetectionLoader worker_loader;
-  std::string load_error;
-  if (!worker_loader.loadZarrFile(request.archive_path, load_error)) {
-    result.error = "Worker failed to load active Zarr: " + load_error;
-    return result;
-  }
-
-  RefinedKeypointRepository refined_keypoint_repo(worker_loader);
+  crimson::zarr::ReviewWriteOperation operation;
+  operation.selection = *request.selection;
   switch (request.action.type) {
   case CropKeypointEditorActionType::Save:
-    result.ok = refined_keypoint_repo.writeManualCorrection(
-        *request.selection, request.action.keypoints_roi, result.error,
-        &result.edit_result);
+    operation.kind =
+        crimson::zarr::ReviewWriteOperationKind::ManualKeypointCorrection;
+    operation.keypoints_roi = request.action.keypoints_roi;
     break;
   case CropKeypointEditorActionType::MarkNoKeypoints:
-    result.ok = refined_keypoint_repo.markFishPresentNoKeypoints(
-        *request.selection, result.error, &result.edit_result);
+    operation.kind =
+        crimson::zarr::ReviewWriteOperationKind::FishPresentNoKeypoints;
     break;
   case CropKeypointEditorActionType::MarkDetectionIssue:
-    result.ok = refined_keypoint_repo.markDetectionIssue(
-        *request.selection, result.error, &result.edit_result);
+    operation.kind = crimson::zarr::ReviewWriteOperationKind::DetectionIssue;
     break;
   case CropKeypointEditorActionType::Reset:
   case CropKeypointEditorActionType::None:
   default:
     result.error = "No keypoint write action.";
-    break;
+    return result;
   }
-  return result;
+  return crimson::zarr::ExecuteReviewWrite(repository_factory,
+                                           request.archive_path, operation);
 }
 
-bool pollAndApplyLegacyRefinedKeypointWrite(
+bool pollAndApplyRefinedKeypointWrite(
     RefinedKeypointWriteSession &session, uint64_t active_session_generation,
-    ZarrDetectionLoader &loader, CropKeypointEditorState &crop_editor_state,
-    FullFrameKeypointEditState &full_frame_editor_state,
-    std::string &status_out,
-    const std::function<bool(std::string &)> &reload_active_zarr,
-    const std::function<void()> &invalidate_after_write) {
+    const std::string &active_archive_path, std::string &status_out,
+    const RefinedKeypointWriteSettlementCallbacks &callbacks) {
   auto completion =
-      session.takeReady(active_session_generation, loader.getArchivePath());
+      session.takeReady(active_session_generation, active_archive_path);
   if (!completion.has_value()) {
     return false;
   }
@@ -83,24 +68,27 @@ bool pollAndApplyLegacyRefinedKeypointWrite(
     return true;
   }
 
-  if (completion->request.reset_crop_editor) {
-    resetCropKeypointEditorState(crop_editor_state);
+  if (completion->request.reset_crop_editor && callbacks.reset_crop_editor) {
+    callbacks.reset_crop_editor();
   }
-  if (completion->request.reset_full_frame_editor) {
-    resetFullFrameKeypointEditState(full_frame_editor_state);
+  if (completion->request.reset_full_frame_editor &&
+      callbacks.reset_full_frame_editor) {
+    callbacks.reset_full_frame_editor();
   }
 
   std::string cache_error;
-  if (!loader.applyRefinedKeypointCacheUpdate(
+  if (!callbacks.apply_cache_update ||
+      !callbacks.apply_cache_update(
           completion->worker_result.edit_result.cache_update, &cache_error)) {
     std::string reload_error;
-    if (!reload_active_zarr(reload_error)) {
+    if (!callbacks.reload_active_zarr ||
+        !callbacks.reload_active_zarr(reload_error)) {
       status_out = reloadFailurePrefix(completion->request.action.type) +
                    reload_error + " (cache update failed: " + cache_error + ")";
       return true;
     }
-    if (invalidate_after_write) {
-      invalidate_after_write();
+    if (callbacks.invalidate_after_write) {
+      callbacks.invalidate_after_write();
     }
     status_out = completion->status_message +
                  " (reloaded; targeted cache update failed: " + cache_error +
@@ -108,8 +96,8 @@ bool pollAndApplyLegacyRefinedKeypointWrite(
     return true;
   }
 
-  if (invalidate_after_write) {
-    invalidate_after_write();
+  if (callbacks.invalidate_after_write) {
+    callbacks.invalidate_after_write();
   }
   return true;
 }

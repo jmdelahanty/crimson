@@ -645,7 +645,11 @@ int main(int argc, char **argv) {
   crimson::app::FrameInspectControllerState frame_inspect_controller_state;
   crimson::platform::nvidia::RefinedKeypointWriteSession
       refined_keypoint_write_session(
-          crimson::platform::nvidia::executeLegacyRefinedKeypointWrite);
+          [](const crimson::platform::nvidia::RefinedKeypointWriteRequest
+                 &request) {
+            return crimson::platform::nvidia::executeRefinedKeypointWrite(
+                request, crimson::zarr::OpenLegacyReviewWriteRepository);
+          });
   auto startRefinedKeypointWrite =
       [&](const CropKeypointEditorAction &action,
           const std::optional<RefinedKeypointSelection> &selection) {
@@ -1743,19 +1747,34 @@ int main(int argc, char **argv) {
     }
     const auto frame_loop_start = std::chrono::steady_clock::now();
     configureQualityTimelineSession();
-    crimson::platform::nvidia::pollAndApplyLegacyRefinedKeypointWrite(
+    crimson::platform::nvidia::pollAndApplyRefinedKeypointWrite(
         refined_keypoint_write_session, recording_open_workflow.generation(),
-        zarr_loader,
-        crop_preview_window_state.editor_state,
-        frame_debug_window_state.keypoint_review_panel.full_frame_edit,
+        zarr_loader.getArchivePath(),
         frame_debug_window_state.keypoint_review_panel.manual_write_status,
-        reloadActiveZarrPreserveDataset, [&]() {
-          invalidateReviewFrameCache(review_frame_cache);
-          review_frame_status.clear();
-          crop_preview_window_state.last_roi_index =
-              std::numeric_limits<int>::min();
-          crop_preview_window_state.last_crop_preview_source_frame = -1;
-          crop_preview_window_state.rotated_valid = false;
+        {
+            [&](const RefinedKeypointCacheUpdate &update,
+                std::string *error) {
+              return zarr_loader.applyRefinedKeypointCacheUpdate(update,
+                                                                 error);
+            },
+            reloadActiveZarrPreserveDataset,
+            [&]() {
+              resetCropKeypointEditorState(
+                  crop_preview_window_state.editor_state);
+            },
+            [&]() {
+              resetFullFrameKeypointEditState(
+                  frame_debug_window_state.keypoint_review_panel
+                      .full_frame_edit);
+            },
+            [&]() {
+              invalidateReviewFrameCache(review_frame_cache);
+              review_frame_status.clear();
+              crop_preview_window_state.last_roi_index =
+                  std::numeric_limits<int>::min();
+              crop_preview_window_state.last_crop_preview_source_frame = -1;
+              crop_preview_window_state.rotated_valid = false;
+            },
         });
     double frame_camera_upload_ms = 0.0;
     int frame_camera_upload_count = 0;

@@ -76,11 +76,31 @@ readback behavior changes. This bounded extraction reduces `red.cpp` from
 5,472 to 5,368 lines. It is an NVIDIA platform session composed from portable
 writers and serializers, not a cross-backend rendering abstraction.
 
-The preceding refined-keypoint write extraction has one named dependency-policy
-exception for its concrete legacy adapter. The typed session and UI do not
-include `zarr_loader.h`; only
-`nvidia_refined_keypoint_write_adapter.cpp` may bridge to the monolith until a
-`ReviewWriteRepository` facade replaces it.
+### 2026-08-10 Review Write Repository Facade
+
+Refined-keypoint mutations now cross the backend-neutral
+`ReviewWriteRepository` contract. The contract owns selection, ROI placement,
+cache-update, edit-result, operation, and repository-factory records without a
+GUI, renderer, platform, TensorStore, or `ZarrDetectionLoader` dependency. The
+NVIDIA adapter translates editor actions into typed repository operations and
+executes them through an injected factory.
+
+The compatibility implementation remains intentionally narrow. The existing
+`RefinedKeypointRepository` implements the facade, while
+`OpenLegacyReviewWriteRepository` owns an independently opened legacy loader on
+the write worker. On completion, the NVIDIA adapter receives callbacks for the
+active archive path, targeted cache installation, reload fallback, editor
+reset, and downstream invalidation. It no longer includes or names
+`ZarrDetectionLoader`; the composition root supplies those concrete callbacks.
+
+The durable-write rules are unchanged: one write runs at a time, running writes
+are not cancelled, generation/archive mismatches suppress stale settlement,
+targeted cache installation is preferred, and a failed cache installation
+falls back to a full active-archive reload. Fake-repository and callback tests
+freeze operation mapping, exact result propagation, reset behavior, successful
+cache installation, reload fallback, reload failure, and invalidation. The
+direct-loader dependency policy no longer carries an NVIDIA write-adapter
+exception.
 
 ### 2026-08-10 Async Single-Flight Write Extraction
 
@@ -99,11 +119,11 @@ rejection, status construction, stale-completion suppression, and the reset
 intent returned to the main thread. Its worker is injected, so lifecycle tests
 do not require a real archive mutation.
 
-The concrete legacy adapter remains NVIDIA-app-specific. It opens the legacy
-Zarr loader on the worker, performs the refined-keypoint mutation, and applies
-the targeted cache update or reload fallback on the GUI thread. It also owns
-editor reset and downstream presentation invalidation. The application closes
-the write session before tearing down the active loader and schedulers.
+The NVIDIA adapter now depends on `ReviewWriteRepository`. The legacy
+repository factory owns the worker-side loader, while typed completion
+callbacks apply the targeted cache update or reload fallback on the GUI thread.
+The application closes the write session before tearing down the active loader
+and schedulers.
 
 This is intentionally separate from `DataAccessScheduler`, which retains
 priority, cancellation, and demand-reservation semantics for frame-local
@@ -1159,7 +1179,7 @@ Acceptance:
   - `EyeMaskRepository`
   - `StimulusRepository`
   - `MovementRepository`
-  - `ReviewWriteRepository`
+  - [x] `ReviewWriteRepository`
 - [ ] Move call sites toward those facades before moving implementation.
 - [ ] Keep `ZarrDetectionLoader` as a backend adapter during this phase.
 

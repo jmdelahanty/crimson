@@ -282,6 +282,7 @@ add_library(crimson_repository_contracts STATIC
     src/subject_mask_overlay_buffer.cpp
     src/subject_shape_overlay_buffer.cpp
     src/zarr/keypoint_overlay_repository.cpp
+    src/zarr/review_write_repository.cpp
     src/zarr/eye_geometry_overlay_repository.cpp
     src/zarr/stimulus_repository.cpp
     src/zarr/subject_mask_overlay_repository.cpp
@@ -294,6 +295,26 @@ target_compile_features(crimson_repository_contracts PUBLIC cxx_std_17)
 target_link_libraries(crimson_repository_contracts PUBLIC
     crimson_data_access_contracts
     Threads::Threads
+)
+
+add_executable(review_write_repository_tests
+    tools/review_write_repository_tests.cpp
+)
+target_include_directories(review_write_repository_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(review_write_repository_tests PRIVATE
+    crimson_repository_contracts
+)
+target_compile_features(review_write_repository_tests PRIVATE cxx_std_17)
+set_target_properties(review_write_repository_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME review_write_repository_tests
+    COMMAND $<TARGET_FILE:review_write_repository_tests>
+)
+set_tests_properties(review_write_repository_tests PROPERTIES
+    LABELS "headless;keypoints;repository;write"
 )
 
 add_library(crimson_ui_reference_scene_evidence STATIC
@@ -2673,6 +2694,7 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/keypoint_v2_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/detection_repository_selection.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/refined_detection_contract.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/review_write_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/subject_mask_bundle_v2_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/subject_mask_sampled_contour_v1_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/subject_mask_v1_contract.cpp"
@@ -2777,6 +2799,7 @@ crimson_configure_parquet_support(redgui)
 
 add_executable(nvidia_refined_keypoint_write_session_tests
     tools/nvidia_refined_keypoint_write_session_tests.cpp
+    src/platform/nvidia/nvidia_refined_keypoint_write_adapter.cpp
     src/platform/nvidia/nvidia_refined_keypoint_write_session.cpp
 )
 target_include_directories(nvidia_refined_keypoint_write_session_tests PRIVATE
@@ -2787,6 +2810,7 @@ target_include_directories(nvidia_refined_keypoint_write_session_tests PRIVATE
 )
 target_link_libraries(nvidia_refined_keypoint_write_session_tests PRIVATE
     crimson_runtime_contracts
+    crimson_repository_contracts
     tensorstore::all_drivers
 )
 target_compile_features(nvidia_refined_keypoint_write_session_tests PRIVATE

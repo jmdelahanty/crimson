@@ -4,6 +4,7 @@
 #include <chrono>
 #include <future>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <thread>
 
@@ -146,11 +147,171 @@ bool testWorkerFailureAndException() {
   return true;
 }
 
+struct CapturedReviewWrite {
+  std::string archive_path;
+  crimson::zarr::ReviewWriteOperation operation;
+  int opens = 0;
+};
+
+class FakeReviewWriteRepository final
+    : public crimson::zarr::ReviewWriteRepository {
+public:
+  explicit FakeReviewWriteRepository(CapturedReviewWrite &capture)
+      : capture_(capture) {}
+
+  crimson::zarr::ReviewWriteResult
+  write(const crimson::zarr::ReviewWriteOperation &operation) override {
+    capture_.operation = operation;
+    crimson::zarr::ReviewWriteResult result;
+    result.ok = true;
+    result.edit_result.changed = true;
+    result.edit_result.cache_update.valid = true;
+    result.edit_result.cache_update.roi_index = operation.selection.roi_index;
+    return result;
+  }
+
+private:
+  CapturedReviewWrite &capture_;
+};
+
+bool testRepositoryActionMapping() {
+  using namespace crimson::platform::nvidia;
+  CapturedReviewWrite capture;
+  crimson::zarr::ReviewWriteRepositoryFactory factory =
+      [&](const std::string &archive_path, std::string &error) {
+        ++capture.opens;
+        capture.archive_path = archive_path;
+        error.clear();
+        return std::make_unique<FakeReviewWriteRepository>(capture);
+      };
+
+  auto save = request(CropKeypointEditorActionType::Save);
+  save.action.keypoints_roi = {{{1.0, 2.0}}, {{3.0, 4.0}}};
+  auto result = executeRefinedKeypointWrite(save, factory);
+  CHECK(result.ok);
+  CHECK(capture.opens == 1);
+  CHECK(capture.archive_path == "archive.zarr");
+  CHECK(capture.operation.kind ==
+        crimson::zarr::ReviewWriteOperationKind::ManualKeypointCorrection);
+  CHECK(capture.operation.selection.roi_index == 12);
+  CHECK(capture.operation.keypoints_roi == save.action.keypoints_roi);
+
+  result = executeRefinedKeypointWrite(
+      request(CropKeypointEditorActionType::MarkNoKeypoints), factory);
+  CHECK(result.ok);
+  CHECK(capture.operation.kind ==
+        crimson::zarr::ReviewWriteOperationKind::FishPresentNoKeypoints);
+
+  result = executeRefinedKeypointWrite(
+      request(CropKeypointEditorActionType::MarkDetectionIssue), factory);
+  CHECK(result.ok);
+  CHECK(capture.operation.kind ==
+        crimson::zarr::ReviewWriteOperationKind::DetectionIssue);
+
+  auto invalid = request(CropKeypointEditorActionType::Save);
+  invalid.selection.reset();
+  result = executeRefinedKeypointWrite(invalid, factory);
+  CHECK(!result.ok);
+  CHECK(result.error == "No keypoint selection.");
+  CHECK(capture.opens == 3);
+  return true;
+}
+
+bool testCallbackSettlementAndReloadFallback() {
+  using namespace crimson::platform::nvidia;
+  RefinedKeypointWriteSession session(
+      [](const RefinedKeypointWriteRequest &write_request) {
+        RefinedKeypointWriteWorkerResult result;
+        result.ok = true;
+        result.edit_result.changed = true;
+        result.edit_result.cache_update.valid = true;
+        result.edit_result.cache_update.roi_index =
+            write_request.selection->roi_index;
+        return result;
+      });
+  CHECK(session.start(request(CropKeypointEditorActionType::Save)).accepted());
+
+  int cache_calls = 0;
+  int reload_calls = 0;
+  int crop_resets = 0;
+  int full_frame_resets = 0;
+  int invalidations = 0;
+  std::string status;
+  RefinedKeypointWriteSettlementCallbacks callbacks{
+      [&](const RefinedKeypointCacheUpdate &update, std::string *) {
+        ++cache_calls;
+        CHECK(update.valid);
+        CHECK(update.roi_index == 12);
+        return true;
+      },
+      [&](std::string &) {
+        ++reload_calls;
+        return true;
+      },
+      [&] { ++crop_resets; },
+      [&] { ++full_frame_resets; },
+      [&] { ++invalidations; },
+  };
+  CHECK(waitUntil([&] {
+    return pollAndApplyRefinedKeypointWrite(session, 7, "archive.zarr", status,
+                                            callbacks);
+  }));
+  CHECK(status == "Keypoint edit saved: roi=12");
+  CHECK(cache_calls == 1);
+  CHECK(reload_calls == 0);
+  CHECK(crop_resets == 1);
+  CHECK(full_frame_resets == 1);
+  CHECK(invalidations == 1);
+
+  CHECK(session.start(request(CropKeypointEditorActionType::MarkDetectionIssue))
+            .accepted());
+  callbacks.apply_cache_update = [&](const RefinedKeypointCacheUpdate &,
+                                     std::string *error) {
+    ++cache_calls;
+    *error = "cache mismatch";
+    return false;
+  };
+  CHECK(waitUntil([&] {
+    return pollAndApplyRefinedKeypointWrite(session, 7, "archive.zarr", status,
+                                            callbacks);
+  }));
+  CHECK(status ==
+        "Marked detection_issue: roi=12 (reloaded; targeted cache update "
+        "failed: cache mismatch)");
+  CHECK(cache_calls == 2);
+  CHECK(reload_calls == 1);
+  CHECK(crop_resets == 2);
+  CHECK(full_frame_resets == 2);
+  CHECK(invalidations == 2);
+
+  CHECK(session.start(request(CropKeypointEditorActionType::MarkNoKeypoints))
+            .accepted());
+  callbacks.reload_active_zarr = [&](std::string &error) {
+    ++reload_calls;
+    error = "reload denied";
+    return false;
+  };
+  CHECK(waitUntil([&] {
+    return pollAndApplyRefinedKeypointWrite(session, 7, "archive.zarr",
+                                            status, callbacks);
+  }));
+  CHECK(status ==
+        "Marked fish_present_no_keypoints but reload failed: reload denied "
+        "(cache update failed: cache mismatch)");
+  CHECK(cache_calls == 3);
+  CHECK(reload_calls == 2);
+  CHECK(crop_resets == 3);
+  CHECK(full_frame_resets == 3);
+  CHECK(invalidations == 2);
+  return true;
+}
+
 } // namespace
 
 int main() {
   if (!testValidationBusySuccessAndStaleCompletion() ||
-      !testWorkerFailureAndException()) {
+      !testWorkerFailureAndException() || !testRepositoryActionMapping() ||
+      !testCallbackSettlementAndReloadFallback()) {
     return 1;
   }
   std::cout << "nvidia_refined_keypoint_write_session_tests: PASS\n";

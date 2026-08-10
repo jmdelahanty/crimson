@@ -7,6 +7,7 @@
 #include "read_only_overlay_controls.h"
 #include "read_only_overlay_scene.h"
 #include "roi_inset_presentation.h"
+#include "zarr/review_write_repository.h"
 #include "zarr_bbox_edit.h"
 
 #include <cstddef>
@@ -15,7 +16,6 @@
 #include <vector>
 
 struct StimulusPlayback;
-struct RefinedKeypointSelection;
 
 using CameraViewMaskOverlayMode = crimson::overlay::ReadOnlyMaskOverlayMode;
 
