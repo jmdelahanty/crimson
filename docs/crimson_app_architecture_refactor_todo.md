@@ -4,6 +4,55 @@ Date anchored: 2026-04-03.
 
 Lifecycle: **active architecture roadmap**.
 
+## Long-Term Platform Composition
+
+The target is a shared Crimson application assembled by thin platform
+composition roots, not one universal platform implementation and not three
+copies of the current application shell. Shared application/session policy,
+repository contracts, presentation models, scene construction, transport
+commands, and feature UI modules should remain portable. Concrete media,
+graphics, native-window, and operating-system services remain behind platform
+adapters.
+
+The expected composition roots are:
+
+- `src/platform/macos/crimson_macos_main.mm` for Cocoa, Metal, and
+  AVFoundation wiring;
+- a future `src/platform/nvidia/crimson_nvidia_main.cpp` for the shared
+  CUDA/NVDEC/OpenGL/FFmpeg application used by Linux and Windows; and
+- optional very small Linux- or Windows-specific bootstrap files only when
+  native display initialization, crash handling, paths, dialogs, or packaging
+  genuinely differ.
+
+Ubuntu is a packaging and qualification target, not an application-architecture
+boundary, so a `crimson_ubuntu_main` should not be introduced merely to name a
+distribution. `src/red.cpp` currently serves as the combined Linux/Windows
+NVIDIA composition root. It should be moved or replaced only after its
+remaining responsibilities are narrow enough that the change is mechanical.
+
+A final composition root should only parse platform launch options, construct
+platform services, assemble the shared application/session, run the event
+loop, and perform ordered shutdown. It may establish per-frame dispatch order,
+but it should not implement repository semantics, feature state machines,
+coordinate policy, playback policy, or evidence schemas.
+
+Continue extraction when it creates a cohesive owner, removes duplicated
+behavior, makes policy headlessly testable, or replaces direct cross-feature
+mutation with a typed command or result. Do not extract solely to reduce line
+count, wrap a single call, predict a hypothetical platform difference, or
+force unlike Metal and NVIDIA resource lifecycles through one abstraction.
+Each extraction should preserve behavior, keep platform resource ownership
+explicit, and compile against every backend that consumes the new module.
+
+- [ ] Reduce `red.cpp` to the NVIDIA wiring/frame-loop boundary before moving
+      it to `src/platform/nvidia/crimson_nvidia_main.cpp`.
+- [ ] Add Linux- or Windows-specific bootstrap translation units only when a
+      concrete native integration requires them.
+- [ ] Keep macOS and NVIDIA media/rendering ownership separate while sharing
+      backend-neutral application and presentation contracts.
+- [ ] Stop extracting a region when its remaining code is platform wiring with
+      one clear owner and no independently testable policy.
+
 ## Recording Clip Index Media
 
 - [x] Extract strict backend-neutral `recording_clip_index.json` parsing and
