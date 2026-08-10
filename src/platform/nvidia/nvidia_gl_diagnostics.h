@@ -7,13 +7,6 @@
 
 namespace crimson::platform::nvidia {
 
-struct ClippedTextureDumpConfig {
-  bool enabled = false;
-  int parent_frame = -1;
-  std::filesystem::path output_path;
-  bool dumped = false;
-};
-
 struct GlTextureDumpResult {
   bool ok = false;
   int width = 0;

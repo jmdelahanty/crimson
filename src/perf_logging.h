@@ -3,35 +3,14 @@
 #include "gui/analysis_timeline_perf.h"
 #include "gui/camera_view_overlay_renderer.h"
 #include "gui/crop_preview_perf.h"
+#include "perf_log_writer.h"
 #include "stimulus_playback.h"
 
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
 #include <string>
 #include <vector>
-
-struct PerfLogWriter {
-    std::ofstream stream;
-    std::filesystem::path csv_path;
-    std::filesystem::path metadata_path;
-    std::chrono::steady_clock::time_point start_steady{};
-    std::chrono::steady_clock::time_point last_sample_steady{};
-
-    bool open(const std::filesystem::path& output_path);
-    bool enabled() const;
-};
-
-struct MaskPerfLogWriter {
-    std::ofstream stream;
-    std::filesystem::path jsonl_path;
-    int samples_since_flush = 0;
-    std::chrono::steady_clock::time_point last_flush_steady{};
-
-    bool open(const std::filesystem::path& output_path);
-    bool enabled() const;
-};
 
 struct PerfLogFrameContext {
     std::vector<std::string> camera_names;
@@ -164,9 +143,6 @@ struct MaskPerfLogFrameContext {
 
     std::chrono::steady_clock::time_point frame_loop_start{};
 };
-
-std::filesystem::path defaultMaskPerfLogPath(
-    const std::filesystem::path& default_buffer_dump_root);
 
 void maybeWritePerfLogSample(PerfLogWriter& writer,
                              const PerfLogFrameContext& context,

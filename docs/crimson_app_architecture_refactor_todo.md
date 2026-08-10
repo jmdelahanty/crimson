@@ -53,6 +53,35 @@ explicit, and compile against every backend that consumes the new module.
 - [ ] Stop extracting a region when its remaining code is platform wiring with
       one clear owner and no independently testable policy.
 
+### 2026-08-10 NVIDIA Diagnostics Session Extraction
+
+The NVIDIA composition root now delegates diagnostic sink configuration and
+lifetime to a typed `NvidiaDiagnosticsSession`. The session owns performance,
+mask-performance, playback, frame-sync, and clipped-frame writers; exact
+CLI/environment/default path precedence; clipped texture-dump configuration;
+clipped mismatch aggregation; periodic summary publication; and the final
+flush/close sequence. The render loop continues to gather concrete decoder,
+ring-buffer, resolver, texture, and framebuffer evidence because those reads
+remain timing- and backend-specific.
+
+The reusable CSV and mask JSONL sink types moved into `perf_log_writer.*`,
+separate from the frame-sampling code that depends on NVIDIA application
+globals. This permits the diagnostics session lifecycle to be tested without a
+GPU, decoder, GUI, or `ZarrDetectionLoader`. Headless tests freeze path
+precedence, invalid texture-frame rejection, sink enablement, envelope
+preservation, idempotent close, and exactly one shutdown summary.
+
+No diagnostic event schema, flush cadence, mask sampling cadence, or OpenGL
+readback behavior changes. This bounded extraction reduces `red.cpp` from
+5,472 to 5,368 lines. It is an NVIDIA platform session composed from portable
+writers and serializers, not a cross-backend rendering abstraction.
+
+The preceding refined-keypoint write extraction has one named dependency-policy
+exception for its concrete legacy adapter. The typed session and UI do not
+include `zarr_loader.h`; only
+`nvidia_refined_keypoint_write_adapter.cpp` may bridge to the monolith until a
+`ReviewWriteRepository` facade replaces it.
+
 ### 2026-08-10 Async Single-Flight Write Extraction
 
 The reusable asynchronous boundary is execution policy, not a universal data

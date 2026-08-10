@@ -20,6 +20,9 @@ set(CRIMSON_ZARR_LOADER_DIRECT_INCLUDE_ALLOWLIST
     src/gui_interpolation.h
     src/live_crop_image_provider.h
     src/media_session_loader.h
+    # Temporary concrete backend for the typed refined-keypoint write session.
+    # New UI/session code must depend on the typed contract, not this adapter.
+    src/platform/nvidia/nvidia_refined_keypoint_write_adapter.cpp
     src/red.cpp
     src/refined_keypoint_repository.h
     src/review_frame_state.h

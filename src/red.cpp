@@ -49,6 +49,7 @@
 #include "media_session_loader.h"
 #include "perf_logging.h"
 #include "platform/nvidia/nvidia_clipped_media_coordinator.h"
+#include "platform/nvidia/nvidia_diagnostics_session.h"
 #include "platform/nvidia/nvidia_frame_buffer_adapter.h"
 #include "platform/nvidia/nvidia_frame_inspect_adapter.h"
 #include "platform/nvidia/nvidia_gl_diagnostics.h"
@@ -163,11 +164,8 @@ namespace {
 
 using json = nlohmann::json;
 
-using PlaybackTraceLogWriter =
-    crimson::playback::diagnostics::PlaybackTraceJsonlWriter;
 namespace nvidia_trace = crimson::platform::nvidia::trace;
 namespace nvidia_diagnostics = crimson::platform::nvidia::diagnostics;
-using crimson::platform::nvidia::parseIntegerArgument;
 using crimson::platform::nvidia::UiReferenceState;
 using crimson::platform::nvidia::uiReferenceStateName;
 
@@ -515,119 +513,29 @@ int main(int argc, char **argv) {
   int frame_sync_latest_decoded = -1;
   int frame_sync_recording_remaining = -1;
   int frame_sync_recording_total = -1;
-  PerfLogWriter perf_log_writer;
-  MaskPerfLogWriter mask_perf_log_writer;
-  PlaybackTraceLogWriter playback_trace_log_writer;
-  PlaybackTraceLogWriter frame_sync_trace_log_writer;
-  PlaybackTraceLogWriter clipped_frame_trace_log_writer;
-  nvidia_trace::ClippedFrameTraceStats clipped_frame_trace_stats;
-  crimson::platform::nvidia::ClippedTextureDumpConfig clipped_texture_dump;
+  nvidia_diagnostics::NvidiaDiagnosticsSession diagnostics_session;
+  diagnostics_session.open(
+      nvidia_diagnostics::NvidiaDiagnosticsOptions{
+          default_buffer_dump_root,
+          cli_perf_log_path,
+          mask_perf_log_enabled,
+          cli_mask_perf_log_path,
+          cli_mask_perf_sample_every,
+          cli_playback_trace_log_path,
+          cli_frame_sync_trace_log_path,
+          nvidia_diagnostics::captureNvidiaDiagnosticsEnvironment(),
+      },
+      std::cout, std::cerr);
+  auto &perf_log_writer = diagnostics_session.perfLogWriter();
+  auto &mask_perf_log_writer = diagnostics_session.maskPerfLogWriter();
+  auto &clipped_frame_trace_stats =
+      diagnostics_session.clippedFrameTraceStats();
+  auto &clipped_texture_dump = diagnostics_session.clippedTextureDump();
   const bool clipped_rebase_before_play =
       crimson_env_flag_enabled("CRIMSON_CLIPPED_REBASE_BEFORE_PLAY");
   constexpr auto kPerfLogSamplePeriod = std::chrono::milliseconds(250);
   constexpr uint64_t kPlaybackWarmupPerfFrames = 120;
   constexpr uint64_t kPlaybackWarmupPerfSampleStride = 2;
-  auto openPlaybackTraceLog = [](PlaybackTraceLogWriter &writer,
-                                 const std::filesystem::path &path,
-                                 const char *label) {
-    const std::string log_label = label != nullptr ? label : "PlaybackTrace";
-    if (writer.open(path, log_label)) {
-      std::cout << "[" << log_label << "] Writing JSONL samples to "
-                << writer.path() << std::endl;
-      return true;
-    }
-    std::cerr << "[" << log_label << "] Failed to open " << path
-              << " for writing: " << writer.lastError() << std::endl;
-    return false;
-  };
-  if (!cli_perf_log_path.empty()) {
-    (void)perf_log_writer.open(cli_perf_log_path);
-  }
-  if (mask_perf_log_enabled) {
-    const std::filesystem::path mask_perf_log_path =
-        cli_mask_perf_log_path.empty()
-            ? defaultMaskPerfLogPath(default_buffer_dump_root)
-            : cli_mask_perf_log_path;
-    (void)mask_perf_log_writer.open(mask_perf_log_path);
-    if (cli_mask_perf_sample_every > 1) {
-      std::cout << "[MaskPerfLog] Sampling every " << cli_mask_perf_sample_every
-                << " frames" << std::endl;
-    }
-  }
-  if (!cli_playback_trace_log_path.empty()) {
-    (void)openPlaybackTraceLog(playback_trace_log_writer,
-                               cli_playback_trace_log_path, "PlaybackTrace");
-  }
-  const char *frame_sync_trace_path_env =
-      std::getenv("CRIMSON_FRAME_SYNC_TRACE_PATH");
-  const bool frame_sync_trace_enabled =
-      crimson_env_flag_enabled("CRIMSON_FRAME_SYNC_TRACE") ||
-      !cli_frame_sync_trace_log_path.empty() ||
-      (frame_sync_trace_path_env != nullptr &&
-       frame_sync_trace_path_env[0] != '\0');
-  if (frame_sync_trace_enabled) {
-    std::filesystem::path frame_sync_trace_path =
-        default_buffer_dump_root / "frame_sync_trace_latest.jsonl";
-    if (frame_sync_trace_path_env != nullptr &&
-        frame_sync_trace_path_env[0] != '\0') {
-      frame_sync_trace_path = frame_sync_trace_path_env;
-    }
-    if (!cli_frame_sync_trace_log_path.empty()) {
-      frame_sync_trace_path = cli_frame_sync_trace_log_path;
-    }
-    (void)openPlaybackTraceLog(frame_sync_trace_log_writer,
-                               frame_sync_trace_path, "FrameSyncTrace");
-  }
-  const char *clipped_texture_dump_frame_env =
-      std::getenv("CRIMSON_CLIPPED_TEXTURE_DUMP_FRAME");
-  if (clipped_texture_dump_frame_env != nullptr &&
-      clipped_texture_dump_frame_env[0] != '\0') {
-    int dump_frame = -1;
-    if (!parseIntegerArgument(clipped_texture_dump_frame_env, dump_frame) ||
-        dump_frame < 0) {
-      std::cerr << "[ClippedTextureDump] Invalid "
-                << "CRIMSON_CLIPPED_TEXTURE_DUMP_FRAME='"
-                << clipped_texture_dump_frame_env << "'" << std::endl;
-    } else {
-      clipped_texture_dump.enabled = true;
-      clipped_texture_dump.parent_frame = dump_frame;
-      const char *dump_path_env =
-          std::getenv("CRIMSON_CLIPPED_TEXTURE_DUMP_PATH");
-      if (dump_path_env != nullptr && dump_path_env[0] != '\0') {
-        clipped_texture_dump.output_path = dump_path_env;
-      } else {
-        clipped_texture_dump.output_path =
-            default_buffer_dump_root / ("clipped_bound_texture_parent_" +
-                                        std::to_string(dump_frame) + ".png");
-      }
-      if (clipped_texture_dump.output_path.extension().empty()) {
-        clipped_texture_dump.output_path.replace_extension(".png");
-      }
-      std::cout << "[ClippedTextureDump] Will dump parent frame "
-                << clipped_texture_dump.parent_frame << " to "
-                << clipped_texture_dump.output_path << " and "
-                << crimson::platform::nvidia::pathWithStemSuffix(
-                       clipped_texture_dump.output_path, "_flip_y")
-                << std::endl;
-    }
-  }
-  const char *clipped_frame_trace_path_env =
-      std::getenv("CRIMSON_CLIPPED_FRAME_TRACE_PATH");
-  const bool clipped_frame_trace_enabled =
-      crimson_env_flag_enabled("CRIMSON_CLIPPED_FRAME_TRACE") ||
-      clipped_texture_dump.enabled ||
-      (clipped_frame_trace_path_env != nullptr &&
-       clipped_frame_trace_path_env[0] != '\0');
-  if (clipped_frame_trace_enabled) {
-    std::filesystem::path clipped_frame_trace_path =
-        default_buffer_dump_root / "clipped_frame_trace_latest.jsonl";
-    if (clipped_frame_trace_path_env != nullptr &&
-        clipped_frame_trace_path_env[0] != '\0') {
-      clipped_frame_trace_path = clipped_frame_trace_path_env;
-    }
-    (void)openPlaybackTraceLog(clipped_frame_trace_log_writer,
-                               clipped_frame_trace_path, "ClippedFrameTrace");
-  }
   std::unordered_map<std::string, nvidia_trace::FrameSyncTraceState>
       frame_sync_trace_last_by_camera;
   uint64_t mask_perf_sample_index = 0;
@@ -961,11 +869,11 @@ int main(int argc, char **argv) {
   auto writeClippedPlaybackStateEvent = [&](const std::string &event_name,
                                             const json &details,
                                             bool force_flush) {
-    if (!clipped_frame_trace_log_writer.enabled() ||
+    if (!diagnostics_session.clippedFrameTraceEnabled() ||
         !media_session_loader.hasMappedMedia()) {
       return;
     }
-    clipped_frame_trace_log_writer.write(
+    diagnostics_session.writeClippedFrameTrace(
         crimson::playback::diagnostics::clippedPlaybackStateEventJson(
             event_name, details, clippedPlaybackSnapshot()),
         force_flush);
@@ -1033,8 +941,8 @@ int main(int argc, char **argv) {
       const json rebase_target = clippedPlaybackRebaseTargetBeforePlay();
       const int target_frame = rebase_target.value(
           "target_frame", std::max(0, ps.to_display_frame_number));
-      if (clipped_frame_trace_log_writer.enabled()) {
-        clipped_frame_trace_log_writer.write(
+      if (diagnostics_session.clippedFrameTraceEnabled()) {
+        diagnostics_session.writeClippedFrameTrace(
             json{{"event", "clipped_rebase_before_play"},
                  {"phase", "before_seek"},
                  {"target", rebase_target},
@@ -1046,8 +954,8 @@ int main(int argc, char **argv) {
           /*prefer_buffer_when_paused=*/false,
           /*force_inaccurate=*/true,
           /*skip_stimulus_hard_seek=*/true);
-      if (clipped_frame_trace_log_writer.enabled()) {
-        clipped_frame_trace_log_writer.write(
+      if (diagnostics_session.clippedFrameTraceEnabled()) {
+        diagnostics_session.writeClippedFrameTrace(
             json{{"event", "clipped_rebase_before_play"},
                  {"phase", "after_seek"},
                  {"target", rebase_target},
@@ -1155,10 +1063,10 @@ int main(int argc, char **argv) {
           int presenter_presented_slot = -1, int presenter_presented_frame = -1,
           int presenter_resolved_frame = -1,
           bool presenter_prewarm_active = false) {
-        if (!playback_trace_log_writer.enabled()) {
+        if (!diagnostics_session.playbackTraceEnabled()) {
           return;
         }
-        playback_trace_log_writer.write(
+        diagnostics_session.writePlaybackTrace(
             crimson::playback::diagnostics::playbackTraceEventJson(
                 event_name, details,
                 playbackTraceSnapshot(
@@ -1260,10 +1168,10 @@ int main(int argc, char **argv) {
           int presenter_target_frame, int presenter_preferred_paused_slot,
           int presenter_presented_slot, int presenter_presented_frame,
           int presenter_resolved_frame, bool presenter_prewarm_active) {
-        if (!frame_sync_trace_log_writer.enabled()) {
+        if (!diagnostics_session.frameSyncTraceEnabled()) {
           return;
         }
-        frame_sync_trace_log_writer.write(
+        diagnostics_session.writeFrameSyncTrace(
             crimson::playback::diagnostics::frameSyncTraceEventJson(
                 details,
                 playbackTraceSnapshot(
@@ -1300,10 +1208,10 @@ int main(int argc, char **argv) {
 
   auto writeClippedHandoffTraceEvent = [&](const std::string &event_name,
                                            const json &details) {
-    if (!frame_sync_trace_log_writer.enabled()) {
+    if (!diagnostics_session.frameSyncTraceEnabled()) {
       return;
     }
-    frame_sync_trace_log_writer.write(
+    diagnostics_session.writeFrameSyncTrace(
         crimson::playback::diagnostics::clippedHandoffTraceEventJson(
             event_name, details, video_loaded, current_frame_num,
             playbackSnapshot(), clippedMediaStateSnapshot()),
@@ -1342,18 +1250,6 @@ int main(int argc, char **argv) {
         row->clip_local_frame_index,
         static_cast<uint64_t>(row->selected_run_index),
         std::move(selected_snapshot)};
-  };
-
-  auto writeClippedFrameTraceSummary = [&](const char *reason) {
-    if (!clipped_frame_trace_log_writer.enabled() ||
-        clipped_frame_trace_stats.frames_traced == 0) {
-      return;
-    }
-    clipped_frame_trace_log_writer.write(
-        json{{"event", "clipped_frame_trace_summary"},
-             {"reason", reason != nullptr ? reason : "unknown"},
-             {"summary", clipped_frame_trace_stats.summaryJson()}},
-        /*force_flush=*/true);
   };
 
   if (ui_reference.enabled) {
@@ -3625,7 +3521,7 @@ int main(int argc, char **argv) {
                   ps.slider_frame_number,
               };
           camera_context_input.capture_texture_draw_trace =
-              clipped_frame_trace_log_writer.enabled() && zarr_loaded &&
+              diagnostics_session.clippedFrameTraceEnabled() && zarr_loaded &&
               zarr_loader.hasClippedCollection();
           PreparedCameraViewFrameContext prepared_camera_context;
           prepareCameraViewFrameContext(camera_context_input,
@@ -3673,7 +3569,7 @@ int main(int argc, char **argv) {
           const bool frame_sync_staging_valid_after_draw =
               camera_after_draw.playback_staging_valid;
 
-          if (frame_sync_trace_log_writer.enabled()) {
+          if (diagnostics_session.frameSyncTraceEnabled()) {
             const int zarr_box_count = static_cast<int>(zarr_boxes.size());
             nvidia_trace::FrameSyncTraceState &last_trace_state =
                 frame_sync_trace_last_by_camera[win_name];
@@ -3821,7 +3717,7 @@ int main(int argc, char **argv) {
             }
           }
 
-          if (clipped_frame_trace_log_writer.enabled() && zarr_loaded &&
+          if (diagnostics_session.clippedFrameTraceEnabled() && zarr_loaded &&
               zarr_loader.hasClippedCollection() &&
               has_presented_camera_frame) {
             const int current_parent_frame_index = presented_frame;
@@ -3983,12 +3879,12 @@ int main(int argc, char **argv) {
             trace_snapshot.detection_details_frame_id =
                 static_cast<int64_t>(detection_details.frame_id);
             trace_snapshot.sanity = sanity;
-            clipped_frame_trace_log_writer.write(
+            diagnostics_session.writeClippedFrameTrace(
                 nvidia_trace::clippedFrameJson(trace_snapshot),
                 /*force_flush=*/false);
 
             if ((clipped_frame_trace_stats.frames_traced % 300) == 0) {
-              writeClippedFrameTraceSummary("periodic");
+              diagnostics_session.writeClippedFrameTraceSummary("periodic");
             }
           }
 
@@ -4918,7 +4814,7 @@ int main(int argc, char **argv) {
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     frame_gl_draw_ms =
         durationMs(std::chrono::steady_clock::now() - gl_draw_start);
-    if (clipped_frame_trace_log_writer.enabled() && zarr_loaded &&
+    if (diagnostics_session.clippedFrameTraceEnabled() && zarr_loaded &&
         zarr_loader.hasClippedCollection() && scene != nullptr) {
       for (int camera_idx = 0; camera_idx < static_cast<int>(scene->num_cams);
            ++camera_idx) {
@@ -4931,7 +4827,7 @@ int main(int argc, char **argv) {
         const auto texture_draw = nvidia_diagnostics::toTraceTextureDraw(trace);
         nvidia_trace::recordTextureDrawOutcome(clipped_frame_trace_stats,
                                                texture_draw);
-        clipped_frame_trace_log_writer.write(
+        diagnostics_session.writeClippedFrameTrace(
             nvidia_trace::clippedTextureDrawEventJson(texture_draw),
             /*force_flush=*/false);
 
@@ -4998,8 +4894,8 @@ int main(int argc, char **argv) {
             dump_event["metadata_write_error"] = metadata_ec.message();
           }
 
-          clipped_frame_trace_log_writer.write(dump_event,
-                                               /*force_flush=*/true);
+          diagnostics_session.writeClippedFrameTrace(
+              std::move(dump_event), /*force_flush=*/true);
           if (dump_result.ok) {
             std::cout << "[ClippedTextureDump] Wrote " << dump_result.raw_path
                       << " and " << dump_result.flip_y_path << std::endl;
@@ -5360,7 +5256,7 @@ int main(int argc, char **argv) {
     };
     maybeWritePerfLogSample(perf_log_writer, perf_frame_context,
                             kPerfLogSamplePeriod);
-    if (playback_trace_log_writer.enabled() && video_loaded &&
+    if (diagnostics_session.playbackTraceEnabled() && video_loaded &&
         (!ps.play_video || seek_progress.state != SeekState::Idle)) {
       writePlaybackTraceEvent(
           "frame",
@@ -5433,7 +5329,7 @@ int main(int argc, char **argv) {
     }
   }
 
-  writeClippedFrameTraceSummary("shutdown");
+  diagnostics_session.close();
 
   // Cleanup
   session_lifecycle.beginClose();

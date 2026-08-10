@@ -95,6 +95,27 @@ target_link_libraries(crimson_nvidia_playback_diagnostics PUBLIC
 )
 target_compile_features(crimson_nvidia_playback_diagnostics PUBLIC cxx_std_17)
 
+add_library(crimson_perf_log_writer STATIC
+    src/perf_log_writer.cpp
+)
+target_include_directories(crimson_perf_log_writer PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_features(crimson_perf_log_writer PUBLIC cxx_std_17)
+
+add_library(crimson_nvidia_diagnostics_session STATIC
+    src/platform/nvidia/nvidia_diagnostics_session.cpp
+)
+target_include_directories(crimson_nvidia_diagnostics_session PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(crimson_nvidia_diagnostics_session PUBLIC
+    crimson_frame_contracts
+    crimson_nvidia_playback_diagnostics
+    crimson_perf_log_writer
+)
+target_compile_features(crimson_nvidia_diagnostics_session PUBLIC cxx_std_17)
+
 add_library(crimson_ui_reference_contract STATIC
     src/ui_reference_contract.cpp
 )
@@ -1387,6 +1408,23 @@ set_tests_properties(nvidia_playback_trace_model_tests PROPERTIES
     LABELS "headless;nvidia;playback;diagnostics"
 )
 
+add_executable(nvidia_diagnostics_session_tests
+    tools/nvidia_diagnostics_session_tests.cpp
+)
+target_link_libraries(nvidia_diagnostics_session_tests PRIVATE
+    crimson_nvidia_diagnostics_session
+)
+target_compile_features(nvidia_diagnostics_session_tests PRIVATE cxx_std_17)
+set_target_properties(nvidia_diagnostics_session_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME nvidia_diagnostics_session_tests
+    COMMAND $<TARGET_FILE:nvidia_diagnostics_session_tests>
+)
+set_tests_properties(nvidia_diagnostics_session_tests PROPERTIES
+    LABELS "configuration;diagnostics;headless;lifecycle;nvidia"
+)
+
 add_executable(nvidia_launch_options_tests
     tools/nvidia_launch_options_tests.cpp
 )
@@ -2625,6 +2663,7 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui_reference_scene_evidence.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/workspace_state.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/overlay_scene_contract.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/perf_log_writer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/read_only_overlay_scene.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/canonical_detection_overlay_scene_adapter.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/canonical_json.cpp"
@@ -2693,6 +2732,7 @@ target_link_libraries(redgui PRIVATE
     crimson_frame_contracts
     crimson_nvidia_playback_adapter
     crimson_nvidia_playback_diagnostics
+    crimson_nvidia_diagnostics_session
     crimson_nvidia_launch_options
     crimson_ui_reference_capture
     crimson_ui_reference_contract
