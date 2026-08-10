@@ -66,6 +66,7 @@
 #include "stimulus_open_coordinator.h"
 #include "ui_reference_capture.h"
 #include "ui_reference_contract.h"
+#include "ui_reference_scene_evidence.h"
 #include "utils.h"
 #include "workspace_state.h"
 #include "yolo_detection.h"
@@ -221,210 +222,6 @@ struct UiReferenceConfig {
   int stimulus_buffer_valid = 0;
   int stimulus_buffer_capacity = 0;
 };
-
-json polarSceneReferenceJson(
-    const crimson::polar::ChaserDistancePolarScene &scene,
-    double display_origin_x, double display_origin_y,
-    const crimson::polar::ChaserDistancePolarDescriptor *descriptor) {
-  json result = {
-      {"ready", scene.ready()},
-      {"status",
-       crimson::polar::chaserDistancePolarSceneStatusName(scene.status)},
-      {"availability", crimson::polar::chaserDistancePolarAvailabilityName(
-                           scene.frame_availability)},
-      {"requested_frame", scene.requested_camera_frame},
-      {"source_frame", scene.source_camera_frame
-                           ? json(*scene.source_camera_frame)
-                           : json(nullptr)},
-      {"point_count", scene.point_count},
-      {"primitive_count", scene.primitives.size()},
-      {"text_count", scene.text.size()},
-      {"semantic_signature",
-       crimson::polar::chaserDistancePolarSceneSemanticSignature(scene)},
-  };
-  if (descriptor != nullptr) {
-    result["descriptor"] = {
-        {"availability", crimson::polar::chaserDistancePolarAvailabilityName(
-                             descriptor->availability)},
-        {"source_group", descriptor->provenance.source_group},
-        {"run_name", descriptor->provenance.run_name},
-        {"component_name", descriptor->provenance.component_name},
-        {"run_selection",
-         crimson::polar::chaserDistancePolarSelectionProvenanceName(
-             descriptor->provenance.run_selection)},
-        {"component_selection",
-         crimson::polar::chaserDistancePolarSelectionProvenanceName(
-             descriptor->provenance.component_selection)},
-        {"row_count", descriptor->row_count},
-        {"chaser_count", descriptor->chaser_count},
-        {"distance_unit", crimson::polar::chaserDistancePolarDistanceUnitName(
-                              descriptor->distance_unit)},
-        {"coordinate_frame", descriptor->coordinate_frame},
-        {"angle_convention", descriptor->angle_convention},
-        {"normalized_coordinate_frame",
-         static_cast<int>(descriptor->normalized_coordinate_frame)},
-        {"normalized_angle_convention",
-         static_cast<int>(descriptor->normalized_angle_convention)},
-        {"dataset_global_max_distance_mm",
-         descriptor->dataset_global_max_distance_mm},
-        {"display_max_distance_mm",
-         descriptor->radial_scale.display_max_distance_mm},
-    };
-  }
-  if (!scene.ready() || !std::isfinite(display_origin_x) ||
-      !std::isfinite(display_origin_y)) {
-    return result;
-  }
-
-  auto pointJson = [&](crimson::polar::ChaserDistancePolarScenePoint point) {
-    return json{{"x", point.x - scene.box.x}, {"y", point.y - scene.box.y}};
-  };
-  auto colorJson = [](const crimson::polar::ChaserDistancePolarRgba &color) {
-    return json::array({color.red, color.green, color.blue, color.alpha});
-  };
-  result["viewport"] = {{"width", scene.viewport.width_px},
-                        {"height", scene.viewport.height_px}};
-  result["box"] = {{"x", scene.box.x},
-                   {"y", scene.box.y},
-                   {"width", scene.box.width},
-                   {"height", scene.box.height}};
-  result["screen_box"] = {
-      {"x", display_origin_x + scene.box.x},
-      {"y", display_origin_y + scene.box.y},
-      {"width", scene.box.width},
-      {"height", scene.box.height},
-  };
-  result["graph"] = {
-      {"x", scene.graph.x - scene.box.x},
-      {"y", scene.graph.y - scene.box.y},
-      {"width", scene.graph.width},
-      {"height", scene.graph.height},
-  };
-  result["center"] = pointJson(scene.center);
-  result["radius_px"] = scene.radius_px;
-  result["display_max_distance_mm"] = scene.display_max_distance_mm;
-
-  result["points"] = json::array();
-  for (const auto &primitive : scene.primitives) {
-    if (primitive.type !=
-        crimson::polar::ChaserDistancePolarScenePrimitiveType::Marker) {
-      continue;
-    }
-    result["points"].push_back({
-        {"chaser_index", primitive.chaser_index},
-        {"center", pointJson(primitive.first)},
-        {"screen_center",
-         {{"x", display_origin_x + primitive.first.x},
-          {"y", display_origin_y + primitive.first.y}}},
-        {"radius_px", primitive.radius_px},
-        {"fill", colorJson(primitive.fill)},
-        {"stroke", colorJson(primitive.stroke)},
-    });
-  }
-  result["text"] = json::array();
-  for (const auto &annotation : scene.text) {
-    result["text"].push_back({
-        {"layer",
-         crimson::polar::chaserDistancePolarSceneLayerName(annotation.layer)},
-        {"anchor", pointJson(annotation.anchor)},
-        {"centered", annotation.centered},
-        {"color", colorJson(annotation.color)},
-        {"content", annotation.content},
-    });
-  }
-  return result;
-}
-
-json stimulusCameraOverlaySceneReferenceJson(
-    const crimson::stimulus::StimulusCameraOverlayScene &scene,
-    double display_origin_x, double display_origin_y,
-    const crimson::timeline::StimulusContextTimelineDescriptor *descriptor) {
-  json result = {
-      {"ready", scene.ready()},
-      {"status",
-       crimson::stimulus::stimulusCameraOverlaySceneStatusName(scene.status)},
-      {"availability",
-       crimson::stimulus::stimulusCameraOverlayFrameAvailabilityName(
-           scene.frame_availability)},
-      {"requested_frame", scene.requested_camera_frame},
-      {"source_frame", scene.source_camera_frame
-                           ? json(*scene.source_camera_frame)
-                           : json(nullptr)},
-      {"event_source_frame", scene.event_source_camera_frame
-                                 ? json(*scene.event_source_camera_frame)
-                                 : json(nullptr)},
-      {"step_index",
-       scene.step_index ? json(*scene.step_index) : json(nullptr)},
-      {"grating_direction_camera_deg",
-       scene.grating_direction_camera_deg
-           ? json(*scene.grating_direction_camera_deg)
-           : json(nullptr)},
-      {"primitive_count", scene.primitives.size()},
-      {"text_count", scene.text.size()},
-      {"event_box",
-       {{"x", scene.event_box.x},
-        {"y", scene.event_box.y},
-        {"width", scene.event_box.width},
-        {"height", scene.event_box.height}}},
-      {"step_box",
-       {{"x", scene.step_box.x},
-        {"y", scene.step_box.y},
-        {"width", scene.step_box.width},
-        {"height", scene.step_box.height}}},
-      {"viewport",
-       {{"width", scene.viewport.width_px},
-        {"height", scene.viewport.height_px}}},
-      {"display_origin", {{"x", display_origin_x}, {"y", display_origin_y}}},
-      {"semantic_signature",
-       crimson::stimulus::stimulusCameraOverlaySceneSemanticSignature(scene)},
-      {"screen_event_box",
-       {{"x", display_origin_x + scene.event_box.x},
-        {"y", display_origin_y + scene.event_box.y},
-        {"width", scene.event_box.width},
-        {"height", scene.event_box.height}}},
-      {"screen_step_box",
-       {{"x", display_origin_x + scene.step_box.x},
-        {"y", display_origin_y + scene.step_box.y},
-        {"width", scene.step_box.width},
-        {"height", scene.step_box.height}}},
-      {"descriptor", descriptor != nullptr
-                         ? json{{"run_name", descriptor->run_name},
-                                {"frame_count", descriptor->frame_count},
-                                {"event_count", descriptor->event_count},
-                                {"step_count", descriptor->step_count}}
-                         : json(nullptr)}};
-  auto colorJson = [](const auto &color) {
-    return json::array({color.red, color.green, color.blue, color.alpha});
-  };
-  result["primitives"] = json::array();
-  for (const auto &primitive : scene.primitives) {
-    result["primitives"].push_back({
-        {"type", static_cast<int>(primitive.type)},
-        {"layer", crimson::stimulus::stimulusCameraOverlaySceneLayerName(
-                      primitive.layer)},
-        {"first", {{"x", primitive.first.x}, {"y", primitive.first.y}}},
-        {"second", {{"x", primitive.second.x}, {"y", primitive.second.y}}},
-        {"third", {{"x", primitive.third.x}, {"y", primitive.third.y}}},
-        {"corner_radius_px", primitive.corner_radius_px},
-        {"stroke_width_px", primitive.stroke_width_px},
-        {"fill", colorJson(primitive.fill)},
-        {"stroke", colorJson(primitive.stroke)},
-        {"has_fill", primitive.has_fill},
-        {"has_stroke", primitive.has_stroke},
-    });
-  }
-  result["text"] = json::array();
-  for (const auto &annotation : scene.text) {
-    result["text"].push_back({
-        {"layer", crimson::stimulus::stimulusCameraOverlaySceneLayerName(
-                      annotation.layer)},
-        {"anchor", {{"x", annotation.anchor.x}, {"y", annotation.anchor.y}}},
-        {"color", colorJson(annotation.color)},
-        {"content", annotation.content},
-    });
-  }
-  return result;
-}
 
 double durationMs(std::chrono::steady_clock::duration duration) {
   return std::chrono::duration<double, std::milli>(duration).count();
@@ -5549,18 +5346,19 @@ int main(int argc, char **argv) {
             {"camera_capacity", ui_reference.camera_buffer_capacity},
             {"stimulus_valid", ui_reference.stimulus_buffer_valid},
             {"stimulus_capacity", ui_reference.stimulus_buffer_capacity}}},
-          {"polar", polarSceneReferenceJson(
-                        perf_chaser_distance_polar_scene,
-                        perf_chaser_distance_polar_origin_x_px,
-                        perf_chaser_distance_polar_origin_y_px,
-                        chaser_distance_polar_repository != nullptr
-                            ? &chaser_distance_polar_repository->descriptor()
-                            : nullptr)},
+          {"polar",
+           crimson::ui_reference::polarSceneEvidenceJson(
+               perf_chaser_distance_polar_scene,
+               {perf_chaser_distance_polar_origin_x_px,
+                perf_chaser_distance_polar_origin_y_px, 1.0, 1.0},
+               chaser_distance_polar_repository != nullptr
+                   ? &chaser_distance_polar_repository->descriptor()
+                   : nullptr)},
           {"stimulus_camera_overlay",
-           stimulusCameraOverlaySceneReferenceJson(
+           crimson::ui_reference::stimulusCameraOverlaySceneEvidenceJson(
                perf_stimulus_camera_overlay_scene,
-               perf_stimulus_camera_overlay_origin_x_px,
-               perf_stimulus_camera_overlay_origin_y_px,
+               {perf_stimulus_camera_overlay_origin_x_px,
+                perf_stimulus_camera_overlay_origin_y_px, 1.0, 1.0},
                stimulus_context_timeline_repository != nullptr
                    ? &stimulus_context_timeline_repository->descriptor()
                    : nullptr)},

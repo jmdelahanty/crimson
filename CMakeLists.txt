@@ -274,6 +274,18 @@ target_link_libraries(crimson_repository_contracts PUBLIC
     Threads::Threads
 )
 
+add_library(crimson_ui_reference_scene_evidence STATIC
+    src/ui_reference_scene_evidence.cpp
+)
+target_include_directories(crimson_ui_reference_scene_evidence PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_features(crimson_ui_reference_scene_evidence PUBLIC cxx_std_17)
+target_link_libraries(crimson_ui_reference_scene_evidence PUBLIC
+    crimson_repository_contracts
+    nlohmann_json::nlohmann_json
+)
+
 add_library(crimson_crop_contracts STATIC
     src/crop_source_contract.cpp
     src/crop_presentation_coordinator.cpp
@@ -1423,6 +1435,23 @@ add_test(NAME ui_reference_contract_tests
 )
 set_tests_properties(ui_reference_contract_tests PROPERTIES
     LABELS "headless;portable;ui;reference;contract;launch"
+)
+
+add_executable(ui_reference_scene_evidence_tests
+    tools/ui_reference_scene_evidence_tests.cpp
+)
+target_link_libraries(ui_reference_scene_evidence_tests PRIVATE
+    crimson_ui_reference_scene_evidence
+)
+target_compile_features(ui_reference_scene_evidence_tests PRIVATE cxx_std_17)
+set_target_properties(ui_reference_scene_evidence_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME ui_reference_scene_evidence_tests
+    COMMAND $<TARGET_FILE:ui_reference_scene_evidence_tests>
+)
+set_tests_properties(ui_reference_scene_evidence_tests PROPERTIES
+    LABELS "evidence;headless;portable;presentation;ui;reference"
 )
 
 foreach(runtime_test
@@ -2588,6 +2617,7 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/session_open_transaction.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/recording_open_workflow.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/session_loading_presentation.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui_reference_scene_evidence.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/workspace_state.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/overlay_scene_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/read_only_overlay_scene.cpp"
@@ -2661,6 +2691,7 @@ target_link_libraries(redgui PRIVATE
     crimson_nvidia_launch_options
     crimson_ui_reference_capture
     crimson_ui_reference_contract
+    crimson_ui_reference_scene_evidence
     crimson_runtime_contracts
     crimson_overlay_contracts
     crimson_repository_contracts
@@ -3444,6 +3475,7 @@ if(CRIMSON_BUILD_MACOS_APP)
         crimson_apple_stimulus_playback
         crimson_ui_reference_capture
         crimson_ui_reference_contract
+        crimson_ui_reference_scene_evidence
         crimson_tensorstore_repositories
         crimson_workspace_contracts
         crimson::tensorstore_zarr

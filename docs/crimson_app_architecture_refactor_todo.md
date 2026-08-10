@@ -227,6 +227,27 @@ published an empty 1280x720 reference and OpenGL published a frame-exact
 The authenticated NVIDIA playback smoke also advanced frames 0 through 300 in
 3.00 seconds after the parser adoption.
 
+### 2026-08-10 Shared UI Reference Scene Evidence
+
+Polar-inset and stimulus-camera-overlay evidence now use one backend-neutral
+JSON serializer. The serializer consumes only the portable scene, optional
+repository descriptor, and an explicit display transform containing origin and
+framebuffer scale. It has no ImGui, Metal, OpenGL, decoder, archive, or capture
+dependency. Both shells continue to own scene construction, GPU rendering,
+framebuffer readback, and evidence publication.
+
+The shared transform preserves unit-scale NVIDIA screen coordinates and
+Retina-scaled Metal coordinates. Stimulus evidence now always declares
+`display_scale`; NVIDIA reports the previously implicit `{1, 1}` transform,
+while Metal reports its drawable scale. Portable tests lock the complete
+top-level, descriptor, primitive, and text envelopes and verify unscaled and
+nonuniform scaled coordinates without changing the scene semantic signature.
+
+This extraction removes the duplicate serializers from both composition roots,
+reducing `red.cpp` from 5,920 to 5,718 lines and
+`crimson_macos_main.mm` from 6,118 to 5,909 lines. Historical reference files
+remain immutable evidence; future captures use the shared envelope.
+
 ### 2026-08-10 Apple Analysis Product Adoption Extraction
 
 The macOS composition root now delegates completed analysis-repository bundles
