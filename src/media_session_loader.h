@@ -2,6 +2,7 @@
 
 #include "camera.h"
 #include "clipped_media_handoff.h"
+#include "media_selection_plan.h"
 #include "playback_clock.h"
 #include "recording_clip_media_provider.h"
 #include "recording_open_workflow.h"
@@ -45,6 +46,7 @@ struct MediaSessionLoaderContext {
   std::string *root_dir = nullptr;
   std::string *skeleton_dir = nullptr;
   std::vector<std::string> *camera_names = nullptr;
+  std::vector<std::string> *image_names = nullptr;
   std::vector<CameraParams> *camera_params = nullptr;
   std::vector<std::thread> *decoder_threads = nullptr;
   std::vector<std::unique_ptr<FFmpegDemuxer>> *demuxers = nullptr;
@@ -74,6 +76,9 @@ class MediaSessionLoader {
 public:
   explicit MediaSessionLoader(const MediaSessionLoaderContext &context);
 
+  bool loadSelectedCameraMedia(
+      const std::vector<crimson::media::CameraMediaSelection> &selections,
+      std::string &error_message) const;
   void loadCameraCalibrationsForCurrentMedia() const;
   void tryAutoLoadAffiliatedVideoFromZarr(const char *trigger_label) const;
   void tryAutoLoadStimulusVideo(const char *trigger_label) const;
@@ -96,6 +101,10 @@ private:
   bool loadSingleVideoMedia(const std::filesystem::path &video_path,
                             bool infer_recording_root,
                             const char *success_label) const;
+  bool executeCameraMediaPlan(const crimson::media::CameraMediaOpenPlan &plan,
+                              bool infer_recording_root,
+                              const char *success_label,
+                              std::string *error_message) const;
   bool activateRecordingClipIndex(const std::filesystem::path &index_path,
                                   std::string *error_message = nullptr) const;
 

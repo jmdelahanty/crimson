@@ -117,6 +117,7 @@ if(WIN32)
 endif()
 
 add_library(crimson_recording_contracts STATIC
+    src/media_selection_plan.cpp
     src/recording_clip_index.cpp
     src/recording_clip_media_provider.cpp
     src/recording_path_resolution.cpp
@@ -144,6 +145,23 @@ add_test(NAME recording_path_resolution_tests
 )
 set_tests_properties(recording_path_resolution_tests PROPERTIES
     LABELS "headless;media;portable;runtime"
+)
+
+add_executable(media_selection_plan_tests
+    tools/media_selection_plan_tests.cpp
+)
+target_link_libraries(media_selection_plan_tests PRIVATE
+    crimson_recording_contracts
+)
+target_compile_features(media_selection_plan_tests PRIVATE cxx_std_17)
+set_target_properties(media_selection_plan_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME media_selection_plan_tests
+    COMMAND $<TARGET_FILE:media_selection_plan_tests>
+)
+set_tests_properties(media_selection_plan_tests PROPERTIES
+    LABELS "headless;media;portable;selection"
 )
 
 add_executable(recording_clip_index_tests
@@ -2468,6 +2486,7 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/playback_buffer_browser.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/session_lifecycle.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/loading_progress.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/media_selection_plan.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/frame_presentation.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/diagnostic_report.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/session_readiness.cpp"

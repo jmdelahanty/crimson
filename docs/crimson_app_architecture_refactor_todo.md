@@ -100,6 +100,32 @@ The macOS build and all 83 configured tests pass. An isolated native Ubuntu
 the authenticated ws1 playback smoke advanced parent frames 0 through 300 and
 presented frame 300 from slot 0 in 3.00 seconds.
 
+### 2026-08-10 Camera Media Open Extraction
+
+Camera-media selection is now planned through a backend-neutral contract before
+the NVIDIA application mutates decoder state. The planner classifies a complete
+selection as MP4 cameras or an image sequence, preserves camera ordering and
+full paths, and fails closed for mixed types, duplicate camera identities,
+malformed image names, or incomplete camera/frame image grids. Portable tests
+cover valid multi-camera video and image selections plus each rejection path.
+
+`MediaSessionLoader` now owns the NVIDIA execution of that plan: FFmpeg demuxer
+construction, image sample validation, camera dimensions, decoder teardown and
+replacement, scene-buffer allocation, decoder/image-loader thread startup,
+playback timeline configuration, initial video seek, and calibration loading.
+Selection validation and media probing happen before existing camera decoder
+threads are stopped. If replacement fails after teardown begins, the loader
+stops and joins any partially started replacement threads and reports the
+failure through the existing recording-open workflow.
+
+The `ChooseMedia` branch in `red.cpp` now translates the ImGui file-dialog
+selection, invokes the loader, refreshes composition-level playback state, and
+settles the shared session transaction. It no longer parses camera/image names,
+constructs demuxers, allocates render buffers, or starts decoder threads. This
+bounded Phase 3 extraction reduces `red.cpp` from 6,646 to 6,556 lines. FFmpeg,
+NVDEC, CUDA, OpenGL, and concrete thread ownership remain platform-specific;
+the selection plan and session lifecycle remain backend-neutral.
+
 ## 2026-07-23 Runtime Contract Checkpoint
 
 The first backend-neutral runtime slices are now shared by the macOS and

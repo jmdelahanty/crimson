@@ -88,8 +88,6 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <numeric>
-#include <opencv2/imgcodecs.hpp>
-#include <opencv2/imgproc.hpp>
 #include <optional>
 #include <random>
 #include <sstream>
@@ -1728,6 +1726,7 @@ int main(int argc, char **argv) {
       &root_dir,
       &skeleton_dir,
       &camera_names,
+      &imgs_names,
       &camera_params,
       &decoder_threads,
       &demuxers,
@@ -3774,105 +3773,18 @@ int main(int argc, char **argv) {
               "archive", "No recording archive", false);
         }
 
-        // check if it is mp4, if it is mp4 files
         recording_open_workflow.startProduct("media", "Opening camera media");
-        auto first_selection =
-            *selected_files.begin(); // Dereferencing iterator
-        if (string_ends_with(first_selection.first, ".mp4")) {
-          for (const auto &elem : selected_files) {
-            std::string cam_string_full = elem.first;
-            std::size_t last_slash = cam_string_full.find_last_of("/\\");
-            if (last_slash != std::string::npos) {
-              cam_string_full = cam_string_full.substr(last_slash + 1);
-            }
-            std::size_t cam_string_mp4_position = cam_string_full.find(".mp4");
-            std::string cam_string =
-                cam_string_full.substr(0, cam_string_mp4_position);
-            camera_names.push_back(cam_string);
-            std::cout << "camera names: " << cam_string << std::endl;
-            window_need_decoding[cam_string].store(true);
-            window_was_decoding[cam_string] = true;
-            std::map<std::string, std::string> m;
-            demuxers.push_back(
-                std::make_unique<FFmpegDemuxer>(elem.second.c_str(), m));
-          }
-          std::map<std::string, std::string> m;
-          FFmpegDemuxer dummy_dmuxer(selected_files.begin()->second.c_str(), m);
-          dc_context->seek_interval =
-              (int)dummy_dmuxer.FindKeyFrameInterval(); // get the seek interval
-          video_fps = dummy_dmuxer.GetFramerate();
-          scene->num_cams = selected_files.size();
-          scene->cameras.resize(scene->num_cams);
-          for (u32 j = 0; j < scene->num_cams; j++) {
-            scene->cameras[j].image_width = demuxers[j]->GetWidth();
-            scene->cameras[j].image_height = demuxers[j]->GetHeight();
-          }
-          render_allocate_scene_memory(scene, label_buffer_size);
-          // multiple threads for decoding for selected videos
-          for (int i = 0; i < scene->num_cams; i++) {
-            decoder_threads.push_back(std::thread(
-                &decoder_process, dc_context, demuxers[i].get(),
-                camera_names[i], scene->cameras[i].display_buffer,
-                scene->size_of_buffer, &scene->cameras[i].seek_context,
-                scene->use_cpu_buffer));
-            is_view_focused.push_back(false);
-          }
-          video_loaded = true;
-        } else {
-          input_is_imgs = true;
-          for (const auto &elem : selected_files) {
-            std::size_t cam_string_position = elem.first.find("_");
-            std::string cam_name = elem.first.substr(0, cam_string_position);
-            std::string file_name = elem.first.substr(cam_string_position + 1);
-
-            if (std::find(camera_names.begin(), camera_names.end(), cam_name) ==
-                camera_names.end()) {
-              camera_names.push_back(cam_name);
-            }
-
-            if (std::find(imgs_names.begin(), imgs_names.end(), file_name) ==
-                imgs_names.end()) {
-              imgs_names.push_back(file_name);
-            }
-          }
-
-          dc_context->seek_interval = 1;
-          scene->num_cams = camera_names.size();
-          scene->cameras.resize(scene->num_cams);
-          for (u32 j = 0; j < scene->num_cams; j++) {
-            std::string file_name =
-                root_dir + "/" + camera_names[j] + "_" + imgs_names[0];
-            cv::Mat image = cv::imread(file_name, cv::IMREAD_COLOR);
-            scene->cameras[j].image_width = image.cols;
-            scene->cameras[j].image_height = image.rows;
-          }
-          if (imgs_names.size() < label_buffer_size) {
-            label_buffer_size = imgs_names.size();
-          }
-          render_allocate_scene_memory(scene, label_buffer_size);
-          for (int i = 0; i < scene->num_cams; i++) {
-            decoder_threads.push_back(std::thread(
-                &image_loader, dc_context, imgs_names,
-                scene->cameras[i].display_buffer, scene->size_of_buffer,
-                &scene->cameras[i].seek_context, scene->use_cpu_buffer,
-                camera_names[i], root_dir));
-            is_view_focused.push_back(false);
-          }
-          video_loaded = true;
+        std::vector<crimson::media::CameraMediaSelection> media_selections;
+        media_selections.reserve(selected_files.size());
+        for (const auto &selection : selected_files) {
+          media_selections.push_back({selection.first, selection.second});
         }
-
-        if (video_loaded) {
+        std::string media_error;
+        const bool media_ready = media_session_loader.loadSelectedCameraMedia(
+            media_selections, media_error);
+        if (media_ready) {
           refreshPlaybackTimeline(std::chrono::steady_clock::now(), true);
           ps.play_video = playback_transport.isPlaying();
-        }
-        media_session_loader.loadCameraCalibrationsForCurrentMedia();
-        if (video_loaded && !input_is_imgs) {
-          int initial_frame = std::max(0, ps.to_display_frame_number);
-          double seek_fps = (video_fps > 0.0) ? video_fps : 30.0;
-          seek_all_cameras(scene, initial_frame, seek_fps, ps, true,
-                           &zarr_loader, &stimulus_player);
-        }
-        if (video_loaded) {
           recording_open_workflow.completeProduct("media", "Camera media ready",
                                                   true);
           std::string transaction_error;
@@ -3880,8 +3792,9 @@ int main(int argc, char **argv) {
               requested_session, "Media session ready",
               "Media session unavailable", &transaction_error);
         } else {
-          const std::string media_error =
-              "Selected camera media could not be opened";
+          if (media_error.empty()) {
+            media_error = "Selected camera media could not be opened";
+          }
           recording_open_workflow.failProduct(
               "media", "Camera media unavailable", media_error,
               "Media session unavailable");
@@ -4071,13 +3984,11 @@ int main(int argc, char **argv) {
             resumePathName(ps.last_resume_path), ps.last_resume_target_frame};
       }
       const auto buffer_window = crimson::gui::drawFrameBufferWindow(
-          {buffer_model,
-           scene->size_of_buffer,
+          {buffer_model, scene->size_of_buffer,
            ps.paused_frame_on_toggle >= 0
                ? std::optional<int64_t>(ps.paused_frame_on_toggle)
                : std::nullopt,
-           ps.buffer_browsed_since_pause,
-           last_resume});
+           ps.buffer_browsed_since_pause, last_resume});
       frame_buffer_window_ui_ms += buffer_window.draw_ms;
 
       select_corr_head = buffer_model.preferred_slot.value_or(-1);
@@ -4092,12 +4003,11 @@ int main(int argc, char **argv) {
             ps.paused_frame_on_toggle >= 0 &&
             selected_frame != ps.paused_frame_on_toggle;
         select_corr_head = buffer_window.selection->slot.value_or(-1);
-        writeClippedPlaybackStateEvent(
-            "paused_buffer_select",
-            json{{"previous_frame", previous_frame},
-                 {"target_frame", selected_frame},
-                 {"slot", select_corr_head}},
-            true);
+        writeClippedPlaybackStateEvent("paused_buffer_select",
+                                       json{{"previous_frame", previous_frame},
+                                            {"target_frame", selected_frame},
+                                            {"slot", select_corr_head}},
+                                       true);
       }
       if (select_corr_head >= 0) {
         ps.read_head = select_corr_head;

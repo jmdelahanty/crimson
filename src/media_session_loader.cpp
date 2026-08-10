@@ -12,7 +12,9 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <opencv2/imgcodecs.hpp>
 #include <sstream>
+#include <stdexcept>
 #include <tuple>
 
 extern std::mutex g_seek_info_mutex;
@@ -110,6 +112,10 @@ int64_t playbackFrameCount(const MediaSessionLoaderContext &context,
   }
   if (demuxer != nullptr && demuxer->GetNumFrames() > 0) {
     return static_cast<int64_t>(demuxer->GetNumFrames());
+  }
+  if (context.input_is_imgs != nullptr && *context.input_is_imgs &&
+      context.image_names != nullptr && !context.image_names->empty()) {
+    return static_cast<int64_t>(context.image_names->size());
   }
   if (context.decoder_context != nullptr &&
       context.decoder_context->total_num_frame > 0 &&
@@ -290,7 +296,8 @@ std::string MediaSessionLoader::activeRecordingClipIndexPath() const {
 void MediaSessionLoader::stopCameraDecodersForReload() const {
   if (context_.decoder_context == nullptr ||
       context_.decoder_threads == nullptr || context_.demuxers == nullptr ||
-      context_.camera_names == nullptr || context_.is_view_focused == nullptr ||
+      context_.camera_names == nullptr || context_.image_names == nullptr ||
+      context_.is_view_focused == nullptr ||
       context_.window_need_decoding == nullptr ||
       context_.window_was_decoding == nullptr ||
       context_.video_loaded == nullptr || context_.input_is_imgs == nullptr) {
@@ -313,6 +320,7 @@ void MediaSessionLoader::stopCameraDecodersForReload() const {
 
   context_.demuxers->clear();
   context_.camera_names->clear();
+  context_.image_names->clear();
   context_.is_view_focused->clear();
   *context_.video_loaded = false;
   *context_.input_is_imgs = false;
@@ -625,86 +633,197 @@ void MediaSessionLoader::loadCameraCalibrationsForCurrentMedia() const {
 bool MediaSessionLoader::loadSingleVideoMedia(
     const std::filesystem::path &video_path, bool infer_recording_root,
     const char *success_label) const {
+  crimson::media::CameraMediaOpenPlan plan;
+  std::string error_message;
+  if (!crimson::media::BuildCameraMediaOpenPlan(
+          {{video_path.filename().string(), video_path}}, plan,
+          error_message)) {
+    std::cerr << success_label << " failed: " << error_message << std::endl;
+    return false;
+  }
+  return executeCameraMediaPlan(plan, infer_recording_root, success_label,
+                                nullptr);
+}
+
+bool MediaSessionLoader::loadSelectedCameraMedia(
+    const std::vector<crimson::media::CameraMediaSelection> &selections,
+    std::string &error_message) const {
+  crimson::media::CameraMediaOpenPlan plan;
+  if (!crimson::media::BuildCameraMediaOpenPlan(selections, plan,
+                                                error_message)) {
+    return false;
+  }
+  return executeCameraMediaPlan(
+      plan, false, "[Media] Loaded camera media: ", &error_message);
+}
+
+bool MediaSessionLoader::executeCameraMediaPlan(
+    const crimson::media::CameraMediaOpenPlan &plan, bool infer_recording_root,
+    const char *success_label, std::string *error_message) const {
   if (context_.scene == nullptr || context_.decoder_context == nullptr ||
       context_.zarr_loader == nullptr || context_.stimulus_player == nullptr ||
       context_.playback_state == nullptr || context_.root_dir == nullptr ||
       context_.skeleton_dir == nullptr || context_.camera_names == nullptr ||
-      context_.decoder_threads == nullptr || context_.demuxers == nullptr ||
-      context_.is_view_focused == nullptr ||
+      context_.image_names == nullptr || context_.decoder_threads == nullptr ||
+      context_.demuxers == nullptr || context_.is_view_focused == nullptr ||
       context_.window_need_decoding == nullptr ||
       context_.window_was_decoding == nullptr ||
       context_.video_loaded == nullptr || context_.input_is_imgs == nullptr ||
       context_.label_buffer_size == nullptr || context_.video_fps == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "Camera media loader is not fully configured";
+    }
     return false;
   }
 
+  bool replacement_started = false;
   try {
-    *context_.input_is_imgs = false;
-    context_.camera_names->clear();
-    context_.demuxers->clear();
-    context_.is_view_focused->clear();
+    std::vector<std::unique_ptr<FFmpegDemuxer>> prepared_demuxers;
+    std::vector<std::pair<int, int>> camera_dimensions;
+    int prepared_seek_interval = 1;
+    double prepared_video_fps = *context_.video_fps;
+    int prepared_buffer_size = *context_.label_buffer_size;
 
-    std::string camera_name = video_path.stem().string();
-    if (camera_name.empty()) {
-      camera_name = video_path.filename().string();
+    if (plan.kind == crimson::media::CameraMediaKind::VideoFiles) {
+      prepared_demuxers.reserve(plan.video_paths.size());
+      camera_dimensions.reserve(plan.video_paths.size());
+      std::map<std::string, std::string> ffmpeg_options;
+      for (const auto &video_path : plan.video_paths) {
+        auto demuxer = std::make_unique<FFmpegDemuxer>(
+            video_path.string().c_str(), ffmpeg_options);
+        const int width = demuxer->GetWidth();
+        const int height = demuxer->GetHeight();
+        if (width <= 0 || height <= 0) {
+          throw std::runtime_error("Camera video has invalid dimensions: " +
+                                   video_path.string());
+        }
+        camera_dimensions.push_back({width, height});
+        prepared_demuxers.push_back(std::move(demuxer));
+      }
+      prepared_seek_interval =
+          static_cast<int>(prepared_demuxers.front()->FindKeyFrameInterval());
+      prepared_video_fps = prepared_demuxers.front()->GetFramerate();
+    } else {
+      camera_dimensions.reserve(plan.camera_names.size());
+      for (const auto &camera_name : plan.camera_names) {
+        const std::filesystem::path sample_path =
+            std::filesystem::path(*context_.root_dir) /
+            (camera_name + "_" + plan.image_frame_names.front());
+        const cv::Mat image =
+            cv::imread(sample_path.string(), cv::IMREAD_COLOR);
+        if (image.empty()) {
+          throw std::runtime_error("Could not read image sequence sample: " +
+                                   sample_path.string());
+        }
+        camera_dimensions.push_back({image.cols, image.rows});
+      }
+      prepared_buffer_size = static_cast<int>(std::min<size_t>(
+          static_cast<size_t>(std::max(1, *context_.label_buffer_size)),
+          plan.image_frame_names.size()));
     }
 
-    context_.camera_names->push_back(camera_name);
-    (*context_.window_need_decoding)[camera_name].store(true);
-    (*context_.window_was_decoding)[camera_name] = true;
+    stopCameraDecodersForReload();
+    replacement_started = true;
+    *context_.input_is_imgs =
+        plan.kind == crimson::media::CameraMediaKind::ImageSequence;
+    *context_.camera_names = plan.camera_names;
+    *context_.image_names = plan.image_frame_names;
+    *context_.demuxers = std::move(prepared_demuxers);
+    *context_.label_buffer_size = prepared_buffer_size;
+    context_.decoder_context->seek_interval = prepared_seek_interval;
+    if (plan.kind == crimson::media::CameraMediaKind::VideoFiles) {
+      *context_.video_fps = prepared_video_fps;
+    } else {
+      context_.decoder_context->total_num_frame =
+          static_cast<int>(plan.image_frame_names.size());
+      context_.decoder_context->estimated_num_frames =
+          static_cast<int>(plan.image_frame_names.size());
+    }
 
-    std::map<std::string, std::string> ffmpeg_options;
-    context_.demuxers->push_back(std::make_unique<FFmpegDemuxer>(
-        video_path.string().c_str(), ffmpeg_options));
+    for (const auto &camera_name : *context_.camera_names) {
+      (*context_.window_need_decoding)[camera_name].store(true);
+      (*context_.window_was_decoding)[camera_name] = true;
+    }
 
-    context_.decoder_context->seek_interval =
-        static_cast<int>(context_.demuxers->at(0)->FindKeyFrameInterval());
-    *context_.video_fps = context_.demuxers->at(0)->GetFramerate();
-    context_.scene->num_cams = 1;
+    context_.scene->num_cams = static_cast<decltype(context_.scene->num_cams)>(
+        context_.camera_names->size());
     context_.scene->cameras.resize(context_.scene->num_cams);
-    context_.scene->cameras[0].image_width =
-        context_.demuxers->at(0)->GetWidth();
-    context_.scene->cameras[0].image_height =
-        context_.demuxers->at(0)->GetHeight();
+    for (size_t index = 0; index < camera_dimensions.size(); ++index) {
+      context_.scene->cameras[index].image_width =
+          camera_dimensions[index].first;
+      context_.scene->cameras[index].image_height =
+          camera_dimensions[index].second;
+    }
     render_allocate_scene_memory(context_.scene, *context_.label_buffer_size);
 
-    context_.decoder_threads->push_back(
-        std::thread(&decoder_process, context_.decoder_context,
-                    context_.demuxers->at(0).get(), (*context_.camera_names)[0],
-                    context_.scene->cameras[0].display_buffer,
-                    context_.scene->size_of_buffer,
-                    &context_.scene->cameras[0].seek_context,
-                    context_.scene->use_cpu_buffer));
-    context_.is_view_focused->push_back(false);
+    for (size_t index = 0; index < context_.camera_names->size(); ++index) {
+      if (*context_.input_is_imgs) {
+        context_.decoder_threads->push_back(std::thread(
+            &image_loader, context_.decoder_context, *context_.image_names,
+            context_.scene->cameras[index].display_buffer,
+            context_.scene->size_of_buffer,
+            &context_.scene->cameras[index].seek_context,
+            context_.scene->use_cpu_buffer, context_.camera_names->at(index),
+            *context_.root_dir));
+      } else {
+        context_.decoder_threads->push_back(
+            std::thread(&decoder_process, context_.decoder_context,
+                        context_.demuxers->at(index).get(),
+                        context_.camera_names->at(index),
+                        context_.scene->cameras[index].display_buffer,
+                        context_.scene->size_of_buffer,
+                        &context_.scene->cameras[index].seek_context,
+                        context_.scene->use_cpu_buffer));
+      }
+      context_.is_view_focused->push_back(false);
+    }
     *context_.video_loaded = true;
 
     const int initial_frame =
         std::max(0, context_.playback_state->to_display_frame_number);
-    configurePlaybackTransport(context_, context_.demuxers->at(0).get(),
-                               initial_frame, false);
-    const double seek_fps =
-        (*context_.video_fps > 0.0) ? *context_.video_fps : 30.0;
-    seek_all_cameras(context_.scene, initial_frame, seek_fps,
-                     *context_.playback_state, true, context_.zarr_loader,
-                     context_.stimulus_player);
+    const FFmpegDemuxer *primary_demuxer =
+        context_.demuxers->empty() ? nullptr : context_.demuxers->front().get();
+    configurePlaybackTransport(context_, primary_demuxer, initial_frame, false);
+    if (!*context_.input_is_imgs) {
+      const double seek_fps =
+          (*context_.video_fps > 0.0) ? *context_.video_fps : 30.0;
+      seek_all_cameras(context_.scene, initial_frame, seek_fps,
+                       *context_.playback_state, true, context_.zarr_loader,
+                       context_.stimulus_player);
+    }
 
-    if (infer_recording_root) {
+    if (infer_recording_root && !plan.video_paths.empty()) {
       std::filesystem::path inferred_root = InferRecordingRootPath(
-          video_path, context_.zarr_loader->getArchivePath());
+          plan.video_paths.front(), context_.zarr_loader->getArchivePath());
       if (!inferred_root.empty()) {
         *context_.root_dir = inferred_root.string();
         *context_.skeleton_dir = *context_.root_dir;
       }
     }
 
-    std::cout << success_label << video_path.string() << std::endl;
+    std::cout << success_label;
+    if (plan.kind == crimson::media::CameraMediaKind::VideoFiles) {
+      std::cout << plan.video_paths.front().string();
+    } else {
+      std::cout << *context_.root_dir;
+    }
+    std::cout << " cameras=" << context_.camera_names->size() << std::endl;
     if (context_.clipped_media_state != nullptr) {
       *context_.clipped_media_state = PaletteClippedMediaState();
     }
     loadCameraCalibrationsForCurrentMedia();
+    if (error_message != nullptr) {
+      error_message->clear();
+    }
     return true;
   } catch (const std::exception &e) {
     std::cerr << success_label << " failed: " << e.what() << std::endl;
+    if (replacement_started) {
+      stopCameraDecodersForReload();
+    }
+    if (error_message != nullptr) {
+      *error_message = e.what();
+    }
     return false;
   }
 }
