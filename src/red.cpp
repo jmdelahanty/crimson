@@ -52,6 +52,7 @@
 #include "platform/nvidia/nvidia_frame_buffer_adapter.h"
 #include "platform/nvidia/nvidia_frame_inspect_adapter.h"
 #include "platform/nvidia/nvidia_gl_diagnostics.h"
+#include "platform/nvidia/nvidia_launch_options.h"
 #include "platform/nvidia/nvidia_playback_diagnostics_adapter.h"
 #include "platform/nvidia/nvidia_playback_trace_model.h"
 #include "playback_diagnostics.h"
@@ -162,6 +163,9 @@ using PlaybackTraceLogWriter =
     crimson::playback::diagnostics::PlaybackTraceJsonlWriter;
 namespace nvidia_trace = crimson::platform::nvidia::trace;
 namespace nvidia_diagnostics = crimson::platform::nvidia::diagnostics;
+using crimson::platform::nvidia::parseIntegerArgument;
+using crimson::platform::nvidia::UiReferenceState;
+using crimson::platform::nvidia::uiReferenceStateName;
 
 struct ClippedBoundarySmokeConfig {
   bool enabled = false;
@@ -187,59 +191,7 @@ struct PlaybackSmokeConfig {
   int last_view_idx = -1;
 };
 
-enum class UiReferenceState {
-  Workspace,
-  Overlays,
-  Polar,
-  StimulusOverlay,
-  StimulusDebug,
-  CropPreview,
-  AnalysisEye,
-  AnalysisTailStimulus,
-};
-
 constexpr int kUiReferenceStableFrameTarget = 60;
-
-const char *uiReferenceStateName(UiReferenceState state) {
-  switch (state) {
-  case UiReferenceState::Workspace:
-    return "workspace";
-  case UiReferenceState::Overlays:
-    return "overlays";
-  case UiReferenceState::Polar:
-    return "polar";
-  case UiReferenceState::StimulusOverlay:
-    return "stimulus-overlay";
-  case UiReferenceState::StimulusDebug:
-    return "stimulus-debug";
-  case UiReferenceState::CropPreview:
-    return "crop-preview";
-  case UiReferenceState::AnalysisEye:
-    return "analysis-eye";
-  case UiReferenceState::AnalysisTailStimulus:
-    return "analysis-tail-stimulus";
-  }
-  return "unknown";
-}
-
-bool parseUiReferenceState(const std::string &value, UiReferenceState &state) {
-  static const std::array<std::pair<const char *, UiReferenceState>, 8> states =
-      {{{"workspace", UiReferenceState::Workspace},
-        {"overlays", UiReferenceState::Overlays},
-        {"polar", UiReferenceState::Polar},
-        {"stimulus-overlay", UiReferenceState::StimulusOverlay},
-        {"stimulus-debug", UiReferenceState::StimulusDebug},
-        {"crop-preview", UiReferenceState::CropPreview},
-        {"analysis-eye", UiReferenceState::AnalysisEye},
-        {"analysis-tail-stimulus", UiReferenceState::AnalysisTailStimulus}}};
-  for (const auto &entry : states) {
-    if (value == entry.first) {
-      state = entry.second;
-      return true;
-    }
-  }
-  return false;
-}
 
 struct UiReferenceConfig {
   bool enabled = false;
@@ -526,54 +478,6 @@ double durationMs(std::chrono::steady_clock::duration duration) {
   return std::chrono::duration<double, std::milli>(duration).count();
 }
 
-bool parseIntArgument(const char *text, int &out) {
-  if (text == nullptr || *text == '\0') {
-    return false;
-  }
-  char *end = nullptr;
-  long value = std::strtol(text, &end, 10);
-  if (end == text || *end != '\0' || value < std::numeric_limits<int>::min() ||
-      value > std::numeric_limits<int>::max()) {
-    return false;
-  }
-  out = static_cast<int>(value);
-  return true;
-}
-
-bool parseFrameRangeArgument(const char *text, int &start, int &end) {
-  if (text == nullptr || *text == '\0') {
-    return false;
-  }
-  const std::string value(text);
-  const size_t colon = value.find(':');
-  if (colon == std::string::npos || colon == 0 || colon + 1 >= value.size()) {
-    return false;
-  }
-  int parsed_start = -1;
-  int parsed_end = -1;
-  if (!parseIntArgument(value.substr(0, colon).c_str(), parsed_start) ||
-      !parseIntArgument(value.substr(colon + 1).c_str(), parsed_end) ||
-      parsed_start < 0 || parsed_end < parsed_start) {
-    return false;
-  }
-  start = parsed_start;
-  end = parsed_end;
-  return true;
-}
-
-bool parseDoubleArgument(const char *text, double &out) {
-  if (text == nullptr || *text == '\0') {
-    return false;
-  }
-  char *end = nullptr;
-  double value = std::strtod(text, &end);
-  if (end == text || *end != '\0' || !std::isfinite(value)) {
-    return false;
-  }
-  out = value;
-  return true;
-}
-
 struct PendingKeypointWriteResult {
   CropKeypointEditorActionType action_type = CropKeypointEditorActionType::None;
   RefinedKeypointSelection selection;
@@ -832,554 +736,82 @@ void pollPendingKeypointWrite(
   status_out = result.success_status;
 }
 
-std::optional<int> ParseCudaDeviceIndexString(const std::string &value) {
-  if (value.empty()) {
-    return std::nullopt;
-  }
-
-  try {
-    size_t consumed = 0;
-    const int parsed = std::stoi(value, &consumed);
-    if (consumed != value.size() || parsed < 0) {
-      return std::nullopt;
-    }
-    return parsed;
-  } catch (...) {
-    return std::nullopt;
-  }
-}
-
-std::optional<std::filesystem::path> GetCudaDeviceConfigPath() {
-  if (const char *explicit_path = std::getenv("CRIMSON_CUDA_DEVICE_CONFIG");
-      explicit_path && *explicit_path != '\0') {
-    return std::filesystem::path(explicit_path);
-  }
-
-#ifdef _WIN32
-  if (const char *localappdata = std::getenv("LOCALAPPDATA");
-      localappdata && *localappdata != '\0') {
-    return std::filesystem::path(localappdata) / "Crimson" / "config" /
-           "cuda_device.json";
-  }
-  if (const char *appdata = std::getenv("APPDATA");
-      appdata && *appdata != '\0') {
-    return std::filesystem::path(appdata) / "crimson" / "cuda_device.json";
-  }
-#else
-  if (const char *xdg_config_home = std::getenv("XDG_CONFIG_HOME");
-      xdg_config_home && *xdg_config_home != '\0') {
-    return std::filesystem::path(xdg_config_home) / "crimson" /
-           "cuda_device.json";
-  }
-#endif
-
-  if (const char *home = std::getenv("HOME"); home && *home != '\0') {
-    return std::filesystem::path(home) / ".config" / "crimson" /
-           "cuda_device.json";
-  }
-  return std::nullopt;
-}
-
-std::optional<int>
-LoadSavedCudaDeviceIndex(const std::filesystem::path &config_path,
-                         std::string &source_description) {
-  if (config_path.empty()) {
-    return std::nullopt;
-  }
-
-  std::ifstream config_stream(config_path);
-  if (!config_stream.is_open()) {
-    return std::nullopt;
-  }
-
-  try {
-    json payload = json::parse(config_stream);
-    auto selected_index = payload.find("selected_cuda_device_index");
-    if (selected_index == payload.end() ||
-        !selected_index->is_number_integer()) {
-      return std::nullopt;
-    }
-    const int parsed = selected_index->get<int>();
-    if (parsed < 0) {
-      return std::nullopt;
-    }
-    source_description = config_path.string();
-    return parsed;
-  } catch (const std::exception &exc) {
-    std::cerr << "[CudaDevice] Ignoring unreadable saved CUDA device config "
-              << config_path << ": " << exc.what() << std::endl;
-    return std::nullopt;
-  }
-}
-
-int ResolveCudaDeviceIndex() {
-  if (const char *env_device = std::getenv("CRIMSON_CUDA_DEVICE_INDEX");
-      env_device && *env_device != '\0') {
-    if (auto parsed = ParseCudaDeviceIndexString(std::string(env_device))) {
-      std::cout << "[CudaDevice] Using GPU " << *parsed
-                << " from CRIMSON_CUDA_DEVICE_INDEX" << std::endl;
-      return *parsed;
-    }
-    std::cerr << "[CudaDevice] Ignoring invalid CRIMSON_CUDA_DEVICE_INDEX="
-              << env_device << std::endl;
-  }
-
-  if (auto config_path = GetCudaDeviceConfigPath()) {
-    std::string source_description;
-    if (auto saved_index =
-            LoadSavedCudaDeviceIndex(*config_path, source_description)) {
-      std::cout << "[CudaDevice] Using GPU " << *saved_index << " from "
-                << source_description << std::endl;
-      return *saved_index;
-    }
-  }
-
-  constexpr int default_cuda_device_index = 0;
-  std::cout << "[CudaDevice] Using default GPU " << default_cuda_device_index
-            << std::endl;
-  return default_cuda_device_index;
-}
-
 } // namespace
 
 int main(int argc, char **argv) {
-  std::string cli_zarr_override_path;
-  std::string cli_recording_path;
-  std::string cli_recording_clip_index_path;
-  std::string cli_subject_shape_run;
-  std::string cli_refined_subject_mask_run;
-  std::string cli_refined_subject_mask_storage;
-  std::string cli_tail_kinematics_run;
-  std::string cli_eye_angle_run;
-  std::string cli_stimulus_run;
-  std::string cli_detection_run;
-  std::string cli_refined_detection_run;
-  bool cli_allow_selector_ineligible_refined_detection = false;
-  crimson::gui::QualityTimelineArtifactSelection cli_keypoint_v2_raw;
-  crimson::gui::QualityTimelineArtifactSelection cli_keypoint_v2_quality;
-  crimson::gui::QualityTimelineArtifactSelection cli_keypoint_v2_refined;
-  crimson::gui::QualityTimelineArtifactSelection cli_keypoint_v2_body_frame;
-  bool cli_allow_selector_ineligible_keypoints = false;
-  std::filesystem::path cli_perf_log_path;
-  std::filesystem::path cli_mask_perf_log_path;
-  std::filesystem::path cli_playback_trace_log_path;
-  std::filesystem::path cli_frame_sync_trace_log_path;
-  int cli_swap_interval = 1;
-  int cli_mask_perf_sample_every = 10;
-  double cli_frame_cap_fps = 0.0;
-  bool mask_perf_log_enabled = true;
-  bool cli_show_eye_masks = false;
-  PlaybackSmokeConfig playback_smoke;
-  ClippedBoundarySmokeConfig clipped_boundary_smoke;
-  UiReferenceConfig ui_reference;
-  crimson::ui::SemanticSnapshot ui_semantic_snapshot;
-  int app_exit_code = 0;
   const std::filesystem::path argv0_path = (argc > 0) ? argv[0] : "";
   InstallWindowsCrashHandler(argv0_path);
   std::error_code cwd_error;
   const std::filesystem::path cwd = std::filesystem::current_path(cwd_error);
-  for (int i = 1; i < argc; ++i) {
-    std::string arg = argv[i];
-    if (arg == "--zarr") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --zarr" << std::endl;
-        return 1;
-      }
-      cli_zarr_override_path = argv[++i];
-      continue;
-    }
-    if (arg == "--recording") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --recording" << std::endl;
-        return 1;
-      }
-      cli_recording_path = argv[++i];
-      continue;
-    }
-    if (arg == "--recording-clip-index") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --recording-clip-index" << std::endl;
-        return 1;
-      }
-      cli_recording_clip_index_path = argv[++i];
-      continue;
-    }
-    if (arg == "--subject-shape-run") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --subject-shape-run" << std::endl;
-        return 1;
-      }
-      cli_subject_shape_run = argv[++i];
-      continue;
-    }
-    if (arg == "--refined-subject-mask-run") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --refined-subject-mask-run"
-                  << std::endl;
-        return 1;
-      }
-      cli_refined_subject_mask_run = argv[++i];
-      continue;
-    }
-    if (arg == "--refined-subject-mask-storage") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --refined-subject-mask-storage"
-                  << std::endl;
-        return 1;
-      }
-      cli_refined_subject_mask_storage = argv[++i];
-      continue;
-    }
-    if (arg == "--show-subject-masks" || arg == "--show-eye-masks") {
-      cli_show_eye_masks = true;
-      continue;
-    }
-    if (arg == "--tail-kinematics-run") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --tail-kinematics-run" << std::endl;
-        return 1;
-      }
-      cli_tail_kinematics_run = argv[++i];
-      continue;
-    }
-    if (arg == "--eye-angle-run") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --eye-angle-run" << std::endl;
-        return 1;
-      }
-      cli_eye_angle_run = argv[++i];
-      continue;
-    }
-    if (arg == "--stimulus-run") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --stimulus-run" << std::endl;
-        return 1;
-      }
-      cli_stimulus_run = argv[++i];
-      continue;
-    }
-    if (arg == "--detection-run") {
-      if (i + 1 >= argc || argv[i + 1][0] == '\0') {
-        std::cerr << "Missing value for --detection-run" << std::endl;
-        return 1;
-      }
-      cli_detection_run = argv[++i];
-      continue;
-    }
-    if (arg == "--refined-detection-run" ||
-        arg == "--benchmark-refined-detection-run") {
-      if (i + 1 >= argc || argv[i + 1][0] == '\0') {
-        std::cerr << "Missing value for " << arg << std::endl;
-        return 1;
-      }
-      cli_refined_detection_run = argv[++i];
-      cli_allow_selector_ineligible_refined_detection =
-          arg == "--benchmark-refined-detection-run";
-      continue;
-    }
-    if (arg == "--benchmark-keypoint-v2-raw" ||
-        arg == "--benchmark-keypoint-v2-quality" ||
-        arg == "--benchmark-keypoint-v2-refined" ||
-        arg == "--benchmark-keypoint-v2-body-frame") {
-      if (i + 3 >= argc) {
-        std::cerr << arg << " requires ARCHIVE RUN MANIFEST_DIGEST"
-                  << std::endl;
-        return 1;
-      }
-      crimson::gui::QualityTimelineArtifactSelection selection{
-          argv[i + 1], argv[i + 2], argv[i + 3]};
-      if (arg == "--benchmark-keypoint-v2-raw") {
-        cli_keypoint_v2_raw = std::move(selection);
-      } else if (arg == "--benchmark-keypoint-v2-quality") {
-        cli_keypoint_v2_quality = std::move(selection);
-      } else if (arg == "--benchmark-keypoint-v2-refined") {
-        cli_keypoint_v2_refined = std::move(selection);
-      } else {
-        cli_keypoint_v2_body_frame = std::move(selection);
-      }
-      cli_allow_selector_ineligible_keypoints = true;
-      i += 3;
-      continue;
-    }
-    if (arg == "--perf-log") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --perf-log" << std::endl;
-        return 1;
-      }
-      cli_perf_log_path = argv[++i];
-      continue;
-    }
-    if (arg == "--mask-perf-log") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --mask-perf-log" << std::endl;
-        return 1;
-      }
-      cli_mask_perf_log_path = argv[++i];
-      continue;
-    }
-    if (arg == "--playback-trace-log") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --playback-trace-log" << std::endl;
-        return 1;
-      }
-      cli_playback_trace_log_path = argv[++i];
-      continue;
-    }
-    if (arg == "--frame-sync-trace-log") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --frame-sync-trace-log" << std::endl;
-        return 1;
-      }
-      cli_frame_sync_trace_log_path = argv[++i];
-      continue;
-    }
-    if (arg == "--clipped-boundary-smoke") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --clipped-boundary-smoke" << std::endl;
-        return 1;
-      }
-      int start_frame = -1;
-      int end_frame = -1;
-      if (!parseFrameRangeArgument(argv[++i], start_frame, end_frame)) {
-        std::cerr << "Invalid --clipped-boundary-smoke value; "
-                     "expected START:END with END >= START"
-                  << std::endl;
-        return 1;
-      }
-      clipped_boundary_smoke.enabled = true;
-      clipped_boundary_smoke.start_frame = start_frame;
-      clipped_boundary_smoke.end_frame = end_frame;
-      continue;
-    }
-    if (arg == "--playback-smoke") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --playback-smoke" << std::endl;
-        return 1;
-      }
-      int start_frame = -1;
-      int end_frame = -1;
-      if (!parseFrameRangeArgument(argv[++i], start_frame, end_frame)) {
-        std::cerr << "Invalid --playback-smoke value; expected "
-                     "START:END with END >= START"
-                  << std::endl;
-        return 1;
-      }
-      playback_smoke.enabled = true;
-      playback_smoke.start_frame = start_frame;
-      playback_smoke.end_frame = end_frame;
-      continue;
-    }
-    if (arg == "--playback-smoke-timeout") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --playback-smoke-timeout" << std::endl;
-        return 1;
-      }
-      double parsed = 0.0;
-      if (!parseDoubleArgument(argv[++i], parsed) || parsed <= 0.0) {
-        std::cerr << "Invalid --playback-smoke-timeout value; "
-                     "expected a positive number of seconds"
-                  << std::endl;
-        return 1;
-      }
-      playback_smoke.timeout_s = parsed;
-      continue;
-    }
-    if (arg == "--ui-reference-state") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --ui-reference-state" << std::endl;
-        return 1;
-      }
-      const std::string value = argv[++i];
-      if (!parseUiReferenceState(value, ui_reference.state)) {
-        std::cerr << "Invalid --ui-reference-state value '" << value
-                  << "'; expected workspace, overlays, polar, stimulus-debug, "
-                     "crop-preview, analysis-eye, or "
-                     "analysis-tail-stimulus"
-                  << std::endl;
-        return 1;
-      }
-      ui_reference.enabled = true;
-      ui_reference.state_set = true;
-      continue;
-    }
-    if (arg == "--ui-reference-frame") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --ui-reference-frame" << std::endl;
-        return 1;
-      }
-      int parsed = -1;
-      if (!parseIntArgument(argv[++i], parsed) || parsed < 0) {
-        std::cerr << "Invalid --ui-reference-frame value; expected "
-                     "an integer >= 0"
-                  << std::endl;
-        return 1;
-      }
-      ui_reference.enabled = true;
-      ui_reference.frame_set = true;
-      ui_reference.target_frame = parsed;
-      continue;
-    }
-    if (arg == "--ui-reference-ready-file") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --ui-reference-ready-file" << std::endl;
-        return 1;
-      }
-      ui_reference.ready_file = argv[++i];
-      if (ui_reference.ready_file.empty()) {
-        std::cerr << "Invalid --ui-reference-ready-file value; "
-                     "expected a non-empty path"
-                  << std::endl;
-        return 1;
-      }
-      ui_reference.enabled = true;
-      ui_reference.ready_file_set = true;
-      continue;
-    }
-    if (arg == "--ui-reference-timeout") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --ui-reference-timeout" << std::endl;
-        return 1;
-      }
-      double parsed = 0.0;
-      if (!parseDoubleArgument(argv[++i], parsed) || parsed <= 0.0) {
-        std::cerr << "Invalid --ui-reference-timeout value; expected "
-                     "a positive number of seconds"
-                  << std::endl;
-        return 1;
-      }
-      ui_reference.timeout_s = parsed;
-      continue;
-    }
-    if (arg == "--no-mask-perf-log") {
-      mask_perf_log_enabled = false;
-      continue;
-    }
-    if (arg == "--mask-perf-sample-every") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --mask-perf-sample-every" << std::endl;
-        return 1;
-      }
-      int parsed = 0;
-      if (!parseIntArgument(argv[++i], parsed) || parsed < 1) {
-        std::cerr << "Invalid --mask-perf-sample-every value; "
-                     "expected an integer >= 1"
-                  << std::endl;
-        return 1;
-      }
-      cli_mask_perf_sample_every = parsed;
-      continue;
-    }
-    if (arg == "--swap-interval") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --swap-interval" << std::endl;
-        return 1;
-      }
-      int parsed = 0;
-      if (!parseIntArgument(argv[++i], parsed) ||
-          (parsed != 0 && parsed != 1)) {
-        std::cerr << "Invalid --swap-interval value; expected 0 or 1"
-                  << std::endl;
-        return 1;
-      }
-      cli_swap_interval = parsed;
-      continue;
-    }
-    if (arg == "--frame-cap-fps") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for --frame-cap-fps" << std::endl;
-        return 1;
-      }
-      double parsed = 0.0;
-      if (!parseDoubleArgument(argv[++i], parsed) || parsed < 0.0) {
-        std::cerr << "Invalid --frame-cap-fps value; expected a "
-                     "non-negative number"
-                  << std::endl;
-        return 1;
-      }
-      cli_frame_cap_fps = parsed;
-      continue;
-    }
-    std::cerr << "Ignoring unknown argument: " << arg << std::endl;
-  }
 
-  if (cli_swap_interval == 0 && cli_frame_cap_fps <= 0.0) {
-    cli_frame_cap_fps = 60.0;
-    std::cerr << "[FramePacing] --swap-interval 0 requested without "
-                 "--frame-cap-fps; capping at 60 FPS to avoid an "
-                 "uncapped render loop."
-              << std::endl;
+  auto launch_result =
+      crimson::platform::nvidia::parseNvidiaLaunchOptions(argc, argv);
+  for (const auto &diagnostic : launch_result.diagnostics) {
+    std::cerr << diagnostic << std::endl;
   }
-
-  if (playback_smoke.enabled && clipped_boundary_smoke.enabled) {
-    std::cerr << "--playback-smoke and --clipped-boundary-smoke cannot be "
-                 "used in the same run"
-              << std::endl;
+  if (!launch_result.ok) {
+    std::cerr << launch_result.error << std::endl;
     return 1;
   }
-  if (!cli_detection_run.empty() && !cli_refined_detection_run.empty()) {
-    std::cerr << "--detection-run and --refined-detection-run are mutually "
-                 "exclusive"
-              << std::endl;
-    return 1;
-  }
-  const bool keypoint_v2_requested =
-      !cli_keypoint_v2_raw.empty() || !cli_keypoint_v2_quality.empty() ||
-      !cli_keypoint_v2_refined.empty() || !cli_keypoint_v2_body_frame.empty();
-  if (keypoint_v2_requested &&
-      (!cli_keypoint_v2_raw.complete() || !cli_keypoint_v2_quality.complete() ||
-       !cli_keypoint_v2_body_frame.complete() ||
-       (!cli_keypoint_v2_refined.empty() &&
-        !cli_keypoint_v2_refined.complete()))) {
-    std::cerr << "Keypoint-v2 quality timelines require complete raw, quality, "
-                 "and body-frame selections; refined must be complete when "
-                 "provided"
-              << std::endl;
-    return 1;
-  }
-  if (ui_reference.enabled &&
-      (!ui_reference.state_set || !ui_reference.frame_set ||
-       !ui_reference.ready_file_set)) {
-    std::cerr << "UI reference capture requires --ui-reference-state, "
-                 "--ui-reference-frame, and --ui-reference-ready-file"
-              << std::endl;
-    return 1;
-  }
-  if (ui_reference.enabled &&
-      (playback_smoke.enabled || clipped_boundary_smoke.enabled)) {
-    std::cerr << "UI reference capture cannot run with playback or "
-                 "clipped-boundary smoke modes"
-              << std::endl;
-    return 1;
-  }
+  const auto launch_options = std::move(launch_result.options);
+  const auto &cli_zarr_override_path = launch_options.zarr_override_path;
+  const auto &cli_recording_path = launch_options.recording_path;
+  const auto &cli_recording_clip_index_path =
+      launch_options.recording_clip_index_path;
+  const auto &cli_subject_shape_run = launch_options.subject_shape_run;
+  const auto &cli_refined_subject_mask_run =
+      launch_options.refined_subject_mask_run;
+  const auto &cli_refined_subject_mask_storage =
+      launch_options.refined_subject_mask_storage;
+  const auto &cli_tail_kinematics_run = launch_options.tail_kinematics_run;
+  const auto &cli_eye_angle_run = launch_options.eye_angle_run;
+  const auto &cli_stimulus_run = launch_options.stimulus_run;
+  const auto &cli_detection_run = launch_options.detection_run;
+  const auto &cli_refined_detection_run = launch_options.refined_detection_run;
+  const bool cli_allow_selector_ineligible_refined_detection =
+      launch_options.allow_selector_ineligible_refined_detection;
+  const auto &cli_keypoint_v2_raw = launch_options.keypoint_v2_raw;
+  const auto &cli_keypoint_v2_quality = launch_options.keypoint_v2_quality;
+  const auto &cli_keypoint_v2_refined = launch_options.keypoint_v2_refined;
+  const auto &cli_keypoint_v2_body_frame =
+      launch_options.keypoint_v2_body_frame;
+  const bool cli_allow_selector_ineligible_keypoints =
+      launch_options.allow_selector_ineligible_keypoints;
+  const auto &cli_perf_log_path = launch_options.perf_log_path;
+  const auto &cli_mask_perf_log_path = launch_options.mask_perf_log_path;
+  const auto &cli_playback_trace_log_path =
+      launch_options.playback_trace_log_path;
+  const auto &cli_frame_sync_trace_log_path =
+      launch_options.frame_sync_trace_log_path;
+  const int cli_swap_interval = launch_options.swap_interval;
+  const int cli_mask_perf_sample_every = launch_options.mask_perf_sample_every;
+  const double cli_frame_cap_fps = launch_options.frame_cap_fps;
+  const bool mask_perf_log_enabled = launch_options.mask_perf_log_enabled;
+  const bool cli_show_eye_masks = launch_options.show_eye_masks;
 
-  // Mutual exclusion: --recording takes precedence over --zarr
-  if (!cli_recording_path.empty() && !cli_zarr_override_path.empty()) {
-    std::cerr << "Warning: both --recording and --zarr specified; "
-              << "using --recording, ignoring --zarr" << std::endl;
-    cli_zarr_override_path.clear();
-  }
-
-  // Validate --recording path early
-  if (!cli_recording_path.empty() && !IsDirectoryNoThrow(cli_recording_path)) {
-    std::cerr << "Error: --recording path is not a directory: "
-              << cli_recording_path << std::endl;
-    cli_recording_path.clear();
-  }
-  if (!cli_recording_clip_index_path.empty()) {
-    std::error_code clip_index_error;
-    if (!std::filesystem::is_regular_file(cli_recording_clip_index_path,
-                                          clip_index_error)) {
-      std::cerr << "Error: --recording-clip-index path is not a file: "
-                << cli_recording_clip_index_path << std::endl;
-      return 1;
-    }
-    if (cli_zarr_override_path.empty() && cli_recording_path.empty()) {
-      std::cerr << "--recording-clip-index requires --zarr or --recording"
-                << std::endl;
-      return 1;
-    }
-  }
-
+  PlaybackSmokeConfig playback_smoke;
+  playback_smoke.enabled = launch_options.playback_smoke.enabled;
+  playback_smoke.start_frame = launch_options.playback_smoke.start_frame;
+  playback_smoke.end_frame = launch_options.playback_smoke.end_frame;
+  playback_smoke.timeout_s = launch_options.playback_smoke.timeout_s;
+  ClippedBoundarySmokeConfig clipped_boundary_smoke;
+  clipped_boundary_smoke.enabled =
+      launch_options.clipped_boundary_smoke.enabled;
+  clipped_boundary_smoke.start_frame =
+      launch_options.clipped_boundary_smoke.start_frame;
+  clipped_boundary_smoke.end_frame =
+      launch_options.clipped_boundary_smoke.end_frame;
+  UiReferenceConfig ui_reference;
+  ui_reference.enabled = launch_options.ui_reference.enabled;
+  ui_reference.state_set = launch_options.ui_reference.state_set;
+  ui_reference.frame_set = launch_options.ui_reference.frame_set;
+  ui_reference.ready_file_set = launch_options.ui_reference.ready_file_set;
+  ui_reference.state = launch_options.ui_reference.state;
+  ui_reference.target_frame = launch_options.ui_reference.target_frame;
+  ui_reference.ready_file = launch_options.ui_reference.ready_file;
+  ui_reference.timeout_s = launch_options.ui_reference.timeout_s;
+  crimson::ui::SemanticSnapshot ui_semantic_snapshot;
+  int app_exit_code = 0;
   gx_context *window = new gx_context();
   *window = gx_context{};
   window->swap_interval = cli_swap_interval;
@@ -1388,7 +820,8 @@ int main(int argc, char **argv) {
   window->render_target_title = (char *)malloc(100); // window title
   window->glsl_version = (char *)malloc(100);
 
-  const int kCudaDeviceIndex = ResolveCudaDeviceIndex();
+  const int kCudaDeviceIndex =
+      crimson::platform::nvidia::resolveCudaDeviceIndex();
   render_initialize_target(window, kCudaDeviceIndex, argv0_path);
   crimson::ui::setSemanticCaptureEnabled(ImGui::GetCurrentContext(),
                                          ui_reference.enabled);
@@ -1656,7 +1089,7 @@ int main(int argc, char **argv) {
   if (clipped_texture_dump_frame_env != nullptr &&
       clipped_texture_dump_frame_env[0] != '\0') {
     int dump_frame = -1;
-    if (!parseIntArgument(clipped_texture_dump_frame_env, dump_frame) ||
+    if (!parseIntegerArgument(clipped_texture_dump_frame_env, dump_frame) ||
         dump_frame < 0) {
       std::cerr << "[ClippedTextureDump] Invalid "
                 << "CRIMSON_CLIPPED_TEXTURE_DUMP_FRAME='"
@@ -2883,10 +2316,18 @@ int main(int argc, char **argv) {
                                        ? cli_detection_run
                                        : zarr_loader.getDetectRunName();
     }
-    request.raw_keypoints = cli_keypoint_v2_raw;
-    request.keypoint_quality = cli_keypoint_v2_quality;
-    request.refined_keypoints = cli_keypoint_v2_refined;
-    request.body_frame = cli_keypoint_v2_body_frame;
+    request.raw_keypoints = {cli_keypoint_v2_raw.archive_path,
+                             cli_keypoint_v2_raw.run_name,
+                             cli_keypoint_v2_raw.manifest_digest};
+    request.keypoint_quality = {cli_keypoint_v2_quality.archive_path,
+                                cli_keypoint_v2_quality.run_name,
+                                cli_keypoint_v2_quality.manifest_digest};
+    request.refined_keypoints = {cli_keypoint_v2_refined.archive_path,
+                                 cli_keypoint_v2_refined.run_name,
+                                 cli_keypoint_v2_refined.manifest_digest};
+    request.body_frame = {cli_keypoint_v2_body_frame.archive_path,
+                          cli_keypoint_v2_body_frame.run_name,
+                          cli_keypoint_v2_body_frame.manifest_digest};
     request.allow_selector_ineligible_keypoints =
         cli_allow_selector_ineligible_keypoints;
     quality_timeline_session.configure(std::move(request));

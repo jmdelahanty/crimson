@@ -153,6 +153,30 @@ bounded extraction reduces `red.cpp` from 6,556 to 6,541 lines while removing
 the remaining archive/stimulus transaction implementation from the dialog
 branches.
 
+### 2026-08-10 NVIDIA Launch Options Extraction
+
+Linux and Windows launch parsing now lives in a typed
+`nvidia_launch_options` module. It owns recording/archive inputs, explicit run
+overrides, selector-ineligible benchmark artifacts, smoke ranges, UI-reference
+capture inputs, trace paths, frame pacing, mask diagnostics, and CUDA-device
+configuration discovery. Parsing returns a value plus ordered diagnostics and
+one fail-fast error; it has no decoder, renderer, ImGui, Zarr-loader, or quality-
+timeline dependency.
+
+`red.cpp` now installs the platform crash handler, parses once, reports the
+result, and expands only smoke and UI-reference fields that acquire mutable
+runtime state. Keypoint benchmark triples are converted to the existing
+quality-timeline request at the composition edge. The macOS Metal shell keeps
+its separate launch surface because it does not expose the NVIDIA smoke,
+TensorRT, CUDA-device, or legacy editing options.
+
+Headless tests cover defaults, unknown-option compatibility, every maintained
+option class, artifact completeness, mutually exclusive modes, invalid values,
+recording precedence, clip-index filesystem validation, frame-pacing fallback,
+UI-reference completeness, and saved CUDA-device parsing. This extraction
+reduces `red.cpp` from 6,541 to 5,982 lines without changing the accepted
+command-line interface.
+
 ## 2026-07-23 Runtime Contract Checkpoint
 
 The first backend-neutral runtime slices are now shared by the macOS and

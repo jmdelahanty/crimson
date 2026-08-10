@@ -95,6 +95,17 @@ target_link_libraries(crimson_nvidia_playback_diagnostics PUBLIC
 )
 target_compile_features(crimson_nvidia_playback_diagnostics PUBLIC cxx_std_17)
 
+add_library(crimson_nvidia_launch_options STATIC
+    src/platform/nvidia/nvidia_launch_options.cpp
+)
+target_include_directories(crimson_nvidia_launch_options PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(crimson_nvidia_launch_options PUBLIC
+    nlohmann_json::nlohmann_json
+)
+target_compile_features(crimson_nvidia_launch_options PUBLIC cxx_std_17)
+
 add_library(crimson_runtime_contracts STATIC
     src/archive_open_coordinator.cpp
     src/stimulus_open_coordinator.cpp
@@ -1339,6 +1350,23 @@ set_tests_properties(nvidia_playback_trace_model_tests PROPERTIES
     LABELS "headless;nvidia;playback;diagnostics"
 )
 
+add_executable(nvidia_launch_options_tests
+    tools/nvidia_launch_options_tests.cpp
+)
+target_link_libraries(nvidia_launch_options_tests PRIVATE
+    crimson_nvidia_launch_options
+)
+target_compile_features(nvidia_launch_options_tests PRIVATE cxx_std_17)
+set_target_properties(nvidia_launch_options_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME nvidia_launch_options_tests
+    COMMAND $<TARGET_FILE:nvidia_launch_options_tests>
+)
+set_tests_properties(nvidia_launch_options_tests PROPERTIES
+    LABELS "headless;nvidia;launch;configuration"
+)
+
 foreach(runtime_test
         session_lifecycle_tests
         loading_progress_tests
@@ -2570,6 +2598,7 @@ target_link_libraries(redgui PRIVATE
     crimson_frame_contracts
     crimson_nvidia_playback_adapter
     crimson_nvidia_playback_diagnostics
+    crimson_nvidia_launch_options
     crimson_runtime_contracts
     crimson_overlay_contracts
     crimson_repository_contracts
