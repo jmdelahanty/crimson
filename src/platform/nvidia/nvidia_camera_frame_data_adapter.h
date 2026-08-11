@@ -32,12 +32,14 @@ CameraFrameQuery selectCameraFrameQuery(const CameraFrameQueryInput &input);
 
 struct CameraFrameDataRequest {
   bool archive_loaded = false;
-  bool has_presented_frame = false;
+  bool frame_selected = false;
   int query_frame = -1;
   int source_width = 0;
   int source_height = 0;
   bool resolve_keypoints = true;
-  bool load_legacy_details = true;
+  bool load_legacy_details = false;
+  bool load_legacy_details_when_keypoints_available = false;
+  bool load_legacy_details_for_synthetic_detections = false;
   bool include_eye_masks = false;
   bool include_subject_shapes = false;
   bool allow_blocking_eye_mask_load = true;
@@ -63,6 +65,7 @@ struct CameraFrameData {
   bool keypoint_frame_requested = false;
   std::vector<LoggedBoundingBox> source_boxes;
   ZarrDetectionLoader::FrameDetections legacy_details{};
+  bool legacy_details_requested = false;
   bool legacy_details_ready = false;
   bool frame_is_interpolated = false;
   bool dataset_allows_bbox_edit = false;

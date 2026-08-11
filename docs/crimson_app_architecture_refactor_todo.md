@@ -260,6 +260,37 @@ tests, all eight configured NVIDIA-labeled headless tests pass together, and
 the Zarr-loader dependency policy names this adapter as a temporary
 compatibility boundary.
 
+### 2026-08-11 NVIDIA Frame Inspect Data Adoption
+
+Frame Inspect now consumes the same `CameraFrameDataAdapter` as the NVIDIA
+camera view. Its former duplicate path independently resolved detection and
+keypoint repositories, converted presentation boxes, tested interpolation and
+edit capabilities, prefetched masks, loaded legacy mask/shape details, and
+published results without the adapter's exact-frame rejection. That storage
+and stale-result logic now has one implementation.
+
+The request contract now describes a selected frame rather than requiring a
+presented video frame, allowing inspection of the requested timeline position
+without weakening camera-view presentation semantics. Legacy detail loading is
+explicitly conditional: callers may require it unconditionally, when a
+keypoint run is available, or when the selected detection surface contains
+synthetic observations. Mask and subject-shape payload flags remain separate,
+and invalid or unselected frames perform no payload reads.
+
+Frame Inspect retains UI-tab policy, bbox edit overlays, review mutations, and
+the legacy `FrameDebugWindowContext`. Removing that context's direct loader
+reference requires the remaining subject-shape, eye-angle, tail-kinematics,
+and review-navigation repository boundaries; this checkpoint does not invent
+temporary facades for those evolving contracts. The adoption reduces
+`red.cpp` from 5,478 to 5,468 lines and removes its second direct detection,
+keypoint, mask-prefetch, and combined-detail read pipeline.
+
+The expanded adapter tests cover unconditional, keypoint-conditional, and
+synthetic-detection-conditional details plus unloaded, unselected, and invalid
+frame suppression. All eight NVIDIA-labeled tests, the isolated Linux
+CUDA/TensorRT build, the authenticated frames 0-to-300 playback smoke, 84
+portable tests, and 15 serial macOS tests pass.
+
 ## Recording Clip Index Media
 
 - [x] Extract strict backend-neutral `recording_clip_index.json` parsing and

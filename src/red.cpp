@@ -2233,97 +2233,85 @@ int main(int argc, char **argv) {
         legacy_labeling_state.keypoints_find = false;
       }
       std::vector<LoggedBoundingBox> zarr_boxes;
-      bool frame_is_interpolated = false;
       const bool frame_has_bbox_edits =
           g_zarr_bbox_edit_state.isFrameDirty(current_frame_num);
-      bool dataset_has_synthetic_boxes = false;
-      bool dataset_allows_bbox_edit = false;
-      crimson::zarr::DetectionRepositoryDescriptor detection_descriptor;
-      crimson::zarr::DetectionFrame detection_frame;
-      const crimson::zarr::DetectionFrame *detection_frame_ptr = nullptr;
-      crimson::zarr::KeypointOverlayDescriptor keypoint_descriptor;
-      const crimson::zarr::KeypointOverlayDescriptor *keypoint_descriptor_ptr =
-          nullptr;
-      crimson::zarr::KeypointOverlayResolution keypoint_frame;
-      const crimson::zarr::KeypointOverlayResolution *keypoint_frame_ptr =
-          nullptr;
-      ZarrDetectionLoader::FrameDetections detection_details;
-      const ZarrDetectionLoader::FrameDetections *detection_details_ptr =
-          nullptr;
+      const bool subject_shape_needs_contours =
+          subject_shape_overlay_options.show_overlay &&
+          (subject_shape_overlay_options.show_body_contour ||
+           subject_shape_overlay_options.show_swim_bladder_contour ||
+           subject_shape_overlay_options.show_eye_contours);
+      const bool include_subject_shapes_in_details =
+          zarr_loaded && zarr_loader.hasSubjectShapeData() &&
+          (subject_shape_overlay_options.show_overlay ||
+           (zarr_loader.hasTailKinematicsData() &&
+            tail_kinematics_overlay_options.show_overlay) ||
+           (show_eye_masks && show_eye_angle_arcs &&
+            zarr_loader.hasEyeAngleData()) ||
+           frame_debug_window_state.active_view ==
+               crimson::workspace::FrameInspectView::EyeMasks);
+      const bool include_eye_masks_in_details =
+          zarr_loaded && zarr_loader.hasEyeMasks() &&
+          (show_eye_masks || subject_shape_needs_contours ||
+           frame_debug_window_state.active_view ==
+               crimson::workspace::FrameInspectView::EyeMasks);
+      const bool keypoint_view_needs_legacy_details =
+          frame_debug_window_state.active_view ==
+          crimson::workspace::FrameInspectView::Keypoints;
+      const bool allow_blocking_eye_mask_load = !ps.play_video;
+      crimson::platform::nvidia::CameraFrameData frame_inspect_data =
+          camera_frame_data_adapter.resolve(
+              crimson::platform::nvidia::CameraFrameDataRequest{
+                  zarr_loaded,
+                  current_frame_num >= 0,
+                  current_frame_num,
+                  zarr_loader.getImageWidth(),
+                  zarr_loader.getImageHeight(),
+                  true,
+                  include_eye_masks_in_details ||
+                      include_subject_shapes_in_details,
+                  keypoint_view_needs_legacy_details,
+                  true,
+                  include_eye_masks_in_details,
+                  include_subject_shapes_in_details,
+                  allow_blocking_eye_mask_load,
+                  kPlaybackMaskPrefetchLookaheadFrames,
+              });
+      const auto &detection_descriptor =
+          frame_inspect_data.detection_descriptor;
+      const auto *detection_frame_ptr =
+          frame_inspect_data.detection_frame_ready
+              ? &frame_inspect_data.detection_frame
+              : nullptr;
+      const auto &keypoint_descriptor = frame_inspect_data.keypoint_descriptor;
+      const auto *keypoint_descriptor_ptr =
+          !keypoint_descriptor.run_name.empty() ? &keypoint_descriptor
+                                                : nullptr;
+      const auto *keypoint_frame_ptr =
+          frame_inspect_data.keypoint_frame_requested
+              ? &frame_inspect_data.keypoint_frame
+              : nullptr;
+      const auto *detection_details_ptr =
+          frame_inspect_data.legacy_details_ready
+              ? &frame_inspect_data.legacy_details
+              : nullptr;
+      const bool dataset_has_synthetic_boxes =
+          detection_descriptor.active_dataset_has_synthetic_observations;
+      const bool frame_is_interpolated =
+          frame_inspect_data.frame_is_interpolated;
+      const bool dataset_allows_bbox_edit =
+          frame_inspect_data.dataset_allows_bbox_edit;
       if (zarr_loaded) {
-        detection_descriptor = detection_repository.descriptor();
-        dataset_has_synthetic_boxes =
-            detection_descriptor.active_dataset_has_synthetic_observations;
-        if (detection_descriptor.interpolation_available) {
-          frame_is_interpolated =
-              detection_repository.isFrameInterpolated(current_frame_num);
-        }
-        detection_frame = detection_repository.resolveFrame(
-            static_cast<size_t>(current_frame_num), false);
-        detection_frame_ptr = detection_frame.ready() ? &detection_frame
-                                                       : nullptr;
-        keypoint_descriptor = keypoint_repository.descriptor();
-        if (!keypoint_descriptor.run_name.empty()) {
-          keypoint_descriptor_ptr = &keypoint_descriptor;
-          keypoint_frame = keypoint_repository.resolveCameraFrame(
-              current_frame_num, zarr_loader.getImageWidth(),
-              zarr_loader.getImageHeight());
-          keypoint_frame_ptr = &keypoint_frame;
-        }
-        std::vector<LoggedBoundingBox> loaded_zarr_boxes =
-            crimson::platform::nvidia::makeLegacyBoundingBoxes(
-                detection_descriptor, detection_frame);
         zarr_boxes = g_zarr_bbox_edit_state.resolveFrameBoxes(
-            current_frame_num, loaded_zarr_boxes);
-        dataset_allows_bbox_edit =
-            detection_descriptor.activeDatasetAllowsBboxEditing();
+            current_frame_num, frame_inspect_data.source_boxes);
         if (!dataset_allows_bbox_edit) {
           g_zarr_bbox_edit_state.draw_mode = false;
           g_zarr_bbox_edit_state.cancelDraw();
           g_zarr_bbox_edit_state.clearSelection();
         }
-        const bool subject_shape_needs_contours =
-            subject_shape_overlay_options.show_overlay &&
-            (subject_shape_overlay_options.show_body_contour ||
-             subject_shape_overlay_options.show_swim_bladder_contour ||
-             subject_shape_overlay_options.show_eye_contours);
-        const bool include_subject_shapes_in_details =
-            zarr_loader.hasSubjectShapeData() &&
-            (subject_shape_overlay_options.show_overlay ||
-             (zarr_loader.hasTailKinematicsData() &&
-              tail_kinematics_overlay_options.show_overlay) ||
-             (show_eye_masks && show_eye_angle_arcs &&
-              zarr_loader.hasEyeAngleData()) ||
-             frame_debug_window_state.active_view ==
-                 crimson::workspace::FrameInspectView::EyeMasks);
-        const bool include_eye_masks_in_details =
-            zarr_loader.hasEyeMasks() &&
-            (show_eye_masks || subject_shape_needs_contours ||
-             frame_debug_window_state.active_view ==
-                 crimson::workspace::FrameInspectView::EyeMasks);
-        const bool need_details =
-            (keypoint_descriptor_ptr != nullptr &&
-             frame_debug_window_state.active_view ==
-                 crimson::workspace::FrameInspectView::Keypoints) ||
-            include_eye_masks_in_details ||
-            include_subject_shapes_in_details || dataset_has_synthetic_boxes;
-        if (need_details) {
-          const bool allow_blocking_eye_mask_load = !ps.play_video;
-          if (include_eye_masks_in_details && !allow_blocking_eye_mask_load) {
-            zarr_loader.requestEyeMaskCacheForFrame(
-                static_cast<size_t>(std::max(current_frame_num, 0)),
-                kPlaybackMaskPrefetchLookaheadFrames);
-          }
-          const auto details_load_start = std::chrono::steady_clock::now();
-          detection_details = zarr_loader.getRawDetections(
-              current_frame_num, false, include_eye_masks_in_details,
-              include_subject_shapes_in_details, false,
-              allow_blocking_eye_mask_load);
-          if (include_eye_masks_in_details) {
-            frame_mask_data_load_ms += durationMs(
-                std::chrono::steady_clock::now() - details_load_start);
-          }
-          detection_details_ptr = &detection_details;
+        if (include_eye_masks_in_details &&
+            frame_inspect_data.legacy_details_requested) {
+          frame_mask_data_load_ms +=
+              frame_inspect_data.metrics.legacy_details_ms;
         }
       }
 
@@ -3199,6 +3187,8 @@ int main(int argc, char **argv) {
                       zarr_loader.getImageHeight(),
                       true,
                       true,
+                      false,
+                      false,
                       camera_details_include_eye_masks,
                       camera_details_include_subject_shapes,
                       allow_blocking_eye_mask_load,

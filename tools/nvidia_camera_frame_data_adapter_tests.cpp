@@ -155,14 +155,26 @@ bool testExactMultiRowAndNonblockingLoad() {
          return details;
        }});
 
-  const auto result = adapter.resolve(
-      {true, true, 42, 4512, 4512, true, true, true, true, false, 700});
+  crimson::platform::nvidia::CameraFrameDataRequest request;
+  request.archive_loaded = true;
+  request.frame_selected = true;
+  request.query_frame = 42;
+  request.source_width = 4512;
+  request.source_height = 4512;
+  request.resolve_keypoints = true;
+  request.load_legacy_details = true;
+  request.include_eye_masks = true;
+  request.include_subject_shapes = true;
+  request.allow_blocking_eye_mask_load = false;
+  request.mask_prefetch_lookahead_frames = 700;
+  const auto result = adapter.resolve(request);
   CHECK(result.query_frame == 42);
   CHECK(result.detection_frame_ready);
   CHECK(result.detection_frame.observations.size() == 3);
   CHECK(result.source_boxes.size() == 3);
   CHECK(result.keypoint_frame_requested);
   CHECK(result.keypoint_frame.detections.size() == 2);
+  CHECK(result.legacy_details_requested);
   CHECK(result.legacy_details_ready);
   CHECK(result.legacy_details.boxes.size() == 3);
   CHECK(result.frame_is_interpolated);
@@ -181,8 +193,13 @@ bool testExactMultiRowAndNonblockingLoad() {
   CHECK(details_include_subject_shapes);
 
   detections.empty = true;
-  const auto empty = adapter.resolve(
-      {true, true, 43, 4512, 4512, true, false, false, false, true, 0});
+  request.query_frame = 43;
+  request.load_legacy_details = false;
+  request.include_eye_masks = false;
+  request.include_subject_shapes = false;
+  request.allow_blocking_eye_mask_load = true;
+  request.mask_prefetch_lookahead_frames = 0;
+  const auto empty = adapter.resolve(request);
   CHECK(empty.detection_frame_ready);
   CHECK(empty.detection_frame.observations.empty());
   CHECK(empty.source_boxes.empty());
@@ -205,8 +222,15 @@ bool testStaleResultsAreDiscarded() {
                                 return details;
                               }});
 
-  const auto result = adapter.resolve(
-      {true, true, 75, 100, 100, true, true, false, false, true, 0});
+  crimson::platform::nvidia::CameraFrameDataRequest request;
+  request.archive_loaded = true;
+  request.frame_selected = true;
+  request.query_frame = 75;
+  request.source_width = 100;
+  request.source_height = 100;
+  request.resolve_keypoints = true;
+  request.load_legacy_details = true;
+  const auto result = adapter.resolve(request);
   CHECK(!result.detection_frame_ready);
   CHECK(result.source_boxes.empty());
   CHECK(result.keypoint_frame.status ==
@@ -229,14 +253,90 @@ bool testInactiveRequestDoesNoPayloadWork() {
                                 details_count++;
                                 return ZarrDetectionLoader::FrameDetections{};
                               }});
-  const auto result = adapter.resolve(
-      {false, false, 4, 100, 100, true, true, true, true, false, 10});
+  crimson::platform::nvidia::CameraFrameDataRequest request;
+  request.query_frame = 4;
+  request.source_width = 100;
+  request.source_height = 100;
+  request.resolve_keypoints = true;
+  request.load_legacy_details = true;
+  request.load_legacy_details_when_keypoints_available = true;
+  request.load_legacy_details_for_synthetic_detections = true;
+  request.include_eye_masks = true;
+  request.include_subject_shapes = true;
+  request.allow_blocking_eye_mask_load = false;
+  request.mask_prefetch_lookahead_frames = 10;
+  auto result = adapter.resolve(request);
   CHECK(!result.detection_frame_ready);
   CHECK(!result.keypoint_frame_requested);
   CHECK(!result.legacy_details_ready);
   CHECK(detections.resolve_count == 0);
   CHECK(keypoints.resolve_count == 0);
   CHECK(details_count == 0);
+
+  request.archive_loaded = true;
+  result = adapter.resolve(request);
+  CHECK(!result.detection_frame_ready);
+  CHECK(detections.resolve_count == 0);
+  CHECK(keypoints.resolve_count == 0);
+  CHECK(details_count == 0);
+
+  request.frame_selected = true;
+  request.query_frame = -1;
+  result = adapter.resolve(request);
+  CHECK(!result.detection_frame_ready);
+  CHECK(detections.resolve_count == 0);
+  CHECK(keypoints.resolve_count == 0);
+  CHECK(details_count == 0);
+  return true;
+}
+
+bool testConditionalLegacyDetailPolicy() {
+  FakeDetectionRepository detections;
+  detections.descriptor_value.available = true;
+  FakeKeypointRepository keypoints;
+  int details_count = 0;
+  crimson::platform::nvidia::CameraFrameDataAdapter adapter(
+      detections, keypoints, {{}, [&](size_t frame, bool, bool, bool) {
+                                details_count++;
+                                ZarrDetectionLoader::FrameDetections details{};
+                                details.frame_id = frame;
+                                return details;
+                              }});
+
+  crimson::platform::nvidia::CameraFrameDataRequest request;
+  request.archive_loaded = true;
+  request.frame_selected = true;
+  request.query_frame = 8;
+  request.resolve_keypoints = false;
+
+  auto result = adapter.resolve(request);
+  CHECK(!result.legacy_details_requested);
+  CHECK(!result.legacy_details_ready);
+  CHECK(details_count == 0);
+
+  request.load_legacy_details_when_keypoints_available = true;
+  result = adapter.resolve(request);
+  CHECK(!result.legacy_details_requested);
+  CHECK(details_count == 0);
+
+  keypoints.descriptor_value.run_name = "keypoints";
+  result = adapter.resolve(request);
+  CHECK(result.legacy_details_requested);
+  CHECK(result.legacy_details_ready);
+  CHECK(details_count == 1);
+
+  keypoints.descriptor_value.run_name.clear();
+  request.load_legacy_details_when_keypoints_available = false;
+  request.load_legacy_details_for_synthetic_detections = true;
+  result = adapter.resolve(request);
+  CHECK(!result.legacy_details_requested);
+  CHECK(details_count == 1);
+
+  detections.descriptor_value.active_dataset_has_synthetic_observations = true;
+  result = adapter.resolve(request);
+  CHECK(result.legacy_details_requested);
+  CHECK(result.legacy_details_ready);
+  CHECK(details_count == 2);
   return true;
 }
 
@@ -245,7 +345,8 @@ bool testInactiveRequestDoesNoPayloadWork() {
 int main() {
   if (!testFrameQuerySelection() || !testExactMultiRowAndNonblockingLoad() ||
       !testStaleResultsAreDiscarded() ||
-      !testInactiveRequestDoesNoPayloadWork()) {
+      !testInactiveRequestDoesNoPayloadWork() ||
+      !testConditionalLegacyDetailPolicy()) {
     return 1;
   }
   std::cout << "nvidia_camera_frame_data_adapter_tests: PASS\n";

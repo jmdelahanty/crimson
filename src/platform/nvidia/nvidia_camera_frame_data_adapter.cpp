@@ -54,10 +54,10 @@ CameraFrameDataAdapter::resolve(const CameraFrameDataRequest &request) const {
   result.detection_descriptor = detection_repository_.descriptor();
   result.keypoint_descriptor = keypoint_repository_.descriptor();
   result.dataset_allows_bbox_edit =
-      request.archive_loaded && request.has_presented_frame &&
+      request.archive_loaded && request.frame_selected &&
       result.detection_descriptor.activeDatasetAllowsBboxEditing();
 
-  if (!request.archive_loaded || !request.has_presented_frame ||
+  if (!request.archive_loaded || !request.frame_selected ||
       !validFrameIndex(request.query_frame)) {
     return result;
   }
@@ -104,7 +104,13 @@ CameraFrameDataAdapter::resolve(const CameraFrameDataRequest &request) const {
       result.detection_descriptor.interpolation_available &&
       detection_repository_.isFrameInterpolated(frame);
 
-  if (request.load_legacy_details && callbacks_.resolve_legacy_details) {
+  result.legacy_details_requested =
+      request.load_legacy_details ||
+      (request.load_legacy_details_when_keypoints_available &&
+       !result.keypoint_descriptor.run_name.empty()) ||
+      (request.load_legacy_details_for_synthetic_detections &&
+       result.detection_descriptor.active_dataset_has_synthetic_observations);
+  if (result.legacy_details_requested && callbacks_.resolve_legacy_details) {
     result.legacy_details.frame_id = frame;
     if (request.include_eye_masks && !request.allow_blocking_eye_mask_load &&
         callbacks_.request_eye_mask_cache) {
