@@ -469,8 +469,13 @@ bool TestDenseRepositoryAndScene(
   auto input = crimson::zarr::makeSubjectMaskOverlaySceneInput(
       descriptor, frame, 0, 2, 0, 100, 80);
   CHECK(input.subject_masks.size() == 8);
-  CHECK(input.subject_masks[0].cache_namespace ==
-        "refined_subject_masks_runs/dense_fixture");
+  CHECK(!descriptor.cache_namespace.empty());
+  CHECK(descriptor.cache_namespace.find(":dense_fixture") != std::string::npos);
+  CHECK(std::all_of(input.subject_masks.begin(), input.subject_masks.end(),
+                    [&](const auto &component) {
+                      return component.cache_namespace ==
+                             descriptor.cache_namespace;
+                    }));
   CHECK(std::all_of(
       input.subject_masks.begin(), input.subject_masks.end(),
       [](const auto &component) { return component.mask != nullptr; }));
