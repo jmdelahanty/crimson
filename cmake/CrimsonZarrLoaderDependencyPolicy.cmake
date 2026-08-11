@@ -18,6 +18,7 @@ set(CRIMSON_ZARR_LOADER_DIRECT_INCLUDE_ALLOWLIST
     src/gui_interpolation.h
     src/live_crop_image_provider.h
     src/media_session_loader.h
+    src/platform/nvidia/nvidia_camera_frame_data_adapter.h
     src/red.cpp
     src/refined_keypoint_repository.h
     src/subject_mask_edit_session.h

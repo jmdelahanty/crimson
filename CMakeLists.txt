@@ -2749,6 +2749,7 @@ file(GLOB CPP_SOURCES CONFIGURE_DEPENDS
     "src/gui/*.cpp"
     "src/zarr/*.cpp")
 list(APPEND CPP_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_camera_frame_data_adapter.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_detection_presentation_adapter.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_frame_inspect_adapter.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_gl_diagnostics.cpp"
@@ -2958,6 +2959,33 @@ add_test(NAME nvidia_detection_presentation_adapter_tests
 )
 set_tests_properties(nvidia_detection_presentation_adapter_tests PROPERTIES
     LABELS "detection;headless;nvidia;presentation"
+)
+
+add_executable(nvidia_camera_frame_data_adapter_tests
+    tools/nvidia_camera_frame_data_adapter_tests.cpp
+    src/platform/nvidia/nvidia_camera_frame_data_adapter.cpp
+    src/platform/nvidia/nvidia_detection_presentation_adapter.cpp
+)
+target_include_directories(nvidia_camera_frame_data_adapter_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+    ${HDF5_INCLUDE_DIRS}
+)
+target_link_libraries(nvidia_camera_frame_data_adapter_tests PRIVATE
+    crimson_repository_contracts
+    tensorstore::all_drivers
+)
+target_compile_features(nvidia_camera_frame_data_adapter_tests PRIVATE
+    cxx_std_17
+)
+set_target_properties(nvidia_camera_frame_data_adapter_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME nvidia_camera_frame_data_adapter_tests
+    COMMAND $<TARGET_FILE:nvidia_camera_frame_data_adapter_tests>
+)
+set_tests_properties(nvidia_camera_frame_data_adapter_tests PROPERTIES
+    LABELS "detection;headless;keypoints;nvidia;presentation"
 )
 
 if(CRIMSON_ENABLE_NVENC)

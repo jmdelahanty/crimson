@@ -223,6 +223,43 @@ success and failure states, generation/archive staleness, reset intent, and
 worker exceptions. The extraction reduces `red.cpp` from 5,718 to 5,472 lines
 without adding keypoint-write support to the read-only Metal application.
 
+### 2026-08-10 NVIDIA Camera-Frame Data Adapter Extraction
+
+The NVIDIA camera-view loop now obtains its read-only per-frame analysis data
+through `CameraFrameDataAdapter`. The adapter accepts typed detection and
+keypoint repositories, selects the exact presented camera frame (including the
+last settled parent frame during a clipped-media handoff), resolves every row
+for that frame, converts detections to the maintained legacy box surface, and
+requests optional mask/shape details through an explicit compatibility
+callback. It rejects any repository or compatibility result whose frame
+identity does not match the request, so a late seek result cannot reach the
+renderer.
+
+The returned value owns one self-consistent camera-frame snapshot: repository
+descriptors, detection rows, keypoint observations, presentation boxes,
+optional legacy details, interpolation/edit capabilities, and repository
+resolution timings. Exact empty frames remain ready empty frames rather than
+being treated
+as missing. During playback, mask cache prefetch remains nonblocking and occurs
+before the optional detail lookup.
+
+This is deliberately a narrow NVIDIA compatibility adapter, not a new
+universal repository. The typed repository contracts and frame-selection
+inputs are backend-neutral, while `red.cpp` retains bbox edit mutations,
+decoder-slot and clipped-switch execution, playback state, ImGui composition,
+and CUDA/OpenGL resources. The legacy combined detail callback remains isolated
+until masks, subject shape, and eye geometry all use their dedicated typed
+repositories in the NVIDIA camera view.
+
+Headless Linux tests cover exact/current/clipped query selection, multiple and
+empty detection rows, keypoint observations, mask prefetch, interpolation and
+edit capabilities, inactive requests, and stale detection/keypoint/detail
+suppression. The isolated Ubuntu/CUDA/TensorRT build and authenticated NVIDIA
+playback smoke pass through frames 0 to 300. The macOS build retains 99 passing
+tests, all eight configured NVIDIA-labeled headless tests pass together, and
+the Zarr-loader dependency policy names this adapter as a temporary
+compatibility boundary.
+
 ## Recording Clip Index Media
 
 - [x] Extract strict backend-neutral `recording_clip_index.json` parsing and

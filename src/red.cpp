@@ -48,6 +48,7 @@
 #include "manual_detect_payload_preview.h"
 #include "media_session_loader.h"
 #include "perf_logging.h"
+#include "platform/nvidia/nvidia_camera_frame_data_adapter.h"
 #include "platform/nvidia/nvidia_clipped_media_coordinator.h"
 #include "platform/nvidia/nvidia_diagnostics_session.h"
 #include "platform/nvidia/nvidia_detection_presentation_adapter.h"
@@ -338,6 +339,20 @@ int main(int argc, char **argv) {
   crimson::zarr::LegacyDetectionRepository detection_repository(zarr_loader);
   crimson::zarr::LegacyKeypointOverlayRepository keypoint_repository(
       zarr_loader);
+  crimson::platform::nvidia::CameraFrameDataAdapter camera_frame_data_adapter(
+      detection_repository, keypoint_repository,
+      crimson::platform::nvidia::CameraFrameDataCallbacks{
+          [&zarr_loader](size_t frame, size_t lookahead_frames) {
+            zarr_loader.requestEyeMaskCacheForFrame(frame, lookahead_frames);
+          },
+          [&zarr_loader](size_t frame, bool include_eye_masks,
+                         bool include_subject_shapes,
+                         bool allow_blocking_eye_mask_load) {
+            return zarr_loader.getRawDetections(
+                frame, false, include_eye_masks, include_subject_shapes, false,
+                allow_blocking_eye_mask_load);
+          },
+      });
   crimson::zarr::LegacyStimulusRepository stimulus_repository(zarr_loader);
   auto analysis_data_scheduler =
       std::make_shared<crimson::data::DataAccessScheduler>(64, 4, 1, 1);
@@ -3130,34 +3145,32 @@ int main(int argc, char **argv) {
             g_cvs[j].notify_one();
           }
 
-          ZarrDetectionLoader::FrameDetections detection_details;
-          crimson::zarr::DetectionFrame presented_detection_frame;
-          const auto camera_detection_descriptor =
-              detection_repository.descriptor();
-          const auto camera_keypoint_descriptor =
-              keypoint_repository.descriptor();
-          crimson::zarr::KeypointOverlayResolution presented_keypoint_frame;
-          const crimson::zarr::KeypointOverlayResolution*
-              presented_keypoint_frame_ptr = nullptr;
           const bool has_presented_camera_frame = presented_frame >= 0;
-          int zarr_bbox_query_frame =
-              has_presented_camera_frame ? presented_frame : current_frame_num;
           const auto &clipped_handoff = clipped_media_state.handoff;
+          bool presented_frame_uses_selected_clip = false;
           if (media_session_loader.hasMappedMedia() &&
               clipped_handoff.switch_in_progress &&
               clipped_handoff.pending_switch_parent_frame >= 0 &&
-              clipped_handoff.last_presented_parent_frame >= 0) {
-            const bool presented_new_clip_frame =
-                has_presented_camera_frame &&
+              has_presented_camera_frame) {
+            presented_frame_uses_selected_clip =
                 presented_frame >=
                     clipped_handoff.pending_switch_parent_frame &&
                 clippedSelectedRunForFrame(presented_frame) ==
                     clipped_handoff.selected_run_index;
-            if (!presented_new_clip_frame) {
-              zarr_bbox_query_frame =
-                  static_cast<int>(clipped_handoff.last_presented_parent_frame);
-            }
           }
+          const crimson::platform::nvidia::CameraFrameQuery
+              camera_frame_query =
+                  crimson::platform::nvidia::selectCameraFrameQuery(
+                      crimson::platform::nvidia::CameraFrameQueryInput{
+                      current_frame_num,
+                      presented_frame,
+                      media_session_loader.hasMappedMedia(),
+                      clipped_handoff.switch_in_progress,
+                      clipped_handoff.pending_switch_parent_frame,
+                      clipped_handoff.last_presented_parent_frame,
+                      presented_frame_uses_selected_clip,
+                  });
+          const int zarr_bbox_query_frame = camera_frame_query.query_frame;
           const bool camera_subject_shape_needs_contours =
               subject_shape_overlay_options.show_overlay &&
               (subject_shape_overlay_options.show_body_contour ||
@@ -3175,13 +3188,40 @@ int main(int argc, char **argv) {
               zarr_loaded && has_presented_camera_frame &&
               (show_eye_masks || camera_subject_shape_needs_contours) &&
               zarr_loader.hasEyeMasks();
+          const bool allow_blocking_eye_mask_load = !ps.play_video;
+          crimson::platform::nvidia::CameraFrameData camera_frame_data =
+              camera_frame_data_adapter.resolve(
+                  crimson::platform::nvidia::CameraFrameDataRequest{
+                      zarr_loaded,
+                      has_presented_camera_frame,
+                      zarr_bbox_query_frame,
+                      zarr_loader.getImageWidth(),
+                      zarr_loader.getImageHeight(),
+                      true,
+                      true,
+                      camera_details_include_eye_masks,
+                      camera_details_include_subject_shapes,
+                      allow_blocking_eye_mask_load,
+                      kPlaybackMaskPrefetchLookaheadFrames,
+                  });
+          const auto &camera_detection_descriptor =
+              camera_frame_data.detection_descriptor;
+          const auto &camera_keypoint_descriptor =
+              camera_frame_data.keypoint_descriptor;
+          const auto &presented_detection_frame =
+              camera_frame_data.detection_frame;
+          const auto &presented_keypoint_frame =
+              camera_frame_data.keypoint_frame;
+          const crimson::zarr::KeypointOverlayResolution*
+              presented_keypoint_frame_ptr =
+                  camera_frame_data.keypoint_frame_requested
+                      ? &presented_keypoint_frame
+                      : nullptr;
+          auto &detection_details = camera_frame_data.legacy_details;
           const bool is_zarr_interpolated =
-              zarr_loaded && has_presented_camera_frame &&
-              camera_detection_descriptor.interpolation_available &&
-              detection_repository.isFrameInterpolated(zarr_bbox_query_frame);
+              camera_frame_data.frame_is_interpolated;
           const bool dataset_allows_bbox_edit =
-              zarr_loaded && has_presented_camera_frame &&
-              camera_detection_descriptor.activeDatasetAllowsBboxEditing();
+              camera_frame_data.dataset_allows_bbox_edit;
           if (zarr_loaded && !dataset_allows_bbox_edit) {
             g_zarr_bbox_edit_state.draw_mode = false;
             g_zarr_bbox_edit_state.cancelDraw();
@@ -3191,55 +3231,32 @@ int main(int argc, char **argv) {
               dataset_allows_bbox_edit && g_zarr_bbox_edit_state.enabled &&
               (g_zarr_bbox_edit_state.allow_edit_while_playing ||
                !ps.play_video);
-          std::vector<LoggedBoundingBox> loaded_zarr_boxes;
+          const auto &loaded_zarr_boxes = camera_frame_data.source_boxes;
           std::vector<LoggedBoundingBox> zarr_boxes;
           if (zarr_loaded && has_presented_camera_frame) {
             frame_bbox_query_frame = zarr_bbox_query_frame;
-            const auto bbox_load_total_start = std::chrono::steady_clock::now();
-            const auto bbox_get_boxes_start = std::chrono::steady_clock::now();
-            presented_detection_frame = detection_repository.resolveFrame(
-                static_cast<size_t>(zarr_bbox_query_frame), false);
-            if (!camera_keypoint_descriptor.run_name.empty()) {
-              presented_keypoint_frame =
-                  keypoint_repository.resolveCameraFrame(
-                      zarr_bbox_query_frame, zarr_loader.getImageWidth(),
-                      zarr_loader.getImageHeight());
-              presented_keypoint_frame_ptr = &presented_keypoint_frame;
-            }
-            loaded_zarr_boxes =
-                crimson::platform::nvidia::makeLegacyBoundingBoxes(
-                    camera_detection_descriptor, presented_detection_frame);
-            frame_bbox_get_boxes_ms += durationMs(
-                std::chrono::steady_clock::now() - bbox_get_boxes_start);
+            frame_bbox_get_boxes_ms +=
+                camera_frame_data.metrics.detection_repository_ms +
+                camera_frame_data.metrics.keypoint_repository_ms +
+                camera_frame_data.metrics.bounding_box_conversion_ms;
             frame_bbox_loaded_count =
                 static_cast<int>(loaded_zarr_boxes.size());
             const auto bbox_edit_resolve_start =
                 std::chrono::steady_clock::now();
             zarr_boxes = g_zarr_bbox_edit_state.resolveFrameBoxes(
                 zarr_bbox_query_frame, loaded_zarr_boxes);
-            frame_bbox_edit_resolve_ms += durationMs(
+            const double bbox_edit_resolve_ms = durationMs(
                 std::chrono::steady_clock::now() - bbox_edit_resolve_start);
+            frame_bbox_edit_resolve_ms += bbox_edit_resolve_ms;
             frame_bbox_display_count = static_cast<int>(zarr_boxes.size());
-            const bool allow_blocking_eye_mask_load = !ps.play_video;
-            if (camera_details_include_eye_masks &&
-                !allow_blocking_eye_mask_load && zarr_bbox_query_frame >= 0) {
-              zarr_loader.requestEyeMaskCacheForFrame(
-                  static_cast<size_t>(zarr_bbox_query_frame),
-                  kPlaybackMaskPrefetchLookaheadFrames);
-            }
-            const auto detection_load_start = std::chrono::steady_clock::now();
-            detection_details = zarr_loader.getRawDetections(
-                zarr_bbox_query_frame, false, camera_details_include_eye_masks,
-                camera_details_include_subject_shapes, false,
-                allow_blocking_eye_mask_load);
-            const double raw_detections_ms = durationMs(
-                std::chrono::steady_clock::now() - detection_load_start);
-            frame_bbox_get_raw_detections_ms += raw_detections_ms;
+            frame_bbox_get_raw_detections_ms +=
+                camera_frame_data.metrics.legacy_details_ms;
             if (camera_details_include_eye_masks) {
-              frame_mask_data_load_ms += raw_detections_ms;
+              frame_mask_data_load_ms +=
+                  camera_frame_data.metrics.legacy_details_ms;
             }
-            frame_bbox_load_total_ms += durationMs(
-                std::chrono::steady_clock::now() - bbox_load_total_start);
+            frame_bbox_load_total_ms +=
+                camera_frame_data.metrics.total_ms + bbox_edit_resolve_ms;
           }
 
           auto deleteSelectedBoxOnCurrentFrame = [&]() -> bool {
@@ -3529,8 +3546,8 @@ int main(int argc, char **argv) {
           camera_context_input.full_frame_edit_state = full_frame_edit_state;
           camera_context_input.zarr_boxes = &zarr_boxes;
           camera_context_input.detection_details =
-              zarr_loaded && has_presented_camera_frame ? &detection_details
-                                                        : nullptr;
+              camera_frame_data.legacy_details_ready ? &detection_details
+                                                     : nullptr;
           camera_context_input.keypoint_descriptor =
               !camera_keypoint_descriptor.run_name.empty()
                   ? &camera_keypoint_descriptor
