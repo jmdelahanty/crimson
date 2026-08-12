@@ -80,6 +80,7 @@ inline constexpr std::array<SubjectMaskV1ArrayDeclaration, 13>
 
 struct SubjectMaskV1ManifestSummary {
   std::string run_id;
+  int manifest_schema_version = 0;
   std::string payload_digest;
   std::string manifest_digest;
   std::string metadata_digest;

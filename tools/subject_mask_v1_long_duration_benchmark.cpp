@@ -79,6 +79,7 @@ struct Workload {
   size_t reserved_current_workers = 0;
   size_t lookahead_frames = 0;
   size_t cache_frames = 0;
+  std::vector<int64_t> fixed_frames;
   size_t frame_timeout_ms = 0;
   size_t close_timeout_ms = 0;
   double readiness_gate_ms = 0.0;
@@ -404,6 +405,11 @@ Workload loadWorkload(const std::filesystem::path &path) {
   const auto &cache = result.document.at("presentation_cache");
   result.lookahead_frames = cache.at("lookahead_frames");
   result.cache_frames = cache.at("capacity_frames");
+  if (const auto fixed = result.document.find("fixed_frames");
+      fixed != result.document.end()) {
+    result.fixed_frames =
+        fixed->at("clip_boundaries").get<std::vector<int64_t>>();
+  }
   const auto &timeouts = result.document.at("timeouts_ms");
   result.frame_timeout_ms = timeouts.at("frame");
   result.close_timeout_ms = timeouts.at("close");
@@ -834,6 +840,16 @@ json execute(const Options &options, const Workload &workload) {
   const auto rapid = randomFrames(
       descriptor.camera_frame_count, workload.rapid_seek_count,
       workload.rapid_seek_seed + options.repetition * 0x9e3779b9ULL);
+  std::vector<int64_t> fixed = workload.fixed_frames;
+  std::sort(fixed.begin(), fixed.end());
+  fixed.erase(std::unique(fixed.begin(), fixed.end()), fixed.end());
+  require(std::all_of(fixed.begin(), fixed.end(),
+                      [&](int64_t frame) {
+                        return frame >= 0 &&
+                               frame < static_cast<int64_t>(
+                                           descriptor.camera_frame_count);
+                      }),
+          "Fixed subject-mask frame is outside the archive");
   const auto forward =
       forwardFrames(descriptor.camera_frame_count, workload.traversal_frames,
                     options.repetition);
@@ -860,6 +876,15 @@ json execute(const Options &options, const Workload &workload) {
                                           options.frame_height, timeout);
   const json random_warm = runRandomPass(&buffer, random, options.frame_width,
                                          options.frame_height, timeout);
+  const json fixed_json =
+      fixed.empty() ? json{{"status", "pass"},
+                           {"requests", 0},
+                           {"frames", json::array()}}
+                    : json{{"status", "pass"},
+                           {"frames", fixed},
+                           {"measurements",
+                            runRandomPass(&buffer, fixed, options.frame_width,
+                                          options.frame_height, timeout)}};
   const json forward_json = runTraversal(
       &buffer, forward, workload.page_frames, workload.warmup_pages,
       workload.source_fps, options.frame_width, options.frame_height, timeout);
@@ -957,6 +982,7 @@ json execute(const Options &options, const Workload &workload) {
           {"first_presentation", first_json},
           {"random_process_first", random_first},
           {"random_warm", random_warm},
+          {"fixed_frames", fixed_json},
           {"forward_traversal", forward_json},
           {"reverse_traversal", reverse_json},
           {"rapid_seeks", rapid_json},

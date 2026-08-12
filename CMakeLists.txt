@@ -945,6 +945,19 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
 
+    add_executable(subject_mask_bundle_v4_probe
+        tools/subject_mask_bundle_v4_probe.cpp
+    )
+    target_compile_features(subject_mask_bundle_v4_probe PRIVATE cxx_std_17)
+    target_link_libraries(subject_mask_bundle_v4_probe PRIVATE
+        crimson_tensorstore_repositories
+        ${tensorstore_target}
+        nlohmann_json::nlohmann_json
+    )
+    set_target_properties(subject_mask_bundle_v4_probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
     add_executable(subject_mask_crop_join_probe
         tools/subject_mask_crop_join_probe.cpp
     )

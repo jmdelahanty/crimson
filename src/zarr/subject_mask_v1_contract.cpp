@@ -165,12 +165,15 @@ bool validateLogicalSchema(const json &schema,
 }
 
 bool validateLogicalContent(const json &content,
-                            const SubjectMaskV1ManifestSummary &summary) {
+                            const SubjectMaskV1ManifestSummary &summary,
+                            bool composable_dense_identity,
+                            std::string *error) {
   if (!exactKeys(content, {"digest_algorithm", "digest", "document"}) ||
       content.value("digest_algorithm", "") != "sha256_canonical_json_v1" ||
       !IsLowerSha256(content.value("digest", "")) ||
       CanonicalJsonSha256(content.at("document")) !=
           content.value("digest", "")) {
+    assignError(error, "Subject-mask logical-content envelope differs");
     return false;
   }
   const auto &document = content.at("document");
@@ -178,10 +181,12 @@ bool validateLogicalContent(const json &content,
                             "components", "arrays"}) ||
       document.value("schema_id", "") !=
           "palette.subject_mask_core.logical_content" ||
-      document.value("schema_version", 0) != 1 ||
+      document.value("schema_version", 0) !=
+          (composable_dense_identity ? 2 : 1) ||
       document.value("kind", "") != "refined_dense_core" ||
       !document.at("arrays").is_object() ||
       document.at("arrays").size() != kSubjectMaskV1ArrayDeclarations.size()) {
+    assignError(error, "Subject-mask logical-content document differs");
     return false;
   }
   const auto &dimensions = document.at("dimensions");
@@ -203,22 +208,88 @@ bool validateLogicalContent(const json &content,
       components.value("ordering", "") != "persisted_exact_order" ||
       !components.contains("labels") ||
       components.at("labels") != summary.component_labels) {
+    assignError(error, "Subject-mask logical-content dimensions differ");
     return false;
   }
   for (const auto &declaration : kSubjectMaskV1ArrayDeclarations) {
     const auto found = document.at("arrays").find(declaration.path);
     if (found == document.at("arrays").end() ||
-        !exactKeys(*found, {"shape", "dtype", "digest_algorithm", "sha256"}) ||
         found->value("dtype", "") != declaration.dtype ||
-        found->value("digest_algorithm", "") !=
-            "sha256_c_contiguous_bytes_v1" ||
-        !IsLowerSha256(found->value("sha256", "")) ||
         found->at("shape").get<std::vector<size_t>>() !=
             ExpectedSubjectMaskV1Shape(declaration, summary)) {
+      assignError(error, "Subject-mask logical array shape or dtype differs: " +
+                             std::string(declaration.path));
+      return false;
+    }
+    const bool dense = declaration.path == std::string_view("masks_roi");
+    if (!dense || !composable_dense_identity) {
+      if (!exactKeys(*found,
+                     {"shape", "dtype", "digest_algorithm", "sha256"}) ||
+          found->value("digest_algorithm", "") !=
+              "sha256_c_contiguous_bytes_v1" ||
+          !IsLowerSha256(found->value("sha256", ""))) {
+        assignError(error, "Subject-mask logical array digest differs: " +
+                               std::string(declaration.path));
+        return false;
+      }
+      continue;
+    }
+    if (!exactKeys(*found,
+                   {"shape", "dtype", "digest_algorithm", "identity_unit_rows",
+                    "unit_count", "units_digest", "units"}) ||
+        found->value("digest_algorithm", "") !=
+            "sha256_c_contiguous_global_row_units_v1" ||
+        !found->at("identity_unit_rows").is_number_integer() ||
+        found->value("identity_unit_rows", size_t{0}) == 0 ||
+        !found->at("unit_count").is_number_integer() ||
+        !found->at("units").is_array() ||
+        found->value("unit_count", size_t{0}) != found->at("units").size() ||
+        !IsLowerSha256(found->value("units_digest", "")) ||
+        CanonicalJsonSha256(found->at("units")) !=
+            found->value("units_digest", "")) {
+      assignError(error, "Subject-mask dense identity envelope differs");
+      return false;
+    }
+    size_t next_row = 0;
+    const size_t row_bytes = summary.channel_count * summary.mask_height *
+                             summary.mask_width * sizeof(uint8_t);
+    for (const auto &unit : found->at("units")) {
+      if (!exactKeys(unit,
+                     {"start_row", "stop_row", "decoded_bytes", "sha256"}) ||
+          !unit.at("start_row").is_number_integer() ||
+          !unit.at("stop_row").is_number_integer() ||
+          !unit.at("decoded_bytes").is_number_integer() ||
+          !IsLowerSha256(unit.value("sha256", ""))) {
+        assignError(error, "Subject-mask dense identity unit differs");
+        return false;
+      }
+      const size_t start = unit.at("start_row").get<size_t>();
+      const size_t stop = unit.at("stop_row").get<size_t>();
+      if (start != next_row || stop <= start || stop > summary.row_count ||
+          unit.at("decoded_bytes").get<size_t>() !=
+              (stop - start) * row_bytes) {
+        assignError(error, "Subject-mask dense identity coverage differs");
+        return false;
+      }
+      next_row = stop;
+    }
+    if (next_row != summary.row_count) {
+      assignError(error, "Subject-mask dense identity terminal row differs");
       return false;
     }
   }
   return true;
+}
+
+bool validateDigestEnvelope(const json &value, std::string_view schema_id,
+                            int schema_version) {
+  return exactKeys(value, {"schema_id", "schema_version", "digest_algorithm",
+                           "digest", "document"}) &&
+         value.value("schema_id", "") == schema_id &&
+         value.value("schema_version", 0) == schema_version &&
+         value.value("digest_algorithm", "") == "sha256_canonical_json_v1" &&
+         IsLowerSha256(value.value("digest", "")) &&
+         CanonicalJsonSha256(value.at("document")) == value.value("digest", "");
 }
 
 } // namespace
@@ -308,7 +379,8 @@ bool ValidateSubjectMaskV1Manifest(const json &manifest,
                               "payload_digest", "payload"}) ||
         manifest.value("schema_id", "") !=
             "palette.subject_mask_core.run_manifest" ||
-        manifest.value("schema_version", 0) != 2 ||
+        (manifest.value("schema_version", 0) != 2 &&
+         manifest.value("schema_version", 0) != 5) ||
         manifest.value("digest_algorithm", "") != "sha256_canonical_json_v1" ||
         !IsLowerSha256(manifest.value("payload_digest", "")) ||
         CanonicalJsonSha256(manifest.at("payload")) !=
@@ -318,13 +390,23 @@ bool ValidateSubjectMaskV1Manifest(const json &manifest,
     }
 
     SubjectMaskV1ManifestSummary parsed;
+    parsed.manifest_schema_version = manifest.at("schema_version").get<int>();
     parsed.payload_digest = manifest.at("payload_digest").get<std::string>();
     parsed.manifest_digest = CanonicalJsonSha256(manifest);
     const auto &payload = manifest.at("payload");
-    if (!exactKeys(payload, {"run_id", "stage_family", "kind", "publication",
-                             "logical_schema", "storage_plan", "source",
-                             "write_receipt", "logical_content"}) ||
-        payload.value("run_id", "") != requested_run ||
+    const bool composable = parsed.manifest_schema_version == 5;
+    const bool exact_payload =
+        composable
+            ? exactKeys(payload,
+                        {"run_id", "stage_family", "kind", "publication",
+                         "logical_schema", "storage_plan", "source",
+                         "write_receipt", "logical_content",
+                         "coordinate_contract", "coordinate_dependencies"})
+            : exactKeys(payload,
+                        {"run_id", "stage_family", "kind", "publication",
+                         "logical_schema", "storage_plan", "source",
+                         "write_receipt", "logical_content"});
+    if (!exact_payload || payload.value("run_id", "") != requested_run ||
         payload.value("stage_family", "") != "refined_subject_masks_runs" ||
         payload.value("kind", "") != "refined_dense_core") {
       assignError(error, "Subject-mask v1 manifest identity is invalid");
@@ -356,12 +438,30 @@ bool ValidateSubjectMaskV1Manifest(const json &manifest,
         publication.at("metadata_digest").get<std::string>();
     parsed.metadata_digest_scope = metadata_digest_scope;
 
-    if (!validateLogicalSchema(payload.at("logical_schema"), &parsed) ||
-        !validateLogicalContent(payload.at("logical_content"), parsed) ||
-        !payload.at("storage_plan").is_object() ||
+    if (!validateLogicalSchema(payload.at("logical_schema"), &parsed)) {
+      assignError(error, "Subject-mask v1 logical schema is invalid");
+      return false;
+    }
+    if (!validateLogicalContent(payload.at("logical_content"), parsed,
+                                composable, error)) {
+      if (error && error->empty()) {
+        assignError(error, "Subject-mask v1 logical content is invalid");
+      }
+      return false;
+    }
+    if (!payload.at("storage_plan").is_object() ||
         !payload.at("source").is_object() ||
         !payload.at("write_receipt").is_object()) {
-      assignError(error, "Subject-mask v1 logical contract is invalid");
+      assignError(error, "Subject-mask v1 publication evidence is invalid");
+      return false;
+    }
+    if (composable &&
+        (!validateDigestEnvelope(payload.at("coordinate_contract"),
+                                 "palette.persisted_coordinate_catalog", 1) ||
+         !validateDigestEnvelope(
+             payload.at("coordinate_dependencies"),
+             "palette.subject_mask_core.coordinate_dependencies", 3))) {
+      assignError(error, "Subject-mask v1 coordinate contract is invalid");
       return false;
     }
     *summary = std::move(parsed);

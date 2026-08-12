@@ -136,15 +136,25 @@ const json *SourceArrays(const json &source_manifest) {
 
 bool ValidateSourceBinding(const json &binding, const json &source_manifest,
                            const SubjectMaskV1ManifestSummary &source,
-                           std::string *error) {
+                           bool composable_dense_identity, std::string *error) {
   const json *arrays = SourceArrays(source_manifest);
-  if (!arrays ||
-      !ExactKeys(binding,
-                 {"stage", "run_name", "run_path", "manifest_schema_id",
-                  "manifest_schema_version", "manifest_payload_digest",
-                  "manifest_document_digest", "dense_array_values_sha256",
-                  "component_registry_digest",
-                  "row_identity_array_values_sha256", "authority"})) {
+  const bool exact_binding =
+      composable_dense_identity
+          ? ExactKeys(
+                binding,
+                {"stage", "run_name", "run_path", "manifest_schema_id",
+                 "manifest_schema_version", "manifest_payload_digest",
+                 "manifest_document_digest", "component_registry_digest",
+                 "row_identity_array_values_sha256", "authority",
+                 "dense_identity_kind", "dense_array_logical_identity_digest",
+                 "dense_array_logical_identity", "worker_assembly_digest"})
+          : ExactKeys(binding,
+                      {"stage", "run_name", "run_path", "manifest_schema_id",
+                       "manifest_schema_version", "manifest_payload_digest",
+                       "manifest_document_digest", "dense_array_values_sha256",
+                       "component_registry_digest",
+                       "row_identity_array_values_sha256", "authority"});
+  if (!arrays || !exact_binding) {
     AssignError(error, "Sampled-contour source binding is malformed");
     return false;
   }
@@ -159,25 +169,41 @@ bool ValidateSourceBinding(const json &binding, const json &source_manifest,
     identity[std::string(path)] = found->at("sha256");
   }
   const auto masks = arrays->find("masks_roi");
-  if (masks == arrays->end() || !masks->is_object() ||
-      !masks->contains("sha256") || !Sha256Value(masks->at("sha256"))) {
+  if (masks == arrays->end() || !masks->is_object()) {
+    AssignError(error, "Dense source mask digest is unavailable");
+    return false;
+  }
+  if (!composable_dense_identity &&
+      (!masks->contains("sha256") || !Sha256Value(masks->at("sha256")))) {
     AssignError(error, "Dense source mask digest is unavailable");
     return false;
   }
   const auto &components =
       source_manifest.at("payload").at("logical_schema").at("components");
-  const json expected = {
+  json expected = {
       {"stage", "refined_subject_masks"},
       {"run_name", source.run_id},
       {"run_path", "refined_subject_masks_runs/" + source.run_id},
       {"manifest_schema_id", "palette.subject_mask_core.run_manifest"},
-      {"manifest_schema_version", 2},
+      {"manifest_schema_version", source.manifest_schema_version},
       {"manifest_payload_digest", source.payload_digest},
       {"manifest_document_digest", CanonicalJsonSha256(source_manifest)},
-      {"dense_array_values_sha256", masks->at("sha256")},
       {"component_registry_digest", CanonicalJsonSha256(components)},
       {"row_identity_array_values_sha256", identity},
       {"authority", "dense_masks_roi"}};
+  if (composable_dense_identity) {
+    expected["dense_identity_kind"] = "composable_logical_units_v1";
+    expected["dense_array_logical_identity_digest"] =
+        CanonicalJsonSha256(*masks);
+    expected["dense_array_logical_identity"] = *masks;
+    expected["worker_assembly_digest"] = binding.at("worker_assembly_digest");
+    if (!Sha256Value(binding.at("worker_assembly_digest"))) {
+      AssignError(error, "Sampled-contour worker assembly digest is invalid");
+      return false;
+    }
+  } else {
+    expected["dense_array_values_sha256"] = masks->at("sha256");
+  }
   if (binding != expected) {
     AssignError(error,
                 "Sampled-contour cache is bound to a different dense source");
@@ -281,7 +307,7 @@ bool ValidateStoragePlan(
 bool ValidateReceipts(
     const json &extension, const json &source_binding, const json &logical,
     const std::vector<SubjectMaskSampledContourV1ArrayDeclaration> &arrays,
-    std::string *error) {
+    bool composable_dense_identity, std::string *error) {
   if (!ExactKeys(extension,
                  {"schema_id", "schema_version", "authority", "freshness_rule",
                   "receipts", "receipts_digest"}) ||
@@ -304,7 +330,8 @@ bool ValidateReceipts(
                              "payload", "payload_digest"}) ||
         receipt.value("schema_id", "") !=
             "palette.refined_subject_mask.derived_cache_receipt" ||
-        receipt.value("schema_version", 0) != 1 ||
+        receipt.value("schema_version", 0) !=
+            (composable_dense_identity ? 2 : 1) ||
         receipt.value("digest_algorithm", "") != "sha256_canonical_json_v1" ||
         CanonicalJsonSha256(receipt.at("payload")) !=
             receipt.value("payload_digest", "")) {
@@ -317,7 +344,9 @@ bool ValidateReceipts(
         !observed.insert(path).second || payload.value("stale", true) ||
         payload.value("authoritative_pixels", true) ||
         payload.at("validation").value("mode", "") !=
-            "full_dense_equivalence" ||
+            (composable_dense_identity
+                 ? "receipt_bound_complete_dense_equivalence_v2"
+                 : "full_dense_equivalence") ||
         payload.at("validation").value("status", "") != "passed" ||
         payload.at("generator") !=
             json{{"id", "palette_subject_mask_sampled_contours"},
@@ -337,14 +366,23 @@ bool ValidateReceipts(
         {"source_point_count",
          logical_arrays.at(path + "/source_point_count")}};
     const json &receipt_source = payload.at("source");
-    if (receipt_source.value("dense_core_manifest_digest", "") !=
-            source_binding.value("manifest_document_digest", "") ||
-        receipt_source.value("dense_array_values_sha256", "") !=
-            source_binding.value("dense_array_values_sha256", "") ||
-        receipt_source.value("component_registry_digest", "") !=
-            source_binding.value("component_registry_digest", "") ||
-        payload.value("logical_content_digest", "") !=
-            CanonicalJsonSha256(component_content)) {
+    const bool source_matches =
+        receipt_source.value("dense_core_manifest_digest", "") ==
+            source_binding.value("manifest_document_digest", "") &&
+        receipt_source.value("component_registry_digest", "") ==
+            source_binding.value("component_registry_digest", "") &&
+        payload.value("logical_content_digest", "") ==
+            CanonicalJsonSha256(component_content) &&
+        (composable_dense_identity
+             ? (receipt_source.value("dense_identity_kind", "") ==
+                    "composable_logical_units_v1" &&
+                receipt_source.value("dense_array_logical_identity_digest",
+                                     "") ==
+                    source_binding.value("dense_array_logical_identity_digest",
+                                         ""))
+             : receipt_source.value("dense_array_values_sha256", "") ==
+                   source_binding.value("dense_array_values_sha256", ""));
+    if (!source_matches) {
       AssignError(error, "Sampled-contour receipt source binding differs");
       return false;
     }
@@ -364,7 +402,8 @@ bool ValidateSubjectMaskSampledContourV1Manifest(
                               "payload_digest", "payload"}) ||
         manifest.value("schema_id", "") !=
             "palette.subject_mask.derived_cache_run_manifest" ||
-        manifest.value("schema_version", 0) != 1 ||
+        (manifest.value("schema_version", 0) != 1 &&
+         manifest.value("schema_version", 0) != 3) ||
         manifest.value("digest_algorithm", "") != "sha256_canonical_json_v1" ||
         !Sha256Value(manifest.at("payload_digest")) ||
         CanonicalJsonSha256(manifest.at("payload")) !=
@@ -381,6 +420,8 @@ bool ValidateSubjectMaskSampledContourV1Manifest(
     }
 
     const auto &payload = manifest.at("payload");
+    const bool composable_dense_identity =
+        manifest.value("schema_version", 0) == 3;
     if (!ExactKeys(payload,
                    {"run_id", "stage_family", "kind", "publication",
                     "dimensions", "components", "contour_profile",
@@ -420,7 +461,7 @@ bool ValidateSubjectMaskSampledContourV1Manifest(
     }
     if (!ValidateSourceBinding(
             payload.at("source_refined_subject_mask_snapshot"), source_manifest,
-            source, error)) {
+            source, composable_dense_identity, error)) {
       return false;
     }
     const auto arrays = ExpectedArrays(source.row_count);
@@ -431,7 +472,8 @@ bool ValidateSubjectMaskSampledContourV1Manifest(
                              profile, arrays, error) ||
         !ValidateReceipts(payload.at("cache_extension"),
                           payload.at("source_refined_subject_mask_snapshot"),
-                          payload.at("logical_content"), arrays, error)) {
+                          payload.at("logical_content"), arrays,
+                          composable_dense_identity, error)) {
       return false;
     }
     const auto &write_receipt = payload.at("write_receipt");
