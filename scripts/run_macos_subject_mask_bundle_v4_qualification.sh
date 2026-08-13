@@ -148,7 +148,7 @@ for ((repetition = 0; repetition < repetitions; ++repetition)); do
             exit "$trial_status"
         fi
         trial_commit="$(jq -er '.crimson_commit' "$output")"
-        trial_dirty="$(jq -er '.worktree_dirty' "$output")"
+        trial_dirty="$(jq -r '.worktree_dirty' "$output")"
         if [[ "$trial_commit" != "$expected_crimson_commit" ]]; then
             echo "Benchmark executable commit does not match HEAD: $trial_commit" >&2
             exit 1
