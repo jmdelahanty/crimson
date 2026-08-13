@@ -111,3 +111,7 @@ The output directory contains the bundle and crop probes, both negative
 fail-closed checks, environment identity, ten raw trial JSON files,
 `aggregate.json`, and `aggregate.sha256`. macOS and mounted-network cache state
 are recorded as uncontrolled rather than described as cold.
+
+The harness also binds every trial to the full current Crimson `HEAD` and a
+clean recorded worktree. A stale configured benchmark executable fails on its
+first result instead of producing a misleading aggregate.

@@ -20,6 +20,7 @@ cache_digest="${CRIMSON_SUBJECT_MASK_BUNDLE_V4_CACHE_DIGEST:-844cd75cf13d6a3d1ab
 crop_run="${CRIMSON_SUBJECT_MASK_BUNDLE_V4_CROP_RUN:-crop_sleepyfish_cam2010095_full_v8_20260730}"
 workload="${CRIMSON_SUBJECT_MASK_BUNDLE_V4_WORKLOAD:-$repo_root/tools/fixtures/subject_mask_bundle_v4_qualification_workload_v1.json}"
 output_dir="${CRIMSON_SUBJECT_MASK_BUNDLE_V4_OUTPUT_DIR:-/private/tmp/crimson-subject-mask-bundle-v4-$(date -u +%Y%m%dT%H%M%SZ)}"
+expected_crimson_commit="$(git -C "$repo_root" rev-parse HEAD)"
 
 for executable in "$benchmark" "$bundle_probe" "$crop_join_probe"; do
     if [[ ! -x "$executable" ]]; then
@@ -98,6 +99,7 @@ jq -n \
     --arg macos_version "$(sw_vers -productVersion)" \
     --arg fixture_root "$fixture_root" \
     --arg workload "$workload" \
+    --arg expected_crimson_commit "$expected_crimson_commit" \
     '{
       schema_id: "crimson.subject_mask.bundle_v4_environment",
       schema_version: 1,
@@ -107,6 +109,7 @@ jq -n \
       macos_version: $macos_version,
       fixture_root: $fixture_root,
       workload: $workload,
+      expected_crimson_commit: $expected_crimson_commit,
       mount_cache_state: "uncontrolled_macos_and_network_filesystem_cache",
       tensorstore_cache_policy: "benchmark_workload_declared"
     }' > "$output_dir/environment.json"
@@ -143,6 +146,16 @@ for ((repetition = 0; repetition < repetitions; ++repetition)); do
         if [[ "$trial_status" -ne 0 && "$trial_status" -ne 2 ]]; then
             echo "Benchmark process failed before producing a gate result." >&2
             exit "$trial_status"
+        fi
+        trial_commit="$(jq -er '.crimson_commit' "$output")"
+        trial_dirty="$(jq -er '.worktree_dirty' "$output")"
+        if [[ "$trial_commit" != "$expected_crimson_commit" ]]; then
+            echo "Benchmark executable commit does not match HEAD: $trial_commit" >&2
+            exit 1
+        fi
+        if [[ "$trial_dirty" != "false" ]]; then
+            echo "Benchmark reported a dirty Crimson worktree." >&2
+            exit 1
         fi
         trials+=("$output")
     done
