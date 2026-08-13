@@ -962,10 +962,17 @@ bool ValidateSubjectMaskBundleV4Archive(
       return false;
     }
     const json &manifest = bundle_group->at("attributes").at("run_manifest");
-    if (!ValidateManifestEnvelope(
-            manifest, "palette.subject_mask.bundle_manifest", 4, error) ||
+    const int bundle_manifest_version = manifest.value("schema_version", 0);
+    const bool composable_receipt_bundle = bundle_manifest_version == 4;
+    if (bundle_manifest_version != 3 && bundle_manifest_version != 4) {
+      AssignError(error, "Subject-mask modern bundle version is unsupported");
+      return false;
+    }
+    if (!ValidateManifestEnvelope(manifest,
+                                  "palette.subject_mask.bundle_manifest",
+                                  bundle_manifest_version, error) ||
         manifest.value("payload_digest", "") != expected_payload_digest) {
-      AssignError(error, "Subject-mask bundle-v4 manifest digest differs");
+      AssignError(error, "Subject-mask modern bundle manifest digest differs");
       return false;
     }
     const auto &payload = manifest.at("payload");
@@ -1048,10 +1055,10 @@ bool ValidateSubjectMaskBundleV4Archive(
                                   error) ||
         !ValidateManifestEnvelope(*quality_manifest,
                                   "palette.subject_mask_quality.run_manifest",
-                                  3, error) ||
+                                  composable_receipt_bundle ? 3 : 2, error) ||
         !ValidateManifestEnvelope(
             *cache_manifest, "palette.subject_mask.derived_cache_run_manifest",
-            3, error) ||
+            composable_receipt_bundle ? 3 : 2, error) ||
         !ValidateLogicalContent(*raw_manifest, error) ||
         !ValidateLogicalContent(*refined_manifest, error) ||
         !ValidateLogicalContent(*quality_manifest, error) ||
@@ -1062,6 +1069,7 @@ bool ValidateSubjectMaskBundleV4Archive(
     SubjectMaskBundleV4Summary parsed;
     parsed.bundle_id = requested_bundle;
     parsed.payload_digest = expected_payload_digest;
+    parsed.bundle_manifest_schema_version = bundle_manifest_version;
     parsed.recording_identity =
         payload.at("recording_identity").get<std::string>();
     if (!ValidateMemberReference(members.at("raw"), "raw", "subject_mask_runs",
@@ -1177,13 +1185,10 @@ bool ValidateSubjectMaskBundleV4Archive(
         "masks_roi",           "instance_key",
         "source_crop_row_ids", "source_acquisition_frame_index",
         "frame_row_offsets",   "available_channels"};
-    json quality_identities = json::object();
-    for (const auto path : quality_paths) {
-      quality_identities[std::string(path)] = refined_arrays->at(path);
-    }
     const auto &quality_source =
         quality_payload.at("source_refined_subject_mask_snapshot");
-    const json expected_quality_source = {
+    json quality_identities = json::object();
+    json expected_quality_source = {
         {"stage", "refined_subject_mask"},
         {"run_name", parsed.refined_run},
         {"run_path", "refined_subject_masks_runs/" + parsed.refined_run},
@@ -1192,11 +1197,37 @@ bool ValidateSubjectMaskBundleV4Archive(
         {"manifest_digest", CanonicalJsonSha256(*refined_manifest)},
         {"component_registry_digest",
          CanonicalJsonSha256(refined_schema.at("components"))},
-        {"source_identity_kind", "composable_logical_arrays_v1"},
-        {"dense_array_logical_identity_digest",
-         CanonicalJsonSha256(refined_arrays->at("masks_roi"))},
-        {"source_array_logical_identities", quality_identities},
         {"coverage", "every_source_row_exactly_once_in_source_order"}};
+    if (composable_receipt_bundle) {
+      for (const auto path : quality_paths) {
+        quality_identities[std::string(path)] = refined_arrays->at(path);
+      }
+      expected_quality_source["source_identity_kind"] =
+          "composable_logical_arrays_v1";
+      expected_quality_source["dense_array_logical_identity_digest"] =
+          CanonicalJsonSha256(refined_arrays->at("masks_roi"));
+      expected_quality_source["source_array_logical_identities"] =
+          quality_identities;
+    } else {
+      const auto &declared_quality_hashes =
+          quality_source.at("source_array_values_sha256");
+      for (const auto path : quality_paths) {
+        const std::string path_string(path);
+        const std::string digest =
+            path == std::string_view("masks_roi")
+                ? declared_quality_hashes.value(path_string, "")
+                : ArrayHash(*refined_manifest, path);
+        if (!IsSha256(digest)) {
+          AssignError(error, "Subject-mask bundle-v3 quality hash is invalid");
+          return false;
+        }
+        quality_identities[path_string] = digest;
+      }
+      expected_quality_source["dense_array_values_sha256"] =
+          quality_identities.at("masks_roi");
+      expected_quality_source["source_array_values_sha256"] =
+          quality_identities;
+    }
     if (quality_source != expected_quality_source) {
       AssignError(error, "Subject-mask bundle-v4 quality source differs");
       return false;
@@ -1247,33 +1278,43 @@ bool ValidateSubjectMaskBundleV4Archive(
         {"component_registry_digest",
          CanonicalJsonSha256(refined_schema.at("components"))},
         {"row_identity_array_values_sha256", shared_identity},
-        {"authority", "dense_masks_roi"},
-        {"dense_identity_kind", "composable_logical_units_v1"},
-        {"dense_array_logical_identity_digest",
-         CanonicalJsonSha256(refined_arrays->at("masks_roi"))},
-        {"dense_array_logical_identity", refined_arrays->at("masks_roi")},
-        {"worker_assembly_digest", cache_source.at("worker_assembly_digest")}};
-    if (!IsSha256(cache_source.at("worker_assembly_digest")) ||
-        cache_source != expected_cache_source) {
+        {"authority", "dense_masks_roi"}};
+    if (composable_receipt_bundle) {
+      expected_cache_source["dense_identity_kind"] =
+          "composable_logical_units_v1";
+      expected_cache_source["dense_array_logical_identity_digest"] =
+          CanonicalJsonSha256(refined_arrays->at("masks_roi"));
+      expected_cache_source["dense_array_logical_identity"] =
+          refined_arrays->at("masks_roi");
+      expected_cache_source["worker_assembly_digest"] =
+          cache_source.at("worker_assembly_digest");
+      if (!IsSha256(cache_source.at("worker_assembly_digest"))) {
+        AssignError(error, "Subject-mask bundle-v4 worker assembly differs");
+        return false;
+      }
+    } else {
+      const std::string dense_sha =
+          cache_source.value("dense_array_values_sha256", "");
+      if (!IsSha256(dense_sha) ||
+          dense_sha != quality_identities.value("masks_roi", "")) {
+        AssignError(error, "Subject-mask bundle-v3 dense identity differs");
+        return false;
+      }
+      expected_cache_source["dense_array_values_sha256"] = dense_sha;
+    }
+    if (cache_source != expected_cache_source) {
       AssignError(error, "Subject-mask bundle-v4 cache source differs");
       return false;
     }
 
-    const json expected_cross = {
+    json expected_cross = {
         {"dimensions", refined_schema.at("dimensions")},
         {"components", refined_schema.at("components")},
         {"component_registry_digest",
          CanonicalJsonSha256(refined_schema.at("components"))},
         {"raw_refined_identity_array_values_sha256", shared_identity},
-        {"quality_source_identity",
-         {{"kind", "composable_logical_arrays_v1"},
-          {"dense_array_logical_identity_digest",
-           CanonicalJsonSha256(refined_arrays->at("masks_roi"))},
-          {"source_array_logical_identities_digest",
-           CanonicalJsonSha256(quality_identities)}}},
         {"quality_source_manifest_digest",
          CanonicalJsonSha256(*refined_manifest)},
-        {"identity_policy", "manifest_bound_composable_dense_identity_v2"},
         {"raw_dimensions", raw_schema.at("dimensions")},
         {"raw_components", raw_schema.at("components")},
         {"raw_component_registry_digest",
@@ -1298,11 +1339,32 @@ bool ValidateSubjectMaskBundleV4Archive(
            CanonicalJsonSha256(refined_schema.at("components"))},
           {"source_row_identity_array_values_sha256", shared_identity},
           {"cache_extension_receipts_digest",
-           cache_payload.at("cache_extension").at("receipts_digest")},
-          {"binding_policy",
-           "manifest_composable_dense_identity_and_row_identity_v2"},
-          {"source_dense_array_logical_identity_digest",
-           CanonicalJsonSha256(refined_arrays->at("masks_roi"))}}}};
+           cache_payload.at("cache_extension").at("receipts_digest")}}}};
+    if (composable_receipt_bundle) {
+      expected_cross["quality_source_identity"] = {
+          {"kind", "composable_logical_arrays_v1"},
+          {"dense_array_logical_identity_digest",
+           CanonicalJsonSha256(refined_arrays->at("masks_roi"))},
+          {"source_array_logical_identities_digest",
+           CanonicalJsonSha256(quality_identities)}};
+      expected_cross["identity_policy"] =
+          "manifest_bound_composable_dense_identity_v2";
+      expected_cross["presentation_cache"]["binding_policy"] =
+          "manifest_composable_dense_identity_and_row_identity_v2";
+      expected_cross["presentation_cache"]
+                    ["source_dense_array_logical_identity_digest"] =
+                        CanonicalJsonSha256(refined_arrays->at("masks_roi"));
+    } else {
+      expected_cross["quality_source_identity"] = {
+          {"kind", "whole_array_sha256_v1"},
+          {"source_array_values_sha256", quality_identities}};
+      expected_cross["identity_policy"] =
+          "manifest_bound_composable_dense_identity_plus_quality_sha_v1";
+      expected_cross["presentation_cache"]["binding_policy"] =
+          "exact_dense_authority_and_row_identity_v1";
+      expected_cross["presentation_cache"]["source_dense_array_values_sha256"] =
+          quality_identities.at("masks_roi");
+    }
     if (payload.at("cross_binding") != expected_cross) {
       AssignError(error, "Subject-mask bundle-v4 cross-binding differs");
       return false;

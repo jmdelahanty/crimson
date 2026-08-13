@@ -136,6 +136,7 @@ const json *SourceArrays(const json &source_manifest) {
 
 bool ValidateSourceBinding(const json &binding, const json &source_manifest,
                            const SubjectMaskV1ManifestSummary &source,
+                           int cache_manifest_version,
                            bool composable_dense_identity, std::string *error) {
   const json *arrays = SourceArrays(source_manifest);
   const bool exact_binding =
@@ -173,11 +174,6 @@ bool ValidateSourceBinding(const json &binding, const json &source_manifest,
     AssignError(error, "Dense source mask digest is unavailable");
     return false;
   }
-  if (!composable_dense_identity &&
-      (!masks->contains("sha256") || !Sha256Value(masks->at("sha256")))) {
-    AssignError(error, "Dense source mask digest is unavailable");
-    return false;
-  }
   const auto &components =
       source_manifest.at("payload").at("logical_schema").at("components");
   json expected = {
@@ -202,7 +198,15 @@ bool ValidateSourceBinding(const json &binding, const json &source_manifest,
       return false;
     }
   } else {
-    expected["dense_array_values_sha256"] = masks->at("sha256");
+    const auto &declared_dense_sha = binding.at("dense_array_values_sha256");
+    if (!Sha256Value(declared_dense_sha) ||
+        (cache_manifest_version == 1 &&
+         (!masks->contains("sha256") || !Sha256Value(masks->at("sha256")) ||
+          masks->at("sha256") != declared_dense_sha))) {
+      AssignError(error, "Dense source mask digest is invalid");
+      return false;
+    }
+    expected["dense_array_values_sha256"] = declared_dense_sha;
   }
   if (binding != expected) {
     AssignError(error,
@@ -403,6 +407,7 @@ bool ValidateSubjectMaskSampledContourV1Manifest(
         manifest.value("schema_id", "") !=
             "palette.subject_mask.derived_cache_run_manifest" ||
         (manifest.value("schema_version", 0) != 1 &&
+         manifest.value("schema_version", 0) != 2 &&
          manifest.value("schema_version", 0) != 3) ||
         manifest.value("digest_algorithm", "") != "sha256_canonical_json_v1" ||
         !Sha256Value(manifest.at("payload_digest")) ||
@@ -461,7 +466,8 @@ bool ValidateSubjectMaskSampledContourV1Manifest(
     }
     if (!ValidateSourceBinding(
             payload.at("source_refined_subject_mask_snapshot"), source_manifest,
-            source, composable_dense_identity, error)) {
+            source, manifest.value("schema_version", 0),
+            composable_dense_identity, error)) {
       return false;
     }
     const auto arrays = ExpectedArrays(source.row_count);

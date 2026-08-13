@@ -38,6 +38,7 @@ struct SubjectMaskBundleV4Summary {
   std::string presentation_cache_run;
   std::string refined_manifest_payload_digest;
   std::string presentation_cache_manifest_payload_digest;
+  int bundle_manifest_schema_version = 0;
   size_t frame_count = 0;
   size_t row_count = 0;
   size_t raw_channel_count = 0;

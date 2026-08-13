@@ -20,6 +20,18 @@ Supported modern manifests are deliberately narrow:
 - quality manifest v3; and
 - derived sampled-contour cache manifest v3.
 
+The production-path import gate also accepts Palette's immediately preceding,
+strictly versioned envelope as one indivisible combination:
+
+- subject-mask bundle manifest v3;
+- raw and refined core manifests v5;
+- quality manifest v2; and
+- derived sampled-contour cache manifest v2.
+
+That branch validates the whole-array SHA-256 bindings carried consistently by
+the quality, cache, and bundle manifests. It does not reinterpret them as v4
+composable receipts, mix member versions, or weaken the v4 checks.
+
 Legacy bundle-v2, core-v2, and cache-v1 support remains a separate accepted
 contract. Modern validation does not add aliases or dtype probing to either
 path.
@@ -31,6 +43,9 @@ bindings, schemas, shapes, dtypes, storage plans, codec chains, coordinate
 catalogs, composable row-unit identities, complete receipts, and the absence of
 ordinary selector references. An explicit nonexistent bundle or wrong digest
 must fail; no fallback is permitted.
+
+Its structured output records the observed bundle manifest schema version so
+qualification evidence distinguishes an imported v3 envelope from v4.
 
 `subject_mask_crop_join_probe` reads the compact refined identity and placement
 columns and compares every `source_crop_row_ids` join against the crop run. The
@@ -63,6 +78,14 @@ Run five alternating fresh processes for sampled contours and dense masks:
 
 ```bash
 scripts/run_macos_subject_mask_bundle_v4_qualification.sh
+```
+
+For a digest-bound candidate imported into a production archive, use the thin
+production wrapper instead. It verifies Palette's import/validation/lineage
+receipts and supplies the production bundle/member digests to the same harness:
+
+```bash
+scripts/run_macos_subject_mask_bundle_v4_production_gate.sh
 ```
 
 The frozen workload is

@@ -59,6 +59,8 @@ int main(int argc, char **argv) {
       {"store", options.store.string()},
       {"bundle_id", summary.bundle_id},
       {"manifest_payload_digest", summary.payload_digest},
+      {"bundle_manifest_schema_version",
+       summary.bundle_manifest_schema_version},
       {"recording_identity", summary.recording_identity},
       {"members",
        {{"raw", summary.raw_run},
