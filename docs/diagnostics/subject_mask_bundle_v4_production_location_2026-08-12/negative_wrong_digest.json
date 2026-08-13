@@ -1,0 +1,35 @@
+{
+  "activation_deferred": false,
+  "bundle_id": "",
+  "bundle_manifest_schema_version": 0,
+  "error": "Subject-mask modern bundle manifest digest differs",
+  "frame_count": 0,
+  "full_ragged_contours_present": false,
+  "manifest_payload_digest": "",
+  "mask_shape": [
+    0,
+    0
+  ],
+  "member_manifest_payload_digests": {
+    "presentation_cache": "",
+    "refined": ""
+  },
+  "members": {
+    "presentation_cache": "",
+    "quality": "",
+    "raw": "",
+    "refined": ""
+  },
+  "ordinary_selection_absent": false,
+  "quality_payload_opened": false,
+  "raw_channel_count": 0,
+  "recording_identity": "",
+  "refined_channel_count": 0,
+  "row_count": 0,
+  "schema_id": "crimson.subject_mask.bundle_v4_probe",
+  "schema_version": 1,
+  "selector_eligible": true,
+  "status": "fail",
+  "store": "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/zarr/sleepyfish_2026_05_05_17_45_30_cam2010095_analysis.zarr",
+  "validated_array_declarations": 0
+}

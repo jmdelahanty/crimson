@@ -1,0 +1,35 @@
+{
+  "activation_deferred": true,
+  "bundle_id": "subject_mask_bundle_sleepyfish_composable_modern_receipts_20260811_e523c816_v1",
+  "bundle_manifest_schema_version": 3,
+  "error": "",
+  "frame_count": 1188000,
+  "full_ragged_contours_present": false,
+  "manifest_payload_digest": "582652a82631ceb41004c9612cfb6ad5426506a9c6c31de8fa007ab9b70f3f79",
+  "mask_shape": [
+    512,
+    512
+  ],
+  "member_manifest_payload_digests": {
+    "presentation_cache": "38a77478755e5442c8004d7d53a075fde15d12c5e9cff87b8ef2b6f28b4ddf0f",
+    "refined": "8fb8bd4ddb3ee586813d51439f17a26cd03c6f2845455ce63cda6d67bbdb34c9"
+  },
+  "members": {
+    "presentation_cache": "subject_mask_sampled_contours_sleepyfish_composable_modern_receipts_20260811_e523c816_v1",
+    "quality": "subject_mask_quality_sleepyfish_composable_modern_receipts_20260811_e523c816_v1",
+    "raw": "subject_masks_sleepyfish_composable_modern_receipts_20260811_e523c816_v1",
+    "refined": "refined_subject_masks_sleepyfish_composable_modern_receipts_20260811_e523c816_v1"
+  },
+  "ordinary_selection_absent": true,
+  "quality_payload_opened": false,
+  "raw_channel_count": 3,
+  "recording_identity": "sleepyfish_2026_05_05_17_45_30_cam2010095",
+  "refined_channel_count": 4,
+  "row_count": 1169010,
+  "schema_id": "crimson.subject_mask.bundle_v4_probe",
+  "schema_version": 1,
+  "selector_eligible": false,
+  "status": "pass",
+  "store": "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/zarr/sleepyfish_2026_05_05_17_45_30_cam2010095_analysis.zarr",
+  "validated_array_declarations": 51
+}

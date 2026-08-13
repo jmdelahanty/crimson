@@ -1,0 +1,19 @@
+{
+  "crop_run": "crop_sleepyfish_cam2010095_full_v8_20260730",
+  "elapsed_ms": 2589.295,
+  "error": "",
+  "frame_count": 1188000,
+  "instance_key_mismatches": 0,
+  "instance_keys_compared": 1169010,
+  "mask_run": "refined_subject_masks_sleepyfish_composable_modern_receipts_20260811_e523c816_v1",
+  "non_identity_source_rows": 0,
+  "out_of_range_rows": 0,
+  "placement_mismatches": 0,
+  "placements_compared": 1169010,
+  "row_count": 1169010,
+  "schema_id": "crimson.subject_mask.crop_join_probe",
+  "schema_version": 1,
+  "source_crop_row_ids_read": 1169010,
+  "status": "pass",
+  "store": "/Volumes/johnsonlab/jeremy/recordings/sleepyfish_2026_05_05_17_45_30_cam2010095/zarr/sleepyfish_2026_05_05_17_45_30_cam2010095_analysis.zarr"
+}
