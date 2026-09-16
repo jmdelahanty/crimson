@@ -1,6 +1,7 @@
 #pragma once
 
 #include "zarr_loader.h"
+#include "windows_long_path_support.h"
 #include <nlohmann/json.hpp>
 #include <filesystem>
 #include <fstream>
@@ -189,6 +190,8 @@ ts::Result<ts::TensorStore<T, Rank>> openArrayAny(
         {"kvstore", kv_json_or.value()},
         {"path", path}
     };
+    crimson::windows_path::noteZarrPathAccess(
+        kv_json_or.value(), appendPath(path, "zarr.json"));
     return ts::Open<T, Rank>(
                spec,
                ts::OpenMode::open,

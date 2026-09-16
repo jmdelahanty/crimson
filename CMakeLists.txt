@@ -785,6 +785,23 @@ target_link_libraries(ui_path_config_tests PRIVATE
 target_compile_features(ui_path_config_tests PRIVATE cxx_std_17)
 add_test(NAME ui_path_config_tests COMMAND ui_path_config_tests)
 
+add_executable(windows_long_path_support_tests
+    tools/windows_long_path_support_tests.cpp
+    src/windows_long_path_support.cpp
+)
+target_include_directories(windows_long_path_support_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(windows_long_path_support_tests PRIVATE
+    nlohmann_json::nlohmann_json
+)
+target_compile_features(windows_long_path_support_tests PRIVATE cxx_std_17)
+if(WIN32)
+    target_link_libraries(windows_long_path_support_tests PRIVATE Advapi32)
+endif()
+add_test(NAME windows_long_path_support_tests
+    COMMAND windows_long_path_support_tests)
+
 # --- Source Files ---
 # CUDA sources
 set(CUDA_SOURCES "")
@@ -885,7 +902,25 @@ else()
 endif()
 
 if(WIN32)
-    target_link_libraries(redgui PRIVATE Dbghelp)
+    target_link_libraries(redgui PRIVATE Dbghelp Advapi32)
+endif()
+
+if(MSVC)
+    set(CRIMSON_WINDOWS_LONG_PATH_MANIFEST
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/windows/redgui.exe.manifest")
+    if(NOT EXISTS "${CRIMSON_WINDOWS_LONG_PATH_MANIFEST}")
+        message(FATAL_ERROR
+            "Windows long-path manifest is missing: "
+            "${CRIMSON_WINDOWS_LONG_PATH_MANIFEST}")
+    endif()
+    target_link_options(redgui PRIVATE
+        "/MANIFEST:EMBED"
+        "/MANIFESTINPUT:${CRIMSON_WINDOWS_LONG_PATH_MANIFEST}"
+    )
+    set_property(TARGET redgui APPEND PROPERTY LINK_DEPENDS
+        "${CRIMSON_WINDOWS_LONG_PATH_MANIFEST}")
+    target_compile_definitions(redgui PRIVATE
+        CRIMSON_WINDOWS_LONG_PATH_AWARE=1)
 endif()
 
 # Add NVML if enabled
@@ -1130,6 +1165,7 @@ target_link_libraries(debug_detect_run PRIVATE tensorstore::all_drivers)
 
 add_executable(palette_clipped_loader_probe
     tools/palette_clipped_loader_probe.cpp
+    src/windows_long_path_support.cpp
     src/zarr_loader.cpp
     src/zarr_loader_detections.cpp
     src/zarr_loader_eye_keypoint.cpp

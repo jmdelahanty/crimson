@@ -525,6 +525,7 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
         active_dataset_ = DetectionDataset::RawDetect;
         
         std::cout << "Opening Zarr store: " << filepath << std::endl;
+        crimson::windows_path::logConfigurationForZarrRoot(filepath);
 
         // Validate filepath exists
         if (!std::filesystem::exists(filepath)) {

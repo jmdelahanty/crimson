@@ -68,6 +68,26 @@ Notes
 
 - Keep the `.dll` files next to `redgui.exe` in `bin\`.
 - Do not copy only `redgui.exe`.
+
+Long Zarr paths
+---------------
+
+The packaged `redgui.exe` declares `longPathAware` in its embedded Windows
+application manifest. Windows must also enable the system long-path policy.
+Check it from PowerShell:
+
+  Get-ItemPropertyValue `
+    -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
+    -Name LongPathsEnabled
+
+The expected value is `1`. If organizational policy leaves it disabled,
+deeply nested Zarr arrays beyond the legacy 259-character usable limit can be
+reported as missing. Map the network share closer to a drive root as a safe
+workaround and ask IT to enable "Win32 long paths" for the machine.
+
+When opening a Zarr archive on Windows, Crimson reports the embedded-manifest
+expectation, current system-policy state, and the first physical Zarr path that
+crosses the legacy limit.
 - Do not move files out of this folder by hand.
 - Run-only users should not need to install the CUDA Toolkit. They need a
   compatible NVIDIA driver; this app drop should contain the runtime DLLs

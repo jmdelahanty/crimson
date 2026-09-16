@@ -133,6 +133,24 @@ if ($appRootExists) {
     }
 }
 
+$longPathPolicyPath = "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem"
+try {
+    $longPathsEnabled = Get-ItemPropertyValue `
+        -Path $longPathPolicyPath `
+        -Name "LongPathsEnabled" `
+        -ErrorAction Stop
+    if ([int]$longPathsEnabled -eq 1) {
+        Add-Ok -Category "system" -Name "Win32 long paths" `
+            -Details "LongPathsEnabled=1"
+    } else {
+        Add-Warn -Category "system" -Name "Win32 long paths" `
+            -Details "LongPathsEnabled=$longPathsEnabled; deep Zarr paths may be reported as missing"
+    }
+} catch {
+    Add-Warn -Category "system" -Name "Win32 long paths" `
+        -Details "Could not read $longPathPolicyPath\LongPathsEnabled"
+}
+
 $releaseMetadata = Read-JsonFile -PathValue $releaseMetadataPath
 if ($releaseMetadata) {
     $releaseName = if ($releaseMetadata.PSObject.Properties["release_name"]) { [string]$releaseMetadata.release_name } else { "<unknown>" }

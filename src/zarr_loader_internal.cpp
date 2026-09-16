@@ -25,6 +25,16 @@ std::optional<json> readAttrsAny(const ts::kvstore::KvStore& store,
     std::string first_read_error;
 
     for (const std::string& key : keys) {
+#if defined(_WIN32)
+        auto store_spec = store.spec();
+        if (store_spec.ok()) {
+            auto store_json = store_spec.value().ToJson();
+            if (store_json.ok()) {
+                crimson::windows_path::noteZarrPathAccess(
+                    store_json.value(), key);
+            }
+        }
+#endif
         auto read_result = ts::kvstore::Read(store, key).result();
         if (!read_result.ok()) {
             if (first_read_error.empty()) {
@@ -76,6 +86,16 @@ std::optional<json> readAttrsAny(const ts::kvstore::KvStore& store,
 
 std::optional<json> readNodeMetaV3(const ts::kvstore::KvStore& store,
                                    const std::string& path) {
+#if defined(_WIN32)
+    auto store_spec = store.spec();
+    if (store_spec.ok()) {
+        auto store_json = store_spec.value().ToJson();
+        if (store_json.ok()) {
+            crimson::windows_path::noteZarrPathAccess(
+                store_json.value(), appendPath(path, "zarr.json"));
+        }
+    }
+#endif
     auto read_result =
         ts::kvstore::Read(store, appendPath(path, "zarr.json")).result();
     if (!read_result.ok() || !read_result.value().has_value()) {
