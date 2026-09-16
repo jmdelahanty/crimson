@@ -1194,6 +1194,38 @@ target_link_libraries(palette_clipped_loader_probe PRIVATE
 target_compile_features(palette_clipped_loader_probe PRIVATE cxx_std_17)
 crimson_configure_parquet_support(palette_clipped_loader_probe)
 
+add_executable(refined_tabular_read_qualification EXCLUDE_FROM_ALL
+    tools/refined_tabular_read_qualification.cpp
+    src/refined_keypoint_repository.cpp
+    src/windows_long_path_support.cpp
+    src/zarr_loader.cpp
+    src/zarr_loader_detections.cpp
+    src/zarr_loader_eye_keypoint.cpp
+    src/zarr_loader_movement.cpp
+    src/zarr_loader_stimulus.cpp
+    src/zarr_loader_subject_shape.cpp
+    src/zarr_loader_tail_kinematics.cpp
+    src/zarr_loader_write.cpp
+    src/zarr_loader_internal.cpp
+    src/keypoint_heading_utils.cpp
+    src/zarr/clipped_detection_repository.cpp
+    src/zarr/palette_clipped_resolver.cpp
+)
+target_include_directories(refined_tabular_read_qualification PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+    ${HDF5_INCLUDE_DIRS}
+)
+target_link_libraries(refined_tabular_read_qualification PRIVATE
+    tensorstore::all_drivers
+    nlohmann_json::nlohmann_json
+    Threads::Threads
+    ${OpenCV_LIBS}
+    ${HDF5_CXX_LIBRARIES}
+)
+target_compile_features(refined_tabular_read_qualification PRIVATE cxx_std_17)
+crimson_configure_parquet_support(refined_tabular_read_qualification)
+
 add_executable(subject_mask_contour_probe EXCLUDE_FROM_ALL
     tools/subject_mask_contour_probe.cpp
     src/zarr_loader.cpp
