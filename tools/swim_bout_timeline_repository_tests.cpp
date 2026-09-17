@@ -119,15 +119,13 @@ std::vector<uint8_t> FixedStrings(const std::vector<std::string> &values,
   return result;
 }
 
-bool WriteCompact(const std::filesystem::path &root, const std::string &group) {
+bool WriteCompact(const std::filesystem::path &root, const std::string &group,
+                  int schema_version = 7, bool corrupt_manifest = false,
+                  bool zero_selected_bouts = false) {
   const std::string run = group + "/compact_fixture";
-  CHECK(WriteJson(root / run / "zarr.json",
-                  {{"zarr_format", 3},
-                   {"node_type", "group"},
-                   {"attributes",
-                    {{"layout", "compact_tabular_v2"},
+  json attributes = {{"layout", "compact_tabular_v2"},
                      {"schema_id", "palette.swim_bout_runs"},
-                     {"schema_version", 7},
+                     {"schema_version", schema_version},
                      {"default_candidate_id", 0},
                      {"default_signal_id", 4},
                      {"default_level", "speed_exponential"},
@@ -135,7 +133,44 @@ bool WriteCompact(const std::filesystem::path &root, const std::string &group) {
                      {"track_id", 0},
                      {"detection_method", "peak_event"},
                      {"min_peak_prominence_mm_s", 4.0},
-                     {"peak_width_rel_height", 0.98}}}}));
+                     {"peak_width_rel_height", 0.98}};
+  if (schema_version >= 8) {
+    const std::string digest = "fixture_motion_digest";
+    attributes["source_track_kinematics_scope"] = "offline";
+    attributes["source_track_motion_manifest_sha256"] = digest;
+    attributes["frame_axis_contract_sha256"] = "fixture_axis_digest";
+    attributes["frame_axis_contract"] = {
+        {"schema_id", "palette.swim_bout_frame_axis_reference"},
+        {"schema_version", 2},
+        {"axis_kind", "camera_frame_index"},
+        {"identity_array_role", "source_acquisition_frame_index"},
+        {"storage_mode", "reference"},
+        {"source_track_kinematics_run", "motion_fixture"},
+        {"track_id", 0},
+        {"source_track_motion_manifest_sha256", digest},
+        {"authoritative_path",
+         "analysis/track_kinematics_runs/offline/motion_fixture/tracks/id_0/"
+         "source_acquisition_frame_index"},
+        {"shape", {8}},
+        {"frame_count", 8},
+        {"content_sha256", "fixture_axis_content"}};
+    CHECK(WriteJson(
+        root / "analysis/track_kinematics_runs/offline/motion_fixture/zarr.json",
+        {{"zarr_format", 3},
+         {"node_type", "group"},
+         {"attributes",
+          {{"track_motion_publication_manifest_sha256",
+            corrupt_manifest ? "wrong_digest" : digest}}}}));
+    CHECK((WriteArray<int64_t, 1>(
+        root,
+        "analysis/track_kinematics_runs/offline/motion_fixture/tracks/id_0/"
+        "source_acquisition_frame_index",
+        "int64", {8}, {0, 2, 4, 6, 8, 10, 12, 14})));
+  }
+  CHECK(WriteJson(root / run / "zarr.json",
+                  {{"zarr_format", 3},
+                   {"node_type", "group"},
+                   {"attributes", attributes}}));
   const std::string candidates = run + "/indexes/candidates/";
   CHECK((WriteArray<int32_t, 1>(root, candidates + "candidate_id", "int32", {2},
                                 {0, 1})));
@@ -174,7 +209,9 @@ bool WriteCompact(const std::filesystem::path &root, const std::string &group) {
 
   const std::string bouts = run + "/tables/bouts/";
   CHECK((WriteArray<int32_t, 1>(root, bouts + "candidate_id", "int32", {4},
-                                {0, 0, 0, 1})));
+                                zero_selected_bouts
+                                    ? std::vector<int32_t>{1, 1, 1, 1}
+                                    : std::vector<int32_t>{0, 0, 0, 1})));
   CHECK((WriteArray<int32_t, 1>(root, bouts + "signal_id", "int32", {4},
                                 {4, 1, 4, 9})));
   CHECK((WriteArray<int64_t, 1>(root, bouts + "start_frame", "int64", {4},
@@ -248,6 +285,20 @@ bool WriteFixture(const std::filesystem::path &root) {
                      {"latest_complete", "compact_fixture"},
                      {"latest", "compact_fixture"}}}}));
   return WriteCompact(root, group) && WriteLegacy(root, group);
+}
+
+bool WriteV8Fixture(const std::filesystem::path &root, bool corrupt_manifest) {
+  CHECK(WriteJson(root / "zarr.json",
+                  {{"zarr_format", 3}, {"node_type", "group"}}));
+  const std::string group = "analysis/swim_bout_runs";
+  CHECK(WriteJson(root / group / "zarr.json",
+                  {{"zarr_format", 3},
+                   {"node_type", "group"},
+                   {"attributes",
+                    {{"latest_complete", "compact_fixture"},
+                     {"latest", "compact_fixture"}}}}));
+  return WriteCompact(root, group, 8, corrupt_manifest,
+                      /*zero_selected_bouts=*/!corrupt_manifest);
 }
 
 const crimson::timeline::SwimBoutCandidateDescriptor *
@@ -332,13 +383,54 @@ bool TestRequestedRunAndFailure(const std::filesystem::path &root) {
   return true;
 }
 
+bool TestV8AuthorityAndZeroBouts(const std::filesystem::path &valid_root,
+                                const std::filesystem::path &invalid_root) {
+  std::string error;
+  auto archive = crimson::zarr::ArchiveContext::Open(valid_root, &error);
+  CHECK(archive != nullptr);
+  auto repository = crimson::zarr::OpenSwimBoutTimelineRepository(
+      archive, 100, "compact_fixture", &error);
+  CHECK(repository != nullptr);
+  const auto &descriptor = repository->descriptor();
+  const auto *candidate =
+      FindLevel(descriptor, "compact_fixture", "speed_exponential");
+  CHECK(candidate != nullptr);
+  CHECK(candidate->bout_count == 0);
+  CHECK(candidate->has_detector_trace);
+  crimson::timeline::SwimBoutTimelineRequest request;
+  request.candidate_key = candidate->key;
+  request.first_frame = 0;
+  request.last_frame = 14;
+  request.anchor_frame = 6;
+  request.max_detector_points = 8;
+  request.fallback_frames_per_second = 30.0;
+  const auto window = repository->resolveWindow(request);
+  CHECK(window.status == crimson::timeline::SwimBoutTimelineStatus::Mapped);
+  CHECK(window.intervals.empty());
+  CHECK(window.detector_values.size() == 8);
+
+  archive = crimson::zarr::ArchiveContext::Open(invalid_root, &error);
+  CHECK(archive != nullptr);
+  repository = crimson::zarr::OpenSwimBoutTimelineRepository(
+      archive, 100, "compact_fixture", &error);
+  CHECK(repository == nullptr);
+  CHECK(error.find("No readable") != std::string::npos);
+  return true;
+}
+
 } // namespace
 
 int main() {
   TemporaryDirectory fixture;
-  if (fixture.path().empty() || !WriteFixture(fixture.path()) ||
+  TemporaryDirectory v8_valid;
+  TemporaryDirectory v8_invalid;
+  if (fixture.path().empty() || v8_valid.path().empty() ||
+      v8_invalid.path().empty() || !WriteFixture(fixture.path()) ||
       !TestCompactAndLegacy(fixture.path()) ||
-      !TestRequestedRunAndFailure(fixture.path())) {
+      !TestRequestedRunAndFailure(fixture.path()) ||
+      !WriteV8Fixture(v8_valid.path(), false) ||
+      !WriteV8Fixture(v8_invalid.path(), true) ||
+      !TestV8AuthorityAndZeroBouts(v8_valid.path(), v8_invalid.path())) {
     return 1;
   }
   std::cout << "swim_bout_timeline_repository_tests: PASS\n";

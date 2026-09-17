@@ -31,9 +31,10 @@ struct RecordingClipFrameMapping {
   explicit operator bool() const { return clip != nullptr; }
 };
 
-// Strict compatibility adapter for Palette's currently unversioned
-// recording_clip_index.json. Platform decoders consume only the validated
-// descriptors and frame mappings exposed here.
+// Strict compatibility adapter for Palette's materialized_stream_copy and
+// versioned Orange rolling-clips recording_clip_index.json schemas. Platform
+// decoders consume only the common validated descriptors and frame mappings
+// exposed here.
 class RecordingClipIndex {
 public:
   static std::optional<RecordingClipIndex>

@@ -47,6 +47,9 @@ struct SwimBoutCandidateDescriptor {
 
 struct SwimBoutTimelineDescriptor {
   size_t frame_count = 0;
+  size_t retained_interval_count = 0;
+  uint64_t retained_interval_index_bytes = 0;
+  uint64_t interval_index_budget_bytes = 0;
   std::string default_candidate;
   std::vector<SwimBoutCandidateDescriptor> candidates;
 };

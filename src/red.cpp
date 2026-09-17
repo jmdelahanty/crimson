@@ -21,6 +21,8 @@
 #include "gui/camera_view_presenter.h"
 #include "gui/camera_view_transport_controls.h"
 #include "gui/camera_view_window.h"
+#include "gui/canonical_timeline_session.h"
+#include "gui/canonical_timeline_window.h"
 #include "gui/crop_preview_window.h"
 #include "gui/diagnostics_window.h"
 #include "gui/file_browser_window.h"
@@ -51,6 +53,7 @@
 #include "platform/nvidia/nvidia_camera_frame_data_adapter.h"
 #include "platform/nvidia/nvidia_clipped_media_coordinator.h"
 #include "platform/nvidia/nvidia_diagnostics_session.h"
+#include "platform/nvidia/nvidia_detection_repository.h"
 #include "platform/nvidia/nvidia_detection_presentation_adapter.h"
 #include "platform/nvidia/nvidia_frame_buffer_adapter.h"
 #include "platform/nvidia/nvidia_frame_inspect_adapter.h"
@@ -183,6 +186,7 @@ struct ClippedBoundarySmokeConfig {
   std::chrono::steady_clock::time_point start_time{};
   bool started = false;
   bool completed = false;
+  bool endpoint_seek_requested = false;
 };
 
 struct PlaybackSmokeConfig {
@@ -231,6 +235,124 @@ struct UiReferenceConfig {
 
 double durationMs(std::chrono::steady_clock::duration duration) {
   return std::chrono::duration<double, std::milli>(duration).count();
+}
+
+std::optional<json> readBoundedJsonObject(const std::filesystem::path &path,
+                                          size_t maximum_bytes,
+                                          std::string *error) {
+  std::error_code size_error;
+  const auto bytes = std::filesystem::file_size(path, size_error);
+  if (size_error || bytes > maximum_bytes) {
+    if (error != nullptr) {
+      *error = size_error ? "Cannot inspect " + path.string() + ": " +
+                                size_error.message()
+                          : "Metadata exceeds bounded inspection limit: " +
+                                path.string();
+    }
+    return std::nullopt;
+  }
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    if (error != nullptr) {
+      *error = "Cannot read metadata: " + path.string();
+    }
+    return std::nullopt;
+  }
+  try {
+    json value;
+    input >> value;
+    if (!value.is_object()) {
+      if (error != nullptr) {
+        *error = "Metadata is not a JSON object: " + path.string();
+      }
+      return std::nullopt;
+    }
+    return value;
+  } catch (const json::exception &exception) {
+    if (error != nullptr) {
+      *error = "Invalid JSON metadata " + path.string() + ": " +
+               exception.what();
+    }
+    return std::nullopt;
+  }
+}
+
+bool isRollingRecordingClipIndex(const std::filesystem::path &index_path,
+                                 std::string *error) {
+  constexpr size_t kMaximumClipIndexBytes = 8 * 1024 * 1024;
+  const auto root =
+      readBoundedJsonObject(index_path, kMaximumClipIndexBytes, error);
+  if (!root) {
+    return false;
+  }
+  try {
+    return root->value("schema_id", "") ==
+               "palette.orange_external_ipc_recording_clip_index.v1" &&
+           root->value("schema_version", 0) == 1 &&
+           root->value("mode", "") == "rolling_clips" &&
+           root->value("source_layout", "") == "rolling_clips";
+  } catch (const json::exception &exception) {
+    if (error != nullptr) {
+      *error = "Recording clip index schema fields are invalid: " +
+               std::string(exception.what());
+    }
+    return false;
+  }
+}
+
+std::optional<std::string> resolveAuthoritativeCanonicalRawRun(
+    const std::filesystem::path &archive_path,
+    const std::string &loader_selected_run, std::string *error) {
+  constexpr size_t kMaximumDetectRunsMetadataBytes = 1024 * 1024;
+  const auto metadata = readBoundedJsonObject(
+      archive_path / "detect_runs" / "zarr.json",
+      kMaximumDetectRunsMetadataBytes, error);
+  if (!metadata) {
+    return std::nullopt;
+  }
+  try {
+    const auto attributes = metadata->find("attributes");
+    if (metadata->value("zarr_format", 0) != 3 ||
+        metadata->value("node_type", "") != "group" ||
+        attributes == metadata->end() || !attributes->is_object()) {
+      if (error != nullptr) {
+        *error = "detect_runs metadata is not a Zarr v3 group";
+      }
+      return std::nullopt;
+    }
+    const auto latest = attributes->find("latest");
+    const auto latest_complete = attributes->find("latest_complete");
+    if (latest == attributes->end() || !latest->is_string() ||
+        latest->get_ref<const std::string &>().empty() ||
+        latest_complete == attributes->end() ||
+        !latest_complete->is_string() ||
+        latest_complete->get_ref<const std::string &>().empty()) {
+      if (error != nullptr) {
+        *error = "detect_runs latest/latest_complete selection is missing";
+      }
+      return std::nullopt;
+    }
+    const std::string selected = latest->get<std::string>();
+    if (latest_complete->get_ref<const std::string &>() != selected) {
+      if (error != nullptr) {
+        *error = "detect_runs latest and latest_complete disagree";
+      }
+      return std::nullopt;
+    }
+    if (!loader_selected_run.empty() && loader_selected_run != selected) {
+      if (error != nullptr) {
+        *error = "Legacy and canonical raw-run selectors disagree";
+      }
+      return std::nullopt;
+    }
+    return selected;
+  } catch (const json::exception &exception) {
+    if (error != nullptr) {
+      *error = "detect_runs selection metadata is invalid: " +
+               std::string(exception.what());
+    }
+    return std::nullopt;
+  }
 }
 
 } // namespace
@@ -339,7 +461,13 @@ int main(int argc, char **argv) {
   crimson::zarr::LegacyDetectionRepository detection_repository(zarr_loader);
   crimson::zarr::LegacyKeypointOverlayRepository keypoint_repository(
       zarr_loader);
-  crimson::platform::nvidia::CameraFrameDataAdapter camera_frame_data_adapter(
+  auto analysis_data_scheduler =
+      std::make_shared<crimson::data::DataAccessScheduler>(64, 4, 1, 1);
+  zarr_loader.setDataAccessScheduler(analysis_data_scheduler);
+  crimson::platform::nvidia::NvidiaDetectionRepository
+      canonical_detection_repository(analysis_data_scheduler);
+  crimson::platform::nvidia::CameraFrameDataAdapter
+      legacy_camera_frame_data_adapter(
       detection_repository, keypoint_repository,
       crimson::platform::nvidia::CameraFrameDataCallbacks{
           [&zarr_loader](size_t frame, size_t lookahead_frames) {
@@ -353,11 +481,13 @@ int main(int argc, char **argv) {
                 allow_blocking_eye_mask_load);
           },
       });
+  crimson::platform::nvidia::CameraFrameDataAdapter
+      canonical_camera_frame_data_adapter(canonical_detection_repository,
+                                          keypoint_repository);
   crimson::zarr::LegacyStimulusRepository stimulus_repository(zarr_loader);
-  auto analysis_data_scheduler =
-      std::make_shared<crimson::data::DataAccessScheduler>(64, 4, 1, 1);
-  zarr_loader.setDataAccessScheduler(analysis_data_scheduler);
   crimson::gui::QualityTimelineSession quality_timeline_session(
+      analysis_data_scheduler);
+  crimson::gui::CanonicalTimelineSession canonical_timeline_session(
       analysis_data_scheduler);
   crimson::gui::DetectionQualityTimelineControls
       detection_quality_timeline_controls;
@@ -612,6 +742,284 @@ int main(int argc, char **argv) {
       &recording_open_workflow,
       kCudaDeviceIndex,
   });
+  bool canonical_detection_route = false;
+  uint64_t canonical_detection_session_generation =
+      std::numeric_limits<uint64_t>::max();
+  std::string canonical_detection_archive;
+  std::string canonical_detection_index;
+  std::string canonical_detection_run;
+  std::string canonical_detection_expected_recording_identity;
+  size_t canonical_detection_expected_frames = 0;
+  size_t canonical_detection_expected_width = 0;
+  size_t canonical_detection_expected_height = 0;
+  uint64_t canonical_detection_seen_seek_requests = 0;
+  int canonical_detection_last_requested_frame = -1;
+  std::string canonical_detection_last_request_error;
+  auto requestCanonicalDetectionFrame = [&](int frame) {
+    if (!canonical_detection_route || frame < 0 ||
+        canonical_detection_repository.state() !=
+            crimson::platform::nvidia::NvidiaDetectionState::Ready) {
+      return false;
+    }
+    const uint64_t seek_requests =
+        playback_transport.seekCoordinator().metrics().requests;
+    const bool seek_generation_changed =
+        seek_requests != canonical_detection_seen_seek_requests;
+    const bool request_discontinuity =
+        seek_generation_changed ||
+        canonical_detection_last_requested_frame < 0 ||
+        std::abs(frame - canonical_detection_last_requested_frame) > 70;
+    std::string request_error;
+    const bool accepted = canonical_detection_repository.requestPresentedFrame(
+        frame, request_discontinuity, &request_error);
+    if (!accepted && !request_error.empty() &&
+        request_error != canonical_detection_last_request_error) {
+      canonical_detection_last_request_error = request_error;
+      std::cerr << "[NvidiaDetection] frame_request=failed frame=" << frame
+                << " seek_requests=" << seek_requests
+                << " error=" << request_error << std::endl;
+    }
+    canonical_detection_seen_seek_requests = seek_requests;
+    canonical_detection_last_requested_frame = frame;
+    return accepted;
+  };
+  auto activeDetectionRepository = [&]()
+      -> crimson::zarr::DetectionRepository & {
+    if (canonical_detection_route) {
+      return canonical_detection_repository;
+    }
+    return detection_repository;
+  };
+  auto activeCameraFrameDataAdapter = [&]()
+      -> crimson::platform::nvidia::CameraFrameDataAdapter & {
+    if (canonical_detection_route) {
+      return canonical_camera_frame_data_adapter;
+    }
+    return legacy_camera_frame_data_adapter;
+  };
+  auto refreshActiveDetectionDatasetOptions = [&]() {
+    refreshDetectionDatasetOptions(activeDetectionRepository());
+  };
+  auto syncCanonicalDetectionRoute = [&]() {
+    const std::string index_path =
+        media_session_loader.activeRecordingClipIndexPath();
+    const auto recording_provider =
+        clipped_media_state.source == ClippedMediaSource::RecordingClipIndex
+            ? clipped_media_state.recording_clip_provider
+            : nullptr;
+    const std::string archive_path =
+        zarr_loaded ? zarr_loader.getArchivePath() : std::string{};
+    const std::string loader_selected_raw_run =
+        zarr_loaded ? zarr_loader.getDetectRunName() : std::string{};
+    size_t expected_frames = 0;
+    double expected_fps = video_fps;
+    std::string expected_recording_identity;
+    if (recording_provider != nullptr) {
+      const auto &index = recording_provider->index();
+      expected_frames = static_cast<size_t>(std::max<int64_t>(
+          0, index.totalFrameCount()));
+      expected_fps = index.framesPerSecond();
+      expected_recording_identity = index.recordingId();
+    }
+    size_t expected_width = 0;
+    size_t expected_height = 0;
+    if (scene != nullptr && !scene->cameras.empty()) {
+      expected_width = scene->cameras.front().image_width;
+      expected_height = scene->cameras.front().image_height;
+    }
+
+    const uint64_t session_generation = recording_open_workflow.generation();
+    const bool signature_changed =
+        session_generation != canonical_detection_session_generation ||
+        archive_path != canonical_detection_archive ||
+        index_path != canonical_detection_index ||
+        loader_selected_raw_run != canonical_detection_run ||
+        expected_recording_identity !=
+            canonical_detection_expected_recording_identity ||
+        expected_frames != canonical_detection_expected_frames ||
+        expected_width != canonical_detection_expected_width ||
+        expected_height != canonical_detection_expected_height;
+    if (!signature_changed) {
+      return;
+    }
+
+    std::string eligibility_error;
+    const bool rolling_index =
+        recording_provider != nullptr && !index_path.empty() &&
+        isRollingRecordingClipIndex(index_path, &eligibility_error);
+    const bool rolling_index_inspection_failed =
+        recording_provider != nullptr && !index_path.empty() &&
+        !rolling_index && !eligibility_error.empty();
+    const bool route_selected = rolling_index || rolling_index_inspection_failed;
+    std::string selected_raw_run = loader_selected_raw_run;
+    if (rolling_index && eligibility_error.empty() && !archive_path.empty()) {
+      const auto authoritative_run = resolveAuthoritativeCanonicalRawRun(
+          archive_path, loader_selected_raw_run, &eligibility_error);
+      if (authoritative_run.has_value()) {
+        selected_raw_run = *authoritative_run;
+      }
+    }
+
+    canonical_detection_session_generation = session_generation;
+    canonical_detection_archive = archive_path;
+    canonical_detection_index = index_path;
+    // Keep the loader-published seed in the signature. The authoritative run
+    // is resolved from bounded group metadata only when this signature changes.
+    canonical_detection_run = loader_selected_raw_run;
+    canonical_detection_expected_recording_identity =
+        expected_recording_identity;
+    canonical_detection_expected_frames = expected_frames;
+    canonical_detection_expected_width = expected_width;
+    canonical_detection_expected_height = expected_height;
+    canonical_detection_route = route_selected;
+    canonical_detection_seen_seek_requests = 0;
+    canonical_detection_last_requested_frame = -1;
+
+    if (!route_selected) {
+      canonical_detection_repository.close();
+      canonical_timeline_session.close();
+      refreshDetectionDatasetOptions(detection_repository);
+      return;
+    }
+
+    if (!archive_path.empty() && expected_frames > 0 && expected_fps > 0.0) {
+      std::string timeline_open_error;
+      crimson::gui::CanonicalTimelineOpenRequest timeline_request;
+      timeline_request.archive_path = archive_path;
+      timeline_request.expected_frame_count = expected_frames;
+      timeline_request.frames_per_second = expected_fps;
+      timeline_request.eye_angle_run = cli_eye_angle_run;
+      if (!canonical_timeline_session.beginOpen(std::move(timeline_request),
+                                                &timeline_open_error)) {
+        std::cerr << "[CanonicalTimeline] state=failed archive="
+                  << archive_path << " error=" << timeline_open_error
+                  << std::endl;
+      }
+    } else {
+      canonical_timeline_session.close();
+    }
+
+    detection_dataset_ids.clear();
+    detection_dataset_labels.clear();
+    detection_dataset_choice = 0;
+    g_zarr_bbox_edit_state.clearAll();
+    if (!eligibility_error.empty() || archive_path.empty() ||
+        selected_raw_run.empty() || expected_frames == 0 ||
+        expected_width == 0 || expected_height == 0) {
+      canonical_detection_repository.close();
+      std::ostringstream message;
+      message << "Canonical detection route is not ready:";
+      if (!eligibility_error.empty()) {
+        message << " " << eligibility_error;
+      } else if (archive_path.empty()) {
+        message << " archive path is unavailable";
+      } else if (selected_raw_run.empty()) {
+        message << " selected raw run is unavailable";
+      } else if (expected_frames == 0) {
+        message << " validated recording frame count is unavailable";
+      } else {
+        message << " decoded source dimensions are unavailable";
+      }
+      show_error = true;
+      error_message = message.str();
+      std::cerr << "[NvidiaDetection] state=not_ready source=canonical "
+                << "archive=" << archive_path << " run=" << selected_raw_run
+                << " index=" << index_path << " error=" << error_message
+                << std::endl;
+      return;
+    }
+
+    std::string open_error;
+    const bool accepted = canonical_detection_repository.beginOpen(
+        crimson::platform::nvidia::NvidiaDetectionOpenRequest{
+            archive_path,
+            selected_raw_run,
+            expected_fps,
+            expected_frames,
+            expected_width,
+            expected_height,
+            70,
+            32,
+            expected_recording_identity,
+        },
+        &open_error);
+    std::cout << "[NvidiaDetection] state=opening source=canonical archive="
+              << archive_path << " run=" << selected_raw_run
+              << " index=" << index_path << " frames=" << expected_frames
+              << " recording_identity=" << expected_recording_identity
+              << " source_size=" << expected_width << "x" << expected_height
+              << " page_frames=70 cache_pages=32" << std::endl;
+    if (!accepted) {
+      show_error = true;
+      error_message = "Canonical detection open was rejected: " + open_error;
+      std::cerr << "[NvidiaDetection] state=failed source=canonical error="
+                << error_message << std::endl;
+    }
+  };
+  auto last_reported_canonical_state =
+      crimson::platform::nvidia::NvidiaDetectionState::Closed;
+  uint64_t last_reported_canonical_generation = 0;
+  auto reportCanonicalDetectionState = [&]() {
+    if (!canonical_detection_route) {
+      return;
+    }
+    const auto metrics = canonical_detection_repository.metrics();
+    if (metrics.state == last_reported_canonical_state &&
+        metrics.generation == last_reported_canonical_generation) {
+      return;
+    }
+    last_reported_canonical_state = metrics.state;
+    last_reported_canonical_generation = metrics.generation;
+    const auto descriptor = canonical_detection_repository.descriptor();
+    std::cout << "[NvidiaDetection] state="
+              << crimson::platform::nvidia::nvidiaDetectionStateName(
+                     metrics.state)
+              << " source=canonical generation=" << metrics.generation
+              << " archive=" << metrics.archive_path
+              << " run=" << metrics.canonical_raw_run
+              << " frames=" << descriptor.total_frames
+              << " rows=" << metrics.repository.resolved_rows
+              << " range_reads=" << metrics.repository.range_reads
+              << " cached_pages=" << metrics.buffer.peak_cached_pages
+              << " cached_bytes=" << metrics.buffer.cached_bytes
+              << " page_cache_hard_byte_budgeted="
+              << (metrics.page_cache_hard_byte_budgeted ? "true" : "false")
+              << " error=" << metrics.last_error << std::endl;
+    if (metrics.state ==
+        crimson::platform::nvidia::NvidiaDetectionState::Ready) {
+      refreshActiveDetectionDatasetOptions();
+    } else if (metrics.state ==
+               crimson::platform::nvidia::NvidiaDetectionState::Failed) {
+      show_error = true;
+      error_message = "Canonical detection open failed: " + metrics.last_error;
+    }
+  };
+  auto last_reported_timeline_state =
+      crimson::gui::CanonicalTimelineSessionState::Closed;
+  uint64_t last_reported_timeline_generation = 0;
+  auto reportCanonicalTimelineState = [&]() {
+    if (!canonical_detection_route) {
+      return;
+    }
+    const auto metrics = canonical_timeline_session.metrics();
+    if (metrics.state == last_reported_timeline_state &&
+        metrics.generation == last_reported_timeline_generation) {
+      return;
+    }
+    last_reported_timeline_state = metrics.state;
+    last_reported_timeline_generation = metrics.generation;
+    std::cout << "[CanonicalTimeline] state="
+              << crimson::gui::canonicalTimelineSessionStateName(metrics.state)
+              << " generation=" << metrics.generation
+              << " archive=" << metrics.archive_path
+              << " eye_run=" << metrics.eye_angle_run
+              << " motion_run=" << metrics.motion_run
+              << " bout_run=" << metrics.swim_bout_run
+              << " eye_error=" << metrics.eye_angle_error
+              << " motion_error=" << metrics.motion_error
+              << " bout_error=" << metrics.swim_bout_error
+              << " error=" << metrics.last_error << std::endl;
+  };
   auto refreshChaserDistancePolarRepository = [&]() {
     chaser_distance_polar_repository.reset();
     stimulus_context_timeline.reset();
@@ -648,6 +1056,7 @@ int main(int argc, char **argv) {
       cli_zarr_override_path, cli_recording_path, cli_recording_clip_index_path,
       [&]() { refreshDetectionDatasetOptions(detection_repository); },
       [&]() { g_zarr_bbox_edit_state.clearAll(); });
+  syncCanonicalDetectionRoute();
   if (session_lifecycle.snapshot().phase !=
       crimson::session::SessionPhase::Empty) {
     crimson::diagnostics::writeRuntimeDiagnostics(
@@ -1347,7 +1756,7 @@ int main(int argc, char **argv) {
         if (!(zarr_loader.hasCropImages() ||
               !keypoint_repository.descriptor().run_name.empty() ||
               zarr_loader.hasEyeMasks()) ||
-            !detection_repository.descriptor().available) {
+            !activeDetectionRepository().descriptor().available) {
           std::cerr << "[UiReference] crop-preview requires detection "
                        "and crop/keypoint/mask data"
                     << std::endl;
@@ -1400,16 +1809,25 @@ int main(int argc, char **argv) {
         frame_debug_window_state.active_roi_inset_options.visible = false;
         chaser_distance_polar_inset_options = {};
       } else if (ui_reference.state == UiReferenceState::AnalysisEye) {
-        if (!zarr_loader.hasEyeAngleAnalysisData()) {
+        const bool canonical_analysis_available =
+            canonical_detection_route &&
+            canonical_timeline_session.state() !=
+                crimson::gui::CanonicalTimelineSessionState::Closed &&
+            canonical_timeline_session.state() !=
+                crimson::gui::CanonicalTimelineSessionState::Failed;
+        if (!canonical_analysis_available &&
+            !zarr_loader.hasEyeAngleAnalysisData()) {
           std::cerr << "[UiReference] analysis-eye requires eye-angle "
                        "analysis data"
                     << std::endl;
           rejectUiReferenceStart();
           break;
         }
-        frame_debug_window_state.active_view =
-            crimson::workspace::FrameInspectView::EyeMasks;
-        show_eye_masks = true;
+        if (!canonical_analysis_available) {
+          frame_debug_window_state.active_view =
+              crimson::workspace::FrameInspectView::EyeMasks;
+          show_eye_masks = true;
+        }
       } else if (ui_reference.state == UiReferenceState::AnalysisTailStimulus) {
         if (!zarr_loader.hasTailKinematicsData() ||
             !(zarr_loader.hasStimulusSteps() ||
@@ -1719,12 +2137,15 @@ int main(int argc, char **argv) {
          zarr_loader.hasEyeMasks());
     capabilities.stimulus_video_loaded = stimulus_player.loaded;
     capabilities.analysis_timeline_available =
-        zarr_loaded &&
-        (zarr_loader.hasMovementData() ||
-         zarr_loader.hasDeferredMovementData() ||
-         zarr_loader.hasEyeAngleAnalysisData() ||
-         zarr_loader.hasTailKinematicsData() ||
-         zarr_loader.hasStimulusSteps() || zarr_loader.hasStimulusEvents());
+        (canonical_detection_route &&
+         canonical_timeline_session.state() !=
+             crimson::gui::CanonicalTimelineSessionState::Closed) ||
+        (zarr_loaded &&
+         (zarr_loader.hasMovementData() ||
+          zarr_loader.hasDeferredMovementData() ||
+          zarr_loader.hasEyeAngleAnalysisData() ||
+          zarr_loader.hasTailKinematicsData() ||
+          zarr_loader.hasStimulusSteps() || zarr_loader.hasStimulusEvents()));
     capabilities.detection_quality_available =
         quality_timeline_session.detectionConfigured();
     capabilities.keypoint_quality_available =
@@ -1770,6 +2191,9 @@ int main(int argc, char **argv) {
 
   while (!glfwWindowShouldClose(window->render_target)) {
     static FileBrowserWindowState file_browser_window_state;
+    syncCanonicalDetectionRoute();
+    reportCanonicalDetectionState();
+    reportCanonicalTimelineState();
     if (ui_reference_capture.published()) {
       // Preserve the proven front buffer until the external harness has
       // captured it. Rendering another frame can race an X11 capture.
@@ -1833,6 +2257,7 @@ int main(int argc, char **argv) {
     int frame_bbox_query_frame = -1;
     int frame_bbox_loaded_count = 0;
     int frame_bbox_display_count = 0;
+    bool canonical_presented_request_this_frame = false;
     double frame_subject_shape_overlay_ms = 0.0;
     double frame_tail_kinematics_overlay_ms = 0.0;
     double frame_camera_scene_ui_ms = 0.0;
@@ -1982,14 +2407,68 @@ int main(int argc, char **argv) {
         !clipped_boundary_smoke.completed &&
         std::chrono::steady_clock::now() - clipped_boundary_smoke.start_time >
             std::chrono::seconds(20)) {
+      const auto canonical_metrics = canonical_detection_repository.metrics();
       std::cerr << "[ClippedBoundarySmoke] timeout waiting for frame "
                 << clipped_boundary_smoke.end_frame
                 << " current_frame=" << current_frame_num
+                << " detection_source="
+                << (canonical_detection_route ? "canonical" : "legacy")
+                << " detection_state="
+                << crimson::platform::nvidia::nvidiaDetectionStateName(
+                       canonical_metrics.state)
+                << " detection_run=" << canonical_metrics.canonical_raw_run
+                << " frame_requests=" << canonical_metrics.frame_requests
+                << " cache_hits=" << canonical_metrics.buffer.cache_hits
+                << " cache_misses=" << canonical_metrics.cache_misses
+                << " cached_pages="
+                << canonical_metrics.buffer.peak_cached_pages
+                << " cached_bytes=" << canonical_metrics.buffer.cached_bytes
+                << " range_reads="
+                << canonical_metrics.repository.range_reads
+                << " resolved_rows="
+                << canonical_metrics.repository.resolved_rows
+                << " resident_range_reads="
+                << canonical_metrics.repository.resident_range_reads
+                << " residency_rows_read="
+                << canonical_metrics.repository.residency_rows_read
+                << " resident_bytes="
+                << canonical_metrics.repository.resident_retained_bytes
+                << " detection_error=" << canonical_metrics.last_error
                 << " state=" << clippedStateJson().dump() << std::endl;
       writeClippedHandoffTraceEvent(
           "smoke_timeout", {{"start_frame", clipped_boundary_smoke.start_frame},
                             {"end_frame", clipped_boundary_smoke.end_frame},
-                            {"current_frame", current_frame_num}});
+                            {"current_frame", current_frame_num},
+                            {"detection_source",
+                             canonical_detection_route ? "canonical"
+                                                       : "legacy"},
+                            {"detection_state",
+                             crimson::platform::nvidia::
+                                 nvidiaDetectionStateName(
+                                     canonical_metrics.state)},
+                            {"detection_run",
+                             canonical_metrics.canonical_raw_run},
+                            {"frame_requests",
+                             canonical_metrics.frame_requests},
+                            {"cache_hits",
+                             canonical_metrics.buffer.cache_hits},
+                            {"cache_misses",
+                             canonical_metrics.cache_misses},
+                            {"cached_bytes",
+                             canonical_metrics.buffer.cached_bytes},
+                            {"range_reads",
+                             canonical_metrics.repository.range_reads},
+                            {"resolved_rows",
+                             canonical_metrics.repository.resolved_rows},
+                            {"resident_range_reads",
+                             canonical_metrics.repository.resident_range_reads},
+                            {"residency_rows_read",
+                             canonical_metrics.repository.residency_rows_read},
+                            {"resident_bytes",
+                             canonical_metrics.repository
+                                 .resident_retained_bytes},
+                            {"detection_error",
+                             canonical_metrics.last_error}});
       app_exit_code = 3;
       glfwSetWindowShouldClose(window->render_target, GLFW_TRUE);
     }
@@ -2259,18 +2738,20 @@ int main(int argc, char **argv) {
           crimson::workspace::FrameInspectView::Keypoints;
       const bool allow_blocking_eye_mask_load = !ps.play_video;
       crimson::platform::nvidia::CameraFrameData frame_inspect_data =
-          camera_frame_data_adapter.resolve(
+          activeCameraFrameDataAdapter().resolve(
               crimson::platform::nvidia::CameraFrameDataRequest{
                   zarr_loaded,
                   current_frame_num >= 0,
                   current_frame_num,
                   zarr_loader.getImageWidth(),
                   zarr_loader.getImageHeight(),
-                  true,
-                  include_eye_masks_in_details ||
-                      include_subject_shapes_in_details,
-                  keypoint_view_needs_legacy_details,
-                  true,
+                  !canonical_detection_route,
+                  !canonical_detection_route &&
+                      (include_eye_masks_in_details ||
+                       include_subject_shapes_in_details),
+                  !canonical_detection_route &&
+                      keypoint_view_needs_legacy_details,
+                  !canonical_detection_route,
                   include_eye_masks_in_details,
                   include_subject_shapes_in_details,
                   allow_blocking_eye_mask_load,
@@ -2434,7 +2915,7 @@ int main(int argc, char **argv) {
           crimson::nvidia::FrameInspectNavigationContext{
               zarr_loaded,
               zarr_loader,
-              detection_repository,
+              activeDetectionRepository(),
               current_frame_num,
               detection_dataset_ids,
               detection_dataset_choice,
@@ -2447,7 +2928,7 @@ int main(int argc, char **argv) {
                 playback_session_controller.seekToFrame(
                     frame, prefer_buffer_when_paused);
               },
-              [&]() { refreshDetectionDatasetOptions(detection_repository); },
+              [&]() { refreshActiveDetectionDatasetOptions(); },
           };
       const auto frame_inspect_navigation_result =
           crimson::nvidia::applyFrameInspectNavigation(
@@ -3159,6 +3640,11 @@ int main(int argc, char **argv) {
                       presented_frame_uses_selected_clip,
                   });
           const int zarr_bbox_query_frame = camera_frame_query.query_frame;
+          if (canonical_detection_route && has_presented_camera_frame &&
+              zarr_bbox_query_frame >= 0) {
+            canonical_presented_request_this_frame = true;
+            (void)requestCanonicalDetectionFrame(zarr_bbox_query_frame);
+          }
           const bool camera_subject_shape_needs_contours =
               subject_shape_overlay_options.show_overlay &&
               (subject_shape_overlay_options.show_body_contour ||
@@ -3178,15 +3664,15 @@ int main(int argc, char **argv) {
               zarr_loader.hasEyeMasks();
           const bool allow_blocking_eye_mask_load = !ps.play_video;
           crimson::platform::nvidia::CameraFrameData camera_frame_data =
-              camera_frame_data_adapter.resolve(
+              activeCameraFrameDataAdapter().resolve(
                   crimson::platform::nvidia::CameraFrameDataRequest{
                       zarr_loaded,
                       has_presented_camera_frame,
                       zarr_bbox_query_frame,
                       zarr_loader.getImageWidth(),
                       zarr_loader.getImageHeight(),
-                      true,
-                      true,
+                      !canonical_detection_route,
+                      !canonical_detection_route,
                       false,
                       false,
                       camera_details_include_eye_masks,
@@ -3233,8 +3719,12 @@ int main(int argc, char **argv) {
                 static_cast<int>(loaded_zarr_boxes.size());
             const auto bbox_edit_resolve_start =
                 std::chrono::steady_clock::now();
-            zarr_boxes = g_zarr_bbox_edit_state.resolveFrameBoxes(
-                zarr_bbox_query_frame, loaded_zarr_boxes);
+            if (canonical_detection_route) {
+              zarr_boxes = loaded_zarr_boxes;
+            } else {
+              zarr_boxes = g_zarr_bbox_edit_state.resolveFrameBoxes(
+                  zarr_bbox_query_frame, loaded_zarr_boxes);
+            }
             const double bbox_edit_resolve_ms = durationMs(
                 std::chrono::steady_clock::now() - bbox_edit_resolve_start);
             frame_bbox_edit_resolve_ms += bbox_edit_resolve_ms;
@@ -3785,7 +4275,7 @@ int main(int argc, char **argv) {
                       ? json(zarr_bbox_query_frame - presented_frame)
                       : json(nullptr);
               details["detection_details_frame_id"] =
-                  (zarr_loaded && has_presented_camera_frame)
+                  camera_frame_data.legacy_details_ready
                       ? json(detection_details.frame_id)
                       : json(nullptr);
               details["bbox_matches_presented_frame"] =
@@ -3970,8 +4460,10 @@ int main(int argc, char **argv) {
             trace_snapshot.first_bbox_source_image = first_source_bbox;
             trace_snapshot.first_bbox_display = first_display_bbox;
             trace_snapshot.first_bbox_source = first_detection_source;
-            trace_snapshot.detection_details_frame_id =
-                static_cast<int64_t>(detection_details.frame_id);
+            if (camera_frame_data.legacy_details_ready) {
+              trace_snapshot.detection_details_frame_id =
+                  static_cast<int64_t>(detection_details.frame_id);
+            }
             trace_snapshot.sanity = sanity;
             diagnostics_session.writeClippedFrameTrace(
                 nvidia_trace::clippedFrameJson(trace_snapshot),
@@ -4039,6 +4531,30 @@ int main(int argc, char **argv) {
               clipped_boundary_smoke.started &&
               !clipped_boundary_smoke.completed && has_presented_camera_frame &&
               presented_frame >= clipped_boundary_smoke.end_frame) {
+            if (canonical_detection_route &&
+                presented_frame != clipped_boundary_smoke.end_frame) {
+              if (!clipped_boundary_smoke.endpoint_seek_requested) {
+                if (ps.play_video) {
+                  applyPlaybackToggleForPerf();
+                }
+                clipped_boundary_smoke.endpoint_seek_requested = true;
+                const auto endpoint_seek =
+                    playback_session_controller.seekToFrame(
+                        clipped_boundary_smoke.end_frame,
+                        /*prefer_buffer_when_paused=*/false,
+                        /*force_inaccurate=*/false,
+                        /*skip_stimulus_hard_seek=*/true);
+                std::cout
+                    << "[ClippedBoundarySmoke] canonical endpoint seek "
+                    << "requested_frame=" << clipped_boundary_smoke.end_frame
+                    << " overshoot_frame=" << presented_frame
+                    << " status=" << static_cast<int>(endpoint_seek.status)
+                    << std::endl;
+              }
+            }
+            if (canonical_detection_route && ps.play_video) {
+              applyPlaybackToggleForPerf();
+            }
             const size_t expected_run =
                 clippedSelectedRunForFrame(clipped_boundary_smoke.end_frame);
             const size_t presented_run =
@@ -4048,12 +4564,64 @@ int main(int argc, char **argv) {
             const bool run_matches =
                 expected_run != std::numeric_limits<size_t>::max() &&
                 presented_run == expected_run;
-            if (bbox_matches_presented && run_matches) {
+            const bool canonical_frame_ready =
+                !canonical_detection_route ||
+                (canonical_detection_repository.state() ==
+                     crimson::platform::nvidia::NvidiaDetectionState::Ready &&
+                 presented_detection_frame.ready() &&
+                 presented_detection_frame.frame_id ==
+                     static_cast<size_t>(clipped_boundary_smoke.end_frame));
+            const size_t canonical_frame_rows =
+                canonical_frame_ready && canonical_detection_route
+                    ? presented_detection_frame.observations.size()
+                    : 0;
+            const bool canonical_scene_ready =
+                !canonical_detection_route || canonical_frame_rows == 0 ||
+                (loaded_zarr_boxes.size() == canonical_frame_rows &&
+                 camera_view_result.perf.bbox_overlay_item_count > 0);
+            if (bbox_matches_presented && run_matches &&
+                canonical_frame_ready && canonical_scene_ready) {
               clipped_boundary_smoke.completed = true;
+              const auto canonical_metrics =
+                  canonical_detection_repository.metrics();
               std::cout << "[ClippedBoundarySmoke] PASS "
                         << "presented_frame=" << presented_frame
                         << " bbox_query_frame=" << zarr_bbox_query_frame
                         << " clip=" << clipped_media_state.handoff.clip_id
+                        << " detection_source="
+                        << (canonical_detection_route ? "canonical"
+                                                      : "legacy")
+                        << " detection_run="
+                        << camera_detection_descriptor.run_name
+                        << " frame_rows=" << canonical_frame_rows
+                        << " boxes=" << loaded_zarr_boxes.size()
+                        << " scene_boxes="
+                        << camera_view_result.perf.bbox_overlay_item_count
+                        << " first_box_xywh=";
+              if (!loaded_zarr_boxes.empty()) {
+                const auto &first_box = loaded_zarr_boxes.front();
+                std::cout << first_box.x_min << "," << first_box.y_min << ","
+                          << first_box.width << "," << first_box.height;
+              } else {
+                std::cout << "empty";
+              }
+              std::cout
+                        << " cache_hits="
+                        << canonical_metrics.buffer.cache_hits
+                        << " cached_pages="
+                        << canonical_metrics.buffer.peak_cached_pages
+                        << " cached_bytes="
+                        << canonical_metrics.buffer.cached_bytes
+                        << " range_reads="
+                        << canonical_metrics.repository.range_reads
+                        << " resolved_rows="
+                        << canonical_metrics.repository.resolved_rows
+                        << " resident_range_reads="
+                        << canonical_metrics.repository.resident_range_reads
+                        << " residency_rows_read="
+                        << canonical_metrics.repository.residency_rows_read
+                        << " resident_bytes="
+                        << canonical_metrics.repository.resident_retained_bytes
                         << std::endl;
               writeClippedHandoffTraceEvent(
                   "smoke_pass",
@@ -4061,15 +4629,51 @@ int main(int argc, char **argv) {
                    {"bbox_query_frame", zarr_bbox_query_frame},
                    {"expected_end_frame", clipped_boundary_smoke.end_frame},
                    {"selected_run_index", presented_run},
-                   {"clip_id", clipped_media_state.handoff.clip_id}});
+                   {"clip_id", clipped_media_state.handoff.clip_id},
+                   {"detection_source",
+                    canonical_detection_route ? "canonical" : "legacy"},
+                   {"detection_run", camera_detection_descriptor.run_name},
+                   {"detection_frame_ready", canonical_frame_ready},
+                   {"detection_frame_rows", canonical_frame_rows},
+                   {"detection_boxes", loaded_zarr_boxes.size()},
+                   {"bbox_scene_items",
+                    camera_view_result.perf.bbox_overlay_item_count},
+                   {"first_box_xywh",
+                    loaded_zarr_boxes.empty()
+                        ? json(nullptr)
+                        : json::array(
+                              {loaded_zarr_boxes.front().x_min,
+                               loaded_zarr_boxes.front().y_min,
+                               loaded_zarr_boxes.front().width,
+                               loaded_zarr_boxes.front().height})},
+                   {"cache_hits", canonical_metrics.buffer.cache_hits},
+                   {"cached_bytes", canonical_metrics.buffer.cached_bytes},
+                   {"range_reads",
+                    canonical_metrics.repository.range_reads},
+                   {"resolved_rows",
+                    canonical_metrics.repository.resolved_rows},
+                   {"resident_range_reads",
+                    canonical_metrics.repository.resident_range_reads},
+                   {"residency_rows_read",
+                    canonical_metrics.repository.residency_rows_read},
+                   {"resident_bytes",
+                    canonical_metrics.repository.resident_retained_bytes}});
               app_exit_code = 0;
               glfwSetWindowShouldClose(window->render_target, GLFW_TRUE);
-            } else {
+            } else if (!canonical_detection_route ||
+                       (canonical_frame_ready && !canonical_scene_ready)) {
               std::cerr << "[ClippedBoundarySmoke] FAIL "
                         << "presented_frame=" << presented_frame
                         << " bbox_query_frame=" << zarr_bbox_query_frame
                         << " expected_run=" << expected_run
-                        << " presented_run=" << presented_run << std::endl;
+                        << " presented_run=" << presented_run
+                        << " canonical_frame_ready="
+                        << canonical_frame_ready
+                        << " detection_rows=" << canonical_frame_rows
+                        << " boxes=" << loaded_zarr_boxes.size()
+                        << " scene_boxes="
+                        << camera_view_result.perf.bbox_overlay_item_count
+                        << std::endl;
               writeClippedHandoffTraceEvent(
                   "smoke_fail",
                   {{"presented_frame", presented_frame},
@@ -4337,6 +4941,13 @@ int main(int argc, char **argv) {
       }
     }
 
+    if (canonical_detection_route && !ps.play_video &&
+        !canonical_presented_request_this_frame && current_frame_num >= 0) {
+      // A collapsed camera window has no presented-frame consumer. Keep Frame
+      // Inspect useful without allowing its cursor to compete with playback.
+      (void)requestCanonicalDetectionFrame(current_frame_num);
+    }
+
     workspace_state.setWindowRequested(
         crimson::workspace::Window::AdvancedCropPreview,
         frame_debug_window_state.keypoint_review_panel
@@ -4414,10 +5025,10 @@ int main(int argc, char **argv) {
       int selected_detection_index = -1;
       if (g_zarr_bbox_edit_state.selected_frame == crop_preview_frame_num &&
           g_zarr_bbox_edit_state.selected_box >= 0 &&
-          detection_repository.descriptor().available) {
+          activeDetectionRepository().descriptor().available) {
         const auto crop_detection_descriptor =
-            detection_repository.descriptor();
-        const auto crop_detection_frame = detection_repository.resolveFrame(
+            activeDetectionRepository().descriptor();
+        const auto crop_detection_frame = activeDetectionRepository().resolveFrame(
             static_cast<size_t>(crop_preview_frame_num), false);
         const auto loaded_crop_boxes =
             crimson::platform::nvidia::makeLegacyBoundingBoxes(
@@ -4566,6 +5177,8 @@ int main(int argc, char **argv) {
     static TimelineScrollState shared_timeline_scroll_state;
     static StimulusEventTimelineWindowState stimulus_timeline_window_state;
     static AnalysisTimelineWindowState analysis_timeline_window_state;
+    static crimson::gui::CanonicalTimelineWindowState
+        canonical_timeline_window_state;
 
     if (ui_reference_capture.waitingForStableFrame() &&
         !ui_reference.analysis_state_applied &&
@@ -4657,19 +5270,81 @@ int main(int argc, char **argv) {
             crimson::workspace::Window::AnalysisTimeline,
             workspaceCapabilities())) {
       const auto analysis_timeline_ui_start = std::chrono::steady_clock::now();
-      AnalysisTimelineWindowContext analysis_timeline_context{
-          zarr_loader, shared_timeline_scroll_state,  current_frame_num,
-          video_fps,   &frame_analysis_timeline_perf,
-      };
-      drawAnalysisTimelineWindow(analysis_timeline_context,
-                                 analysis_timeline_window_state);
-      const auto &eye_data = zarr_loader.getEyeAngleAnalysisData();
-      const int eye_index =
-          analysis_timeline_window_state.eye_angle_representation_index;
-      if (eye_index >= 0 &&
-          static_cast<size_t>(eye_index) < eye_data.representations.size()) {
+      if (canonical_detection_route) {
+        static uint64_t logged_canonical_timeline_generation = 0;
+        std::string timeline_request_error;
+        (void)canonical_timeline_session.requestFrame(
+            current_frame_num, ps.just_seeked, &timeline_request_error);
+        const auto timeline_snapshot =
+            canonical_timeline_session.snapshot(current_frame_num);
+        if (timeline_snapshot.generation !=
+                logged_canonical_timeline_generation &&
+            timeline_snapshot.eye_angles.state ==
+                crimson::gui::CanonicalTimelineProductState::Ready &&
+            timeline_snapshot.motion.state ==
+                crimson::gui::CanonicalTimelineProductState::Ready &&
+            timeline_snapshot.swim_bouts.state ==
+                crimson::gui::CanonicalTimelineProductState::Ready) {
+          size_t eye_finite = 0;
+          for (const auto &trace : timeline_snapshot.eye_angles.window->traces) {
+            eye_finite += static_cast<size_t>(std::count_if(
+                trace.values.begin(), trace.values.end(),
+                [](double value) { return std::isfinite(value); }));
+          }
+          size_t motion_finite = 0;
+          for (const auto &trace : timeline_snapshot.motion.window->traces) {
+            motion_finite += static_cast<size_t>(std::count_if(
+                trace.values.begin(), trace.values.end(),
+                [](double value) { return std::isfinite(value); }));
+          }
+          const size_t detector_finite = static_cast<size_t>(std::count_if(
+              timeline_snapshot.swim_bouts.window->detector_values.begin(),
+              timeline_snapshot.swim_bouts.window->detector_values.end(),
+              [](double value) { return std::isfinite(value); }));
+          std::cout
+              << "[CanonicalTimeline] windows=ready generation="
+              << timeline_snapshot.generation
+              << " frame=" << current_frame_num
+              << " eye_source="
+              << timeline_snapshot.eye_angles.source_identity
+              << " eye_traces="
+              << timeline_snapshot.eye_angles.window->traces.size()
+              << " eye_finite=" << eye_finite
+              << " motion_source=" << timeline_snapshot.motion.source_identity
+              << " motion_traces="
+              << timeline_snapshot.motion.window->traces.size()
+              << " motion_finite=" << motion_finite
+              << " bout_source="
+              << timeline_snapshot.swim_bouts.source_identity
+              << " bout_intervals="
+              << timeline_snapshot.swim_bouts.window->intervals.size()
+              << " detector_finite=" << detector_finite << std::endl;
+          logged_canonical_timeline_generation = timeline_snapshot.generation;
+        }
+        crimson::gui::drawCanonicalTimelineWindow(
+            timeline_snapshot, current_frame_num, video_fps,
+            &canonical_timeline_window_state);
         workspace_state.selections().eye_angle_representation_key =
-            eye_data.representations[static_cast<size_t>(eye_index)].key;
+            timeline_snapshot.eye_angles.descriptor.default_representation;
+        workspace_state.selections().motion_source_key =
+            timeline_snapshot.motion.descriptor.default_source;
+        workspace_state.selections().swim_bout_candidate_key =
+            timeline_snapshot.swim_bouts.descriptor.default_candidate;
+      } else {
+        AnalysisTimelineWindowContext analysis_timeline_context{
+            zarr_loader, shared_timeline_scroll_state, current_frame_num,
+            video_fps, &frame_analysis_timeline_perf,
+        };
+        drawAnalysisTimelineWindow(analysis_timeline_context,
+                                   analysis_timeline_window_state);
+        const auto &eye_data = zarr_loader.getEyeAngleAnalysisData();
+        const int eye_index =
+            analysis_timeline_window_state.eye_angle_representation_index;
+        if (eye_index >= 0 &&
+            static_cast<size_t>(eye_index) < eye_data.representations.size()) {
+          workspace_state.selections().eye_angle_representation_key =
+              eye_data.representations[static_cast<size_t>(eye_index)].key;
+        }
       }
       frame_movement_timeline_ui_ms += durationMs(
           std::chrono::steady_clock::now() - analysis_timeline_ui_start);
@@ -4800,9 +5475,28 @@ int main(int argc, char **argv) {
           "optional overlays ready";
       bool state_ready = false;
       switch (ui_reference.state) {
-      case UiReferenceState::Workspace:
-        state_ready = true;
+      case UiReferenceState::Workspace: {
+        if (!canonical_detection_route) {
+          state_ready = true;
+          break;
+        }
+        const auto reference_detection_frame =
+            canonical_detection_repository.resolveFrame(
+                static_cast<size_t>(
+                    std::max(0, ui_reference.target_frame)),
+                false);
+        const bool reference_detection_ready =
+            ui_reference.target_frame >= 0 &&
+            reference_detection_frame.ready() &&
+            reference_detection_frame.frame_id ==
+                static_cast<size_t>(ui_reference.target_frame);
+        state_ready =
+            reference_detection_ready &&
+            ui_reference.bbox_query_frame == ui_reference.target_frame &&
+            (reference_detection_frame.observations.empty() ||
+             frame_bbox_overlay_item_count > 0);
         break;
+      }
       case UiReferenceState::Overlays:
         state_ready =
             show_eye_masks && optional_eye_overlays_ready &&
@@ -4844,17 +5538,34 @@ int main(int argc, char **argv) {
         state_ready = ui_reference.crop_ready;
         break;
       case UiReferenceState::AnalysisEye:
-        state_ready = ui_reference.analysis_state_applied &&
-                      zarr_loader.hasEyeAngleAnalysisData() && show_eye_masks &&
-                      optional_eye_overlays_ready &&
-                      frame_mask_overlay_perf.attempted &&
-                      frame_mask_overlay_perf.visible_roi_count > 0 &&
-                      frame_mask_overlay_perf.component_fill_count > 0 &&
-                      frame_mask_overlay_perf.contours_drawn > 0 &&
-                      frame_mask_overlay_perf.axes_drawn > 0 &&
-                      (frame_mask_overlay_perf.gaze_rays_drawn > 0 ||
-                       frame_mask_overlay_perf.visual_cones_drawn > 0) &&
-                      frame_mask_overlay_perf.angle_labels_drawn > 0;
+        if (canonical_detection_route) {
+          (void)canonical_timeline_session.requestFrame(
+              ui_reference.target_frame, false, nullptr);
+          const auto timeline_reference =
+              canonical_timeline_session.snapshot(ui_reference.target_frame);
+          state_ready =
+              ui_reference.analysis_state_applied &&
+              timeline_reference.eye_angles.state ==
+                  crimson::gui::CanonicalTimelineProductState::Ready &&
+              timeline_reference.motion.state ==
+                  crimson::gui::CanonicalTimelineProductState::Ready &&
+              (timeline_reference.swim_bouts.state ==
+                   crimson::gui::CanonicalTimelineProductState::Ready ||
+               timeline_reference.swim_bouts.state ==
+                   crimson::gui::CanonicalTimelineProductState::Empty);
+        } else {
+          state_ready = ui_reference.analysis_state_applied &&
+                        zarr_loader.hasEyeAngleAnalysisData() &&
+                        show_eye_masks && optional_eye_overlays_ready &&
+                        frame_mask_overlay_perf.attempted &&
+                        frame_mask_overlay_perf.visible_roi_count > 0 &&
+                        frame_mask_overlay_perf.component_fill_count > 0 &&
+                        frame_mask_overlay_perf.contours_drawn > 0 &&
+                        frame_mask_overlay_perf.axes_drawn > 0 &&
+                        (frame_mask_overlay_perf.gaze_rays_drawn > 0 ||
+                         frame_mask_overlay_perf.visual_cones_drawn > 0) &&
+                        frame_mask_overlay_perf.angle_labels_drawn > 0;
+        }
         break;
       case UiReferenceState::AnalysisTailStimulus:
         state_ready =
@@ -5153,6 +5864,43 @@ int main(int argc, char **argv) {
              analysis_timeline_window_state.show_tail_curvature},
             {"show_stimulus_context",
              analysis_timeline_window_state.show_stimulus_context}}}});
+      if (canonical_detection_route) {
+        const auto snapshot =
+            canonical_timeline_session.snapshot(ui_reference.target_frame);
+        auto traceCount = [](const auto& product) {
+          size_t count = 0;
+          if (product.window) {
+            for (const auto& trace : product.window->traces) {
+              count += static_cast<size_t>(std::count_if(
+                  trace.values.begin(), trace.values.end(),
+                  [](double value) { return std::isfinite(value); }));
+            }
+          }
+          return count;
+        };
+        auto productMarker = [](const auto& product) {
+          return json{
+              {"state", crimson::gui::canonicalTimelineProductStateName(product.state)},
+              {"source", product.source_identity},
+              {"first_frame", product.window ? product.window->request.first_frame : -1},
+              {"last_frame", product.window ? product.window->request.last_frame : -1}};
+        };
+        marker["analysis"]["canonical"] = true;
+        marker["analysis"]["eye_representation_key"] =
+            snapshot.eye_angles.descriptor.default_representation;
+        marker["canonical_timelines"] = {
+            {"frame", snapshot.requested_frame},
+            {"eye", productMarker(snapshot.eye_angles)},
+            {"motion", productMarker(snapshot.motion)},
+            {"bouts", productMarker(snapshot.swim_bouts)}};
+        marker["canonical_timelines"]["eye"]["finite_points"] =
+            traceCount(snapshot.eye_angles);
+        marker["canonical_timelines"]["motion"]["finite_points"] =
+            traceCount(snapshot.motion);
+        marker["canonical_timelines"]["bouts"]["interval_count"] =
+            snapshot.swim_bouts.window
+                ? snapshot.swim_bouts.window->intervals.size() : 0;
+      }
       std::string marker_error;
       if (!crimson::ui_reference::writeUiReferenceMarkerAtomically(
               ui_reference.ready_file, marker, &marker_error)) {
@@ -5436,6 +6184,8 @@ int main(int argc, char **argv) {
   playback_transport.seekCoordinator().cancelActive();
   refined_keypoint_write_session.close();
   quality_timeline_session.close();
+  canonical_timeline_session.close();
+  canonical_detection_repository.close();
   zarr_loader.setDataAccessScheduler(nullptr);
   analysis_data_scheduler->waitUntilIdle();
   const auto final_analysis_data_scheduler_metrics =

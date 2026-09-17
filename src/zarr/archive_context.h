@@ -29,6 +29,7 @@ struct DetectionRepositorySelectionRequest;
 struct DetectionRepositorySelectionMetrics;
 struct DetectionQualityTimelineOpenRequest;
 struct DetectionQualityTimelineOpenMetrics;
+struct MotionSeriesTimelineOpenRequest;
 struct TensorStoreChaserDistancePolarOptions;
 class TensorStoreChaserDistancePolarRepository;
 
@@ -122,6 +123,12 @@ private:
   OpenEyeAngleTimelineRepository(
       const std::shared_ptr<ArchiveContext> &archive,
       const std::string &requested_run, std::string *error_message,
+      crimson::data::SmallSeriesPreloadPolicy preload_policy);
+  friend std::unique_ptr<crimson::timeline::AnalysisSeriesTimelineRepository>
+  OpenMotionSeriesTimelineRepository(
+      const std::shared_ptr<ArchiveContext> &archive,
+      const MotionSeriesTimelineOpenRequest &request,
+      std::string *error_message,
       crimson::data::SmallSeriesPreloadPolicy preload_policy);
   friend std::unique_ptr<crimson::timeline::AnalysisSeriesTimelineRepository>
   OpenMotionSeriesTimelineRepository(

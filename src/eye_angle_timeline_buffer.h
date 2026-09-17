@@ -1,6 +1,7 @@
 #pragma once
 
 #include "eye_angle_timeline.h"
+#include "data_access_scheduler.h"
 
 #include <chrono>
 #include <cstddef>
@@ -20,12 +21,18 @@ struct EyeAngleTimelineBufferMetrics {
   size_t peak_pending_windows = 0;
   size_t peak_cached_windows = 0;
   double maximum_resolve_ms = 0.0;
+  uint64_t scheduler_submissions = 0;
+  uint64_t scheduler_duplicates = 0;
+  uint64_t scheduler_promotions = 0;
+  uint64_t scheduler_capacity_rejections = 0;
   std::string last_error;
 };
 
 class EyeAngleTimelineBuffer {
  public:
-  EyeAngleTimelineBuffer();
+  explicit EyeAngleTimelineBuffer(
+      std::shared_ptr<crimson::data::DataAccessScheduler> scheduler = nullptr,
+      std::string archive_identity = {});
   ~EyeAngleTimelineBuffer();
 
   EyeAngleTimelineBuffer(const EyeAngleTimelineBuffer&) = delete;

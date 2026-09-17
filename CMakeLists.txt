@@ -591,6 +591,37 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         TIMEOUT 30
     )
 
+    add_executable(canonical_detection_window_probe
+        tools/canonical_detection_window_probe.cpp
+    )
+    target_compile_features(canonical_detection_window_probe PRIVATE cxx_std_17)
+    target_link_libraries(canonical_detection_window_probe PRIVATE
+        crimson_tensorstore_repositories
+        crimson_coordinate_contracts
+        ${tensorstore_target}
+        nlohmann_json::nlohmann_json
+        Threads::Threads
+    )
+    set_target_properties(canonical_detection_window_probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
+    add_executable(august_timeline_window_probe
+        tools/august_timeline_window_probe.cpp
+        src/gui/canonical_timeline_session.cpp
+    )
+    target_compile_features(august_timeline_window_probe PRIVATE cxx_std_17)
+    target_link_libraries(august_timeline_window_probe PRIVATE
+        crimson_tensorstore_repositories
+        crimson_repository_contracts
+        ${tensorstore_target}
+        nlohmann_json::nlohmann_json
+        Threads::Threads
+    )
+    set_target_properties(august_timeline_window_probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
     add_executable(detection_quality_timeline_gate
         tools/detection_quality_timeline_gate.cpp
     )
@@ -639,6 +670,28 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         COMMAND $<TARGET_FILE:keypoint_quality_timeline_tests>)
     set_tests_properties(keypoint_quality_timeline_tests PROPERTIES
         LABELS "headless;keypoints;quality;timeline;repository"
+        TIMEOUT 30
+    )
+
+    add_executable(canonical_timeline_session_tests
+        tools/canonical_timeline_session_tests.cpp
+        src/gui/canonical_timeline_session.cpp
+    )
+    target_compile_features(canonical_timeline_session_tests PRIVATE cxx_std_17)
+    target_link_libraries(canonical_timeline_session_tests PRIVATE
+        crimson_tensorstore_repositories
+        crimson_repository_contracts
+        ${tensorstore_target}
+        nlohmann_json::nlohmann_json
+        Threads::Threads
+    )
+    set_target_properties(canonical_timeline_session_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME canonical_timeline_session_tests
+        COMMAND $<TARGET_FILE:canonical_timeline_session_tests>)
+    set_tests_properties(canonical_timeline_session_tests PROPERTIES
+        LABELS "headless;repository;session;timeline"
         TIMEOUT 30
     )
 
@@ -2010,6 +2063,23 @@ set_tests_properties(swim_bout_timeline_tests PROPERTIES
     LABELS "headless;portable;repository;swim_bout;timeline"
 )
 
+add_executable(timeline_shared_scheduler_tests
+    tools/timeline_shared_scheduler_tests.cpp
+)
+target_link_libraries(timeline_shared_scheduler_tests PRIVATE
+    crimson_repository_contracts
+)
+target_compile_features(timeline_shared_scheduler_tests PRIVATE cxx_std_17)
+set_target_properties(timeline_shared_scheduler_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME timeline_shared_scheduler_tests
+    COMMAND $<TARGET_FILE:timeline_shared_scheduler_tests>)
+set_tests_properties(timeline_shared_scheduler_tests PROPERTIES
+    LABELS "headless;portable;repository;scheduler;timeline"
+    TIMEOUT 15
+)
+
 add_executable(stimulus_playback_coordinator_tests
     tools/stimulus_playback_coordinator_tests.cpp
 )
@@ -2763,6 +2833,7 @@ file(GLOB CPP_SOURCES CONFIGURE_DEPENDS
     "src/zarr/*.cpp")
 list(APPEND CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_camera_frame_data_adapter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_detection_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_detection_presentation_adapter.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_frame_inspect_adapter.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nvidia/nvidia_gl_diagnostics.cpp"
@@ -2999,6 +3070,32 @@ add_test(NAME nvidia_camera_frame_data_adapter_tests
 )
 set_tests_properties(nvidia_camera_frame_data_adapter_tests PROPERTIES
     LABELS "detection;headless;keypoints;nvidia;presentation"
+)
+
+add_executable(nvidia_detection_repository_tests
+    tools/nvidia_detection_repository_tests.cpp
+    src/platform/nvidia/nvidia_detection_repository.cpp
+)
+target_include_directories(nvidia_detection_repository_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(nvidia_detection_repository_tests PRIVATE
+    crimson_repository_contracts
+    crimson_coordinate_contracts
+    crimson_tensorstore_repositories
+    tensorstore::all_drivers
+    Threads::Threads
+)
+target_compile_features(nvidia_detection_repository_tests PRIVATE cxx_std_17)
+set_target_properties(nvidia_detection_repository_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME nvidia_detection_repository_tests
+    COMMAND $<TARGET_FILE:nvidia_detection_repository_tests>
+)
+set_tests_properties(nvidia_detection_repository_tests PROPERTIES
+    LABELS "detection;headless;nvidia;repository;storage"
+    TIMEOUT 30
 )
 
 if(CRIMSON_ENABLE_NVENC)

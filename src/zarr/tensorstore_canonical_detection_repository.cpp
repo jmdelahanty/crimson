@@ -161,6 +161,18 @@ bool validateSchema(const json &root, const std::string &base,
       descriptor->run_manifest_digest = manifest.payload_digest;
       descriptor->coordinate_catalog_validated =
           manifest.coordinate_catalog_validated;
+      const auto &source_evidence =
+          attributes.at("run_manifest").at("payload").at("source_evidence");
+      if (source_evidence.is_object() &&
+          source_evidence.contains("recording_identity")) {
+        if (!source_evidence.at("recording_identity").is_string()) {
+          assignError(error,
+                      "Canonical manifest recording identity is invalid");
+          return false;
+        }
+        descriptor->recording_identity =
+            source_evidence.at("recording_identity").get<std::string>();
+      }
     }
 
     size_t validated = 0;

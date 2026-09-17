@@ -70,6 +70,41 @@ int integerValue(const json& attributes, const char* key) {
              : 0;
 }
 
+bool boolValue(const json& attributes, const char* key) {
+  const auto found = attributes.find(key);
+  return found != attributes.end() && found->is_boolean() &&
+         found->get<bool>();
+}
+
+bool completedRun(const ArchiveContext::Impl& archive,
+                  const std::string& path) {
+  const auto attributes = internal::ReadArchiveAttributes(archive, path);
+  return attributes &&
+         stringValue(*attributes, "palette_run_completion_status") ==
+             "complete";
+}
+
+bool validCompactEyeAngleSchema(const json& attributes) {
+  if (stringValue(attributes, "schema_id") != "analysis.eye_angle_runs" ||
+      stringValue(attributes, "layout") != "compact_dense_v2") {
+    return false;
+  }
+  const int version = integerValue(attributes, "schema_version");
+  if (version == 5) {
+    return true;
+  }
+  if (version != 7) {
+    return false;
+  }
+  const auto arrays = attributes.find("eye_angle_array_schema");
+  return arrays != attributes.end() && arrays->is_object() &&
+         stringValue(*arrays, "schema_id") ==
+             "palette.analysis.eye_angle.compact_dense_arrays" &&
+         integerValue(*arrays, "schema_version") == 1 &&
+         integerValue(*arrays, "run_schema_version") == 7 &&
+         stringValue(*arrays, "layout") == "compact_dense_v2";
+}
+
 std::string methodVersion(const json& attributes) {
   const auto found = attributes.find("method_version");
   if (found == attributes.end()) {
@@ -568,10 +603,15 @@ OpenEyeAngleTimelineRepository(
   if (!attributes) {
     return fail("Eye-angle timeline metadata is unavailable: " + run);
   }
-  if (stringValue(*attributes, "schema_id") != "analysis.eye_angle_runs" ||
-      integerValue(*attributes, "schema_version") != 5 ||
-      stringValue(*attributes, "layout") != "compact_dense_v2") {
-    return fail("Eye-angle timeline requires compact schema 5");
+  if (!validCompactEyeAngleSchema(*attributes)) {
+    return fail("Eye-angle timeline requires validated compact schema 5 or 7");
+  }
+  const int schema_version = integerValue(*attributes, "schema_version");
+  if (schema_version == 7 &&
+      (stringValue(*attributes, "palette_run_completion_status") !=
+           "complete" ||
+       !boolValue(*attributes, "stage_selector_eligible"))) {
+    return fail("Eye-angle schema 7 run is incomplete or selector-ineligible");
   }
   auto frame_angles = openArray<float, 2>(impl, base + "/frame_angles");
   auto roi_angles = openArray<float, 2>(impl, base + "/roi_angles");
@@ -583,14 +623,83 @@ OpenEyeAngleTimelineRepository(
       static_cast<size_t>(frame_angles->domain().shape()[0]);
   const size_t column_count =
       static_cast<size_t>(frame_angles->domain().shape()[1]);
+  if (schema_version == 7) {
+    const auto arrays = attributes->find("eye_angle_array_schema");
+    const auto dimensions =
+        arrays != attributes->end() && arrays->is_object()
+            ? arrays->find("dimensions")
+            : json::const_iterator{};
+    if (arrays == attributes->end() || !arrays->is_object() ||
+        dimensions == arrays->end() || !dimensions->is_object() ||
+        integerValue(*dimensions, "n_frames") !=
+            static_cast<int>(frame_count) ||
+        integerValue(*dimensions, "n_angle_channels") !=
+            static_cast<int>(column_count) ||
+        !roi_angles || roi_angles->domain().shape()[0] <= 0 ||
+        roi_angles->domain().shape()[1] !=
+            static_cast<ts::Index>(column_count) ||
+        integerValue(*dimensions, "n_roi_rows") !=
+            static_cast<int>(roi_angles->domain().shape()[0])) {
+      return fail("Eye-angle schema 7 dense-array dimensions disagree");
+    }
+    const std::string keypoint_run =
+        stringValue(*attributes, "source_base_keypoints_run");
+    const std::string mask_run =
+        stringValue(*attributes, "source_refined_subject_masks_run");
+    const std::string shape_run =
+        stringValue(*attributes, "source_subject_shape_run");
+    const std::string source_instance_path =
+        stringValue(*attributes, "source_instance_key_path");
+    const std::string source_frame_path = stringValue(
+        *attributes, "source_acquisition_frame_index_path");
+    const auto source_instances =
+        openArray<uint64_t, 1>(impl, source_instance_path);
+    const auto source_frames = openArray<int64_t, 1>(impl, source_frame_path);
+    const std::string expected_keypoint_base =
+        "keypoints_runs/" + keypoint_run;
+    if (!validRunName(keypoint_run) || !validRunName(mask_run) ||
+        !validRunName(shape_run) || source_instance_path.empty() ||
+        source_frame_path.empty() ||
+        source_instance_path != expected_keypoint_base + "/instance_key" ||
+        source_frame_path !=
+            expected_keypoint_base + "/source_acquisition_frame_index" ||
+        stringValue(*attributes, "source_detection_success_path") !=
+            expected_keypoint_base + "/pose_success" ||
+        !source_instances || !source_frames ||
+        source_instances->domain().shape()[0] !=
+            roi_angles->domain().shape()[0] ||
+        source_frames->domain().shape()[0] != roi_angles->domain().shape()[0] ||
+        !completedRun(impl, "keypoints_runs/" + keypoint_run) ||
+        !completedRun(impl, "refined_subject_masks_runs/" + mask_run) ||
+        !completedRun(impl, "analysis/subject_shape_runs/" + shape_run)) {
+      return fail("Eye-angle schema 7 bound upstream identity is invalid");
+    }
+    const auto shape_attributes = internal::ReadArchiveAttributes(
+        impl, "analysis/subject_shape_runs/" + shape_run);
+    if (!shape_attributes ||
+        stringValue(*shape_attributes, "source_refined_subject_masks_run") !=
+            mask_run) {
+      return fail("Eye-angle shape/mask bound lineage disagrees");
+    }
+  }
   auto frame_times =
       openArray<float, 1>(impl, base + "/support/frame_time_seconds");
+  if (schema_version == 7 && !frame_times) {
+    return fail("Eye-angle schema 7 frame-time authority is unavailable");
+  }
   if (frame_times &&
       frame_times->domain().shape()[0] != static_cast<ts::Index>(frame_count)) {
     return fail("Eye-angle frame-time count does not match frame angles");
   }
-  const auto channels =
-      availableFrameChannels(impl, base + "/angle_channel_index");
+  const std::string channel_base = base + "/angle_channel_index";
+  std::vector<uint8_t> frame_available;
+  if (schema_version == 7 &&
+      (!readBools(impl, channel_base + "/frame_available",
+                  &frame_available) ||
+       frame_available.size() != column_count)) {
+    return fail("Eye-angle schema 7 frame-channel availability is invalid");
+  }
+  const auto channels = availableFrameChannels(impl, channel_base);
   if (channels.empty()) {
     return fail("No frame-available eye-angle channels were found");
   }

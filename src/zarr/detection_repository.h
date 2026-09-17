@@ -47,6 +47,9 @@ struct DetectionRepositoryDescriptor {
 
 struct DetectionObservation {
   size_t ordinal = 0;
+  // Stable row identity within descriptor.archive_path + descriptor.run_name.
+  // Legacy repositories leave this unset; it is not a global instance key.
+  int64_t canonical_row_index = -1;
   std::array<float, 4> box_xyxy{};
   float score = 1.0f;
   int32_t class_id = 0;

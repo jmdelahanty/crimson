@@ -1,6 +1,7 @@
 #pragma once
 
 #include "swim_bout_timeline.h"
+#include "data_access_scheduler.h"
 
 #include <chrono>
 #include <cstddef>
@@ -22,12 +23,18 @@ struct SwimBoutTimelineBufferMetrics {
   size_t peak_pending_windows = 0;
   size_t peak_cached_windows = 0;
   double maximum_resolve_ms = 0.0;
+  uint64_t scheduler_submissions = 0;
+  uint64_t scheduler_duplicates = 0;
+  uint64_t scheduler_promotions = 0;
+  uint64_t scheduler_capacity_rejections = 0;
   std::string last_error;
 };
 
 class SwimBoutTimelineBuffer {
 public:
-  SwimBoutTimelineBuffer();
+  explicit SwimBoutTimelineBuffer(
+      std::shared_ptr<crimson::data::DataAccessScheduler> scheduler = nullptr,
+      std::string archive_identity = {});
   ~SwimBoutTimelineBuffer();
 
   SwimBoutTimelineBuffer(const SwimBoutTimelineBuffer &) = delete;

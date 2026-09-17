@@ -209,6 +209,70 @@ bool WriteFixture(const std::filesystem::path& root,
   return true;
 }
 
+bool WriteV7Fixture(const std::filesystem::path& root,
+                    bool corrupt_source_path = false) {
+  CHECK(WriteFixture(root));
+  const std::string group = "analysis/eye_angle_runs";
+  const std::string run = group + "/timeline_fixture";
+  const std::string keypoint_run = "keypoint_fixture";
+  const std::string mask_run = "mask_fixture";
+  const std::string shape_run = "shape_fixture";
+  const std::string keypoint_base = "keypoints_runs/" + keypoint_run;
+  const std::string source_instance_path =
+      (corrupt_source_path ? "keypoints_runs/wrong_fixture" : keypoint_base) +
+      "/instance_key";
+  CHECK(WriteJson(
+      root / run / "zarr.json",
+      {{"zarr_format", 3},
+       {"node_type", "group"},
+       {"attributes",
+        {{"schema_id", "analysis.eye_angle_runs"},
+         {"schema_version", 7},
+         {"method", "ellipse_and_centroid_eye_angles"},
+         {"method_version", "eye_angle_analysis.v7"},
+         {"layout", "compact_dense_v2"},
+         {"palette_run_completion_status", "complete"},
+         {"stage_selector_eligible", true},
+         {"source_base_keypoints_run", keypoint_run},
+         {"source_refined_subject_masks_run", mask_run},
+         {"source_subject_shape_run", shape_run},
+         {"source_instance_key_path", source_instance_path},
+         {"source_acquisition_frame_index_path",
+          keypoint_base + "/source_acquisition_frame_index"},
+         {"source_detection_success_path", keypoint_base + "/pose_success"},
+         {"eye_angle_array_schema",
+          {{"schema_id", "palette.analysis.eye_angle.compact_dense_arrays"},
+           {"schema_version", 1},
+           {"run_schema_version", 7},
+           {"layout", "compact_dense_v2"},
+           {"dimensions",
+            {{"n_roi_rows", 6},
+             {"n_frames", 12},
+             {"n_angle_channels", 5}}}}},
+         {"eye_angle_variant_schema", VariantSchema()}}}}));
+  for (const auto& path : {keypoint_base,
+                           "refined_subject_masks_runs/" + mask_run}) {
+    CHECK(WriteJson(root / path / "zarr.json",
+                    {{"zarr_format", 3},
+                     {"node_type", "group"},
+                     {"attributes",
+                      {{"palette_run_completion_status", "complete"}}}}));
+  }
+  CHECK(WriteJson(
+      root / "analysis/subject_shape_runs" / shape_run / "zarr.json",
+      {{"zarr_format", 3},
+       {"node_type", "group"},
+       {"attributes",
+        {{"palette_run_completion_status", "complete"},
+         {"source_refined_subject_masks_run", mask_run}}}}));
+  CHECK((WriteArray<uint64_t, 1>(
+      root, source_instance_path, "uint64", {6}, {1, 2, 3, 4, 5, 6})));
+  CHECK((WriteArray<int64_t, 1>(
+      root, keypoint_base + "/source_acquisition_frame_index", "int64", {6},
+      {0, 2, 4, 6, 8, 10})));
+  return true;
+}
+
 bool TestRepository(const std::filesystem::path& root) {
   using namespace crimson::timeline;
   std::string error;
@@ -287,15 +351,41 @@ bool TestInvalidChannelShape(const std::filesystem::path& root) {
   return true;
 }
 
+bool TestV7Contract(const std::filesystem::path& valid_root,
+                    const std::filesystem::path& invalid_root) {
+  std::string error;
+  auto archive = crimson::zarr::ArchiveContext::Open(valid_root, &error);
+  CHECK(archive != nullptr);
+  auto repository = crimson::zarr::OpenEyeAngleTimelineRepository(
+      archive, "timeline_fixture", &error);
+  CHECK(repository != nullptr);
+  CHECK(repository->descriptor().schema_version == 7);
+  CHECK(repository->descriptor().frame_count == 12);
+
+  archive = crimson::zarr::ArchiveContext::Open(invalid_root, &error);
+  CHECK(archive != nullptr);
+  repository = crimson::zarr::OpenEyeAngleTimelineRepository(
+      archive, "timeline_fixture", &error);
+  CHECK(repository == nullptr);
+  CHECK(error.find("bound upstream identity") != std::string::npos);
+  return true;
+}
+
 }  // namespace
 
 int main() {
   TemporaryDirectory valid;
   TemporaryDirectory invalid;
+  TemporaryDirectory v7_valid;
+  TemporaryDirectory v7_invalid;
   if (valid.path().empty() || invalid.path().empty() ||
+      v7_valid.path().empty() || v7_invalid.path().empty() ||
       !WriteFixture(valid.path()) ||
       !WriteFixture(invalid.path(), true) || !TestRepository(valid.path()) ||
-      !TestInvalidChannelShape(invalid.path())) {
+      !TestInvalidChannelShape(invalid.path()) ||
+      !WriteV7Fixture(v7_valid.path()) ||
+      !WriteV7Fixture(v7_invalid.path(), true) ||
+      !TestV7Contract(v7_valid.path(), v7_invalid.path())) {
     return 1;
   }
   std::cout << "eye_angle_timeline_repository_tests: PASS\n";

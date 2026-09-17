@@ -30,6 +30,8 @@ using json = nlohmann::json;
 
 namespace {
 
+constexpr uint64_t kIntervalIndexBudgetBytes = 64ULL * 1024ULL * 1024ULL;
+
 using FrameStore =
     std::variant<ts::TensorStore<int64_t, 1>, ts::TensorStore<int32_t, 1>>;
 using ScalarStore =
@@ -395,16 +397,19 @@ bool readRankOneStore(const Variant& store, std::vector<Output>* output) {
       store);
 }
 
-bool readMatrixRow(const MatrixStore& store, size_t row,
-                   std::vector<double>* output) {
+bool readMatrixRowRange(const MatrixStore& store, size_t row, size_t first,
+                        size_t last, std::vector<double>* output) {
   return std::visit(
       [&](const auto& typed) {
-        if (row >= static_cast<size_t>(typed.domain().shape()[0])) {
+        if (row >= static_cast<size_t>(typed.domain().shape()[0]) ||
+            first > last || last > static_cast<size_t>(typed.domain().shape()[1])) {
           return false;
         }
         ts::Box<2> domain(typed.domain().box());
         domain.origin()[0] = static_cast<ts::Index>(row);
         domain.shape()[0] = 1;
+        domain.origin()[1] = static_cast<ts::Index>(first);
+        domain.shape()[1] = static_cast<ts::Index>(last - first);
         const auto result =
             ts::Read(typed | ts::IdentityTransform(domain)).result();
         if (!result.ok() || result->rank() != 2 || result->shape()[0] != 1 ||
@@ -427,61 +432,139 @@ bool readMatrixRow(const MatrixStore& store, size_t row,
       store);
 }
 
+template <typename Variant, typename Output>
+bool readRankOneRange(const Variant& store, size_t first, size_t last,
+                      std::vector<Output>* output) {
+  return std::visit(
+      [&](const auto& typed) {
+        if (first > last ||
+            last > static_cast<size_t>(typed.domain().shape()[0])) {
+          return false;
+        }
+        ts::Box<1> domain(typed.domain().box());
+        domain.origin()[0] = static_cast<ts::Index>(first);
+        domain.shape()[0] = static_cast<ts::Index>(last - first);
+        const auto result =
+            ts::Read(typed | ts::IdentityTransform(domain)).result();
+        if (!result.ok() || result->rank() != 1 ||
+            result->byte_strides().size() != 1) {
+          return false;
+        }
+        using Source = typename std::decay_t<decltype(typed)>::Element;
+        const size_t count = static_cast<size_t>(result->shape()[0]);
+        const auto* origin = reinterpret_cast<const uint8_t*>(
+            result->byte_strided_origin_pointer().get());
+        output->resize(count);
+        for (size_t index = 0; index < count; ++index) {
+          const auto* value = reinterpret_cast<const Source*>(
+              origin + static_cast<ts::Index>(index) *
+                           result->byte_strides()[0]);
+          (*output)[index] = static_cast<Output>(*value);
+        }
+        return true;
+      },
+      store);
+}
+
+std::optional<int64_t> frameAt(const FrameStore& store, size_t row) {
+  std::vector<int64_t> value;
+  return readRankOneRange(store, row, row + 1, &value) && value.size() == 1
+             ? std::optional<int64_t>(value.front())
+             : std::nullopt;
+}
+
+std::optional<size_t> lowerBoundFrame(const FrameStore& store,
+                                      int64_t target) {
+  size_t first = 0;
+  size_t last = rowCount(store);
+  while (first < last) {
+    const size_t middle = first + (last - first) / 2;
+    const auto value = frameAt(store, middle);
+    if (!value) {
+      return std::nullopt;
+    }
+    if (*value < target) {
+      first = middle + 1;
+    } else {
+      last = middle;
+    }
+  }
+  if (first < rowCount(store)) {
+    const auto value = frameAt(store, first);
+    if (!value || *value < target) {
+      return std::nullopt;
+    }
+  }
+  if (first > 0) {
+    const auto previous = frameAt(store, first - 1);
+    if (!previous || *previous >= target) {
+      return std::nullopt;
+    }
+  }
+  return first;
+}
+
 struct DetectorCache {
   std::optional<FrameStore> frames;
   std::optional<ScalarStore> scalar;
   std::optional<MatrixStore> matrix;
   size_t matrix_row = 0;
-  mutable std::mutex mutex;
-  mutable bool attempted = false;
-  mutable bool loaded = false;
-  mutable std::vector<int64_t> cached_frames;
-  mutable std::vector<double> cached_values;
-  mutable std::string error;
+  bool require_frames = false;
 
-  bool load() const {
-    std::lock_guard<std::mutex> lock(mutex);
-    if (attempted) {
-      return loaded;
-    }
-    attempted = true;
-    if (scalar) {
-      loaded = readRankOneStore(*scalar, &cached_values);
-    } else if (matrix) {
-      loaded = readMatrixRow(*matrix, matrix_row, &cached_values);
-    }
-    if (!loaded) {
-      error = "Failed to read the swim-bout detector response";
-      return false;
-    }
+  bool readWindow(int64_t first_frame, int64_t last_frame,
+                  std::vector<int64_t>* frame_values,
+                  std::vector<double>* detector_values,
+                  std::string* error) const {
+    size_t first = 0;
+    size_t last = scalar ? rowCount(*scalar) :
+                          (matrix ? matrixColumns(*matrix) : 0);
     if (frames) {
-      std::vector<int64_t> read_frames;
-      if (!readRankOneStore(*frames, &read_frames)) {
-        error = "Failed to read swim-bout detector frame indices";
-        loaded = false;
+      if (rowCount(*frames) != last) {
+        *error = "Swim-bout detector frame/value counts differ";
         return false;
       }
-      cached_frames.reserve(cached_values.size());
-      for (size_t index = 0; index < cached_values.size(); ++index) {
-        const int64_t fallback = cached_frames.empty()
-                                     ? static_cast<int64_t>(index)
-                                     : cached_frames.back() + 1;
-        cached_frames.push_back(index < read_frames.size() &&
-                                        read_frames[index] >= 0
-                                    ? read_frames[index]
-                                    : fallback);
+      const auto resolved_first = lowerBoundFrame(*frames, first_frame);
+      const auto resolved_last = lowerBoundFrame(*frames, last_frame + 1);
+      if (!resolved_first || !resolved_last) {
+        *error = "Failed to resolve swim-bout detector frame bounds";
+        return false;
       }
+      first = *resolved_first;
+      last = *resolved_last;
+      if (!readRankOneRange(*frames, first, last, frame_values)) {
+        *error = "Failed to read swim-bout detector frame indices";
+        return false;
+      }
+      if (!std::is_sorted(frame_values->begin(), frame_values->end()) ||
+          (!frame_values->empty() &&
+           (frame_values->front() < first_frame ||
+            frame_values->back() > last_frame))) {
+        *error = "Swim-bout authoritative frame window is not monotonic";
+        return false;
+      }
+    } else if (require_frames) {
+      *error = "Swim-bout detector lacks its authoritative frame axis";
+      return false;
     } else {
-      cached_frames.resize(cached_values.size());
-      for (size_t index = 0; index < cached_frames.size(); ++index) {
-        cached_frames[index] = static_cast<int64_t>(index);
+      first = static_cast<size_t>(std::max<int64_t>(0, first_frame));
+      last = std::min(last,
+                      static_cast<size_t>(std::max<int64_t>(0, last_frame + 1)));
+      frame_values->resize(last > first ? last - first : 0);
+      for (size_t index = 0; index < frame_values->size(); ++index) {
+        (*frame_values)[index] = static_cast<int64_t>(first + index);
       }
     }
-    if (!std::is_sorted(cached_frames.begin(), cached_frames.end())) {
-      error = "Swim-bout detector frame indices are not sorted";
-      loaded = false;
+    const bool loaded = scalar
+                            ? readRankOneRange(*scalar, first, last,
+                                               detector_values)
+                            : matrix && readMatrixRowRange(
+                                            *matrix, matrix_row, first, last,
+                                            detector_values);
+    if (!loaded) {
+      *error = "Failed to read the swim-bout detector response window";
+      return false;
     }
-    return loaded;
+    return frame_values->size() == detector_values->size();
   }
 };
 
@@ -518,16 +601,19 @@ class TensorStoreRepository final
                      "Swim-bout candidate is unavailable");
     }
     if (request.include_detector_trace && found->second.detector) {
-      if (!found->second.detector->load()) {
+      std::vector<int64_t> detector_frames;
+      std::vector<double> detector_values;
+      std::string detector_error;
+      if (!found->second.detector->readWindow(
+              request.first_frame, request.last_frame, &detector_frames,
+              &detector_values, &detector_error)) {
         return failure(request,
                        crimson::timeline::SwimBoutTimelineStatus::ReadFailed,
-                       found->second.detector->error);
+                       std::move(detector_error));
       }
-      std::lock_guard<std::mutex> lock(found->second.detector->mutex);
       return crimson::timeline::buildSwimBoutTimelineWindow(
           descriptor_, request, found->second.intervals,
-          found->second.detector->cached_frames, {},
-          found->second.detector->cached_values);
+          detector_frames, {}, detector_values);
     }
     return crimson::timeline::buildSwimBoutTimelineWindow(
         descriptor_, request, found->second.intervals, {}, {}, {});
@@ -580,6 +666,15 @@ bool loadCompactRun(const ArchiveContext::Impl& archive,
   const std::string candidate_base = base + "indexes/candidates/";
   const std::string signal_base = base + "indexes/signal_variants/";
   const std::string bouts_base = base + "tables/bouts/";
+
+  const auto bout_rows_store =
+      openFrameStore(archive, bouts_base + "start_frame");
+  if (!bout_rows_store ||
+      static_cast<uint64_t>(rowCount(*bout_rows_store)) *
+              sizeof(crimson::timeline::SwimBoutInterval) >
+          kIntervalIndexBudgetBytes) {
+    return false;
+  }
 
   std::vector<int64_t> candidate_ids;
   if (!readIntegers(archive, candidate_base + "candidate_id", &candidate_ids) ||
@@ -672,6 +767,68 @@ bool loadCompactRun(const ArchiveContext::Impl& archive,
       openMatrixStore(archive, base + "signals/detector_signal_mm_s");
   auto detector_frames =
       openFrameStore(archive, base + "signals/frame_indices");
+  const int schema_version =
+      static_cast<int>(integerValue(attributes, "schema_version", 0));
+  if (schema_version >= 8) {
+    const std::string source_run =
+        stringValue(attributes, "source_track_kinematics_run");
+    const std::string source_scope =
+        stringValue(attributes, "source_track_kinematics_scope");
+    const int64_t source_track = integerValue(attributes, "track_id", -1);
+    const auto contract = attributes.find("frame_axis_contract");
+    const std::string motion_manifest =
+        stringValue(attributes, "source_track_motion_manifest_sha256");
+    const std::string frame_axis_digest =
+        stringValue(attributes, "frame_axis_contract_sha256");
+    if (!validName(source_run) || source_scope != "offline" ||
+        source_track < 0 || contract == attributes.end() ||
+        !contract->is_object() ||
+        stringValue(*contract, "schema_id") !=
+            "palette.swim_bout_frame_axis_reference" ||
+        integerValue(*contract, "schema_version", 0) != 2 ||
+        stringValue(*contract, "axis_kind") != "camera_frame_index" ||
+        stringValue(*contract, "identity_array_role") !=
+            "source_acquisition_frame_index" ||
+        stringValue(*contract, "storage_mode") != "reference" ||
+        motion_manifest.empty() || frame_axis_digest.empty() ||
+        stringValue(*contract, "source_track_motion_manifest_sha256") !=
+            motion_manifest) {
+      return false;
+    }
+    std::string authoritative_path =
+        stringValue(*contract, "authoritative_path");
+    if (!authoritative_path.empty() && authoritative_path.front() == '/') {
+      authoritative_path.erase(authoritative_path.begin());
+    }
+    const std::string expected_path =
+        "analysis/track_kinematics_runs/offline/" + source_run +
+        "/tracks/id_" + std::to_string(source_track) +
+        "/source_acquisition_frame_index";
+    const auto track_attributes = internal::ReadArchiveAttributes(
+        archive, "analysis/track_kinematics_runs/offline/" + source_run);
+    if (authoritative_path != expected_path ||
+        stringValue(*contract, "source_track_kinematics_run") != source_run ||
+        integerValue(*contract, "track_id", -1) != source_track ||
+        !track_attributes ||
+        stringValue(*track_attributes,
+                    "track_motion_publication_manifest_sha256") !=
+            motion_manifest) {
+      return false;
+    }
+    detector_frames = openFrameStore(archive, authoritative_path);
+    const auto shape = contract->find("shape");
+    const int64_t contract_rows =
+        shape != contract->end() && shape->is_array() && shape->size() == 1 &&
+                (*shape)[0].is_number_integer()
+            ? (*shape)[0].get<int64_t>()
+            : -1;
+    if (!detector_frames || contract_rows < 0 ||
+        integerValue(*contract, "frame_count", -1) != contract_rows ||
+        static_cast<uint64_t>(contract_rows) != rowCount(*detector_frames) ||
+        stringValue(*contract, "content_sha256").empty()) {
+      return false;
+    }
+  }
   const std::string default_level = stringValue(attributes, "default_level");
   const int64_t default_signal =
       integerValue(attributes, "default_signal_id", -1);
@@ -689,9 +846,6 @@ bool loadCompactRun(const ArchiveContext::Impl& archive,
         filteredIntervals(table_candidate_ids, table_signal_ids,
                           static_cast<int32_t>(selected_candidate), signal_id,
                           starts, ends, core_starts, core_ends, gap_censored);
-    if (intervals.empty()) {
-      continue;
-    }
 
     CandidateStore candidate;
     auto& descriptor = candidate.descriptor;
@@ -761,7 +915,14 @@ bool loadCompactRun(const ArchiveContext::Impl& archive,
           candidate.detector->matrix = *detector_matrix;
           candidate.detector->matrix_row = row;
           candidate.detector->frames = detector_frames;
+          candidate.detector->require_frames = schema_version >= 8;
           descriptor.detector_sample_count = matrixColumns(*detector_matrix);
+          if (schema_version >= 8 &&
+              (!detector_frames ||
+               rowCount(*detector_frames) !=
+                   descriptor.detector_sample_count)) {
+            return false;
+          }
           descriptor.has_detector_trace = descriptor.detector_sample_count != 0;
         }
       }
@@ -1015,10 +1176,19 @@ OpenSwimBoutTimelineRepository(const std::shared_ptr<ArchiveContext>& archive,
 
   crimson::timeline::SwimBoutTimelineDescriptor descriptor;
   descriptor.frame_count = frame_count;
+  descriptor.interval_index_budget_bytes = kIntervalIndexBudgetBytes;
   descriptor.default_candidate = globalDefaultCandidate(candidates);
   descriptor.candidates.reserve(candidates.size());
   for (const auto& candidate : candidates) {
     descriptor.candidates.push_back(candidate.descriptor);
+    descriptor.retained_interval_count += candidate.intervals.size();
+    descriptor.retained_interval_index_bytes +=
+        static_cast<uint64_t>(candidate.intervals.capacity()) *
+        sizeof(crimson::timeline::SwimBoutInterval);
+  }
+  if (descriptor.retained_interval_index_bytes >
+      descriptor.interval_index_budget_bytes) {
+    return fail("Swim-bout interval index exceeds its retained-byte budget");
   }
   if (error_message != nullptr) {
     error_message->clear();

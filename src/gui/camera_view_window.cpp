@@ -1004,18 +1004,25 @@ CameraViewWindowResult drawCameraViewWindowContents(
 
             crimson::overlay::ReadOnlyOverlayScene bounding_box_overlay_scene;
             if (context.zarr_boxes != nullptr &&
-                context.detection_details != nullptr &&
                 context.bbox_edit_state != nullptr &&
                 !context.zarr_boxes->empty()) {
                 const auto bbox_overlay_build_start =
                     std::chrono::steady_clock::now();
+                // Canonical paged detections do not carry the legacy loader's
+                // optional heading/mask/provenance bundle. Boxes remain a
+                // complete read-only overlay without that bundle.
+                const ZarrDetectionLoader::FrameDetections empty_details{};
+                const auto& detection_details =
+                    context.detection_details != nullptr
+                        ? *context.detection_details
+                        : empty_details;
                 const bool frame_has_bbox_edits =
                     context.bbox_edit_state->isFrameDirty(
                         context.current_frame_num);
                 bounding_box_overlay_scene =
                     buildCameraViewBoundingBoxOverlayScene(
                         *context.zarr_boxes,
-                        *context.detection_details,
+                        detection_details,
                         *context.bbox_edit_state,
                         context.view_idx,
                         context.presented_frame,

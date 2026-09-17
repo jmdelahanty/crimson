@@ -75,6 +75,13 @@ std::string stringValue(const json& attributes, const char* key) {
              : std::string{};
 }
 
+int integerValue(const json& attributes, const char* key) {
+  const auto found = attributes.find(key);
+  return found != attributes.end() && found->is_number_integer()
+             ? found->get<int>()
+             : 0;
+}
+
 bool validName(const std::string& value) {
   return !value.empty() && value != "." && value != ".." &&
          value.find('/') == std::string::npos;
@@ -854,7 +861,8 @@ std::vector<std::string> speedCandidates(const std::string& track_base,
 
 std::unique_ptr<crimson::timeline::AnalysisSeriesTimelineRepository>
 OpenMotionSeriesTimelineRepository(
-    const std::shared_ptr<ArchiveContext>& archive, size_t frame_count_hint,
+    const std::shared_ptr<ArchiveContext>& archive,
+    const MotionSeriesTimelineOpenRequest& request,
     std::string* error_message,
     crimson::data::SmallSeriesPreloadPolicy preload_policy) {
   auto fail = [&](std::string message)
@@ -867,25 +875,47 @@ OpenMotionSeriesTimelineRepository(
   if (!archive || !archive->impl_) {
     return fail("Archive context is unavailable");
   }
+  if ((!request.scope.empty() && !validName(request.scope)) ||
+      (!request.run_name.empty() && !validName(request.run_name)) ||
+      request.track_id < -1) {
+    return fail("Exact motion timeline source identity is invalid");
+  }
   const auto& impl = *archive->impl_;
-  const std::array<std::pair<const char*, const char*>, 3> scopes = {{
-      {"offline", "offline"},
-      {"online_refined", "online_refined"},
-      {"online", "online"},
-  }};
+  std::vector<std::pair<std::string, std::string>> scopes;
+  if (!request.run_name.empty()) {
+    const std::string scope = request.scope.empty() ? "offline" : request.scope;
+    scopes.emplace_back(scope, scope);
+  } else {
+    scopes = {{"offline", "offline"},
+              {"online_refined", "online_refined"},
+              {"online", "online"}};
+  }
   const std::array<const char*, 4> levels = {"filtered", "smoothed", "raw",
                                              "averaged"};
   std::vector<SourceStore> sources;
-  size_t resolved_frame_count = frame_count_hint;
+  size_t resolved_frame_count = request.frame_count_hint;
 
   for (const auto& [scope_name, category_name] : scopes) {
     const std::string scope =
-        "analysis/track_kinematics_runs/" + std::string(scope_name);
-    const std::string run = latestRun(impl, scope);
+        "analysis/track_kinematics_runs/" + scope_name;
+    const std::string run = request.run_name.empty()
+                                ? latestRun(impl, scope)
+                                : request.run_name;
     if (!validName(run)) {
       continue;
     }
     const std::string run_base = scope + "/" + run;
+
+    if (!request.run_name.empty()) {
+      const auto run_attributes =
+          internal::ReadArchiveAttributes(impl, run_base);
+      if (!run_attributes ||
+          stringValue(*run_attributes, "schema_id") !=
+              "analysis.track_kinematics_runs" ||
+          integerValue(*run_attributes, "schema_version") != 1) {
+        return fail("Selected motion run is not track-kinematics schema 1");
+      }
+    }
 
     auto track_ids_store = openFrameStore(impl, run_base + "/track_ids");
     std::vector<int64_t> track_ids = track_ids_store
@@ -895,17 +925,36 @@ OpenMotionSeriesTimelineRepository(
       track_ids.push_back(0);
     }
     for (int64_t track_id : track_ids) {
-      if (track_id < 0) {
+      if (track_id < 0 ||
+          (request.track_id >= 0 && track_id != request.track_id)) {
         continue;
       }
       const std::string track_name = "id_" + std::to_string(track_id);
       const std::string track_base = run_base + "/tracks/" + track_name;
-      auto frames = openFrameStore(impl, track_base + "/frame_indices");
+      auto frames = openFrameStore(
+          impl, track_base + "/source_acquisition_frame_index");
+      if (!frames && !request.require_source_identity) {
+        frames = openFrameStore(impl, track_base + "/frame_indices");
+      }
       if (!frames || rowCount(*frames) == 0) {
         continue;
       }
+      if (request.require_source_identity) {
+        const auto track_sample_key =
+            openArray<int64_t, 2>(impl, track_base + "/track_sample_key");
+        const auto source_instance_key =
+            makeArraySpec(impl, track_base + "/source_instance_key");
+        if (!track_sample_key ||
+            track_sample_key->domain().shape()[0] !=
+                static_cast<ts::Index>(rowCount(*frames)) ||
+            track_sample_key->domain().shape()[1] != 2 ||
+            !source_instance_key) {
+          return fail("Selected motion track lacks exact row identity arrays");
+        }
+      }
       resolved_frame_count = std::max(
-          resolved_frame_count, resolvedFrameCount(*frames, frame_count_hint));
+          resolved_frame_count,
+          resolvedFrameCount(*frames, request.frame_count_hint));
       auto times = openScalarStore(impl, track_base + "/time_seconds");
       if (times && rowCount(*times) != rowCount(*frames)) {
         return fail("Motion frame and time arrays have different row counts");
@@ -942,14 +991,14 @@ OpenMotionSeriesTimelineRepository(
         source.frames = *frames;
         source.frame_index = frame_index;
         source.times = times;
-        source.descriptor.key = std::string(scope_name) + "/" + run + "/" +
+        source.descriptor.key = scope_name + "/" + run + "/" +
                                 track_name + "/" + level;
         source.descriptor.display_name =
             titleCase(level) + " | track " + std::to_string(track_id);
         source.descriptor.source_group = scope;
         source.descriptor.run_name = run;
         source.descriptor.category =
-            "track_kinematics/" + std::string(category_name);
+            "track_kinematics/" + category_name;
         source.descriptor.track_id = track_name;
         source.descriptor.variant = level;
         source.descriptor.sample_count = rowCount(*frames);
@@ -1021,6 +1070,18 @@ OpenMotionSeriesTimelineRepository(
   }
   return std::make_unique<TensorStoreRepository>(
       std::move(descriptor), std::move(sources), preload_policy);
+}
+
+std::unique_ptr<crimson::timeline::AnalysisSeriesTimelineRepository>
+OpenMotionSeriesTimelineRepository(
+    const std::shared_ptr<ArchiveContext>& archive, size_t frame_count_hint,
+    std::string* error_message,
+    crimson::data::SmallSeriesPreloadPolicy preload_policy) {
+  MotionSeriesTimelineOpenRequest request;
+  request.frame_count_hint = frame_count_hint;
+  request.scope.clear();
+  return OpenMotionSeriesTimelineRepository(archive, request, error_message,
+                                            preload_policy);
 }
 
 std::unique_ptr<crimson::timeline::AnalysisSeriesTimelineRepository>

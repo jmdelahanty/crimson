@@ -32,6 +32,9 @@ struct CanonicalDetectionDescriptor {
   bool source_audit_lazy = false;
   bool authority_approved = false;
   bool coordinate_catalog_validated = false;
+  // Optional recording identity carried by a validated canonical raw manifest.
+  // Empty means that the manifest did not provide this identity.
+  std::string recording_identity;
 
   bool ready() const {
     return !run_name.empty() && camera_frame_count > 0 &&

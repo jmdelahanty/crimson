@@ -243,7 +243,8 @@ if [[ -n "$ui_reference_state" ]]; then
            .crop.source_frame == $frame and
            .crop.width > 0 and
            .crop.height > 0)) and
-         (($state != "overlays" and $state != "analysis-eye") or
+         (($state != "overlays" and
+           ($state != "analysis-eye" or .analysis.canonical == true)) or
           (.overlays.optional_overlay_status == "optional overlays ready" and
            .overlays.visible_roi_count > 0 and
            .overlays.component_fill_count > 0 and
@@ -276,6 +277,18 @@ if [[ -n "$ui_reference_state" ]]; then
            .stimulus_camera_overlay.text_count > 0 and
            (.stimulus_camera_overlay.semantic_signature |
             startswith("crimson.stimulus-camera-overlay-semantics.v1")))) and
+         ($state != "analysis-eye" or .analysis.canonical != true or
+          (.canonical_timelines.frame == $frame and
+           .canonical_timelines.eye.state == "ready" and
+           .canonical_timelines.eye.finite_points > 0 and
+           .canonical_timelines.motion.state == "ready" and
+           .canonical_timelines.motion.finite_points > 0 and
+           (.canonical_timelines.bouts.state == "ready" or
+            .canonical_timelines.bouts.state == "empty") and
+           ([.canonical_timelines.eye, .canonical_timelines.motion,
+             .canonical_timelines.bouts] | all(
+                .source != "" and .first_frame <= $frame and
+                .last_frame >= $frame)))) and
          ($state != "analysis-eye" or
           (.analysis.state_applied and
            .analysis.show_eye and

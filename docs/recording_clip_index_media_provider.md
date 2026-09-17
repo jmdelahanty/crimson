@@ -25,14 +25,46 @@ publish the parent frame as `frame_number`, preserve the decoder-local frame as
 
 ## Current Compatibility Boundary
 
-Palette's current index is sufficient for read-only playback. Crimson requires
-the current `materialized_stream_copy` mode, successful validation checks,
-keyframe-aligned clip starts, contiguous coverage from frame zero through the
-declared source frame count, and matching per-clip identities.
+Crimson accepts two index generations through one validated descriptor model:
 
-The current document is unversioned. Crimson therefore treats it as a strict
-compatibility adapter rather than a production-authoritative storage contract.
-Future Palette hardening should add:
+- the unversioned `materialized_stream_copy` document used by the May and June
+  recordings; and
+- `palette.orange_external_ipc_recording_clip_index.v1`, schema version 1, for
+  consolidated Orange `rolling_clips` recordings.
+
+The materialized adapter continues to require successful validation checks,
+keyframe-aligned clip starts, contiguous coverage from frame zero through the
+declared source frame count, and matching per-clip identities. Its validation
+path is unchanged.
+
+The rolling adapter accepts only the consolidated, single-camera Palette
+projection. It does not accept a raw multi-camera Orange index or relabel the
+mode. It requires completed and drained rows, matching recording/camera/clip
+identities, safe recording-relative artifact paths, an authoritative full
+stream in each versioned clip manifest, and readable existing media. It reads
+FPS and clip-start keyframe evidence from each declared keyframe sidecar. Clip
+lengths are taken from the rows; they are not inferred from rollover ordinal or
+nominal duration.
+
+Rolling acquisition IDs are inclusive and need not have a fixed base. Crimson
+uses each clip's explicit `parent_frame_index_offset` from the sibling
+`recording_frame_index_manifest.json` to translate them to the zero-based
+parent axis. The manifest must be the completed versioned Palette convenience
+index, identify the same recording, and contain successful per-clip row-count,
+endpoint, intra-clip continuity, and inter-clip continuity checks. Crimson
+validates the bounded JSON manifest rather than loading the multi-million-row
+Parquet/CSV table. Thus an acquisition beginning at ID 0, 1, or another value
+maps correctly when the published offset and all declared ranges agree.
+
+Absolute metadata paths embedded in the derived frame-index manifest are
+rebased through that manifest's original `recording_folder` and must equal the
+safe relative metadata path in the clip row. This preserves validation when a
+recording directory is copied or remounted without trusting stale absolute
+locations.
+
+The legacy materialized document remains unversioned. Crimson treats it as a
+strict compatibility adapter rather than a production-authoritative storage
+contract. Future hardening of that schema should add:
 
 - a schema ID and version;
 - canonical serialization and a document digest;
@@ -41,8 +73,9 @@ Future Palette hardening should add:
 - immutable per-clip content or clip-manifest digests.
 
 These additions are not required to use existing Palette recordings. The
-decoder currently verifies each opened clip's frame count, dimensions, and
-nominal frame rate against the validated index and the first clip.
+decoder verifies each opened clip's frame count, dimensions, and nominal frame
+rate against the validated index and the first clip. Supporting rolling clips
+does not re-encode or rewrite source media.
 
 ## Discovery And Launch
 
