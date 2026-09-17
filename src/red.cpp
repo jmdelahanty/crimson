@@ -3513,6 +3513,7 @@ int main(int argc, char **argv) {
               select_corr_head,
               ps.play_video,
               ps.pause_seeked,
+              ps.rejected_seek_ring_quarantined,
               yolo_detection,
               playbackLightweightRendererIsActive(playback_upload_mode_active,
                                                   playback_renderer_mode),

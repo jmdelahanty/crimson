@@ -68,6 +68,10 @@ struct PlaybackState {
     int read_head = 0;
     bool just_seeked = false;
     bool pause_seeked = false;
+    // Frames published by a rejected exact seek cannot be trusted by numeric
+    // label alone. Keep the ring quarantined until a fresh backend generation
+    // settles successfully.
+    bool rejected_seek_ring_quarantined = false;
     int slider_frame_number = 0;
     double accumulated_play_time = 0.0;
     std::chrono::steady_clock::time_point last_play_time_start =

@@ -61,6 +61,7 @@ add_library(crimson_frame_contracts STATIC
     src/playback_buffer_browser.cpp
     src/playback_diagnostics.cpp
     src/playback_seek.cpp
+    src/decoder_seek_bookkeeping.cpp
     src/playback_presentation_lifecycle.cpp
 )
 target_include_directories(crimson_frame_contracts PUBLIC
@@ -1504,6 +1505,23 @@ add_test(NAME playback_transport_tests
 )
 set_tests_properties(playback_transport_tests PROPERTIES
     LABELS "headless;playback;portable;transport"
+)
+
+add_executable(decoder_seek_bookkeeping_tests
+    tools/decoder_seek_bookkeeping_tests.cpp
+)
+target_link_libraries(decoder_seek_bookkeeping_tests PRIVATE
+    crimson_frame_contracts
+)
+target_compile_features(decoder_seek_bookkeeping_tests PRIVATE cxx_std_17)
+set_target_properties(decoder_seek_bookkeeping_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME decoder_seek_bookkeeping_tests
+    COMMAND $<TARGET_FILE:decoder_seek_bookkeeping_tests>
+)
+set_tests_properties(decoder_seek_bookkeeping_tests PROPERTIES
+    LABELS "headless;playback;portable;seek"
 )
 
 add_executable(playback_buffer_browser_tests

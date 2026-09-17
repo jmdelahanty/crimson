@@ -57,7 +57,7 @@ Final GUI binary SHA-256: `c4af847c0e5b35f8ffa956607a24d90860f0f294d139195815f89
 
 1. The first August GUI smoke failed because the old metadata-only loader clears its selected raw-run name. The bounded authoritative selector lookup described above fixed it; all four subsequent real smokes passed.
 2. An invalid attempt to use `--clipped-boundary-smoke 2565014:2565015` was rejected because it does not cross a clip boundary. The early-return shutdown then aborted with `terminate called without an active exception`. This is not an empty-detection test result; its log is retained.
-3. Paused UI-reference startup at frame **54,010** timed out, repeatedly presenting **54,000** despite a full decoded buffer and a ready canonical reader. The clip-start capture at 54,000 succeeded. Evidence points to clipped seek settlement upstream of detection resolution, but no before/after baseline reproduction was performed. Exact non-boundary paused seeking remains an observed issue, not a qualified capability.
+3. Paused UI-reference startup at frame **54,010** timed out, repeatedly presenting **54,000** despite a full decoded buffer and a ready canonical reader. The clip-start capture at 54,000 succeeded. Evidence points to clipped seek settlement upstream of detection resolution, but no before/after baseline reproduction was performed during this integration. This issue was subsequently fixed and separately qualified by the [paused-seek follow-up](linux_sleepyfish_paused_seek_fix_2026-09-17.md).
 4. Existing mixed FFmpeg ABI warnings and the workstation-specific prebuilt TensorStore dependency remain as documented in the video-only report. This is not yet a portable packaged build.
 
 ## What a complete per-frame view still needs

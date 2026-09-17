@@ -156,6 +156,8 @@ or write/edit/export workflow.
 The earlier observed non-boundary paused seek problem (request 54,010 settling
 at 54,000) has not been fixed or qualified by this change. Passing live playback
 and exact clip-start captures do not establish arbitrary paused-seek correctness.
+It was subsequently fixed and separately validated in the
+[paused-seek follow-up](linux_sleepyfish_paused_seek_fix_2026-09-17.md).
 No long-session/endurance or colleague-machine portability qualification was done.
 Workstation-specific TensorStore reuse and mixed FFmpeg ABI warnings remain.
 

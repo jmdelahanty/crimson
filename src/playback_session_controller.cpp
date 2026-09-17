@@ -1,4 +1,5 @@
 #include "playback_session_controller.h"
+#include "decoder_seek_bookkeeping.h"
 #include "frame_selection.h"
 #include "frame_slot.h"
 
@@ -293,7 +294,8 @@ bool PlaybackSessionController::stepPausedFrameFromBuffer(
   if (context_.playback_state == nullptr || context_.scene == nullptr ||
       context_.current_frame_num == nullptr ||
       context_.playback_state->play_video || context_.scene->num_cams <= 0 ||
-      context_.scene->size_of_buffer <= 0) {
+      context_.scene->size_of_buffer <= 0 ||
+      context_.playback_state->rejected_seek_ring_quarantined) {
     return false;
   }
   const int visible_idx = getVisibleCameraIndex();
@@ -553,7 +555,8 @@ bool PlaybackSessionController::resumeFromBufferedFrame(
   if (context_.playback_state == nullptr || context_.scene == nullptr ||
       context_.current_frame_num == nullptr || context_.video_fps == nullptr ||
       context_.stimulus_player == nullptr ||
-      context_.playback_transport == nullptr) {
+      context_.playback_transport == nullptr ||
+      context_.playback_state->rejected_seek_ring_quarantined) {
     return false;
   }
   if (context_.scene->num_cams <= 0 || context_.scene->size_of_buffer <= 0) {
@@ -710,6 +713,12 @@ void PlaybackSessionController::applyPlaybackToggle() const {
       (*context_.window_need_decoding)[context_.stimulus_player->window_name]
           .store(true);
     }
+    if (context_.playback_state->rejected_seek_ring_quarantined) {
+      context_.playback_state->last_resume_path = ResumePath::HardSeekFallback;
+      seekToFrame(resume_frame, false, true);
+      context_.playback_state->buffer_browsed_since_pause = false;
+      return;
+    }
     if (browsed_since_pause) {
       if (isWithinNewestContiguousBufferedSpan(resume_frame)) {
         if (resumeFromBufferedFrame(resume_frame)) {
@@ -761,6 +770,7 @@ PlaybackSessionController::pollSeekState() const {
     if (settled >= context_.seek_progress->cameras_total) {
       int settled_camera_frame = context_.seek_progress->target_camera_frame;
       int settled_camera_index = getVisibleCameraIndex();
+      std::optional<int> exact_mismatch_frame;
       if (settled_camera_index < 0 ||
           settled_camera_index >= context_.scene->num_cams) {
         settled_camera_index = 0;
@@ -775,6 +785,25 @@ PlaybackSessionController::pollSeekState() const {
             settled_camera_frame = static_cast<int>(settled_ctx.seek_frame);
           }
         }
+        if (context_.seek_progress->accurate) {
+          for (int cam_idx = 0; cam_idx < context_.scene->num_cams;
+               ++cam_idx) {
+            const auto &camera_ctx =
+                context_.scene->cameras[cam_idx].seek_context;
+            if (camera_ctx.seek_done &&
+                camera_ctx.settled_seek_id ==
+                    context_.seek_progress->seek_id) {
+              const int camera_frame =
+                  static_cast<int>(camera_ctx.seek_frame);
+              if (!crimson::playback::cameraSeekSettlementMatches(
+                      true, context_.seek_progress->target_camera_frame,
+                      camera_frame)) {
+                exact_mismatch_frame = camera_frame;
+                break;
+              }
+            }
+          }
+        }
       }
 
       if (settled_camera_frame != context_.seek_progress->target_camera_frame) {
@@ -786,6 +815,22 @@ PlaybackSessionController::pollSeekState() const {
                     << std::endl;
         }
       }
+      if (exact_mismatch_frame.has_value()) {
+        std::cerr << "[Seek] id=" << context_.seek_progress->seek_id
+                  << " exact camera seek mismatch: settled="
+                  << *exact_mismatch_frame << " requested="
+                  << context_.seek_progress->target_camera_frame << std::endl;
+        crimson::playback::PlaybackSeekExecutionResult result;
+        result.status = crimson::playback::PlaybackSeekExecutionStatus::Failed;
+        result.path =
+            crimson::playback::PlaybackSeekExecutionPath::BackendDecoder;
+        result.resolved_frame = *exact_mismatch_frame;
+        result.error = "exact decoder seek settled to an unexpected frame";
+        context_.playback_state->rejected_seek_ring_quarantined = true;
+        context_.seek_progress->state = SeekState::Idle;
+        return result;
+      }
+      context_.playback_state->rejected_seek_ring_quarantined = false;
       context_.seek_progress->target_camera_frame = settled_camera_frame;
       context_.playback_state->to_display_frame_number = settled_camera_frame;
       context_.playback_state->slider_frame_number = settled_camera_frame;

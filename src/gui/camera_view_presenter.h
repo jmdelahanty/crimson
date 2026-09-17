@@ -12,6 +12,7 @@ struct CameraViewPresenterContext {
 
     bool play_video = false;
     bool pause_seeked = false;
+    bool rejected_seek_ring_quarantined = false;
     bool yolo_detection = false;
     bool lightweight_playback_renderer_active = false;
     bool preview_active = false;

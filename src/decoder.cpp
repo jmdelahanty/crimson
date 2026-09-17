@@ -2,6 +2,7 @@
 #include "AppDecUtils.h"
 #include "global.h"
 #include "debug_flags.h"
+#include "decoder_seek_bookkeeping.h"
 #include "frame_slot.h"
 #include "ColorSpace.h"
 #include <algorithm>
@@ -158,14 +159,8 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
             std::lock_guard<std::mutex> lock(g_seek_info_mutex);
             frame_map = seek_info->frame_number_map;
         }
-        if (frame_map != nullptr &&
-            local_frame < static_cast<uint64_t>(frame_map->size())) {
-            const int64_t parent_frame = (*frame_map)[static_cast<size_t>(local_frame)];
-            if (parent_frame >= 0) {
-                return parent_frame;
-            }
-        }
-        return static_cast<int64_t>(local_frame);
+        return crimson::playback::publishDecoderFrameNumber(
+            local_frame, frame_map.get());
     };
     auto publishFrameNumberInt = [&](uint64_t local_frame) -> int {
         const int64_t frame = publishFrameNumber(local_frame);
@@ -235,7 +230,8 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
     auto discard_decoded_frames_until =
         [&](uint64_t &decode_frame_cursor, uint64_t target_frame) -> bool {
         while (nFrameReturned > 0) {
-            if (decode_frame_cursor >= target_frame) {
+            if (crimson::playback::queuedDecoderFrameReachedTarget(
+                    decode_frame_cursor, target_frame)) {
                 // Keep target frame (or nearest frame past it) in decoder
                 // output queue for the normal write path.  Using >= instead
                 // of == guards against the cursor overshooting the target by
@@ -249,12 +245,12 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
             dec->GetFrame(&discarded_timestamp);
             nFrameReturned--;
             ++seek_discard_count;
-            const int64_t fallback_frame =
-                static_cast<int64_t>(decode_frame_cursor);
             const int64_t mapped_frame =
-                mapTimestampToFrameNumber(discarded_timestamp, fallback_frame);
-            const int64_t next_frame = std::max(mapped_frame + 1, fallback_frame + 1);
-            decode_frame_cursor = static_cast<uint64_t>(std::max<int64_t>(0, next_frame));
+                mapTimestampToFrameNumber(
+                    discarded_timestamp,
+                    static_cast<int64_t>(decode_frame_cursor));
+            decode_frame_cursor = crimson::playback::advanceDecoderSeekCursor(
+                decode_frame_cursor, mapped_frame);
         }
         return false;
     };
@@ -409,7 +405,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                           << " dts=" << pktinfo.dts << std::endl;
             }
 
-            uint64_t settled_seek_frame = decode_frame_cursor;
+            crimson::playback::DecoderSeekBookkeeping seek_bookkeeping;
             bool accurate_reached_target = false;
             uint64_t accurate_demux_attempts = 0;
             uint64_t accurate_decode_calls = 0;
@@ -497,15 +493,18 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                     }
                 }
                 if (!reached_target) {
-                    settled_seek_frame = decode_frame_cursor;
                     skip_first_decode_after_seek = (nFrameReturned > 0);
                 }
                 accurate_reached_target = reached_target;
+                seek_bookkeeping =
+                    crimson::playback::finalizeDecoderSeekBookkeeping(
+                        decode_frame_cursor);
                 if (crimson_seek_debug_logs_enabled()) std::cout << "[SeekAccurate] cam=" << cam_name
                           << " request id=" << active_seek_id
                           << " result reached_target="
                           << (accurate_reached_target ? "true" : "false")
-                          << " settled=" << settled_seek_frame
+                          << " settled="
+                          << seek_bookkeeping.settled_local_frame
                           << " cursor=" << decode_frame_cursor
                           << " nFrameReturned=" << nFrameReturned
                           << " demux_attempts=" << accurate_demux_attempts
@@ -513,13 +512,17 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                           << " discarded=" << seek_discard_count
                           << std::endl;
             } else {
-                settled_seek_frame = decode_frame_cursor;
                 skip_first_decode_after_seek = (nFrameReturned > 0);
+                seek_bookkeeping =
+                    crimson::playback::finalizeDecoderSeekBookkeeping(
+                        decode_frame_cursor);
             }
 
             // dec.setReconfigParams(NULL, NULL);
             buffer_head = 0;
-            nFrame = static_cast<int>(settled_seek_frame);
+            const uint64_t settled_seek_frame =
+                seek_bookkeeping.settled_local_frame;
+            nFrame = seek_bookkeeping.next_local_frame;
             if (nFrameReturned > 0) {
                 latest_decoded_frame[cam_name].store(
                     publishFrameNumberInt(settled_seek_frame));

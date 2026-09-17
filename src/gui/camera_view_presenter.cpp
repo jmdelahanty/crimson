@@ -1,6 +1,7 @@
 #include "gui/camera_view_presenter.h"
 
 #include "NvCodecUtils.h"
+#include "decoder_seek_bookkeeping.h"
 #include "frame_presentation.h"
 #include "frame_selection.h"
 
@@ -491,6 +492,13 @@ CameraViewPresenterResult presentCameraViewFrame(
     auto& camera = context.scene->cameras[context.view_idx];
     result.presented_rgba_cuda_buffer = camera.pbo_cuda.cuda_buffer;
     result.presentation_texture = &camera.presentation_texture;
+
+    if (!crimson::playback::shouldAttemptSeekFramePresentation(
+            context.rejected_seek_ring_quarantined, true)) {
+        // Keep the last known-good front texture but do not claim or upload a
+        // frame from a ring whose labels were rejected as untrustworthy.
+        return result;
+    }
 
     auto uploadCameraFrameToTexture = [&](int slot_index,
                                           bool request_surface_swap = true) -> int {
