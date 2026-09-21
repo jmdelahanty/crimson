@@ -736,7 +736,8 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         src/gui/canonical_overlay_presentation.cpp)
     target_compile_features(canonical_overlay_presentation_tests PRIVATE cxx_std_17)
     target_link_libraries(canonical_overlay_presentation_tests PRIVATE
-        crimson_repository_contracts crimson_overlay_contracts)
+        crimson_repository_contracts crimson_overlay_contracts
+        nlohmann_json::nlohmann_json)
     set_target_properties(canonical_overlay_presentation_tests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME canonical_overlay_presentation_tests
