@@ -30,6 +30,7 @@ struct FrameRangeLaunchOptions {
 
 struct PlaybackSmokeLaunchOptions : FrameRangeLaunchOptions {
   double timeout_s = 20.0;
+  double warmup_s = 0.0;
 };
 
 using UiReferenceLaunchOptions = crimson::ui_reference::LaunchOptions;

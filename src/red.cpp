@@ -21,6 +21,7 @@
 #include "gui/camera_view_presenter.h"
 #include "gui/camera_view_transport_controls.h"
 #include "gui/camera_view_window.h"
+#include "gui/camera_view_window_identity.h"
 #include "gui/canonical_timeline_session.h"
 #include "gui/canonical_overlay_session.h"
 #include "gui/canonical_overlay_presentation.h"
@@ -196,9 +197,11 @@ struct PlaybackSmokeConfig {
   int start_frame = -1;
   int end_frame = -1;
   double timeout_s = 20.0;
+  double warmup_s = 0.0;
   std::chrono::steady_clock::time_point start_time{};
   bool started = false;
   bool completed = false;
+  bool playback_started = false;
   int presented_count = 0;
   int last_presented_frame = -1;
   int max_presented_frame = -1;
@@ -415,6 +418,7 @@ int main(int argc, char **argv) {
   playback_smoke.start_frame = launch_options.playback_smoke.start_frame;
   playback_smoke.end_frame = launch_options.playback_smoke.end_frame;
   playback_smoke.timeout_s = launch_options.playback_smoke.timeout_s;
+  playback_smoke.warmup_s = launch_options.playback_smoke.warmup_s;
   ClippedBoundarySmokeConfig clipped_boundary_smoke;
   clipped_boundary_smoke.enabled =
       launch_options.clipped_boundary_smoke.enabled;
@@ -770,7 +774,10 @@ int main(int argc, char **argv) {
     const uint64_t seek_requests = playback_transport.seekCoordinator().metrics().requests;
     const bool accepted = canonical_overlay_session.requestFrame(
         frame, keypoints, masks, shapes,
-        seek_requests != canonical_overlay_seen_seek_requests);
+        seek_requests != canonical_overlay_seen_seek_requests,
+        {true, ps.play_video ? crimson::gui::CanonicalOverlayPlaybackDirection::Forward
+                            : crimson::gui::CanonicalOverlayPlaybackDirection::Paused,
+         video_fps, playback_transport.playbackRate()});
     // A partial product rejection must not repeatedly invalidate products
     // which already accepted this seek. New opens have their own source epoch.
     canonical_overlay_seen_seek_requests = seek_requests;
@@ -1557,7 +1564,7 @@ int main(int argc, char **argv) {
                     presenter_preferred_paused_slot, presenter_presented_slot,
                     presenter_presented_frame, presenter_resolved_frame,
                     presenter_prewarm_active)),
-            event_name != "frame");
+            event_name != "frame" && event_name != "canonical_overlay_present");
       };
 
   auto playbackSeekEventDetails =
@@ -1964,14 +1971,16 @@ int main(int argc, char **argv) {
                                             /*skip_stimulus_hard_seek=*/true);
     prewarmEyeMaskOverlayTexturesForPlayback("playback_smoke",
                                              playback_smoke.start_frame);
-    if (!ps.play_video) {
+    playback_smoke.playback_started = playback_smoke.warmup_s <= 0.0;
+    if (ps.play_video != playback_smoke.playback_started) {
       applyPlaybackToggleForPerf();
     }
     writePlaybackTraceEvent(
         "playback_smoke_started",
         {{"start_frame", playback_smoke.start_frame},
          {"end_frame", playback_smoke.end_frame},
-         {"timeout_s", playback_smoke.timeout_s}},
+         {"timeout_s", playback_smoke.timeout_s},
+         {"warmup_s", playback_smoke.warmup_s}},
         playback_session_controller.getVisibleCameraIndex());
     std::cout << "[PlaybackSmoke] started range=" << playback_smoke.start_frame
               << "-" << playback_smoke.end_frame
@@ -2431,6 +2440,18 @@ int main(int argc, char **argv) {
                 << ui_reference_capture.stableFrameCount() << std::endl;
       app_exit_code = 3;
       glfwSetWindowShouldClose(window->render_target, GLFW_TRUE);
+    }
+    if (playback_smoke.enabled && playback_smoke.started &&
+        !playback_smoke.playback_started &&
+        std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                      playback_smoke.start_time).count() >=
+            playback_smoke.warmup_s) {
+      playback_smoke.playback_started = true;
+      if (!ps.play_video) applyPlaybackToggleForPerf();
+      writePlaybackTraceEvent("playback_smoke_warmup_complete",
+                             {{"warmup_s", playback_smoke.warmup_s}});
+      std::cout << "[PlaybackSmoke] warmup complete seconds="
+                << playback_smoke.warmup_s << std::endl;
     }
     if (playback_smoke.enabled && playback_smoke.started &&
         !playback_smoke.completed &&
@@ -3563,7 +3584,25 @@ int main(int argc, char **argv) {
         }
 
         ImGui::SetNextWindowPos(window_pos, ImGuiCond_FirstUseEver);
-        bool is_visible = ImGui::Begin(win_name.c_str());
+        // A clip handoff changes the decoder stream name, not the viewport.
+        // Keep the clip in the visible title, but scope ImGui state (including
+        // its active transport slider) to the stable recording and camera.
+        std::string camera_window_label = win_name;
+        if (clipped_media_state.source == ClippedMediaSource::RecordingClipIndex &&
+            clipped_media_state.recording_clip_provider) {
+          const auto &index = clipped_media_state.recording_clip_provider->index();
+          const std::string recording_identity = index.recordingId().empty()
+              ? "index:" + index.indexPath().generic_string()
+              : "recording:" + index.recordingId();
+          camera_window_label = crimson::gui::cameraViewWindowLabel(
+              win_name, recording_identity, index.cameraSerial(), j);
+        } else if (clipped_media_state.source == ClippedMediaSource::LegacyZarrCollection &&
+                   zarr_loaded) {
+          camera_window_label = crimson::gui::cameraViewWindowLabel(
+              win_name, "archive:" + zarr_loader.getArchivePath(),
+              clipped_media_state.camera_serial, j);
+        }
+        bool is_visible = ImGui::Begin(camera_window_label.c_str());
 
         if (!window_was_decoding[win_name] && is_visible && ps.play_video) {
           // seek if visibility has changed
@@ -4266,6 +4305,47 @@ int main(int argc, char **argv) {
             canonical_shape_draw_count = camera_view_result.perf.subject_shape_overlay_item_count;
             canonical_expected_shape_draw_count = static_cast<int>(canonical_presentation.shapes.primitives.size());
             canonical_expected_mask_draw_count = static_cast<int>(canonical_presentation.masks.raster_masks.size());
+            if (diagnostics_session.playbackTraceEnabled() && has_presented_camera_frame) {
+              const auto& snapshot = canonical_presentation.snapshot;
+              const auto& mask = snapshot.masks;
+              const auto& mask_perf = camera_view_result.perf.mask_overlay;
+              const bool mask_resolved = mask.state == crimson::gui::CanonicalOverlayState::Ready ||
+                                         mask.state == crimson::gui::CanonicalOverlayState::Empty;
+              const char* outcome = !show_eye_masks ? "disabled" :
+                  !mask_resolved ? crimson::gui::canonicalOverlayStateName(mask.state) :
+                  !canonical_presentation.masks.ready() ? "scene_rejected" :
+                  canonical_expected_mask_draw_count == 0 ? "valid_absent" :
+                  mask_perf.component_fill_count != canonical_expected_mask_draw_count ? "draw_failed" : "drawn";
+              writePlaybackTraceEvent("canonical_overlay_present",
+                  {{"generation", snapshot.generation},
+                   {"query_frame", zarr_bbox_query_frame},
+                   {"mask_frame", mask.frame ? mask.frame->camera_frame : -1},
+                   {"mask_state", crimson::gui::canonicalOverlayStateName(mask.state)},
+                   {"mask_outcome", outcome}, {"mask_error", mask.error},
+                   {"mask_enabled", show_eye_masks},
+                   {"mask_expected_fills", canonical_expected_mask_draw_count},
+                   {"mask_actual_fills", mask_perf.component_fill_count},
+                   {"mask_texture_uploads", mask_perf.texture_uploads},
+                   {"mask_texture_upload_ms", mask_perf.texture_upload_ms},
+                   {"mask_draw_ms", mask_perf.total_draw_ms},
+                   {"mask_decoded_cache_bytes", snapshot.mask_buffer_metrics.cached_payload_bytes},
+                   {"mask_decoded_cache_byte_budget", snapshot.mask_buffer_metrics.maximum_cached_payload_bytes},
+                   {"mask_lookahead_frames", snapshot.mask_buffer_metrics.effective_lookahead_frames},
+                   {"mask_contiguous_ready_ahead", snapshot.mask_buffer_metrics.contiguous_ready_ahead},
+                   {"mask_average_resolve_ms", snapshot.mask_buffer_metrics.average_resolve_ms},
+                   {"mask_maximum_resolve_ms", snapshot.mask_buffer_metrics.maximum_resolve_ms},
+                   {"mask_pending_frames", snapshot.mask_buffer_metrics.pending_frames},
+                   {"mask_speculative_queue_ms", snapshot.mask_buffer_metrics.speculative_average_queue_wait_ms},
+                   {"mask_byte_budget_evictions", snapshot.mask_buffer_metrics.byte_budget_evictions},
+                   {"mask_oversized_rejections", snapshot.mask_buffer_metrics.oversized_result_rejections},
+                   {"mask_payload_cache_bytes", snapshot.mask_metrics.cached_payload_bytes},
+                   {"mask_payload_read_calls", snapshot.mask_metrics.dense_mask_payload_reads},
+                   {"mask_payload_read_ms", snapshot.mask_metrics.chunk_read_ms}},
+                  j, camera_view_presenter_context.target_display_frame,
+                  camera_view_presenter_context.preferred_paused_slot, presented_slot,
+                  presented_frame, camera_view_presenter_result.resolved_current_frame_num,
+                  prewarm_playback_textures);
+            }
           }
           accumulateCameraViewMaskPerfMetrics(
               frame_mask_overlay_perf, camera_view_result.perf.mask_overlay);
@@ -4622,7 +4702,7 @@ int main(int argc, char **argv) {
                 stimulus_player.last_displayed_frame;
           }
 
-          if (playback_smoke.enabled && playback_smoke.started &&
+          if (playback_smoke.enabled && playback_smoke.started && playback_smoke.playback_started &&
               !playback_smoke.completed && has_presented_camera_frame) {
             playback_smoke.last_presented_frame = presented_frame;
             playback_smoke.max_presented_frame =

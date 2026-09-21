@@ -48,6 +48,14 @@ bool testDefaultsAndUnknownArguments() {
   CHECK(result.options.mask_perf_log_enabled);
   CHECK(result.options.mask_perf_sample_every == 10);
   CHECK(result.options.playback_smoke.timeout_s == 20.0);
+  CHECK(result.options.playback_smoke.warmup_s == 0.0);
+  auto warmup = parse({"redgui", "--playback-smoke", "0:300",
+                       "--playback-smoke-warmup-seconds", "8.5"});
+  CHECK(warmup.ok && warmup.options.playback_smoke.warmup_s == 8.5);
+  for (const auto *invalid : {"-1", "121", "nan", "inf", "no"}) {
+    CHECK(!parse({"redgui", "--playback-smoke-warmup-seconds", invalid}).ok);
+  }
+  CHECK(!parse({"redgui", "--playback-smoke-warmup-seconds"}).ok);
   CHECK(result.options.ui_reference.timeout_seconds == 60.0);
   CHECK(result.diagnostics.size() == 1);
   CHECK(result.diagnostics.front() ==

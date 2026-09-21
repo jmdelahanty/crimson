@@ -322,6 +322,16 @@ NvidiaLaunchParseResult parseNvidiaLaunchOptions(int argc,
       options.playback_smoke.timeout_s = parsed;
       continue;
     }
+    if (arg == "--playback-smoke-warmup-seconds") {
+      const char *value = requireValue("Missing value for --playback-smoke-warmup-seconds");
+      if (value == nullptr) return result;
+      double parsed = 0.0;
+      if (!parseDoubleArgument(value, parsed) || parsed < 0.0 || parsed > 120.0) {
+        return fail("Invalid --playback-smoke-warmup-seconds; expected 0 through 120 seconds");
+      }
+      options.playback_smoke.warmup_s = parsed;
+      continue;
+    }
     if (arg == "--no-mask-perf-log") {
       options.mask_perf_log_enabled = false;
       continue;

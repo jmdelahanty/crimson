@@ -731,6 +731,15 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
     set_tests_properties(canonical_overlay_session_tests PROPERTIES
         LABELS "headless;repository;session;overlay" TIMEOUT 30)
 
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME canonical_mask_playback_coverage_tests
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_canonical_mask_playback_tests.py)
+        set_tests_properties(canonical_mask_playback_coverage_tests PROPERTIES
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+            LABELS "headless;playback;overlay" TIMEOUT 10)
+    endif()
+
     add_executable(canonical_overlay_presentation_tests
         tools/canonical_overlay_presentation_tests.cpp
         src/gui/canonical_overlay_presentation.cpp)
@@ -2614,6 +2623,29 @@ if(EXISTS ${IMGUI_DIR})
 else()
     message(FATAL_ERROR "ImGui not found at ${IMGUI_DIR}")
 endif()
+
+# Headless regression for mapped-camera layout and active slider identity.
+add_executable(camera_view_window_identity_tests
+    tools/camera_view_window_identity_tests.cpp
+    src/gui/camera_view_transport_controls.cpp
+    src/imgui_semantic_snapshot.cpp
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+)
+target_compile_features(camera_view_window_identity_tests PRIVATE cxx_std_17)
+target_compile_definitions(camera_view_window_identity_tests PRIVATE IMGUI_ENABLE_TEST_ENGINE)
+target_include_directories(camera_view_window_identity_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${IMGUI_DIR} ${ICON_FONT_CPP_HEADERS_DIR})
+target_link_libraries(camera_view_window_identity_tests PRIVATE
+    crimson_workspace_contracts crimson_frame_contracts
+    nlohmann_json::nlohmann_json)
+set_target_properties(camera_view_window_identity_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME camera_view_window_identity_tests COMMAND camera_view_window_identity_tests)
+set_tests_properties(camera_view_window_identity_tests PROPERTIES
+    LABELS "headless;ui;playback" TIMEOUT 30)
 
 # ImPlot sources
 if(EXISTS ${IMPLOT_DIR})

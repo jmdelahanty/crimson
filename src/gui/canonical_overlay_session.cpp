@@ -123,8 +123,9 @@ struct CanonicalOverlaySession::Impl {
           candidate->shape_error = std::move(repositories.shape_error);
           const auto identity = request.archive_path + ":canonical-overlay:" +
                                 std::to_string(session_identity) + ":" + std::to_string(version);
-          // No speculative mask reads; explicit current-frame requests are
-          // bounded by the repositories and these small frame caches.
+          // Overlay demand is bounded by each typed buffer policy. Mask
+          // read-ahead remains opt-in per request and runs through the shared
+          // scheduler rather than a repository-owned prefetch worker.
           if (repositories.keypoints) {
             candidate->keypoints = std::make_shared<KeypointOverlayBuffer>(scheduler, identity);
             if (!candidate->keypoints->open(std::move(repositories.keypoints), 2, 8,
@@ -133,8 +134,9 @@ struct CanonicalOverlaySession::Impl {
           }
           if (repositories.masks) {
             candidate->masks = std::make_shared<SubjectMaskOverlayBuffer>(scheduler, identity);
-            if (!candidate->masks->open(std::move(repositories.masks), 0, 4,
-                                       &candidate->mask_error))
+            SubjectMaskOverlayBufferPolicy mask_policy;
+            if (!candidate->masks->open(std::move(repositories.masks),
+                                       mask_policy, &candidate->mask_error))
               candidate->masks.reset();
           }
           if (repositories.shapes) {
@@ -210,7 +212,9 @@ void CanonicalOverlaySession::close() {
   impl_->condition.notify_all();
 }
 bool CanonicalOverlaySession::requestFrame(int64_t frame, bool keypoints,
-                                          bool masks, bool shapes, bool discontinuity) {
+                                          bool masks, bool shapes,
+                                          bool discontinuity,
+                                          CanonicalOverlayPlaybackDemand playback) {
   std::shared_ptr<Impl::Epoch> epoch;
   {
     std::lock_guard<std::mutex> lock(impl_->mutex);
@@ -222,8 +226,27 @@ bool CanonicalOverlaySession::requestFrame(int64_t frame, bool keypoints,
   bool accepted = true;
   if (keypoints && epoch->keypoints)
     accepted = epoch->keypoints->requestFrame(frame, width, height, discontinuity) && accepted;
-  if (masks && epoch->masks)
-    accepted = epoch->masks->requestFrame(frame, width, height, discontinuity) && accepted;
+  if (masks && epoch->masks) {
+    SubjectMaskPlaybackDemand mask_playback;
+    mask_playback.read_ahead = playback.read_ahead;
+    mask_playback.source_frames_per_second =
+        playback.source_frames_per_second;
+    mask_playback.playback_rate = playback.playback_rate;
+    switch (playback.direction) {
+      case CanonicalOverlayPlaybackDirection::Paused:
+        mask_playback.direction = SubjectMaskPlaybackDirection::Paused;
+        break;
+      case CanonicalOverlayPlaybackDirection::Forward:
+        mask_playback.direction = SubjectMaskPlaybackDirection::Forward;
+        break;
+      case CanonicalOverlayPlaybackDirection::Reverse:
+        mask_playback.direction = SubjectMaskPlaybackDirection::Reverse;
+        break;
+    }
+    accepted = epoch->masks->requestFrame(
+                   frame, width, height, mask_playback, discontinuity) &&
+               accepted;
+  }
   if (shapes && epoch->shapes)
     accepted = epoch->shapes->requestFrame(frame, width, height, discontinuity) && accepted;
   return accepted;
@@ -245,7 +268,10 @@ CanonicalOverlaySnapshot CanonicalOverlaySession::snapshot(int64_t frame) const 
     populate(result.keypoints, epoch->keypoints, epoch->keypoint_error, frame);
     populate(result.masks, epoch->masks, epoch->mask_error, frame);
     populate(result.shapes, epoch->shapes, epoch->shape_error, frame);
-    if (epoch->masks) result.mask_metrics = epoch->masks->repositoryMetrics();
+    if (epoch->masks) {
+      result.mask_metrics = epoch->masks->repositoryMetrics();
+      result.mask_buffer_metrics = epoch->masks->metrics();
+    }
   } else if (result.state == CanonicalOverlayState::Opening) {
     result.keypoints.state = result.masks.state = result.shapes.state = CanonicalOverlayState::Opening;
   }

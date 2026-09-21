@@ -1,6 +1,7 @@
 #pragma once
 
 #include "data_access_scheduler.h"
+#include "subject_mask_overlay_buffer.h"
 #include "zarr/canonical_overlay_selection.h"
 #include "zarr/keypoint_overlay_repository.h"
 #include "zarr/subject_mask_overlay_repository.h"
@@ -17,6 +18,21 @@ enum class CanonicalOverlayState : uint8_t {
   Closed, Opening, Pending, Ready, Empty, Unavailable, Failed
 };
 const char* canonicalOverlayStateName(CanonicalOverlayState state);
+
+enum class CanonicalOverlayPlaybackDirection : uint8_t {
+  Paused,
+  Forward,
+  Reverse,
+};
+
+struct CanonicalOverlayPlaybackDemand {
+  // Opt-in preserves current-frame-only behavior for existing callers.
+  bool read_ahead = false;
+  CanonicalOverlayPlaybackDirection direction =
+      CanonicalOverlayPlaybackDirection::Paused;
+  double source_frames_per_second = 0.0;
+  double playback_rate = 1.0;
+};
 
 struct CanonicalOverlayOpenRequest {
   std::string archive_path;
@@ -56,6 +72,7 @@ struct CanonicalOverlaySnapshot {
   CanonicalOverlayProductSnapshot<zarr::SubjectShapeOverlayDescriptor,
                                   zarr::SubjectShapeOverlayResolution> shapes;
   zarr::SubjectMaskOverlayRepositoryMetrics mask_metrics;
+  SubjectMaskOverlayBufferMetrics mask_buffer_metrics;
   double open_ms = 0.0;
   std::string error;
 };
@@ -75,7 +92,8 @@ class CanonicalOverlaySession {
   void close(); // Invalidates immediately; draining remains on lifecycle worker.
   void shutdown(); // Blocking teardown; call before shutting down the scheduler.
   bool requestFrame(int64_t frame, bool keypoints, bool masks, bool shapes,
-                    bool discontinuity = false);
+                    bool discontinuity = false,
+                    CanonicalOverlayPlaybackDemand playback = {});
   CanonicalOverlaySnapshot snapshot(int64_t frame) const;
   bool waitUntilOpen(std::chrono::milliseconds timeout) const;
 

@@ -130,6 +130,46 @@ private:
   crimson::zarr::SubjectMaskOverlayDescriptor descriptor_;
 };
 
+class SizedSubjectMaskRepository final
+    : public crimson::zarr::SubjectMaskOverlayRepository {
+public:
+  explicit SizedSubjectMaskRepository(size_t payload_bytes) : bytes_(payload_bytes) {
+    descriptor_.source_group = "refined_subject_masks_runs";
+    descriptor_.run_name = "sized_buffer_fixture";
+    descriptor_.camera_frame_count = 20;
+    descriptor_.row_count = 20;
+    descriptor_.mask_width = payload_bytes;
+    descriptor_.mask_height = 1;
+    descriptor_.storage_chunk_rows = 8;
+    descriptor_.component_labels = {"subject_body"};
+  }
+  const crimson::zarr::SubjectMaskOverlayDescriptor &descriptor()
+      const override {
+    return descriptor_;
+  }
+  crimson::zarr::SubjectMaskOverlayResolution
+  resolveCameraFrame(int64_t camera_frame, int, int) const override {
+    crimson::zarr::SubjectMaskOverlayResolution result;
+    result.camera_frame = camera_frame;
+    result.status = crimson::zarr::SubjectMaskOverlayStatus::Mapped;
+    crimson::zarr::SubjectMaskOverlayDetection detection;
+    crimson::zarr::SubjectMaskOverlayComponent component;
+    component.label = "subject_body";
+    component.present = true;
+    component.mask_width = bytes_;
+    component.mask_height = 1;
+    component.mask =
+        std::make_shared<const std::vector<uint8_t>>(bytes_, uint8_t{255});
+    detection.components.push_back(std::move(component));
+    result.detections.push_back(std::move(detection));
+    return result;
+  }
+
+private:
+  size_t bytes_ = 0;
+  crimson::zarr::SubjectMaskOverlayDescriptor descriptor_;
+};
+
 bool WriteJson(const std::filesystem::path &path, const json &value) {
   std::filesystem::create_directories(path.parent_path());
   std::ofstream output(path);
@@ -801,6 +841,102 @@ bool TestReverseLookaheadDoesNotResetGeneration() {
   return true;
 }
 
+bool TestDecodedByteBudgetAndOversizedAdmission() {
+  auto scheduler =
+      std::make_shared<crimson::data::DataAccessScheduler>(16, 2, 1);
+  SubjectMaskOverlayBufferPolicy policy;
+  policy.minimum_lookahead_frames = 4;
+  policy.maximum_lookahead_frames = 8;
+  policy.maximum_cached_frames = 9;
+  policy.maximum_cached_payload_bytes = 7000;
+  SubjectMaskOverlayBuffer buffer(scheduler, "byte_budget_fixture");
+  std::string error;
+  CHECK(buffer.open(std::make_unique<SizedSubjectMaskRepository>(2048),
+                    policy, &error));
+  SubjectMaskPlaybackDemand demand;
+  demand.read_ahead = true;
+  demand.direction = SubjectMaskPlaybackDirection::Paused;
+  demand.source_frames_per_second = 30.0;
+  CHECK(buffer.requestFrame(0, 100, 80, demand, true, &error));
+  CHECK(buffer.waitForFrame(0, std::chrono::seconds(2)));
+  scheduler->waitUntilIdle();
+  const auto bounded = buffer.metrics();
+  CHECK(bounded.current_frame_ready);
+  CHECK(bounded.cached_payload_bytes <=
+        bounded.maximum_cached_payload_bytes);
+  CHECK(bounded.effective_lookahead_frames <= 2);
+  CHECK(buffer.frame(0)->status ==
+        crimson::zarr::SubjectMaskOverlayStatus::Mapped);
+  buffer.close();
+
+  policy.maximum_cached_payload_bytes = 4096;
+  CHECK(buffer.open(std::make_unique<SizedSubjectMaskRepository>(8192),
+                    policy, &error));
+  CHECK(buffer.requestFrame(0, 100, 80, demand, true, &error));
+  CHECK(buffer.waitForFrame(0, std::chrono::seconds(2)));
+  const auto oversized = buffer.frame(0);
+  CHECK(oversized != nullptr);
+  CHECK(oversized->status ==
+        crimson::zarr::SubjectMaskOverlayStatus::ReadFailed);
+  const auto oversized_metrics = buffer.metrics();
+  CHECK(oversized_metrics.oversized_result_rejections == 1);
+  CHECK(oversized_metrics.cached_payload_bytes <=
+        oversized_metrics.maximum_cached_payload_bytes);
+  buffer.close();
+
+  policy.maximum_cached_payload_bytes = 1;
+  CHECK(!buffer.open(std::make_unique<SizedSubjectMaskRepository>(1), policy,
+                     &error));
+  CHECK(error.find("cannot hold an error result") != std::string::npos);
+  scheduler->shutdown();
+  return true;
+}
+
+bool TestSchedulerCapacityEvictionRecovers() {
+  auto scheduler =
+      std::make_shared<crimson::data::DataAccessScheduler>(2, 1, 1);
+  auto blocked_state = std::make_shared<BlockingRepositoryState>();
+  SubjectMaskOverlayBuffer first(scheduler, "capacity_first");
+  SubjectMaskOverlayBuffer second(scheduler, "capacity_second");
+  std::string error;
+  CHECK(first.open(
+      std::make_unique<BlockingSubjectMaskRepository>(blocked_state), 4, 5,
+      &error));
+  CHECK(second.open(std::make_unique<RecordingSubjectMaskRepository>(), 0, 1,
+                    &error));
+  CHECK(first.requestFrame(0, 100, 80, true, &error));
+  {
+    std::unique_lock<std::mutex> lock(blocked_state->mutex);
+    CHECK(blocked_state->condition.wait_for(
+        lock, std::chrono::seconds(2),
+        [&] { return blocked_state->first_read_started; }));
+  }
+  // The worker has removed frame zero from the bounded pending queue. Refill
+  // both slots with speculative work before a different source submits its
+  // current frame, forcing a deterministic priority eviction.
+  CHECK(first.requestFrame(0, 100, 80, false, &error));
+  CHECK(second.requestFrame(5, 100, 80, true, &error));
+  const bool evicted = scheduler->metrics().queue.capacity_evictions > 0;
+  {
+    std::lock_guard<std::mutex> lock(blocked_state->mutex);
+    blocked_state->release_first_read = true;
+    blocked_state->condition.notify_all();
+  }
+  CHECK(evicted);
+  CHECK(first.waitForFrame(0, std::chrono::seconds(2)));
+  CHECK(second.waitForFrame(5, std::chrono::seconds(2)));
+  for (int attempt = 0; attempt < 4 && first.frame(4) == nullptr; ++attempt) {
+    CHECK(first.requestFrame(0, 100, 80, false, &error));
+    scheduler->waitUntilIdle();
+  }
+  CHECK(first.frame(4) != nullptr);
+  CHECK(first.metrics().scheduler_capacity_rejections > 0);
+  first.close();
+  second.close();
+  scheduler->shutdown();
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -825,7 +961,9 @@ int main() {
       !TestInvalidFrameCountsFailOnce(archive) ||
       !TestNeutralRepositoryContract() ||
       !TestBoundedBufferAndDiscontinuity() ||
-      !TestReverseLookaheadDoesNotResetGeneration()) {
+      !TestReverseLookaheadDoesNotResetGeneration() ||
+      !TestDecodedByteBudgetAndOversizedAdmission() ||
+      !TestSchedulerCapacityEvictionRecovers()) {
     std::cerr << error << '\n';
     return 1;
   }

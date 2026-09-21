@@ -2,10 +2,12 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <algorithm>
 #include <iostream>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 using namespace std::chrono_literals;
 using crimson::gui::CanonicalOverlayState;
@@ -75,6 +77,59 @@ class Reader : public crimson::zarr::KeypointOverlayRepository {
   crimson::zarr::KeypointOverlayDescriptor descriptor_;
   std::shared_ptr<Gate> gate_;
 };
+
+struct MaskReaderState {
+  std::mutex mutex;
+  std::vector<int64_t> reads;
+};
+
+class MaskReader : public crimson::zarr::SubjectMaskOverlayRepository {
+ public:
+  explicit MaskReader(std::shared_ptr<MaskReaderState> state)
+      : state_(std::move(state)) {
+    descriptor_.source_group = "refined_subject_masks_runs";
+    descriptor_.run_name = "latency-mask-fixture";
+    descriptor_.camera_frame_count = 80;
+    descriptor_.row_count = 80;
+    descriptor_.mask_width = 2;
+    descriptor_.mask_height = 2;
+    descriptor_.storage_chunk_rows = 8;
+    descriptor_.component_labels = {"subject_body"};
+  }
+  const crimson::zarr::SubjectMaskOverlayDescriptor& descriptor() const override {
+    return descriptor_;
+  }
+  crimson::zarr::SubjectMaskOverlayResolution resolveCameraFrame(
+      int64_t frame, int, int) const override {
+    {
+      std::lock_guard<std::mutex> lock(state_->mutex);
+      state_->reads.push_back(frame);
+    }
+    std::this_thread::sleep_for(
+        frame == 3 || frame == 13 || frame == 23 ? 40ms : 2ms);
+    if (frame == 31) throw std::runtime_error("fixture mask read failure");
+    crimson::zarr::SubjectMaskOverlayResolution result;
+    result.camera_frame = frame == 32 ? 33 : frame;
+    if (frame == 30) {
+      result.status = crimson::zarr::SubjectMaskOverlayStatus::Missing;
+      return result;
+    }
+    result.status = crimson::zarr::SubjectMaskOverlayStatus::Mapped;
+    crimson::zarr::SubjectMaskOverlayDetection detection;
+    crimson::zarr::SubjectMaskOverlayComponent component;
+    component.label = "subject_body";
+    component.present = true;
+    component.mask_width = component.mask_height = 2;
+    component.mask = std::make_shared<const std::vector<uint8_t>>(
+        std::initializer_list<uint8_t>{255, 0, 0, 255});
+    detection.components.push_back(std::move(component));
+    result.detections.push_back(std::move(detection));
+    return result;
+  }
+ private:
+  crimson::zarr::SubjectMaskOverlayDescriptor descriptor_;
+  std::shared_ptr<MaskReaderState> state_;
+};
 crimson::gui::CanonicalOverlayOpenRequest request(std::string name) {
   crimson::gui::CanonicalOverlayOpenRequest result;
   result.archive_path = std::move(name);
@@ -92,10 +147,27 @@ crimson::gui::CanonicalOverlayRepositories opened(const std::string& name,
   result.shape_error = "fixture shape unavailable";
   return result;
 }
+crimson::gui::CanonicalOverlayRepositories openedMasks(
+    const std::string& name, const std::shared_ptr<MaskReaderState>& state) {
+  crimson::gui::CanonicalOverlayRepositories result;
+  result.selection.archive_identity = name;
+  result.selection.frame_count = 80;
+  result.masks = std::make_unique<MaskReader>(state);
+  return result;
+}
 bool waitFrame(crimson::gui::CanonicalOverlaySession& session, int64_t frame) {
   const auto deadline = std::chrono::steady_clock::now() + 3s;
   while (std::chrono::steady_clock::now() < deadline) {
     if (session.snapshot(frame).keypoints.frame) return true;
+    std::this_thread::sleep_for(1ms);
+  }
+  return false;
+}
+bool waitMaskState(crimson::gui::CanonicalOverlaySession& session,
+                   int64_t frame, CanonicalOverlayState state) {
+  const auto deadline = std::chrono::steady_clock::now() + 3s;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (session.snapshot(frame).masks.state == state) return true;
     std::this_thread::sleep_for(1ms);
   }
   return false;
@@ -178,8 +250,83 @@ bool testNonblockingCloseAndSourceIsolation() {
   second.shutdown();
   return true;
 }
+
+bool testMaskReadAheadAtRenderRate(int render_hz) {
+  auto scheduler =
+      std::make_shared<crimson::data::DataAccessScheduler>(64, 4, 1, 1);
+  auto reader_state = std::make_shared<MaskReaderState>();
+  crimson::gui::CanonicalOverlaySession session(
+      scheduler, [reader_state](const auto& r) {
+        return openedMasks(r.archive_path, reader_state);
+      });
+  auto open_request = request("mask-latency-" + std::to_string(render_hz));
+  open_request.frame_count = 80;
+  CHECK(session.beginOpen(open_request));
+  CHECK(session.waitUntilOpen(3s));
+  crimson::gui::CanonicalOverlayPlaybackDemand paused;
+  paused.read_ahead = true;
+  paused.direction = crimson::gui::CanonicalOverlayPlaybackDirection::Paused;
+  paused.source_frames_per_second = 30.0;
+  paused.playback_rate = 1.0;
+  CHECK(session.requestFrame(0, false, true, false, true, paused));
+  const auto prewarm_deadline = std::chrono::steady_clock::now() + 3s;
+  while (std::chrono::steady_clock::now() < prewarm_deadline &&
+         session.snapshot(0).mask_buffer_metrics.contiguous_ready_ahead < 8) {
+    std::this_thread::sleep_for(1ms);
+  }
+  auto warmed = session.snapshot(0);
+  CHECK(warmed.masks.state == CanonicalOverlayState::Ready);
+  CHECK(warmed.mask_buffer_metrics.effective_lookahead_frames >= 8);
+  CHECK(warmed.mask_buffer_metrics.contiguous_ready_ahead >= 8);
+
+  auto playing = paused;
+  playing.direction =
+      crimson::gui::CanonicalOverlayPlaybackDirection::Forward;
+  const auto started = std::chrono::steady_clock::now();
+  int64_t last_frame = -1;
+  for (int tick = 0; last_frame < 29; ++tick) {
+    const int64_t frame = std::min<int64_t>(29, (tick * 30) / render_hz);
+    CHECK(session.requestFrame(frame, false, true, false, false, playing));
+    if (frame != last_frame) {
+      const auto first_presentation = session.snapshot(frame);
+      CHECK(first_presentation.masks.state == CanonicalOverlayState::Ready);
+      CHECK(first_presentation.masks.frame != nullptr);
+      CHECK(first_presentation.masks.frame->camera_frame == frame);
+      last_frame = frame;
+    }
+    std::this_thread::sleep_until(
+        started + std::chrono::microseconds(
+                      static_cast<int64_t>((tick + 1) * 1000000LL /
+                                           render_hz)));
+  }
+  const auto final = session.snapshot(29);
+  CHECK(final.mask_buffer_metrics.cached_payload_bytes <=
+        final.mask_buffer_metrics.maximum_cached_payload_bytes);
+  CHECK(final.mask_buffer_metrics.current_frame_ready);
+  {
+    std::lock_guard<std::mutex> lock(reader_state->mutex);
+    for (const int64_t boundary : {7, 8, 15, 16, 23, 24}) {
+      CHECK(std::find(reader_state->reads.begin(), reader_state->reads.end(),
+                      boundary) != reader_state->reads.end());
+    }
+  }
+
+  CHECK(session.requestFrame(30, false, true, false, false, playing));
+  CHECK(waitMaskState(session, 30, CanonicalOverlayState::Empty));
+  CHECK(session.requestFrame(31, false, true, false, false, playing));
+  CHECK(waitMaskState(session, 31, CanonicalOverlayState::Failed));
+  CHECK(session.requestFrame(32, false, true, false, false, playing));
+  CHECK(waitMaskState(session, 32, CanonicalOverlayState::Failed));
+  CHECK(session.snapshot(32).masks.error.find("different") !=
+        std::string::npos);
+  session.shutdown();
+  scheduler->shutdown();
+  return true;
+}
 int main() {
   if (!testSnapshotsAndFailures() || !testSupersededOpen() ||
-      !testNonblockingCloseAndSourceIsolation()) return 1;
+      !testNonblockingCloseAndSourceIsolation() ||
+      !testMaskReadAheadAtRenderRate(30) ||
+      !testMaskReadAheadAtRenderRate(60)) return 1;
   std::cout << "canonical_overlay_session_tests passed\n";
 }
