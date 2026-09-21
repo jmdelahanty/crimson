@@ -3,6 +3,7 @@
 #include "global.h"
 #include "gui/camera_view_manual_keypoint_input.h"
 #include "gui/camera_view_overlay_renderer.h"
+#include "gui/camera_view_keypoint_scene_adapter.h"
 #include "overlay_scene_contract.h"
 
 #include "imgui.h"
@@ -1087,13 +1088,13 @@ CameraViewWindowResult drawCameraViewWindowContents(
                         if (context.can_draw_headings &&
                             context.keypoint_descriptor != nullptr &&
                             context.keypoint_frame != nullptr) {
-                            drawCameraViewHeadingOverlay(
-                                *context.keypoint_descriptor,
-                                *context.keypoint_frame,
-                                static_cast<float>(camera.image_width),
-                                image_height_px,
-                                context.view_idx,
-                                context.presented_frame);
+                            const auto heading_scene = crimson::gui::makeCameraViewKeypointHeadingScene(
+                                    *context.keypoint_descriptor, *context.keypoint_frame,
+                                    context.view_idx, context.presented_frame,
+                                    static_cast<int>(camera.image_width), static_cast<int>(camera.image_height));
+                            drawCameraViewReadOnlyOverlayScene(heading_scene, image_height_px);
+                            result.perf.heading_overlay_item_count += static_cast<int>(
+                                heading_scene.count(CameraOverlayLayer::KeypointHeading));
                         }
                         break;
                     case CameraOverlayLayer::MovementLabel:
@@ -1136,6 +1137,12 @@ CameraViewWindowResult drawCameraViewWindowContents(
                         }
                         break;
                     case CameraOverlayLayer::SubjectShape:
+                        if (context.subject_shape_scene != nullptr) {
+                            drawCameraViewReadOnlyOverlayScene(
+                                *context.subject_shape_scene, image_height_px);
+                            result.perf.subject_shape_overlay_item_count += static_cast<int>(
+                                context.subject_shape_scene->count(CameraOverlayLayer::SubjectShape));
+                        }
                         if (context.subject_shape_details != nullptr) {
                             const auto subject_shape_overlay_start =
                                 std::chrono::steady_clock::now();
@@ -1204,15 +1211,16 @@ CameraViewWindowResult drawCameraViewWindowContents(
                                           context.selected_keypoint_selection
                                               ->detection_index)
                                     : -1;
-                            drawCameraViewDetectionKeypointMarkers(
-                                *context.keypoint_descriptor,
-                                *context.keypoint_frame,
-                                context.show_keypoint_markers,
-                                static_cast<float>(camera.image_width),
-                                image_height_px,
-                                context.view_idx,
-                                context.presented_frame,
-                                keypoint_skip_detection);
+                            if (context.show_keypoint_markers) {
+                                const auto keypoint_scene = crimson::gui::makeCameraViewKeypointMarkerScene(
+                                        *context.keypoint_descriptor, *context.keypoint_frame,
+                                        context.view_idx, context.presented_frame,
+                                        static_cast<int>(camera.image_width), static_cast<int>(camera.image_height),
+                                        keypoint_skip_detection);
+                                drawCameraViewReadOnlyOverlayScene(keypoint_scene, image_height_px);
+                                result.perf.keypoint_overlay_item_count += static_cast<int>(
+                                    keypoint_scene.count(CameraOverlayLayer::Keypoints));
+                            }
                         }
                         break;
                 }

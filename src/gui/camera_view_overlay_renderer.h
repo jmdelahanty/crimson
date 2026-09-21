@@ -1,5 +1,8 @@
 #pragma once
 
+// Must be called on the owning GL thread before context teardown/source reuse.
+void clearCameraViewReadOnlyMaskTextureCache();
+
 #include "camera.h"
 #include "chaser_distance_polar_scene.h"
 #include "stimulus_camera_overlay_scene.h"

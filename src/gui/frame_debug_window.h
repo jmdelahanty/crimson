@@ -3,6 +3,7 @@
 #include "gui/camera_view_overlay_renderer.h"
 #include "gui/crop_keypoint_editor.h"
 #include "gui/frame_inspect_eye_angle_module.h"
+#include "gui/frame_inspect_keypoint_module.h"
 #include "gui/frame_inspect_subject_mask_module.h"
 #include "gui/frame_inspect_subject_shape_module.h"
 #include "gui/refined_keypoint_review_panel.h"
@@ -19,7 +20,10 @@
 #include <string>
 #include <vector>
 
+namespace crimson::gui { struct CanonicalOverlaySnapshot; }
+
 struct FrameDebugWindowState {
+    crimson::gui::KeypointInspectModuleState canonical_keypoint_inspect;
     ReviewMetadataEditorState manual_write_review;
     RefinedKeypointReviewPanelState keypoint_review_panel;
     SubjectMaskEditSession subject_mask_edit_session;
@@ -113,6 +117,7 @@ struct FrameDebugWindowContext {
     CameraViewChaserDistancePolarInsetOptions
         chaser_distance_polar_inset_options;
     bool show_stimulus_debug_windows = false;
+    const crimson::gui::CanonicalOverlaySnapshot* canonical_overlays = nullptr;
 };
 
 struct FrameDebugWindowResult {

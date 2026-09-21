@@ -17,6 +17,7 @@
 #include <mutex>
 #include <optional>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -296,11 +297,16 @@ class TensorStoreCanonicalDetectionRepository final
 public:
   TensorStoreCanonicalDetectionRepository(
       CanonicalDetectionDescriptor descriptor, std::vector<int64_t> offsets,
+      ts::TensorStore<int32_t, 1> frame_indices,
+      ts::TensorStore<int64_t, 1> source_acquisition_frames,
+      ts::TensorStore<uint64_t, 1> instance_keys,
       ts::TensorStore<float, 2> boxes, ts::TensorStore<float, 1> scores,
       ts::TensorStore<int32_t, 1> classes)
       : descriptor_(std::move(descriptor)), offsets_(std::move(offsets)),
-        boxes_(std::move(boxes)), scores_(std::move(scores)),
-        classes_(std::move(classes)) {}
+        frame_indices_(std::move(frame_indices)),
+        source_acquisition_frames_(std::move(source_acquisition_frames)),
+        instance_keys_(std::move(instance_keys)), boxes_(std::move(boxes)),
+        scores_(std::move(scores)), classes_(std::move(classes)) {}
 
   const CanonicalDetectionDescriptor &descriptor() const override {
     return descriptor_;
@@ -341,6 +347,8 @@ public:
         resident ? resident->bbox_norm_coords : paged_rows.bbox_norm_coords;
     const auto &scores = resident ? resident->scores : paged_rows.scores;
     const auto &classes = resident ? resident->class_ids : paged_rows.class_ids;
+    const auto &keys =
+        resident ? resident->instance_keys : paged_rows.instance_keys;
 
     const size_t row_count = last_row - first_row;
     page.frames.reserve(last_frame - first_frame + 1);
@@ -355,6 +363,8 @@ public:
         CanonicalDetection detection;
         detection.row_index = static_cast<int64_t>(row);
         const size_t value_row = resident ? row : local;
+        detection.instance_key = keys[value_row];
+        detection.instance_key_valid = true;
         std::copy_n(boxes.data() + value_row * 4, 4,
                     detection.normalized_cxcywh.begin());
         detection.score = scores[value_row];
@@ -363,7 +373,7 @@ public:
       }
       page.frames.push_back(std::move(resolved));
     }
-    page.decoded_bytes = row_count * kUiDecodedBytesPerRow;
+    page.decoded_bytes = row_count * kUiReadDecodedBytesPerRow;
     page.status = CanonicalDetectionPageStatus::Ready;
     recordPageMetrics(page, row_count, elapsedMilliseconds(started),
                       resident != nullptr);
@@ -372,10 +382,10 @@ public:
 
   uint64_t decodedUiColumnBytes() const override {
     if (descriptor_.row_count >
-        std::numeric_limits<uint64_t>::max() / kUiDecodedBytesPerRow) {
+        std::numeric_limits<uint64_t>::max() / kUiRetainedBytesPerRow) {
       return std::numeric_limits<uint64_t>::max();
     }
-    return descriptor_.row_count * kUiDecodedBytesPerRow;
+    return descriptor_.row_count * kUiRetainedBytesPerRow;
   }
 
   std::vector<CanonicalDetectionUiResidencyChunk>
@@ -385,7 +395,7 @@ public:
       return chunks;
     }
     const size_t maximum_rows = static_cast<size_t>(std::max<uint64_t>(
-        1, maximum_chunk_decoded_bytes / kUiDecodedBytesPerRow));
+        1, maximum_chunk_decoded_bytes / kUiReadDecodedBytesPerRow));
     const size_t frame_count = descriptor_.camera_frame_count;
     size_t first_frame = 0;
     while (first_frame < frame_count) {
@@ -418,7 +428,7 @@ public:
     auto rows = readStorageUiRows(first_row, last_row_exclusive);
     std::lock_guard<std::mutex> lock(metrics_mutex_);
     ++metrics_.residency_chunk_reads;
-    metrics_.ui_field_reads += 3;
+    metrics_.ui_field_reads += 6;
     metrics_.maximum_residency_chunk_read_ms = std::max(
         metrics_.maximum_residency_chunk_read_ms, elapsedMilliseconds(started));
     if (rows.ready()) {
@@ -434,15 +444,24 @@ public:
   bool publishResidentUiColumns(
       std::shared_ptr<const CanonicalDetectionResidentUiColumns> columns,
       std::string *error) override {
-    if (!columns || !columns->valid(descriptor_.row_count)) {
+    if (!columns ||
+        !columns->valid(descriptor_.row_count, false, true)) {
       assignError(error, "Canonical resident UI column extents are invalid");
       return false;
     }
+    std::unordered_set<uint64_t> instance_keys;
+    instance_keys.reserve(descriptor_.row_count);
     for (size_t row = 0; row < descriptor_.row_count; ++row) {
       if (!validUiRow(columns->bbox_norm_coords.data() + row * 4,
                       columns->scores[row], columns->class_ids[row])) {
         assignError(error,
                     "Canonical resident UI value contract failed at row " +
+                        std::to_string(row));
+        return false;
+      }
+      if (!instance_keys.insert(columns->instance_keys[row]).second) {
+        assignError(error,
+                    "Canonical instance_key is not globally unique at row " +
                         std::to_string(row));
         return false;
       }
@@ -482,7 +501,10 @@ public:
   }
 
 private:
-  static constexpr uint64_t kUiDecodedBytesPerRow = 6 * sizeof(uint32_t);
+  static constexpr uint64_t kUiRetainedBytesPerRow =
+      4 * sizeof(float) + sizeof(float) + sizeof(int32_t) + sizeof(uint64_t);
+  static constexpr uint64_t kUiReadDecodedBytesPerRow =
+      kUiRetainedBytesPerRow + sizeof(int32_t) + sizeof(int64_t);
 
   static bool validUiRow(const float *box, float score, int32_t class_id) {
     return std::all_of(box, box + 4,
@@ -533,30 +555,85 @@ private:
                         error);
       });
     });
+    auto frames_future = std::async(std::launch::async, [&] {
+      return readField([&](std::string *error) {
+        return readRows(frame_indices_, first_row, last_row, 1,
+                        &rows.frame_indices, error);
+      });
+    });
+    auto source_frames_future = std::async(std::launch::async, [&] {
+      return readField([&](std::string *error) {
+        return readRows(source_acquisition_frames_, first_row, last_row, 1,
+                        &rows.source_acquisition_frame_indices, error);
+      });
+    });
+    auto keys_future = std::async(std::launch::async, [&] {
+      return readField([&](std::string *error) {
+        return readRows(instance_keys_, first_row, last_row, 1,
+                        &rows.instance_keys, error);
+      });
+    });
     const auto boxes_result = boxes_future.get();
     const auto scores_result = scores_future.get();
     const auto classes_result = classes_future.get();
-    if (!boxes_result.ready || !scores_result.ready || !classes_result.ready) {
+    const auto frames_result = frames_future.get();
+    const auto source_frames_result = source_frames_future.get();
+    const auto keys_result = keys_future.get();
+    if (!boxes_result.ready || !scores_result.ready || !classes_result.ready ||
+        !frames_result.ready || !source_frames_result.ready ||
+        !keys_result.ready) {
       rows.status = CanonicalDetectionPageStatus::ReadFailed;
       rows.error = !boxes_result.ready    ? boxes_result.error
                    : !scores_result.ready ? scores_result.error
-                                          : classes_result.error;
+                   : !classes_result.ready ? classes_result.error
+                   : !frames_result.ready ? frames_result.error
+                   : !source_frames_result.ready
+                       ? source_frames_result.error
+                       : keys_result.error;
       return rows;
     }
     const size_t row_count = last_row - first_row;
+    std::unordered_set<uint64_t> instance_keys;
+    instance_keys.reserve(row_count);
+    size_t expected_frame = 0;
+    if (first_row < descriptor_.row_count) {
+      const auto upper = std::upper_bound(
+          offsets_.begin(), offsets_.end(), static_cast<int64_t>(first_row));
+      expected_frame =
+          upper == offsets_.begin()
+              ? 0
+              : static_cast<size_t>(std::distance(offsets_.begin(), upper) - 1);
+      expected_frame =
+          std::min(expected_frame, descriptor_.camera_frame_count - 1);
+    }
     for (size_t row = 0; row < row_count; ++row) {
+      const size_t global_row = first_row + row;
+      while (expected_frame + 1 < offsets_.size() &&
+             global_row >= static_cast<size_t>(offsets_[expected_frame + 1])) {
+        ++expected_frame;
+      }
       if (!validUiRow(rows.bbox_norm_coords.data() + row * 4, rows.scores[row],
-                      rows.class_ids[row])) {
+                      rows.class_ids[row]) ||
+          expected_frame >
+              static_cast<size_t>(std::numeric_limits<int32_t>::max()) ||
+          rows.frame_indices[row] != static_cast<int32_t>(expected_frame) ||
+          rows.source_acquisition_frame_indices[row] !=
+              static_cast<int64_t>(expected_frame) ||
+          !instance_keys.insert(rows.instance_keys[row]).second) {
         rows.status = CanonicalDetectionPageStatus::ReadFailed;
-        rows.error = "Canonical detection value contract failed at row " +
-                     std::to_string(first_row + row);
+        rows.error =
+            "Canonical detection value/identity/frame contract failed at row " +
+            std::to_string(global_row);
+        rows.frame_indices.clear();
+        rows.source_acquisition_frame_indices.clear();
+        rows.instance_keys.clear();
         rows.bbox_norm_coords.clear();
         rows.scores.clear();
         rows.class_ids.clear();
         return rows;
       }
     }
-    rows.decoded_bytes = row_count * kUiDecodedBytesPerRow;
+    rows.decoded_bytes = row_count * kUiReadDecodedBytesPerRow;
     rows.status = CanonicalDetectionPageStatus::Ready;
     return rows;
   }
@@ -569,7 +646,7 @@ private:
       ++metrics_.resident_range_reads;
     } else {
       ++metrics_.paged_range_reads;
-      metrics_.ui_field_reads += 3;
+      metrics_.ui_field_reads += 6;
     }
     metrics_.maximum_range_read_ms =
         std::max(metrics_.maximum_range_read_ms, elapsed_ms);
@@ -586,6 +663,9 @@ private:
 
   CanonicalDetectionDescriptor descriptor_;
   std::vector<int64_t> offsets_;
+  ts::TensorStore<int32_t, 1> frame_indices_;
+  ts::TensorStore<int64_t, 1> source_acquisition_frames_;
+  ts::TensorStore<uint64_t, 1> instance_keys_;
   ts::TensorStore<float, 2> boxes_;
   ts::TensorStore<float, 1> scores_;
   ts::TensorStore<int32_t, 1> classes_;
@@ -637,6 +717,23 @@ std::unique_ptr<CanonicalDetectionRepository> OpenCanonicalDetectionRepository(
   }
 
   const auto handles_started = Clock::now();
+  auto frame_indices = openExact<int32_t, 1>(
+      *archive->impl_, *root, base + "/instances/frame_indices",
+      error_message);
+  if (frame_indices) {
+    ++metrics.exact_handle_opens;
+  }
+  auto source_acquisition_frames = openExact<int64_t, 1>(
+      *archive->impl_, *root,
+      base + "/instances/source_acquisition_frame_index", error_message);
+  if (source_acquisition_frames) {
+    ++metrics.exact_handle_opens;
+  }
+  auto instance_keys = openExact<uint64_t, 1>(
+      *archive->impl_, *root, base + "/instances/instance_key", error_message);
+  if (instance_keys) {
+    ++metrics.exact_handle_opens;
+  }
   auto boxes =
       openExact<float, 2>(*archive->impl_, *root,
                           base + "/instances/bbox_norm_coords", error_message);
@@ -660,7 +757,8 @@ std::unique_ptr<CanonicalDetectionRepository> OpenCanonicalDetectionRepository(
     ++metrics.exact_handle_opens;
   }
   metrics.exact_handle_open_ms = elapsedMilliseconds(handles_started);
-  if (!boxes || !scores || !classes || !offsets) {
+  if (!frame_indices || !source_acquisition_frames || !instance_keys ||
+      !boxes || !scores || !classes || !offsets) {
     return nullptr;
   }
 
@@ -683,13 +781,17 @@ std::unique_ptr<CanonicalDetectionRepository> OpenCanonicalDetectionRepository(
   }
   descriptor.offset_read_calls = 1;
   descriptor.retained_offset_bytes = metrics.retained_offset_bytes;
+  descriptor.identity_authority =
+      CanonicalDetectionIdentityAuthority::PublishedInstanceKeyV1;
   metrics.total_ms = elapsedMilliseconds(all_started);
   if (open_metrics) {
     *open_metrics = metrics;
   }
   return std::make_unique<TensorStoreCanonicalDetectionRepository>(
-      std::move(descriptor), std::move(retained_offsets), std::move(*boxes),
-      std::move(*scores), std::move(*classes));
+      std::move(descriptor), std::move(retained_offsets),
+      std::move(*frame_indices), std::move(*source_acquisition_frames),
+      std::move(*instance_keys), std::move(*boxes), std::move(*scores),
+      std::move(*classes));
 }
 
 } // namespace crimson::zarr

@@ -40,12 +40,22 @@ bool appendSubjectShapeOverlaySceneInput(
     shape.detection_index = detection.detection_index;
     shape.source_refined_row_id = detection.source_refined_row_id;
     shape.source_crop_row_id = detection.source_crop_row_id;
-    shape.source_rect = {detection.roi_x, detection.roi_y,
-                         detection.roi_width, detection.roi_height};
+    shape.source_rect = descriptor.geometry_in_source_camera_coordinates
+                            ? overlay::Rect{0.0, 0.0,
+                                            static_cast<double>(
+                                                descriptor.coordinate_width),
+                                            static_cast<double>(descriptor
+                                                                    .coordinate_height)}
+                            : overlay::Rect{detection.roi_x, detection.roi_y,
+                                            detection.roi_width,
+                                            detection.roi_height};
     shape.coordinate_width = descriptor.coordinate_width;
     shape.coordinate_height = descriptor.coordinate_height;
     const auto &geometry = detection.geometry;
-    shape.body_frame_valid = geometry.body_frame_valid;
+    shape.body_frame_valid =
+        geometry.body_frame_valid &&
+        (!descriptor.geometry_in_source_camera_coordinates ||
+         geometry.body_axis_valid);
     shape.body_origin = point(geometry.body_origin);
     shape.body_forward_axis = point(geometry.body_forward_axis);
     shape.body_left_axis = point(geometry.body_left_axis);
@@ -65,6 +75,8 @@ bool appendSubjectShapeOverlaySceneInput(
     shape.tail_sample_valid = geometry.tail_sample_valid;
     shape.tail_samples = points(geometry.tail_samples);
     shape.tail_normals = points(geometry.tail_normals);
+    shape.instance_key = detection.instance_key;
+    shape.instance_key_valid = detection.instance_key_valid;
     input->subject_shapes.push_back(std::move(shape));
   }
   return input->subject_shapes.size() > initial_size;

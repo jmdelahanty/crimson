@@ -360,6 +360,7 @@ public:
         CanonicalDetection detection;
         detection.row_index = static_cast<int64_t>(row);
         detection.instance_key = keys[index];
+        detection.instance_key_valid = true;
         detection.refined_row_id = refined_ids[index];
         detection.source_detect_row_index = source_rows[index];
         detection.source_kind_code = kinds[index];

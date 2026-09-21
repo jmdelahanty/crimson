@@ -48,6 +48,9 @@ makeDescriptor(size_t frame_count = 2'592'041, size_t source_width = 1000,
   descriptor.retained_offset_bytes = (frame_count + 1) * sizeof(int64_t);
   descriptor.offset_read_calls = 1;
   descriptor.consolidated_metadata = true;
+  descriptor.identity_authority =
+      crimson::zarr::CanonicalDetectionIdentityAuthority::
+          PublishedInstanceKeyV1;
   return descriptor;
 }
 
@@ -219,7 +222,13 @@ private:
   static crimson::zarr::CanonicalDetection makeDetection(int64_t frame) {
     crimson::zarr::CanonicalDetection detection;
     detection.row_index = frame * 4;
-    detection.instance_key = static_cast<uint64_t>(frame) + 10;
+    detection.instance_key =
+        frame == 54'000
+            ? uint64_t{0}
+            : frame == 53'999
+                  ? std::numeric_limits<uint64_t>::max() - 3
+                  : static_cast<uint64_t>(frame) + 10;
+    detection.instance_key_valid = true;
     detection.source_kind_code = 2;
     detection.score_valid = true;
     detection.normalized_cxcywh = {0.5f, 0.25f, 0.2f, 0.1f};
@@ -312,6 +321,7 @@ bool testCacheOnlyResolveAndNonblockingRequest() {
   CHECK(descriptor.active_dataset ==
         crimson::zarr::DetectionDataset::RawDetect);
   CHECK(!descriptor.coordinates_normalized);
+  CHECK(descriptor.has_validated_instance_keys);
   CHECK(descriptor.source_width == 1000);
   CHECK(descriptor.source_height == 500);
   CHECK(!descriptor.activeDatasetAllowsBboxEditing());
@@ -347,6 +357,8 @@ bool testCacheOnlyResolveAndNonblockingRequest() {
   const auto &observation = ready.observations.front();
   CHECK(observation.ordinal == 0);
   CHECK(observation.canonical_row_index == 216'000);
+  CHECK(observation.instance_key == 0);
+  CHECK(observation.instance_key_valid);
   CHECK(near(observation.box_xyxy[0], 400.0f));
   CHECK(near(observation.box_xyxy[1], 100.0f));
   CHECK(near(observation.box_xyxy[2], 600.0f));
@@ -415,6 +427,11 @@ bool testExactParentBoundariesAndBoundedPages() {
   CHECK(repository.requestPresentedFrame(53'999, false, &error));
   scheduler->waitUntilIdle();
   CHECK(repository.resolveFrame(53'999, false).frame_id == 53'999);
+  CHECK(repository.resolveFrame(53'999, false).observations.front().instance_key ==
+        std::numeric_limits<uint64_t>::max() - 3);
+  CHECK(repository.resolveFrame(53'999, false)
+            .observations.front()
+            .instance_key_valid);
   CHECK(repository.resolveFrame(54'000, false).frame_id == 54'000);
 
   // The mounted August clip set has a late unequal boundary at parent frame
@@ -629,6 +646,17 @@ bool testExpectedVideoContractMismatchesFailClosed() {
       std::make_shared<crimson::data::DataAccessScheduler>(8, 2, 1, 1);
   crimson::platform::nvidia::NvidiaDetectionRepository repository(scheduler);
   std::string error;
+
+  auto identity_unavailable = makeDescriptor();
+  identity_unavailable.identity_authority =
+      crimson::zarr::CanonicalDetectionIdentityAuthority::Unavailable;
+  CHECK(!repository.openForTesting(
+      makeRepository(identity_unavailable,
+                     std::make_shared<FakeRepositoryState>()),
+      makeOpenRequest(), &error));
+  CHECK(repository.state() ==
+        crimson::platform::nvidia::NvidiaDetectionState::Failed);
+  CHECK(!error.empty());
 
   auto frame_request = makeOpenRequest();
   frame_request.expected_camera_frame_count = 2'592'040;

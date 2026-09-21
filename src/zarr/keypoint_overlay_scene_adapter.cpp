@@ -1,6 +1,7 @@
 #include "zarr/keypoint_overlay_scene_adapter.h"
 
 #include <utility>
+#include <limits>
 
 namespace crimson::zarr {
 
@@ -27,6 +28,7 @@ makeKeypointOverlaySceneInput(const KeypointOverlayDescriptor &descriptor,
   for (const auto &metadata : resolution.detections) {
     overlay::DetectionOverlayInput detection;
     detection.instance_key = metadata.instance_key;
+    detection.instance_key_valid = metadata.instance_key_valid;
     if (metadata.full_frame_box_xywh) {
       const auto &box = *metadata.full_frame_box_xywh;
       detection.box = overlay::DetectionBoxInput{
@@ -36,8 +38,13 @@ makeKeypointOverlaySceneInput(const KeypointOverlayDescriptor &descriptor,
                                           : overlay::BoxProvenance::Clean};
     }
     detection.keypoints.reserve(metadata.keypoints.size());
-    for (const auto point : metadata.keypoints) {
-      detection.keypoints.push_back({point.x, point.y});
+    for (size_t index = 0; index < metadata.keypoints.size(); ++index) {
+      const auto point = metadata.keypoints[index];
+      const bool valid = metadata.keypoint_valid.empty() ||
+          (index < metadata.keypoint_valid.size() && metadata.keypoint_valid[index]);
+      const double nan = std::numeric_limits<double>::quiet_NaN();
+      detection.keypoints.push_back(valid ? overlay::Point{point.x, point.y}
+                                         : overlay::Point{nan, nan});
     }
     if (metadata.heading_origin) {
       detection.heading_origin = overlay::Point{metadata.heading_origin->x,

@@ -321,8 +321,8 @@ void validateCanonicalTraversal(
           "Canonical adapter did not read root metadata exactly once");
   require(open.consolidated_array_declarations == 9,
           "Canonical adapter did not validate nine declarations");
-  require(open.exact_handle_opens == 4,
-          "Canonical adapter did not perform four exact opens");
+  require(open.exact_handle_opens == 7,
+          "Canonical adapter did not perform seven exact opens");
   require(open.fallback_metadata_reads == 0 && open.fallback_dtype_opens == 0,
           "Canonical adapter used a forbidden fallback probe");
   require(open.offset_read_calls == 1,

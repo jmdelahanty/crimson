@@ -703,7 +703,7 @@ int main(int argc, char **argv) {
               "Resident preload did not publish a ready snapshot");
       const auto completed_residency = buffer.residencyMetrics();
       require(completed_residency.decoded_hot_bytes ==
-                  descriptor.row_count * 24ULL,
+                  descriptor.row_count * 32ULL,
               "Resident decoded-byte accounting is inconsistent");
       require(completed_residency.retained_bytes ==
                   completed_residency.decoded_hot_bytes,

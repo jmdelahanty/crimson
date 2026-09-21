@@ -82,6 +82,11 @@ bool validateCanonicalRepository(
                 "Selected repository is not the requested canonical raw run");
     return false;
   }
+  if (!descriptor.hasValidatedInstanceKeys()) {
+    assignError(error,
+                "Canonical raw detection observation identity is unavailable");
+    return false;
+  }
   if (!request.canonical_raw_run.empty() &&
       descriptor.run_name != request.canonical_raw_run) {
     assignError(error,
@@ -141,6 +146,7 @@ crimson::zarr::DetectionRepositoryDescriptor makeDescriptor(
   result.interpolation_available = false;
   result.clipped_collection = false;
   result.active_dataset_has_synthetic_observations = false;
+  result.has_validated_instance_keys = canonical.hasValidatedInstanceKeys();
   return result;
 }
 
@@ -550,6 +556,20 @@ crimson::zarr::DetectionFrame NvidiaDetectionRepository::resolveFrame(
   result.observations.reserve(canonical->detections.size());
   for (size_t index = 0; index < canonical->detections.size(); ++index) {
     const auto &detection = canonical->detections[index];
+    if (!detection.instance_key_valid) {
+      std::lock_guard<std::mutex> lock(impl_->mutex);
+      if (impl_->observed.state == NvidiaDetectionState::Ready &&
+          impl_->observed.generation == generation &&
+          impl_->buffer == buffer) {
+        ++impl_->observed.invalid_geometry_frames;
+        impl_->observed.last_error =
+            "Canonical detection is missing validated observation identity";
+      } else {
+        ++impl_->observed.stale_frames_discarded;
+      }
+      result.observations.clear();
+      return result;
+    }
     const auto &box = detection.normalized_cxcywh;
     const auto pixels =
         crimson::coordinates::normalizedCenterSizeBoxToContinuousPixelXyxy(
@@ -571,6 +591,8 @@ crimson::zarr::DetectionFrame NvidiaDetectionRepository::resolveFrame(
     crimson::zarr::DetectionObservation observation;
     observation.ordinal = index;
     observation.canonical_row_index = detection.row_index;
+    observation.instance_key = detection.instance_key;
+    observation.instance_key_valid = detection.instance_key_valid;
     observation.box_xyxy = {static_cast<float>(pixels->x_min),
                             static_cast<float>(pixels->y_min),
                             static_cast<float>(pixels->x_max),

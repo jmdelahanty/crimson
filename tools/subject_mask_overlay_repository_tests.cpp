@@ -407,6 +407,52 @@ bool WriteChunkedDenseFixture(const std::filesystem::path &root) {
   return true;
 }
 
+bool TestBoundedInteractiveDenseReads(
+    const std::shared_ptr<crimson::zarr::ArchiveContext>& archive) {
+  using namespace crimson::zarr;
+  std::string error;
+  auto baseline = OpenSubjectMaskOverlayRepository(archive, "dense_fixture", &error);
+  CHECK(baseline);
+  auto expected = baseline->resolveCameraFrame(2, 100, 80);
+  SubjectMaskOverlayOpenOptions options;
+  options.requested_run = "dense_fixture";
+  options.max_read_rows = 1;
+  options.max_cached_payload_bytes = 64 * 1024;
+  options.disable_prefetch = true;
+  options.serial_dense_channels = true;
+  auto bounded = OpenSubjectMaskOverlayRepository(archive, options, &error);
+  CHECK(bounded);
+  const auto actual = bounded->resolveCameraFrame(2, 100, 80);
+  CHECK(actual.status == SubjectMaskOverlayStatus::Mapped);
+  CHECK(actual.detections.size() == expected.detections.size());
+  for (size_t row = 0; row < actual.detections.size(); ++row) {
+    CHECK(actual.detections[row].roi_x == expected.detections[row].roi_x);
+    CHECK(actual.detections[row].roi_y == expected.detections[row].roi_y);
+    for (size_t channel = 0; channel < actual.detections[row].components.size(); ++channel) {
+      const auto& left = actual.detections[row].components[channel];
+      const auto& right = expected.detections[row].components[channel];
+      CHECK(left.present == right.present);
+      CHECK(bool(left.mask) == bool(right.mask));
+      if (left.mask) CHECK(*left.mask == *right.mask);
+    }
+  }
+  CHECK(bounded->metrics().prefetch_requests == 0);
+  CHECK(bounded->metrics().cached_payload_bytes <= options.max_cached_payload_bytes);
+  CHECK(bounded->metrics().dense_mask_payload_reads > 1);
+  options.max_cached_payload_bytes = 1;
+  auto oversized = OpenSubjectMaskOverlayRepository(archive, options, &error);
+  CHECK(oversized);
+  CHECK(oversized->resolveCameraFrame(2, 100, 80).status == SubjectMaskOverlayStatus::ReadFailed);
+  CHECK(oversized->metrics().dense_mask_payload_reads == 0);
+  options.max_cached_payload_bytes = 64 * 1024;
+  options.max_observations_per_frame = 1;
+  auto dense_frame = OpenSubjectMaskOverlayRepository(archive, options, &error);
+  CHECK(dense_frame);
+  CHECK(dense_frame->resolveCameraFrame(2, 100, 80).status == SubjectMaskOverlayStatus::ReadFailed);
+  CHECK(dense_frame->metrics().dense_mask_payload_reads == 0);
+  return true;
+}
+
 bool TestDenseRepositoryAndScene(
     const std::shared_ptr<crimson::zarr::ArchiveContext> &archive) {
   std::string error;
@@ -773,6 +819,7 @@ int main() {
   std::string error;
   auto archive = crimson::zarr::ArchiveContext::Open(root, &error);
   if (!archive || !TestDenseRepositoryAndScene(archive) ||
+      !TestBoundedInteractiveDenseReads(archive) ||
       !TestCompactRepositories(archive) ||
       !TestChunkCacheAndPrefetch(archive) ||
       !TestInvalidFrameCountsFailOnce(archive) ||

@@ -22,6 +22,8 @@
 #include "gui/camera_view_transport_controls.h"
 #include "gui/camera_view_window.h"
 #include "gui/canonical_timeline_session.h"
+#include "gui/canonical_overlay_session.h"
+#include "gui/canonical_overlay_presentation.h"
 #include "gui/canonical_timeline_window.h"
 #include "gui/crop_preview_window.h"
 #include "gui/diagnostics_window.h"
@@ -489,6 +491,14 @@ int main(int argc, char **argv) {
       analysis_data_scheduler);
   crimson::gui::CanonicalTimelineSession canonical_timeline_session(
       analysis_data_scheduler);
+  crimson::gui::CanonicalOverlaySession canonical_overlay_session(analysis_data_scheduler);
+  crimson::gui::CanonicalOverlaySnapshot last_canonical_overlay_snapshot;
+  int64_t canonical_overlay_draw_frame = -1;
+  int canonical_keypoint_draw_count = 0;
+  int canonical_heading_draw_count = 0;
+  int canonical_shape_draw_count = 0;
+  int canonical_expected_shape_draw_count = 0;
+  int canonical_expected_mask_draw_count = 0;
   crimson::gui::DetectionQualityTimelineControls
       detection_quality_timeline_controls;
   crimson::gui::KeypointQualityTimelineControls
@@ -755,6 +765,17 @@ int main(int argc, char **argv) {
   uint64_t canonical_detection_seen_seek_requests = 0;
   int canonical_detection_last_requested_frame = -1;
   std::string canonical_detection_last_request_error;
+  uint64_t canonical_overlay_seen_seek_requests = 0;
+  auto requestCanonicalOverlayFrame = [&](int frame, bool keypoints, bool masks, bool shapes) {
+    const uint64_t seek_requests = playback_transport.seekCoordinator().metrics().requests;
+    const bool accepted = canonical_overlay_session.requestFrame(
+        frame, keypoints, masks, shapes,
+        seek_requests != canonical_overlay_seen_seek_requests);
+    // A partial product rejection must not repeatedly invalidate products
+    // which already accepted this seek. New opens have their own source epoch.
+    canonical_overlay_seen_seek_requests = seek_requests;
+    return accepted;
+  };
   auto requestCanonicalDetectionFrame = [&](int frame) {
     if (!canonical_detection_route || frame < 0 ||
         canonical_detection_repository.state() !=
@@ -875,20 +896,38 @@ int main(int argc, char **argv) {
     canonical_detection_seen_seek_requests = 0;
     canonical_detection_last_requested_frame = -1;
 
+    clearCameraViewReadOnlyMaskTextureCache();
     if (!route_selected) {
       canonical_detection_repository.close();
       canonical_timeline_session.close();
+      canonical_overlay_session.close();
       refreshDetectionDatasetOptions(detection_repository);
       return;
     }
 
-    if (!archive_path.empty() && expected_frames > 0 && expected_fps > 0.0) {
+    const bool canonical_sources_eligible =
+        eligibility_error.empty() && !archive_path.empty() &&
+        !selected_raw_run.empty() && !expected_recording_identity.empty() &&
+        expected_frames > 0 && expected_width > 0 && expected_height > 0 &&
+        std::isfinite(expected_fps) && expected_fps > 0.0;
+    if (canonical_sources_eligible) {
       std::string timeline_open_error;
       crimson::gui::CanonicalTimelineOpenRequest timeline_request;
       timeline_request.archive_path = archive_path;
       timeline_request.expected_frame_count = expected_frames;
       timeline_request.frames_per_second = expected_fps;
       timeline_request.eye_angle_run = cli_eye_angle_run;
+      crimson::gui::CanonicalOverlayOpenRequest overlay_request;
+      overlay_request.archive_path = archive_path;
+      overlay_request.recording_id = expected_recording_identity;
+      overlay_request.eye_run = cli_eye_angle_run;
+      overlay_request.frame_count = expected_frames;
+      overlay_request.source_width = static_cast<int>(expected_width);
+      overlay_request.source_height = static_cast<int>(expected_height);
+      std::string overlay_error;
+      if (!canonical_overlay_session.beginOpen(std::move(overlay_request), &overlay_error)) {
+        std::cerr << "[CanonicalOverlay] state=failed error=" << overlay_error << std::endl;
+      }
       if (!canonical_timeline_session.beginOpen(std::move(timeline_request),
                                                 &timeline_open_error)) {
         std::cerr << "[CanonicalTimeline] state=failed archive="
@@ -897,15 +936,14 @@ int main(int argc, char **argv) {
       }
     } else {
       canonical_timeline_session.close();
+      canonical_overlay_session.close();
     }
 
     detection_dataset_ids.clear();
     detection_dataset_labels.clear();
     detection_dataset_choice = 0;
     g_zarr_bbox_edit_state.clearAll();
-    if (!eligibility_error.empty() || archive_path.empty() ||
-        selected_raw_run.empty() || expected_frames == 0 ||
-        expected_width == 0 || expected_height == 0) {
+    if (!canonical_sources_eligible) {
       canonical_detection_repository.close();
       std::ostringstream message;
       message << "Canonical detection route is not ready:";
@@ -915,8 +953,12 @@ int main(int argc, char **argv) {
         message << " archive path is unavailable";
       } else if (selected_raw_run.empty()) {
         message << " selected raw run is unavailable";
+      } else if (expected_recording_identity.empty()) {
+        message << " validated recording identity is unavailable";
       } else if (expected_frames == 0) {
         message << " validated recording frame count is unavailable";
+      } else if (!std::isfinite(expected_fps) || expected_fps <= 0.0) {
+        message << " validated recording frame rate is unavailable";
       } else {
         message << " decoded source dimensions are unavailable";
       }
@@ -1773,6 +1815,11 @@ int main(int argc, char **argv) {
         frame_debug_window_state.active_view =
             crimson::workspace::FrameInspectView::EyeMasks;
         show_eye_masks = true;
+        if (canonical_detection_route) {
+          show_keypoint_markers = true;
+          show_heading_arrows = true;
+          subject_shape_overlay_options.show_overlay = true;
+        }
       } else if (ui_reference.state == UiReferenceState::StimulusOverlay) {
         if (stimulus_context_timeline == nullptr) {
           std::cerr << "[UiReference] stimulus-overlay requires a "
@@ -1864,8 +1911,9 @@ int main(int argc, char **argv) {
           /*prefer_buffer_when_paused=*/false,
           /*force_inaccurate=*/false,
           /*skip_stimulus_hard_seek=*/false);
-      if (ui_reference.state == UiReferenceState::Overlays ||
-          ui_reference.state == UiReferenceState::AnalysisEye) {
+      if (!canonical_detection_route &&
+          (ui_reference.state == UiReferenceState::Overlays ||
+           ui_reference.state == UiReferenceState::AnalysisEye)) {
         zarr_loader.requestRefinedSubjectMaskOptionalOverlayPrefetch();
         prewarmEyeMaskOverlayTexturesForPlayback("ui_reference",
                                                  ui_reference.target_frame);
@@ -2194,6 +2242,26 @@ int main(int argc, char **argv) {
     syncCanonicalDetectionRoute();
     reportCanonicalDetectionState();
     reportCanonicalTimelineState();
+    if (canonical_detection_route) {
+      static std::string last_overlay_open_report;
+      const auto snapshot = canonical_overlay_session.snapshot(-1);
+      const std::string signature = std::to_string(snapshot.generation) + ":" +
+          crimson::gui::canonicalOverlayStateName(snapshot.state) + snapshot.error +
+          snapshot.keypoints.error + snapshot.masks.error + snapshot.shapes.error;
+      if (signature != last_overlay_open_report) {
+        last_overlay_open_report = signature;
+        std::cout << "[CanonicalOverlay] state=" << crimson::gui::canonicalOverlayStateName(snapshot.state)
+                  << " generation=" << snapshot.generation
+                  << " keypoint_run=" << snapshot.keypoints.descriptor.run_name
+                  << " mask_run=" << snapshot.masks.descriptor.run_name
+                  << " shape_run=" << snapshot.shapes.descriptor.run_name
+                  << " open_ms=" << snapshot.open_ms
+                  << " keypoint_error=" << snapshot.keypoints.error
+                  << " mask_error=" << snapshot.masks.error
+                  << " shape_error=" << snapshot.shapes.error
+                  << " error=" << snapshot.error << std::endl;
+      }
+    }
     if (ui_reference_capture.published()) {
       // Preserve the proven front buffer until the external harness has
       // captured it. Rendering another frame can race an X11 capture.
@@ -2700,6 +2768,7 @@ int main(int argc, char **argv) {
         durationMs(std::chrono::steady_clock::now() - file_browser_ui_start);
 
     const bool use_legacy_manual_keypoint_tools =
+        !canonical_detection_route &&
         legacy_labeling_state.toolsEnabled(has_active_zarr_keypoint_review);
     std::optional<RefinedKeypointSelection>
         active_full_frame_keypoint_selection;
@@ -2757,6 +2826,22 @@ int main(int argc, char **argv) {
                   allow_blocking_eye_mask_load,
                   kPlaybackMaskPrefetchLookaheadFrames,
               });
+      crimson::gui::CanonicalOverlaySnapshot inspect_overlays;
+      if (canonical_detection_route) {
+        const bool inspect_masks = frame_debug_window_state.active_view ==
+            crimson::workspace::FrameInspectView::EyeMasks;
+        requestCanonicalOverlayFrame(current_frame_num, true,
+            show_eye_masks || inspect_masks,
+            subject_shape_overlay_options.show_overlay || show_heading_arrows || inspect_masks);
+        auto presentation = crimson::gui::makeCanonicalOverlayPresentation(
+            canonical_overlay_session.snapshot(current_frame_num), 0, current_frame_num,
+            static_cast<int>(canonical_detection_expected_width),
+            static_cast<int>(canonical_detection_expected_height), {});
+        inspect_overlays = std::move(presentation.snapshot);
+        frame_inspect_data.keypoint_descriptor = inspect_overlays.keypoints.descriptor;
+        frame_inspect_data.keypoint_frame = std::move(presentation.keypoints);
+        frame_inspect_data.keypoint_frame_requested = presentation.keypoints_ready;
+      }
       const auto &detection_descriptor =
           frame_inspect_data.detection_descriptor;
       const auto *detection_frame_ptr =
@@ -2796,7 +2881,7 @@ int main(int argc, char **argv) {
         }
       }
 
-      const FrameDebugWindowContext frame_debug_context{
+      FrameDebugWindowContext frame_debug_context{
           current_frame_num,
           ps.to_display_frame_number,
           ps.slider_frame_number,
@@ -2855,6 +2940,7 @@ int main(int argc, char **argv) {
           chaser_distance_polar_inset_options,
           show_stimulus_debug_windows,
       };
+      frame_debug_context.canonical_overlays = canonical_detection_route ? &inspect_overlays : nullptr;
       const auto requested_frame_inspect_view =
           workspace_state.selections().frame_inspect_view;
       const crimson::app::FrameInspectTabState frame_inspect_tab_state{
@@ -3681,6 +3767,34 @@ int main(int argc, char **argv) {
                       allow_blocking_eye_mask_load,
                       kPlaybackMaskPrefetchLookaheadFrames,
                   });
+          crimson::gui::CanonicalOverlayPresentation canonical_presentation;
+          if (canonical_detection_route && zarr_bbox_query_frame >= 0) {
+            requestCanonicalOverlayFrame(zarr_bbox_query_frame,
+                show_keypoint_markers || show_heading_arrows,
+                show_eye_masks,
+                subject_shape_overlay_options.show_overlay || show_heading_arrows);
+            crimson::overlay::ReadOnlyOverlayControlState controls;
+            controls.show_keypoints = show_keypoint_markers;
+            controls.show_headings = show_heading_arrows;
+            controls.show_subject_masks = show_eye_masks;
+            controls.show_subject_body_mask = show_subject_body_mask;
+            controls.show_eye_left_mask = show_eye_left_mask;
+            controls.show_eye_right_mask = show_eye_right_mask;
+            controls.show_swim_bladder_mask = show_swim_bladder_mask;
+            controls.show_eye_geometry = false;
+            controls.show_subject_shape = subject_shape_overlay_options.show_overlay;
+            controls.show_subject_shape_body_axes = subject_shape_overlay_options.show_body_frame_axes;
+            controls.show_subject_shape_centerline = subject_shape_overlay_options.show_centerline;
+            controls.show_subject_shape_bspline = subject_shape_overlay_options.show_bspline_sample;
+            canonical_presentation = crimson::gui::makeCanonicalOverlayPresentation(
+                canonical_overlay_session.snapshot(zarr_bbox_query_frame), j, zarr_bbox_query_frame,
+                static_cast<int>(scene->cameras[j].image_width),
+                static_cast<int>(scene->cameras[j].image_height), controls);
+            last_canonical_overlay_snapshot = canonical_presentation.snapshot;
+            camera_frame_data.keypoint_descriptor = canonical_presentation.snapshot.keypoints.descriptor;
+            camera_frame_data.keypoint_frame = canonical_presentation.keypoints;
+            camera_frame_data.keypoint_frame_requested = canonical_presentation.keypoints_ready;
+          }
           const auto &camera_detection_descriptor =
               camera_frame_data.detection_descriptor;
           const auto &camera_keypoint_descriptor =
@@ -4035,7 +4149,7 @@ int main(int argc, char **argv) {
                   : nullptr;
           camera_context_input.keypoint_frame = presented_keypoint_frame_ptr;
           camera_context_input.subject_mask_repository =
-              &subject_mask_repository;
+              canonical_detection_route ? nullptr : &subject_mask_repository;
           camera_context_input.frame_is_interpolated = is_zarr_interpolated;
           camera_context_input.latest_decoded_frame = latest_decoded;
           camera_context_input.total_recording_frames = total_recording_frames;
@@ -4111,6 +4225,18 @@ int main(int argc, char **argv) {
           PreparedCameraViewFrameContext prepared_camera_context;
           prepareCameraViewFrameContext(camera_context_input,
                                         prepared_camera_context);
+          if (canonical_detection_route) {
+            prepared_camera_context.context.can_draw_eye_masks =
+                show_eye_masks && canonical_presentation.masks.ready();
+            prepared_camera_context.context.subject_mask_scene =
+                canonical_presentation.masks.ready() ? &canonical_presentation.masks : nullptr;
+            prepared_camera_context.context.subject_shape_scene =
+                canonical_presentation.shapes.ready() ? &canonical_presentation.shapes : nullptr;
+            prepared_camera_context.context.mask_details = nullptr;
+            prepared_camera_context.context.subject_shape_details = nullptr;
+            prepared_camera_context.context.subject_mask_pick_enabled = false;
+            prepared_camera_context.context.subject_mask_brush_input_enabled = false;
+          }
           frame_mask_data_load_ms += prepared_camera_context.mask_data_load_ms;
 
           const auto &camera_before_draw = scene->cameras[j];
@@ -4133,6 +4259,14 @@ int main(int argc, char **argv) {
 
           const CameraViewWindowResult camera_view_result =
               drawCameraViewWindowContents(prepared_camera_context.context);
+          if (canonical_detection_route) {
+            canonical_overlay_draw_frame = zarr_bbox_query_frame;
+            canonical_keypoint_draw_count = camera_view_result.perf.keypoint_overlay_item_count;
+            canonical_heading_draw_count = camera_view_result.perf.heading_overlay_item_count;
+            canonical_shape_draw_count = camera_view_result.perf.subject_shape_overlay_item_count;
+            canonical_expected_shape_draw_count = static_cast<int>(canonical_presentation.shapes.primitives.size());
+            canonical_expected_mask_draw_count = static_cast<int>(canonical_presentation.masks.raster_masks.size());
+          }
           accumulateCameraViewMaskPerfMetrics(
               frame_mask_overlay_perf, camera_view_result.perf.mask_overlay);
 
@@ -5499,6 +5633,19 @@ int main(int argc, char **argv) {
         break;
       }
       case UiReferenceState::Overlays:
+        if (canonical_detection_route) {
+          const auto ready = crimson::gui::CanonicalOverlayState::Ready;
+          const auto& overlays = last_canonical_overlay_snapshot;
+          state_ready = show_eye_masks &&
+              overlays.requested_frame == ui_reference.target_frame &&
+              canonical_overlay_draw_frame == ui_reference.target_frame &&
+              ui_reference.bbox_query_frame == ui_reference.target_frame &&
+              overlays.keypoints.state == ready && overlays.masks.state == ready &&
+              overlays.shapes.state == ready && canonical_keypoint_draw_count > 0 &&
+              canonical_shape_draw_count == canonical_expected_shape_draw_count &&
+              frame_mask_overlay_perf.component_fill_count == canonical_expected_mask_draw_count;
+          break;
+        }
         state_ready =
             show_eye_masks && optional_eye_overlays_ready &&
             ui_reference.bbox_query_frame == ui_reference.target_frame &&
@@ -5902,6 +6049,40 @@ int main(int argc, char **argv) {
             snapshot.swim_bouts.window
                 ? snapshot.swim_bouts.window->intervals.size() : 0;
       }
+      if (canonical_detection_route) {
+        const auto& overlays = last_canonical_overlay_snapshot;
+        const auto product = [](const auto& value) {
+          json keys = json::array();
+          if (value.frame) for (const auto& row : value.frame->detections) keys.push_back(row.instance_key);
+          return json{{"state", crimson::gui::canonicalOverlayStateName(value.state)},
+                      {"run", value.descriptor.run_name},
+                      {"frame", value.frame ? value.frame->camera_frame : -1},
+                      {"instance_keys", keys}, {"error", value.error}};
+        };
+        marker["canonical_overlays"] = {
+            {"generation", overlays.generation},
+            {"query_frame", overlays.requested_frame},
+            {"draw_frame", canonical_overlay_draw_frame},
+            {"keypoints", product(overlays.keypoints)},
+            {"masks", product(overlays.masks)},
+            {"shapes", product(overlays.shapes)},
+            {"keypoint_primitives", canonical_keypoint_draw_count},
+            {"heading_primitives", canonical_heading_draw_count},
+            {"shape_primitives", canonical_shape_draw_count},
+            {"shape_expected_primitives", canonical_expected_shape_draw_count},
+            {"mask_expected_fills", canonical_expected_mask_draw_count},
+            {"mask_cached_payload_bytes", overlays.mask_metrics.cached_payload_bytes},
+            {"mask_peak_cached_payload_bytes", overlays.mask_metrics.peak_cached_payload_bytes},
+            {"mask_logical_payload_bytes", overlays.mask_metrics.chunk_source_bytes_read},
+            {"mask_mapping_retained_bytes", overlays.mask_metrics.metadata_retained_bytes}};
+        if (overlays.selection) {
+          marker["canonical_overlays"]["recording_id"] = overlays.selection->recording_id;
+          marker["canonical_overlays"]["eye_run"] = overlays.selection->eye.run_id;
+          marker["canonical_overlays"]["keypoint_identity"] = overlays.selection->keypoints.identity_digest;
+          marker["canonical_overlays"]["mask_payload_digest"] = overlays.selection->mask.manifest_payload_digest;
+          marker["canonical_overlays"]["shape_identity"] = overlays.selection->shape.identity_digest;
+        }
+      }
       std::string marker_error;
       if (!crimson::ui_reference::writeUiReferenceMarkerAtomically(
               ui_reference.ready_file, marker, &marker_error)) {
@@ -6186,6 +6367,7 @@ int main(int argc, char **argv) {
   refined_keypoint_write_session.close();
   quality_timeline_session.close();
   canonical_timeline_session.close();
+  canonical_overlay_session.shutdown();
   canonical_detection_repository.close();
   zarr_loader.setDataAccessScheduler(nullptr);
   analysis_data_scheduler->waitUntilIdle();
@@ -6193,6 +6375,7 @@ int main(int argc, char **argv) {
       analysis_data_scheduler->metrics();
   analysis_data_scheduler->shutdown();
   destroyStimulusPlayback(stimulus_player);
+  clearCameraViewReadOnlyMaskTextureCache();
   ImGui_ImplOpenGL3_Shutdown();
   ImGui_ImplGlfw_Shutdown();
   ImGui::DestroyContext();

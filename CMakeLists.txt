@@ -519,6 +519,9 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         src/zarr/crop_geometry_contract.cpp
         src/zarr/keypoint_v2_contract.cpp
         src/zarr/tensorstore_keypoint_v2_repository.cpp
+        src/zarr/canonical_overlay_selection.cpp
+        src/zarr/tensorstore_bound_keypoint_overlay_repository.cpp
+        src/zarr/tensorstore_bound_subject_shape_overlay_repository.cpp
         src/zarr/refined_detection_contract.cpp
         src/zarr/subject_mask_bundle_v2_contract.cpp
         src/zarr/subject_mask_sampled_contour_v1_contract.cpp
@@ -695,6 +698,64 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         LABELS "headless;repository;session;timeline"
         TIMEOUT 30
     )
+
+    foreach(_overlay_target canonical_overlay_selection_tests canonical_overlay_selection_probe bound_keypoint_overlay_repository_tests)
+        add_executable(${_overlay_target} tools/${_overlay_target}.cpp)
+        target_compile_features(${_overlay_target} PRIVATE cxx_std_17)
+        target_link_libraries(${_overlay_target} PRIVATE
+            crimson_tensorstore_repositories crimson_repository_contracts
+            ${tensorstore_target} nlohmann_json::nlohmann_json Threads::Threads)
+        set_target_properties(${_overlay_target} PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    endforeach()
+    add_test(NAME canonical_overlay_selection_tests
+        COMMAND $<TARGET_FILE:canonical_overlay_selection_tests>)
+    set_tests_properties(canonical_overlay_selection_tests PROPERTIES
+        LABELS "headless;repository;overlay;selection" TIMEOUT 30)
+    add_test(NAME bound_keypoint_overlay_repository_tests
+        COMMAND $<TARGET_FILE:bound_keypoint_overlay_repository_tests>)
+    set_tests_properties(bound_keypoint_overlay_repository_tests PROPERTIES
+        LABELS "headless;repository;overlay;keypoint" TIMEOUT 30)
+
+    add_executable(canonical_overlay_session_tests
+        tools/canonical_overlay_session_tests.cpp
+        src/gui/canonical_overlay_session.cpp
+    )
+    target_compile_features(canonical_overlay_session_tests PRIVATE cxx_std_17)
+    target_link_libraries(canonical_overlay_session_tests PRIVATE
+        crimson_repository_contracts nlohmann_json::nlohmann_json Threads::Threads)
+    set_target_properties(canonical_overlay_session_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME canonical_overlay_session_tests
+        COMMAND $<TARGET_FILE:canonical_overlay_session_tests>)
+    set_tests_properties(canonical_overlay_session_tests PROPERTIES
+        LABELS "headless;repository;session;overlay" TIMEOUT 30)
+
+    add_executable(canonical_overlay_presentation_tests
+        tools/canonical_overlay_presentation_tests.cpp
+        src/gui/canonical_overlay_presentation.cpp)
+    target_compile_features(canonical_overlay_presentation_tests PRIVATE cxx_std_17)
+    target_link_libraries(canonical_overlay_presentation_tests PRIVATE
+        crimson_repository_contracts crimson_overlay_contracts)
+    set_target_properties(canonical_overlay_presentation_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME canonical_overlay_presentation_tests
+        COMMAND $<TARGET_FILE:canonical_overlay_presentation_tests>)
+    set_tests_properties(canonical_overlay_presentation_tests PROPERTIES
+        LABELS "headless;repository;overlay;presentation" TIMEOUT 30)
+
+    add_executable(canonical_overlay_repository_probe
+        tools/canonical_overlay_repository_probe.cpp
+        src/gui/canonical_overlay_session.cpp
+        src/gui/canonical_overlay_repository_loader.cpp
+        src/gui/canonical_overlay_presentation.cpp)
+    target_compile_features(canonical_overlay_repository_probe PRIVATE cxx_std_17)
+    target_link_libraries(canonical_overlay_repository_probe PRIVATE
+        crimson_tensorstore_repositories crimson_repository_contracts
+        crimson_overlay_contracts ${tensorstore_target}
+        nlohmann_json::nlohmann_json Threads::Threads)
+    set_target_properties(canonical_overlay_repository_probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 
     add_executable(quality_timeline_session_tests
         tools/quality_timeline_session_tests.cpp
@@ -2929,6 +2990,9 @@ list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_acquisition_crop_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_keypoint_overlay_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_keypoint_v2_repository.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/canonical_overlay_selection.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_bound_keypoint_overlay_repository.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_bound_subject_shape_overlay_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_stimulus_context_timeline_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_swim_bout_timeline_repository.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/zarr/tensorstore_stimulus_repository.cpp"

@@ -23,6 +23,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -319,7 +320,12 @@ json logicalSchema() {
   };
 }
 
-bool buildFixture(const std::filesystem::path &root) {
+bool buildFixture(
+    const std::filesystem::path &root,
+    std::vector<uint64_t> instance_keys = {
+        0, std::numeric_limits<uint64_t>::max() - 7, 203},
+    std::vector<int32_t> frame_indices = {1, 2, 2},
+    std::vector<int64_t> source_acquisition_frames = {1, 2, 2}) {
   constexpr const char *run = "fixture_run";
   const std::string base = std::string("detect_runs/") + run;
   const json detect_group = {
@@ -341,12 +347,12 @@ bool buildFixture(const std::filesystem::path &root) {
 
   const std::string instances = base + "/instances/";
   CHECK((writeArray<int32_t, 1>(root, instances + "frame_indices", "int32", {3},
-                                {1, 2, 2})));
+                                frame_indices)));
   CHECK((writeArray<int64_t, 1>(root,
                                 instances + "source_acquisition_frame_index",
-                                "int64", {3}, {1, 2, 2})));
+                                "int64", {3}, source_acquisition_frames)));
   CHECK((writeArray<uint64_t, 1>(root, instances + "instance_key", "uint64",
-                                 {3}, {101, 202, 203})));
+                                 {3}, instance_keys)));
   CHECK((writeArray<float, 2>(root, instances + "bbox_norm_coords", "float32",
                               {3, 4},
                               {0.20f, 0.25f, 0.10f, 0.20f, 0.50f, 0.50f, 0.20f,
@@ -706,6 +712,7 @@ bool testRefinedRepositoryAndSelection() {
   CHECK(page.frames[2].detections.size() == 1);
   CHECK(page.frames[3].detections.size() == 3);
   CHECK(page.frames[0].detections[0].instance_key == 101);
+  CHECK(page.frames[0].detections[0].instance_key_valid);
   CHECK(page.frames[0].detections[1].instance_key == 501);
   CHECK(page.frames[0].detections[1].refined_row_id == 11);
   CHECK(page.frames[0].detections[1].source_detect_row_index == -1);
@@ -931,7 +938,7 @@ bool testRepositoryAndOverlay() {
   CHECK(open_metrics.root_metadata_reads == 1);
   CHECK(open_metrics.direct_group_metadata_reads == 2);
   CHECK(open_metrics.consolidated_array_declarations == 9);
-  CHECK(open_metrics.exact_handle_opens == 4);
+  CHECK(open_metrics.exact_handle_opens == 7);
   CHECK(open_metrics.fallback_metadata_reads == 0);
   CHECK(open_metrics.fallback_dtype_opens == 0);
   CHECK(open_metrics.offset_read_calls == 1);
@@ -945,6 +952,10 @@ bool testRepositoryAndOverlay() {
   CHECK(descriptor.source_width == 100);
   CHECK(descriptor.source_height == 80);
   CHECK(!descriptor.stable_identity);
+  CHECK(descriptor.identity_authority ==
+        crimson::zarr::CanonicalDetectionIdentityAuthority::
+            PublishedInstanceKeyV1);
+  CHECK(descriptor.hasValidatedInstanceKeys());
   CHECK(descriptor.ready());
 
   const auto page = repository->resolveCameraFrameRange(0, 3);
@@ -955,6 +966,11 @@ bool testRepositoryAndOverlay() {
   CHECK(page.frames[2].detections.size() == 2);
   CHECK(page.frames[3].detections.empty());
   CHECK(page.frames[2].detections[0].class_id == 5);
+  CHECK(page.frames[1].detections[0].instance_key == 0);
+  CHECK(page.frames[1].detections[0].instance_key_valid);
+  CHECK(page.frames[2].detections[0].instance_key ==
+        std::numeric_limits<uint64_t>::max() - 7);
+  CHECK(page.frames[2].detections[0].instance_key_valid);
   CHECK(std::abs(page.frames[2].detections[1].score - 0.7f) < 1e-6f);
   CHECK(repository->resolveCameraFrameRange(-1, 0).status ==
         crimson::zarr::CanonicalDetectionPageStatus::OutOfRange);
@@ -979,6 +995,75 @@ bool testRepositoryAndOverlay() {
             crimson::zarr::makeCanonicalDetectionOverlaySceneInput(
                 descriptor, page.frames[1], 0, 2, 0, 100, 80))
             .ready() == false);
+  return true;
+}
+
+bool testCanonicalRawIdentityFailClosedValidation() {
+  const auto expectReadFailure = [](std::vector<uint64_t> keys,
+                                    std::vector<int32_t> frames,
+                                    std::vector<int64_t> source_frames) {
+    TemporaryDirectory temporary;
+    if (temporary.path().empty()) {
+      return false;
+    }
+    const auto root = temporary.path() / "invalid_identity.zarr";
+    std::filesystem::create_directories(root);
+    if (!buildFixture(root, std::move(keys), std::move(frames),
+                      std::move(source_frames))) {
+      return false;
+    }
+    std::string error;
+    auto archive = crimson::zarr::ArchiveContext::Open(root, &error);
+    if (!archive) {
+      return false;
+    }
+    auto repository = crimson::zarr::OpenCanonicalDetectionRepository(
+        archive, "fixture_run", &error);
+    return repository &&
+           repository->resolveCameraFrameRange(0, 3).status ==
+               crimson::zarr::CanonicalDetectionPageStatus::ReadFailed;
+  };
+
+  CHECK(expectReadFailure({11, 11, 13}, {1, 2, 2}, {1, 2, 2}));
+  CHECK(expectReadFailure({11, 12, 13}, {1, 1, 2}, {1, 2, 2}));
+  CHECK(expectReadFailure({11, 12, 13}, {1, 2, 2}, {1, 2, 3}));
+
+  // Each bounded read is locally unambiguous, but publication of the complete
+  // resident identity surface still rejects a duplicate spanning two reads.
+  TemporaryDirectory temporary;
+  CHECK(!temporary.path().empty());
+  const auto root = temporary.path() / "cross_page_duplicate.zarr";
+  std::filesystem::create_directories(root);
+  CHECK(buildFixture(root, {11, 11, 13}));
+  std::string error;
+  auto archive = crimson::zarr::ArchiveContext::Open(root, &error);
+  CHECK(archive != nullptr);
+  auto repository = crimson::zarr::OpenCanonicalDetectionRepository(
+      archive, "fixture_run", &error);
+  CHECK(repository != nullptr);
+  auto first = repository->readUiRowsForResidency(0, 1);
+  auto second = repository->readUiRowsForResidency(1, 3);
+  CHECK(first.ready());
+  CHECK(second.ready());
+  auto resident =
+      std::make_shared<crimson::zarr::CanonicalDetectionResidentUiColumns>();
+  resident->bbox_norm_coords = std::move(first.bbox_norm_coords);
+  resident->bbox_norm_coords.insert(resident->bbox_norm_coords.end(),
+                                    second.bbox_norm_coords.begin(),
+                                    second.bbox_norm_coords.end());
+  resident->scores = std::move(first.scores);
+  resident->scores.insert(resident->scores.end(), second.scores.begin(),
+                          second.scores.end());
+  resident->class_ids = std::move(first.class_ids);
+  resident->class_ids.insert(resident->class_ids.end(),
+                             second.class_ids.begin(), second.class_ids.end());
+  resident->instance_keys = std::move(first.instance_keys);
+  resident->instance_keys.insert(resident->instance_keys.end(),
+                                 second.instance_keys.begin(),
+                                 second.instance_keys.end());
+  error.clear();
+  CHECK(!repository->publishResidentUiColumns(resident, &error));
+  CHECK(!error.empty());
   return true;
 }
 
@@ -1029,7 +1114,7 @@ bool testPageBuffer() {
   CHECK(repository_metrics.range_reads >= 2);
   CHECK(repository_metrics.failed_reads == 0);
   CHECK(repository_metrics.ui_field_reads ==
-        repository_metrics.range_reads * 3);
+        repository_metrics.range_reads * 6);
 
   const auto resident = canonicalDetectionProductionResidencyPolicy();
   CHECK(resident.enabled());
@@ -1041,9 +1126,9 @@ bool testPageBuffer() {
   CHECK(buffer.waitForUiResidency(std::chrono::seconds(2)));
   const auto residency = buffer.residencyMetrics();
   CHECK(residency.state == CanonicalDetectionResidencyState::Ready);
-  CHECK(residency.decoded_hot_bytes == 3 * 24);
-  CHECK(residency.decoded_source_bytes == 3 * 24);
-  CHECK(residency.retained_bytes == 3 * 24);
+  CHECK(residency.decoded_hot_bytes == 3 * 32);
+  CHECK(residency.decoded_source_bytes == 3 * 44);
+  CHECK(residency.retained_bytes == 3 * 32);
   CHECK(residency.completed_chunks == residency.planned_chunks);
   CHECK(residency.publications == 1);
   CHECK(std::string(canonicalDetectionResidencyStateName(residency.state)) ==
@@ -1057,13 +1142,16 @@ bool testPageBuffer() {
   CHECK(resident_frame != nullptr);
   CHECK(resident_frame->detections.size() == 2);
   CHECK(resident_frame->detections[0].class_id == 5);
+  CHECK(resident_frame->detections[0].instance_key ==
+        std::numeric_limits<uint64_t>::max() - 7);
+  CHECK(resident_frame->detections[0].instance_key_valid);
   const auto after_resident_request = buffer.repositoryMetrics();
   CHECK(after_resident_request.ui_field_reads ==
         before_resident_request.ui_field_reads);
   CHECK(after_resident_request.resident_range_reads >
         before_resident_request.resident_range_reads);
   CHECK(after_resident_request.resident_publications == 1);
-  CHECK(after_resident_request.resident_retained_bytes == 3 * 24);
+  CHECK(after_resident_request.resident_retained_bytes == 3 * 32);
   buffer.close();
   scheduler->shutdown();
   return true;
@@ -1158,6 +1246,7 @@ bool testDemandOvertakesResidencyAndCancellation() {
 
 int main() {
   if (!testZarrMetadataEquivalence() || !testRepositoryAndOverlay() ||
+      !testCanonicalRawIdentityFailClosedValidation() ||
       !testRefinedRepositoryAndSelection() ||
       !testRefinedDetectionQualityTimelineRepository() ||
       !testRefinedFailClosedValidation() || !testPageBuffer() ||

@@ -38,6 +38,10 @@ struct DetectionRepositoryDescriptor {
   bool interpolation_available = false;
   bool clipped_collection = false;
   bool active_dataset_has_synthetic_observations = false;
+  // True only when every returned observation carries a validated published
+  // instance_key scoped by archive_path + run_name. Legacy repositories leave
+  // this false; stable observation identity must not be inferred from ordinal.
+  bool has_validated_instance_keys = false;
 
   bool activeDatasetAllowsBboxEditing() const {
     return available && active_dataset != DetectionDataset::RawDetect &&
@@ -50,6 +54,10 @@ struct DetectionObservation {
   // Stable row identity within descriptor.archive_path + descriptor.run_name.
   // Legacy repositories leave this unset; it is not a global instance key.
   int64_t canonical_row_index = -1;
+  // Published observation identity within the descriptor's archive/run scope.
+  // Numeric zero is a valid key; consult instance_key_valid, never the value,
+  // to distinguish a key from an unavailable legacy identity.
+  uint64_t instance_key = 0;
   std::array<float, 4> box_xyxy{};
   float score = 1.0f;
   int32_t class_id = 0;
@@ -57,6 +65,7 @@ struct DetectionObservation {
   std::string reason;
   bool score_valid = false;
   bool class_id_valid = false;
+  bool instance_key_valid = false;
 };
 
 enum class DetectionFrameStatus : uint8_t {

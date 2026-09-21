@@ -117,11 +117,13 @@ bool testCompleteFrameRangesAndCapabilities() {
   CHECK(descriptor.total_frames == 4);
   CHECK(descriptor.maximum_observations_per_frame == 3);
   CHECK(descriptor.activeDatasetAllowsBboxEditing());
+  CHECK(!descriptor.has_validated_instance_keys);
 
   const auto frame_zero = repository.resolveFrame(0, false);
   CHECK(frame_zero.ready());
   CHECK(frame_zero.observations.size() == 2);
   CHECK(frame_zero.observations[0].class_id == 2);
+  CHECK(!frame_zero.observations[0].instance_key_valid);
   CHECK(frame_zero.observations[1].class_id == 2);
   CHECK(frame_zero.observations[0].box_xyxy[2] >
         frame_zero.observations[1].box_xyxy[0]);

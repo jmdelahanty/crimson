@@ -32,15 +32,19 @@ bool canonicalDetectionTraceEnabled() {
   return enabled;
 }
 
-crimson::data::FieldSelection detectionUiFields(bool stable_identity) {
-  if (!stable_identity) {
-    return crimson::data::FieldSelection::Named(
-        {"bbox_norm_coords", "scores", "class_ids"});
+crimson::data::FieldSelection detectionUiFields(
+    const crimson::zarr::CanonicalDetectionDescriptor &descriptor) {
+  std::vector<std::string> fields = {"bbox_norm_coords", "scores",
+                                     "class_ids"};
+  if (descriptor.hasValidatedInstanceKeys()) {
+    fields.emplace_back("instance_key");
   }
-  return crimson::data::FieldSelection::Named(
-      {"bbox_norm_coords", "scores", "class_ids", "instance_key",
-       "refined_row_ids", "source_detect_row_index", "source_kind_codes",
-       "score_valid", "manual_edit_flags"});
+  if (descriptor.stable_identity) {
+    fields.insert(fields.end(),
+                  {"refined_row_ids", "source_detect_row_index",
+                   "source_kind_codes", "score_valid", "manual_edit_flags"});
+  }
+  return crimson::data::FieldSelection::Named(std::move(fields));
 }
 
 } // namespace
@@ -153,7 +157,7 @@ struct CanonicalDetectionBuffer::Impl {
     crimson::data::DataRangeRequest request{
         residency_source,
         {chunk.first_camera_frame, chunk.last_camera_frame},
-        detectionUiFields(descriptor.stable_identity),
+        detectionUiFields(descriptor),
         crimson::data::RequestPriority::Speculative,
         crimson::data::AccessPattern::Forward,
         generation};
@@ -173,8 +177,10 @@ struct CanonicalDetectionBuffer::Impl {
               columns->bbox_norm_coords.resize(descriptor.row_count * 4);
               columns->scores.resize(descriptor.row_count);
               columns->class_ids.resize(descriptor.row_count);
-              if (descriptor.stable_identity) {
+              if (descriptor.hasValidatedInstanceKeys()) {
                 columns->instance_keys.resize(descriptor.row_count);
+              }
+              if (descriptor.stable_identity) {
                 columns->refined_row_ids.resize(descriptor.row_count);
                 columns->source_detect_row_indices.resize(descriptor.row_count);
                 columns->source_kind_codes.resize(descriptor.row_count);
@@ -221,9 +227,10 @@ struct CanonicalDetectionBuffer::Impl {
               (rows.bbox_norm_coords.size() != row_count * 4 ||
                rows.scores.size() != row_count ||
                rows.class_ids.size() != row_count ||
+               (descriptor.hasValidatedInstanceKeys() &&
+                rows.instance_keys.size() != row_count) ||
                (descriptor.stable_identity &&
-                (rows.instance_keys.size() != row_count ||
-                 rows.refined_row_ids.size() != row_count ||
+                (rows.refined_row_ids.size() != row_count ||
                  rows.source_detect_row_indices.size() != row_count ||
                  rows.source_kind_codes.size() != row_count ||
                  rows.score_valid.size() != row_count ||
@@ -240,10 +247,12 @@ struct CanonicalDetectionBuffer::Impl {
                       build->columns->scores.begin() + chunk.first_row);
             std::copy(rows.class_ids.begin(), rows.class_ids.end(),
                       build->columns->class_ids.begin() + chunk.first_row);
-            if (descriptor.stable_identity) {
+            if (descriptor.hasValidatedInstanceKeys()) {
               std::copy(rows.instance_keys.begin(), rows.instance_keys.end(),
                         build->columns->instance_keys.begin() +
                             chunk.first_row);
+            }
+            if (descriptor.stable_identity) {
               std::copy(
                   rows.refined_row_ids.begin(), rows.refined_row_ids.end(),
                   build->columns->refined_row_ids.begin() + chunk.first_row);
@@ -491,7 +500,7 @@ bool CanonicalDetectionBuffer::requestFrame(int64_t camera_frame,
     crimson::data::DataRangeRequest request{
         impl_->scheduler_source,
         {page_start, page_end},
-        detectionUiFields(impl_->descriptor.stable_identity),
+        detectionUiFields(impl_->descriptor),
         demand ? crimson::data::RequestPriority::CurrentFrame
                : crimson::data::RequestPriority::VisibleWindow,
         discontinuity ? crimson::data::AccessPattern::RandomSeek

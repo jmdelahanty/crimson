@@ -5,6 +5,10 @@
 #include "gui/frame_inspect_window.h"
 #include "gui/overlay_debug_panel.h"
 #include "gui/refined_keypoint_review_panel.h"
+#include "gui/canonical_overlay_session.h"
+#include "gui/keypoint_overlay_inspect_adapter.h"
+#include "gui/subject_mask_overlay_inspect_adapter.h"
+#include "gui/subject_shape_overlay_inspect_adapter.h"
 
 #include "imgui.h"
 
@@ -44,15 +48,68 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
         buildFrameDebugModuleCatalog(context);
     crimson::gui::FrameInspectWindowComposition composition;
     composition.draw_header = [&]() {
-        drawFrameDebugStatusHeader(context, state);
+        if (context.canonical_overlays) {
+            const auto& snapshot = *context.canonical_overlays;
+            ImGui::Text("Canonical recording overlays | frame %lld | %s",
+                        static_cast<long long>(snapshot.requested_frame),
+                        crimson::gui::canonicalOverlayStateName(snapshot.state));
+            ImGui::TextDisabled("Read-only: exact eye-bound product sources; stored observation identities.");
+            if (!snapshot.error.empty()) ImGui::TextWrapped("%s", snapshot.error.c_str());
+        } else {
+            drawFrameDebugStatusHeader(context, state);
+        }
     };
     const auto add_module = [&](FrameInspectView view) {
         composition.modules.push_back(FrameInspectModule{
             view,
-            frameDebugModuleLabel(context, view),
+            context.canonical_overlays && view == FrameInspectView::EyeMasks
+                ? "Masks / Shape" : frameDebugModuleLabel(context, view),
             context.zarr_loaded &&
-                frameDebugModuleAvailable(context, module_catalog, view),
+                ((context.canonical_overlays &&
+                  (view == FrameInspectView::Keypoints || view == FrameInspectView::EyeMasks)) ||
+                 frameDebugModuleAvailable(context, module_catalog, view)),
             [&, view]() {
+                if (context.canonical_overlays &&
+                    (view == FrameInspectView::Keypoints || view == FrameInspectView::EyeMasks)) {
+                    const auto& snapshot = *context.canonical_overlays;
+                    const auto show_status = [](const char* label, const auto& product) {
+                        ImGui::Text("%s: %s", label, crimson::gui::canonicalOverlayStateName(product.state));
+                        if (!product.error.empty()) ImGui::TextWrapped("%s", product.error.c_str());
+                    };
+                    if (view == FrameInspectView::Keypoints) {
+                        ImGui::Checkbox("Show keypoint markers", &result.show_keypoint_markers);
+                        ImGui::SameLine();
+                        ImGui::Checkbox("Show heading arrows", &result.show_heading_arrows);
+                        show_status("Keypoints", snapshot.keypoints);
+                        auto presentation = crimson::gui::makeKeypointOverlayInspectPresentation(
+                            snapshot.keypoints.descriptor.run_name.empty() ? nullptr : &snapshot.keypoints.descriptor,
+                            snapshot.keypoints.frame.get(), snapshot.requested_frame);
+                        crimson::gui::drawFrameInspectKeypointModule(presentation, state.canonical_keypoint_inspect);
+                        ImGui::TextDisabled("Heading authority: the exact bound subject-shape body frame.");
+                    } else {
+                        ImGui::Checkbox("Show subject masks", &result.show_eye_masks);
+                        ImGui::Checkbox("Body", &result.show_subject_body_mask);
+                        ImGui::SameLine(); ImGui::Checkbox("Left eye", &result.show_eye_left_mask);
+                        ImGui::SameLine(); ImGui::Checkbox("Right eye", &result.show_eye_right_mask);
+                        ImGui::SameLine(); ImGui::Checkbox("Swim bladder", &result.show_swim_bladder_mask);
+                        show_status("Masks", snapshot.masks);
+                        auto masks = crimson::gui::makeSubjectMaskOverlayInspectPresentation(
+                            snapshot.masks.descriptor.run_name.empty() ? nullptr : &snapshot.masks.descriptor,
+                            snapshot.masks.frame.get(), snapshot.requested_frame);
+                        crimson::gui::drawFrameInspectSubjectMaskModule(masks, state.subject_mask_inspect);
+                        ImGui::Separator();
+                        ImGui::Checkbox("Show subject shape", &result.subject_shape_overlay_options.show_overlay);
+                        ImGui::Checkbox("Body axes", &result.subject_shape_overlay_options.show_body_frame_axes);
+                        ImGui::SameLine(); ImGui::Checkbox("Centerline", &result.subject_shape_overlay_options.show_centerline);
+                        ImGui::SameLine(); ImGui::Checkbox("B-spline", &result.subject_shape_overlay_options.show_bspline_sample);
+                        show_status("Shape", snapshot.shapes);
+                        auto shapes = crimson::gui::makeSubjectShapeOverlayInspectPresentation(
+                            snapshot.shapes.descriptor.run_name.empty() ? nullptr : &snapshot.shapes.descriptor,
+                            snapshot.shapes.frame.get(), snapshot.requested_frame);
+                        crimson::gui::drawFrameInspectSubjectShapeModule(shapes, state.subject_shape_inspect);
+                    }
+                    return;
+                }
                 drawFrameDebugStatusModule(
                     context, module_catalog, state, result, view);
                 switch (view) {

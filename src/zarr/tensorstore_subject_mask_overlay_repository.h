@@ -17,6 +17,14 @@ struct SubjectMaskOverlayOpenOptions {
   std::string presentation_cache_run;
   std::string expected_presentation_cache_manifest_payload_digest;
   bool contour_only = false;
+  // Optional bounded interactive policy. Zero retains legacy behavior.
+  size_t max_read_rows = 0;
+  uint64_t max_cached_payload_bytes = 0;
+  uint64_t max_storage_chunk_bytes = 0;
+  uint64_t max_mapping_bytes = 0;
+  size_t max_observations_per_frame = 0;
+  bool disable_prefetch = false;
+  bool serial_dense_channels = false;
 };
 
 std::unique_ptr<SubjectMaskOverlayRepository>

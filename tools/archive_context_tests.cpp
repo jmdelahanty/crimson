@@ -202,6 +202,39 @@ bool TestArchiveCachePolicy(const std::filesystem::path& root) {
   return passed;
 }
 
+bool TestSelectedMetadataProjection() {
+  json declarations = {
+    {"runs/selected", {{"node_type","group"},{"attributes",{{"identity","digest"}}}}},
+    {"runs/selected/array", {{"node_type","array"},{"shape",{8,4}},
+        {"attributes",{{"coordinate_frames",{{"source",{{"axis","x"}}}}}}}}},
+    {"runs/selected/unexpected", {{"node_type","group"}}},
+    {"runs/second/data", {{"node_type","array"},{"shape",{2}}}},
+    {"runs/selectedSuffix/ignored", {{"attributes",{{"large",json::array({1,2,3})}}}}},
+    {"unrelated/run", {{"node_type","group"},{"attributes",{{"run","unrelated"}}}}}
+  };
+  json root = {{"zarr_format",3},{"node_type","group"},
+    {"attributes",{{"ignored",std::string(100000,'x')}}},
+    {"consolidated_metadata",{{"kind","inline"},{"must_understand",false},
+      {"metadata",declarations}}}};
+  const auto projected = crimson::zarr::internal::ParseArchiveRunMetadata(
+      root.dump(), {"runs/selected","runs/second"});
+  if (!Check(projected.has_value(),"Metadata projection failed")) return false;
+  json expected = root;
+  auto& retained = expected["consolidated_metadata"]["metadata"];
+  retained.erase("runs/selectedSuffix/ignored"); retained.erase("unrelated/run");
+  if (*projected != expected) {
+    json diagnostic = *projected;
+    diagnostic.erase("attributes");
+    std::cerr << "Projected metadata: " << diagnostic.dump(2) << '\n';
+  }
+  return Check(*projected == expected,"Projection changed selected metadata or retained an unrelated subtree") &&
+      Check(crimson::zarr::internal::ParseArchiveRunMetadata(root.dump(),{})
+                ->at("consolidated_metadata").at("metadata").empty(),
+            "Root-only projection retained product metadata") &&
+      Check(!crimson::zarr::internal::ParseArchiveRunMetadata(root.dump()+"garbage",{"runs/selected"}),
+            "Malformed document was accepted");
+}
+
 }  // namespace
 
 int main() {
@@ -210,7 +243,8 @@ int main() {
     std::cerr << "Unable to create a temporary test directory\n";
     return 1;
   }
-  if (!CreateShardedArray(temporary_directory.path()) ||
+  if (!TestSelectedMetadataProjection() ||
+      !CreateShardedArray(temporary_directory.path()) ||
       !TestArchiveCachePolicy(temporary_directory.path())) {
     return 1;
   }

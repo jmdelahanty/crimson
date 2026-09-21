@@ -24,6 +24,7 @@ struct TextureEntry {
   size_t height = 0;
   GLuint texture_id = 0;
   uint64_t last_used = 0;
+  uint64_t bytes = 0;
 };
 
 class ReadOnlyMaskTextureCache {
@@ -63,6 +64,10 @@ public:
           durationMs(std::chrono::steady_clock::now() - lookup_start);
     }
 
+    const uint64_t incoming_bytes = mask.width * mask.height * 4;
+    if (incoming_bytes > kMaxUploadBytes) return 0;
+    evictIfNeeded(incoming_bytes);
+
     const auto upload_start = std::chrono::steady_clock::now();
     const GLuint texture = createTexture(mask);
     if (perf != nullptr) {
@@ -75,14 +80,24 @@ public:
     if (perf != nullptr) {
       perf->texture_uploads++;
     }
-    evictIfNeeded();
     entries_.push_back(
-        {mask.cache_key, mask.width, mask.height, texture, clock_});
+        {mask.cache_key, mask.width, mask.height, texture, clock_, incoming_bytes});
+    retained_bytes_ += incoming_bytes;
     return texture;
+  }
+
+  void clear() {
+    for (const auto& entry : entries_) {
+      if (entry.texture_id) glDeleteTextures(1, &entry.texture_id);
+    }
+    entries_.clear();
+    retained_bytes_ = 0;
   }
 
 private:
   static constexpr size_t kCapacity = 64;
+  static constexpr uint64_t kByteBudget = 64ULL * 1024 * 1024;
+  static constexpr uint64_t kMaxUploadBytes = 8ULL * 1024 * 1024;
 
   static uint8_t colorComponent(float value) {
     return static_cast<uint8_t>(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
@@ -130,8 +145,8 @@ private:
     return texture;
   }
 
-  void evictIfNeeded() {
-    while (entries_.size() >= kCapacity) {
+  void evictIfNeeded(uint64_t incoming_bytes) {
+    while (entries_.size() >= kCapacity || retained_bytes_ > kByteBudget - incoming_bytes) {
       const auto oldest =
           std::min_element(entries_.begin(), entries_.end(),
                            [](const auto &left, const auto &right) {
@@ -143,12 +158,14 @@ private:
       if (oldest->texture_id != 0) {
         glDeleteTextures(1, &oldest->texture_id);
       }
+      retained_bytes_ -= oldest->bytes;
       entries_.erase(oldest);
     }
   }
 
   std::vector<TextureEntry> entries_;
   uint64_t clock_ = 0;
+  uint64_t retained_bytes_ = 0;
 };
 
 ReadOnlyMaskTextureCache &maskTextureCache() {
@@ -157,6 +174,11 @@ ReadOnlyMaskTextureCache &maskTextureCache() {
 }
 
 } // namespace
+
+void clearCameraViewReadOnlyMaskTextureCache() {
+  // Caller owns the current OpenGL context; never invoke from storage workers.
+  maskTextureCache().clear();
+}
 
 CameraViewMaskPerfMetrics drawCameraViewReadOnlyRasterMasks(
     const crimson::overlay::ReadOnlyOverlayScene &scene,

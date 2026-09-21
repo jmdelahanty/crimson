@@ -59,6 +59,7 @@ struct DetectionOverlayInput {
   uint16_t reason_code = 0;
   std::vector<uint8_t> keypoint_edit_flags;
   bool heading_from_body_frame = false;
+  bool instance_key_valid = false;
 };
 
 struct SubjectMaskComponentInput {
@@ -71,6 +72,8 @@ struct SubjectMaskComponentInput {
   size_t mask_height = 0;
   std::shared_ptr<const std::vector<uint8_t>> mask;
   std::vector<Point> contour;
+  uint64_t instance_key = 0;
+  bool instance_key_valid = false;
 };
 
 struct SubjectShapeInput {
@@ -102,6 +105,8 @@ struct SubjectShapeInput {
   bool tail_sample_valid = false;
   std::vector<Point> tail_samples;
   std::vector<Point> tail_normals;
+  uint64_t instance_key = 0;
+  bool instance_key_valid = false;
 };
 
 struct EyeAxisInput {

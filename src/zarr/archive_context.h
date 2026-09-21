@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace crimson::timeline {
@@ -30,6 +31,12 @@ struct DetectionRepositorySelectionMetrics;
 struct DetectionQualityTimelineOpenRequest;
 struct DetectionQualityTimelineOpenMetrics;
 struct MotionSeriesTimelineOpenRequest;
+struct CanonicalOverlaySelectionRequest;
+struct CanonicalOverlaySelection;
+struct BoundKeypointOverlayOpenRequest;
+struct BoundKeypointOverlayOpenMetrics;
+struct BoundSubjectShapeOverlayOpenRequest;
+struct SubjectShapeOverlayOpenMetrics;
 struct TensorStoreChaserDistancePolarOptions;
 class TensorStoreChaserDistancePolarRepository;
 
@@ -79,6 +86,21 @@ private:
   OpenKeypointV2Repository(const KeypointV2RepositoryOpenRequest &request,
                            std::string *error_message,
                            KeypointV2RepositoryOpenMetrics *open_metrics);
+  friend std::optional<CanonicalOverlaySelection>
+  SelectCanonicalOverlaySources(
+      const std::shared_ptr<ArchiveContext> &archive,
+      const CanonicalOverlaySelectionRequest &request,
+      std::string *error_message);
+  friend std::unique_ptr<class BoundKeypointOverlayRepository>
+  OpenBoundKeypointOverlayRepository(
+      const BoundKeypointOverlayOpenRequest &request,
+      std::string *error_message,
+      BoundKeypointOverlayOpenMetrics *open_metrics);
+  friend std::unique_ptr<class SubjectShapeOverlayRepository>
+  OpenBoundSubjectShapeOverlayRepository(
+      const BoundSubjectShapeOverlayOpenRequest &request,
+      std::string *error_message,
+      SubjectShapeOverlayOpenMetrics *open_metrics);
   friend std::unique_ptr<class CanonicalDetectionRepository>
   OpenCanonicalDetectionRepository(
       const std::shared_ptr<ArchiveContext> &archive,

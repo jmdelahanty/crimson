@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -34,13 +35,27 @@ struct SubjectShapeOverlayDescriptor {
   size_t bspline_sample_point_count = 0;
   size_t bspline_control_point_count = 0;
   size_t tail_sample_point_count = 0;
+  // V5 bound repositories validate and preserve the published direct
+  // source-camera continuous-pixel geometry. Legacy readers retain their
+  // historical ROI-local geometry contract.
+  bool geometry_in_source_camera_coordinates = false;
+  bool validated_instance_keys = false;
+  size_t maximum_observations_per_frame = 0;
+  std::string publication_identity_digest;
+  std::string source_binding_digest;
+  std::string source_mask_manifest_payload_digest;
 };
 
 struct SubjectShapeOverlayGeometry {
   bool body_frame_valid = false;
+  bool body_axis_valid = false;
   SubjectShapeOverlayPoint body_origin;
   SubjectShapeOverlayPoint body_forward_axis;
   SubjectShapeOverlayPoint body_left_axis;
+  // Authoritative v5 heading: zero is camera +x and positive is
+  // counterclockwise after display-space Y inversion. Absent unless both
+  // body_frame_valid and body_axis_valid are true.
+  std::optional<double> heading_degrees;
 
   bool snout_tip_valid = false;
   SubjectShapeOverlayPoint snout_tip;
@@ -72,6 +87,8 @@ struct SubjectShapeOverlayRow {
   double roi_width = 0.0;
   double roi_height = 0.0;
   SubjectShapeOverlayGeometry geometry;
+  uint64_t instance_key = 0;
+  bool instance_key_valid = false;
 };
 
 struct SubjectShapeOverlayDetection {
@@ -84,6 +101,8 @@ struct SubjectShapeOverlayDetection {
   double roi_width = 0.0;
   double roi_height = 0.0;
   SubjectShapeOverlayGeometry geometry;
+  uint64_t instance_key = 0;
+  bool instance_key_valid = false;
 };
 
 enum class SubjectShapeOverlayStatus : uint8_t {

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <condition_variable>
+#include <exception>
 #include <deque>
 #include <limits>
 #include <mutex>
@@ -290,8 +291,18 @@ bool SubjectMaskOverlayBuffer::requestFrame(int64_t camera_frame,
             return crimson::data::DataResultStatus::Stale;
           }
           const auto start = std::chrono::steady_clock::now();
-          auto resolution = impl_->repository->resolveCameraFrame(
-              frame, full_frame_width, full_frame_height);
+          crimson::zarr::SubjectMaskOverlayResolution resolution;
+          try {
+            resolution = impl_->repository->resolveCameraFrame(frame, full_frame_width, full_frame_height);
+          } catch (const std::exception& exception) {
+            resolution.camera_frame = frame;
+            resolution.status = crimson::zarr::SubjectMaskOverlayStatus::ReadFailed;
+            resolution.error = exception.what();
+          } catch (...) {
+            resolution.camera_frame = frame;
+            resolution.status = crimson::zarr::SubjectMaskOverlayStatus::ReadFailed;
+            resolution.error = "Mask reader threw an unknown exception";
+          }
           const double elapsed_ms =
               std::chrono::duration<double, std::milli>(
                   std::chrono::steady_clock::now() - start)

@@ -14,6 +14,13 @@ enum class DetectionSurfaceKind : uint8_t {
   RefinedSnapshotV1,
 };
 
+enum class CanonicalDetectionIdentityAuthority : uint8_t {
+  Unavailable,
+  // The stored uint64 instances/instance_key column, validated together with
+  // its declared row extent and per-row acquisition/camera-frame association.
+  PublishedInstanceKeyV1,
+};
+
 struct CanonicalDetectionDescriptor {
   DetectionSurfaceKind surface_kind = DetectionSurfaceKind::CanonicalRawV1;
   std::string source_group;
@@ -29,6 +36,10 @@ struct CanonicalDetectionDescriptor {
   bool consolidated_metadata = false;
   // True only when the repository presents the complete refined identity set.
   bool stable_identity = false;
+  // Raw published-key availability is deliberately independent of the
+  // refined-only stable_identity contract above.
+  CanonicalDetectionIdentityAuthority identity_authority =
+      CanonicalDetectionIdentityAuthority::Unavailable;
   bool source_audit_lazy = false;
   bool authority_approved = false;
   bool coordinate_catalog_validated = false;
@@ -40,11 +51,20 @@ struct CanonicalDetectionDescriptor {
     return !run_name.empty() && camera_frame_count > 0 &&
            offset_read_calls == 1;
   }
+
+  bool hasValidatedInstanceKeys() const {
+    return stable_identity ||
+           identity_authority ==
+               CanonicalDetectionIdentityAuthority::PublishedInstanceKeyV1;
+  }
 };
 
 struct CanonicalDetection {
   int64_t row_index = -1;
   uint64_t instance_key = 0;
+  // Numeric zero is valid. This flag, not the key value, distinguishes
+  // published identity from an older identity-free route.
+  bool instance_key_valid = false;
   int64_t refined_row_id = -1;
   int64_t source_detect_row_index = -1;
   uint8_t source_kind_code = 0;
@@ -82,6 +102,7 @@ struct CanonicalDetectionUiRows {
   size_t first_row = 0;
   size_t last_row_exclusive = 0;
   std::vector<int32_t> frame_indices;
+  std::vector<int64_t> source_acquisition_frame_indices;
   std::vector<float> bbox_norm_coords;
   std::vector<float> scores;
   std::vector<int32_t> class_ids;
@@ -131,15 +152,20 @@ struct CanonicalDetectionResidentUiColumns {
            manual_edit_flags.size() * sizeof(uint8_t);
   }
 
-  bool valid(size_t row_count, bool stable_identity = false) const {
+  bool valid(size_t row_count, bool stable_identity = false,
+             bool instance_keys_required = false) const {
     const bool identity_valid =
-        !stable_identity || (instance_keys.size() == row_count &&
-                             refined_row_ids.size() == row_count &&
-                             source_detect_row_indices.size() == row_count &&
-                             source_kind_codes.size() == row_count &&
-                             score_valid.size() == row_count &&
-                             manual_edit_flags.size() == row_count);
+        (!instance_keys_required && !stable_identity) ||
+        instance_keys.size() == row_count;
+    const bool refined_identity_valid =
+        !stable_identity ||
+        (refined_row_ids.size() == row_count &&
+         source_detect_row_indices.size() == row_count &&
+         source_kind_codes.size() == row_count &&
+         score_valid.size() == row_count &&
+         manual_edit_flags.size() == row_count);
     return row_count <= SIZE_MAX / 4 && identity_valid &&
+           refined_identity_valid &&
            bbox_norm_coords.size() == row_count * 4 &&
            scores.size() == row_count && class_ids.size() == row_count;
   }

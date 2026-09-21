@@ -26,11 +26,16 @@ bool appendSubjectMaskOverlaySceneInput(
         continue;
       }
       overlay::SubjectMaskComponentInput mask;
+      mask.instance_key = detection.instance_key;
+      mask.instance_key_valid = descriptor.strict_v1;
       mask.cache_namespace = descriptor.cache_namespace.empty()
                                  ? descriptor.source_group + "/" +
                                        descriptor.run_name
                                  : descriptor.cache_namespace;
       mask.label = component.label;
+      if (descriptor.strict_v1) {
+        mask.cache_namespace += ":instance:" + std::to_string(detection.instance_key);
+      }
       mask.source_crop_row_id = detection.source_crop_row_id;
       mask.channel_index = component.channel_index;
       mask.source_rect = {detection.roi_x, detection.roi_y, detection.roi_width,

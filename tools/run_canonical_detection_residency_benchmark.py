@@ -296,8 +296,8 @@ def reduce_trials(trials: list[dict[str, Any]]) -> dict[str, Any]:
                 trial["metrics"]["residency_state"] == "ready"
                 and trial["metrics"]["resident_publications"] == 1
                 and trial["metrics"]["resident_stale_chunks"] == 0
-                and trial["metrics"]["resident_decoded_hot_bytes"] == 28_490_088
-                and trial["metrics"]["resident_retained_bytes"] == 28_490_088
+                and trial["metrics"]["resident_decoded_hot_bytes"] == 37_986_784
+                and trial["metrics"]["resident_retained_bytes"] == 37_986_784
                 for trial in resident
             ),
             [
@@ -317,8 +317,8 @@ def reduce_trials(trials: list[dict[str, Any]]) -> dict[str, Any]:
                 "state": "ready",
                 "publications": 1,
                 "stale_chunks": 0,
-                "decoded_hot_bytes": 28_490_088,
-                "retained_bytes": 28_490_088,
+                "decoded_hot_bytes": 37_986_784,
+                "retained_bytes": 37_986_784,
             },
         )
     )

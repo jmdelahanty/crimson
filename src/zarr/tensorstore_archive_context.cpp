@@ -51,13 +51,56 @@ std::optional<json> ReadArchiveJson(const ArchiveContext::Impl& archive,
   }
 }
 
+std::optional<json> ParseArchiveRunMetadata(
+    const std::string& payload, const std::vector<std::string>& run_prefixes) {
+  for (const auto& prefix : run_prefixes)
+    if (prefix.empty() || prefix.back() == '/') return std::nullopt;
+  try {
+    std::string root_field;
+    return json::parse(payload, [&](int depth, json::parse_event_t event, json& value) {
+      if (event != json::parse_event_t::key) return true;
+      const auto& key = value.get_ref<const std::string&>();
+      if (depth == 1) {
+        root_field = key;
+        return key == "zarr_format" || key == "node_type" ||
+               key == "attributes" || key == "consolidated_metadata";
+      }
+      if (root_field == "attributes") return true;
+      if (depth == 2)
+        return key == "kind" || key == "must_understand" || key == "metadata";
+      if (depth == 3) {
+        for (const auto& prefix : run_prefixes)
+          if (key == prefix || (key.size() > prefix.size() &&
+              key.compare(0, prefix.size(), prefix) == 0 && key[prefix.size()] == '/'))
+            return true;
+        return false;
+      }
+      return true;
+    });
+  } catch (const json::exception&) {
+    return std::nullopt;
+  }
+}
+
+std::optional<json> ReadArchiveRunMetadata(
+    const ArchiveContext::Impl& archive, const std::vector<std::string>& run_prefixes) {
+  auto read = ts::kvstore::Read(archive.store, "zarr.json").result();
+  if (!read.ok() || !read->has_value()) return std::nullopt;
+  std::string payload;
+  absl::CopyCordToString(read->value, &payload);
+  read->value.Clear(); // Do not retain a second serialized copy during parsing.
+  return ParseArchiveRunMetadata(payload, run_prefixes);
+}
+
 std::optional<json> ReadArchiveAttributes(const ArchiveContext::Impl& archive,
                                           const std::string& group_path) {
   std::string prefix = group_path;
   if (!prefix.empty() && prefix.back() != '/') {
     prefix.push_back('/');
   }
-  if (auto metadata = ReadArchiveJson(archive, prefix + "zarr.json")) {
+  if (auto metadata = prefix.empty()
+                          ? ReadArchiveRunMetadata(archive, {})
+                          : ReadArchiveJson(archive, prefix + "zarr.json")) {
     if (metadata->contains("attributes") &&
         (*metadata)["attributes"].is_object()) {
       return (*metadata)["attributes"];

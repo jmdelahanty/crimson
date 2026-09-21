@@ -2,7 +2,14 @@
 
 Date: 2026-09-21
 
-Status: planning only; no overlay implementation is included in this change.
+Status: read-only August integration implemented in the active worktree and
+native-tested. See [the implementation report](linux_sleepyfish_overlay_integration_2026-09-21.md)
+for exact evidence and limits. Unchecked items are not claimed complete.
+
+User decision during implementation: finish this increment first; defer mask
+contour outlines and swim-bout/core shading on the speed graph. Filled masks,
+keypoints, valid headings and shape lines are in this increment. A fresh
+Ubuntu 22 colleague package has not been built or published from these changes.
 
 ## Stable checkpoint
 
@@ -19,7 +26,7 @@ Status: planning only; no overlay implementation is included in this change.
   Existing GitHub CLI credentials were used over HTTPS after SSH-key
   authentication failed; saved Git configuration was not changed.
 - [x] The September 17 colleague package still represents this baseline.
-  This planning change does not rebuild, replace, or republish it.
+  This integration does not replace or republish that package.
 
 This is a tested **partial-feature checkpoint**, not a claim that the missing
 overlays already work or that the colleague's A4000/driver 535 is qualified.
@@ -40,9 +47,9 @@ detail bundle, or implement editing/export, arbitrary multi-track selection,
 tail-trace panels, or unrelated stimulus/quality products. Keep older May/June
 archive playback and overlays working.
 
-## Findings that determine implementation order
+## Baseline findings that determined implementation order
 
-| Surface | Current implementation | Required change |
+| Surface | Baseline implementation | Required change |
 | --- | --- | --- |
 | Source selection | Timeline reads validate bound sources, but the overlay session does not adopt those bindings | One validated, immutable product selection for the session |
 | Detection identity | August stores `instances/instance_key`; the raw reader and NVIDIA bridge omit it | Read and transport the published key with validity/source scope, then verify cross-product joins |
@@ -105,14 +112,14 @@ These exact names are an audit example, not hardcoded defaults for other cameras
   Record recording ID, parent-frame domain, source dimensions, selected products,
   schema versions, completion/eligibility, exact upstream paths, advertised
   manifest identities and available mapping/coordinate columns.
-- [ ] Default the scientifically paired overlay set to the validated upstream
+- [x] Default the scientifically paired overlay set to the validated upstream
   bindings of the selected eye-angle/shape products. The eye-bound
   coordinate-successor keypoints differ from `keypoints_runs.latest`.
   Do not independently choose every group's `latest`.
-- [ ] Accept a complete, selector-ineligible upstream only through its explicit
+- [x] Accept a complete, selector-ineligible upstream only through its explicit
   validated binding. An empty parent selector is not proof that a bound source
   is absent. Do not add a global “ignore eligibility” fallback or mutate selectors.
-- [ ] Expose that immutable selection through a canonical overlay-session
+- [x] Expose that immutable selection through a canonical overlay-session
   request/snapshot, reusing or factoring the timeline source-selection logic.
   Include archive/recording, runs, schema/manifest identities, frame domain and
   coordinate authority in source/cache identities.
@@ -121,12 +128,12 @@ These exact names are an audit example, not hardcoded defaults for other cameras
   run bindings. Use the existing keys, not new synthetic identities. If a
   pairing uses different identities, validate its published upstream crosswalk
   before association; never derive a key from a row ordinal.
-- [ ] Specify joins by recording/source scope, exact bound run, parent frame and
+- [x] Specify joins by recording/source scope, exact bound run, parent frame and
   validated `instance_key` (or an explicitly proven contract crosswalk).
   Preserve keys as uint64; distinguish absent identity from numeric zero.
   Reject duplicates, wrong frames, wrong runs and ambiguous matches.
   Observation keys are not subject/track IDs; keep those concepts separate.
-- [ ] Support filtered/reordered downstream rows without assuming raw-key-set
+- [x] Support filtered/reordered downstream rows without assuming raw-key-set
   inclusion: no equal-row-count requirement, positional zip, nearest-frame
   match, or use of clip-local indices as parent IDs.
   Preserve raw detections when a product has no valid corresponding observation.
@@ -136,14 +143,14 @@ reviewed selection/identity contract before a renderer or selector is changed.
 
 ## 2. Implement narrow schema-aware readers and joins
 
-- [ ] Extend the canonical detection read/bridge path to expose validated
+- [x] Extend the canonical detection read/bridge path to expose validated
   observation identities without losing score/class validity, normalized-box
   storage semantics, source row handles or provenance.
   Include keys in paged and resident reads, byte accounting and downstream
   observation/scene types. The existing descriptor's `stable_identity` flag
   means the complete refined identity set; do not blindly repurpose it as a
   raw-key-present flag. Define explicit identity availability/authority semantics.
-- [ ] Evaluate `OpenKeypointV2Repository` against the actual August publication
+- [x] Evaluate `OpenKeypointV2Repository` against the actual August publication
   envelope, required quality/body-frame bindings and coordinate declarations.
   Reuse compatible code; add an explicit versioned branch where needed.
   Do not simply turn on the legacy repository or broaden generic schema gates.
@@ -151,14 +158,14 @@ reviewed selection/identity contract before a renderer or selector is changed.
   eye product instead binds raw coordinate-successor keypoints and subject
   shape. Do not invent missing companion selections. A narrow raw-v2 overlay
   view plus the exact shape binding may be the appropriate adapter.
-- [ ] Read per-frame keypoints, confidences, per-point validity, success flags
+- [x] Read per-frame keypoints, confidences, per-point validity, success flags
   and declared heading/body-frame authority. Preserve missing or invalid values;
   do not invent confidence or geometry for unavailable observations.
   The bound `keypoints_img` is already full-camera continuous pixels with a
   top-left origin and x-right/y-down axes. Preserve its five-point order:
   swim bladder, left eye, right eye, snout tip, tail tip. Prefer this declared
   image surface over reconstructing it from auxiliary normalized/ROI arrays.
-- [ ] Qualify and reuse `OpenSubjectMaskOverlayRepository`'s strict-v1 path
+- [x] Qualify and reuse `OpenSubjectMaskOverlayRepository`'s strict-v1 path
   (`OpenStrictSubjectMaskV1`) for the exact August bound
   mask: `palette.subject_mask_core.run_manifest` v5, logical
   `palette.stage.refined_subject_mask_dense_core` v1,
@@ -172,7 +179,7 @@ reviewed selection/identity contract before a renderer or selector is changed.
   for outline presentation. Do not assume a cache from another recording or
   publication version is usable. Filled masks require explicit bounded dense/
   packed/RLE reads when no suitable presentation surface exists.
-- [ ] Support shape v5's exact frame/key/mask-row contract and propagate stable
+- [x] Support shape v5's exact frame/key/mask-row contract and propagate stable
   observation identity through its declared rows in the exact bound mask run
   into shape resolution and scene types. Do not use positional joins or rename
   `recording_subject_mask_bundle_rows` to the old row axis.
@@ -181,11 +188,11 @@ reviewed selection/identity contract before a renderer or selector is changed.
   heading authority is shape `body_frame/heading_deg`, gated by `axis_valid`:
   zero is camera +x, positive is counterclockwise after the y-axis flip.
   Do not substitute a legacy keypoint heading or unrelated body-frame run.
-- [ ] Preserve source coordinates on disk. Convert declared full-image,
+- [x] Preserve source coordinates on disk. Convert declared full-image,
   ROI-local or normalized coordinates through validated crop placement,
   coordinate dimensions and shared transform helpers. Apply camera scaling
   and Y-axis display inversion once, in presentation.
-- [ ] Fail only the affected product or incompatible pairing when possible.
+- [x] Fail only the affected product or incompatible pairing when possible.
   Keep valid boxes, video and independent timelines available with a visible
   reason for the missing overlay.
 
@@ -195,7 +202,7 @@ source identity. No UI is needed to prove these contracts.
 
 ## 3. Preserve storage-aware loading and bounded resources
 
-- [ ] Open/validate repositories off the UI thread. Reuse an archive context
+- [x] Open/validate repositories off the UI thread. Reuse an archive context
   across paired overlay readers where safe; record existing consolidated-root
   metadata and offset costs rather than claiming all opening is constant-size.
   The strict mask path currently reads full frame/key/crop-placement mappings
@@ -205,19 +212,19 @@ source identity. No UI is needed to prove these contracts.
   `ReadOnlyOverlayFrameCoordinator` and
   `SubjectMaskPresentationCoordinator`. UI queries must inspect snapshots,
   not call synchronous TensorStore repository resolution.
-- [ ] Adapt `SubjectShapeOverlayBuffer` to the shared scheduler/lifecycle or
+- [x] Adapt `SubjectShapeOverlayBuffer` to the shared scheduler/lifecycle or
   provide an equivalent bounded session wrapper. It currently owns a private
   worker; keypoint and mask buffers already accept the shared scheduler.
-- [ ] Keep current-frame demand ahead of directional prefetch and visible
+- [x] Keep current-frame demand ahead of directional prefetch and visible
   windows. Preserve reserved current-frame capacity so mask/timeline work
   cannot consume all workers while detection demand waits.
-- [ ] Coordinate or disable redundant repository-level mask prefetch when a
+- [x] Coordinate or disable redundant repository-level mask prefetch when a
   session buffer already schedules it. The current mask repository has its
   own prefetch thread and can wait for an in-progress chunk.
-- [ ] Advance source/seek generations, cancel obsolete queued work, and reject
+- [x] Advance source/seek generations, cancel obsolete queued work, and reject
   stale completion at publication and drawing. Do not promise cancellation
   interrupts an already-running filesystem/TensorStore read.
-- [ ] Keep close/reopen and worker retirement off latency-critical UI paths:
+- [x] Keep close/reopen and worker retirement off latency-critical UI paths:
   existing buffer close methods wait for source work to drain.
 - [ ] Set and test explicit retained CPU/GPU and in-flight decode/upload limits.
   Use existing byte-budget admission helpers where applicable, counting shared
@@ -227,16 +234,19 @@ source identity. No UI is needed to prove these contracts.
   temporary conversions, TensorStore cache and GPU textures separately.
   Logical frame/page limits do not limit physical compressed-chunk reads or
   total RSS.
-  In the audited August mask, one `masks_roi` chunk is 2,872 rows × one
-  384×384 channel, approximately 404 MiB uncompressed. Measure actual read,
-  decompression and retained/transient behavior before enabling dense fills;
-  metadata chunk size is not a measured physical read or process-RSS result.
-- [ ] Audit existing count-only limits: mask repository payload cache
+  Correction from the full sharding codec metadata: the August `masks_roi`
+  outer shard is 2,872 rows × one 384×384 channel (about 404 MiB logically),
+  but its indexed inner read chunks are eight rows × one 384×384 channel
+  (1.125 MiB uncompressed). The published storage plan distinguishes both.
+  Do not treat the outer shard as the decompression unit. Verify TensorStore's
+  read layout and measure actual read, decompression and retained/transient
+  behavior; neither logical extent is a measured physical read or RSS result.
+- [x] Audit existing count-only limits: mask repository payload cache
   (3 dense or 8 packed/contour chunks), mask/keypoint buffers (default 24 frames),
   shape buffer (16), and Linux read-only mask texture cache (64 textures).
   Existing mask mapping caches are byte-limited, but this is not an end-to-end
   decoded-byte or GPU-memory guarantee.
-- [ ] Key GPU textures by immutable payload identity: archive/run/manifest,
+- [x] Key GPU textures by immutable payload identity: archive/run/manifest,
   mask row/source-crop row and component. Keep frame/geometry placement in
   scene/presentation identity, not texture identity, to preserve payload reuse.
   Reject stale placement separately; invalidate safely on source change and
@@ -253,29 +263,31 @@ qualification from a different subject-mask bundle.
 
 ## 4. Integrate canonical frame presentation and controls
 
-- [ ] Add a canonical overlay session around the existing Linux open/close flow
+- [x] Add a canonical overlay session around the existing Linux open/close flow
   and supply validated product snapshots to `CameraFrameDataAdapter` or an
   explicit companion interface. Keep legacy adapters intact.
-- [ ] Demand the authoritative presented camera parent frame, including the
+- [x] Demand the authoritative presented camera parent frame, including the
   existing retained-frame policy during clip handoff. Never draw a newly
   requested frame's overlay over the previous camera surface.
-- [ ] Reuse keypoint, mask and shape scene adapters plus the shared read-only
+- [x] Reuse keypoint, mask and shape scene adapters plus the shared read-only
   renderer. Do not fabricate `ZarrDetectionLoader::FrameDetections` solely to
   pass old camera-window or inspector gates.
-- [ ] Wire keypoint markers, declared heading arrows, mask components/fill/
-  contours and valid shape geometry into Camera View and Frame Inspect.
+- [x] Wire keypoint markers, declared heading arrows, mask components/fill
+  and valid shape geometry into Camera View and Frame Inspect.
   Disable legacy editing tools on these read-only canonical sources.
-- [ ] Represent each product as opening, pending, ready, valid-empty, unavailable
+- [ ] Deferred by user: add mask contour outlines and restore swim-bout/core
+  shading on the speed trace after this increment is stable.
+- [x] Represent each product as opening, pending, ready, valid-empty, unavailable
   or failed. A product failure must not become a silent empty result or prevent
   independent valid layers from drawing.
-- [ ] Make ready-empty clear the prior frame's geometry. Turning a layer off,
+- [x] Make ready-empty clear the prior frame's geometry. Turning a layer off,
   changing source, seeking or closing must not leave old masks/textures visible.
-- [ ] Show exact product/run provenance and observation/frame identities in
+- [x] Show exact product/run provenance and observation/frame identities in
   diagnostics. Distinguish raw camera boxes from the bound geometry product.
 - [ ] If eye axes/gaze/angle arcs are included, separately qualify the v7
   eye-geometry reader and conventions. Working precomputed angle traces do not
   establish support for rendering their underlying geometry.
-- [ ] Label old “metadata-only / no scores / no class IDs” diagnostics as legacy
+- [x] Label old “metadata-only / no scores / no class IDs” diagnostics as legacy
   probe results. Emit a route-aware session summary and explicit canonical
   product states; missing integration must not masquerade as missing archive data.
 
@@ -284,10 +296,10 @@ loading/error states and no legacy-detail dependency; existing plots still work.
 
 ## 5. Regression and real-data acceptance
 
-- [ ] Add metadata-contract negatives: missing/incomplete bound run, forbidden
+- [x] Add metadata-contract negatives: missing/incomplete bound run, forbidden
   unbound ineligible run, wrong digest/schema/recording/dimensions, selector
   disagreement and mismatched shape-to-mask lineage.
-- [ ] Add identity fixtures with 0/1/multiple observations, reordered/filtered
+- [x] Add identity fixtures with 0/1/multiple observations, reordered/filtered
   rows, sparse acquisition frames, duplicate keys, high uint64 keys, absent
   identities and identical row ordinals belonging to different runs.
 - [ ] Add coordinate fixtures with non-origin/non-square ROIs, differing mask
@@ -298,11 +310,11 @@ loading/error states and no legacy-detail dependency; existing plots still work.
   worker exceptions and current-frame work competing with speculative masks.
 - [ ] Extend scene/Frame Inspect tests for product independence, valid-empty
   clearing, toggles, stale frame/source rejection and read-only controls.
-- [ ] Extend GUI capture markers: require exact video/query/overlay frame,
+- [x] Extend GUI capture markers: require exact video/query/overlay frame,
   selected run/manifest/observation identities and actual rendered primitive/
   component counts. The old `--ui-reference-state overlays` gate still
   assumes legacy eye masks; update the canonical gate, not merely the timeout.
-- [ ] Run the complete headless suite plus focused repeated scheduler/session
+- [x] Run the complete headless suite plus focused repeated scheduler/session
   regressions. Reuse existing keypoint/mask/shape repository, scene-adapter,
   frame-coordinator and NVIDIA frame-data tests; add canonical session/join tests.
 - [ ] Probe all four August cameras at start, ordinary non-keyframes, both sides
@@ -315,7 +327,7 @@ loading/error states and no legacy-detail dependency; existing plots still work.
 - [ ] Run authenticated local NVIDIA playback/captures: all four cameras across
   53,990–54,010, paused non-keyframe seeks such as 54,010, reverse seeks, reopen,
   and camera 93's unequal late boundary at 2,592,030.
-- [ ] Keep the required June GoodCopBadCop 0:300 smoke and a May legacy-overlay
+- [x] Keep the required June GoodCopBadCop 0:300 smoke and a May legacy-overlay
   control. Do not operate on the user's running Crimson window.
 - [ ] Measure warm/random-seek behavior, continuous playback, repeated seek/
   source changes and an endurance interval. Report storage/cache conditions,

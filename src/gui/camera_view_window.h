@@ -25,6 +25,9 @@ struct CameraViewWindowPerfMetrics {
     double bbox_overlay_build_ms = 0.0;
     double bbox_overlay_draw_ms = 0.0;
     int bbox_overlay_item_count = 0;
+    int keypoint_overlay_item_count = 0;
+    int heading_overlay_item_count = 0;
+    int subject_shape_overlay_item_count = 0;
     double subject_shape_overlay_ms = 0.0;
     double tail_kinematics_overlay_ms = 0.0;
     double scene_ui_ms = 0.0;
@@ -131,6 +134,7 @@ struct CameraViewWindowContext {
 
     CameraViewTransportControlsContext transport_controls;
     bool capture_texture_draw_trace = false;
+    const crimson::overlay::ReadOnlyOverlayScene* subject_shape_scene = nullptr;
 };
 
 struct CameraViewSubjectMaskPick {

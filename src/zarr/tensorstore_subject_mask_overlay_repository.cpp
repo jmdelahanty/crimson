@@ -793,7 +793,8 @@ class TensorStoreSubjectMaskOverlayRepository final
       std::vector<RleSource> rle, std::vector<ContourSource> contours,
       bool read_mask_pixels,
       SubjectMaskOverlayRepositoryMetrics opening_metrics,
-      std::chrono::steady_clock::time_point open_started)
+      std::chrono::steady_clock::time_point open_started,
+      SubjectMaskOverlayOpenOptions limits = {})
       : descriptor_(std::move(descriptor)), rows_(std::move(rows)),
         frame_row_offsets_(std::move(frame_row_offsets)),
         lazy_mapping_(std::move(lazy_mapping)),
@@ -801,6 +802,7 @@ class TensorStoreSubjectMaskOverlayRepository final
         dense_(std::move(dense)), bitpacked_(std::move(bitpacked)),
         rle_(std::move(rle)), contours_(std::move(contours)),
         read_mask_pixels_(read_mask_pixels),
+        limits_(std::move(limits)),
         metrics_(std::move(opening_metrics)) {
     if (lazy_mapping_) {
       metrics_.lazy_mapping = true;
@@ -862,10 +864,15 @@ class TensorStoreSubjectMaskOverlayRepository final
       chunk_rows_ = 1;
     }
     descriptor_.storage_chunk_rows = chunk_rows_;
+    if (limits_.max_read_rows != 0) {
+      chunk_rows_ = std::min(chunk_rows_, limits_.max_read_rows);
+    }
     chunk_count_ = descriptor_.row_count == 0
                        ? 0
                        : 1 + (descriptor_.row_count - 1) / chunk_rows_;
-    prefetch_worker_ = std::thread([this] { runPrefetch(); });
+    if (!limits_.disable_prefetch) {
+      prefetch_worker_ = std::thread([this] { runPrefetch(); });
+    }
     metrics_.open_total_ms = ElapsedMilliseconds(open_started);
   }
 
@@ -885,6 +892,8 @@ class TensorStoreSubjectMaskOverlayRepository final
   SubjectMaskOverlayResolution resolveCameraFrame(
       int64_t camera_frame, int full_frame_width,
       int full_frame_height) const override {
+    std::unique_lock<std::mutex> interactive_lock(interactive_mutex_, std::defer_lock);
+    if (limits_.serial_dense_channels) interactive_lock.lock();
     SubjectMaskOverlayResolution result;
     result.camera_frame = camera_frame;
     if (camera_frame < 0 ||
@@ -909,6 +918,12 @@ class TensorStoreSubjectMaskOverlayRepository final
       const size_t frame = static_cast<size_t>(camera_frame);
       const size_t first = static_cast<size_t>(frame_row_offsets_[frame]);
       const size_t last = static_cast<size_t>(frame_row_offsets_[frame + 1]);
+      if (limits_.max_observations_per_frame &&
+          last - first > limits_.max_observations_per_frame) {
+        result.status = SubjectMaskOverlayStatus::ReadFailed;
+        result.error = "Subject-mask frame exceeds observation admission budget";
+        return result;
+      }
       metadata_rows.insert(metadata_rows.end(), rows_.begin() + first,
                            rows_.begin() + last);
     } else {
@@ -922,6 +937,12 @@ class TensorStoreSubjectMaskOverlayRepository final
     }
     if (metadata_rows.empty()) {
       result.status = SubjectMaskOverlayStatus::Missing;
+      return result;
+    }
+    if (limits_.max_observations_per_frame &&
+        metadata_rows.size() > limits_.max_observations_per_frame) {
+      result.status = SubjectMaskOverlayStatus::ReadFailed;
+      result.error = "Subject-mask frame exceeds observation admission budget";
       return result;
     }
 
@@ -1481,7 +1502,9 @@ class TensorStoreSubjectMaskOverlayRepository final
             std::max(metrics_.maximum_contour_load_ms, loaded->contour_load_ms);
         cache_.push_back(loaded);
         metrics_.cached_payload_bytes += loaded->retained_bytes;
-        while (cache_.size() > cache_capacity_) {
+        while (cache_.size() > cache_capacity_ ||
+               (limits_.max_cached_payload_bytes != 0 &&
+                metrics_.cached_payload_bytes > limits_.max_cached_payload_bytes)) {
           metrics_.cached_payload_bytes -= std::min(
               metrics_.cached_payload_bytes, cache_.front()->retained_bytes);
           metrics_.evicted_payload_bytes += cache_.front()->retained_bytes;
@@ -1509,6 +1532,15 @@ class TensorStoreSubjectMaskOverlayRepository final
     }
     const size_t first = chunk_id * chunk_rows_;
     const size_t last = std::min(first + chunk_rows_, descriptor_.row_count);
+    uint64_t worst_case_indices = 0;
+    AddBytes(&worst_case_indices, last - first,
+             descriptor_.component_labels.size() * descriptor_.mask_width *
+                 descriptor_.mask_height * sizeof(uint32_t) * 2);
+    if (limits_.max_cached_payload_bytes && read_mask_pixels_ &&
+        worst_case_indices > limits_.max_cached_payload_bytes) {
+      *error = "Subject-mask decode exceeds interactive admission budget";
+      return nullptr;
+    }
     auto chunk = std::make_shared<CachedMaskChunk>();
     chunk->chunk_id = chunk_id;
     chunk->first_row = first;
@@ -1547,11 +1579,61 @@ class TensorStoreSubjectMaskOverlayRepository final
       return nullptr;
     }
     chunk->retained_bytes = CachedChunkRetainedBytes(*chunk);
+    if (limits_.max_cached_payload_bytes != 0 &&
+        chunk->retained_bytes > limits_.max_cached_payload_bytes) {
+      *error = "Subject-mask payload exceeds interactive byte budget";
+      return nullptr;
+    }
     return chunk;
+  }
+
+  bool loadDenseChannels(size_t first, size_t last, CachedMaskChunk* chunk,
+                         std::string* error) const {
+    // A narrow logical read still decodes physical Zarr chunks. Read channels
+    // serially so the four large August channel chunks are not requested
+    // concurrently by this repository. TensorStore's cache is separate.
+    for (size_t channel = 0; channel < descriptor_.component_labels.size(); ++channel) {
+      if (channel >= available_channels_.size() || !available_channels_[channel]) continue;
+      ts::Box<4> domain(dense_.domain().box());
+      domain.origin()[0] = static_cast<ts::Index>(first);
+      domain.shape()[0] = static_cast<ts::Index>(last - first);
+      domain.origin()[1] = static_cast<ts::Index>(channel);
+      domain.shape()[1] = 1;
+      const auto started = std::chrono::steady_clock::now();
+      auto read = ts::Read(dense_ | ts::IdentityTransform(domain)).result();
+      ++chunk->dense_mask_payload_reads;
+      chunk->read_ms += ElapsedMilliseconds(started);
+      if (!read.ok() || read->rank() != 4 ||
+          read->shape()[0] != static_cast<ts::Index>(last - first) ||
+          read->shape()[1] != 1 ||
+          read->shape()[2] != static_cast<ts::Index>(descriptor_.mask_height) ||
+          read->shape()[3] != static_cast<ts::Index>(descriptor_.mask_width)) {
+        *error = read.ok() ? "Dense mask channel has an unexpected shape" : read.status().ToString();
+        return false;
+      }
+      chunk->source_bytes_read += ArrayPayloadBytes(*read, sizeof(uint8_t));
+      const auto strides = read->byte_strides();
+      const auto* origin = reinterpret_cast<const uint8_t*>(read->byte_strided_origin_pointer().get());
+      for (size_t row = 0; row < last - first; ++row) {
+        auto& indices = chunk->rows[row].components[channel].foreground_indices;
+        indices.reserve(256);
+        for (size_t y = 0; y < descriptor_.mask_height; ++y) {
+          for (size_t x = 0; x < descriptor_.mask_width; ++x) {
+            if (*(origin + row * strides[0] + y * strides[2] + x * strides[3])) {
+              indices.push_back(static_cast<uint32_t>(y * descriptor_.mask_width + x));
+            }
+          }
+        }
+      }
+    }
+    return true;
   }
 
   bool loadDenseChunk(size_t first, size_t last, CachedMaskChunk* chunk,
                       std::string* error) const {
+    if (limits_.serial_dense_channels) {
+      return loadDenseChannels(first, last, chunk, error);
+    }
     const auto read_started = std::chrono::steady_clock::now();
     auto read =
         ts::Read(SliceFirstDimension(dense_, static_cast<ts::Index>(first),
@@ -1970,6 +2052,7 @@ class TensorStoreSubjectMaskOverlayRepository final
   }
 
   void queuePrefetch(size_t chunk_id) const {
+    if (limits_.disable_prefetch) return;
     std::lock_guard<std::mutex> lock(cache_mutex_);
     if (stopping_ || chunk_id >= chunk_count_ ||
         loading_chunks_.count(chunk_id) != 0 ||
@@ -2030,6 +2113,8 @@ class TensorStoreSubjectMaskOverlayRepository final
   std::vector<RleSource> rle_;
   std::vector<ContourSource> contours_;
   bool read_mask_pixels_ = true;
+  SubjectMaskOverlayOpenOptions limits_;
+  mutable std::mutex interactive_mutex_;
   size_t chunk_rows_ = 1;
   size_t chunk_count_ = 0;
   size_t cache_capacity_ = 3;
@@ -2281,7 +2366,7 @@ bool ValidateSampledContourCacheMetadata(
     const SubjectMaskSampledContourV1Summary &summary, json *root_output,
     std::string *error_message) {
   try {
-    auto root = internal::ReadArchiveJson(archive, "zarr.json");
+    auto root = internal::ReadArchiveRunMetadata(archive, {run_base});
     if (!root || root->value("zarr_format", 0) != 3 ||
         root->value("node_type", "") != "group" ||
         !root->contains("consolidated_metadata") ||
@@ -2498,7 +2583,7 @@ bool ValidateStrictMetadata(const ArchiveContext::Impl &archive,
                             const SubjectMaskV1ManifestSummary &summary,
                             json *root_output, std::string *error_message) {
   try {
-    const auto root = internal::ReadArchiveJson(archive, "zarr.json");
+    const auto root = internal::ReadArchiveRunMetadata(archive, {run_base});
     if (!root || root->value("zarr_format", 0) != 3 ||
         root->value("node_type", "") != "group" ||
         !root->contains("consolidated_metadata") ||
@@ -2627,6 +2712,17 @@ OpenStrictSubjectMaskV1(const ArchiveContext::Impl &archive,
     return nullptr;
   }
 
+  // Admit known mapping allocations before opening/reading full vectors. This
+  // is not an RSS cap: archive JSON, TensorStore and allocator overhead remain
+  // separately measured. Include temporary columns and key-validation space.
+  uint64_t mapping_bytes = 0;
+  AddBytes(&mapping_bytes, summary.row_count, sizeof(RowMetadata) + 40 + 64);
+  AddBytes(&mapping_bytes, summary.frame_count + 1, 2 * sizeof(int64_t));
+  if (options.max_mapping_bytes && mapping_bytes > options.max_mapping_bytes) {
+    internal::SetArchiveError(error_message, "Subject-mask mappings exceed interactive admission budget");
+    return nullptr;
+  }
+
   SubjectMaskOverlayRepositoryMetrics opening_metrics;
   const auto catalog_started = std::chrono::steady_clock::now();
   json root;
@@ -2728,6 +2824,22 @@ OpenStrictSubjectMaskV1(const ArchiveContext::Impl &archive,
   }
   opening_metrics.storage_open_ms = ElapsedMilliseconds(storage_started);
 
+  if (!options.contour_only && options.max_storage_chunk_bytes) {
+    const auto layout = masks_store.chunk_layout();
+    uint64_t bytes = 1;
+    if (!layout.ok()) {
+      internal::SetArchiveError(error_message, "Subject-mask physical chunk layout is unavailable");
+      return nullptr;
+    }
+    for (const auto extent : layout->read_chunk_shape()) {
+      if (extent <= 0 || bytes > options.max_storage_chunk_bytes / static_cast<uint64_t>(extent)) {
+        internal::SetArchiveError(error_message, "Subject-mask physical chunk exceeds interactive decode budget");
+        return nullptr;
+      }
+      bytes *= static_cast<uint64_t>(extent);
+    }
+  }
+
   const auto mapping_started = std::chrono::steady_clock::now();
   std::vector<int64_t> offsets;
   std::vector<int64_t> frames;
@@ -2794,7 +2906,7 @@ OpenStrictSubjectMaskV1(const ArchiveContext::Impl &archive,
   }
 
   SubjectMaskOverlayDescriptor descriptor;
-  descriptor.cache_namespace = archive.root_path.string() + ":" + run_name;
+  descriptor.cache_namespace = archive.root_path.string() + ":" + run_name + ":" + summary.payload_digest;
   descriptor.source_group = "refined_subject_masks_runs";
   descriptor.run_name = run_name;
   descriptor.source_crop_run = StringValue(run_attributes, "source_crop_run");
@@ -2838,7 +2950,7 @@ OpenStrictSubjectMaskV1(const ArchiveContext::Impl &archive,
       std::move(available), std::move(masks_store),
       ts::TensorStore<uint8_t, 4>{}, std::vector<RleSource>{},
       std::move(presentation_contours), !options.contour_only,
-      std::move(opening_metrics), open_started);
+      std::move(opening_metrics), open_started, options);
 }
 
 }  // namespace
@@ -3269,7 +3381,7 @@ std::unique_ptr<SubjectMaskOverlayRepository> OpenSubjectMaskOverlayRepository(
       std::move(descriptor), std::move(rows), std::vector<int64_t>{},
       std::move(lazy_mapping), std::move(available), std::move(dense),
       std::move(bitpacked), std::move(rle), std::move(contours), true,
-      std::move(opening_metrics), open_started);
+      std::move(opening_metrics), open_started, options);
 }
 
 std::unique_ptr<SubjectMaskOverlayRepository>

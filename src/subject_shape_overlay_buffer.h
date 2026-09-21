@@ -1,5 +1,7 @@
 #pragma once
 
+#include "data_access_scheduler.h"
+
 #include "zarr/subject_shape_overlay_repository.h"
 
 #include <chrono>
@@ -23,7 +25,9 @@ struct SubjectShapeOverlayBufferMetrics {
 
 class SubjectShapeOverlayBuffer {
 public:
-  SubjectShapeOverlayBuffer();
+  explicit SubjectShapeOverlayBuffer(
+      std::shared_ptr<crimson::data::DataAccessScheduler> scheduler = nullptr,
+      std::string archive_identity = {});
   ~SubjectShapeOverlayBuffer();
 
   SubjectShapeOverlayBuffer(const SubjectShapeOverlayBuffer &) = delete;

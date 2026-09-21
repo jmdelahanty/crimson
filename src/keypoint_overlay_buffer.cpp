@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <condition_variable>
+#include <exception>
 #include <deque>
 #include <limits>
 #include <mutex>
@@ -211,8 +212,19 @@ bool KeypointOverlayBuffer::requestFrame(int64_t camera_frame,
             if (scheduled.cancellation.cancelled())
               return crimson::data::DataResultStatus::Stale;
             const auto started = std::chrono::steady_clock::now();
-            auto resolved = impl_->repository->resolveCameraFrame(
-                frame, full_frame_width, full_frame_height);
+            crimson::zarr::KeypointOverlayResolution resolved;
+            try {
+              resolved = impl_->repository->resolveCameraFrame(
+                  frame, full_frame_width, full_frame_height);
+            } catch (const std::exception& exception) {
+              resolved.camera_frame = frame;
+              resolved.status = crimson::zarr::KeypointOverlayStatus::ReadFailed;
+              resolved.error = exception.what();
+            } catch (...) {
+              resolved.camera_frame = frame;
+              resolved.status = crimson::zarr::KeypointOverlayStatus::ReadFailed;
+              resolved.error = "Overlay reader threw an unknown exception";
+            }
             const double elapsed_ms =
                 std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - started)

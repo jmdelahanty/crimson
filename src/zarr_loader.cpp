@@ -696,7 +696,7 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
             }
             startup_trace.step("load_tail_kinematics");
         } else {
-            std::cout << "  detect_runs layout not found; opening in metadata/stimulus-only mode"
+            std::cout << "  [LegacyZarrProbe] Legacy detect_runs arrays unavailable; opening metadata/media. Canonical products are loaded separately."
                       << std::endl;
         }
 
@@ -852,6 +852,7 @@ bool ZarrDetectionLoader::loadZarrFile(const std::string& filepath,
         startup_trace.step("load_eager_crop_images");
 
         std::cout << "Successfully loaded zarr file: " << filepath << std::endl;
+        std::cout << "  [LegacyZarrProbe] Inventory below describes the legacy loader, not separately loaded canonical products." << std::endl;
         std::cout << "  Total frames: " << data_.total_frames << std::endl;
         std::cout << "  Max detections per frame: " << data_.max_detections << std::endl;
         std::cout << "  FPS: " << data_.fps << std::endl;

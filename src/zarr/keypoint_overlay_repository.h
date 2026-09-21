@@ -28,6 +28,10 @@ struct KeypointOverlayPoint {
 struct KeypointOverlayDescriptor {
   std::string source_group;
   std::string run_name;
+  std::string recording_id;
+  std::string manifest_digest;
+  std::string manifest_payload_digest;
+  std::string coordinate_authority;
   std::string source_crop_run;
   KeypointCoordinateSpace coordinate_space = KeypointCoordinateSpace::Image;
   bool refined = false;
@@ -35,6 +39,7 @@ struct KeypointOverlayDescriptor {
   std::vector<std::array<size_t, 2>> skeleton_edges;
   size_t row_count = 0;
   size_t camera_frame_count = 0;
+  bool stable_instance_keys = false;
 };
 
 struct KeypointOverlayRow {
@@ -57,6 +62,8 @@ struct KeypointOverlayRow {
 
 struct KeypointOverlayDetection {
   uint64_t instance_key = 0;
+  bool instance_key_valid = false;
+  int64_t acquisition_frame = -1;
   int64_t detection_index = -1;
   int64_t source_crop_row_id = -1;
   std::vector<KeypointOverlayPoint> keypoints;
