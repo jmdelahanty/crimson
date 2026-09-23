@@ -1,0 +1,42 @@
+{
+  "schema": "crimson.august_nfs_performance.v1",
+  "source_fps": 30,
+  "render_fps": 60,
+  "qualification_repetitions": 3,
+  "cache_policy": "fresh_process_os_and_server_cache_uncontrolled_no_flush",
+  "variants": [
+    {"name": "plots_only", "overlays": false, "shading": false},
+    {"name": "overlays", "overlays": true, "shading": false},
+    {"name": "overlays_shading", "overlays": true, "shading": true}
+  ],
+  "playback": [
+    {"name": "sustained", "start": 162000, "end": 162600, "warmup_s": 8},
+    {"name": "clip_boundary", "start": 53940, "end": 54240, "warmup_s": 8}
+  ],
+  "startup": {"name": "unprewarmed", "start": 1677990, "end": 1678590, "warmup_s": 0},
+  "timeline_transition": {"name": "timeline_page_boundary", "start": 55200, "end": 55500, "warmup_s": 8},
+  "seek_frames": [54010, 2565015, 12000, 2862000, 53990, 54010, 2565015, 12000, 2862000, 53990],
+  "thresholds": {
+    "tick_p95_ms": 25.0,
+    "tick_p99_ms": 50.0,
+    "tick_max_ms": 5000.0,
+    "timeline_p99_ms": 5.0,
+    "skipped_fraction": 0.01,
+    "no_presented_frame_fraction": 0.02,
+    "no_presented_frame_max_ms": 500.0,
+    "max_video_hold_periods": 2.5,
+    "no_visible_video_fraction": 0.02,
+    "no_visible_video_max_ms": 500.0,
+    "overlay_late_fraction": 0.01,
+    "timeline_late_fraction": 0.01,
+    "first_ready_ms": 15000.0,
+    "seek_p95_ms": 1500.0,
+    "seek_max_ms": 5000.0,
+    "current_queue_max_ms": 1000.0,
+    "peak_rss_kib": 6291456,
+    "relative_increase": 0.20,
+    "shading_extra_file_bytes": 1048576,
+    "shading_extra_file_fraction": 0.05,
+    "comparison_floors": {"tick_p95_ms": 2.0, "tick_p99_ms": 3.0, "timeline_p99_ms": 0.5, "file_bytes": 5242880, "file_reads": 50, "peak_rss_kib": 65536, "seek_p95_ms": 100.0}
+  }
+}

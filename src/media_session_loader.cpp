@@ -1,4 +1,6 @@
 #include "media_session_loader.h"
+#include "clipped_media_prewarm_policy.h"
+#include "frame_slot.h"
 #include "global.h"
 #include "platform/nvidia/nvidia_stimulus_media_loader.h"
 #include "render.h"
@@ -7,6 +9,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
+#include <cstring>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
@@ -17,6 +21,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <tuple>
+#include <unordered_set>
+#include <cuda_runtime_api.h>
 
 extern std::mutex g_seek_info_mutex;
 
@@ -140,7 +146,14 @@ void configurePlaybackTransport(const MediaSessionLoaderContext &context,
   }
   const int64_t frame_count = playbackFrameCount(context, demuxer);
   if (preserve_state && context.playback_transport->configured()) {
-    context.playback_transport->updateTimeline(*context.video_fps, frame_count);
+    // A same-rate clip handoff does not change the parent timeline. Updating
+    // it here floors the fractional playback position and delays the next
+    // frame even when it is already decoded in the ring.
+    if (context.playback_transport->framesPerSecond() != *context.video_fps ||
+        context.playback_transport->frameCount() != frame_count) {
+      context.playback_transport->updateTimeline(*context.video_fps,
+                                                 frame_count);
+    }
     return;
   }
   context.playback_transport->configure(*context.video_fps, frame_count,
@@ -244,6 +257,746 @@ std::string discoverRecordingFallbackVideo(const std::string &recording_root) {
 
 MediaSessionLoader::MediaSessionLoader(const MediaSessionLoaderContext &context)
     : context_(context) {}
+
+struct MediaSessionLoader::PrewarmCandidate {
+  crimson::playback::ClippedMediaTransitionWorker prepare_stage;
+  PreparedCameraMedia prepared;
+  std::string error;
+  bool prepared_ok = false;
+  bool decoder_started = false;
+  bool canceled = false;
+  std::shared_ptr<const crimson::media::RecordingClipMediaProvider> provider;
+  size_t selected_run = crimson::playback::kNoClippedSelectedRun;
+  std::string clip_id;
+  std::string video_path;
+  std::string camera_name;
+  int boundary_parent = -1;
+  int boundary_local = -1;
+  DecoderContext decoder_context{};
+  SeekInfo seek_info;
+  DecoderOutputHandoff output;
+  PictureBuffer staged{};
+  std::thread decoder_thread;
+
+  ~PrewarmCandidate() {
+    decoder_context.stop_flag = true;
+    prepare_stage.drain();
+    if (decoder_thread.joinable()) decoder_thread.join();
+    if (staged.frame) {
+      cudaSetDevice(decoder_context.gpu_index);
+      cudaFree(staged.frame);
+      staged.frame = nullptr;
+    }
+    if (staged.frame_slot_state) frameSlotDestroy(staged);
+  }
+};
+
+void MediaSessionLoader::discardPrewarmCandidate() {
+  if (!prewarm_candidate_) return;
+  prewarm_candidate_->canceled = true;
+  prewarm_candidate_->decoder_context.stop_flag = true;
+  if (prewarm_cleanup_stage_.active()) {
+    if (!prewarm_cleanup_stage_.finished()) return;
+    prewarm_cleanup_stage_.drain();
+  }
+  auto old = prewarm_candidate_;
+  try {
+    prewarm_cleanup_stage_.start([old] {
+      old->prepare_stage.drain();
+      if (old->decoder_thread.joinable()) old->decoder_thread.join();
+    });
+    prewarm_cleanup_launch_failures_ = 0;
+    prewarm_candidate_.reset();
+  } catch (const std::exception &e) {
+    ++prewarm_cleanup_launch_failures_;
+    std::cout << "[ClipPrewarm] stage=fallback reason=cleanup_launch "
+              << e.what() << std::endl;
+    if (prewarm_cleanup_launch_failures_ >= 3) {
+      // Thread creation failure can otherwise leave the canceled candidate
+      // resident forever. A one-time pause is the bounded recovery path.
+      prewarm_candidate_.reset();
+      prewarm_cleanup_launch_failures_ = 0;
+    }
+  }
+}
+
+MediaSessionLoader::~MediaSessionLoader() {
+  cancelPendingClipSwitch(false);
+  if (adopted_candidate_ && context_.decoder_threads) {
+    adopted_candidate_->decoder_context.stop_flag = true;
+    crimson::playback::joinLiveThreads(*context_.decoder_threads);
+    adopted_candidate_.reset();
+  }
+}
+
+void MediaSessionLoader::pollSequentialClipPrewarm(int presented_parent_frame,
+                                                   bool playback_active) {
+  if (prewarm_cleanup_stage_.finished()) prewarm_cleanup_stage_.drain();
+  if (prewarm_old_join_stage_.finished()) {
+    prewarm_old_join_stage_.drain();
+    prewarm_old_retiring_ = false;
+    prewarm_old_retired_ = true;
+    std::cout << "[ClipPrewarm] stage=old_decoder_retired parent_frame="
+              << presented_parent_frame << std::endl;
+  }
+  const auto *state = context_.clipped_media_state;
+  const auto provider = state ? state->recording_clip_provider : nullptr;
+  if (!playback_active || !provider || !context_.video_loaded ||
+      !*context_.video_loaded || !context_.scene ||
+      context_.scene->use_cpu_buffer || !context_.decoder_threads ||
+      clip_switch_work_ || clip_join_started_ ||
+      (std::getenv("CRIMSON_DISABLE_CLIP_PREWARM") &&
+       std::strcmp(std::getenv("CRIMSON_DISABLE_CLIP_PREWARM"), "0") != 0)) {
+    if (prewarm_candidate_) discardPrewarmCandidate();
+    return;
+  }
+  const auto &active = state->handoff;
+  const int remaining = static_cast<int>(active.last_parent_frame -
+                                          presented_parent_frame);
+  const double rate = context_.playback_transport
+      ? context_.playback_transport->playbackRate() : 1.0;
+  const int lead_frames = crimson::playback::leadFrames(*context_.video_fps,
+                                                        rate);
+  if (remaining <= 0 || remaining > lead_frames ||
+      presented_parent_frame < active.first_parent_frame ||
+      active.switch_in_progress) return;
+  const int boundary = static_cast<int>(active.last_parent_frame + 1);
+  const auto next = provider->resolveParentFrame(boundary);
+  if (!next || next->clip_index == active.selected_run_index ||
+      next->clip_local_frame < 0 || !next->parent_frame_by_clip_local ||
+      next->camera_serial != state->camera_serial) return;
+  if (prewarm_failed_boundary_ == boundary) return;
+  if (prewarm_candidate_ &&
+      (prewarm_candidate_->provider != provider ||
+       prewarm_candidate_->selected_run != next->clip_index ||
+       prewarm_candidate_->boundary_parent != boundary ||
+       prewarm_candidate_->clip_id != next->clip_id ||
+       prewarm_candidate_->video_path != next->video_path.string())) {
+    discardPrewarmCandidate();
+  }
+  if (!prewarm_candidate_) {
+    if (prewarm_cleanup_stage_.active()) return;
+    auto candidate = std::make_shared<PrewarmCandidate>();
+    candidate->provider = provider;
+    candidate->selected_run = next->clip_index;
+    candidate->clip_id = next->clip_id;
+    candidate->video_path = next->video_path.string();
+    candidate->camera_name = "Cam" + next->camera_serial + "_" + next->clip_id;
+    candidate->boundary_parent = boundary;
+    candidate->boundary_local = static_cast<int>(next->clip_local_frame);
+    candidate->decoder_context.gpu_index = context_.decoder_context->gpu_index;
+    candidate->decoder_context.seek_interval = context_.decoder_context->seek_interval;
+    candidate->seek_info.frame_number_map = next->parent_frame_by_clip_local;
+    crimson::media::CameraMediaOpenPlan plan;
+    plan.kind = crimson::media::CameraMediaKind::VideoFiles;
+    plan.camera_names = {candidate->camera_name};
+    plan.video_paths = {candidate->video_path};
+    try {
+      candidate->prepare_stage.start([candidate, plan = std::move(plan),
+                                      image_root = *context_.root_dir,
+                                      buffer_size = *context_.label_buffer_size,
+                                      fps = *context_.video_fps] {
+        candidate->prepared_ok = prepareCameraMedia(
+            plan, image_root, buffer_size, fps, candidate->prepared,
+            candidate->error);
+      });
+    } catch (const std::exception &e) {
+      prewarm_failed_boundary_ = boundary;
+      std::cout << "[ClipPrewarm] stage=fallback reason=prepare_launch "
+                << e.what() << std::endl;
+      return;
+    }
+    prewarm_candidate_ = std::move(candidate);
+    std::cout << "[ClipPrewarm] stage=prepare_started parent_frame="
+              << boundary << std::endl;
+    return;
+  }
+  auto &candidate = *prewarm_candidate_;
+  if (candidate.canceled) { discardPrewarmCandidate(); return; }
+  if (!candidate.decoder_started) {
+    if (!candidate.prepare_stage.finished()) return;
+    candidate.prepare_stage.drain();
+    if (!candidate.prepared_ok || candidate.prepared.demuxers.size() != 1 ||
+        candidate.prepared.camera_dimensions.size() != 1) {
+      prewarm_failed_boundary_ = boundary;
+      std::cout << "[ClipPrewarm] stage=fallback reason=prepare_failed "
+                << candidate.error << std::endl;
+      discardPrewarmCandidate();
+      return;
+    }
+    const int width = candidate.prepared.camera_dimensions[0].first;
+    const int height = candidate.prepared.camera_dimensions[0].second;
+    const auto *active_demuxer = context_.demuxers &&
+        !context_.demuxers->empty() ? context_.demuxers->front().get()
+                                     : nullptr;
+    const auto *next_demuxer = candidate.prepared.demuxers[0].get();
+    const bool compatible_format = active_demuxer && next_demuxer &&
+        active_demuxer->GetVideoCodec() == next_demuxer->GetVideoCodec() &&
+        active_demuxer->GetPixelFormat() == next_demuxer->GetPixelFormat() &&
+        active_demuxer->GetColorSpace() == next_demuxer->GetColorSpace() &&
+        active_demuxer->GetColorRange() == next_demuxer->GetColorRange() &&
+        std::fabs(active_demuxer->GetFramerate() -
+                  next_demuxer->GetFramerate()) < 1e-6 &&
+        context_.scene->size_of_buffer > 0 &&
+        context_.scene->cameras[0].display_buffer &&
+        context_.scene->cameras[0].display_buffer[0].format ==
+            FramePixelFormat::NV12;
+    if (!compatible_format) {
+      prewarm_failed_boundary_ = boundary;
+      std::cout << "[ClipPrewarm] stage=fallback reason=format_or_rate"
+                << std::endl;
+      discardPrewarmCandidate();
+      return;
+    }
+    if (width <= 0 || height <= 0 ||
+        width != context_.scene->cameras[0].image_width ||
+        height != context_.scene->cameras[0].image_height) {
+      prewarm_failed_boundary_ = boundary;
+      std::cout << "[ClipPrewarm] stage=fallback reason=dimensions" << std::endl;
+      discardPrewarmCandidate();
+      return;
+    }
+    const int pitch = (width + 1) & ~1;
+    const size_t bytes = static_cast<size_t>(pitch) *
+                         (height + (height + 1) / 2);
+    constexpr size_t kDefaultStagingBudget = 64ULL * 1024 * 1024;
+    size_t staging_budget = kDefaultStagingBudget;
+    if (const char *raw = std::getenv("CRIMSON_PREWARM_MAX_BYTES")) {
+      char *end = nullptr;
+      const auto parsed = std::strtoull(raw, &end, 10);
+      if (end && *end == '\0') staging_budget = parsed;
+    }
+    if (!crimson::playback::allowedStageBytes(
+            bytes, staging_budget, std::numeric_limits<size_t>::max(), 0)) {
+      prewarm_failed_boundary_ = boundary;
+      std::cout << "[ClipPrewarm] stage=fallback reason=capacity bytes="
+                << bytes << " budget=" << staging_budget << std::endl;
+      discardPrewarmCandidate();
+      return;
+    }
+    size_t free_bytes = 0;
+    size_t total_bytes = 0;
+    constexpr size_t kDecoderHeadroom = 1024ULL * 1024 * 1024;
+    if (cudaMemGetInfo(&free_bytes, &total_bytes) != cudaSuccess ||
+        !crimson::playback::allowedStageBytes(
+            bytes, staging_budget, free_bytes, kDecoderHeadroom)) {
+      prewarm_failed_boundary_ = boundary;
+      std::cout << "[ClipPrewarm] stage=fallback reason=gpu_headroom"
+                << std::endl;
+      discardPrewarmCandidate();
+      return;
+    }
+    if (cudaMalloc(reinterpret_cast<void **>(&candidate.staged.frame), bytes)
+        != cudaSuccess) {
+      prewarm_failed_boundary_ = boundary;
+      std::cout << "[ClipPrewarm] stage=fallback reason=cuda_allocation"
+                << std::endl;
+      discardPrewarmCandidate();
+      return;
+    }
+    candidate.staged.frame_number = -1;
+    candidate.staged.local_frame_number = -1;
+    candidate.staged.frame_pts = -1;
+    candidate.staged.available_to_write = true;
+    candidate.staged.pitch_bytes = pitch;
+    candidate.staged.frame_bytes = bytes;
+    candidate.staged.format = FramePixelFormat::NV12;
+    frameSlotInitialize(candidate.staged);
+    candidate.seek_info.use_seek = true;
+    candidate.seek_info.seek_frame = candidate.boundary_local;
+    candidate.seek_info.seek_accurate = true;
+    candidate.seek_info.seek_id = 1;
+    candidate.output.buffer = &candidate.staged;
+    candidate.output.buffer_size = 1;
+    try {
+      candidate.decoder_thread = std::thread(
+          &decoder_process_with_handoff, &candidate.decoder_context,
+          candidate.prepared.demuxers[0].get(), candidate.camera_name,
+          &candidate.staged, 1, &candidate.seek_info, false,
+          &candidate.output);
+      candidate.decoder_started = true;
+    } catch (const std::exception &e) {
+      prewarm_failed_boundary_ = boundary;
+      std::cout << "[ClipPrewarm] stage=fallback reason=decoder_launch "
+                << e.what() << std::endl;
+      discardPrewarmCandidate();
+    }
+    return;
+  }
+  const auto staged = frameSlotSnapshotReadable(candidate.staged);
+  if (candidate.output.failed.load() ||
+      (staged && (staged->frame_number != boundary ||
+                  staged->local_frame_number != candidate.boundary_local))) {
+    prewarm_failed_boundary_ = boundary;
+    std::cout << "[ClipPrewarm] stage=fallback reason=wrong_or_failed_frame"
+              << std::endl;
+    discardPrewarmCandidate();
+    return;
+  }
+  if (!staged || prewarm_old_retiring_ || prewarm_old_retired_) return;
+  std::cout << "[ClipPrewarm] stage=candidate_ready parent_frame="
+            << boundary << " local_frame=" << staged->local_frame_number
+            << " staged_frames=1 bytes=" << staged->frame_bytes
+            << " normal_ring_slots=" << context_.scene->size_of_buffer
+            << std::endl;
+  // Hold leases while the old producer drains: a snapshot alone would allow
+  // the ring writer to reuse a proved tail slot before the join finishes.
+  auto leases = std::make_shared<std::vector<FrameSlotReadLease>>();
+  std::vector<int64_t> resident;
+  for (u32 i = 0; i < context_.scene->size_of_buffer; ++i) {
+    auto lease = frameSlotAcquireReadable(
+        context_.scene->cameras[0].display_buffer[i]);
+    if (lease && lease->metadata().frame_number >= presented_parent_frame &&
+        lease->metadata().frame_number <= active.last_parent_frame) {
+      resident.push_back(lease->metadata().frame_number);
+      leases->push_back(std::move(*lease));
+    }
+  }
+  if (!crimson::playback::hasContiguousTail(
+          presented_parent_frame, active.last_parent_frame, resident)) return;
+  auto threads = std::make_shared<std::vector<std::thread>>(
+      std::move(*context_.decoder_threads));
+  context_.decoder_threads->clear();
+  auto adopted = std::move(adopted_candidate_);
+  if (adopted) adopted->decoder_context.stop_flag = true;
+  else context_.decoder_context->stop_flag = true;
+  try {
+    prewarm_old_join_stage_.start([threads, leases, adopted] {
+      crimson::playback::joinLiveThreads(*threads);
+    });
+  } catch (const std::exception &e) {
+    prewarm_failed_boundary_ = boundary;
+    crimson::playback::joinLiveThreads(*threads);
+    restartCurrentClipDecoder();
+    std::cout << "[ClipPrewarm] stage=fallback reason=retire_launch "
+              << e.what() << std::endl;
+    discardPrewarmCandidate();
+    return;
+  }
+  prewarm_old_retiring_ = true;
+  std::cout << "[ClipPrewarm] stage=old_decoder_retire_started parent_frame="
+            << presented_parent_frame << " tail_frames=" << resident.size()
+            << std::endl;
+}
+
+void MediaSessionLoader::finishClipSwitchWorkers() {
+  if (clip_switch_work_) {
+    clip_switch_work_->stage.drain();
+  }
+  clip_join_stage_.drain();
+}
+
+void MediaSessionLoader::restartCurrentClipDecoder() {
+  if (adopted_candidate_) {
+    adopted_candidate_->decoder_context.stop_flag = true;
+    crimson::playback::joinLiveThreads(*context_.decoder_threads);
+    adopted_candidate_.reset();
+  }
+  context_.decoder_context->stop_flag = false;
+  context_.decoder_context->decoding_flag = false;
+  if (context_.video_loaded && *context_.video_loaded &&
+      context_.scene->num_cams > 0 && !context_.demuxers->empty() &&
+      !context_.camera_names->empty()) {
+    const auto &handoff = context_.clipped_media_state->handoff;
+    const int64_t visible = context_.scene->cameras[0].last_uploaded_frame;
+    const int64_t restore_parent = std::clamp<int64_t>(
+        visible >= 0 ? visible : handoff.last_presented_parent_frame,
+        std::max<int64_t>(0, handoff.first_parent_frame),
+        std::max<int64_t>(0, handoff.last_parent_frame));
+    const auto binding = resolveMappedMediaFrame(restore_parent);
+    if (crimson::playback::isValidClippedFrameBinding(binding) &&
+        binding.selected_run_index == handoff.selected_run_index) {
+      std::lock_guard<std::mutex> lock(g_seek_info_mutex);
+      auto &seek = context_.scene->cameras[0].seek_context;
+      seek.seek_frame = static_cast<uint64_t>(binding.clip_local_frame_index);
+      seek.seek_accurate = true;
+      ++seek.seek_id;
+      seek.use_seek = true;
+      seek.seek_done = false;
+    }
+    context_.decoder_threads->clear();
+    context_.decoder_threads->emplace_back(
+        &decoder_process, context_.decoder_context,
+        context_.demuxers->front().get(), context_.camera_names->front(),
+        context_.scene->cameras[0].display_buffer,
+        context_.scene->size_of_buffer,
+        &context_.scene->cameras[0].seek_context,
+        context_.scene->use_cpu_buffer);
+  }
+}
+
+bool MediaSessionLoader::cancelPendingClipSwitch(bool restore_current) {
+  const bool decoder_drained = clip_join_started_ || prewarm_old_retired_ ||
+                               prewarm_old_retiring_;
+  if (prewarm_candidate_) discardPrewarmCandidate();
+  prewarm_cleanup_stage_.drain();
+  if (prewarm_candidate_) {
+    discardPrewarmCandidate();
+    prewarm_cleanup_stage_.drain();
+  }
+  prewarm_old_join_stage_.drain();
+  prewarm_old_retiring_ = false;
+  if (decoder_drained && restore_current && !clip_join_started_) {
+    restartCurrentClipDecoder();
+  }
+  prewarm_old_retired_ = false;
+  prewarm_adoption_fallback_ = false;
+  prewarm_failed_boundary_ = -1;
+  finishClipSwitchWorkers();
+  if (clip_join_started_ && restore_current) {
+    restartCurrentClipDecoder();
+  }
+  clip_switch_work_.reset();
+  pending_clip_parent_frame_ = -1;
+  pending_clip_video_path_.clear();
+  clip_join_started_ = false;
+  return decoder_drained;
+}
+
+void MediaSessionLoader::restoreCurrentClipDecoderAfterCancellation() {
+  restartCurrentClipDecoder();
+}
+
+bool MediaSessionLoader::hasPendingClipSwitch() const {
+  return clip_switch_work_ != nullptr || clip_join_started_;
+}
+
+bool MediaSessionLoader::hasPendingPrewarmActivity() const {
+  return prewarm_candidate_ != nullptr || prewarm_cleanup_stage_.active() ||
+         prewarm_old_join_stage_.active() || prewarm_old_retired_;
+}
+
+void MediaSessionLoader::stopAdoptedDecoderForShutdown() {
+  if (adopted_candidate_) adopted_candidate_->decoder_context.stop_flag = true;
+}
+
+bool MediaSessionLoader::adoptPrewarmCandidate(int parent_frame,
+                                               int local_frame) {
+  auto candidate = prewarm_candidate_;
+  if (!candidate) return false;
+  auto staged = frameSlotAcquireReadable(candidate->staged);
+  if (!staged || candidate->prepared.demuxers.size() != 1 ||
+      !crimson::playback::canAdopt(
+          parent_frame, local_frame, staged->metadata().frame_number,
+          staged->metadata().local_frame_number, prewarm_old_retired_,
+          candidate->output.failed.load() ||
+              candidate->boundary_parent != parent_frame ||
+              candidate->boundary_local != local_frame))
+    return false;
+  const bool loaded = loadClippedVideoForParentFrame(
+      parent_frame, &candidate->prepared, false, candidate.get());
+  if (!loaded) {
+    if (context_.clipped_media_state &&
+        !context_.clipped_media_state->recording_clip_provider) {
+      context_.clipped_media_state->recording_clip_provider =
+          candidate->provider;
+      context_.clipped_media_state->source =
+          ClippedMediaSource::RecordingClipIndex;
+    }
+    prewarm_failed_boundary_ = parent_frame;
+    return false;
+  }
+  auto &normal = context_.scene->cameras[0].display_buffer[0];
+  auto writable = frameSlotAcquireWritable(normal);
+  if (!writable || normal.format != candidate->staged.format ||
+      normal.frame_bytes != candidate->staged.frame_bytes ||
+      cudaMemcpy(normal.frame, candidate->staged.frame, normal.frame_bytes,
+                 cudaMemcpyDeviceToDevice) != cudaSuccess) {
+    std::cout << "[ClipPrewarm] stage=fallback reason=adoption_copy"
+              << std::endl;
+    prewarm_adoption_fallback_ = true;
+    prewarm_failed_boundary_ = parent_frame;
+    discardPrewarmCandidate();
+    return false;
+  }
+  writable->publish(staged->metadata());
+  latest_decoded_frame[candidate->camera_name].store(parent_frame);
+  context_.decoder_context->decoding_flag = true;
+  {
+    std::lock_guard<std::mutex> lock(candidate->output.mutex);
+    candidate->output.buffer = context_.scene->cameras[0].display_buffer;
+    candidate->output.buffer_size = context_.scene->size_of_buffer;
+    candidate->output.next_slot = 1;
+    candidate->output.seek_info =
+        &context_.scene->cameras[0].seek_context;
+    candidate->output.adopted.store(true);
+    ++candidate->output.generation;
+  }
+  context_.decoder_threads->push_back(std::move(candidate->decoder_thread));
+  adopted_candidate_ = std::move(candidate);
+  prewarm_candidate_.reset();
+  prewarm_old_retired_ = false;
+  std::cout << "[ClipPrewarm] stage=candidate_adopted parent_frame="
+            << parent_frame << " local_frame=" << local_frame
+            << " staged_frames=1" << std::endl;
+  return true;
+}
+
+DecoderFrameResolution
+MediaSessionLoader::requestDecoderFrameForParentFrame(int parent_frame) {
+  const auto binding = resolveMappedMediaFrame(parent_frame);
+  if (!hasMappedMedia()) {
+    return {DecoderFrameResolutionStatus::Ready, parent_frame, {}};
+  }
+  if (!crimson::playback::isValidClippedFrameBinding(binding)) {
+    return {DecoderFrameResolutionStatus::Failed, -1,
+            "media mapping is unavailable for the requested frame"};
+  }
+  const int local_frame = static_cast<int>(std::clamp<int64_t>(
+      binding.clip_local_frame_index, 0, std::numeric_limits<int>::max()));
+  if (prewarm_cleanup_stage_.active()) {
+    if (!prewarm_cleanup_stage_.finished()) {
+      return {DecoderFrameResolutionStatus::Pending, -1, {}};
+    }
+    prewarm_cleanup_stage_.drain();
+  }
+  if (prewarm_adoption_fallback_) {
+    if (prewarm_cleanup_stage_.active() &&
+        !prewarm_cleanup_stage_.finished()) {
+      return {DecoderFrameResolutionStatus::Pending, -1, {}};
+    }
+    prewarm_cleanup_stage_.drain();
+    if (prewarm_candidate_) {
+      discardPrewarmCandidate();
+      return {DecoderFrameResolutionStatus::Pending, -1, {}};
+    }
+    restartCurrentClipDecoder();
+    prewarm_adoption_fallback_ = false;
+    return {DecoderFrameResolutionStatus::Ready, local_frame, {}};
+  }
+  const auto &active = *context_.clipped_media_state;
+  if (prewarm_old_join_stage_.finished()) {
+    prewarm_old_join_stage_.drain();
+    prewarm_old_retiring_ = false;
+    prewarm_old_retired_ = true;
+    std::cout << "[ClipPrewarm] stage=old_decoder_retired parent_frame="
+              << parent_frame << std::endl;
+  }
+  const bool requesting_active_clip =
+      active.handoff.selected_run_index == binding.selected_run_index &&
+      parent_frame >= active.handoff.first_parent_frame &&
+      parent_frame <= active.handoff.last_parent_frame;
+  if (requesting_active_clip &&
+      (prewarm_old_retiring_ || prewarm_old_retired_)) {
+    discardPrewarmCandidate();
+    if (prewarm_candidate_ || prewarm_cleanup_stage_.active())
+      return {DecoderFrameResolutionStatus::Pending, -1, {}};
+    if (prewarm_old_retiring_) {
+      return {DecoderFrameResolutionStatus::Pending, -1, {}};
+    }
+    restartCurrentClipDecoder();
+    prewarm_old_retired_ = false;
+    return {DecoderFrameResolutionStatus::Ready, local_frame, {}};
+  }
+  const bool automatic_boundary = context_.playback_state &&
+      context_.playback_state->play_video &&
+      active.handoff.switch_in_progress &&
+      active.handoff.pending_switch_parent_frame == parent_frame &&
+      parent_frame == active.handoff.last_parent_frame + 1;
+  if (automatic_boundary && prewarm_candidate_ &&
+      prewarm_candidate_->boundary_parent == parent_frame) {
+    if (prewarm_old_retiring_) {
+      return {DecoderFrameResolutionStatus::Pending, -1, {}};
+    }
+    if (context_.playback_transport &&
+        context_.playback_transport->requestedFrame() < parent_frame) {
+      return {DecoderFrameResolutionStatus::Pending, -1, {}};
+    }
+    if (adoptPrewarmCandidate(parent_frame, local_frame)) {
+      return {DecoderFrameResolutionStatus::ReadyBuffered, local_frame, {}};
+    }
+    if (prewarm_adoption_fallback_) {
+      return {DecoderFrameResolutionStatus::Pending, -1, {}};
+    }
+  }
+  if (prewarm_candidate_) {
+    discardPrewarmCandidate();
+    return {DecoderFrameResolutionStatus::Pending, -1, {}};
+  }
+  if (prewarm_cleanup_stage_.active()) {
+    return {DecoderFrameResolutionStatus::Pending, -1, {}};
+  }
+  if (prewarm_old_retiring_) {
+    return {DecoderFrameResolutionStatus::Pending, -1, {}};
+  }
+  const bool same_clip = context_.video_loaded && *context_.video_loaded &&
+      active.handoff.selected_run_index == binding.selected_run_index &&
+      parent_frame >= active.handoff.first_parent_frame &&
+      parent_frame <= active.handoff.last_parent_frame &&
+      context_.decoder_threads && !context_.decoder_threads->empty() &&
+      !clip_join_started_;
+  if (same_clip) {
+    return {DecoderFrameResolutionStatus::Ready, local_frame, {}};
+  }
+
+  std::string video_path;
+  std::string camera_serial;
+  if (active.recording_clip_provider) {
+    const auto resolved = active.recording_clip_provider->resolveParentFrame(
+        parent_frame);
+    if (!resolved) {
+      return {DecoderFrameResolutionStatus::Failed, -1,
+              "recording clip mapping disappeared"};
+    }
+    video_path = resolved->video_path.string();
+    camera_serial = resolved->camera_serial;
+  } else {
+    const auto *row = context_.zarr_loader->resolveClippedFrame(parent_frame);
+    const auto *selected = row ? context_.zarr_loader->getClippedResolver()
+                                      .selectedRun(row->selected_run_index)
+                               : nullptr;
+    if (!selected) {
+      return {DecoderFrameResolutionStatus::Failed, -1,
+              "clipped source mapping disappeared"};
+    }
+    const auto resolved = ResolveAffiliatedVideoPath(
+        selected->video_path, context_.zarr_loader->getArchivePath());
+    if (!resolved) {
+      return {DecoderFrameResolutionStatus::Failed, -1,
+              "clipped source video path is unavailable"};
+    }
+    video_path = resolved->string();
+    camera_serial = selected->camera_serial;
+  }
+
+  if (clip_switch_work_ && clip_switch_work_->stage.finished() &&
+      !clip_join_started_ && pending_clip_video_path_ != video_path) {
+    finishClipSwitchWorkers();
+    clip_switch_work_.reset();
+  }
+  if (!clip_switch_work_) {
+    if (clip_join_started_) {
+      return {DecoderFrameResolutionStatus::Pending, -1, {}};
+    }
+    pending_clip_parent_frame_ = parent_frame;
+    pending_clip_video_path_ = video_path;
+    auto work = std::make_unique<ClipSwitchWork>();
+    work->started = std::chrono::steady_clock::now();
+    auto *work_ptr = work.get();
+    crimson::media::CameraMediaOpenPlan plan;
+    plan.kind = crimson::media::CameraMediaKind::VideoFiles;
+    plan.camera_names = {"Cam" + camera_serial + "_" + binding.clip_id};
+    plan.video_paths = {video_path};
+    const std::string image_root = *context_.root_dir;
+    const int buffer_size = *context_.label_buffer_size;
+    const double fps = *context_.video_fps;
+    const auto prepare = context_.prepare_clip_media_async;
+    try {
+      work->stage.start([work_ptr, plan = std::move(plan), image_root,
+                         buffer_size, fps, prepare] {
+        work_ptr->ready = prepare
+            ? prepare(plan, image_root, buffer_size, fps,
+                      work_ptr->prepared, work_ptr->error)
+            : prepareCameraMedia(plan, image_root, buffer_size, fps,
+                                 work_ptr->prepared, work_ptr->error);
+      });
+    } catch (const std::exception &e) {
+      return {DecoderFrameResolutionStatus::Failed, -1, e.what()};
+    }
+    clip_switch_work_ = std::move(work);
+    std::cout << "[ClipSwitchStage] stage=prepare_started parent_frame="
+              << parent_frame << " clip=" << binding.clip_id << std::endl;
+    return {DecoderFrameResolutionStatus::Pending, -1, {}};
+  }
+  const auto transition_poll = crimson::playback::pollClippedMediaTransition(
+      clip_join_started_, clip_switch_work_->stage, clip_join_stage_);
+  if (transition_poll == crimson::playback::ClippedMediaTransitionPoll::Preparing) {
+    return {DecoderFrameResolutionStatus::Pending, -1, {}};
+  }
+  if (pending_clip_video_path_ != video_path && !clip_join_started_) {
+    return {DecoderFrameResolutionStatus::Pending, -1, {}};
+  }
+  if (!clip_switch_work_->ready) {
+    const std::string error = !clip_switch_work_->stage.error().empty()
+        ? clip_switch_work_->stage.error() : clip_switch_work_->error;
+    finishClipSwitchWorkers();
+    clip_switch_work_.reset();
+    return {DecoderFrameResolutionStatus::Failed, -1, error};
+  }
+  if (transition_poll == crimson::playback::ClippedMediaTransitionPoll::Prepared) {
+    clip_switch_work_->stage.drain();
+    const auto prepare_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - clip_switch_work_->started).count();
+    std::cout << "[ClipSwitchStage] stage=prepare_ready parent_frame="
+              << parent_frame << " elapsed_ms=" << prepare_ms << std::endl;
+    const auto join = context_.join_clip_decoders_async;
+    auto *threads = context_.decoder_threads;
+    clip_join_error_.clear();
+    try {
+      clip_join_stage_.start([this, join, threads] {
+        try {
+          if (join) {
+            join(*threads);
+          } else {
+            for (auto &thread : *threads) {
+              if (thread.joinable()) thread.join();
+            }
+          }
+        } catch (const std::exception &e) {
+          clip_join_error_ = e.what();
+        } catch (...) {
+          clip_join_error_ = "unknown decoder join error";
+        }
+        for (auto &thread : *threads) {
+          if (thread.joinable()) thread.join();
+        }
+      });
+    } catch (const std::exception &e) {
+      clip_switch_work_.reset();
+      pending_clip_parent_frame_ = -1;
+      pending_clip_video_path_.clear();
+      return {DecoderFrameResolutionStatus::Failed, -1, e.what()};
+    }
+    clip_join_started_ = true;
+    clip_join_started_at_ = std::chrono::steady_clock::now();
+    context_.decoder_context->stop_flag = true;
+    if (adopted_candidate_) adopted_candidate_->decoder_context.stop_flag = true;
+    return {DecoderFrameResolutionStatus::Pending, -1, {}};
+  }
+  if (transition_poll == crimson::playback::ClippedMediaTransitionPoll::Joining) {
+    return {DecoderFrameResolutionStatus::Pending, -1, {}};
+  }
+  clip_join_stage_.drain();
+  if (!clip_join_error_.empty()) {
+    const std::string error = clip_join_error_;
+    restartCurrentClipDecoder();
+    clip_switch_work_.reset();
+    clip_join_started_ = false;
+    pending_clip_parent_frame_ = -1;
+    pending_clip_video_path_.clear();
+    return {DecoderFrameResolutionStatus::Failed, -1, error};
+  }
+  if (pending_clip_video_path_ != video_path) {
+    // A newer seek won while the old decoder was draining. Restore its
+    // decoder over the still-owned buffers before servicing that seek.
+    restartCurrentClipDecoder();
+    clip_switch_work_.reset();
+    clip_join_started_ = false;
+    pending_clip_parent_frame_ = -1;
+    pending_clip_video_path_.clear();
+    return {DecoderFrameResolutionStatus::Pending, -1, {}};
+  }
+  const auto join_ms = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - clip_join_started_at_).count();
+  std::cout << "[ClipSwitchStage] stage=decoder_join_ready parent_frame="
+            << parent_frame << " elapsed_ms=" << join_ms << std::endl;
+  const auto commit_started = std::chrono::steady_clock::now();
+  const bool ready = loadClippedVideoForParentFrame(
+      parent_frame, &clip_switch_work_->prepared);
+  const auto commit_ms = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - commit_started).count();
+  std::cout << "[ClipSwitchStage] stage=owner_commit parent_frame="
+            << parent_frame << " elapsed_ms=" << commit_ms
+            << " ready=" << ready << std::endl;
+  clip_switch_work_.reset();
+  clip_join_started_ = false;
+  pending_clip_parent_frame_ = -1;
+  pending_clip_video_path_.clear();
+  return ready ? DecoderFrameResolution{DecoderFrameResolutionStatus::Ready,
+                                         local_frame, {}}
+               : DecoderFrameResolution{DecoderFrameResolutionStatus::Failed,
+                                         -1, "clipped media commit failed"};
+}
 
 bool MediaSessionLoader::hasMappedMedia() const {
   return context_.clipped_media_state != nullptr &&
@@ -402,6 +1155,7 @@ void MediaSessionLoader::stopCameraDecodersForReload() const {
   }
 
   context_.decoder_context->stop_flag = true;
+  if (adopted_candidate_) adopted_candidate_->decoder_context.stop_flag = true;
   if (context_.join_camera_decoders) {
     context_.join_camera_decoders(*context_.decoder_threads);
   } else {
@@ -412,6 +1166,7 @@ void MediaSessionLoader::stopCameraDecodersForReload() const {
     }
   }
   context_.decoder_threads->clear();
+  adopted_candidate_.reset();
 
   for (const auto &camera_name : *context_.camera_names) {
     (*context_.window_need_decoding)[camera_name].store(false);
@@ -435,6 +1190,12 @@ void MediaSessionLoader::stopCameraDecodersForReload() const {
 
 bool MediaSessionLoader::loadClippedVideoForParentFrame(
     int parent_frame) const {
+  return loadClippedVideoForParentFrame(parent_frame, nullptr);
+}
+
+bool MediaSessionLoader::loadClippedVideoForParentFrame(
+    int parent_frame, PreparedCameraMedia *preprepared,
+    bool start_decoder, PrewarmCandidate *pending_adoption) const {
   const auto recording_provider =
       context_.clipped_media_state != nullptr
           ? context_.clipped_media_state->recording_clip_provider
@@ -547,22 +1308,29 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
   clip_plan.camera_names = {camera_name};
   clip_plan.video_paths = {resolved_video};
   PreparedCameraMedia prepared;
+  auto stop_pending_adoption = [&] {
+    if (!pending_adoption) return;
+    pending_adoption->decoder_context.stop_flag = true;
+    if (pending_adoption->decoder_thread.joinable())
+      pending_adoption->decoder_thread.join();
+  };
   std::string prepare_error;
-  const bool prepared_ok = context_.prepare_camera_media
-                               ? context_.prepare_camera_media(
-                                     clip_plan, *context_.root_dir,
-                                     *context_.label_buffer_size,
-                                     *context_.video_fps, prepared, prepare_error)
-                               : prepareCameraMedia(clip_plan, *context_.root_dir,
-                                                    *context_.label_buffer_size,
-                                                    *context_.video_fps, prepared,
-                                                    prepare_error);
+  const bool prepared_ok = preprepared != nullptr
+      ? (prepared = std::move(*preprepared), true)
+      : (context_.prepare_camera_media
+             ? context_.prepare_camera_media(
+                   clip_plan, *context_.root_dir, *context_.label_buffer_size,
+                   *context_.video_fps, prepared, prepare_error)
+             : prepareCameraMedia(clip_plan, *context_.root_dir,
+                                  *context_.label_buffer_size,
+                                  *context_.video_fps, prepared, prepare_error));
   if (!prepared_ok) {
     std::cerr << "[Zarr] Failed to prepare clipped source video: "
               << prepare_error << std::endl;
     return false;
   }
   if (context_.opening_cancelled && context_.opening_cancelled()) {
+    stop_pending_adoption();
     return false;
   }
 
@@ -571,6 +1339,7 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
     stopCameraDecodersForReload();
   }
   if (context_.opening_cancelled && context_.opening_cancelled()) {
+    stop_pending_adoption();
     return false;
   }
 
@@ -605,16 +1374,16 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
       for (u32 i = 0; i < context_.scene->size_of_buffer; ++i) {
         frameSlotReleaseForReuse(context_.scene->cameras[0].display_buffer[i]);
       }
-      context_.scene->cameras[0].last_uploaded_frame = -1;
-      context_.scene->cameras[0].last_uploaded_local_frame = -1;
-      context_.scene->cameras[0].last_uploaded_pts = -1;
-      context_.scene->cameras[0].texture_has_valid_frame = false;
+      // The old GL texture is still owned by this camera and remains a
+      // truthful displayed parent frame until the new decoder uploads one.
       context_.scene->cameras[0].playback_staging_frame = -1;
       context_.scene->cameras[0].playback_staging_local_frame = -1;
       context_.scene->cameras[0].playback_staging_pts = -1;
       context_.scene->cameras[0].playback_staging_valid = false;
     }
     if (context_.opening_cancelled && context_.opening_cancelled()) {
+      stop_pending_adoption();
+      stopCameraDecodersForReload();
       return false;
     }
 
@@ -648,13 +1417,15 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
     context_.decoder_context->estimated_num_frames =
         std::max(0, context_.decoder_context->total_num_frame - 1);
 
-    context_.decoder_threads->push_back(std::thread(
-        &decoder_process, context_.decoder_context,
-        context_.demuxers->at(0).get(), context_.camera_names->at(0),
-        context_.scene->cameras[0].display_buffer,
-        context_.scene->size_of_buffer,
-        &context_.scene->cameras[0].seek_context,
-        context_.scene->use_cpu_buffer));
+    if (start_decoder) {
+      context_.decoder_threads->push_back(std::thread(
+          &decoder_process, context_.decoder_context,
+          context_.demuxers->at(0).get(), context_.camera_names->at(0),
+          context_.scene->cameras[0].display_buffer,
+          context_.scene->size_of_buffer,
+          &context_.scene->cameras[0].seek_context,
+          context_.scene->use_cpu_buffer));
+    }
     context_.is_view_focused->push_back(false);
     *context_.video_loaded = true;
     configurePlaybackTransport(context_, context_.demuxers->at(0).get(),
@@ -673,6 +1444,7 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
               << ": " << resolved_video << std::endl;
     loadCameraCalibrationsForCurrentMedia();
     if (context_.opening_cancelled && context_.opening_cancelled()) {
+      stop_pending_adoption();
       stopCameraDecodersForReload();
       return false;
     }
@@ -680,6 +1452,7 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
   } catch (const std::exception &e) {
     std::cerr << "[Zarr] Failed to load clipped source video: " << e.what()
               << std::endl;
+    stop_pending_adoption();
     stopCameraDecodersForReload();
     return false;
   }

@@ -14,8 +14,14 @@ Ubuntu 22 colleague package has not been built or published from these changes.
 September 23 follow-up: the deferred mask contours and full shape controls are
 now implemented and locally validated on `codex/main-integration-20260922`;
 see [the contours/shape report](linux_sleepyfish_contours_shape_controls_2026-09-23.md).
-Swim-bout/core shading remains deferred. Other dated baseline and package
-statements below describe the September 21 checkpoint, not current packaging.
+The subsequent [swim-bout shading follow-up](linux_sleepyfish_swim_bout_shading_2026-09-23.md)
+also restores bout/core bands on the speed graph. Other dated baseline and
+package statements below describe the September 21 checkpoint, not current packaging.
+
+The [August NFS performance suite](linux_august_nfs_performance_suite_2026-09-23.md)
+now measures rendering, reads, overlay readiness, page/clip transitions and
+seeks with explicit budgets. Initial real-NFS trials detect late masks and
+seek-time render stalls; a passing performance baseline is still outstanding.
 
 ## Stable checkpoint
 
@@ -285,7 +291,8 @@ qualification from a different subject-mask bundle.
   Disable legacy editing tools on these read-only canonical sources.
 - [x] Add the deferred mask contour outlines after this increment is stable;
   see the [September 23 follow-up](linux_sleepyfish_contours_shape_controls_2026-09-23.md).
-- [ ] Still deferred: restore swim-bout/core shading on the speed trace.
+- [x] Restore swim-bout/core shading on the speed trace; see the
+  [September 23 shading follow-up](linux_sleepyfish_swim_bout_shading_2026-09-23.md).
 - [x] Represent each product as opening, pending, ready, valid-empty, unavailable
   or failed. A product failure must not become a silent empty result or prevent
   independent valid layers from drawing.

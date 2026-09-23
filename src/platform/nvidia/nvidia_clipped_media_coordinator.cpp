@@ -66,6 +66,10 @@ ClippedMediaCoordinator::onPresentedFrame(int64_t presented_parent_frame,
 
   const bool load_succeeded =
       context_.load_and_seek && context_.load_and_seek(command.parent_frame);
+  if (load_succeeded && context_.switch_pending && context_.switch_pending()) {
+    pending_command_ = command;
+    return playback::ClippedMediaHandoffOutcome::SwitchRequested;
+  }
   const auto loaded_binding = context_.resolve_binding(command.parent_frame);
   const auto completion = playback::completeClippedMediaHandoffLoad(
       state, command, load_succeeded, loaded_binding);
@@ -86,6 +90,48 @@ ClippedMediaCoordinator::onPresentedFrame(int64_t presented_parent_frame,
            command.expected_clip_local_frame_index, state.first_parent_frame,
            state.last_parent_frame});
   return completion.outcome;
+}
+
+playback::ClippedMediaHandoffOutcome
+ClippedMediaCoordinator::pollPendingSwitch() const {
+  if (!pending_command_ || !context_.state) {
+    return playback::ClippedMediaHandoffOutcome::None;
+  }
+  if (context_.switch_pending && context_.switch_pending()) {
+    return playback::ClippedMediaHandoffOutcome::SwitchRequested;
+  }
+  const auto command = std::move(*pending_command_);
+  pending_command_.reset();
+  const auto binding = context_.resolve_binding(command.parent_frame);
+  const bool loaded = context_.state->selected_run_index ==
+                      command.expected_selected_run_index;
+  const auto completion = playback::completeClippedMediaHandoffLoad(
+      *context_.state, command, loaded, binding);
+  if (completion.outcome == playback::ClippedMediaHandoffOutcome::SwitchLoaded) {
+    publish({ClippedMediaCoordinatorEventKind::SwitchLoaded,
+             command.parent_frame, context_.state->pending_switch_parent_frame,
+             {}, context_.state->clip_id,
+             playback::kNoClippedSelectedRun,
+             context_.state->selected_run_index,
+             command.expected_clip_local_frame_index,
+             context_.state->first_parent_frame,
+             context_.state->last_parent_frame});
+  } else {
+    (void)playback::resetClippedMediaHandoff(*context_.state);
+    publish({ClippedMediaCoordinatorEventKind::SwitchFailed,
+             command.parent_frame, -1, {}, command.expected_clip_id,
+             playback::kNoClippedSelectedRun,
+             command.expected_selected_run_index,
+             command.expected_clip_local_frame_index});
+  }
+  return completion.outcome;
+}
+
+void ClippedMediaCoordinator::cancelPendingSwitch() const {
+  pending_command_.reset();
+  if (context_.state && context_.state->switch_in_progress) {
+    (void)playback::resetClippedMediaHandoff(*context_.state);
+  }
 }
 
 } // namespace crimson::platform::nvidia

@@ -1,6 +1,7 @@
 #include "gui/canonical_timeline_window.h"
 
 #include "gui/analysis_timeline_trace_plot.h"
+#include "gui/canonical_timeline_bout_shading.h"
 
 #include "imgui.h"
 #include "implot.h"
@@ -139,6 +140,9 @@ void drawCanonicalTimelineWindow(const CanonicalTimelineSnapshot& snapshot,
   if (!state) {
     return;
   }
+  state->shading_requested_frame = current_frame;
+  state->shading_bands_drawn = 0;
+  state->shading_core_bands_drawn = 0;
   const auto* viewport = ImGui::GetMainViewport();
   const float width = std::min(900.0f, viewport->WorkSize.x * 0.58f);
   ImGui::SetNextWindowSize(
@@ -152,7 +156,8 @@ void drawCanonicalTimelineWindow(const CanonicalTimelineSnapshot& snapshot,
     return;
   }
   const double current_time =
-      current_frame >= 0 && frames_per_second > 0.0
+      current_frame >= 0 && std::isfinite(frames_per_second) &&
+              frames_per_second > 0.0
           ? static_cast<double>(current_frame) / frames_per_second
           : -1.0;
   ImGui::Checkbox("Follow playback", &state->scroll.enabled);
@@ -162,6 +167,11 @@ void drawCanonicalTimelineWindow(const CanonicalTimelineSnapshot& snapshot,
   // guarantees at least 34 seconds on either side of an interior anchor.
   ImGui::SliderFloat("Half-window (s)", &state->scroll.window_half_span_s, 1.0f,
                      30.0f, "%.1f");
+  ImGui::SameLine();
+  ImGui::Checkbox("Shade swim bouts", &state->show_swim_bouts);
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Shade bout intervals on the speed plot; darker green marks cores.");
+  }
 
   const bool aligned = ImPlot::BeginAlignedPlots("canonical_timelines", true);
 
@@ -180,9 +190,27 @@ void drawCanonicalTimelineWindow(const CanonicalTimelineSnapshot& snapshot,
       snapshot.motion.state == CanonicalTimelineProductState::Ready) {
     const auto traces = speedTraces(*snapshot.motion.window);
     const char* units = traces.empty() ? "Speed" : traces.front().units.c_str();
+    const auto bands = state->show_swim_bouts
+                           ? canonicalTimelineBoutShadingBands(
+                                 snapshot, current_frame, frames_per_second)
+                           : std::vector<AnalysisTimelinePlotBand>{};
+    double speed_current_time = current_time;
+    const auto& motion = *snapshot.motion.window;
+    if (current_frame >= 0 && detail::validMotionTimeMapping(motion) &&
+        !motion.mapping_frames.empty() &&
+        current_frame >= motion.mapping_frames.front() &&
+        current_frame <= motion.mapping_frames.back()) {
+      const auto mapped = detail::mappedFrameTime(
+          motion, static_cast<long double>(current_frame),
+          frames_per_second);
+      if (mapped) speed_current_time = *mapped;
+    }
+    AnalysisTimelinePlotBandCounts counts;
     drawAnalysisTracePlot("Speed##canonical_speed", units, traces,
-                          state->scroll, current_time,
-                          "##canonical_speed_current");
+                          state->scroll, speed_current_time,
+                          "##canonical_speed_current", &bands, &counts);
+    state->shading_bands_drawn = counts.bands_drawn;
+    state->shading_core_bands_drawn = counts.core_bands_drawn;
   }
 
   drawProductStatus("Swim bouts", snapshot.swim_bouts.state,

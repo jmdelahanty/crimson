@@ -1,5 +1,7 @@
 #include "gui/canonical_timeline_session.h"
+#include "gui/canonical_timeline_bout_shading.h"
 #include <nlohmann/json.hpp>
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <iostream>
@@ -14,6 +16,90 @@ using namespace crimson::gui;
 using namespace std::chrono_literals;
 void require(bool ok, const std::string& message) {
   if (!ok) throw std::runtime_error(message);
+}
+double independentMotionTime(const crimson::timeline::AnalysisSeriesTimelineWindow& motion,
+                             int64_t frame, double fps) {
+  const auto& frames = motion.mapping_frames;
+  const auto& times = motion.mapping_times_seconds;
+  if (frames.empty()) return static_cast<double>(frame) / fps;
+  require(frames.size() >= 2 && frames.size() == times.size(),
+          "Motion time mapping is incomplete");
+  size_t right = 1;
+  while (right + 1 < frames.size() && frame > frames[right]) ++right;
+  const size_t left = right - 1;
+  require(frames[right] > frames[left] && std::isfinite(times[left]) &&
+          std::isfinite(times[right]) && times[right] > times[left],
+          "Motion time mapping is invalid");
+  return times[left] +
+         (static_cast<double>(frame - frames[left]) /
+          static_cast<double>(frames[right] - frames[left])) *
+             (times[right] - times[left]);
+}
+void verifySpeedShading(const CanonicalTimelineSnapshot& snapshot, json& output) {
+  const auto& motion = *snapshot.motion.window;
+  const auto& bouts = *snapshot.swim_bouts.window;
+  constexpr double fps = 30.0;
+  const auto bands = canonicalTimelineBoutShadingBands(
+      snapshot, snapshot.requested_frame, fps);
+  output = json::array();
+  if (snapshot.motion.state != CanonicalTimelineProductState::Ready ||
+      snapshot.swim_bouts.state != CanonicalTimelineProductState::Ready) {
+    require(bands.empty(), "Shading survived an unavailable source");
+    return;
+  }
+  int64_t first = std::max(motion.request.first_frame, bouts.request.first_frame);
+  int64_t last = std::min(motion.request.last_frame, bouts.request.last_frame);
+  if (!motion.mapping_frames.empty()) {
+    first = std::max(first, motion.mapping_frames.front());
+    last = std::min(last, motion.mapping_frames.back());
+  }
+  struct ExpectedBand { bool core; int64_t start; int64_t end; double t0; double t1; };
+  std::vector<ExpectedBand> expected;
+  for (const auto& interval : bouts.intervals) {
+    if (interval.start_frame < 0 ||
+        interval.end_frame < interval.start_frame ||
+        static_cast<uint64_t>(interval.end_frame) >=
+            snapshot.swim_bouts.descriptor.frame_count) {
+      continue;
+    }
+    auto add = [&](int64_t start, int64_t end, bool core) {
+      start = std::max(start, first);
+      end = std::min(end, last);
+      if (start > end) return;
+      expected.push_back({core, start, end,
+                          independentMotionTime(motion, start, fps),
+                          independentMotionTime(motion, end + 1, fps)});
+    };
+    add(interval.start_frame, interval.end_frame, false);
+    if (interval.hasCore())
+      add(interval.core_start_frame, interval.core_end_frame, true);
+  }
+  require(bands.size() == expected.size(),
+          "Speed shading band count differs from clipped source intervals");
+  std::vector<bool> matched(expected.size(), false);
+  for (const auto& band : bands) {
+    require(std::isfinite(band.start_seconds) &&
+            std::isfinite(band.end_seconds) &&
+            band.end_seconds > band.start_seconds,
+            "Speed shading has an invalid time interval");
+    size_t match = expected.size();
+    for (size_t i = 0; i < expected.size(); ++i) {
+      if (!matched[i] && band.core == expected[i].core &&
+          std::abs(band.start_seconds - expected[i].t0) < 1e-6 &&
+          std::abs(band.end_seconds - expected[i].t1) < 1e-6) {
+        match = i;
+        break;
+      }
+    }
+    require(match < expected.size(),
+            "Speed shading does not map to a clipped source interval");
+    matched[match] = true;
+    output.push_back({{"core", band.core},
+                      {"source_start_frame", expected[match].start},
+                      {"source_end_frame", expected[match].end},
+                      {"start_seconds", band.start_seconds},
+                      {"end_seconds", band.end_seconds}});
+  }
 }
 template<class Product> json product(const Product& value) {
   return {{"state", canonicalTimelineProductStateName(value.state)},
@@ -100,6 +186,7 @@ json snapshotJson(const CanonicalTimelineSnapshot& snapshot) {
          {"end", interval.end_frame}, {"core_start", interval.core_start_frame},
          {"core_end", interval.core_end_frame}, {"gap_censored", interval.gap_censored}});
   }
+  verifySpeedShading(snapshot, result["swim_bouts"]["speed_shading"]);
   require(eyes.source_row_count <= 256 && motion.source_row_count <= 256 &&
           bouts.source_detector_row_count <= 256, "Payload read exceeded bounded page");
   return result;

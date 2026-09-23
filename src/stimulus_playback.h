@@ -13,7 +13,7 @@
 #include <string>
 #include <thread>
 
-enum class SeekState { Idle, WaitingCameras, WaitingStimulus, Ready, TimedOut };
+enum class SeekState { Idle, WaitingMedia, WaitingCameras, WaitingStimulus, Ready, TimedOut };
 enum class ResumePath {
     None,
     SmoothPause,
@@ -25,6 +25,7 @@ enum class ResumePath {
 inline const char *seekStateName(SeekState s) {
     switch (s) {
     case SeekState::Idle:             return "Idle";
+    case SeekState::WaitingMedia:     return "WaitingMedia";
     case SeekState::WaitingCameras:   return "WaitingCameras";
     case SeekState::WaitingStimulus:  return "WaitingStimulus";
     case SeekState::Ready:            return "Ready";

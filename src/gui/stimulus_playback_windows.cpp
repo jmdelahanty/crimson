@@ -81,6 +81,7 @@ StimulusPlaybackPresentationResult updateStimulusPlaybackPresentation(
 
     if (playback_state.play_video && mapping_available &&
         target_stimulus_frame >= 0 &&
+        seek_progress.state != SeekState::WaitingMedia &&
         seek_progress.state != SeekState::WaitingCameras &&
         seek_progress.state != SeekState::WaitingStimulus) {
         const int stimulus_progress_frame =

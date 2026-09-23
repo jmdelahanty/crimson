@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 
 namespace crimson::platform::nvidia {
@@ -36,6 +37,8 @@ struct ClippedMediaCoordinatorContext {
   std::function<playback::ClippedFrameBinding(int64_t)> resolve_binding;
   std::function<bool(int64_t)> load_and_seek;
   std::function<void(const ClippedMediaCoordinatorEvent &)> publish_event;
+  // True while the owner-polled media seek has not committed its new clip.
+  std::function<bool()> switch_pending;
 };
 
 // Executes the platform handoff command emitted by the backend-neutral policy.
@@ -47,11 +50,14 @@ public:
 
   playback::ClippedMediaHandoffOutcome
   onPresentedFrame(int64_t presented_parent_frame, bool playback_active) const;
+  playback::ClippedMediaHandoffOutcome pollPendingSwitch() const;
+  void cancelPendingSwitch() const;
 
 private:
   void publish(const ClippedMediaCoordinatorEvent &event) const;
 
   ClippedMediaCoordinatorContext context_;
+  mutable std::optional<playback::ClippedMediaHandoffCommand> pending_command_;
 };
 
 } // namespace crimson::platform::nvidia

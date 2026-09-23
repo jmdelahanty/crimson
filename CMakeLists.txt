@@ -616,6 +616,9 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         src/gui/canonical_timeline_session.cpp
     )
     target_compile_features(august_timeline_window_probe PRIVATE cxx_std_17)
+    target_include_directories(august_timeline_window_probe PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui
+    )
     target_link_libraries(august_timeline_window_probe PRIVATE
         crimson_tensorstore_repositories
         crimson_repository_contracts
@@ -626,6 +629,20 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
     set_target_properties(august_timeline_window_probe PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
+
+    if(UNIX)
+        add_executable(nvidia_performance_probe_tests tools/nvidia_performance_probe_tests.cpp)
+        target_compile_features(nvidia_performance_probe_tests PRIVATE cxx_std_17)
+        target_link_libraries(nvidia_performance_probe_tests PRIVATE
+            crimson_tensorstore_repositories crimson_repository_contracts
+            ${tensorstore_target} nlohmann_json::nlohmann_json)
+        set_target_properties(nvidia_performance_probe_tests PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+        add_test(NAME nvidia_performance_probe_tests
+            COMMAND $<TARGET_FILE:nvidia_performance_probe_tests>)
+        set_tests_properties(nvidia_performance_probe_tests PROPERTIES
+            LABELS "headless;nvidia;performance" TIMEOUT 10)
+    endif()
 
     add_executable(detection_quality_timeline_gate
         tools/detection_quality_timeline_gate.cpp
@@ -733,6 +750,12 @@ function(crimson_add_tensorstore_repositories tensorstore_target)
         LABELS "headless;repository;session;overlay" TIMEOUT 30)
 
     if(Python3_Interpreter_FOUND)
+        add_test(NAME august_nfs_performance_checker_tests
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/august_nfs_performance_tests.py)
+        set_tests_properties(august_nfs_performance_checker_tests PROPERTIES
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+            LABELS "headless;playback;performance;nfs" TIMEOUT 10)
         add_test(NAME canonical_mask_playback_coverage_tests
             COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_canonical_mask_playback_tests.py)
@@ -1689,6 +1712,45 @@ add_test(NAME nvidia_clipped_media_coordinator_tests
 )
 set_tests_properties(nvidia_clipped_media_coordinator_tests PROPERTIES
     LABELS "headless;playback;nvidia;clipped"
+)
+
+add_executable(clipped_media_transition_worker_tests
+    tools/clipped_media_transition_worker_tests.cpp
+)
+target_include_directories(clipped_media_transition_worker_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(clipped_media_transition_worker_tests PRIVATE
+    Threads::Threads
+)
+target_compile_features(clipped_media_transition_worker_tests PRIVATE cxx_std_17)
+set_target_properties(clipped_media_transition_worker_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME clipped_media_transition_worker_tests
+    COMMAND $<TARGET_FILE:clipped_media_transition_worker_tests>
+)
+set_tests_properties(clipped_media_transition_worker_tests PROPERTIES
+    LABELS "headless;playback;clipped"
+    TIMEOUT 10
+)
+
+add_executable(clipped_media_prewarm_policy_tests
+    tools/clipped_media_prewarm_policy_tests.cpp
+)
+target_include_directories(clipped_media_prewarm_policy_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_features(clipped_media_prewarm_policy_tests PRIVATE cxx_std_17)
+set_target_properties(clipped_media_prewarm_policy_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME clipped_media_prewarm_policy_tests
+    COMMAND $<TARGET_FILE:clipped_media_prewarm_policy_tests>
+)
+set_tests_properties(clipped_media_prewarm_policy_tests PROPERTIES
+    LABELS "headless;playback;clipped"
+    TIMEOUT 10
 )
 
 add_executable(nvidia_frame_buffer_adapter_tests
@@ -3170,6 +3232,26 @@ target_link_libraries(redgui PRIVATE
     Threads::Threads
 )
 crimson_configure_parquet_support(redgui)
+
+add_executable(canonical_timeline_bout_shading_tests
+    tools/canonical_timeline_bout_shading_tests.cpp
+)
+target_include_directories(canonical_timeline_bout_shading_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${IMGUI_DIR}
+)
+target_link_libraries(canonical_timeline_bout_shading_tests PRIVATE
+    crimson_repository_contracts
+)
+target_compile_features(canonical_timeline_bout_shading_tests PRIVATE cxx_std_17)
+set_target_properties(canonical_timeline_bout_shading_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME canonical_timeline_bout_shading_tests
+    COMMAND $<TARGET_FILE:canonical_timeline_bout_shading_tests>)
+set_tests_properties(canonical_timeline_bout_shading_tests PROPERTIES
+    LABELS "headless;timeline;swim_bout;ui"
+)
 
 add_executable(diagnostics_window_tests
     tools/diagnostics_window_tests.cpp src/gui/diagnostics_window.cpp

@@ -231,6 +231,62 @@ uint64_t plotDecimatedLineFallback(const char* label,
 
 }  // namespace
 
+namespace {
+
+void drawPlotBands(const std::vector<AnalysisTimelinePlotBand>& bands,
+                   AnalysisTimelinePlotBandCounts* counts) {
+    if (bands.empty()) {
+        return;
+    }
+    const ImPlotRect limits = ImPlot::GetPlotLimits();
+    if (!std::isfinite(limits.X.Min) || !std::isfinite(limits.X.Max) ||
+        !std::isfinite(limits.Y.Min) || !std::isfinite(limits.Y.Max) ||
+        limits.X.Max <= limits.X.Min || limits.Y.Max <= limits.Y.Min) {
+        return;
+    }
+    const ImVec2 plot_pos = ImPlot::GetPlotPos();
+    const ImVec2 plot_size = ImPlot::GetPlotSize();
+    if (plot_size.x <= 0.0f || plot_size.y <= 0.0f) {
+        return;
+    }
+    ImDrawList* draw_list = ImPlot::GetPlotDrawList();
+    draw_list->PushClipRect(plot_pos,
+                            ImVec2(plot_pos.x + plot_size.x,
+                                   plot_pos.y + plot_size.y), true);
+    for (const auto& band : bands) {
+        if (!std::isfinite(band.start_seconds) ||
+            !std::isfinite(band.end_seconds) ||
+            band.end_seconds <= band.start_seconds) {
+            continue;
+        }
+        const double start = std::max(band.start_seconds, limits.X.Min);
+        const double end = std::min(band.end_seconds, limits.X.Max);
+        if (end <= start) {
+            continue;
+        }
+        const ImVec2 p0 = ImPlot::PlotToPixels(ImPlotPoint(start, limits.Y.Max));
+        const ImVec2 p1 = ImPlot::PlotToPixels(ImPlotPoint(end, limits.Y.Min));
+        if (!std::isfinite(p0.x) || !std::isfinite(p0.y) ||
+            !std::isfinite(p1.x) || !std::isfinite(p1.y) || p1.x == p0.x) {
+            continue;
+        }
+        draw_list->AddRectFilled(
+            ImVec2(std::min(p0.x, p1.x), std::min(p0.y, p1.y)),
+            ImVec2(std::max(p0.x, p1.x), std::max(p0.y, p1.y)),
+            ImGui::GetColorU32(band.color));
+        if (counts != nullptr) {
+            if (band.core) {
+                ++counts->core_bands_drawn;
+            } else {
+                ++counts->bands_drawn;
+            }
+        }
+    }
+    draw_list->PopClipRect();
+}
+
+}  // namespace
+
 std::optional<double> sampleTimeFromFrame(int32_t frame, double video_fps) {
     if (frame < 0 || video_fps <= 0.0) {
         return std::nullopt;
@@ -375,8 +431,23 @@ bool drawAnalysisTracePlotRow(
     const AnalysisTimelineXAxisLimits* linked_x_limits,
     bool embedded_in_subplots,
     uint64_t* submitted_points_out) {
+    return drawAnalysisTracePlotRow(row, scroll_state, linked_x_limits,
+                                    embedded_in_subplots, submitted_points_out,
+                                    nullptr);
+}
+
+bool drawAnalysisTracePlotRow(
+    const AnalysisTimelineTracePlotRow& row,
+    const TimelineScrollState& scroll_state,
+    const AnalysisTimelineXAxisLimits* linked_x_limits,
+    bool embedded_in_subplots,
+    uint64_t* submitted_points_out,
+    AnalysisTimelinePlotBandCounts* band_counts_out) {
     if (submitted_points_out != nullptr) {
         *submitted_points_out = 0;
+    }
+    if (band_counts_out != nullptr) {
+        *band_counts_out = {};
     }
     if (row.traces.empty()) {
         if (!embedded_in_subplots) {
@@ -439,6 +510,7 @@ bool drawAnalysisTracePlotRow(
                                     ImGuiCond_Once);
         }
         ImPlot::SetupAxisLimits(ImAxis_Y1, y_min, y_max, ImGuiCond_Once);
+        drawPlotBands(row.bands, band_counts_out);
         for (const auto& trace : row.traces) {
             if (trace.has_color) {
                 ImPlot::SetNextLineStyle(trace.color, trace.line_width);
@@ -467,6 +539,18 @@ void drawAnalysisTracePlot(const char* title,
                            const TimelineScrollState& scroll_state,
                            double current_time,
                            const char* current_marker_id) {
+    drawAnalysisTracePlot(title, y_axis_label, traces, scroll_state,
+                          current_time, current_marker_id, nullptr, nullptr);
+}
+
+void drawAnalysisTracePlot(const char* title,
+                           const char* y_axis_label,
+                           const std::vector<AnalysisTimelineTrace>& traces,
+                           const TimelineScrollState& scroll_state,
+                           double current_time,
+                           const char* current_marker_id,
+                           const std::vector<AnalysisTimelinePlotBand>* bands,
+                           AnalysisTimelinePlotBandCounts* band_counts_out) {
     AnalysisTimelineTracePlotRow row;
     row.title = title != nullptr ? title : "Trace";
     row.y_axis_label = y_axis_label != nullptr ? y_axis_label : "";
@@ -474,5 +558,9 @@ void drawAnalysisTracePlot(const char* title,
     row.current_time = current_time;
     row.current_marker_id =
         current_marker_id != nullptr ? current_marker_id : "##current_time";
-    drawAnalysisTracePlotRow(row, scroll_state, nullptr, false);
+    if (bands != nullptr) {
+        row.bands = *bands;
+    }
+    drawAnalysisTracePlotRow(row, scroll_state, nullptr, false, nullptr,
+                             band_counts_out);
 }

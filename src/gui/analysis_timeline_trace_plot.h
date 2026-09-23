@@ -20,6 +20,18 @@ struct AnalysisTimelineTrace {
     std::vector<double> ys;
 };
 
+struct AnalysisTimelinePlotBand {
+    double start_seconds = 0.0;
+    double end_seconds = 0.0;
+    ImVec4 color = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+    bool core = false;
+};
+
+struct AnalysisTimelinePlotBandCounts {
+    size_t bands_drawn = 0;
+    size_t core_bands_drawn = 0;
+};
+
 struct AnalysisTimelineTracePlotRow {
     std::string title;
     std::string y_axis_label;
@@ -27,6 +39,7 @@ struct AnalysisTimelineTracePlotRow {
     double current_time = -1.0;
     std::string current_marker_id;
     float row_weight = 1.0f;
+    std::vector<AnalysisTimelinePlotBand> bands;
 };
 
 struct AnalysisTimelineXAxisLimits {
@@ -64,9 +77,26 @@ bool drawAnalysisTracePlotRow(
     bool embedded_in_subplots = false,
     uint64_t* submitted_points_out = nullptr);
 
+bool drawAnalysisTracePlotRow(
+    const AnalysisTimelineTracePlotRow& row,
+    const TimelineScrollState& scroll_state,
+    const AnalysisTimelineXAxisLimits* linked_x_limits,
+    bool embedded_in_subplots,
+    uint64_t* submitted_points_out,
+    AnalysisTimelinePlotBandCounts* band_counts_out);
+
 void drawAnalysisTracePlot(const char* title,
                            const char* y_axis_label,
                            const std::vector<AnalysisTimelineTrace>& traces,
                            const TimelineScrollState& scroll_state,
                            double current_time,
                            const char* current_marker_id);
+
+void drawAnalysisTracePlot(const char* title,
+                           const char* y_axis_label,
+                           const std::vector<AnalysisTimelineTrace>& traces,
+                           const TimelineScrollState& scroll_state,
+                           double current_time,
+                           const char* current_marker_id,
+                           const std::vector<AnalysisTimelinePlotBand>* bands,
+                           AnalysisTimelinePlotBandCounts* band_counts_out);

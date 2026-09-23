@@ -67,6 +67,7 @@
 #include "platform/nvidia/nvidia_launch_options.h"
 #include "platform/nvidia/nvidia_playback_diagnostics_adapter.h"
 #include "platform/nvidia/nvidia_playback_trace_model.h"
+#include "platform/nvidia/nvidia_performance_probe.h"
 #include "platform/nvidia/nvidia_refined_keypoint_write_session.h"
 #include "playback_diagnostics.h"
 #include "playback_session_controller.h"
@@ -436,6 +437,24 @@ int main(int argc, char **argv) {
   const double cli_frame_cap_fps = launch_options.frame_cap_fps;
   const bool mask_perf_log_enabled = launch_options.mask_perf_log_enabled;
   const bool cli_show_eye_masks = launch_options.show_eye_masks;
+  crimson::platform::nvidia::PerformanceProbe performance_probe;
+  try {
+    performance_probe = crimson::platform::nvidia::PerformanceProbe::load(
+        std::getenv("CRIMSON_PERFORMANCE_CASE"));
+    if (performance_probe.enabled && cli_playback_trace_log_path.empty())
+      throw std::runtime_error("Performance case requires --playback-trace-log");
+  } catch (const std::exception& error) {
+    std::cerr << "[PerformanceProbe] " << error.what() << std::endl;
+    return 2;
+  }
+  const auto performance_initial_counters = performance_probe.enabled
+      ? crimson::platform::nvidia::performanceFileCounters() : json{};
+  auto performance_seek_started = std::chrono::steady_clock::now();
+  auto performance_previous_tick = performance_seek_started;
+  uint64_t performance_tick_count = 0;
+  bool performance_manual_seek_active = false;
+  bool performance_automatic_handoff_active = false;
+  uint64_t performance_manual_seek_epoch = 0;
   const char *canonical_overlay_mode_env =
       std::getenv("CRIMSON_CANONICAL_OVERLAY_MODE");
   const std::string canonical_overlay_mode =
@@ -568,7 +587,6 @@ int main(int argc, char **argv) {
   bool zarr_loaded = false;
 
   DecoderContext *dc_context = new DecoderContext();
-  *dc_context = DecoderContext{};
   dc_context->decoding_flag = false;
   dc_context->stop_flag = false;
   dc_context->total_num_frame = int(INT_MAX);
@@ -623,6 +641,15 @@ int main(int argc, char **argv) {
     }
   };
   if (playback_smoke.enabled) applyCanonicalOverlayMode();
+  if (performance_probe.enabled) {
+    show_eye_masks = performance_probe.overlays;
+    show_keypoint_markers = performance_probe.overlays;
+    show_heading_arrows = performance_probe.overlays;
+    subject_shape_overlay_options.show_overlay = performance_probe.overlays;
+    subject_shape_overlay_options.show_body_contour = performance_probe.overlays;
+    subject_shape_overlay_options.show_swim_bladder_contour = performance_probe.overlays;
+    subject_shape_overlay_options.show_eye_contours = performance_probe.overlays;
+  }
   int current_frame_num = 0;
   std::vector<std::string> imgs_names;
 
@@ -1137,6 +1164,17 @@ int main(int argc, char **argv) {
       joinStimulusDecoderWhilePainting,
       discoverAffiliatedMediaWhilePainting,
       resolveStimulusVideoWhilePainting,
+      [](const crimson::media::CameraMediaOpenPlan &plan,
+         const std::string &image_root, int buffer_size, double fps,
+         PreparedCameraMedia &prepared, std::string &error) {
+        return prepareCameraMedia(plan, image_root, buffer_size, fps,
+                                  prepared, error);
+      },
+      [](std::vector<std::thread> &threads) {
+        for (auto &thread : threads) {
+          if (thread.joinable()) thread.join();
+        }
+      },
   });
   bool canonical_detection_route = false;
   uint64_t canonical_detection_session_generation =
@@ -1569,7 +1607,7 @@ int main(int argc, char **argv) {
           &window_was_decoding,
           &window_need_decoding,
           [&](int parent_frame) {
-            return media_session_loader.resolveDecoderFrameForParentFrame(
+            return media_session_loader.requestDecoderFrameForParentFrame(
                 parent_frame);
           },
       });
@@ -2001,7 +2039,8 @@ int main(int argc, char **argv) {
                     presenter_preferred_paused_slot, presenter_presented_slot,
                     presenter_presented_frame, presenter_resolved_frame,
                     presenter_prewarm_active)),
-            event_name != "frame" && event_name != "canonical_overlay_present");
+            event_name != "frame" && event_name != "canonical_overlay_present" &&
+                event_name != "performance_frame");
       };
 
   auto playbackSeekEventDetails =
@@ -2045,6 +2084,9 @@ int main(int argc, char **argv) {
 
   auto executePlaybackSeek =
       [&](const crimson::playback::PlaybackSeekRequest &request) {
+        performance_manual_seek_active = true;
+        performance_automatic_handoff_active = false;
+        ++performance_manual_seek_epoch;
         auto &coordinator = playback_transport.seekCoordinator();
         const auto transaction = coordinator.begin(request);
         const auto plan = crimson::playback::planPlaybackSeek(
@@ -2371,6 +2413,25 @@ int main(int argc, char **argv) {
     } while (false);
   }
 
+  if (performance_probe.enabled) {
+    if (!video_loaded || !canonical_detection_route ||
+        ((!performance_probe.seeks.empty()) == playback_smoke.enabled)) {
+      std::cerr << "[PerformanceProbe] Requires canonical video; choose playback or seeks\n";
+      return 2;
+    }
+    for (const auto frame : performance_probe.seeks) {
+      if (static_cast<size_t>(frame) >= zarr_loader.getTotalFrames()) {
+        std::cerr << "[PerformanceProbe] Seek outside recording\n";
+        return 2;
+      }
+    }
+    workspace_state.setWindowRequested(crimson::workspace::Window::AnalysisTimeline, true);
+    writePlaybackTraceEvent("performance_probe_start",
+        {{"schema", "crimson.august_performance_trace.v1"},
+         {"shading", performance_probe.shading}, {"overlays", performance_probe.overlays},
+         {"seek_frames", performance_probe.seeks},
+         {"file_counters_before_open", performance_initial_counters}});
+  }
   if (playback_smoke.enabled) {
     if (!video_loaded) {
       std::cerr << "[PlaybackSmoke] requested but no video is loaded"
@@ -2474,6 +2535,7 @@ int main(int argc, char **argv) {
               << clipped_boundary_smoke.end_frame << std::endl;
   }
 
+  std::chrono::steady_clock::time_point clipped_switch_requested_at;
   crimson::platform::nvidia::ClippedMediaCoordinator clipped_media_coordinator(
       crimson::platform::nvidia::ClippedMediaCoordinatorContext{
           &clipped_media_state.handoff,
@@ -2486,6 +2548,10 @@ int main(int argc, char **argv) {
                 parent_frame > std::numeric_limits<int>::max()) {
               return false;
             }
+            // An automatic clip handoff is part of uninterrupted playback,
+            // including its WaitingMedia/WaitingCameras phases. Do not hide
+            // its visible-image hold by classifying it as a manual seek.
+            performance_automatic_handoff_active = true;
             const auto seek_result = playback_session_controller.seekToFrame(
                 static_cast<int>(parent_frame),
                 /*prefer_buffer_when_paused=*/false,
@@ -2507,6 +2573,7 @@ int main(int argc, char **argv) {
                 crimson::platform::nvidia::ClippedMediaCoordinatorEventKind;
             switch (event.kind) {
             case EventKind::SwitchRequested:
+              clipped_switch_requested_at = std::chrono::steady_clock::now();
               std::cout << "[ClippedHandoff] switch_request parent_frame="
                         << event.parent_frame
                         << " old_clip=" << event.old_clip_id
@@ -2543,6 +2610,14 @@ int main(int argc, char **argv) {
                    {"clip_local_frame_index", event.clip_local_frame_index}});
               break;
             case EventKind::SwitchPresented:
+              if (clipped_switch_requested_at.time_since_epoch().count() != 0) {
+                std::cout << "[ClipSwitchStage] stage=first_presented parent_frame="
+                          << event.parent_frame << " elapsed_ms="
+                          << durationMs(std::chrono::steady_clock::now() -
+                                        clipped_switch_requested_at)
+                          << std::endl;
+                clipped_switch_requested_at = {};
+              }
               std::cout << "[ClippedHandoff] switch_presented parent_frame="
                         << event.parent_frame << " clip=" << event.clip_id
                         << " selected_run_index=" << event.selected_run_index
@@ -2566,7 +2641,8 @@ int main(int argc, char **argv) {
                    {"new_selected_run_index", event.selected_run_index}});
               break;
             }
-          }});
+          },
+          [&] { return seek_progress.state == SeekState::WaitingMedia; }});
 
   auto makeDecodeDebugDumpContext = [&]() {
     return DecodeDebugDumpContext{
@@ -2685,9 +2761,33 @@ int main(int argc, char **argv) {
   };
 
   std::optional<crimson::session::ArchiveOpenCommand> pending_archive_dialog;
+  auto drainClipSwitchForSessionOpen = [&] {
+    playback_session_controller.cancelActiveSeekForSessionOpen();
+    clipped_media_coordinator.cancelPendingSwitch();
+    playback_transport.seekCoordinator().cancelActive();
+    if (!media_session_loader.hasPendingClipSwitch() &&
+        !media_session_loader.hasPendingPrewarmActivity()) return;
+    auto decoder_drained = std::make_shared<bool>(false);
+    const auto outcome = runSessionLoadingStage(
+        "cancel pending clip switch",
+        [&, decoder_drained] {
+          *decoder_drained = media_session_loader.cancelPendingClipSwitch(false);
+        }, true);
+    if (!outcome.applied() || media_session_loader.hasPendingClipSwitch() ||
+        media_session_loader.hasPendingPrewarmActivity()) {
+      // The loading runner may reject launch. Drain before archive mutation;
+      // this fallback is limited to a failed session-open barrier.
+      *decoder_drained = media_session_loader.cancelPendingClipSwitch(false) ||
+                         *decoder_drained;
+    }
+    if (*decoder_drained) {
+      media_session_loader.restoreCurrentClipDecoderAfterCancellation();
+    }
+  };
   auto openArchiveFromDialog =
       [&](const crimson::session::ArchiveOpenCommand &command) {
     session_open_scope = true;
+    drainClipSwitchForSessionOpen();
     const auto archive_result = crimson::session::executeArchiveOpen(
         recording_open_workflow, command,
         {
@@ -2789,6 +2889,8 @@ int main(int argc, char **argv) {
          std::nullopt});
   };
   auto openMediaFromDialog = [&](PendingMediaDialog command) {
+    session_open_scope = true;
+    drainClipSwitchForSessionOpen();
     root_dir = std::move(command.directory);
     skeleton_dir = root_dir;
     auto requested_session = std::move(command.requested_session);
@@ -2803,6 +2905,7 @@ int main(int argc, char **argv) {
             {}, &begin_error)) {
       show_error = true;
       error_message = begin_error;
+      session_open_scope = false;
       return;
     }
     session_open_scope = true;
@@ -2947,6 +3050,20 @@ int main(int argc, char **argv) {
       continue;
     }
     const auto frame_loop_start = std::chrono::steady_clock::now();
+    if (performance_probe.enabled && !performance_probe.seeks.empty() &&
+        !performance_probe.seek_active &&
+        performance_probe.seek_index < performance_probe.seeks.size()) {
+      if (ps.play_video) applyPlaybackToggleForPerf();
+      performance_probe.seek_active = true;
+      performance_probe.settled_draws = 0;
+      performance_seek_started = std::chrono::steady_clock::now();
+      const int target = performance_probe.seeks[performance_probe.seek_index];
+      writePlaybackTraceEvent("performance_seek_started",
+          {{"index", performance_probe.seek_index}, {"target", target}});
+      playback_session_controller.seekToFrame(target,
+          /*prefer_buffer_when_paused=*/false, /*force_inaccurate=*/false,
+          /*skip_stimulus_hard_seek=*/false);
+    }
     configureQualityTimelineSession();
     crimson::platform::nvidia::pollAndApplyRefinedKeypointWrite(
         refined_keypoint_write_session, recording_open_workflow.generation(),
@@ -3239,6 +3356,7 @@ int main(int argc, char **argv) {
     const auto ui_build_start = std::chrono::steady_clock::now();
 
     const auto seek_completion = playback_session_controller.pollSeekState();
+    (void)clipped_media_coordinator.pollPendingSwitch();
     if (seek_completion.has_value() &&
         playback_transport.seekCoordinator().activeGeneration() != 0) {
       const auto completed_event =
@@ -4055,12 +4173,11 @@ int main(int argc, char **argv) {
         } else {
           current_frame_num = ps.to_display_frame_number;
         }
-        (void)clipped_media_coordinator.onPresentedFrame(current_frame_num,
-                                                         ps.play_video);
       }
       const bool freeze_stimulus_during_paused_browse =
           !ps.play_video && ps.pause_seeked && ps.buffer_browsed_since_pause;
       const bool freeze_stimulus_during_seek =
+          seek_progress.state == SeekState::WaitingMedia ||
           seek_progress.state == SeekState::WaitingCameras ||
           seek_progress.state == SeekState::WaitingStimulus;
       if (zarr_loaded && stimulus_repository.hasMapping()) {
@@ -5995,11 +6112,18 @@ int main(int argc, char **argv) {
     static AnalysisTimelineWindowState analysis_timeline_window_state;
     static crimson::gui::CanonicalTimelineWindowState
         canonical_timeline_window_state;
+    if (performance_probe.enabled)
+      canonical_timeline_window_state.show_swim_bouts = performance_probe.shading;
 
     if (ui_reference_capture.waitingForStableFrame() &&
         !ui_reference.analysis_state_applied &&
         (ui_reference.state == UiReferenceState::AnalysisEye ||
          ui_reference.state == UiReferenceState::AnalysisTailStimulus)) {
+      // Capture-only override; normal interactive use is controlled by the UI.
+      if (const char* shading = std::getenv("CRIMSON_CANONICAL_BOUT_SHADING")) {
+        canonical_timeline_window_state.show_swim_bouts =
+            std::string(shading) != "0";
+      }
       analysis_timeline_window_state.show_smoothed = false;
       analysis_timeline_window_state.show_instantaneous = false;
       analysis_timeline_window_state.show_heading_raw = false;
@@ -6740,6 +6864,12 @@ int main(int argc, char **argv) {
         marker["canonical_timelines"]["bouts"]["interval_count"] =
             snapshot.swim_bouts.window
                 ? snapshot.swim_bouts.window->intervals.size() : 0;
+        marker["canonical_timelines"]["speed_shading"] = {
+            {"enabled", canonical_timeline_window_state.show_swim_bouts},
+            {"frame", canonical_timeline_window_state.shading_requested_frame},
+            {"bands_drawn", canonical_timeline_window_state.shading_bands_drawn},
+            {"core_bands_drawn",
+             canonical_timeline_window_state.shading_core_bands_drawn}};
       }
       if (canonical_detection_route) {
         const auto& overlays = last_canonical_overlay_snapshot;
@@ -6861,6 +6991,15 @@ int main(int argc, char **argv) {
                                          commit_details, false);
         }
       }
+    }
+
+    // The handoff observes the frame actually drawn and swapped this tick.
+    // A read-head slot can point at the next frame before its texture appears.
+    if (video_loaded && ps.play_video && scene->num_cams > 0 &&
+        scene->cameras[0].texture_has_valid_frame &&
+        scene->cameras[0].last_uploaded_frame >= 0) {
+      (void)clipped_media_coordinator.onPresentedFrame(
+          scene->cameras[0].last_uploaded_frame, true);
     }
 
     if (zarr_loaded) {
@@ -6992,7 +7131,7 @@ int main(int argc, char **argv) {
     maybeWritePerfLogSample(perf_log_writer, perf_frame_context,
                             kPerfLogSamplePeriod);
     if (diagnostics_session.playbackTraceEnabled() && video_loaded &&
-        (!ps.play_video || seek_progress.state != SeekState::Idle)) {
+        (performance_probe.enabled || !ps.play_video || seek_progress.state != SeekState::Idle)) {
       writePlaybackTraceEvent(
           "frame",
           json{{"frame_loop_ms", durationMs(std::chrono::steady_clock::now() -
@@ -7062,12 +7201,118 @@ int main(int argc, char **argv) {
     } else if (!ps.play_video && perf_playback_start_frame >= 0) {
       resetPlaybackStartPerf();
     }
+    // Schedule speculative next-clip work from the image actually presented,
+    // not from the decoder/read-head cursor. Also poll on paused/hidden draws
+    // so canceled workers can retire without blocking the render thread.
+    media_session_loader.pollSequentialClipPrewarm(
+        playback_trace_presented_frame, ps.play_video);
+    if (performance_probe.enabled) {
+      const auto now = std::chrono::steady_clock::now();
+      const auto timeline = canonical_timeline_session.snapshot(current_frame_num);
+      const auto& overlays = last_canonical_overlay_snapshot;
+      const auto product_ready = [](auto state) {
+        using State = decltype(state);
+        return state == State::Ready || state == State::Empty;
+      };
+      const bool timeline_ready = timeline.requested_frame == current_frame_num &&
+          product_ready(timeline.eye_angles.state) && product_ready(timeline.motion.state) &&
+          product_ready(timeline.swim_bouts.state);
+      const bool overlays_ready = !performance_probe.overlays ||
+          (overlays.requested_frame == current_frame_num &&
+           product_ready(overlays.keypoints.state) && product_ready(overlays.masks.state) &&
+           product_ready(overlays.mask_contours.state) && product_ready(overlays.shapes.state));
+      json visible_video_frame = nullptr;
+      if (playback_trace_presenter_view_idx >= 0 &&
+          static_cast<size_t>(playback_trace_presenter_view_idx) < scene->cameras.size()) {
+        const auto &front = scene->cameras[playback_trace_presenter_view_idx];
+        if (front.texture_has_valid_frame && front.last_uploaded_frame >= 0) {
+          visible_video_frame = front.last_uploaded_frame;
+        }
+      }
+      const bool continuity_manual_seek = performance_manual_seek_active ||
+          (seek_progress.state != SeekState::Idle &&
+           !performance_automatic_handoff_active);
+      writePlaybackTraceEvent("performance_frame",
+          {{"tick_ms", performance_tick_count == 0 ? 0.0 : durationMs(now - performance_previous_tick)},
+           {"frame_loop_ms", durationMs(now - frame_loop_start)},
+           {"cap_sleep_ms", frame_cap_sleep_ms},
+           {"timeline_ms", frame_movement_timeline_ui_ms},
+           {"overlay_ms", frame_camera_overlay_ui_ms},
+           {"upload_ms", frame_camera_upload_ms},
+           {"current_frame", current_frame_num},
+           {"visible_video_frame", visible_video_frame},
+           {"source_video_fps", video_fps},
+           {"playback_rate", playback_transport.playbackRate()},
+           {"continuity_manual_seek", continuity_manual_seek},
+           {"manual_seek_epoch", performance_manual_seek_epoch},
+           {"automatic_handoff", performance_automatic_handoff_active},
+           {"timeline_ready", timeline_ready}, {"overlays_ready", overlays_ready},
+           {"shading", canonical_timeline_window_state.show_swim_bouts},
+           {"bout_bands", canonical_timeline_window_state.shading_bands_drawn},
+           {"core_bands", canonical_timeline_window_state.shading_core_bands_drawn}},
+          playback_trace_presenter_view_idx, playback_trace_presenter_target_frame,
+          playback_trace_presenter_preferred_paused_slot, playback_trace_presented_slot,
+          playback_trace_presented_frame, playback_trace_presenter_resolved_frame);
+      if (seek_progress.state == SeekState::Idle) {
+        performance_manual_seek_active = false;
+        performance_automatic_handoff_active = false;
+      }
+      performance_previous_tick = now;
+      if (performance_tick_count++ % 60 == 0 ||
+          glfwWindowShouldClose(window->render_target)) {
+        const auto tm = canonical_timeline_session.metrics();
+        writePlaybackTraceEvent("performance_resources",
+            {{"file_counters", crimson::platform::nvidia::performanceFileCounters()},
+             {"peak_rss_kib", crimson::platform::nvidia::performancePeakRssKiB()},
+             {"scheduler", crimson::platform::nvidia::performanceSchedulerCounters(analysis_data_scheduler->metrics())},
+             {"mask_reads", overlays.mask_metrics.dense_mask_payload_reads},
+             {"mask_logical_bytes", overlays.mask_metrics.chunk_source_bytes_read},
+             {"contour_reads", overlays.mask_contour_metrics.contour_payload_reads},
+             {"contour_logical_bytes", overlays.mask_contour_metrics.contour_source_bytes_read},
+             {"motion_rows", tm.motion.source_rows_read},
+             {"eye_rows", tm.eye_angles.source_rows_read},
+             {"bout_rows", tm.swim_bouts.source_detector_rows_read},
+             {"motion_source", timeline.motion.source_identity},
+             {"bout_source", timeline.swim_bouts.source_identity},
+             {"keypoint_binding", overlays.selection ? overlays.selection->keypoints.identity_digest : ""},
+             {"mask_binding", overlays.selection ? overlays.selection->mask.identity_digest : ""},
+             {"shape_binding", overlays.selection ? overlays.selection->shape.identity_digest : ""}});
+      }
+      if (performance_probe.seek_active) {
+        const int target = performance_probe.seeks[performance_probe.seek_index];
+        const bool exact = playback_trace_presented_frame == target &&
+            current_frame_num == target && timeline_ready && overlays_ready;
+        performance_probe.settled_draws = exact ? performance_probe.settled_draws + 1 : 0;
+        const double elapsed_ms = durationMs(now - performance_seek_started);
+        const double deadline = performance_probe.seek_index == 0
+            ? performance_probe.initial_timeout_ms : performance_probe.seek_timeout_ms;
+        if (performance_probe.settled_draws >= 2) {
+          writePlaybackTraceEvent("performance_seek_ready",
+              {{"index", performance_probe.seek_index}, {"target", target},
+               {"ready_ms", elapsed_ms}});
+          performance_probe.seek_active = false;
+          if (++performance_probe.seek_index == performance_probe.seeks.size()) {
+            writePlaybackTraceEvent("performance_seeks_pass", {{"count", performance_probe.seek_index}});
+            glfwSetWindowShouldClose(window->render_target, GLFW_TRUE);
+          }
+        } else if (elapsed_ms > deadline) {
+          writePlaybackTraceEvent("performance_seek_timeout",
+              {{"index", performance_probe.seek_index}, {"target", target}, {"elapsed_ms", elapsed_ms}});
+          app_exit_code = 2;
+          glfwSetWindowShouldClose(window->render_target, GLFW_TRUE);
+        }
+      }
+    }
   }
-
-  diagnostics_session.close();
 
   // Cleanup
   session_lifecycle.beginClose();
+  dc_context->stop_flag = true;
+  media_session_loader.cancelPendingClipSwitch(false);
+  media_session_loader.stopAdoptedDecoderForShutdown();
+  // A pending clip switch may already have joined some or all handles.
+  // Finish every remaining decoder before destroying its display buffers.
+  crimson::playback::joinLiveThreads(decoder_threads);
   playback_transport.seekCoordinator().cancelActive();
   refined_keypoint_write_session.close();
   quality_timeline_session.close();
@@ -7078,6 +7323,14 @@ int main(int argc, char **argv) {
   analysis_data_scheduler->waitUntilIdle();
   const auto final_analysis_data_scheduler_metrics =
       analysis_data_scheduler->metrics();
+  if (performance_probe.enabled) {
+    writePlaybackTraceEvent("performance_final_resources",
+        {{"file_counters", crimson::platform::nvidia::performanceFileCounters()},
+         {"peak_rss_kib", crimson::platform::nvidia::performancePeakRssKiB()},
+         {"scheduler", crimson::platform::nvidia::performanceSchedulerCounters(
+             final_analysis_data_scheduler_metrics)}});
+  }
+  diagnostics_session.close();
   analysis_data_scheduler->shutdown();
   destroyStimulusPlayback(stimulus_player);
   clearCameraViewReadOnlyMaskTextureCache();
@@ -7087,11 +7340,6 @@ int main(int argc, char **argv) {
 
   glfwDestroyWindow(window->render_target);
   glfwTerminate();
-
-  dc_context->stop_flag = true;
-  // wait for threads to join
-  for (auto &t : decoder_threads)
-    t.join();
 
   session_lifecycle.completeClose();
   crimson::diagnostics::writeRuntimeDiagnostics(

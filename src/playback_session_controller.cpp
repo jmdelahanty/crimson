@@ -365,11 +365,45 @@ PlaybackSessionController::seekToFrame(int target_frame,
   if (context_.resolve_decoder_frame_for_parent_frame) {
     const auto resolved_decoder_frame =
         context_.resolve_decoder_frame_for_parent_frame(clamped_frame);
-    if (!resolved_decoder_frame) {
-      result.error = "media mapping is unavailable for the requested frame";
+    if (resolved_decoder_frame.status == DecoderFrameResolutionStatus::Pending) {
+      pending_media_frame_ = clamped_frame;
+      pending_media_prefer_buffer_ = prefer_buffer_when_paused;
+      pending_media_force_inaccurate_ = force_inaccurate;
+      pending_media_skip_stimulus_ = skip_stimulus_hard_seek;
+      context_.seek_progress->state = SeekState::WaitingMedia;
+      context_.seek_progress->requested_camera_frame = clamped_frame;
+      context_.playback_state->slider_frame_number = clamped_frame;
+      result.status = crimson::playback::PlaybackSeekExecutionStatus::Submitted;
+      result.path = crimson::playback::PlaybackSeekExecutionPath::BackendDecoder;
+      result.resolved_frame = clamped_frame;
+      result.service_ms = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - service_start).count();
       return result;
     }
-    decoder_seek_frame = *resolved_decoder_frame;
+    if (resolved_decoder_frame.status == DecoderFrameResolutionStatus::Failed) {
+      pending_media_frame_ = -1;
+      if (context_.seek_progress->state == SeekState::WaitingMedia) {
+        context_.seek_progress->state = SeekState::Idle;
+      }
+      result.error = resolved_decoder_frame.error;
+      return result;
+    }
+    if (resolved_decoder_frame.status ==
+        DecoderFrameResolutionStatus::ReadyBuffered) {
+      pending_media_frame_ = -1;
+      context_.seek_progress->state = SeekState::Idle;
+      result.status = crimson::playback::PlaybackSeekExecutionStatus::Completed;
+      result.path = crimson::playback::PlaybackSeekExecutionPath::ResidentBuffer;
+      result.resolved_frame = clamped_frame;
+      result.service_ms = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - service_start).count();
+      return result;
+    }
+    pending_media_frame_ = -1;
+    if (context_.seek_progress->state == SeekState::WaitingMedia) {
+      context_.seek_progress->state = SeekState::Idle;
+    }
+    decoder_seek_frame = resolved_decoder_frame.decoder_frame;
   }
 
   if (context_.scene->num_cams <= 0) {
@@ -763,6 +797,43 @@ PlaybackSessionController::pollSeekState() const {
 
   std::optional<crimson::playback::PlaybackSeekExecutionResult> completion;
 
+  if (context_.seek_progress->state == SeekState::WaitingMedia &&
+      pending_media_frame_ >= 0 &&
+      context_.resolve_decoder_frame_for_parent_frame) {
+    const auto resolved = context_.resolve_decoder_frame_for_parent_frame(
+        pending_media_frame_);
+    if (resolved.status == DecoderFrameResolutionStatus::Pending) {
+      return std::nullopt;
+    }
+    if (resolved.status == DecoderFrameResolutionStatus::Failed) {
+      crimson::playback::PlaybackSeekExecutionResult failed;
+      failed.status = crimson::playback::PlaybackSeekExecutionStatus::Failed;
+      failed.path = crimson::playback::PlaybackSeekExecutionPath::BackendDecoder;
+      failed.resolved_frame = pending_media_frame_;
+      failed.error = resolved.error;
+      context_.seek_progress->state = SeekState::Idle;
+      pending_media_frame_ = -1;
+      return failed;
+    }
+    const int frame = pending_media_frame_;
+    pending_media_frame_ = -1;
+    context_.seek_progress->state = SeekState::Idle;
+    if (resolved.status == DecoderFrameResolutionStatus::ReadyBuffered) {
+      crimson::playback::PlaybackSeekExecutionResult ready;
+      ready.status = crimson::playback::PlaybackSeekExecutionStatus::Completed;
+      ready.path = crimson::playback::PlaybackSeekExecutionPath::ResidentBuffer;
+      ready.resolved_frame = frame;
+      return ready;
+    }
+    const auto resumed = seekToFrame(frame, pending_media_prefer_buffer_,
+                                     pending_media_force_inaccurate_,
+                                     pending_media_skip_stimulus_);
+    if (resumed.status !=
+        crimson::playback::PlaybackSeekExecutionStatus::Submitted) {
+      return resumed;
+    }
+  }
+
   if (context_.seek_progress->state == SeekState::WaitingCameras) {
     const int settled =
         poll_camera_seeks(context_.scene, context_.seek_progress->seek_id);
@@ -968,4 +1039,11 @@ PlaybackSessionController::pollSeekState() const {
     context_.seek_progress->state = SeekState::Idle;
   }
   return completion;
+}
+
+void PlaybackSessionController::cancelActiveSeekForSessionOpen() const {
+  pending_media_frame_ = -1;
+  if (context_.seek_progress) {
+    context_.seek_progress->state = SeekState::Idle;
+  }
 }

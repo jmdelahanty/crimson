@@ -179,6 +179,122 @@ void testUnmappedNextFrameFailsClosed() {
           "an invalid boundary must not leave a pending switch");
 }
 
+void testPendingLoadPreservesIdentityAndDoesNotResubmit() {
+  auto state = initialState();
+  bool pending = true;
+  int submissions = 0;
+  std::vector<ClippedMediaCoordinatorEvent> events;
+  const ClippedMediaCoordinator coordinator(ClippedMediaCoordinatorContext{
+      &state, [] { return 5; }, bindingForFrame,
+      [&](int64_t frame) { ++submissions; return frame == 3; },
+      [&](const auto &event) { events.push_back(event); },
+      [&] { return pending; }});
+
+  require(coordinator.onPresentedFrame(2, true) ==
+              ClippedMediaHandoffOutcome::SwitchRequested,
+          "async acceptance is pending, not a completed media load");
+  for (int poll = 0; poll < 100; ++poll) {
+    require(coordinator.pollPendingSwitch() ==
+                ClippedMediaHandoffOutcome::SwitchRequested,
+            "polling must remain pending while the worker is blocked");
+    (void)coordinator.onPresentedFrame(2, true);
+  }
+  require(submissions == 1 && events.size() == 1,
+          "pending polls and retained old frames must not resubmit or publish loaded");
+  require(state.selected_run_index == 0 && state.clip_id == "clip-a" &&
+              state.first_parent_frame == 0 && state.last_parent_frame == 2,
+          "old clip identity must remain truthful until owner commit");
+
+  // The owner has joined the old decoder and installed the prepared media.
+  state.selected_run_index = 1;
+  state.clip_id = "clip-b";
+  state.first_parent_frame = 3;
+  state.last_parent_frame = 4;
+  pending = false;
+  require(coordinator.pollPendingSwitch() ==
+              ClippedMediaHandoffOutcome::SwitchLoaded,
+          "owner commit should complete the deferred load exactly once");
+  require(events.size() == 2 && events.back().kind ==
+              ClippedMediaCoordinatorEventKind::SwitchLoaded,
+          "commit should emit loaded, not presented");
+  require(state.switch_in_progress,
+          "installed media remains pending until its first actual presentation");
+  (void)coordinator.pollPendingSwitch();
+  require(events.size() == 2, "completion polls must not duplicate loaded events");
+  require(coordinator.onPresentedFrame(3, true) ==
+              ClippedMediaHandoffOutcome::SwitchSettled,
+          "only presentation of the new frame settles the async handoff");
+  require(events.size() == 3 && events.back().kind ==
+              ClippedMediaCoordinatorEventKind::SwitchPresented,
+          "deferred event order must be requested, loaded, presented");
+}
+
+void testDeferredFailureLeavesOldClipUsable() {
+  auto state = initialState();
+  bool pending = true;
+  std::vector<ClippedMediaCoordinatorEvent> events;
+  const ClippedMediaCoordinator coordinator(ClippedMediaCoordinatorContext{
+      &state, [] { return 5; }, bindingForFrame, [](int64_t) { return true; },
+      [&](const auto &event) { events.push_back(event); },
+      [&] { return pending; }});
+  (void)coordinator.onPresentedFrame(2, true);
+  pending = false; // Worker failed: owner did not install clip B.
+  require(coordinator.pollPendingSwitch() ==
+              ClippedMediaHandoffOutcome::SwitchFailed,
+          "a failed async load must not be reported as installed");
+  require(state.clip_id == "clip-a" && state.selected_run_index == 0 &&
+              !state.switch_in_progress,
+          "failure must retain the current clip and clear pending state");
+  require(events.size() == 2 && events.back().kind ==
+              ClippedMediaCoordinatorEventKind::SwitchFailed,
+          "async failure must publish a terminal failure once");
+  (void)coordinator.pollPendingSwitch();
+  require(events.size() == 2, "failed completion must not be repeated");
+}
+
+void testCancelledCompletionCannotMutateNewSession() {
+  auto state = initialState();
+  bool pending = true;
+  std::vector<ClippedMediaCoordinatorEvent> events;
+  const ClippedMediaCoordinator coordinator(ClippedMediaCoordinatorContext{
+      &state, [] { return 5; }, bindingForFrame, [](int64_t) { return true; },
+      [&](const auto &event) { events.push_back(event); },
+      [&] { return pending; }});
+  (void)coordinator.onPresentedFrame(2, true);
+  coordinator.cancelPendingSwitch();
+  require(!state.switch_in_progress && state.clip_id == "clip-a",
+          "cancelling pending work must not change active clip identity");
+  state = {7, "new-session-clip", 100, 109, -1, false, 100};
+  pending = false; // The discarded worker has now completed.
+  (void)coordinator.pollPendingSwitch();
+  require(state.selected_run_index == 7 && state.clip_id == "new-session-clip" &&
+              state.first_parent_frame == 100 && state.last_parent_frame == 109,
+          "a late cancelled handoff must not overwrite the new session");
+  require(events.size() == 1,
+          "cancelled completion must not publish stale loaded/presented events");
+}
+
+void testSupersedingSeekDoesNotRestoreOldBoundaryTarget() {
+  auto state = initialState();
+  bool pending = true;
+  std::vector<ClippedMediaCoordinatorEvent> events;
+  const ClippedMediaCoordinator coordinator(ClippedMediaCoordinatorContext{
+      &state, [] { return 5; }, bindingForFrame, [](int64_t) { return true; },
+      [&](const auto &event) { events.push_back(event); },
+      [&] { return pending; }});
+  (void)coordinator.onPresentedFrame(2, true);
+  // A manual seek superseded the automatic boundary handoff.
+  state = {9, "manual-seek-clip", 200, 299, -1, false, 250};
+  pending = false;
+  (void)coordinator.pollPendingSwitch();
+  require(state.selected_run_index == 9 && state.clip_id == "manual-seek-clip" &&
+              state.last_presented_parent_frame == 250,
+          "obsolete automatic handoff must not restore its target over a newer seek");
+  require(events.size() == 2 && events.back().kind ==
+              ClippedMediaCoordinatorEventKind::SwitchFailed,
+          "obsolete automatic handoff must not claim to have loaded");
+}
+
 } // namespace
 
 int main() {
@@ -187,6 +303,10 @@ int main() {
   testFailedLoadClearsPendingState();
   testInactiveAndInvalidInputsDoNoWork();
   testUnmappedNextFrameFailsClosed();
+  testPendingLoadPreservesIdentityAndDoesNotResubmit();
+  testDeferredFailureLeavesOldClipUsable();
+  testCancelledCompletionCannotMutateNewSession();
+  testSupersedingSeekDoesNotRestoreOldBoundaryTarget();
   std::cout << "nvidia_clipped_media_coordinator_tests: PASS\n";
   return 0;
 }

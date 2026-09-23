@@ -93,22 +93,40 @@ inline void decoder_check_input_files(const char *sz_in_file_path) {
     }
 }
 
-void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
+void decoder_process_with_handoff(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                      std::string cam_name, PictureBuffer *display_buffer,
                      int size_of_buffer, SeekInfo *seek_info,
-                     bool use_cpu_buffer) {
+                     bool use_cpu_buffer,
+                     DecoderOutputHandoff *output_handoff) {
     CUdeviceptr pTmpImage = 0;
-    clear_decoder_error_message(cam_name);
+    CUdevice retained_device = 0;
+    bool primary_context_retained = false;
+    std::unique_ptr<NvDecoder> dec;
+    if (!output_handoff) clear_decoder_error_message(cam_name);
     auto cleanup_decoder_resources = [&]() {
+        dec.reset();
         if (pTmpImage) {
             cuMemFree(pTmpImage);
             pTmpImage = 0;
+        }
+        if (primary_context_retained) {
+            cuDevicePrimaryCtxRelease(retained_device);
+            primary_context_retained = false;
         }
     };
     try {
     ck(cuInit(0));
     CUcontext cuContext = NULL;
-    createCudaContext(&cuContext, dc_context->gpu_index, 0);
+    ck(cuDeviceGet(&retained_device, dc_context->gpu_index));
+    unsigned int context_flags = 0;
+    int context_active = 0;
+    ck(cuDevicePrimaryCtxGetState(retained_device, &context_flags,
+                                  &context_active));
+    if (!context_active)
+        ck(cuDevicePrimaryCtxSetFlags(retained_device, CU_CTX_SCHED_AUTO));
+    ck(cuDevicePrimaryCtxRetain(&cuContext, retained_device));
+    primary_context_retained = true;
+    ck(cuCtxSetCurrent(cuContext));
     size_t nVideoBytes = 0;
     PacketData pktinfo;
     const int stream_color_space =
@@ -120,8 +138,9 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
     auto make_decoder = [&]() {
         return std::make_unique<NvDecoder>(cuContext, true, codec_id);
     };
-    std::unique_ptr<NvDecoder> dec = make_decoder();
+    dec = make_decoder();
     auto decoder_perf = [&]() -> std::shared_ptr<DecoderPerfSample> {
+        if (output_handoff) return std::make_shared<DecoderPerfSample>();
         std::lock_guard<std::mutex> lock(g_decoder_perf_mutex);
         auto &sample = decoder_perf_samples[cam_name];
         if (!sample) {
@@ -182,6 +201,28 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
     auto seek_requested = [&]() -> bool {
         std::lock_guard<std::mutex> lock(g_seek_info_mutex);
         return seek_info->use_seek;
+    };
+    auto decoding_requested = [&]() -> bool {
+        return output_handoff && !output_handoff->adopted.load()
+                   ? output_handoff->need_decoding.load()
+                              : window_need_decoding[cam_name].load();
+    };
+    auto publish_latest = [&](int frame) {
+        if (output_handoff && !output_handoff->adopted.load())
+            output_handoff->latest_frame.store(frame);
+        else latest_decoded_frame[cam_name].store(frame);
+    };
+    uint64_t output_generation = 0;
+    auto update_output = [&]() {
+        if (!output_handoff) return;
+        std::lock_guard<std::mutex> lock(output_handoff->mutex);
+        if (output_generation != output_handoff->generation) {
+            display_buffer = output_handoff->buffer;
+            size_of_buffer = output_handoff->buffer_size;
+            buffer_head = output_handoff->next_slot;
+            if (output_handoff->seek_info) seek_info = output_handoff->seek_info;
+            output_generation = output_handoff->generation;
+        }
     };
     uint64_t active_seek_id = 0;
     auto publishFrameNumber = [&](uint64_t local_frame) -> int64_t {
@@ -555,13 +596,12 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                 seek_bookkeeping.settled_local_frame;
             nFrame = seek_bookkeeping.next_local_frame;
             if (nFrameReturned > 0) {
-                latest_decoded_frame[cam_name].store(
-                    publishFrameNumberInt(settled_seek_frame));
+                publish_latest(publishFrameNumberInt(settled_seek_frame));
             } else {
                 // No decoded frame is currently queued for display after this
                 // seek operation, so keep latest_decoded_frame invalid until a
                 // real frame lands in the ring buffer.
-                latest_decoded_frame[cam_name].store(-1);
+                publish_latest(-1);
             }
             frameSlotResetForWrite(display_buffer[0]);
             // If no frame is currently queued (or this window is not actively
@@ -570,7 +610,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
             // pending_seek_done stuck forever (especially after boundary
             // fallback where demux has already failed).
             const bool window_decoding_enabled =
-                window_need_decoding[cam_name].load();
+                decoding_requested();
             if (!window_decoding_enabled || nFrameReturned == 0) {
                 (void)mark_seek_done(settled_seek_frame);
                 pending_seek_done = false;
@@ -599,7 +639,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
             seek_debug_frames_to_log = crimson_seek_debug_logs_enabled() ? 10 : 0;
         } else {
             static thread_local bool logged_idle = false;
-            if (window_need_decoding[cam_name].load()) {
+            if (decoding_requested()) {
                 logged_idle = false;
                 if (!skip_first_decode_after_seek) {
                     demux_success = timedDemux();
@@ -655,6 +695,8 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                     const auto wait_start = std::chrono::steady_clock::now();
                     std::optional<FrameSlotWriteLease> write_lease;
                     while (!(dc_context->stop_flag) && !seek_requested()) {
+                        update_output();
+                        if (!display_buffer || size_of_buffer <= 0) break;
                         write_lease =
                             frameSlotAcquireWritable(display_buffer[buffer_head]);
                         if (write_lease.has_value()) {
@@ -738,7 +780,7 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
                         FrameSurfaceLifetime::UntilReadLeaseReleased;
                     write_lease->publish(published_metadata);
                     dc_context->decoding_flag = true;
-                    latest_decoded_frame[cam_name].store(assigned_frame_num);
+                    publish_latest(assigned_frame_num);
                     if (pending_seek_done) {
                         const bool marked =
                             mark_seek_done(static_cast<uint64_t>(local_frame_num));
@@ -809,12 +851,25 @@ void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
     cleanup_decoder_resources();
     } catch (const std::exception& e) {
         cleanup_decoder_resources();
-        record_decoder_error_message(cam_name, e.what());
+        if (output_handoff) output_handoff->failed.store(true);
+        if (!output_handoff || output_handoff->adopted.load())
+            record_decoder_error_message(cam_name, e.what());
     } catch (...) {
         cleanup_decoder_resources();
-        record_decoder_error_message(cam_name,
-                                     "Unknown non-standard decoder exception");
+        if (output_handoff) output_handoff->failed.store(true);
+        if (!output_handoff || output_handoff->adopted.load())
+            record_decoder_error_message(cam_name,
+                                          "Unknown non-standard decoder exception");
     }
+}
+
+void decoder_process(DecoderContext *dc_context, FFmpegDemuxer *demuxer,
+                     std::string cam_name, PictureBuffer *display_buffer,
+                     int size_of_buffer, SeekInfo *seek_info,
+                     bool use_cpu_buffer) {
+    decoder_process_with_handoff(dc_context, demuxer, std::move(cam_name),
+                                 display_buffer, size_of_buffer, seek_info,
+                                 use_cpu_buffer, nullptr);
 }
 
 void image_loader(DecoderContext *dc_context,

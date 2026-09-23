@@ -2,6 +2,7 @@
 
 #include "debug_flags.h"
 #include "gui/camera_view_presenter.h"
+#include "media_session_loader.h"
 #include "playback_clock.h"
 #include "playback_presentation_lifecycle.h"
 #include "stimulus_playback.h"
@@ -31,7 +32,7 @@ struct PlaybackSessionControllerContext {
   // Resolves the parent recording frame to the active decoder's local frame,
   // loading/switching media when required. Single-file adapters return the
   // parent frame unchanged.
-  std::function<std::optional<int>(int)> resolve_decoder_frame_for_parent_frame;
+  std::function<DecoderFrameResolution(int)> resolve_decoder_frame_for_parent_frame;
 };
 
 double playbackPreviewScaleFactor(int playback_preview_scale_mode);
@@ -61,6 +62,7 @@ public:
   void applyPlaybackToggle() const;
   std::optional<crimson::playback::PlaybackSeekExecutionResult>
   pollSeekState() const;
+  void cancelActiveSeekForSessionOpen() const;
   crimson::playback::PlaybackPresentationTarget
   planPresentationTarget(int requested_frame,
                          std::optional<int> minimum_decoded_frame) const;
@@ -69,6 +71,10 @@ public:
                        int presented_slot) const;
 
 private:
+  mutable int pending_media_frame_ = -1;
+  mutable bool pending_media_prefer_buffer_ = false;
+  mutable bool pending_media_force_inaccurate_ = false;
+  mutable bool pending_media_skip_stimulus_ = false;
   int findDisplaySlotForFrame(int cam_idx, int target_frame,
                               int preferred_slot) const;
   void releaseBufferedHistoryBeforeFrame(int cam_idx, int frame) const;

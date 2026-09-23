@@ -1,6 +1,7 @@
 #pragma once
 
 #include "camera.h"
+#include "clipped_media_transition_worker.h"
 #include "clipped_media_handoff.h"
 #include "media_selection_plan.h"
 #include "playback_clock.h"
@@ -12,6 +13,7 @@
 #include "zarr_loader.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -44,6 +46,15 @@ struct PreparedCameraMedia {
   int seek_interval = 1;
   double video_fps = 0.0;
   int buffer_size = 1;
+};
+
+enum class DecoderFrameResolutionStatus : uint8_t {
+  Ready, ReadyBuffered, Pending, Failed
+};
+struct DecoderFrameResolution {
+  DecoderFrameResolutionStatus status = DecoderFrameResolutionStatus::Failed;
+  int decoder_frame = -1;
+  std::string error;
 };
 
 struct AffiliatedMediaDiscovery {
@@ -126,11 +137,17 @@ struct MediaSessionLoaderContext {
   std::function<std::optional<std::filesystem::path>(
       const std::string &, const std::string &, const std::string &,
       const std::string &)> resolve_stimulus_video;
+  // Worker-only seams for the nonblocking clipped-media transition.
+  std::function<bool(const crimson::media::CameraMediaOpenPlan &,
+                     const std::string &, int, double, PreparedCameraMedia &,
+                     std::string &)> prepare_clip_media_async;
+  std::function<void(std::vector<std::thread> &)> join_clip_decoders_async;
 };
 
 class MediaSessionLoader {
 public:
   explicit MediaSessionLoader(const MediaSessionLoaderContext &context);
+  ~MediaSessionLoader();
 
   bool loadSelectedCameraMedia(
       const std::vector<crimson::media::CameraMediaSelection> &selections,
@@ -146,6 +163,16 @@ public:
   crimson::playback::ClippedFrameBinding
   resolveMappedMediaFrame(int64_t parent_frame) const;
   std::optional<int> resolveDecoderFrameForParentFrame(int parent_frame) const;
+  DecoderFrameResolution requestDecoderFrameForParentFrame(int parent_frame);
+  // Owner-thread poll during sequential playback. Prepares only the immediate
+  // next recording clip; ordinary seeks keep the existing switch path.
+  void pollSequentialClipPrewarm(int presented_parent_frame,
+                                bool playback_active);
+  bool cancelPendingClipSwitch(bool restore_current = true);
+  void restoreCurrentClipDecoderAfterCancellation();
+  bool hasPendingClipSwitch() const;
+  bool hasPendingPrewarmActivity() const;
+  void stopAdoptedDecoderForShutdown();
   std::string activeRecordingClipIndexPath() const;
   void bootstrapFromCli(
       const std::string &cli_zarr_override_path,
@@ -155,7 +182,39 @@ public:
       const std::function<void()> &clear_bbox_edits) const;
 
 private:
+  struct PrewarmCandidate;
+  struct ClipSwitchWork {
+    crimson::playback::ClippedMediaTransitionWorker stage;
+    bool ready = false;
+    PreparedCameraMedia prepared;
+    std::string error;
+    std::chrono::steady_clock::time_point started;
+  };
+  std::unique_ptr<ClipSwitchWork> clip_switch_work_;
+  std::shared_ptr<PrewarmCandidate> prewarm_candidate_;
+  mutable std::shared_ptr<PrewarmCandidate> adopted_candidate_;
+  crimson::playback::ClippedMediaTransitionWorker prewarm_cleanup_stage_;
+  crimson::playback::ClippedMediaTransitionWorker prewarm_old_join_stage_;
+  bool prewarm_old_retiring_ = false;
+  bool prewarm_old_retired_ = false;
+  bool prewarm_adoption_fallback_ = false;
+  int prewarm_failed_boundary_ = -1;
+  int prewarm_cleanup_launch_failures_ = 0;
+  void discardPrewarmCandidate();
+  bool adoptPrewarmCandidate(int parent_frame, int local_frame);
+  int pending_clip_parent_frame_ = -1;
+  std::string pending_clip_video_path_;
+  bool clip_join_started_ = false;
+  crimson::playback::ClippedMediaTransitionWorker clip_join_stage_;
+  std::string clip_join_error_;
+  std::chrono::steady_clock::time_point clip_join_started_at_;
+  void finishClipSwitchWorkers();
+  void restartCurrentClipDecoder();
   void stopCameraDecodersForReload() const;
+  bool loadClippedVideoForParentFrame(int parent_frame,
+                                      PreparedCameraMedia *preprepared,
+                                      bool start_decoder = true,
+                                      PrewarmCandidate *pending_adoption = nullptr) const;
   bool loadSingleVideoMedia(const std::filesystem::path &video_path,
                             bool infer_recording_root,
                             const char *success_label) const;
