@@ -124,7 +124,7 @@ fi
 find_driver_library() {
     local soname="$1"
     ldconfig -p 2>/dev/null \
-        | awk -v name="$soname" '$1 == name { print $NF; exit }'
+        | awk -v name="$soname" '$1 == name && !found { print $NF; found = 1 }'
 }
 
 cuda_driver="$(find_driver_library libcuda.so.1)"
