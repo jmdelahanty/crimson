@@ -1610,6 +1610,16 @@ if(UNIX AND NOT APPLE)
         LABELS "headless;linux;packaging;portable"
         TIMEOUT 30
     )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND Python3_Interpreter_FOUND)
+        add_test(NAME linux_driver_probe_tests
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/linux_driver_probe_tests.py)
+        set_tests_properties(linux_driver_probe_tests PROPERTIES
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+            LABELS "headless;linux;packaging"
+            TIMEOUT 30
+        )
+    endif()
 endif()
 
 add_custom_target(crimson_zarr_loader_dependency_check ALL
