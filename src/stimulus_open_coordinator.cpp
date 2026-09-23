@@ -54,6 +54,17 @@ executeStimulusOpen(RecordingOpenWorkflowController &workflow,
     return result;
   }
   result.generation = workflow.generation();
+  auto cancelled = [&] {
+    if (operations.opening_cancelled && operations.opening_cancelled()) {
+      workflow.cancel();
+      result.media.error = "Session opening cancelled";
+      return true;
+    }
+    return false;
+  };
+  if (cancelled()) {
+    return result;
+  }
   if (!workflow.startProduct("stimulus", "Opening stimulus media")) {
     return failStimulusOpen(workflow, std::move(result),
                             "Stimulus media loading could not start");
@@ -61,6 +72,9 @@ executeStimulusOpen(RecordingOpenWorkflowController &workflow,
 
   try {
     result.media = operations.open_media(command.media);
+    if (cancelled()) {
+      return result;
+    }
     if (!result.media.ready) {
       if (result.media.error.empty()) {
         result.media.error = "Selected stimulus media could not be opened";
@@ -74,6 +88,9 @@ executeStimulusOpen(RecordingOpenWorkflowController &workflow,
       return failStimulusOpen(
           workflow, std::move(result),
           "Stimulus media readiness could not be published");
+    }
+    if (cancelled()) {
+      return result;
     }
     requested_session.stimulus_video_path = result.media.path;
     std::string commit_error;

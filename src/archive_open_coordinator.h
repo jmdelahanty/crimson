@@ -23,6 +23,7 @@ struct ArchiveOpenOperations {
   std::function<void()> resolve_affiliated_media;
   std::function<void()> resolve_stimulus_media;
   std::function<std::string()> active_recording_clip_index_path;
+  std::function<bool()> opening_cancelled;
 };
 
 struct ArchiveOpenResult {

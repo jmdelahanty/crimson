@@ -154,6 +154,7 @@ target_compile_features(crimson_ui_reference_capture PUBLIC cxx_std_17)
 add_library(crimson_runtime_contracts STATIC
     src/analysis_product_lifecycle.cpp
     src/async_single_flight_job.cpp
+    src/loading_work_runner.cpp
     src/archive_open_coordinator.cpp
     src/stimulus_open_coordinator.cpp
     src/session_lifecycle.cpp
@@ -1534,6 +1535,37 @@ set_target_properties(frame_slot_tests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
 enable_testing()
+
+add_executable(loading_work_runner_tests tools/loading_work_runner_tests.cpp)
+target_link_libraries(loading_work_runner_tests PRIVATE crimson_runtime_contracts)
+target_compile_features(loading_work_runner_tests PRIVATE cxx_std_17)
+set_target_properties(loading_work_runner_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME loading_work_runner_tests COMMAND loading_work_runner_tests)
+set_tests_properties(loading_work_runner_tests PROPERTIES
+    LABELS "headless;portable;runtime" TIMEOUT 30)
+
+# Shared loading modal geometry regression, runnable without a window system.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/imgui.cpp")
+    add_executable(session_loading_modal_layout_tests
+        tools/session_loading_modal_layout_tests.cpp
+        src/gui/session_loading_modal.cpp
+        third_party/imgui/imgui.cpp
+        third_party/imgui/imgui_draw.cpp
+        third_party/imgui/imgui_tables.cpp
+        third_party/imgui/imgui_widgets.cpp
+    )
+    target_compile_features(session_loading_modal_layout_tests PRIVATE cxx_std_17)
+    target_include_directories(session_loading_modal_layout_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui)
+    set_target_properties(session_loading_modal_layout_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME session_loading_modal_layout_tests
+        COMMAND session_loading_modal_layout_tests)
+    set_tests_properties(session_loading_modal_layout_tests PROPERTIES
+        LABELS "headless;ui;portable" TIMEOUT 30)
+endif()
 
 add_executable(app_update_status_tests
     tools/app_update_status_tests.cpp
@@ -2986,6 +3018,7 @@ list(APPEND CPP_SOURCES
 list(REMOVE_ITEM CPP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/analysis_product_lifecycle.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/async_single_flight_job.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/loading_work_runner.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/coordinate_contract.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/data_access.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/data_access_cache.cpp"

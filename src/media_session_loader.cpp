@@ -153,6 +153,95 @@ void configurePlaybackTransport(const MediaSessionLoaderContext &context,
 
 } // namespace
 
+bool prepareCameraMedia(const crimson::media::CameraMediaOpenPlan &plan,
+                        const std::string &image_root, int buffer_size,
+                        double video_fps, PreparedCameraMedia &prepared,
+                        std::string &error) {
+  try {
+    PreparedCameraMedia result;
+    result.plan = plan;
+    result.buffer_size = buffer_size;
+    result.video_fps = video_fps;
+    if (plan.camera_names.empty()) {
+      error = "Camera media selection is empty";
+      return false;
+    }
+    if (plan.kind == crimson::media::CameraMediaKind::VideoFiles) {
+      if (plan.video_paths.size() != plan.camera_names.size()) {
+        error = "Camera video paths do not match selected cameras";
+        return false;
+      }
+      result.demuxers.reserve(plan.video_paths.size());
+      result.camera_dimensions.reserve(plan.video_paths.size());
+      std::map<std::string, std::string> ffmpeg_options;
+      for (const auto &video_path : plan.video_paths) {
+        auto demuxer = std::make_unique<FFmpegDemuxer>(
+            video_path.string().c_str(), ffmpeg_options);
+        const int width = demuxer->GetWidth();
+        const int height = demuxer->GetHeight();
+        if (width <= 0 || height <= 0) {
+          throw std::runtime_error("Camera video has invalid dimensions: " +
+                                   video_path.string());
+        }
+        result.camera_dimensions.push_back({width, height});
+        result.demuxers.push_back(std::move(demuxer));
+      }
+      result.seek_interval = static_cast<int>(
+          result.demuxers.front()->FindKeyFrameInterval());
+      result.video_fps = result.demuxers.front()->GetFramerate();
+    } else {
+      if (plan.image_frame_names.empty()) {
+        error = "Image sequence has no frames";
+        return false;
+      }
+      result.camera_dimensions.reserve(plan.camera_names.size());
+      for (const auto &camera_name : plan.camera_names) {
+        const auto sample_path = std::filesystem::path(image_root) /
+                                 (camera_name + "_" +
+                                  plan.image_frame_names.front());
+        const cv::Mat image = cv::imread(sample_path.string(), cv::IMREAD_COLOR);
+        if (image.empty()) {
+          throw std::runtime_error("Could not read image sequence sample: " +
+                                   sample_path.string());
+        }
+        result.camera_dimensions.push_back({image.cols, image.rows});
+      }
+      result.buffer_size = static_cast<int>(std::min<size_t>(
+          static_cast<size_t>(std::max(1, buffer_size)),
+          plan.image_frame_names.size()));
+    }
+    prepared = std::move(result);
+    error.clear();
+    return true;
+  } catch (const std::exception &exception) {
+    error = exception.what();
+    return false;
+  }
+}
+
+std::string discoverRecordingFallbackVideo(const std::string &recording_root) {
+  namespace fs = std::filesystem;
+  std::vector<fs::path> search_dirs;
+  const fs::path cams_dir = fs::path(recording_root) / "cams";
+  if (IsDirectoryNoThrow(cams_dir)) {
+    search_dirs.push_back(cams_dir);
+  }
+  search_dirs.push_back(fs::path(recording_root));
+  for (const auto &search_dir : search_dirs) {
+    std::error_code ec;
+    for (auto it = fs::directory_iterator(search_dir, ec);
+         it != fs::directory_iterator(); it.increment(ec)) {
+      if (ec) {
+        break;
+      }
+      if (it->is_regular_file(ec) && !ec && IsSupportedVideoPath(it->path())) {
+        return it->path().string();
+      }
+    }
+  }
+  return {};
+}
+
 MediaSessionLoader::MediaSessionLoader(const MediaSessionLoaderContext &context)
     : context_(context) {}
 
@@ -241,15 +330,22 @@ bool MediaSessionLoader::activateRecordingClipIndex(
     }
     return false;
   }
-  auto provider = crimson::media::RecordingClipMediaProvider::Open(
-      index_path, error_message);
+  std::string local_error;
+  std::string &error = error_message != nullptr ? *error_message : local_error;
+  std::shared_ptr<const crimson::media::RecordingClipMediaProvider> provider;
+  if (context_.prepare_recording_clip_index) {
+    provider = context_.prepare_recording_clip_index(index_path, error);
+  } else if (auto opened = crimson::media::RecordingClipMediaProvider::Open(
+                 index_path, &error)) {
+    provider =
+        std::make_shared<const crimson::media::RecordingClipMediaProvider>(
+            std::move(*opened));
+  }
   if (!provider) {
     return false;
   }
   context_.clipped_media_state->source = ClippedMediaSource::RecordingClipIndex;
-  context_.clipped_media_state->recording_clip_provider =
-      std::make_shared<const crimson::media::RecordingClipMediaProvider>(
-          std::move(*provider));
+  context_.clipped_media_state->recording_clip_provider = std::move(provider);
   return true;
 }
 
@@ -306,9 +402,13 @@ void MediaSessionLoader::stopCameraDecodersForReload() const {
   }
 
   context_.decoder_context->stop_flag = true;
-  for (auto &thread : *context_.decoder_threads) {
-    if (thread.joinable()) {
-      thread.join();
+  if (context_.join_camera_decoders) {
+    context_.join_camera_decoders(*context_.decoder_threads);
+  } else {
+    for (auto &thread : *context_.decoder_threads) {
+      if (thread.joinable()) {
+        thread.join();
+      }
     }
   }
   context_.decoder_threads->clear();
@@ -441,9 +541,37 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
         std::make_shared<const std::vector<int64_t>>(*legacy_frame_map_source);
   }
 
+  const std::string camera_name = "Cam" + camera_serial + "_" + clip_id;
+  crimson::media::CameraMediaOpenPlan clip_plan;
+  clip_plan.kind = crimson::media::CameraMediaKind::VideoFiles;
+  clip_plan.camera_names = {camera_name};
+  clip_plan.video_paths = {resolved_video};
+  PreparedCameraMedia prepared;
+  std::string prepare_error;
+  const bool prepared_ok = context_.prepare_camera_media
+                               ? context_.prepare_camera_media(
+                                     clip_plan, *context_.root_dir,
+                                     *context_.label_buffer_size,
+                                     *context_.video_fps, prepared, prepare_error)
+                               : prepareCameraMedia(clip_plan, *context_.root_dir,
+                                                    *context_.label_buffer_size,
+                                                    *context_.video_fps, prepared,
+                                                    prepare_error);
+  if (!prepared_ok) {
+    std::cerr << "[Zarr] Failed to prepare clipped source video: "
+              << prepare_error << std::endl;
+    return false;
+  }
+  if (context_.opening_cancelled && context_.opening_cancelled()) {
+    return false;
+  }
+
   if (*context_.video_loaded || !context_.decoder_threads->empty() ||
       !context_.demuxers->empty()) {
     stopCameraDecodersForReload();
+  }
+  if (context_.opening_cancelled && context_.opening_cancelled()) {
+    return false;
   }
 
   try {
@@ -452,31 +580,27 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
     context_.demuxers->clear();
     context_.is_view_focused->clear();
 
-    std::string camera_name = "Cam" + camera_serial + "_" + clip_id;
     context_.camera_names->push_back(camera_name);
     (*context_.window_need_decoding)[camera_name].store(true);
     (*context_.window_was_decoding)[camera_name] = true;
     latest_decoded_frame[camera_name].store(-1);
 
-    std::map<std::string, std::string> ffmpeg_options;
-    context_.demuxers->push_back(std::make_unique<FFmpegDemuxer>(
-        resolved_video.c_str(), ffmpeg_options));
-
-    context_.decoder_context->seek_interval =
-        static_cast<int>(context_.demuxers->at(0)->FindKeyFrameInterval());
-    *context_.video_fps = context_.demuxers->at(0)->GetFramerate();
+    *context_.demuxers = std::move(prepared.demuxers);
+    context_.decoder_context->seek_interval = prepared.seek_interval;
+    *context_.video_fps = prepared.video_fps;
     context_.scene->num_cams = 1;
     context_.scene->cameras.resize(context_.scene->num_cams);
     context_.scene->cameras[0].image_width =
-        context_.demuxers->at(0)->GetWidth();
+        prepared.camera_dimensions[0].first;
     context_.scene->cameras[0].image_height =
-        context_.demuxers->at(0)->GetHeight();
+        prepared.camera_dimensions[0].second;
 
     const bool needs_allocation =
         context_.scene->cameras[0].display_buffer == nullptr ||
         context_.scene->size_of_buffer == 0;
     if (needs_allocation) {
-      render_allocate_scene_memory(context_.scene, *context_.label_buffer_size);
+      render_allocate_scene_memory(context_.scene, *context_.label_buffer_size,
+                                   context_.poll_owner_events);
     } else {
       for (u32 i = 0; i < context_.scene->size_of_buffer; ++i) {
         frameSlotReleaseForReuse(context_.scene->cameras[0].display_buffer[i]);
@@ -489,6 +613,9 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
       context_.scene->cameras[0].playback_staging_local_frame = -1;
       context_.scene->cameras[0].playback_staging_pts = -1;
       context_.scene->cameras[0].playback_staging_valid = false;
+    }
+    if (context_.opening_cancelled && context_.opening_cancelled()) {
+      return false;
     }
 
     {
@@ -545,6 +672,10 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
               << " -> " << clip_id << " local frame " << clip_local_frame
               << ": " << resolved_video << std::endl;
     loadCameraCalibrationsForCurrentMedia();
+    if (context_.opening_cancelled && context_.opening_cancelled()) {
+      stopCameraDecodersForReload();
+      return false;
+    }
     return true;
   } catch (const std::exception &e) {
     std::cerr << "[Zarr] Failed to load clipped source video: " << e.what()
@@ -554,33 +685,30 @@ bool MediaSessionLoader::loadClippedVideoForParentFrame(
   }
 }
 
-void MediaSessionLoader::loadCameraCalibrationsForCurrentMedia() const {
-  if (context_.video_loaded == nullptr || !*context_.video_loaded ||
-      context_.scene == nullptr || context_.camera_names == nullptr ||
-      context_.camera_params == nullptr || context_.root_dir == nullptr ||
-      context_.error_message == nullptr || context_.show_error == nullptr) {
-    return;
-  }
-
-  context_.camera_params->resize(context_.scene->num_cams);
+bool prepareCameraCalibrations(const std::vector<std::string> &camera_names,
+                               const std::string &recording_root,
+                               ZarrDetectionLoader *zarr_loader,
+                               bool zarr_loaded,
+                               std::vector<CameraParams> &camera_params,
+                               std::string &error) {
+  camera_params.resize(camera_names.size());
   std::cout << "\n=== Loading Camera Calibrations from Zarr/YAML ==="
             << std::endl;
-  for (size_t i = 0; i < context_.camera_names->size(); ++i) {
-    const std::string &camera_name = (*context_.camera_names)[i];
+  for (size_t i = 0; i < camera_names.size(); ++i) {
+    const std::string &camera_name = camera_names[i];
     std::cout << "\nProcessing camera " << i << ": " << camera_name
               << std::endl;
 
     bool loaded_from_zarr = false;
-    if (context_.zarr_loader != nullptr && context_.zarr_loaded != nullptr &&
-        *context_.zarr_loaded &&
-        !context_.zarr_loader->getArchivePath().empty()) {
+    if (zarr_loader != nullptr && zarr_loaded &&
+        !zarr_loader->getArchivePath().empty()) {
       std::string zarr_status;
-      auto calibration = context_.zarr_loader->loadCalibrationForCamera(
+      auto calibration = zarr_loader->loadCalibrationForCamera(
           camera_name, zarr_status);
       if (calibration.has_value()) {
         std::string apply_error;
         if (applyZarrCalibrationToCameraParams(
-                *calibration, (*context_.camera_params)[i], apply_error)) {
+                *calibration, camera_params[i], apply_error)) {
           std::cout << "Loading homography from Zarr for camera: "
                     << camera_name << std::endl;
           std::cout << "  " << zarr_status << std::endl;
@@ -591,11 +719,10 @@ void MediaSessionLoader::loadCameraCalibrationsForCurrentMedia() const {
               << "  Applied to legacy CameraParams: inverse_homography_matrix"
               << " holds projector/texture px -> camera px" << std::endl;
           std::cout << "  Stimulus texture offset: ("
-                    << (*context_.camera_params)[i].stimulus_offset_x << ", "
-                    << (*context_.camera_params)[i].stimulus_offset_y << ")"
+                    << camera_params[i].stimulus_offset_x << ", "
+                    << camera_params[i].stimulus_offset_y << ")"
                     << std::endl;
-          camera_print_calibration_details((*context_.camera_params)[i],
-                                           camera_name);
+          camera_print_calibration_details(camera_params[i], camera_name);
           loaded_from_zarr = true;
         } else {
           std::cerr << "Warning: Failed to apply Zarr calibration for camera "
@@ -611,23 +738,53 @@ void MediaSessionLoader::loadCameraCalibrationsForCurrentMedia() const {
     }
 
     std::string yaml_file =
-        *context_.root_dir + "/calibration/" + camera_name + ".yaml";
+        recording_root + "/calibration/" + camera_name + ".yaml";
     if (std::filesystem::exists(yaml_file)) {
       std::cout << "Loading homography from YAML for camera: " << camera_name
                 << std::endl;
-      if (!camera_load_params_from_yaml(yaml_file, (*context_.camera_params)[i],
-                                        *context_.error_message)) {
+      if (!camera_load_params_from_yaml(yaml_file, camera_params[i], error)) {
         std::cerr << "Error: Failed to load calibration from YAML: "
-                  << *context_.error_message << std::endl;
-        *context_.show_error = true;
-        break;
+                  << error << std::endl;
+        return false;
       }
-      camera_print_calibration_details((*context_.camera_params)[i],
-                                       camera_name);
+      camera_print_calibration_details(camera_params[i], camera_name);
     } else {
       std::cerr << "Warning: No calibration YAML file found at: " << yaml_file
                 << std::endl;
     }
+  }
+  error.clear();
+  return true;
+}
+
+void MediaSessionLoader::loadCameraCalibrationsForCurrentMedia() const {
+  if (context_.video_loaded == nullptr || !*context_.video_loaded ||
+      context_.scene == nullptr || context_.camera_names == nullptr ||
+      context_.camera_params == nullptr || context_.root_dir == nullptr ||
+      context_.error_message == nullptr || context_.show_error == nullptr) {
+    return;
+  }
+  auto prepared = *context_.camera_params;
+  prepared.resize(context_.scene->num_cams);
+  std::string error;
+  const bool ready = context_.prepare_camera_calibrations
+                         ? context_.prepare_camera_calibrations(
+                               *context_.camera_names, *context_.root_dir,
+                               context_.zarr_loader,
+                               context_.zarr_loaded && *context_.zarr_loaded,
+                               prepared, error)
+                         : prepareCameraCalibrations(
+                               *context_.camera_names, *context_.root_dir,
+                               context_.zarr_loader,
+                               context_.zarr_loaded && *context_.zarr_loaded,
+                               prepared, error);
+  if (context_.opening_cancelled && context_.opening_cancelled()) {
+    return;
+  }
+  *context_.camera_params = std::move(prepared);
+  if (!ready) {
+    *context_.show_error = true;
+    *context_.error_message = error;
   }
 }
 
@@ -642,8 +799,12 @@ bool MediaSessionLoader::loadSingleVideoMedia(
     std::cerr << success_label << " failed: " << error_message << std::endl;
     return false;
   }
-  return executeCameraMediaPlan(plan, infer_recording_root, success_label,
-                                nullptr);
+  const bool ready = executeCameraMediaPlan(
+      plan, infer_recording_root, success_label, &error_message);
+  if (!ready && !error_message.empty()) {
+    std::cerr << success_label << " failed: " << error_message << std::endl;
+  }
+  return ready;
 }
 
 bool MediaSessionLoader::loadSelectedCameraMedia(
@@ -679,61 +840,46 @@ bool MediaSessionLoader::executeCameraMediaPlan(
 
   bool replacement_started = false;
   try {
-    std::vector<std::unique_ptr<FFmpegDemuxer>> prepared_demuxers;
-    std::vector<std::pair<int, int>> camera_dimensions;
-    int prepared_seek_interval = 1;
-    double prepared_video_fps = *context_.video_fps;
-    int prepared_buffer_size = *context_.label_buffer_size;
-
-    if (plan.kind == crimson::media::CameraMediaKind::VideoFiles) {
-      prepared_demuxers.reserve(plan.video_paths.size());
-      camera_dimensions.reserve(plan.video_paths.size());
-      std::map<std::string, std::string> ffmpeg_options;
-      for (const auto &video_path : plan.video_paths) {
-        auto demuxer = std::make_unique<FFmpegDemuxer>(
-            video_path.string().c_str(), ffmpeg_options);
-        const int width = demuxer->GetWidth();
-        const int height = demuxer->GetHeight();
-        if (width <= 0 || height <= 0) {
-          throw std::runtime_error("Camera video has invalid dimensions: " +
-                                   video_path.string());
-        }
-        camera_dimensions.push_back({width, height});
-        prepared_demuxers.push_back(std::move(demuxer));
+    PreparedCameraMedia prepared;
+    std::string prepare_error;
+    const bool ready = context_.prepare_camera_media
+                           ? context_.prepare_camera_media(
+                                 plan, *context_.root_dir,
+                                 *context_.label_buffer_size,
+                                 *context_.video_fps, prepared, prepare_error)
+                           : prepareCameraMedia(plan, *context_.root_dir,
+                                                *context_.label_buffer_size,
+                                                *context_.video_fps, prepared,
+                                                prepare_error);
+    if (!ready) {
+      if (error_message != nullptr) {
+        *error_message = prepare_error;
       }
-      prepared_seek_interval =
-          static_cast<int>(prepared_demuxers.front()->FindKeyFrameInterval());
-      prepared_video_fps = prepared_demuxers.front()->GetFramerate();
-    } else {
-      camera_dimensions.reserve(plan.camera_names.size());
-      for (const auto &camera_name : plan.camera_names) {
-        const std::filesystem::path sample_path =
-            std::filesystem::path(*context_.root_dir) /
-            (camera_name + "_" + plan.image_frame_names.front());
-        const cv::Mat image =
-            cv::imread(sample_path.string(), cv::IMREAD_COLOR);
-        if (image.empty()) {
-          throw std::runtime_error("Could not read image sequence sample: " +
-                                   sample_path.string());
-        }
-        camera_dimensions.push_back({image.cols, image.rows});
-      }
-      prepared_buffer_size = static_cast<int>(std::min<size_t>(
-          static_cast<size_t>(std::max(1, *context_.label_buffer_size)),
-          plan.image_frame_names.size()));
+      return false;
     }
-
+    if (context_.opening_cancelled && context_.opening_cancelled()) {
+      if (error_message != nullptr) {
+        *error_message = "Session opening cancelled";
+      }
+      return false;
+    }
     stopCameraDecodersForReload();
+    if (context_.opening_cancelled && context_.opening_cancelled()) {
+      if (error_message != nullptr) {
+        *error_message = "Session opening cancelled";
+      }
+      return false;
+    }
     replacement_started = true;
     *context_.input_is_imgs =
         plan.kind == crimson::media::CameraMediaKind::ImageSequence;
     *context_.camera_names = plan.camera_names;
     *context_.image_names = plan.image_frame_names;
-    *context_.demuxers = std::move(prepared_demuxers);
-    *context_.label_buffer_size = prepared_buffer_size;
-    context_.decoder_context->seek_interval = prepared_seek_interval;
+    *context_.demuxers = std::move(prepared.demuxers);
+    *context_.label_buffer_size = prepared.buffer_size;
+    context_.decoder_context->seek_interval = prepared.seek_interval;
     if (plan.kind == crimson::media::CameraMediaKind::VideoFiles) {
-      *context_.video_fps = prepared_video_fps;
+      *context_.video_fps = prepared.video_fps;
     } else {
       context_.decoder_context->total_num_frame =
           static_cast<int>(plan.image_frame_names.size());
@@ -749,13 +895,20 @@ bool MediaSessionLoader::executeCameraMediaPlan(
     context_.scene->num_cams = static_cast<decltype(context_.scene->num_cams)>(
         context_.camera_names->size());
     context_.scene->cameras.resize(context_.scene->num_cams);
-    for (size_t index = 0; index < camera_dimensions.size(); ++index) {
+    for (size_t index = 0; index < prepared.camera_dimensions.size(); ++index) {
       context_.scene->cameras[index].image_width =
-          camera_dimensions[index].first;
+          prepared.camera_dimensions[index].first;
       context_.scene->cameras[index].image_height =
-          camera_dimensions[index].second;
+          prepared.camera_dimensions[index].second;
     }
-    render_allocate_scene_memory(context_.scene, *context_.label_buffer_size);
+    render_allocate_scene_memory(context_.scene, *context_.label_buffer_size,
+                                 context_.poll_owner_events);
+    if (context_.opening_cancelled && context_.opening_cancelled()) {
+      if (error_message != nullptr) {
+        *error_message = "Session opening cancelled";
+      }
+      return false;
+    }
 
     for (size_t index = 0; index < context_.camera_names->size(); ++index) {
       if (*context_.input_is_imgs) {
@@ -814,6 +967,13 @@ bool MediaSessionLoader::executeCameraMediaPlan(
       *context_.clipped_media_state = PaletteClippedMediaState();
     }
     loadCameraCalibrationsForCurrentMedia();
+    if (context_.opening_cancelled && context_.opening_cancelled()) {
+      stopCameraDecodersForReload();
+      if (error_message != nullptr) {
+        *error_message = "Session opening cancelled";
+      }
+      return false;
+    }
     if (error_message != nullptr) {
       error_message->clear();
     }
@@ -830,6 +990,48 @@ bool MediaSessionLoader::executeCameraMediaPlan(
   }
 }
 
+AffiliatedMediaDiscovery discoverAffiliatedMedia(
+    const std::string &archive_path, const std::string &legacy_source_hint) {
+  AffiliatedMediaDiscovery result;
+  auto archive = crimson::zarr::ArchiveContext::Open(archive_path,
+                                                     &result.error);
+  if (!archive) {
+    return result;
+  }
+  auto affiliated_video = crimson::zarr::DiscoverAffiliatedVideo(
+      archive, &result.error);
+  if (affiliated_video) {
+    result.video_path = affiliated_video->resolved_path;
+    result.error.clear();
+    return result;
+  }
+  const std::string video_error = std::move(result.error);
+  result.error.clear();
+  auto clip_index = crimson::zarr::DiscoverAffiliatedRecordingClipIndex(
+      archive, &result.error);
+  if (clip_index) {
+    result.clip_index_path = clip_index->index_path;
+    result.error.clear();
+    return result;
+  }
+  if (!result.error.empty()) {
+    return result;
+  }
+  if (!video_error.empty()) {
+    result.error = video_error;
+    return result;
+  }
+  if (!legacy_source_hint.empty()) {
+    result.video_path = ResolveAffiliatedVideoPath(legacy_source_hint,
+                                                   archive_path);
+    if (!result.video_path) {
+      result.error = "Legacy affiliated-video hint could not be resolved: " +
+                     legacy_source_hint;
+    }
+  }
+  return result;
+}
+
 void MediaSessionLoader::tryAutoLoadAffiliatedVideoFromZarr(
     const char *trigger_label) const {
   if (context_.zarr_loaded == nullptr || !*context_.zarr_loaded ||
@@ -839,16 +1041,6 @@ void MediaSessionLoader::tryAutoLoadAffiliatedVideoFromZarr(
   }
 
   const std::string archive_path = context_.zarr_loader->getArchivePath();
-  std::string discovery_error;
-  const auto archive =
-      crimson::zarr::ArchiveContext::Open(archive_path, &discovery_error);
-  if (!archive) {
-    std::cout << "[Zarr] Could not open shared archive context for affiliated "
-                 "video discovery: "
-              << discovery_error << std::endl;
-    return;
-  }
-
   if (context_.zarr_loader->hasClippedCollection()) {
     const int parent_frame =
         context_.playback_state != nullptr
@@ -867,28 +1059,16 @@ void MediaSessionLoader::tryAutoLoadAffiliatedVideoFromZarr(
     return;
   }
 
-  const auto affiliated_video =
-      crimson::zarr::DiscoverAffiliatedVideo(archive, &discovery_error);
-  std::optional<std::filesystem::path> resolved_video_opt;
-  if (affiliated_video) {
-    resolved_video_opt = affiliated_video->resolved_path;
-    std::cout << "[Zarr] Discovered affiliated video source="
-              << crimson::zarr::AffiliatedVideoSourceName(
-                     affiliated_video->source)
-              << " resolution="
-              << crimson::zarr::AffiliatedVideoResolutionName(
-                     affiliated_video->resolution)
-              << " stored=" << affiliated_video->stored_path
-              << " resolved=" << affiliated_video->resolved_path << std::endl;
-  } else {
-    const std::string video_discovery_error = discovery_error;
-    discovery_error.clear();
-    const auto recording_clip_index =
-        crimson::zarr::DiscoverAffiliatedRecordingClipIndex(archive,
-                                                            &discovery_error);
-    if (recording_clip_index) {
+  const std::string source_hint = context_.zarr_loader->getSourceVideoPath();
+  auto discovered = context_.discover_affiliated_media
+      ? context_.discover_affiliated_media(archive_path, source_hint)
+      : discoverAffiliatedMedia(archive_path, source_hint);
+  if (context_.opening_cancelled && context_.opening_cancelled()) {
+    return;
+  }
+  if (discovered.clip_index_path) {
       std::string provider_error;
-      if (!activateRecordingClipIndex(recording_clip_index->index_path,
+      if (!activateRecordingClipIndex(*discovered.clip_index_path,
                                       &provider_error)) {
         std::cout
             << "[RecordingClipIndex] Could not activate affiliated media: "
@@ -902,45 +1082,21 @@ void MediaSessionLoader::tryAutoLoadAffiliatedVideoFromZarr(
       if (loadClippedVideoForParentFrame(parent_frame)) {
         std::cout << "[RecordingClipIndex] Auto-loaded indexed media ("
                   << trigger_label
-                  << ") index=" << recording_clip_index->index_path
-                  << " frames=" << recording_clip_index->frame_count
-                  << " fps=" << recording_clip_index->frames_per_second
+                  << ") index=" << *discovered.clip_index_path
                   << std::endl;
       }
       return;
+  }
+  if (!discovered.video_path) {
+    if (!discovered.error.empty()) {
+      std::cout << "[Zarr] Affiliated media discovery failed: "
+                << discovered.error << std::endl;
     }
-    if (!discovery_error.empty()) {
-      std::cout << "[RecordingClipIndex] Affiliated media discovery failed: "
-                << discovery_error << std::endl;
-      return;
-    }
-    if (!video_discovery_error.empty()) {
-      std::cout << "[Zarr] Affiliated video discovery failed: "
-                << video_discovery_error << std::endl;
-      return;
-    }
-
-    const std::string source_hint = context_.zarr_loader->getSourceVideoPath();
-    if (source_hint.empty()) {
-      std::cout << "[Zarr] Archive did not provide source video metadata; "
-                   "skipping affiliated video auto-load"
-                << std::endl;
-      return;
-    }
-    resolved_video_opt = ResolveAffiliatedVideoPath(source_hint, archive_path);
-    if (!resolved_video_opt) {
-      std::cout << "[Zarr] Legacy affiliated-video hint could not be resolved: "
-                << source_hint << std::endl;
-      return;
-    }
-    std::cout << "[Zarr] Shared affiliated-video metadata absent; using "
-                 "legacy loader hint compatibility stored="
-              << source_hint << " resolved=" << *resolved_video_opt
-              << std::endl;
+    return;
   }
 
   if (!loadSingleVideoMedia(
-          *resolved_video_opt, true,
+          *discovered.video_path, true,
           (std::string("[Zarr] Auto-loaded affiliated video (") +
            trigger_label + "): ")
               .c_str())) {
@@ -973,10 +1129,17 @@ void MediaSessionLoader::tryAutoLoadStimulusVideo(
     resolved = std::filesystem::path(
         context_.stimulus_repository->resolvedSourceVideoPath());
   } else {
-    resolved = ResolveStimulusVideoPath(
-        context_.stimulus_repository->sourceVideoPath(),
-        context_.zarr_loader->getStimulusSourceH5(),
-        context_.zarr_loader->getArchivePath(), *context_.root_dir);
+    const auto source_hint = context_.stimulus_repository->sourceVideoPath();
+    const auto h5_hint = context_.zarr_loader->getStimulusSourceH5();
+    const auto archive_path = context_.zarr_loader->getArchivePath();
+    resolved = context_.resolve_stimulus_video
+        ? context_.resolve_stimulus_video(source_hint, h5_hint, archive_path,
+                                          *context_.root_dir)
+        : ResolveStimulusVideoPath(source_hint, h5_hint, archive_path,
+                                   *context_.root_dir);
+  }
+  if (context_.opening_cancelled && context_.opening_cancelled()) {
+    return;
   }
   if (!resolved.has_value()) {
     std::cout << "[Stimulus] Could not auto-discover stimulus video ("
@@ -1011,10 +1174,24 @@ crimson::media::StimulusMediaOpenResult MediaSessionLoader::openStimulusMedia(
     return result;
   }
 
+  PreparedStimulusPlayback prepared;
+  PreparedStimulusPlayback *prepared_ptr = nullptr;
+  if (context_.prepare_stimulus) {
+    if (!context_.prepare_stimulus(request, prepared, result.error)) {
+      return result;
+    }
+    if (context_.opening_cancelled && context_.opening_cancelled()) {
+      result.error = "Session opening cancelled";
+      return result;
+    }
+    prepared_ptr = &prepared;
+  }
   return crimson::platform::nvidia::openStimulusMedia(
       request, {context_.stimulus_player, context_.stimulus_repository,
                 context_.window_need_decoding, context_.window_was_decoding,
-                context_.cuda_device_index});
+                context_.cuda_device_index, prepared_ptr,
+                context_.join_stimulus_decoder, context_.opening_cancelled,
+                context_.poll_owner_events});
 }
 
 void MediaSessionLoader::bootstrapFromCli(
@@ -1059,6 +1236,16 @@ void MediaSessionLoader::bootstrapFromCli(
           {requested_session, "Opening session", std::move(products)})) {
     return;
   }
+  auto stopIfCancelled = [&]() {
+    if (context_.opening_cancelled && context_.opening_cancelled()) {
+      session_open.cancel("Session opening cancelled");
+      return true;
+    }
+    return false;
+  };
+  if (stopIfCancelled()) {
+    return;
+  }
   auto finishSession = [&](bool ready,
                            crimson::session::SessionDescriptor resolved,
                            const std::string &error) {
@@ -1097,23 +1284,39 @@ void MediaSessionLoader::bootstrapFromCli(
   if (!cli_zarr_override_path.empty()) {
     session_open.startProduct("archive", "Resolving archive");
     std::string zarr_error;
-    if (loadZarrDetectionFromPath(cli_zarr_override_path, *context_.zarr_loader,
-                                  zarr_error)) {
+    const bool archive_ready =
+        context_.open_archive
+            ? context_.open_archive(cli_zarr_override_path, false, zarr_error)
+            : loadZarrDetectionFromPath(cli_zarr_override_path,
+                                        *context_.zarr_loader, zarr_error);
+    if (stopIfCancelled()) {
+      return;
+    }
+    if (archive_ready) {
       *context_.zarr_loaded = true;
       refresh_detection_dataset_options();
       clear_bbox_edits();
       std::cout << "Loaded Zarr archive from --zarr: "
                 << context_.zarr_loader->getArchivePath() << std::endl;
-      std::string media_error;
-      const bool explicit_media_ready =
-          loadExplicitRecordingClipIndex(&media_error);
-      if (explicit_media_ready && cli_recording_clip_index_path.empty()) {
-        tryAutoLoadAffiliatedVideoFromZarr("--zarr");
-      }
-      tryAutoLoadStimulusVideo("--zarr");
       session_open.completeProduct("archive", "Archive ready", true);
       session_open.startProduct("affiliated_media",
                                 "Resolving affiliated media");
+      std::string media_error;
+      const bool explicit_media_ready =
+          loadExplicitRecordingClipIndex(&media_error);
+      if (stopIfCancelled()) {
+        return;
+      }
+      if (explicit_media_ready && cli_recording_clip_index_path.empty()) {
+        tryAutoLoadAffiliatedVideoFromZarr("--zarr");
+      }
+      if (stopIfCancelled()) {
+        return;
+      }
+      tryAutoLoadStimulusVideo("--zarr");
+      if (stopIfCancelled()) {
+        return;
+      }
       session_open.completeProduct("affiliated_media",
                                    *context_.video_loaded
                                        ? "Affiliated media ready"
@@ -1144,7 +1347,7 @@ void MediaSessionLoader::bootstrapFromCli(
     }
   }
 
-  if (cli_recording_path.empty()) {
+  if (cli_recording_path.empty() || stopIfCancelled()) {
     return;
   }
 
@@ -1153,23 +1356,39 @@ void MediaSessionLoader::bootstrapFromCli(
 
   session_open.startProduct("recording_archive", "Resolving recording archive");
   std::string zarr_error;
-  if (loadZarrDetectionFromDirectory(*context_.root_dir, *context_.zarr_loader,
-                                     zarr_error)) {
+  const bool recording_archive_ready =
+      context_.open_archive
+          ? context_.open_archive(*context_.root_dir, true, zarr_error)
+          : loadZarrDetectionFromDirectory(*context_.root_dir,
+                                           *context_.zarr_loader, zarr_error);
+  if (stopIfCancelled()) {
+    return;
+  }
+  if (recording_archive_ready) {
     *context_.zarr_loaded = true;
     refresh_detection_dataset_options();
     clear_bbox_edits();
     std::cout << "Loaded Zarr archive from --recording: "
               << context_.zarr_loader->getArchivePath() << std::endl;
-    std::string media_error;
-    const bool explicit_media_ready =
-        loadExplicitRecordingClipIndex(&media_error);
-    if (explicit_media_ready && cli_recording_clip_index_path.empty()) {
-      tryAutoLoadAffiliatedVideoFromZarr("--recording");
-    }
-    tryAutoLoadStimulusVideo("--recording");
     session_open.completeProduct("recording_archive", "Recording archive ready",
                                  true);
     session_open.startProduct("recording_media", "Resolving recording media");
+    std::string media_error;
+    const bool explicit_media_ready =
+        loadExplicitRecordingClipIndex(&media_error);
+    if (stopIfCancelled()) {
+      return;
+    }
+    if (explicit_media_ready && cli_recording_clip_index_path.empty()) {
+      tryAutoLoadAffiliatedVideoFromZarr("--recording");
+    }
+    if (stopIfCancelled()) {
+      return;
+    }
+    tryAutoLoadStimulusVideo("--recording");
+    if (stopIfCancelled()) {
+      return;
+    }
     session_open.completeProduct("recording_media",
                                  *context_.video_loaded
                                      ? "Recording media ready"
@@ -1193,30 +1412,13 @@ void MediaSessionLoader::bootstrapFromCli(
   std::cout << "[--recording] No zarr archive found (optional): " << zarr_error
             << std::endl;
 
-  namespace fs = std::filesystem;
-  std::string found_video;
-  std::vector<fs::path> search_dirs;
-  const fs::path cams_dir = fs::path(*context_.root_dir) / "cams";
-  if (IsDirectoryNoThrow(cams_dir)) {
-    search_dirs.push_back(cams_dir);
-  }
-  search_dirs.push_back(fs::path(*context_.root_dir));
-
-  for (const auto &search_dir : search_dirs) {
-    if (!found_video.empty()) {
-      break;
-    }
-    std::error_code ec;
-    for (auto it = fs::directory_iterator(search_dir, ec);
-         it != fs::directory_iterator(); it.increment(ec)) {
-      if (ec) {
-        break;
-      }
-      if (it->is_regular_file(ec) && !ec && IsSupportedVideoPath(it->path())) {
-        found_video = it->path().string();
-        break;
-      }
-    }
+  const std::string found_video = context_.discover_recording_video
+                                      ? context_.discover_recording_video(
+                                            *context_.root_dir)
+                                      : discoverRecordingFallbackVideo(
+                                            *context_.root_dir);
+  if (stopIfCancelled()) {
+    return;
   }
 
   if (found_video.empty()) {
@@ -1227,9 +1429,17 @@ void MediaSessionLoader::bootstrapFromCli(
   }
 
   session_open.startProduct("recording_media", "Opening recording media");
-  if (loadSingleVideoMedia(found_video, false,
-                           "[--recording] Auto-loaded video: ")) {
+  const bool fallback_media_ready =
+      loadSingleVideoMedia(found_video, false,
+                           "[--recording] Auto-loaded video: ");
+  if (stopIfCancelled()) {
+    return;
+  }
+  if (fallback_media_ready) {
     tryAutoLoadStimulusVideo("--recording-fallback");
+    if (stopIfCancelled()) {
+      return;
+    }
     session_open.completeProduct("recording_media", "Recording media ready",
                                  true);
     crimson::session::SessionDescriptor resolved;

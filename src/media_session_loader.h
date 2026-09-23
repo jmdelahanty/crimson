@@ -18,6 +18,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 enum class ClippedMediaSource : uint8_t {
@@ -35,6 +36,36 @@ struct PaletteClippedMediaState {
   std::shared_ptr<const std::vector<int64_t>> parent_frame_by_clip_local;
   crimson::playback::ClippedMediaHandoffState handoff;
 };
+
+struct PreparedCameraMedia {
+  crimson::media::CameraMediaOpenPlan plan;
+  std::vector<std::unique_ptr<FFmpegDemuxer>> demuxers;
+  std::vector<std::pair<int, int>> camera_dimensions;
+  int seek_interval = 1;
+  double video_fps = 0.0;
+  int buffer_size = 1;
+};
+
+struct AffiliatedMediaDiscovery {
+  std::optional<std::filesystem::path> video_path;
+  std::optional<std::filesystem::path> clip_index_path;
+  std::string error;
+};
+
+AffiliatedMediaDiscovery discoverAffiliatedMedia(
+    const std::string &archive_path, const std::string &legacy_source_hint);
+
+bool prepareCameraMedia(const crimson::media::CameraMediaOpenPlan &plan,
+                        const std::string &image_root, int buffer_size,
+                        double video_fps, PreparedCameraMedia &prepared,
+                        std::string &error);
+std::string discoverRecordingFallbackVideo(const std::string &recording_root);
+bool prepareCameraCalibrations(const std::vector<std::string> &camera_names,
+                               const std::string &recording_root,
+                               ZarrDetectionLoader *zarr_loader,
+                               bool zarr_loaded,
+                               std::vector<CameraParams> &camera_params,
+                               std::string &error);
 
 struct MediaSessionLoaderContext {
   render_scene *scene = nullptr;
@@ -72,6 +103,29 @@ struct MediaSessionLoaderContext {
   double *video_fps = nullptr;
   crimson::session::RecordingOpenWorkflowController *recording_opens = nullptr;
   int cuda_device_index = 0;
+  // Called on the UI owner thread. The adapter may load archive data on a
+  // worker while it alone pumps a loading-only GUI frame.
+  std::function<bool(const std::string &, bool, std::string &)> open_archive;
+  std::function<bool()> opening_cancelled;
+  std::function<bool(const crimson::media::CameraMediaOpenPlan &,
+                     const std::string &, int, double, PreparedCameraMedia &,
+                     std::string &)> prepare_camera_media;
+  std::function<void(std::vector<std::thread> &)> join_camera_decoders;
+  std::function<std::string(const std::string &)> discover_recording_video;
+  std::function<std::shared_ptr<const crimson::media::RecordingClipMediaProvider>(
+      const std::filesystem::path &, std::string &)> prepare_recording_clip_index;
+  std::function<bool(const std::vector<std::string> &, const std::string &,
+                     ZarrDetectionLoader *, bool, std::vector<CameraParams> &,
+                     std::string &)> prepare_camera_calibrations;
+  std::function<void()> poll_owner_events;
+  std::function<bool(const crimson::media::StimulusMediaOpenRequest &,
+                     PreparedStimulusPlayback &, std::string &)> prepare_stimulus;
+  std::function<void(StimulusPlayback &)> join_stimulus_decoder;
+  std::function<AffiliatedMediaDiscovery(const std::string &,
+                                         const std::string &)> discover_affiliated_media;
+  std::function<std::optional<std::filesystem::path>(
+      const std::string &, const std::string &, const std::string &,
+      const std::string &)> resolve_stimulus_video;
 };
 
 class MediaSessionLoader {

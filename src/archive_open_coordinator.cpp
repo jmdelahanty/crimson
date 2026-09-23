@@ -51,6 +51,18 @@ ArchiveOpenResult executeArchiveOpen(RecordingOpenWorkflowController &workflow,
     return result;
   }
   result.generation = workflow.generation();
+  auto stopIfCancelled = [&]() {
+    if (!operations.opening_cancelled || !operations.opening_cancelled()) {
+      return false;
+    }
+    clearArchive(operations);
+    workflow.cancel("Session opening cancelled");
+    result.error = "Session opening cancelled";
+    return true;
+  };
+  if (stopIfCancelled()) {
+    return result;
+  }
   if (!workflow.startProduct("archive", "Resolving archive")) {
     return failArchiveOpen(workflow, operations, std::move(result),
                            "Archive loading could not start");
@@ -58,8 +70,12 @@ ArchiveOpenResult executeArchiveOpen(RecordingOpenWorkflowController &workflow,
 
   try {
     std::string open_error;
-    if (!operations.open_archive(command.selected_path, result.resolved_path,
-                                 open_error)) {
+    const bool open_ready = operations.open_archive(
+        command.selected_path, result.resolved_path, open_error);
+    if (stopIfCancelled()) {
+      return result;
+    }
+    if (!open_ready) {
       if (open_error.empty()) {
         open_error = "Selected Zarr archive could not be opened";
       }
@@ -73,17 +89,29 @@ ArchiveOpenResult executeArchiveOpen(RecordingOpenWorkflowController &workflow,
     if (operations.adopt_archive) {
       operations.adopt_archive(command.current_frame);
     }
+    if (stopIfCancelled()) {
+      return result;
+    }
     if (operations.resolve_affiliated_media) {
       operations.resolve_affiliated_media();
     }
+    if (stopIfCancelled()) {
+      return result;
+    }
     if (operations.resolve_stimulus_media) {
       operations.resolve_stimulus_media();
+    }
+    if (stopIfCancelled()) {
+      return result;
     }
 
     requested_session.zarr_path = result.resolved_path;
     if (operations.active_recording_clip_index_path) {
       requested_session.recording_clip_index_path =
           operations.active_recording_clip_index_path();
+    }
+    if (stopIfCancelled()) {
+      return result;
     }
     if (!workflow.completeProduct("archive", "Archive ready", true)) {
       return failArchiveOpen(workflow, operations, std::move(result),

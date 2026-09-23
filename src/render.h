@@ -7,6 +7,7 @@
 #include <cuda_runtime_api.h>
 #include <cstdint>
 #include <cstdlib>
+#include <functional>
 #include <vector>
 
 
@@ -122,7 +123,9 @@ inline void render_initialize_target(gx_context *context,
     gx_imgui_init(context, argv0_path);
 }
 
-static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer)
+static void render_allocate_scene_memory(
+    render_scene *scene, u32 size_of_buffer,
+    const std::function<void()> &poll_owner_events = {})
 {
     int num_cams = scene->num_cams;
     scene->cameras.resize(num_cams);
@@ -176,6 +179,7 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
             &scene->cameras[j].playback_staging_pbo.cuda_buffer,
             &scene->cameras[j].playback_staging_pbo.cuda_pbo_storage_buffer_size,
             &scene->cameras[j].playback_staging_pbo.cuda_resource);
+        if (poll_owner_events) poll_owner_events();
     }
 
 
@@ -237,6 +241,7 @@ static void render_allocate_scene_memory(render_scene *scene, u32 size_of_buffer
                 ColorRange_Unspecified;
             scene->cameras[j].display_buffer[i].frame_slot_state = nullptr;
             frameSlotInitialize(scene->cameras[j].display_buffer[i]);
+            if (poll_owner_events && (i % 8 == 7)) poll_owner_events();
         }
     }
 

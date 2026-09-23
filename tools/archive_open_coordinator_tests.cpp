@@ -139,12 +139,91 @@ bool testInvalidCommandDoesNotBeginTransaction() {
   return true;
 }
 
+bool testCancellationStopsLaterStages() {
+  for (const std::string stop_after : {"open", "adopt", "media", "stimulus"}) {
+    SessionLifecycle lifecycle;
+    crimson::loading::LoadingProgressTracker progress;
+    RecordingOpenWorkflowController workflow(lifecycle, progress);
+    std::vector<std::string> operations;
+    bool cancelled = false;
+    ArchiveOpenOperations adapter;
+    adapter.open_archive = [&](const std::string &, std::string &resolved,
+                               std::string &) {
+      operations.push_back("open");
+      resolved = "opened.zarr";
+      cancelled = stop_after == "open";
+      return true;
+    };
+    adapter.adopt_archive = [&](int64_t) {
+      operations.push_back("adopt");
+      cancelled = stop_after == "adopt";
+    };
+    adapter.resolve_affiliated_media = [&] {
+      operations.push_back("media");
+      cancelled = stop_after == "media";
+    };
+    adapter.resolve_stimulus_media = [&] {
+      operations.push_back("stimulus");
+      cancelled = stop_after == "stimulus";
+    };
+    adapter.clear_archive = [&] { operations.push_back("clear"); };
+    adapter.opening_cancelled = [&] { return cancelled; };
+    ArchiveOpenCommand command;
+    command.selected_path = "selected.zarr";
+    const auto result =
+        crimson::session::executeArchiveOpen(workflow, command, adapter);
+    CHECK(!result.ready);
+    CHECK(result.error == "Session opening cancelled");
+    CHECK(!workflow.active());
+    CHECK(progress.snapshot().state == crimson::loading::LoadingState::Cancelled);
+    CHECK(operations.back() == "clear");
+    CHECK(operations.size() == static_cast<size_t>(
+        stop_after == "open" ? 2 : stop_after == "adopt" ? 3
+                             : stop_after == "media" ? 4 : 5));
+  }
+  return true;
+}
+
+bool testCloseBeforeOrDuringFailedOpenCancelsWithoutAdoption() {
+  for (const bool close_before_open : {true, false}) {
+    SessionLifecycle lifecycle;
+    crimson::loading::LoadingProgressTracker progress;
+    RecordingOpenWorkflowController workflow(lifecycle, progress);
+    bool closed = close_before_open;
+    int opens = 0;
+    int adoptions = 0;
+    ArchiveOpenOperations adapter;
+    adapter.opening_cancelled = [&] { return closed; };
+    adapter.open_archive = [&](const std::string &, std::string &,
+                               std::string &error) {
+      ++opens;
+      closed = true;
+      error = "read interrupted";
+      return false;
+    };
+    adapter.adopt_archive = [&](int64_t) { ++adoptions; };
+    ArchiveOpenCommand command;
+    command.selected_path = "selected.zarr";
+    const auto result = crimson::session::executeArchiveOpen(
+        workflow, command, adapter);
+    CHECK(!result.ready);
+    CHECK(result.error == "Session opening cancelled");
+    CHECK(opens == (close_before_open ? 0 : 1));
+    CHECK(adoptions == 0);
+    CHECK(!workflow.active());
+    CHECK(progress.snapshot().state == crimson::loading::LoadingState::Cancelled);
+  }
+  return true;
+}
+
 } // namespace
 
 int main() {
   if (!testSuccessfulArchiveOpen() || !testOpenFailureClearsArchiveState() ||
       !testAdoptionExceptionFailsClosed() ||
-      !testInvalidCommandDoesNotBeginTransaction()) {
+      !testInvalidCommandDoesNotBeginTransaction() ||
+      !testCancellationStopsLaterStages() ||
+      !testCloseBeforeOrDuringFailedOpenCancelsWithoutAdoption()) {
     return EXIT_FAILURE;
   }
   std::cout << "archive_open_coordinator_tests: PASS\n";

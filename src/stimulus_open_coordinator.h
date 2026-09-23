@@ -18,6 +18,7 @@ struct StimulusOpenOperations {
       const media::StimulusMediaOpenRequest &)>
       open_media;
   std::function<void()> clear_media;
+  std::function<bool()> opening_cancelled;
 };
 
 struct StimulusOpenResult {

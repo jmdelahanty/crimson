@@ -5,6 +5,7 @@
 #include "zarr/stimulus_repository.h"
 
 #include <chrono>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -110,8 +111,33 @@ struct StimulusPlayback {
         std::chrono::steady_clock::time_point{};
 };
 
+// CPU-only probe result. The demuxer is not shared with a live decoder until
+// the owner thread adopts it after the old decoder has stopped.
+struct PreparedStimulusPlayback {
+    std::string video_path;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    double fps = 0.0;
+    int buffer_size = 1;
+    bool use_cpu_buffer = false;
+    bool use_software_decode = false;
+    std::unique_ptr<FFmpegDemuxer> demuxer;
+};
+
 void destroyStimulusPlayback(StimulusPlayback &stim);
-bool allocateStimulusBuffers(StimulusPlayback &stim);
+void joinStimulusDecoder(StimulusPlayback &stim);
+bool prepareStimulusPlayback(const std::string &video_path, int buffer_size,
+                             bool use_cpu_buffer, bool use_software_decode,
+                             PreparedStimulusPlayback &prepared,
+                             std::string &error);
+bool initializePreparedStimulusPlayback(StimulusPlayback &stim,
+                                       PreparedStimulusPlayback prepared,
+                                       int cuda_device_index,
+                                       const std::function<void()> &poll_owner_events = {},
+                                       const std::function<bool()> &opening_cancelled = {});
+bool allocateStimulusBuffers(StimulusPlayback &stim,
+                            const std::function<void()> &poll_owner_events = {},
+                            const std::function<bool()> &opening_cancelled = {});
 bool initializeStimulusPlayback(StimulusPlayback &stim,
                                 const std::string &video_path,
                                 int buffer_size,

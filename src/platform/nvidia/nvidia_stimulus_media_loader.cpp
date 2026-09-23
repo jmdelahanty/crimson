@@ -23,11 +23,27 @@ openStimulusMedia(const media::StimulusMediaOpenRequest &request,
     return result;
   }
 
-  if (!initializeStimulusPlayback(
-          *context.stimulus_player, request.path,
-          std::max(1, request.buffer_capacity), request.use_cpu_buffer,
-          request.use_software_decode, context.cuda_device_index)) {
-    result.error = "Failed to load stimulus video: " + request.path;
+  if (context.prepared != nullptr && context.join_decoder) {
+    context.join_decoder(*context.stimulus_player);
+    if (context.opening_cancelled && context.opening_cancelled()) {
+      result.error = "Session opening cancelled";
+      return result;
+    }
+  }
+  const bool initialized = context.prepared != nullptr
+      ? initializePreparedStimulusPlayback(*context.stimulus_player,
+                                          std::move(*context.prepared),
+                                          context.cuda_device_index,
+                                          context.poll_owner_events,
+                                          context.opening_cancelled)
+      : initializeStimulusPlayback(
+            *context.stimulus_player, request.path,
+            std::max(1, request.buffer_capacity), request.use_cpu_buffer,
+            request.use_software_decode, context.cuda_device_index);
+  if (!initialized) {
+    result.error = context.opening_cancelled && context.opening_cancelled()
+                       ? "Session opening cancelled"
+                       : "Failed to load stimulus video: " + request.path;
     return result;
   }
 

@@ -131,13 +131,44 @@ bool testEmptyPathDoesNotBeginTransaction() {
   return true;
 }
 
+bool testCloseBeforeProbeAndAfterProbeNeverCommits() {
+  for (const bool close_before_probe : {true, false}) {
+    SessionLifecycle lifecycle;
+    crimson::loading::LoadingProgressTracker progress;
+    RecordingOpenWorkflowController workflow(lifecycle, progress);
+    bool closed = close_before_probe;
+    int probes = 0;
+    StimulusOpenOperations operations;
+    operations.opening_cancelled = [&] { return closed; };
+    operations.open_media = [&](const crimson::media::StimulusMediaOpenRequest &request) {
+      ++probes;
+      closed = true;
+      crimson::media::StimulusMediaOpenResult result;
+      result.ready = true;
+      result.path = request.path;
+      return result;
+    };
+    StimulusOpenCommand command;
+    command.media.path = "stimulus.mp4";
+    const auto result = crimson::session::executeStimulusOpen(
+        workflow, command, operations);
+    CHECK(!result.ready);
+    CHECK(result.media.error == "Session opening cancelled");
+    CHECK(probes == (close_before_probe ? 0 : 1));
+    CHECK(!workflow.active());
+    CHECK(lifecycle.snapshot().phase != SessionPhase::Ready);
+  }
+  return true;
+}
+
 } // namespace
 
 int main() {
   if (!testSuccessfulOpenCommitsResolvedMedia() ||
       !testOpenFailureFailsTransactionWithoutClearingPriorMedia() ||
       !testExceptionAfterOpenStartsFailsClosed() ||
-      !testEmptyPathDoesNotBeginTransaction()) {
+      !testEmptyPathDoesNotBeginTransaction() ||
+      !testCloseBeforeProbeAndAfterProbeNeverCommits()) {
     return EXIT_FAILURE;
   }
   std::cout << "stimulus_open_coordinator_tests: PASS\n";
