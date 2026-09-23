@@ -2,9 +2,18 @@
 # Advancing-video mask coverage; owns only its child process and temporary state.
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-archive="${1:?Usage: gui_smoke_canonical_mask_playback.sh ARCHIVE.zarr START:END [RENDER_FPS]}"
+archive="${1:?Usage: gui_smoke_canonical_mask_playback.sh ARCHIVE.zarr START:END [RENDER_FPS] [--require-contours]}"
 range="${2:?Frame range required}"
 render_fps="${3:-60}"
+require_contours="${4:-}"
+[[ -z "$require_contours" || "$require_contours" == --require-contours ]] ||
+  { echo "Fourth argument must be --require-contours" >&2; exit 2; }
+overlay_mode=default
+checker_flags=()
+if [[ "$require_contours" == --require-contours ]]; then
+  overlay_mode=contour_only
+  checker_flags+=(--require-contours)
+fi
 [[ -d "$archive" && "$range" =~ ^([0-9]+):([0-9]+)$ ]] || { echo "Invalid archive/range" >&2; exit 2; }
 start_frame="${BASH_REMATCH[1]}"
 end_frame="${BASH_REMATCH[2]}"
@@ -19,6 +28,7 @@ case_dir="$(mktemp -d "${TMPDIR:-/tmp}/crimson-mask-playback-smoke.XXXXXX")"
 echo "evidence=$case_dir"
 cd "$case_dir"
 timeout 90 env DISPLAY="$display" XAUTHORITY="$xauthority" \
+  CRIMSON_CANONICAL_OVERLAY_MODE="$overlay_mode" \
   XDG_CONFIG_HOME="$case_dir/config" XDG_CACHE_HOME="$case_dir/cache" \
   "$binary" --zarr "$archive" --show-subject-masks \
   --playback-smoke "$range" --playback-smoke-warmup-seconds 8 \
@@ -29,4 +39,5 @@ python3 "$repo_root/tools/check_canonical_mask_playback.py" \
   "$case_dir/playback.jsonl" "$start_frame" "$end_frame" \
   --grace-frames "${CRIMSON_MASK_PLAYBACK_GRACE_FRAMES:-0}" \
   --minimum-frames "${CRIMSON_MASK_PLAYBACK_MINIMUM_FRAMES:-60}" \
+  "${checker_flags[@]}" \
   | tee "$case_dir/coverage.json"

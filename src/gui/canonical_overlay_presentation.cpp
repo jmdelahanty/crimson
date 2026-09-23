@@ -4,6 +4,8 @@
 #include "zarr/subject_shape_overlay_scene_adapter.h"
 
 #include <cmath>
+#include <iterator>
+#include <set>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -42,6 +44,7 @@ CanonicalOverlayPresentation makeCanonicalOverlayPresentation(
   CanonicalOverlayPresentation result;
   checkFrame(snapshot.keypoints, presented_frame);
   checkFrame(snapshot.masks, presented_frame);
+  checkFrame(snapshot.mask_contours, presented_frame);
   checkFrame(snapshot.shapes, presented_frame);
   if (snapshot.selection) {
     const auto check_source = [](auto& product, const auto& binding) {
@@ -50,6 +53,7 @@ CanonicalOverlayPresentation makeCanonicalOverlayPresentation(
     };
     check_source(snapshot.keypoints, snapshot.selection->keypoints);
     check_source(snapshot.masks, snapshot.selection->mask);
+    check_source(snapshot.mask_contours, snapshot.selection->mask);
     check_source(snapshot.shapes, snapshot.selection->shape);
   }
   std::unordered_set<uint64_t> keys;
@@ -72,6 +76,10 @@ CanonicalOverlayPresentation makeCanonicalOverlayPresentation(
   if (keys_available && resolved(snapshot.masks.state) && snapshot.masks.frame &&
       !sameKeys(keys, snapshot.masks))
     fail(snapshot.masks, "Bound mask/keypoint observation keys disagree for this frame");
+  if (keys_available && resolved(snapshot.mask_contours.state) &&
+      snapshot.mask_contours.frame && !sameKeys(keys, snapshot.mask_contours))
+    fail(snapshot.mask_contours,
+         "Bound contour/keypoint observation keys disagree for this frame");
   if (keys_available && resolved(snapshot.shapes.state) && snapshot.shapes.frame &&
       !sameKeys(keys, snapshot.shapes))
     fail(snapshot.shapes, "Bound shape/keypoint observation keys disagree for this frame");
@@ -123,6 +131,79 @@ CanonicalOverlayPresentation makeCanonicalOverlayPresentation(
         view, source_width, source_height);
     overlay::applyReadOnlyOverlayControls(controls, &input);
     result.masks = overlay::buildReadOnlyOverlayScene(input);
+  }
+  const bool contours_requested = controls.independent_mask_contours &&
+      (controls.show_subject_body_contour || controls.show_eye_left_contour ||
+       controls.show_eye_right_contour || controls.show_swim_bladder_contour);
+  if (contours_requested &&
+      snapshot.mask_contours.state == CanonicalOverlayState::Ready &&
+      snapshot.mask_contours.frame && resolved(snapshot.masks.state) &&
+      snapshot.masks.frame && result.masks.ready()) {
+    const auto &dense = snapshot.masks.descriptor;
+    const auto &contours = snapshot.mask_contours.descriptor;
+    const bool bound_source = dense.strict_v1 && contours.strict_v1 &&
+        contours.contour_only && !contours.presentation_cache_run.empty() &&
+        dense.run_name == contours.run_name &&
+        dense.run_manifest_payload_digest == contours.run_manifest_payload_digest &&
+        dense.cache_namespace == contours.cache_namespace &&
+        snapshot.selection && snapshot.selection->mask.valid &&
+        contours.run_manifest_payload_digest ==
+            snapshot.selection->mask.manifest_payload_digest;
+    if (!bound_source) {
+      fail(snapshot.mask_contours,
+           "Contour source differs from the exact bound dense mask source");
+    } else {
+      std::unordered_map<uint64_t, const zarr::SubjectMaskOverlayDetection*>
+          dense_by_key;
+      std::unordered_set<uint64_t> contour_keys;
+      bool aligned = snapshot.masks.frame->detections.size() ==
+                     snapshot.mask_contours.frame->detections.size();
+      for (const auto &row : snapshot.masks.frame->detections)
+        aligned = dense_by_key.emplace(row.instance_key, &row).second && aligned;
+      for (const auto &row : snapshot.mask_contours.frame->detections) {
+        const auto found = dense_by_key.find(row.instance_key);
+        if (!contour_keys.insert(row.instance_key).second ||
+            found == dense_by_key.end() ||
+            found->second->source_crop_row_id != row.source_crop_row_id ||
+            found->second->roi_x != row.roi_x ||
+            found->second->roi_y != row.roi_y ||
+            found->second->roi_width != row.roi_width ||
+            found->second->roi_height != row.roi_height) {
+          aligned = false;
+          break;
+        }
+        std::set<std::pair<size_t, std::string>> dense_components;
+        for (const auto &candidate : found->second->components)
+          aligned = dense_components.emplace(candidate.channel_index,
+                                              candidate.label).second && aligned;
+        std::set<std::pair<size_t, std::string>> contour_components;
+        for (const auto &component : row.components) {
+          const auto identity = std::make_pair(component.channel_index,
+                                               component.label);
+          aligned = contour_components.insert(identity).second &&
+                    dense_components.count(identity) == 1 && aligned;
+        }
+        aligned = contour_components == dense_components && aligned;
+        if (!aligned) break;
+      }
+      aligned = contour_keys.size() == dense_by_key.size() && aligned;
+      if (!aligned) {
+        fail(snapshot.mask_contours,
+             "Contour observation/component identity differs from dense masks");
+      } else {
+        auto input = zarr::makeSubjectMaskOverlaySceneInput(
+            contours, *snapshot.mask_contours.frame, view, presented_frame,
+            view, source_width, source_height);
+        overlay::applyReadOnlyOverlayControls(controls, &input);
+        input.show_subject_mask_fills = false;
+        auto contour_scene = overlay::buildReadOnlyOverlayScene(input);
+        if (contour_scene.ready()) {
+          result.masks.primitives.insert(result.masks.primitives.end(),
+              std::make_move_iterator(contour_scene.primitives.begin()),
+              std::make_move_iterator(contour_scene.primitives.end()));
+        }
+      }
+    }
   }
   if (resolved(snapshot.shapes.state) && snapshot.shapes.frame) {
     auto input = zarr::makeSubjectShapeOverlaySceneInput(

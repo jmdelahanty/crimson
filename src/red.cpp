@@ -18,6 +18,7 @@
 #include "gui/camera_view_frame_context_builder.h"
 #include "gui/camera_view_manual_keypoint_input.h"
 #include "gui/camera_view_overlay_renderer.h"
+#include "gui/camera_view_subject_shape_controls_adapter.h"
 #include "gui/camera_view_presenter.h"
 #include "gui/camera_view_transport_controls.h"
 #include "gui/camera_view_window.h"
@@ -435,6 +436,10 @@ int main(int argc, char **argv) {
   const double cli_frame_cap_fps = launch_options.frame_cap_fps;
   const bool mask_perf_log_enabled = launch_options.mask_perf_log_enabled;
   const bool cli_show_eye_masks = launch_options.show_eye_masks;
+  const char *canonical_overlay_mode_env =
+      std::getenv("CRIMSON_CANONICAL_OVERLAY_MODE");
+  const std::string canonical_overlay_mode =
+      canonical_overlay_mode_env != nullptr ? canonical_overlay_mode_env : "default";
 
   PlaybackSmokeConfig playback_smoke;
   playback_smoke.enabled = launch_options.playback_smoke.enabled;
@@ -526,6 +531,10 @@ int main(int argc, char **argv) {
   int canonical_shape_draw_count = 0;
   int canonical_expected_shape_draw_count = 0;
   int canonical_expected_mask_draw_count = 0;
+  int canonical_expected_contour_draw_count = 0;
+  int canonical_actual_contour_draw_count = 0;
+  json canonical_shape_expected_labels = json::object();
+  json canonical_mask_expected_contour_labels = json::object();
   crimson::gui::DetectionQualityTimelineControls
       detection_quality_timeline_controls;
   crimson::gui::KeypointQualityTimelineControls
@@ -592,6 +601,28 @@ int main(int argc, char **argv) {
       CameraViewMaskOverlayMode::Review;
   CameraViewSubjectShapeOverlayOptions subject_shape_overlay_options;
   CameraViewTailKinematicsOverlayOptions tail_kinematics_overlay_options;
+  const auto applyCanonicalOverlayMode = [&] {
+    if (canonical_overlay_mode == "contour_only" ||
+        canonical_overlay_mode == "body_contour_only") {
+      show_eye_masks = false;
+      subject_shape_overlay_options.show_overlay = true;
+      subject_shape_overlay_options.show_body_contour = true;
+      subject_shape_overlay_options.show_swim_bladder_contour =
+          canonical_overlay_mode == "contour_only";
+      subject_shape_overlay_options.show_eye_contours =
+          canonical_overlay_mode == "contour_only";
+      subject_shape_overlay_options.show_bspline_debug_points = true;
+      subject_shape_overlay_options.show_bspline_control_points = true;
+      subject_shape_overlay_options.show_tail_samples = true;
+      subject_shape_overlay_options.show_tail_normals = true;
+    } else if (canonical_overlay_mode == "fill_only") {
+      show_eye_masks = true;
+      subject_shape_overlay_options.show_body_contour = false;
+      subject_shape_overlay_options.show_swim_bladder_contour = false;
+      subject_shape_overlay_options.show_eye_contours = false;
+    }
+  };
+  if (playback_smoke.enabled) applyCanonicalOverlayMode();
   int current_frame_num = 0;
   std::vector<std::string> imgs_names;
 
@@ -1121,14 +1152,15 @@ int main(int argc, char **argv) {
   int canonical_detection_last_requested_frame = -1;
   std::string canonical_detection_last_request_error;
   uint64_t canonical_overlay_seen_seek_requests = 0;
-  auto requestCanonicalOverlayFrame = [&](int frame, bool keypoints, bool masks, bool shapes) {
+  auto requestCanonicalOverlayFrame = [&](int frame, bool keypoints, bool masks,
+                                          bool shapes, bool mask_contours) {
     const uint64_t seek_requests = playback_transport.seekCoordinator().metrics().requests;
     const bool accepted = canonical_overlay_session.requestFrame(
         frame, keypoints, masks, shapes,
         seek_requests != canonical_overlay_seen_seek_requests,
         {true, ps.play_video ? crimson::gui::CanonicalOverlayPlaybackDirection::Forward
                             : crimson::gui::CanonicalOverlayPlaybackDirection::Paused,
-         video_fps, playback_transport.playbackRate()});
+         video_fps, playback_transport.playbackRate()}, mask_contours);
     // A partial product rejection must not repeatedly invalidate products
     // which already accepted this seek. New opens have their own source epoch.
     canonical_overlay_seen_seek_requests = seek_requests;
@@ -2231,6 +2263,7 @@ int main(int argc, char **argv) {
           show_keypoint_markers = true;
           show_heading_arrows = true;
           subject_shape_overlay_options.show_overlay = true;
+          applyCanonicalOverlayMode();
         }
       } else if (ui_reference.state == UiReferenceState::StimulusOverlay) {
         if (stimulus_context_timeline == nullptr) {
@@ -3458,10 +3491,7 @@ int main(int argc, char **argv) {
       const bool frame_has_bbox_edits =
           g_zarr_bbox_edit_state.isFrameDirty(current_frame_num);
       const bool subject_shape_needs_contours =
-          subject_shape_overlay_options.show_overlay &&
-          (subject_shape_overlay_options.show_body_contour ||
-           subject_shape_overlay_options.show_swim_bladder_contour ||
-           subject_shape_overlay_options.show_eye_contours);
+          cameraViewCanonicalMaskContoursRequested(subject_shape_overlay_options);
       const bool include_subject_shapes_in_details =
           zarr_loaded && zarr_loader.hasSubjectShapeData() &&
           (subject_shape_overlay_options.show_overlay ||
@@ -3505,8 +3535,9 @@ int main(int argc, char **argv) {
         const bool inspect_masks = frame_debug_window_state.active_view ==
             crimson::workspace::FrameInspectView::EyeMasks;
         requestCanonicalOverlayFrame(current_frame_num, true,
-            show_eye_masks || inspect_masks,
-            subject_shape_overlay_options.show_overlay || show_heading_arrows || inspect_masks);
+            show_eye_masks || inspect_masks || subject_shape_needs_contours,
+            subject_shape_overlay_options.show_overlay || show_heading_arrows || inspect_masks,
+            subject_shape_needs_contours);
         auto presentation = crimson::gui::makeCanonicalOverlayPresentation(
             canonical_overlay_session.snapshot(current_frame_num), 0, current_frame_num,
             static_cast<int>(canonical_detection_expected_width),
@@ -4292,10 +4323,7 @@ int main(int argc, char **argv) {
             (void)requestCanonicalDetectionFrame(zarr_bbox_query_frame);
           }
           const bool camera_subject_shape_needs_contours =
-              subject_shape_overlay_options.show_overlay &&
-              (subject_shape_overlay_options.show_body_contour ||
-               subject_shape_overlay_options.show_swim_bladder_contour ||
-               subject_shape_overlay_options.show_eye_contours);
+              cameraViewCanonicalMaskContoursRequested(subject_shape_overlay_options);
           const bool camera_details_include_subject_shapes =
               zarr_loaded && has_presented_camera_frame &&
               zarr_loader.hasSubjectShapeData() &&
@@ -4329,9 +4357,11 @@ int main(int argc, char **argv) {
           crimson::gui::CanonicalOverlayPresentation canonical_presentation;
           if (canonical_detection_route && zarr_bbox_query_frame >= 0) {
             requestCanonicalOverlayFrame(zarr_bbox_query_frame,
-                show_keypoint_markers || show_heading_arrows,
-                show_eye_masks,
-                subject_shape_overlay_options.show_overlay || show_heading_arrows);
+                show_keypoint_markers || show_heading_arrows ||
+                    camera_subject_shape_needs_contours,
+                show_eye_masks || camera_subject_shape_needs_contours,
+                subject_shape_overlay_options.show_overlay || show_heading_arrows,
+                camera_subject_shape_needs_contours);
             crimson::overlay::ReadOnlyOverlayControlState controls;
             controls.show_keypoints = show_keypoint_markers;
             controls.show_headings = show_heading_arrows;
@@ -4341,10 +4371,8 @@ int main(int argc, char **argv) {
             controls.show_eye_right_mask = show_eye_right_mask;
             controls.show_swim_bladder_mask = show_swim_bladder_mask;
             controls.show_eye_geometry = false;
-            controls.show_subject_shape = subject_shape_overlay_options.show_overlay;
-            controls.show_subject_shape_body_axes = subject_shape_overlay_options.show_body_frame_axes;
-            controls.show_subject_shape_centerline = subject_shape_overlay_options.show_centerline;
-            controls.show_subject_shape_bspline = subject_shape_overlay_options.show_bspline_sample;
+            applyCameraViewCanonicalSubjectShapeControls(
+                subject_shape_overlay_options, &controls);
             canonical_presentation = crimson::gui::makeCanonicalOverlayPresentation(
                 canonical_overlay_session.snapshot(zarr_bbox_query_frame), j, zarr_bbox_query_frame,
                 static_cast<int>(scene->cameras[j].image_width),
@@ -4786,7 +4814,8 @@ int main(int argc, char **argv) {
                                         prepared_camera_context);
           if (canonical_detection_route) {
             prepared_camera_context.context.can_draw_eye_masks =
-                show_eye_masks && canonical_presentation.masks.ready();
+                (show_eye_masks || camera_subject_shape_needs_contours) &&
+                canonical_presentation.masks.ready();
             prepared_camera_context.context.subject_mask_scene =
                 canonical_presentation.masks.ready() ? &canonical_presentation.masks : nullptr;
             prepared_camera_context.context.subject_shape_scene =
@@ -4825,17 +4854,59 @@ int main(int argc, char **argv) {
             canonical_shape_draw_count = camera_view_result.perf.subject_shape_overlay_item_count;
             canonical_expected_shape_draw_count = static_cast<int>(canonical_presentation.shapes.primitives.size());
             canonical_expected_mask_draw_count = static_cast<int>(canonical_presentation.masks.raster_masks.size());
+            canonical_expected_contour_draw_count =
+                static_cast<int>(canonical_presentation.masks.primitives.size());
+            canonical_actual_contour_draw_count =
+                camera_view_result.perf.mask_overlay.contours_drawn;
+            if (ui_reference.enabled &&
+                ui_reference.state == UiReferenceState::Overlays) {
+              canonical_shape_expected_labels = json::object();
+              canonical_mask_expected_contour_labels = json::object();
+              canonical_expected_contour_draw_count = 0;
+              for (const auto &primitive : canonical_presentation.shapes.primitives) {
+                const auto &label = primitive.label;
+                const char *category =
+                    label.rfind("##shape_bspline_debug_", 0) == 0 ? "bspline_debug" :
+                    label.rfind("##shape_bspline_control_", 0) == 0 ? "control_points" :
+                    label.rfind("##shape_bspline_controls_", 0) == 0 ? "control_polygon" :
+                    label.rfind("##shape_bspline_", 0) == 0 ? "bspline_sample" :
+                    label.rfind("##shape_tail_sample_", 0) == 0 ? "tail_samples" :
+                    label.rfind("##shape_tail_normal_", 0) == 0 ? "tail_normals" : "other";
+                canonical_shape_expected_labels[category] =
+                    canonical_shape_expected_labels.value(category, 0) + 1;
+              }
+              for (const auto &primitive : canonical_presentation.masks.primitives) {
+                const auto &label = primitive.label;
+                if (label.rfind("##mask_contour_", 0) != 0) continue;
+                ++canonical_expected_contour_draw_count;
+                const auto first = std::string("##mask_contour_").size();
+                const auto last = label.rfind('_');
+                const std::string component = label.substr(first, last - first);
+                canonical_mask_expected_contour_labels[component] =
+                    canonical_mask_expected_contour_labels.value(component, 0) + 1;
+              }
+            }
             if (diagnostics_session.playbackTraceEnabled() && has_presented_camera_frame) {
               const auto& snapshot = canonical_presentation.snapshot;
               const auto& mask = snapshot.masks;
+              const auto& contours = snapshot.mask_contours;
               const auto& mask_perf = camera_view_result.perf.mask_overlay;
               const bool mask_resolved = mask.state == crimson::gui::CanonicalOverlayState::Ready ||
                                          mask.state == crimson::gui::CanonicalOverlayState::Empty;
+              const bool contour_resolved = contours.state == crimson::gui::CanonicalOverlayState::Ready ||
+                                            contours.state == crimson::gui::CanonicalOverlayState::Empty;
               const char* outcome = !show_eye_masks ? "disabled" :
                   !mask_resolved ? crimson::gui::canonicalOverlayStateName(mask.state) :
                   !canonical_presentation.masks.ready() ? "scene_rejected" :
                   canonical_expected_mask_draw_count == 0 ? "valid_absent" :
-                  mask_perf.component_fill_count != canonical_expected_mask_draw_count ? "draw_failed" : "drawn";
+                  mask_perf.component_fill_count != canonical_expected_mask_draw_count
+                      ? "draw_failed" : "drawn";
+              const char* contour_outcome = !camera_subject_shape_needs_contours ? "disabled" :
+                  !contour_resolved ? crimson::gui::canonicalOverlayStateName(contours.state) :
+                  !canonical_presentation.masks.ready() ? "scene_rejected" :
+                  canonical_expected_contour_draw_count == 0 ? "valid_absent" :
+                  mask_perf.contours_drawn != canonical_expected_contour_draw_count
+                      ? "draw_failed" : "drawn";
               writePlaybackTraceEvent("canonical_overlay_present",
                   {{"generation", snapshot.generation},
                    {"query_frame", zarr_bbox_query_frame},
@@ -4845,6 +4916,16 @@ int main(int argc, char **argv) {
                    {"mask_enabled", show_eye_masks},
                    {"mask_expected_fills", canonical_expected_mask_draw_count},
                    {"mask_actual_fills", mask_perf.component_fill_count},
+                   {"mask_expected_contours", canonical_expected_contour_draw_count},
+                   {"mask_actual_contours", mask_perf.contours_drawn},
+                   {"contour_enabled", camera_subject_shape_needs_contours},
+                   {"contour_state", crimson::gui::canonicalOverlayStateName(contours.state)},
+                   {"contour_frame", contours.frame ? contours.frame->camera_frame : -1},
+                   {"contour_outcome", contour_outcome},
+                   {"contour_expected", canonical_expected_contour_draw_count},
+                   {"contour_actual", mask_perf.contours_drawn},
+                   {"contour_error", contours.error.empty() ? snapshot.mask_contour_error : contours.error},
+                   {"contour_payload_reads", snapshot.mask_contour_metrics.contour_payload_reads},
                    {"mask_texture_uploads", mask_perf.texture_uploads},
                    {"mask_texture_upload_ms", mask_perf.texture_upload_ms},
                    {"mask_draw_ms", mask_perf.total_draw_ms},
@@ -6235,15 +6316,26 @@ int main(int argc, char **argv) {
       case UiReferenceState::Overlays:
         if (canonical_detection_route) {
           const auto ready = crimson::gui::CanonicalOverlayState::Ready;
+          const auto empty = crimson::gui::CanonicalOverlayState::Empty;
           const auto& overlays = last_canonical_overlay_snapshot;
-          state_ready = show_eye_masks &&
+          const bool contours_enabled =
+              cameraViewCanonicalMaskContoursRequested(subject_shape_overlay_options);
+          const bool contours_ready = !contours_enabled ||
+              ((overlays.mask_contours.state == ready ||
+                overlays.mask_contours.state == empty) &&
+               overlays.mask_contours.frame &&
+               overlays.mask_contours.frame->camera_frame == ui_reference.target_frame);
+          state_ready = (show_eye_masks || contours_enabled) &&
               overlays.requested_frame == ui_reference.target_frame &&
               canonical_overlay_draw_frame == ui_reference.target_frame &&
               ui_reference.bbox_query_frame == ui_reference.target_frame &&
               overlays.keypoints.state == ready && overlays.masks.state == ready &&
               overlays.shapes.state == ready && canonical_keypoint_draw_count > 0 &&
+              contours_ready &&
               canonical_shape_draw_count == canonical_expected_shape_draw_count &&
               frame_mask_overlay_perf.component_fill_count == canonical_expected_mask_draw_count;
+          state_ready = state_ready &&
+              canonical_actual_contour_draw_count == canonical_expected_contour_draw_count;
           break;
         }
         state_ready =
@@ -6665,16 +6757,29 @@ int main(int argc, char **argv) {
             {"draw_frame", canonical_overlay_draw_frame},
             {"keypoints", product(overlays.keypoints)},
             {"masks", product(overlays.masks)},
+            {"mask_contours", product(overlays.mask_contours)},
             {"shapes", product(overlays.shapes)},
             {"keypoint_primitives", canonical_keypoint_draw_count},
             {"heading_primitives", canonical_heading_draw_count},
             {"shape_primitives", canonical_shape_draw_count},
             {"shape_expected_primitives", canonical_expected_shape_draw_count},
             {"mask_expected_fills", canonical_expected_mask_draw_count},
+            {"mask_expected_contours", canonical_expected_contour_draw_count},
+            {"mask_actual_contours", canonical_actual_contour_draw_count},
+            {"mask_expected_contour_labels", canonical_mask_expected_contour_labels},
+            {"shape_expected_labels", canonical_shape_expected_labels},
             {"mask_cached_payload_bytes", overlays.mask_metrics.cached_payload_bytes},
             {"mask_peak_cached_payload_bytes", overlays.mask_metrics.peak_cached_payload_bytes},
             {"mask_logical_payload_bytes", overlays.mask_metrics.chunk_source_bytes_read},
             {"mask_mapping_retained_bytes", overlays.mask_metrics.metadata_retained_bytes}};
+        marker["canonical_overlays"]["mask_contour_payload_reads"] =
+            overlays.mask_contour_metrics.contour_payload_reads;
+        marker["canonical_overlays"]["mask_contour_mapping_retained_bytes"] =
+            overlays.mask_contour_metrics.metadata_retained_bytes;
+        marker["canonical_overlays"]["mask_contour_cached_payload_bytes"] =
+            overlays.mask_contour_metrics.cached_payload_bytes;
+        marker["canonical_overlays"]["mask_contour_error"] =
+            overlays.mask_contour_error;
         if (overlays.selection) {
           marker["canonical_overlays"]["recording_id"] = overlays.selection->recording_id;
           marker["canonical_overlays"]["eye_run"] = overlays.selection->eye.run_id;

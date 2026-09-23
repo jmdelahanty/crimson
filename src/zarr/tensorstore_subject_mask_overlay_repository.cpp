@@ -755,6 +755,7 @@ struct CachedMaskRow {
 struct CachedMaskChunk {
   size_t chunk_id = 0;
   size_t first_row = 0;
+  bool contour_read_failed = false;
   std::vector<CachedMaskRow> rows;
   uint64_t source_bytes_read = 0;
   uint64_t contour_source_bytes_read = 0;
@@ -975,6 +976,9 @@ class TensorStoreSubjectMaskOverlayRepository final
       detection.roi_height = metadata.roi_height;
       const auto& cached_row =
           chunk->rows[metadata.mask_row - chunk->first_row];
+      if (chunk->contour_read_failed) {
+        result.error = "Sampled contour cache payload read failed; mask fills remain available";
+      }
       detection.components.resize(descriptor_.component_labels.size());
       for (size_t channel = 0; channel < detection.components.size();
            ++channel) {
@@ -1003,8 +1007,10 @@ class TensorStoreSubjectMaskOverlayRepository final
         }
         component.contour = cached_component.contour;
         for (auto& point : component.contour) {
-          point.x += metadata.roi_x;
-          point.y += metadata.roi_y;
+          point.x = metadata.roi_x +
+                    point.x * metadata.roi_width / descriptor_.mask_width;
+          point.y = metadata.roi_y +
+                    point.y * metadata.roi_height / descriptor_.mask_height;
         }
       }
       result.detections.push_back(std::move(detection));
@@ -1578,6 +1584,12 @@ class TensorStoreSubjectMaskOverlayRepository final
       }
       return nullptr;
     }
+    if (!contours_loaded) {
+      chunk->contour_read_failed = true;
+      for (auto& row : chunk->rows) {
+        for (auto& component : row.components) component.contour.clear();
+      }
+    }
     chunk->retained_bytes = CachedChunkRetainedBytes(*chunk);
     if (limits_.max_cached_payload_bytes != 0 &&
         chunk->retained_bytes > limits_.max_cached_payload_bytes) {
@@ -1939,6 +1951,9 @@ class TensorStoreSubjectMaskOverlayRepository final
       }
     }
     const size_t point_count = static_cast<size_t>(points->shape()[1]);
+    if (descriptor_.strict_v1 && point_count != source.sampled_point_count) {
+      return false;
+    }
     for (size_t local_row = 0; local_row < valid.size(); ++local_row) {
       if (valid[local_row] == 0) {
         continue;
@@ -1953,6 +1968,11 @@ class TensorStoreSubjectMaskOverlayRepository final
         const float x = *reinterpret_cast<const float*>(point);
         const float y =
             *reinterpret_cast<const float*>(point + point_strides[2]);
+        if (descriptor_.strict_v1 &&
+            (!std::isfinite(x) || !std::isfinite(y))) {
+          contour.clear();
+          return false;
+        }
         if (std::isfinite(x) && std::isfinite(y)) {
           contour.push_back({x, y});
         }

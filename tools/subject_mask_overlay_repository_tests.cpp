@@ -1,4 +1,5 @@
 #include "read_only_overlay_scene.h"
+#include "gui/bound_subject_mask_contour_cache.h"
 #include "subject_mask_overlay_buffer.h"
 #include "zarr/archive_context.h"
 #include "zarr/subject_mask_overlay_scene_adapter.h"
@@ -177,6 +178,74 @@ bool WriteJson(const std::filesystem::path &path, const json &value) {
   return output.good();
 }
 
+bool TestBoundContourCacheDiscovery(const std::filesystem::path& root) {
+  const auto group = root / "subject_mask_cache_runs";
+  CHECK(WriteJson(group / "zarr.json", {{"zarr_format", 3},
+                                        {"node_type", "group"}}));
+  std::string diagnostic;
+  CHECK(!crimson::gui::findBoundSubjectMaskContourCache(
+      root, "bound_mask", "source_digest", &diagnostic));
+  CHECK(!diagnostic.empty());
+  const auto metadata = [](const std::string& run,
+                           const std::string& source,
+                           const std::string& digest) {
+    return json{{"attributes", {{"run_manifest", {
+        {"payload_digest", std::string(64, 'a')},
+        {"payload", {{"run_id", run},
+                     {"source_refined_subject_mask_snapshot",
+                      {{"run_name", source},
+                       {"manifest_payload_digest", digest}}}}}}}}}};
+  };
+  CHECK(WriteJson(group / "wrong_source" / "zarr.json",
+                  metadata("wrong_source", "other_mask", "source_digest")));
+  CHECK(WriteJson(group / "malformed" / "zarr.json", json::object()));
+  CHECK(WriteJson(group / "bound_a" / "zarr.json",
+                  metadata("bound_a", "bound_mask", "source_digest")));
+  diagnostic.clear();
+  const auto found = crimson::gui::findBoundSubjectMaskContourCache(
+      root, "bound_mask", "source_digest", &diagnostic);
+  CHECK(found && found->run == "bound_a" && diagnostic.empty());
+  CHECK(!crimson::gui::findBoundSubjectMaskContourCache(
+      root, "bound_mask", "wrong_digest", &diagnostic));
+  CHECK(WriteJson(group / "bound_b" / "zarr.json",
+                  metadata("bound_b", "bound_mask", "source_digest")));
+  CHECK(!crimson::gui::findBoundSubjectMaskContourCache(
+      root, "bound_mask", "source_digest", &diagnostic));
+  CHECK(diagnostic.find("More than one") != std::string::npos);
+  return true;
+}
+
+bool TestMalformedContourPayloadPreservesFills(const std::filesystem::path& root) {
+  const auto chunk = root / "refined_subject_masks_runs/dense_fixture/components/"
+                            "eye_right/sampled_contours/points_xy/c/0/0/0";
+  CHECK(std::filesystem::exists(chunk));
+  {
+    std::ofstream output(chunk, std::ios::binary | std::ios::trunc);
+    CHECK(output.good());
+    output.put('\0');
+    CHECK(output.good());
+  }
+  std::string error;
+  auto archive = crimson::zarr::ArchiveContext::Open(root, &error);
+  CHECK(archive);
+  auto repository = crimson::zarr::OpenSubjectMaskOverlayRepository(
+      archive, "dense_fixture", &error);
+  CHECK(repository);
+  const auto frame = repository->resolveCameraFrame(2, 100, 80);
+  CHECK(frame.status == crimson::zarr::SubjectMaskOverlayStatus::Mapped);
+  CHECK(frame.detections.size() == 2);
+  CHECK(!frame.error.empty());
+  for (const auto& detection : frame.detections) {
+    for (const auto& component : detection.components) {
+      CHECK(component.present && component.mask);
+      CHECK(component.contour.empty());
+    }
+  }
+  CHECK(repository->metrics().dense_mask_payload_reads > 0);
+  CHECK(repository->metrics().contour_payload_reads > 0);
+  return true;
+}
+
 template <typename T, size_t Rank>
 bool WriteArrayWithChunks(
     const std::filesystem::path &root, const std::string &path,
@@ -245,7 +314,7 @@ bool WriteCropFixture(const std::filesystem::path &root) {
   CHECK(WriteJson(root / base / "zarr.json",
                   {{"zarr_format", 3},
                    {"node_type", "group"},
-                   {"attributes", {{"roi_size", {4, 4}}}}}));
+                   {"attributes", {{"roi_size", {8, 6}}}}}));
   CHECK((WriteArray<int32_t, 1>(root, base + "/frame_indices", "int32", {4},
                                 {1, 2, 2, 4})));
   CHECK((WriteArray<int32_t, 1>(root, base + "/detection_indices", "int32", {4},
@@ -314,7 +383,9 @@ bool WriteDenseFixture(const std::filesystem::path &root) {
                        {"coordinate_space", "roi_pixels"},
                        {"point_order", "xy"}}}}));
     CHECK((WriteArray<uint8_t, 1>(root, contour + "/valid", "uint8", {3},
-                                  {1, 1, 1})));
+                                  label == "subject_body"
+                                      ? std::vector<uint8_t>{1, 0, 1}
+                                      : std::vector<uint8_t>{1, 1, 1})));
     std::vector<float> points;
     for (size_t row = 0; row < 3; ++row) {
       points.insert(points.end(), {0, 0, 3, 0, 3, 3, 0, 3});
@@ -542,6 +613,17 @@ bool TestDenseRepositoryAndScene(
   CHECK(!frame.detections[0].components[0].contour.empty());
   CHECK(frame.detections[0].components[0].contour[0].x == 50.0);
   CHECK(frame.detections[0].components[0].contour[0].y == 60.0);
+  CHECK(frame.detections[0].components[0].contour[1].x == 54.5);
+  CHECK(frame.detections[0].components[0].contour[1].y == 60.0);
+  CHECK(frame.detections[0].components[0].contour[2].x == 54.5);
+  CHECK(frame.detections[0].components[0].contour[2].y == 66.0);
+  const auto empty_contour = repository->resolveCameraFrame(1, 100, 80);
+  CHECK(empty_contour.status == crimson::zarr::SubjectMaskOverlayStatus::Mapped);
+  CHECK(empty_contour.detections.size() == 1);
+  CHECK(empty_contour.detections[0].components[1].label == "subject_body");
+  CHECK(empty_contour.detections[0].components[1].present);
+  CHECK(empty_contour.detections[0].components[1].contour.empty());
+  CHECK(empty_contour.error.empty());
   for (const auto &detection : frame.detections) {
     CHECK(std::all_of(detection.components.begin(), detection.components.end(),
                       [](const auto &component) {
@@ -571,6 +653,8 @@ bool TestDenseRepositoryAndScene(
         8);
   CHECK(scene.count(crimson::overlay::CameraOverlayLayer::SubjectMasks) == 8);
   CHECK(scene.raster_masks[0].label == "subject_body");
+  CHECK(scene.raster_masks[0].source_rect.width == 6.0);
+  CHECK(scene.raster_masks[0].source_rect.height == 8.0);
   CHECK(scene.raster_masks[2].label == "swim_bladder");
   CHECK(scene.raster_masks[4].label == "eye_left");
   CHECK(scene.raster_masks[6].label == "eye_right");
@@ -763,8 +847,8 @@ bool TestNeutralRepositoryContract() {
   row.source_crop_row_id = 9;
   row.roi_x = 10.0;
   row.roi_y = 20.0;
-  row.roi_width = 2.0;
-  row.roi_height = 2.0;
+  row.roi_width = 4.0;
+  row.roi_height = 6.0;
   row.components = {body, invalid};
 
   auto repository = crimson::zarr::MakeSubjectMaskOverlayRepository(
@@ -774,8 +858,8 @@ bool TestNeutralRepositoryContract() {
         crimson::zarr::SubjectMaskOverlayStatus::Mapped);
   CHECK(resolution.detections.size() == 1);
   CHECK(resolution.detections[0].components[0].contour.size() == 1);
-  CHECK(resolution.detections[0].components[0].contour[0].x == 11.0);
-  CHECK(resolution.detections[0].components[0].contour[0].y == 22.0);
+  CHECK(resolution.detections[0].components[0].contour[0].x == 12.0);
+  CHECK(resolution.detections[0].components[0].contour[0].y == 26.0);
   const auto input = crimson::zarr::makeSubjectMaskOverlaySceneInput(
       repository->descriptor(), resolution, 0, 4, 0, 100, 80);
   CHECK(input.subject_masks.size() == 1);
@@ -827,12 +911,14 @@ bool TestReverseLookaheadDoesNotResetGeneration() {
   CHECK(buffer.waitForFrame(5, std::chrono::seconds(2)));
   CHECK(buffer.waitForFrame(6, std::chrono::seconds(2)));
   CHECK(buffer.waitForFrame(7, std::chrono::seconds(2)));
+  scheduler->waitUntilIdle();
   const uint64_t cancellations_before =
       scheduler->metrics().queue.cancelled_requests;
   CHECK(buffer.requestFrame(4, 100, 80, false, &error));
   CHECK(buffer.waitForFrame(4, std::chrono::seconds(2)));
   CHECK(buffer.waitForFrame(3, std::chrono::seconds(2)));
   CHECK(buffer.waitForFrame(2, std::chrono::seconds(2)));
+  scheduler->waitUntilIdle();
   CHECK(buffer.frame(2) != nullptr);
   CHECK(scheduler->metrics().queue.cancelled_requests == cancellations_before);
   CHECK(buffer.metrics().discarded_results == 0);
@@ -947,6 +1033,7 @@ int main() {
   const auto root = temporary.path() / "analysis.zarr";
   std::filesystem::create_directories(root);
   if (!WriteCropFixture(root) || !WriteDenseFixture(root) ||
+      !TestBoundContourCacheDiscovery(root) ||
       !WriteInvalidFrameCountsFixture(root) ||
       !WriteBitpackedFixture(root) || !WriteRleFixture(root) ||
       !WriteChunkedDenseFixture(root)) {
@@ -963,7 +1050,8 @@ int main() {
       !TestBoundedBufferAndDiscontinuity() ||
       !TestReverseLookaheadDoesNotResetGeneration() ||
       !TestDecodedByteBudgetAndOversizedAdmission() ||
-      !TestSchedulerCapacityEvictionRecovers()) {
+      !TestSchedulerCapacityEvictionRecovers() ||
+      !TestMalformedContourPayloadPreservesFills(root)) {
     std::cerr << error << '\n';
     return 1;
   }

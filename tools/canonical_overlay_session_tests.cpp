@@ -130,6 +130,53 @@ class MaskReader : public crimson::zarr::SubjectMaskOverlayRepository {
   crimson::zarr::SubjectMaskOverlayDescriptor descriptor_;
   std::shared_ptr<MaskReaderState> state_;
 };
+
+struct ContourReaderState {
+  std::mutex mutex;
+  std::vector<int64_t> reads;
+  std::shared_ptr<Gate> gate;
+};
+class ContourReader : public crimson::zarr::SubjectMaskOverlayRepository {
+ public:
+  explicit ContourReader(std::shared_ptr<ContourReaderState> state)
+      : state_(std::move(state)) {
+    descriptor_.source_group = "subject_mask_cache_runs";
+    descriptor_.run_name = "contour-fixture";
+    descriptor_.camera_frame_count = 80;
+    descriptor_.row_count = 80;
+    descriptor_.mask_width = descriptor_.mask_height = 2;
+    descriptor_.component_labels = {"subject_body"};
+    descriptor_.contour_only = true;
+  }
+  const crimson::zarr::SubjectMaskOverlayDescriptor& descriptor() const override {
+    return descriptor_;
+  }
+  crimson::zarr::SubjectMaskOverlayResolution resolveCameraFrame(
+      int64_t frame, int, int) const override {
+    {
+      std::lock_guard<std::mutex> lock(state_->mutex);
+      state_->reads.push_back(frame);
+    }
+    if (frame == 4 && state_->gate) state_->gate->block();
+    if (frame == 6) throw std::runtime_error("fixture contour read failure");
+    crimson::zarr::SubjectMaskOverlayResolution result;
+    result.camera_frame = frame;
+    result.status = crimson::zarr::SubjectMaskOverlayStatus::Mapped;
+    crimson::zarr::SubjectMaskOverlayDetection detection;
+    detection.instance_key = 0;
+    detection.source_crop_row_id = -1;
+    crimson::zarr::SubjectMaskOverlayComponent component;
+    component.label = "subject_body";
+    component.channel_index = 0;
+    component.contour = {{10.0, 20.0}, {20.0, 20.0}, {20.0, 30.0}};
+    detection.components.push_back(std::move(component));
+    result.detections.push_back(std::move(detection));
+    return result;
+  }
+ private:
+  crimson::zarr::SubjectMaskOverlayDescriptor descriptor_;
+  std::shared_ptr<ContourReaderState> state_;
+};
 crimson::gui::CanonicalOverlayOpenRequest request(std::string name) {
   crimson::gui::CanonicalOverlayOpenRequest result;
   result.archive_path = std::move(name);
@@ -155,6 +202,13 @@ crimson::gui::CanonicalOverlayRepositories openedMasks(
   result.masks = std::make_unique<MaskReader>(state);
   return result;
 }
+crimson::gui::CanonicalOverlayRepositories openedMasksAndContours(
+    const std::string& name, const std::shared_ptr<MaskReaderState>& masks,
+    const std::shared_ptr<ContourReaderState>& contours) {
+  auto result = openedMasks(name, masks);
+  result.mask_contours = std::make_unique<ContourReader>(contours);
+  return result;
+}
 bool waitFrame(crimson::gui::CanonicalOverlaySession& session, int64_t frame) {
   const auto deadline = std::chrono::steady_clock::now() + 3s;
   while (std::chrono::steady_clock::now() < deadline) {
@@ -168,6 +222,15 @@ bool waitMaskState(crimson::gui::CanonicalOverlaySession& session,
   const auto deadline = std::chrono::steady_clock::now() + 3s;
   while (std::chrono::steady_clock::now() < deadline) {
     if (session.snapshot(frame).masks.state == state) return true;
+    std::this_thread::sleep_for(1ms);
+  }
+  return false;
+}
+bool waitContourState(crimson::gui::CanonicalOverlaySession& session,
+                      int64_t frame, CanonicalOverlayState state) {
+  const auto deadline = std::chrono::steady_clock::now() + 3s;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (session.snapshot(frame).mask_contours.state == state) return true;
     std::this_thread::sleep_for(1ms);
   }
   return false;
@@ -323,10 +386,82 @@ bool testMaskReadAheadAtRenderRate(int render_hz) {
   scheduler->shutdown();
   return true;
 }
+bool testIndependentContourDemandAndFailure() {
+  auto scheduler = std::make_shared<crimson::data::DataAccessScheduler>(32, 3, 1, 1);
+  auto mask_state = std::make_shared<MaskReaderState>();
+  auto contour_state = std::make_shared<ContourReaderState>();
+  contour_state->gate = std::make_shared<Gate>();
+  crimson::gui::CanonicalOverlaySession session(
+      scheduler, [mask_state, contour_state](const auto& r) {
+        return openedMasksAndContours(r.archive_path, mask_state, contour_state);
+      });
+  auto open_request = request("independent-contours");
+  open_request.frame_count = 80;
+  CHECK(session.beginOpen(open_request));
+  CHECK(session.waitUntilOpen(3s));
+
+  // A fill-only request must not schedule even one contour payload read.
+  CHECK(session.requestFrame(2, false, true, false, true));
+  CHECK(waitMaskState(session, 2, CanonicalOverlayState::Ready));
+  {
+    std::lock_guard<std::mutex> lock(contour_state->mutex);
+    CHECK(contour_state->reads.empty());
+  }
+  CHECK(!session.snapshot(2).mask_contours.frame);
+
+  // A blocked contour read must not hold a ready fill frame hostage.
+  CHECK(session.requestFrame(4, false, true, false, true, {}, true));
+  const bool contour_started = contour_state->gate->wait();
+  const bool fill_ready_while_contour_blocked =
+      waitMaskState(session, 4, CanonicalOverlayState::Ready);
+  const auto blocked = session.snapshot(4);
+  contour_state->gate->release();
+  CHECK(contour_started && fill_ready_while_contour_blocked);
+  CHECK(blocked.masks.frame && blocked.masks.frame->camera_frame == 4);
+  CHECK(!blocked.mask_contours.frame);
+  CHECK(waitContourState(session, 4, CanonicalOverlayState::Ready));
+
+  CHECK(session.requestFrame(5, false, true, false, true, {}, true));
+  const auto after_seek = session.snapshot(5);
+  CHECK(!after_seek.mask_contours.frame ||
+        after_seek.mask_contours.frame->camera_frame == 5);
+  CHECK(waitMaskState(session, 5, CanonicalOverlayState::Ready));
+  CHECK(waitContourState(session, 5, CanonicalOverlayState::Ready));
+  CHECK(session.snapshot(5).mask_contours.frame->camera_frame == 5);
+
+  CHECK(session.requestFrame(6, false, true, false, true, {}, true));
+  CHECK(waitMaskState(session, 6, CanonicalOverlayState::Ready));
+  CHECK(waitContourState(session, 6, CanonicalOverlayState::Failed));
+  const auto failed = session.snapshot(6);
+  CHECK(failed.masks.frame && failed.masks.frame->camera_frame == 6);
+  if (failed.mask_contours.frame) {
+    CHECK(failed.mask_contours.frame->camera_frame == 6);
+    CHECK(failed.mask_contours.frame->status ==
+          crimson::zarr::SubjectMaskOverlayStatus::ReadFailed);
+    CHECK(failed.mask_contours.frame->detections.empty());
+  }
+  CHECK(!failed.mask_contours.error.empty());
+
+  size_t contour_reads_before_fill_only = 0;
+  {
+    std::lock_guard<std::mutex> lock(contour_state->mutex);
+    contour_reads_before_fill_only = contour_state->reads.size();
+  }
+  CHECK(session.requestFrame(7, false, true, false, true));
+  CHECK(waitMaskState(session, 7, CanonicalOverlayState::Ready));
+  {
+    std::lock_guard<std::mutex> lock(contour_state->mutex);
+    CHECK(contour_state->reads.size() == contour_reads_before_fill_only);
+  }
+  session.shutdown();
+  scheduler->shutdown();
+  return true;
+}
 int main() {
   if (!testSnapshotsAndFailures() || !testSupersededOpen() ||
       !testNonblockingCloseAndSourceIsolation() ||
       !testMaskReadAheadAtRenderRate(30) ||
-      !testMaskReadAheadAtRenderRate(60)) return 1;
+      !testMaskReadAheadAtRenderRate(60) ||
+      !testIndependentContourDemandAndFailure()) return 1;
   std::cout << "canonical_overlay_session_tests passed\n";
 }

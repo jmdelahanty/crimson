@@ -1,4 +1,5 @@
 #include "gui/canonical_overlay_session.h"
+#include "gui/bound_subject_mask_contour_cache.h"
 
 #include "zarr/archive_context.h"
 #include "zarr/tensorstore_bound_keypoint_overlay_repository.h"
@@ -60,6 +61,42 @@ CanonicalOverlayRepositories openCanonicalOverlayRepositories(
         result.mask_error = "Bound mask frame domain disagrees with indexed video";
       }
     }, result.mask_error);
+    if (result.masks) {
+      const auto cache = findBoundSubjectMaskContourCache(
+          archive->rootPath(), selection->mask.run_id,
+          selection->mask.manifest_payload_digest,
+          &result.mask_contour_error);
+      if (cache) {
+        open_product([&] {
+          zarr::SubjectMaskOverlayOpenOptions contours;
+          contours.requested_run = selection->mask.run_id;
+          contours.expected_manifest_payload_digest =
+              selection->mask.manifest_payload_digest;
+          contours.allow_selector_ineligible =
+              selection->mask.bound_selector_exception;
+          contours.require_strict_v1 = true;
+          contours.presentation_cache_archive = archive;
+          contours.presentation_cache_run = cache->run;
+          contours.expected_presentation_cache_manifest_payload_digest =
+              cache->digest;
+          contours.contour_only = true;
+          contours.max_read_rows = 8;
+          contours.max_cached_payload_bytes = 64ULL * 1024 * 1024;
+          contours.max_mapping_bytes = 768ULL * 1024 * 1024;
+          contours.max_observations_per_frame = 16;
+          contours.disable_prefetch = true;
+          result.mask_contours = zarr::OpenSubjectMaskOverlayRepository(
+              archive, contours, &result.mask_contour_error);
+          if (result.mask_contours &&
+              result.mask_contours->descriptor().camera_frame_count !=
+                  request.frame_count) {
+            result.mask_contours.reset();
+            result.mask_contour_error =
+                "Bound contour frame domain disagrees with indexed video";
+          }
+        }, result.mask_contour_error);
+      }
+    }
   }
   if (selection->shape.valid) {
     open_product([&] {

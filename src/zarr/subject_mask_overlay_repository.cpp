@@ -71,8 +71,15 @@ public:
                            }),
             component.contour.end());
         for (auto &point : component.contour) {
-          point.x += row.roi_x;
-          point.y += row.roi_y;
+          if (component.mask_width > 0 && component.mask_height > 0) {
+            point.x = row.roi_x +
+                      point.x * row.roi_width / component.mask_width;
+            point.y = row.roi_y +
+                      point.y * row.roi_height / component.mask_height;
+          } else {
+            point.x += row.roi_x;
+            point.y += row.roi_y;
+          }
         }
       }
       result.detections.push_back(std::move(detection));

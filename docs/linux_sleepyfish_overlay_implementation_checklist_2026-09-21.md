@@ -11,6 +11,12 @@ contour outlines and swim-bout/core shading on the speed graph. Filled masks,
 keypoints, valid headings and shape lines are in this increment. A fresh
 Ubuntu 22 colleague package has not been built or published from these changes.
 
+September 23 follow-up: the deferred mask contours and full shape controls are
+now implemented and locally validated on `codex/main-integration-20260922`;
+see [the contours/shape report](linux_sleepyfish_contours_shape_controls_2026-09-23.md).
+Swim-bout/core shading remains deferred. Other dated baseline and package
+statements below describe the September 21 checkpoint, not current packaging.
+
 ## Stable checkpoint
 
 - [x] Active worktree is `crimson-linux-priority-20260916`, branch
@@ -175,10 +181,12 @@ reviewed selection/identity contract before a renderer or selector is changed.
   option. Keep strict validation intact; add a versioned branch only if a
   concrete unsupported contract is found. Metadata compatibility alone is not
   a successful runtime open or payload qualification.
-- [ ] Validate a compatible digest-bound sampled-contour cache before using it
+- [x] Validate a compatible digest-bound sampled-contour cache before using it
   for outline presentation. Do not assume a cache from another recording or
   publication version is usable. Filled masks require explicit bounded dense/
   packed/RLE reads when no suitable presentation surface exists.
+  Completed in the [September 23 follow-up](linux_sleepyfish_contours_shape_controls_2026-09-23.md),
+  with strict source binding, physical metadata and sampled payload checks.
 - [x] Support shape v5's exact frame/key/mask-row contract and propagate stable
   observation identity through its declared rows in the exact bound mask run
   into shape resolution and scene types. Do not use positional joins or rename
@@ -275,8 +283,9 @@ qualification from a different subject-mask bundle.
 - [x] Wire keypoint markers, declared heading arrows, mask components/fill
   and valid shape geometry into Camera View and Frame Inspect.
   Disable legacy editing tools on these read-only canonical sources.
-- [ ] Deferred by user: add mask contour outlines and restore swim-bout/core
-  shading on the speed trace after this increment is stable.
+- [x] Add the deferred mask contour outlines after this increment is stable;
+  see the [September 23 follow-up](linux_sleepyfish_contours_shape_controls_2026-09-23.md).
+- [ ] Still deferred: restore swim-bout/core shading on the speed trace.
 - [x] Represent each product as opening, pending, ready, valid-empty, unavailable
   or failed. A product failure must not become a silent empty result or prevent
   independent valid layers from drawing.

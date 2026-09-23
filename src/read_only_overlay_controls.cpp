@@ -27,6 +27,18 @@ void applyReadOnlyOverlayControls(const ReadOnlyOverlayControlState& controls,
     input->show_subject_mask_fills = controls.show_subject_masks;
     input->show_subject_mask_contours =
         controls.show_subject_masks && detailed_masks;
+    input->independent_mask_contours = controls.independent_mask_contours;
+    if (controls.independent_mask_contours) {
+        input->show_subject_mask_contours =
+            controls.show_subject_body_contour ||
+            controls.show_eye_left_contour ||
+            controls.show_eye_right_contour ||
+            controls.show_swim_bladder_contour;
+    }
+    input->show_subject_body_contour = controls.show_subject_body_contour;
+    input->show_eye_left_contour = controls.show_eye_left_contour;
+    input->show_eye_right_contour = controls.show_eye_right_contour;
+    input->show_swim_bladder_contour = controls.show_swim_bladder_contour;
     input->show_subject_body_mask = controls.show_subject_body_mask;
     input->show_eye_left_mask = controls.show_eye_left_mask;
     input->show_eye_right_mask = controls.show_eye_right_mask;

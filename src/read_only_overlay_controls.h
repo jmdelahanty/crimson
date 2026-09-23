@@ -23,6 +23,13 @@ struct ReadOnlyOverlayControlState {
     bool show_eye_left_mask = true;
     bool show_eye_right_mask = true;
     bool show_swim_bladder_mask = true;
+    // Legacy mode keeps fill and contour visibility coupled. Canonical camera
+    // controls can opt into separate contour visibility for each component.
+    bool independent_mask_contours = false;
+    bool show_subject_body_contour = false;
+    bool show_eye_left_contour = false;
+    bool show_eye_right_contour = false;
+    bool show_swim_bladder_contour = false;
     ReadOnlyMaskOverlayMode mask_mode = ReadOnlyMaskOverlayMode::Review;
 
     bool show_eye_geometry = true;

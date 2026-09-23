@@ -9,6 +9,8 @@
 #include "gui/keypoint_overlay_inspect_adapter.h"
 #include "gui/subject_mask_overlay_inspect_adapter.h"
 #include "gui/subject_shape_overlay_inspect_adapter.h"
+#include "gui/camera_view_subject_shape_controls_adapter.h"
+#include "gui/subject_shape_overlay_controls.h"
 
 #include "imgui.h"
 
@@ -93,15 +95,29 @@ FrameDebugWindowResult drawFrameDebugWindow(const FrameDebugWindowContext& conte
                         ImGui::SameLine(); ImGui::Checkbox("Right eye", &result.show_eye_right_mask);
                         ImGui::SameLine(); ImGui::Checkbox("Swim bladder", &result.show_swim_bladder_mask);
                         show_status("Masks", snapshot.masks);
+                        show_status("Contours", snapshot.mask_contours);
+                        if (!snapshot.mask_contour_error.empty())
+                            ImGui::TextDisabled("Contours: %s", snapshot.mask_contour_error.c_str());
                         auto masks = crimson::gui::makeSubjectMaskOverlayInspectPresentation(
                             snapshot.masks.descriptor.run_name.empty() ? nullptr : &snapshot.masks.descriptor,
                             snapshot.masks.frame.get(), snapshot.requested_frame);
                         crimson::gui::drawFrameInspectSubjectMaskModule(masks, state.subject_mask_inspect);
                         ImGui::Separator();
-                        ImGui::Checkbox("Show subject shape", &result.subject_shape_overlay_options.show_overlay);
-                        ImGui::Checkbox("Body axes", &result.subject_shape_overlay_options.show_body_frame_axes);
-                        ImGui::SameLine(); ImGui::Checkbox("Centerline", &result.subject_shape_overlay_options.show_centerline);
-                        ImGui::SameLine(); ImGui::Checkbox("B-spline", &result.subject_shape_overlay_options.show_bspline_sample);
+                        auto shape_controls = makeCameraViewSubjectShapeOverlayControlState(
+                            result.subject_shape_overlay_options);
+                        const bool contour_available =
+                            !snapshot.mask_contours.descriptor.presentation_cache_run.empty();
+                        crimson::gui::drawSubjectShapeOverlayControls(
+                            shape_controls,
+                            {!snapshot.shapes.descriptor.run_name.empty(),
+                             contour_available, contour_available,
+                             contour_available,
+                             snapshot.shapes.descriptor.bspline_sample_point_count > 0,
+                             snapshot.shapes.descriptor.bspline_control_point_count > 0,
+                             snapshot.shapes.descriptor.tail_sample_point_count > 0,
+                             "Show shape / contours"});
+                        applyCameraViewSubjectShapeOverlayControlState(
+                            shape_controls, &result.subject_shape_overlay_options);
                         show_status("Shape", snapshot.shapes);
                         auto shapes = crimson::gui::makeSubjectShapeOverlayInspectPresentation(
                             snapshot.shapes.descriptor.run_name.empty() ? nullptr : &snapshot.shapes.descriptor,

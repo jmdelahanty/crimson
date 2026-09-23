@@ -15,6 +15,7 @@ gui::CanonicalOverlaySnapshot fixture() {
   selection->keypoints.valid = selection->mask.valid = selection->shape.valid = true;
   selection->keypoints.run_id = "keypoints";
   selection->mask.run_id = "masks";
+  selection->mask.manifest_payload_digest = "mask-digest";
   selection->shape.run_id = "shapes";
   value.selection = selection;
   value.keypoints.state = value.masks.state = value.shapes.state = gui::CanonicalOverlayState::Ready;
@@ -24,6 +25,7 @@ gui::CanonicalOverlaySnapshot fixture() {
   value.masks.descriptor.strict_v1 = true;
   value.masks.descriptor.component_labels = {"subject_body"};
   value.masks.descriptor.cache_namespace = "archive:masks:digest";
+  value.masks.descriptor.run_manifest_payload_digest = "mask-digest";
   value.shapes.descriptor.run_name = "shapes";
   value.shapes.descriptor.geometry_in_source_camera_coordinates = true;
   value.shapes.descriptor.coordinate_width = value.shapes.descriptor.coordinate_height = 4512;
@@ -176,9 +178,84 @@ bool invalidInferenceGeometryDoesNotSuppressIndependentProducts() {
   CHECK(output.snapshot.shapes.state == gui::CanonicalOverlayState::Ready);
   return true;
 }
+bool contoursJoinOnlyExactBoundRowsAndDoNotBlockFills() {
+  auto with_contours = [] {
+    auto value = fixture();
+    value.mask_contours.state = gui::CanonicalOverlayState::Ready;
+    value.mask_contours.descriptor = value.masks.descriptor;
+    value.mask_contours.descriptor.contour_only = true;
+    value.mask_contours.descriptor.presentation_cache_run = "sampled-cache";
+    auto frame = std::make_shared<zarr::SubjectMaskOverlayResolution>(*value.masks.frame);
+    for (auto& row : frame->detections) {
+      for (auto& component : row.components) {
+        component.mask.reset();
+        component.present = false;
+        component.contour = {{row.roi_x,row.roi_y},
+                             {row.roi_x + 2,row.roi_y},
+                             {row.roi_x + 2,row.roi_y + 2}};
+      }
+    }
+    value.mask_contours.frame = frame;
+    return value;
+  };
+  overlay::ReadOnlyOverlayControlState controls;
+  controls.independent_mask_contours = true;
+  controls.show_subject_body_contour = true;
+  controls.show_subject_masks = false;
+  auto output = present(with_contours(), controls);
+  CHECK(output.masks.ready());
+  CHECK(output.masks.raster_masks.empty());
+  CHECK(output.masks.primitives.size() == 2);
+  CHECK(output.masks.primitives[0].instance_key == std::numeric_limits<uint64_t>::max());
+  CHECK(output.masks.primitives[1].instance_key == 0);
+
+  controls.show_subject_masks = true;
+  auto pending = with_contours();
+  pending.mask_contours.state = gui::CanonicalOverlayState::Pending;
+  pending.mask_contours.frame.reset();
+  output = present(pending, controls);
+  CHECK(output.masks.raster_masks.size() == 2);
+  CHECK(output.masks.primitives.empty());
+  CHECK(output.snapshot.mask_contours.state == gui::CanonicalOverlayState::Pending);
+
+  auto reject = [&](auto mutate) {
+    auto value = with_contours();
+    auto frame = std::make_shared<zarr::SubjectMaskOverlayResolution>(
+        *value.mask_contours.frame);
+    value.mask_contours.frame = frame;
+    mutate(value, *frame);
+    auto rejected = present(value, controls);
+    CHECK(rejected.snapshot.mask_contours.state == gui::CanonicalOverlayState::Failed);
+    CHECK(rejected.masks.raster_masks.size() == 2);
+    CHECK(rejected.masks.primitives.empty());
+    return true;
+  };
+  CHECK(reject([](auto&, auto& frame) { frame.camera_frame = 53999; }));
+  CHECK(reject([](auto&, auto& frame) {
+    frame.detections[1].instance_key = frame.detections[0].instance_key;
+  }));
+  CHECK(reject([](auto&, auto& frame) {
+    frame.detections[0].source_crop_row_id = 77;
+  }));
+  CHECK(reject([](auto&, auto& frame) { frame.detections[0].roi_x += 1; }));
+  CHECK(reject([](auto&, auto& frame) {
+    frame.detections[0].components[0].label = "eye_left";
+  }));
+  CHECK(reject([](auto& value, auto&) {
+    value.mask_contours.descriptor.run_name = "other-mask-run";
+  }));
+  CHECK(reject([](auto& value, auto&) {
+    value.mask_contours.descriptor.run_manifest_payload_digest = "other-digest";
+  }));
+  CHECK(reject([](auto& value, auto&) {
+    value.mask_contours.descriptor.presentation_cache_run.clear();
+  }));
+  return true;
+}
 int main() {
   if (!joinsByKeyAndPreservesCoordinates() || !rejectsStaleOrUnboundProducts() ||
       !mismatchesDuplicatesAndEmptyFrames() ||
-      !invalidInferenceGeometryDoesNotSuppressIndependentProducts()) return 1;
+      !invalidInferenceGeometryDoesNotSuppressIndependentProducts() ||
+      !contoursJoinOnlyExactBoundRowsAndDoNotBlockFills()) return 1;
   std::cout << "canonical_overlay_presentation_tests passed\n";
 }

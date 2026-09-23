@@ -1,4 +1,5 @@
 #include "gui/camera_view_subject_shape_controls_adapter.h"
+#include "gui/read_only_subject_shape_controls_adapter.h"
 
 crimson::gui::SubjectShapeOverlayControlState
 makeCameraViewSubjectShapeOverlayControlState(
@@ -43,4 +44,28 @@ void applyCameraViewSubjectShapeOverlayControlState(
   destination->show_bspline_control_points = source.show_bspline_control_points;
   destination->show_tail_samples = source.show_tail_samples;
   destination->show_tail_normals = source.show_tail_normals;
+}
+
+bool cameraViewCanonicalMaskContoursRequested(
+    const CameraViewSubjectShapeOverlayOptions &source) {
+  return source.show_overlay &&
+         (source.show_body_contour || source.show_swim_bladder_contour ||
+          source.show_eye_contours);
+}
+
+void applyCameraViewCanonicalSubjectShapeControls(
+    const CameraViewSubjectShapeOverlayOptions &source,
+    crimson::overlay::ReadOnlyOverlayControlState *destination) {
+  if (destination == nullptr) return;
+  crimson::gui::applyReadOnlySubjectShapeOverlayControlState(
+      makeCameraViewSubjectShapeOverlayControlState(source), destination);
+  destination->independent_mask_contours = true;
+  destination->show_subject_body_contour =
+      source.show_overlay && source.show_body_contour;
+  destination->show_swim_bladder_contour =
+      source.show_overlay && source.show_swim_bladder_contour;
+  destination->show_eye_left_contour =
+      source.show_overlay && source.show_eye_contours;
+  destination->show_eye_right_contour =
+      destination->show_eye_left_contour;
 }

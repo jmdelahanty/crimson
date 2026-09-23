@@ -39,6 +39,7 @@ void populate(Product& output, const std::shared_ptr<Buffer>& buffer,
   if (output.frame->status == Status::Mapped) {
     output.state = output.frame->detections.empty() ? CanonicalOverlayState::Empty
                                                    : CanonicalOverlayState::Ready;
+    if (!output.frame->error.empty()) output.error = output.frame->error;
   } else if (output.frame->status == Status::Missing) {
     output.state = CanonicalOverlayState::Empty;
   } else {
@@ -56,12 +57,14 @@ struct CanonicalOverlaySession::Impl {
     std::shared_ptr<const zarr::CanonicalOverlaySelection> selection;
     std::shared_ptr<KeypointOverlayBuffer> keypoints;
     std::shared_ptr<SubjectMaskOverlayBuffer> masks;
+    std::shared_ptr<SubjectMaskOverlayBuffer> mask_contours;
     std::shared_ptr<SubjectShapeOverlayBuffer> shapes;
-    std::string keypoint_error, mask_error, shape_error;
+    std::string keypoint_error, mask_error, mask_contour_error, shape_error;
     double open_ms = 0;
     void retire() {
       if (keypoints) keypoints->close();
       if (masks) masks->close();
+      if (mask_contours) mask_contours->close();
       if (shapes) shapes->close();
     }
   };
@@ -120,6 +123,8 @@ struct CanonicalOverlaySession::Impl {
               std::move(repositories.selection));
           candidate->keypoint_error = std::move(repositories.keypoint_error);
           candidate->mask_error = std::move(repositories.mask_error);
+          candidate->mask_contour_error =
+              std::move(repositories.mask_contour_error);
           candidate->shape_error = std::move(repositories.shape_error);
           const auto identity = request.archive_path + ":canonical-overlay:" +
                                 std::to_string(session_identity) + ":" + std::to_string(version);
@@ -138,6 +143,17 @@ struct CanonicalOverlaySession::Impl {
             if (!candidate->masks->open(std::move(repositories.masks),
                                        mask_policy, &candidate->mask_error))
               candidate->masks.reset();
+          }
+          if (repositories.mask_contours) {
+            candidate->mask_contours = std::make_shared<SubjectMaskOverlayBuffer>(
+                scheduler, identity + ":mask-contours");
+            SubjectMaskOverlayBufferPolicy contour_policy;
+            contour_policy.maximum_cached_frames = 32;
+            contour_policy.maximum_cached_payload_bytes = 64ULL * 1024ULL * 1024ULL;
+            if (!candidate->mask_contours->open(
+                    std::move(repositories.mask_contours), contour_policy,
+                    &candidate->mask_contour_error))
+              candidate->mask_contours.reset();
           }
           if (repositories.shapes) {
             candidate->shapes = std::make_shared<SubjectShapeOverlayBuffer>(scheduler, identity);
@@ -214,7 +230,8 @@ void CanonicalOverlaySession::close() {
 bool CanonicalOverlaySession::requestFrame(int64_t frame, bool keypoints,
                                           bool masks, bool shapes,
                                           bool discontinuity,
-                                          CanonicalOverlayPlaybackDemand playback) {
+                                          CanonicalOverlayPlaybackDemand playback,
+                                          bool mask_contours) {
   std::shared_ptr<Impl::Epoch> epoch;
   {
     std::lock_guard<std::mutex> lock(impl_->mutex);
@@ -226,7 +243,7 @@ bool CanonicalOverlaySession::requestFrame(int64_t frame, bool keypoints,
   bool accepted = true;
   if (keypoints && epoch->keypoints)
     accepted = epoch->keypoints->requestFrame(frame, width, height, discontinuity) && accepted;
-  if (masks && epoch->masks) {
+  if ((masks && epoch->masks) || (mask_contours && epoch->mask_contours)) {
     SubjectMaskPlaybackDemand mask_playback;
     mask_playback.read_ahead = playback.read_ahead;
     mask_playback.source_frames_per_second =
@@ -243,9 +260,14 @@ bool CanonicalOverlaySession::requestFrame(int64_t frame, bool keypoints,
         mask_playback.direction = SubjectMaskPlaybackDirection::Reverse;
         break;
     }
-    accepted = epoch->masks->requestFrame(
-                   frame, width, height, mask_playback, discontinuity) &&
-               accepted;
+    if (masks && epoch->masks)
+      accepted = epoch->masks->requestFrame(
+                     frame, width, height, mask_playback, discontinuity) &&
+                 accepted;
+    if (mask_contours && epoch->mask_contours)
+      accepted = epoch->mask_contours->requestFrame(
+                     frame, width, height, mask_playback, discontinuity) &&
+                 accepted;
   }
   if (shapes && epoch->shapes)
     accepted = epoch->shapes->requestFrame(frame, width, height, discontinuity) && accepted;
@@ -265,15 +287,23 @@ CanonicalOverlaySnapshot CanonicalOverlaySession::snapshot(int64_t frame) const 
   if (epoch) {
     result.selection = epoch->selection;
     result.open_ms = epoch->open_ms;
+    result.mask_contour_error = epoch->mask_contour_error;
     populate(result.keypoints, epoch->keypoints, epoch->keypoint_error, frame);
     populate(result.masks, epoch->masks, epoch->mask_error, frame);
+    populate(result.mask_contours, epoch->mask_contours,
+             epoch->mask_contour_error, frame);
     populate(result.shapes, epoch->shapes, epoch->shape_error, frame);
     if (epoch->masks) {
       result.mask_metrics = epoch->masks->repositoryMetrics();
       result.mask_buffer_metrics = epoch->masks->metrics();
     }
+    if (epoch->mask_contours) {
+      result.mask_contour_metrics = epoch->mask_contours->repositoryMetrics();
+      result.mask_contour_buffer_metrics = epoch->mask_contours->metrics();
+    }
   } else if (result.state == CanonicalOverlayState::Opening) {
-    result.keypoints.state = result.masks.state = result.shapes.state = CanonicalOverlayState::Opening;
+    result.keypoints.state = result.masks.state = result.mask_contours.state =
+        result.shapes.state = CanonicalOverlayState::Opening;
   }
   {
     std::lock_guard<std::mutex> lock(impl_->mutex);

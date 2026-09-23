@@ -294,11 +294,18 @@ void appendSubjectMasks(const ReadOnlyOverlayInput &input,
         (component->label != "eye_left" || input.show_eye_left_mask) &&
         (component->label != "eye_right" || input.show_eye_right_mask) &&
         (component->label != "swim_bladder" || input.show_swim_bladder_mask);
-    if (!component_visible) {
+    const bool contour_visible = !input.independent_mask_contours
+        ? component_visible
+        : (component->label == "subject_body" ? input.show_subject_body_contour
+           : component->label == "eye_left" ? input.show_eye_left_contour
+           : component->label == "eye_right" ? input.show_eye_right_contour
+           : component->label == "swim_bladder" ? input.show_swim_bladder_contour
+           : false);
+    if (!component_visible && !contour_visible) {
       continue;
     }
     const Color color = subjectMaskColor(component->label);
-    if (input.show_subject_mask_fills && component->source_rect.valid() &&
+    if (component_visible && input.show_subject_mask_fills && component->source_rect.valid() &&
         component->mask && component->mask_width > 0 &&
         component->mask_height > 0 &&
         component->mask_width <=
@@ -317,7 +324,8 @@ void appendSubjectMasks(const ReadOnlyOverlayInput &input,
                          ":" + std::to_string(component->channel_index);
       scene.raster_masks.push_back(std::move(raster));
     }
-    if (input.show_subject_mask_contours && component->contour.size() > 1) {
+    if (contour_visible && input.show_subject_mask_contours &&
+        component->contour.size() > 1) {
       Primitive contour;
       contour.type = PrimitiveType::Polyline;
       contour.layer = CameraOverlayLayer::SubjectMasks;
@@ -330,6 +338,7 @@ void appendSubjectMasks(const ReadOnlyOverlayInput &input,
         }
       }
       contour.stroke = withAlpha(color, 0.95f);
+      contour.instance_key = component->instance_key;
       contour.stroke_width_px = component->label == "subject_body" ? 1.5 : 1.75;
       contour.label = "##mask_contour_" + component->label + "_" +
                       std::to_string(component->source_crop_row_id);
@@ -710,6 +719,7 @@ void appendShapePolyline(const SubjectShapeInput &shape,
   primitive.layer = CameraOverlayLayer::SubjectShape;
   primitive.points = std::move(converted);
   primitive.stroke = color;
+  primitive.instance_key = shape.instance_key;
   primitive.stroke_width_px = width;
   primitive.label = label;
   primitives.push_back(std::move(primitive));
@@ -728,6 +738,7 @@ void appendShapeMarker(const SubjectShapeInput &shape, Point point,
   primitive.layer = CameraOverlayLayer::SubjectShape;
   primitive.points = {converted};
   primitive.marker_shape = marker;
+  primitive.instance_key = shape.instance_key;
   primitive.marker_size_px = size;
   primitive.fill = fill;
   primitive.outline =
@@ -806,7 +817,7 @@ void appendSubjectShapes(const ReadOnlyOverlayInput &input,
             MarkerShape::Circle, 2.4, {0.2f, 1.0f, 0.7f, 0.45f}, primitives);
       }
     }
-    if (input.show_subject_shape_bspline_control_points) {
+    if (input.show_subject_shape_bspline_control_points && shape->bspline_valid) {
       appendShapePolyline(*shape, shape->bspline_control_points,
                           "##shape_bspline_controls_" + suffix,
                           {0.2f, 0.9f, 0.7f, 0.35f}, 1.0, primitives);

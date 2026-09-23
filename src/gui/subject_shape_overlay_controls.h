@@ -25,6 +25,10 @@ struct SubjectShapeOverlayControlCapabilities {
   bool body_contour = false;
   bool swim_bladder_contour = false;
   bool eye_contours = false;
+  bool bspline_sample = true;
+  bool bspline_control_points = true;
+  bool tail_samples = true;
+  const char *master_label = "Show subject shape";
 };
 
 struct SubjectShapeOverlayControlResult {

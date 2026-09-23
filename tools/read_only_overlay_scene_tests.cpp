@@ -2,6 +2,7 @@
 #include "tests/fixtures/read_only_overlay_scene_fixture.h"
 
 #include <cmath>
+#include <limits>
 #include <iostream>
 #include <utility>
 
@@ -191,11 +192,80 @@ bool testScreenMesh() {
     return true;
 }
 
+bool testIndependentContoursAndShapeDiagnostics() {
+    using namespace crimson::overlay;
+    ReadOnlyOverlayInput input;
+    input.identity = {0, 9, 0, 9};
+    input.source_width = 200.0;
+    input.source_height = 100.0;
+    input.show_boxes = input.show_keypoints = input.show_headings = false;
+    input.show_subject_mask_fills = false;
+    input.show_subject_mask_contours = true;
+    input.independent_mask_contours = true;
+    input.show_subject_body_mask = false;
+    input.show_subject_body_contour = true;
+    SubjectMaskComponentInput mask;
+    mask.label = "subject_body";
+    mask.source_rect = {10, 20, 30, 30};
+    mask.mask_width = mask.mask_height = 2;
+    mask.mask = std::make_shared<const std::vector<uint8_t>>(4, 1);
+    mask.contour = {{10, 20}, {40, 20}, {40, 50}};
+    mask.instance_key = std::numeric_limits<uint64_t>::max();
+    mask.instance_key_valid = true;
+    input.subject_masks.push_back(mask);
+    auto scene = buildReadOnlyOverlayScene(input);
+    CHECK(scene.raster_masks.empty());
+    CHECK(scene.primitives.size() == 1);
+    CHECK(scene.primitives.front().instance_key == mask.instance_key);
+    CHECK(scene.primitives.front().label.find("##mask_contour_subject_body_") == 0);
+
+    input.show_subject_mask_fills = true;
+    input.show_subject_body_contour = false;
+    input.show_subject_body_mask = true;
+    scene = buildReadOnlyOverlayScene(input);
+    CHECK(scene.raster_masks.size() == 1);
+    CHECK(scene.primitives.empty());
+
+    input.show_subject_mask_fills = false;
+    input.show_subject_shape_snout_tip = false;
+    input.show_subject_shape_tail_base = false;
+    input.show_subject_shape_tail_tip = false;
+    input.show_subject_shape_caudal_anchor = false;
+    input.show_subject_shape_centerline = false;
+    input.show_subject_shape_bspline = false;
+    input.show_subject_shape_bspline_debug_points = true;
+    input.show_subject_shape_bspline_control_points = true;
+    input.show_subject_shape_tail_samples = true;
+    input.show_subject_shape_tail_normals = true;
+    SubjectShapeInput shape;
+    shape.shape_row = 1;
+    shape.source_rect = {10, 20, 30, 30};
+    shape.coordinate_width = shape.coordinate_height = 100;
+    shape.bspline_sample = {{0, 0}, {10, 10}};
+    shape.bspline_control_points = {{0, 0}, {20, 20}};
+    shape.tail_samples = {{10, 10}};
+    shape.tail_normals = {{1, 0}};
+    shape.instance_key = 0;
+    shape.instance_key_valid = true;
+    input.subject_shapes.push_back(shape);
+    scene = buildReadOnlyOverlayScene(input);
+    CHECK(scene.primitives.empty());
+    input.subject_shapes.front().bspline_valid = true;
+    input.subject_shapes.front().tail_sample_valid = true;
+    scene = buildReadOnlyOverlayScene(input);
+    CHECK(scene.primitives.size() == 7);
+    for (const auto &primitive : scene.primitives) {
+        CHECK(primitive.instance_key == 0);
+    }
+    return true;
+}
+
 }  // namespace
 
 int main() {
     if (!testDeterministicScene() || !testIdentityAndOptions() ||
-        !testStyleVariants() || !testScreenMesh()) {
+        !testStyleVariants() || !testScreenMesh() ||
+        !testIndependentContoursAndShapeDiagnostics()) {
         return 1;
     }
     std::cout << "read_only_overlay_scene_tests: PASS\n";

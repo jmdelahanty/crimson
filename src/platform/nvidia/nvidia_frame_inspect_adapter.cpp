@@ -1,4 +1,5 @@
 #include "platform/nvidia/nvidia_frame_inspect_adapter.h"
+#include "gui/camera_view_subject_shape_controls_adapter.h"
 
 #include "review_frame_index.h"
 
@@ -84,6 +85,9 @@ app::FrameInspectPresentationOutput makeFrameInspectPresentationOutput(
   output.overlay_controls.show_eye_right_mask = result.show_eye_right_mask;
   output.overlay_controls.show_swim_bladder_mask =
       result.show_swim_bladder_mask;
+  output.overlay_controls.mask_mode = result.mask_overlay_mode;
+  applyCameraViewCanonicalSubjectShapeControls(
+      result.subject_shape_overlay_options, &output.overlay_controls);
   output.overlay_controls.show_eye_direction_beams =
       result.show_eye_direction_beams;
   output.overlay_controls.show_eye_gaze_rays = result.show_eye_gaze_rays;

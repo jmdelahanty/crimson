@@ -47,8 +47,9 @@ struct CanonicalOverlayRepositories {
   zarr::CanonicalOverlaySelection selection;
   std::unique_ptr<zarr::KeypointOverlayRepository> keypoints;
   std::unique_ptr<zarr::SubjectMaskOverlayRepository> masks;
+  std::unique_ptr<zarr::SubjectMaskOverlayRepository> mask_contours;
   std::unique_ptr<zarr::SubjectShapeOverlayRepository> shapes;
-  std::string keypoint_error, mask_error, shape_error, error;
+  std::string keypoint_error, mask_error, mask_contour_error, shape_error, error;
 };
 using CanonicalOverlayOpenFunction =
     std::function<CanonicalOverlayRepositories(const CanonicalOverlayOpenRequest&)>;
@@ -69,10 +70,15 @@ struct CanonicalOverlaySnapshot {
                                   zarr::KeypointOverlayResolution> keypoints;
   CanonicalOverlayProductSnapshot<zarr::SubjectMaskOverlayDescriptor,
                                   zarr::SubjectMaskOverlayResolution> masks;
+  CanonicalOverlayProductSnapshot<zarr::SubjectMaskOverlayDescriptor,
+                                  zarr::SubjectMaskOverlayResolution> mask_contours;
   CanonicalOverlayProductSnapshot<zarr::SubjectShapeOverlayDescriptor,
                                   zarr::SubjectShapeOverlayResolution> shapes;
   zarr::SubjectMaskOverlayRepositoryMetrics mask_metrics;
   SubjectMaskOverlayBufferMetrics mask_buffer_metrics;
+  zarr::SubjectMaskOverlayRepositoryMetrics mask_contour_metrics;
+  SubjectMaskOverlayBufferMetrics mask_contour_buffer_metrics;
+  std::string mask_contour_error;
   double open_ms = 0.0;
   std::string error;
 };
@@ -93,7 +99,8 @@ class CanonicalOverlaySession {
   void shutdown(); // Blocking teardown; call before shutting down the scheduler.
   bool requestFrame(int64_t frame, bool keypoints, bool masks, bool shapes,
                     bool discontinuity = false,
-                    CanonicalOverlayPlaybackDemand playback = {});
+                    CanonicalOverlayPlaybackDemand playback = {},
+                    bool mask_contours = false);
   CanonicalOverlaySnapshot snapshot(int64_t frame) const;
   bool waitUntilOpen(std::chrono::milliseconds timeout) const;
 
